@@ -1,6 +1,8 @@
 # Working on DW4_PC
 
 This is a native C++20 port effort, presently a data-reader/workbench milestone.
+Keep all source code, identifiers, comments, documentation, README content,
+commit messages and application text in English, as requested by the owner.
 Read README.md, docs/ARCHITECTURE.md and docs/ROADMAP.md before extending scope.
 Do not describe the workbench as a playable game or claim stored preferences are
 implemented gameplay. Continue toward the next acceptance gate in the roadmap.
