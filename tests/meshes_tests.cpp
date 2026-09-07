@@ -69,6 +69,11 @@ struct Options {
     std::uint32_t index_format{};
     std::uint32_t index_offset{};
     std::uint32_t length_format{32};
+    bool with_uv{};
+    std::optional<std::uint32_t> uv_reference;
+    std::size_t uv_size{24};
+    float first_u{0.25f};
+    float first_v{-0.5f};
 };
 
 // A compact, generated IGB with one geometry, one vertex-array object, and
@@ -120,6 +125,8 @@ IgbDocument fixture(Options options = {}) {
         words(entries, {2,32,0,static_cast<std::uint32_t>(encoded_indices.size()),0xffffffffu,0,0xffffffffu,0xffffffffu}, big);
         words(entries, {2,32,0,static_cast<std::uint32_t>(encoded_lengths.size()),0xffffffffu,0,0xffffffffu,0xffffffffu}, big);
     }
+    if (options.with_uv)
+        words(entries, {2,32,0,static_cast<std::uint32_t>(options.uv_size),0xffffffffu,0,0xffffffffu,0xffffffffu}, big);
     Bytes objects;
     const auto index_ref = options.strip && !options.null_index && options.index_ref == 0xffffffffu ? 4u : options.index_ref;
     const auto primitive_ref = options.strip && !options.null_lengths && options.primitive_ref == 0xffffffffu ? 5u : options.primitive_ref;
@@ -133,6 +140,8 @@ IgbDocument fixture(Options options = {}) {
     Bytes memories((options.table_size + 3) & ~std::size_t(3), 0xff);
     if (options.table_size >= 4) word(memories, 0, options.position_ref, big);
     if (options.table_size >= 8) word(memories, 4, options.extra_stream_ref, big);
+    if (options.table_size >= 48 && (options.with_uv || options.uv_reference))
+        word(memories, 44, options.uv_reference.value_or(options.strip ? 8u : 4u), big);
     Bytes positions((options.position_size + 3) & ~std::size_t(3));
     const float values[]{options.first_coordinate, 1, 3, 4, -5, 6, 0, 2, -7, 7, 8, 9};
     for (std::size_t i = 0; i < 12 && i * 4 + 4 <= positions.size(); ++i)
@@ -143,11 +152,18 @@ IgbDocument fixture(Options options = {}) {
         encoded_lengths.resize((encoded_lengths.size() + 3) & ~std::size_t(3));
         append(memories, encoded_indices); append(memories, encoded_lengths);
     }
+    if (options.with_uv) {
+        Bytes uv((options.uv_size + 3) & ~std::size_t(3));
+        const float uv_values[]{options.first_u,options.first_v,1.25f,2.0f,0.0f,1.0f,0.75f,0.5f};
+        for (std::size_t i = 0; i < 8 && i * 4 + 4 <= uv.size(); ++i)
+            word(uv, i * 4, std::bit_cast<std::uint32_t>(uv_values[i]), big);
+        append(memories, uv);
+    }
     Bytes bytes;
-    const auto references = options.strip ? 8u : 4u;
+    const auto references = (options.strip ? 8u : 4u) + (options.with_uv ? 1u : 0u);
     const auto object_count = options.strip ? 4u : 2u;
     words(bytes, {static_cast<std::uint32_t>(entries.size()),references,static_cast<std::uint32_t>(type_block.size()),static_cast<std::uint32_t>(types.size()),
-        static_cast<std::uint32_t>(objects.size()),object_count,static_cast<std::uint32_t>(memories.size()),object_count,
+        static_cast<std::uint32_t>(objects.size()),object_count,static_cast<std::uint32_t>(memories.size()),object_count + (options.with_uv ? 1u : 0u),
         static_cast<std::uint32_t>(field_block.size()),static_cast<std::uint32_t>(fields.size()),0xfada,0x20000006}, big);
     append(bytes, field_block); push32(bytes, 4, big); append(bytes, type_block); append(bytes, entries);
     words(bytes, {8 + references * 2,references}, big);
@@ -260,6 +276,43 @@ void strip_synthetic() {
     unsupported(options, "Expanded triangle allocation limit");
 }
 
+void uv_synthetic() {
+    const auto plain = fixture();
+    check(decode_igb_mesh(plain, 0).texcoords.empty(), "Plain geometry leaves optional UVs empty");
+    rejects([&] { decode_igb_texcoords(plain, 0); }, "Missing optional UV stream");
+    Options options; options.with_uv = true;
+    const auto document = fixture(options);
+    const auto uv = decode_igb_texcoords(document, 0);
+    check(uv.size() == 3 && uv[0].u == 0.25f && uv[0].v == -0.5f, "UV float2 byte layout");
+    check(uv[1].u == 1.25f && uv[1].v == 2.0f && uv[2].v == 1.0f, "UVs outside unit interval remain unmodified");
+    check(decode_igb_mesh(document, 0).texcoords.empty(), "UV decoding stays explicit even when stream exists");
+    auto mesh = decode_igb_mesh(document, 0); mesh.texcoords = uv;
+    check(mesh.texcoords.size() == mesh.positions.size(), "Caller attaches one UV per source vertex");
+    const auto optional_failure = [&](Options invalid, const std::string& reason) {
+        const auto doc = fixture(invalid);
+        rejects([&] { decode_igb_texcoords(doc, 0); }, reason);
+        check(decode_igb_mesh(doc, 0).positions.size() == 3, reason + " preserves position-only decoding");
+    };
+    options = {}; options.with_uv = true; options.uv_size = 23; optional_failure(options, "Truncated UV stream");
+    options.uv_size = 28; optional_failure(options, "Unexpected UV stride");
+    options.uv_size = 0; optional_failure(options, "Empty UV memory");
+    for (const auto bad : {std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+        options = {}; options.with_uv = true; options.first_u = bad;
+        optional_failure(options, "Non-finite U coordinate");
+    }
+    options = {}; options.with_uv = true; options.first_v = std::numeric_limits<float>::infinity();
+    optional_failure(options, "Non-finite V coordinate");
+    options = {}; options.with_uv = true; options.uv_reference = 1;
+    const auto wrong_reference = fixture(options);
+    rejects([&] { decode_igb_texcoords(wrong_reference, 0); }, "Nested UV reference selects object");
+    options.uv_reference = 99;
+    const auto unknown_reference = fixture(options);
+    rejects([&] { decode_igb_texcoords(unknown_reference, 0); }, "Nested UV reference is out of range");
+    options = {}; options.with_uv = true; options.big = true;
+    const auto big = fixture(options);
+    rejects([&] { decode_igb_texcoords(big, 0); }, "Unverified big-endian UV profile");
+}
+
 void sample(const std::filesystem::path& path, std::size_t entry) {
     const auto archive = assets::AfsArchive::open(path);
     const auto document = read_igb_document(archive.read(entry));
@@ -311,6 +364,7 @@ int main(int argc, char** argv) {
     try {
         synthetic();
         strip_synthetic();
+        uv_synthetic();
         std::cout << "Passed " << checks << " synthetic mesh checks.\n";
         if (argc == 3 && std::filesystem::path(argv[1]) == "--archives") archives(argv[2]);
         else if (argc == 3) sample(argv[1], static_cast<std::size_t>(std::stoull(std::filesystem::path(argv[2]).string())));

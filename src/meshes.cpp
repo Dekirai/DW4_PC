@@ -48,6 +48,7 @@ struct MeshSource {
     std::span<const std::uint8_t> positions;
     std::span<const std::uint8_t> indices;
     std::span<const std::uint8_t> lengths;
+    std::span<const std::uint8_t> texcoords;
     bool strips{};
 };
 
@@ -94,6 +95,7 @@ MeshSource inspect_mesh(const IgbDocument& document, const IgbObject& geometry) 
         // populated table element as a memory record before using stream zero.
         const auto memory = document.memory(ref);
         if (i == 0) result.positions = memory;
+        if (i == 11) result.texcoords = memory;
     }
     if (result.positions.size() != std::uint64_t(result.vertex_count) * 12)
         fail("position stream byte count is not exactly vertex_count * 12");
@@ -193,6 +195,27 @@ MeshData decode_igb_mesh(const IgbDocument& document, std::uint32_t reference_in
         if (source.strips) strip_triangles(source, [&](std::uint32_t a, std::uint32_t b, std::uint32_t c) {
             result.indices.push_back(a); result.indices.push_back(b); result.indices.push_back(c);
         });
+        return result;
+    } catch (const IgbError& error) {
+        throw MeshError(error.what());
+    }
+}
+
+std::vector<Vec2> decode_igb_texcoords(const IgbDocument& document, std::uint32_t reference_index) {
+    try {
+        const auto source = inspect_mesh(document, document.object(reference_index));
+        if (source.texcoords.empty()) fail("UV stream 11 is absent or empty");
+        if (source.texcoords.size() != std::uint64_t(source.vertex_count) * 8)
+            fail("UV stream byte count is not exactly vertex_count * 8");
+        std::vector<Vec2> result;
+        result.reserve(source.vertex_count);
+        for (std::uint32_t index = 0; index < source.vertex_count; ++index) {
+            const auto offset = static_cast<std::size_t>(index) * 8;
+            const auto u = std::bit_cast<float>(little_word(source.texcoords, offset));
+            const auto v = std::bit_cast<float>(little_word(source.texcoords, offset + 4));
+            if (!std::isfinite(u) || !std::isfinite(v)) fail("UV stream contains a non-finite coordinate");
+            result.push_back({u, v});
+        }
         return result;
     } catch (const IgbError& error) {
         throw MeshError(error.what());

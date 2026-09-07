@@ -1,7 +1,7 @@
 # Native mesh inspection renderer
 
-The version 0.3 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
-array, position/index buffers and a depth-tested framebuffer. It renders actual
+The version 0.4 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
+array, position/UV/index buffers and a depth-tested framebuffer. It renders actual
 geometry decoded from an original IGB document. ImGui displays the resulting
 RGBA texture with vertically flipped UVs to account for framebuffer orientation.
 It does not render a model through a screenshot, emulator or generated substitute.
@@ -29,12 +29,36 @@ camera does not reconstruct the original game's timing, camera or coordinates.
 - Wheel: zoom. **Fit**: restore the initial fitted camera.
 - **Solid**: plain face shading derived from triangle derivatives.
 - **Wireframe**: triangle edges, with depth testing.
+- **Textured**: the verified bound base image sampled with original UVs.
 
-The shader's color and lighting are inspection aids. No material texture is
-applied, and back-face culling is disabled to inspect both sides. Normals,
-materials, scene transforms and skeletal poses still require separate loading.
+Solid shading is an inspection aid. Back-face culling is disabled to inspect
+both sides. Normals, full game materials, scene transforms and skeletal poses
+still require separate loading.
 For a rigged character, stored positions are displayed without executing its
 skinning or animation state.
+
+## Bound texture inspection
+
+The portable [material resolver](MATERIALS.md) verifies the explicit geometry,
+scene owner, attribute scope, texture binding and image references. The current
+game-data profile accepts one enabled stage-zero image with linear minification
+and magnification and repeat wrapping. Ambiguous ancestry, incomplete bindings
+and other sampler/material profiles report an unsupported diagnostic.
+
+The renderer accepts a finite UV pair per vertex and an owned RGBA base image.
+It uploads interleaved position/UV vertices and an RGBA8 texture. UVs and decoded
+image rows are used unchanged, including negative UVs. There is no implicit V
+flip or recoloring. The framebuffer flip used by ImGui is a separate display
+operation. The renderer also supports nearest, clamp-to-edge and mirrored-repeat
+for synthetic validation; the original-material resolver does not infer these
+from unverified source state.
+
+Textured mode displays unlit texel RGB. Zero-alpha samples are discarded and
+partial alpha uses source-over blending onto an opaque viewport. This is basic
+inspection compositing, without original alpha-test rules, translucent sorting,
+lighting, texture matrices, multiple stages or mipmap selection. It does not
+establish final original-game appearance. A missing image or UV stream is an
+error in Textured mode, never a successful solid-mode fallback.
 
 ## Framebuffer and ownership
 
@@ -52,9 +76,12 @@ Framebuffer completeness and GL errors are checked. The UI reports the actual
 offscreen sample count, which is separate from the window framebuffer count.
 
 The renderer restores the caller's framebuffer, viewport, program, vertex-array,
-buffer, texture, polygon, depth, color-mask and changed capability state. Resources
+buffer, texture, polygon, depth, color-mask and changed capability state. Texture
+operations additionally preserve the active unit, unit-zero texture and sampler,
+pixel-unpack buffer/layout and blend equations/factors. Resources
 are created lazily in the current context, and `shutdown()` runs before SDL
-destroys that context. Failed uploads clear the selected geometry; failed renders
+destroys that context. Replacing geometry clears its old image. Invalid texture
+replacement clears the old texture; invalid mesh uploads clear geometry. Failed renders
 are reported and cannot pass an explicit mesh smoke test.
 
 Core-profile polygon rasterization follows the
@@ -62,6 +89,8 @@ Core-profile polygon rasterization follows the
 Core mode uses `GL_FRONT_AND_BACK`; the state query is stored in a two-integer
 buffer for driver compatibility, while the first value determines the shared
 core-profile mode. GPU tests verify actual restoration on the local driver.
+Sampler capture uses the active-unit `GetIntegerv(SAMPLER_BINDING)` query
+specified by section 3.8.2 of the same OpenGL 3.3 specification.
 
 ## Validation
 
@@ -75,18 +104,25 @@ and reset tests. An additional hidden-window GPU test is built with the app:
 It draws a small synthetic tetrahedron and checks pixel coverage, changed pixels
 after orbit, distinct wireframe coverage, resizing, MSAA resolve, GL state
 restoration, invalid uploads and cleanup. It passed on the local RTX 5070 Ti.
+Texture tests use a synthetic asymmetric 2×2 image to verify RGBA channels,
+unchanged V coordinates, repeat/clamp/mirror wrapping, linear filtering, alpha
+and missing/malformed UV/image failures. Hostile caller state includes a different
+active texture unit, an overriding sampler, an unpack buffer and padded/skipped
+pixel layout; rendering and upload must restore all of it.
 The primitive is a test fixture only; the application loads original game meshes.
 CI builds this executable but does not require a GPU or run it automatically.
 
 Original-data checks use explicit finite application runs:
 
 ```powershell
-.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/mesh.ini --resource _common/p_agumon.igb --mesh 2 --smoke-test 5 --screenshot work/agumon.bmp
+.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/mesh.ini --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --smoke-test 5 --screenshot work/agumon.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/mesh.ini --resource _common/p_agumon.igb --mesh 2 --mesh-mode wireframe --smoke-test 5 --screenshot work/agumon-wire.bmp
 ```
 
 The selected Agumon geometry resolves to `ndmw.afs[850]`, global reference 5665:
 1,371 stored vertices and 1,966 emitted triangles. A simpler unindexed sample is
 `ndmw.afs[179]`, mesh-list index 0, global reference 3: 24 vertices and 8 triangles.
+Agumon's high geometry inherits texture 405 through binding 414 on scope node
+5481, reaching image 5609 (`P_agumon01.dds`, 256×256 BC1). It has 1,371 UV pairs.
 These tests validate native loading and visible drawing, not a final animated
 character, material match, original scene or gameplay implementation.

@@ -2,6 +2,7 @@
 #include "dw4/camera.hpp"
 #include "dw4/igb.hpp"
 #include "dw4/igb_document.hpp"
+#include "dw4/materials.hpp"
 #include "dw4/meshes.hpp"
 #include "dw4/resources.hpp"
 #include "dw4/settings.hpp"
@@ -59,7 +60,7 @@ struct Options {
     std::optional<int> entry;
     int texture = 0;
     std::optional<int> mesh;
-    bool mesh_wireframe = false;
+    dw4::viewer::MeshDrawMode mesh_mode = dw4::viewer::MeshDrawMode::solid;
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -110,8 +111,10 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
         else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--mesh-mode") {
-            if (args[i] != "solid" && args[i] != "wireframe") throw std::runtime_error("--mesh-mode requires solid or wireframe.");
-            out.mesh_wireframe = args[i] == "wireframe";
+            if (args[i] == "solid") out.mesh_mode = dw4::viewer::MeshDrawMode::solid;
+            else if (args[i] == "wireframe") out.mesh_mode = dw4::viewer::MeshDrawMode::wireframe;
+            else if (args[i] == "textured") out.mesh_mode = dw4::viewer::MeshDrawMode::textured;
+            else throw std::runtime_error("--mesh-mode requires solid, wireframe or textured.");
             mesh_mode_requested = true;
         }
         else if (option == "--max-entry-mib") out.max_entry_mib = parse_integer_option(args[i], option, 1, 256);
@@ -156,6 +159,29 @@ std::string byte_size(std::uint64_t bytes) {
 }
 
 std::string filename(const std::filesystem::path& path) { return dw4::path_utf8(path.filename()); }
+
+const char* mesh_mode_name(dw4::viewer::MeshDrawMode mode) {
+    if (mode == dw4::viewer::MeshDrawMode::textured) return "textured";
+    if (mode == dw4::viewer::MeshDrawMode::wireframe) return "wireframe";
+    return "solid";
+}
+
+dw4::viewer::MeshTextureWrap texture_wrap(dw4::MaterialWrap wrap) {
+    switch (wrap) {
+    case dw4::MaterialWrap::repeat: return dw4::viewer::MeshTextureWrap::repeat;
+    case dw4::MaterialWrap::clamp_to_edge: return dw4::viewer::MeshTextureWrap::clamp_to_edge;
+    case dw4::MaterialWrap::mirrored_repeat: return dw4::viewer::MeshTextureWrap::mirrored_repeat;
+    }
+    throw std::runtime_error("Unsupported material wrap mode.");
+}
+
+dw4::viewer::MeshTextureFilter texture_filter(dw4::MaterialFilter filter) {
+    switch (filter) {
+    case dw4::MaterialFilter::nearest: return dw4::viewer::MeshTextureFilter::nearest;
+    case dw4::MaterialFilter::linear: return dw4::viewer::MeshTextureFilter::linear;
+    }
+    throw std::runtime_error("Unsupported material filter mode.");
+}
 
 void paragraph(const char* text, const ImVec4& color = muted) {
     ImGui::PushStyleColor(ImGuiCol_Text, color);
@@ -282,6 +308,12 @@ public:
                 return 2;
             }
             if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+                if (options_.mesh_mode == dw4::viewer::MeshDrawMode::textured && !mesh_renderer_.has_texture()) {
+                    const auto reason = !mesh_material_error_.empty() ? mesh_material_error_ :
+                        !mesh_error_.empty() ? mesh_error_ : "No verified material binding and GPU texture are available.";
+                    std::cerr << "Textured mesh unavailable: " << reason << '\n';
+                    return 3;
+                }
                 if (!mesh_renderer_.has_mesh() || mesh_render_failed_ || mesh_renderer_.rendered_frames() <= mesh_render_start_frame_) {
                     std::cerr << "Mesh upload/render failed: " << (mesh_error_.empty() ? "No geometry frame rendered." : mesh_error_) << '\n';
                     return 3;
@@ -290,8 +322,13 @@ public:
                 std::cout << "Mesh: " << mesh_source_ << " / mesh " << selected_mesh_ << " / reference " << mesh.reference_index
                           << " / " << mesh_data_->positions.size() << " vertices / " << mesh_renderer_.triangle_count() << " triangles\n"
                           << "Mesh render: " << mesh_target_width_ << 'x' << mesh_target_height_ << " / "
-                          << (mesh_wireframe_ ? "wireframe" : "solid") << " / " << mesh_renderer_.samples() << " samples\n";
+                          << mesh_mode_name(mesh_mode_) << " / " << mesh_renderer_.samples() << " samples\n";
                 if (!loaded_mesh_resource_.empty()) std::cout << "Logical resource: " << loaded_mesh_resource_ << '\n';
+                if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured && mesh_material_) {
+                    std::cout << "Bound image: " << mesh_material_->image_name << " / reference " << *mesh_material_->image_reference
+                              << " / " << mesh_texture_width_ << 'x' << mesh_texture_height_ << " / " << mesh_data_->texcoords.size() << " UV pairs\n"
+                              << "Material provenance: " << mesh_material_->provenance << '\n';
+                }
             } else if (options_.entry || !options_.resource.empty()) {
                 if (!asset_texture_) {
                     std::cerr << "Texture load failed: " << texture_error_ << '\n';
@@ -366,7 +403,11 @@ private:
     int mesh_target_height_ = 0;
     int mesh_entry_limit_mib_ = 64;
     std::uint64_t mesh_render_start_frame_ = 0;
-    bool mesh_wireframe_ = false;
+    dw4::viewer::MeshDrawMode mesh_mode_ = dw4::viewer::MeshDrawMode::solid;
+    std::string mesh_material_error_;
+    std::optional<dw4::MaterialInfo> mesh_material_;
+    std::uint32_t mesh_texture_width_ = 0;
+    std::uint32_t mesh_texture_height_ = 0;
     bool mesh_render_failed_ = false;
     bool mesh_scroll_pending_ = false;
     std::vector<SDL_Gamepad*> gamepads_;
@@ -397,7 +438,7 @@ private:
         page_ = options_.initial_page;
         max_entry_mib_ = options_.max_entry_mib;
         mesh_entry_limit_mib_ = options_.max_entry_mib;
-        mesh_wireframe_ = options_.mesh_wireframe;
+        mesh_mode_ = options_.mesh_mode;
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         sdl_ready_ = true;
         if (!options_.config.empty()) config_ = options_.config;
@@ -672,6 +713,9 @@ private:
         mesh_renderer_.clear();
         mesh_document_.reset();
         mesh_data_.reset();
+        mesh_material_.reset();
+        mesh_material_error_.clear();
+        mesh_texture_width_ = mesh_texture_height_ = 0;
         meshes_.clear();
         loaded_mesh_resource_.clear();
         mesh_source_.clear();
@@ -732,6 +776,9 @@ private:
     void select_mesh(int index) {
         mesh_renderer_.clear();
         mesh_data_.reset();
+        mesh_material_.reset();
+        mesh_material_error_.clear();
+        mesh_texture_width_ = mesh_texture_height_ = 0;
         mesh_error_.clear();
         mesh_render_failed_ = false;
         selected_mesh_ = index;
@@ -744,6 +791,46 @@ private:
             mesh_renderer_.upload(*mesh_data_);
             mesh_render_start_frame_ = mesh_renderer_.rendered_frames();
         } catch (const std::exception& error) { mesh_error_ = error.what(); }
+        if (mesh_data_ && mesh_renderer_.has_mesh()) {
+            try {
+                mesh_material_ = dw4::resolve_igb_material(*mesh_document_, meshes_.at(static_cast<std::size_t>(index)).reference_index);
+                if (!mesh_material_->supported) mesh_material_error_ = mesh_material_->diagnostic;
+            } catch (const std::exception& error) { mesh_material_error_ = error.what(); }
+            if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured) prepare_mesh_texture();
+        }
+    }
+
+    void prepare_mesh_texture() {
+        if (mesh_renderer_.has_texture()) return;
+        try {
+            if (!mesh_data_ || !mesh_document_ || selected_mesh_ < 0) throw std::runtime_error("No decoded geometry is selected.");
+            if (!mesh_material_) throw std::runtime_error(mesh_material_error_.empty() ? "No verified material binding was resolved." : mesh_material_error_);
+            if (!mesh_material_->supported) throw std::runtime_error(mesh_material_->diagnostic.empty() ? "This material profile is unsupported." : mesh_material_->diagnostic);
+            const auto reference = meshes_.at(static_cast<std::size_t>(selected_mesh_)).reference_index;
+            if (mesh_material_->geometry_reference != reference || !mesh_material_->image_reference)
+                throw std::runtime_error("The material binding does not identify this geometry and an image.");
+            auto uv = dw4::decode_igb_texcoords(*mesh_document_, reference);
+            if (uv.size() != mesh_data_->positions.size()) throw std::runtime_error("Texture-coordinate count does not match the selected geometry.");
+            const auto pixels = dw4::decode_igb_texture(*mesh_document_, *mesh_material_->image_reference);
+            dw4::viewer::MeshTextureOptions sampler;
+            sampler.wrap_u = texture_wrap(mesh_material_->wrap_s);
+            sampler.wrap_v = texture_wrap(mesh_material_->wrap_t);
+            sampler.min_filter = texture_filter(mesh_material_->min_filter);
+            sampler.mag_filter = texture_filter(mesh_material_->mag_filter);
+            mesh_data_->texcoords = std::move(uv);
+            mesh_renderer_.upload(*mesh_data_);
+            mesh_renderer_.set_texture(pixels, sampler);
+            if (!mesh_renderer_.has_texture()) throw std::runtime_error("The graphics renderer did not retain the verified texture.");
+            mesh_texture_width_ = pixels.width;
+            mesh_texture_height_ = pixels.height;
+            mesh_render_start_frame_ = mesh_renderer_.rendered_frames();
+            mesh_material_error_.clear();
+        } catch (const std::exception& error) {
+            mesh_renderer_.clear_texture();
+            mesh_texture_width_ = mesh_texture_height_ = 0;
+            mesh_material_error_ = error.what();
+            if (!mesh_renderer_.has_mesh()) mesh_error_ = mesh_material_error_;
+        }
     }
 
     void draw() {
@@ -1338,7 +1425,7 @@ private:
             mesh_target_width_ = std::max(1,static_cast<int>(width * reduction));
             mesh_target_height_ = std::max(1,static_cast<int>(height * reduction));
             const auto target = mesh_renderer_.render(mesh_target_width_, mesh_target_height_, mesh_camera_,
-                mesh_wireframe_ ? dw4::viewer::MeshDrawMode::wireframe : dw4::viewer::MeshDrawMode::solid, settings_.msaa);
+                mesh_mode_, settings_.msaa);
             auto* draw = ImGui::GetWindowDrawList();
             const ImVec2 end(origin.x + canvas_size.x,origin.y + canvas_size.y);
             draw->AddImage(static_cast<ImTextureID>(target), origin, end, ImVec2(0,1), ImVec2(1,0));
@@ -1350,7 +1437,7 @@ private:
     }
 
     void draw_meshes() {
-        title("Mesh viewer", "Original object-space mesh in its stored pose. Materials, scene transforms, skinning and gameplay are not implemented.");
+        title("Mesh viewer", "Stored object-space pose with a partial base-color texture profile. Scene transforms, skinning and gameplay are not implemented.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB mesh.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -1404,6 +1491,33 @@ private:
             mesh_source_.c_str(),meshes_.size(),mesh_target_width_,mesh_target_height_,mesh_renderer_.samples());
         else paragraph("Select an IGB entry here, or use View meshes in the Original data archive browser.");
         if (!mesh_error_.empty()) paragraph(mesh_error_.c_str(),amber);
+        if (mesh_material_ && mesh_material_->supported && mesh_material_->image_reference) {
+            const auto& material = *mesh_material_;
+            const auto name = material.image_name.empty() ? std::string("Unnamed image") : material.image_name;
+            ImGui::TextColored(teal,"Bound image: %s / reference %u%s",name.c_str(),*material.image_reference,
+                mesh_renderer_.has_texture() ? " / uploaded" : " / not uploaded");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",material.provenance.c_str());
+            if (ImGui::CollapsingHeader("Material binding provenance / partial profile")) {
+                paragraph(material.provenance.c_str());
+                auto reference_text = [](const auto& reference) { return reference ? std::to_string(*reference) : "-"; };
+                ImGui::TextWrapped("Geometry node %s -> scope %s -> attributes %s -> texture bind %s -> texture %s -> image %s",
+                    reference_text(material.geometry_node_reference).c_str(),reference_text(material.scope_node_reference).c_str(),
+                    reference_text(material.attribute_list_reference).c_str(),reference_text(material.texture_bind_reference).c_str(),
+                    reference_text(material.texture_reference).c_str(),reference_text(material.image_reference).c_str());
+                if (material.inherited) {
+                    std::string path;
+                    for (const auto reference : material.inheritance_path) { if (!path.empty()) path += " -> "; path += std::to_string(reference); }
+                    ImGui::TextWrapped("Inherited binding path: %s",path.c_str());
+                }
+                ImGui::Text("Stored sampler values: wrap S/T %u/%u, min/mag %u/%u",material.raw_wrap_s,material.raw_wrap_t,
+                    material.raw_min_filter,material.raw_mag_filter);
+                if (mesh_renderer_.has_texture()) ImGui::Text("Decoded image %u x %u / %zu UV pairs",mesh_texture_width_,mesh_texture_height_,mesh_data_->texcoords.size());
+                paragraph("Only the verified base-color profile is applied. Full game materials, mip selection and scene appearance remain separate work.");
+            }
+            if (!mesh_material_error_.empty()) paragraph(("Textured mode unavailable: " + mesh_material_error_).c_str(),amber);
+        } else if (!mesh_material_error_.empty() && mesh_mode_ != dw4::viewer::MeshDrawMode::textured) {
+            paragraph(("Textured mode unavailable: " + mesh_material_error_).c_str(),amber);
+        }
         if (meshes_.empty()) {
             paragraph("Supported geometry is decoded from its serialized position and topology data. Unsupported layouts remain explicit diagnostics.");
             return;
@@ -1447,10 +1561,18 @@ private:
             if (ImGui::Button("Fit")) mesh_camera_.reset();
             ImGui::SameLine();
             ImGui::SetNextItemWidth(140);
-            int mode = mesh_wireframe_ ? 1 : 0;
-            if (ImGui::Combo("##mesh_draw_mode",&mode,"Solid\0Wireframe\0")) mesh_wireframe_ = mode == 1;
+            int mode = mesh_mode_ == dw4::viewer::MeshDrawMode::textured ? 2 : mesh_mode_ == dw4::viewer::MeshDrawMode::wireframe ? 1 : 0;
+            if (ImGui::Combo("##mesh_draw_mode",&mode,"Solid\0Wireframe\0Textured\0")) {
+                mesh_mode_ = mode == 2 ? dw4::viewer::MeshDrawMode::textured : mode == 1 ? dw4::viewer::MeshDrawMode::wireframe : dw4::viewer::MeshDrawMode::solid;
+                if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured) prepare_mesh_texture();
+            }
             if (ImGui::GetWindowWidth() > 650) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
-            draw_mesh_canvas();
+            if (mesh_mode_ != dw4::viewer::MeshDrawMode::textured || mesh_renderer_.has_texture()) draw_mesh_canvas();
+            else {
+                paragraph("Textured rendering is unavailable for this geometry.",amber);
+                paragraph(mesh_material_error_.c_str());
+                paragraph("Solid and wireframe modes remain available for geometry inspection.");
+            }
         } else {
             paragraph("This geometry could not be rendered.",amber);
             paragraph(mesh_error_.c_str());
@@ -1463,7 +1585,7 @@ private:
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
             {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
-            {"IN PROGRESS", "02  Native original-asset viewer", "Native texture and local mesh viewers are available. Scene transforms, materials, animation and comparison to the original renderer remain.", false},
+            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh and texture viewers include a verified base-color binding profile. Full materials, scene transforms, animation and reference comparison remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -1502,7 +1624,7 @@ int main(int argc, char** argv) {
                          "--resource     Logical catalog path; alternative to --archive/--entry.\n"
                          "--texture      Zero-based texture-list index (default 0).\n"
                          "--mesh         Zero-based geometry-list index; opens the Meshes page.\n"
-                         "--mesh-mode    Solid or wireframe mesh inspection (default solid).\n"
+                         "--mesh-mode    Solid, wireframe or textured mesh inspection (default solid).\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }

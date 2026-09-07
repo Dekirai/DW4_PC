@@ -4,7 +4,9 @@ The `meshes` module reads original `igGeometryAttr1_5` objects and reconstructs
 their stored positions and triangle indices. The native viewer can display
 the resulting geometry in its local coordinate space. This includes the
 Agumon geometry in `_common/p_agumon.igb`; it does not implement the character's
-rig, animation, materials, scene transforms, or gameplay.
+rig, animation, scene transforms, or gameplay. A separate, bounded material
+resolver can associate a stored base image for the textured preview; see
+[MATERIALS.md](MATERIALS.md).
 
 The implementation is independent C++20 with no graphics-library dependency.
 Positions are copied from the original little-endian float stream without
@@ -47,6 +49,28 @@ Geometry slots 8 and 10 are also required to be zero. Their broader semantics
 remain unverified. The nested stream references are checked by the mesh reader;
 they are ordinary memory bytes, so validating the document's direct typed
 references alone would not validate them.
+
+## Optional UV coordinates
+
+`decode_igb_mesh(document, geometry_reference)` produces positions, indices,
+and bounds, leaving `MeshData::texcoords` empty. Call
+`decode_igb_texcoords(document, geometry_reference)` separately to read stream
+element 11 as successive little-endian IEEE 754 float pairs. Its memory must
+contain exactly `vertex_count * 8` bytes, and both components must be finite.
+The existing vertex limit bounds this allocation to 8 MiB.
+
+The helper preserves the original U and V values, including negative values
+and coordinates above one. It does not clamp, flip, rescale, or derive UVs from
+positions. A caller attaches the returned vector only after choosing a verified
+material. Missing, incorrectly sized, or non-finite optional UVs produce a
+separate diagnostic while position-only decoding stays available. Invalid
+nested memory references still invalidate the shared vertex descriptor.
+
+Across the same 2,273 original IGB files, stream 11 provided valid UVs for
+46,988 geometries: 8,024 in `area.afs` and 38,964 in `ndmw.afs`. The other
+151,080 geometries had an absent stream; no present stream failed the byte
+count or finite-value checks. Coordinates outside `[0, 1]` occur in 3,825
+geometries, making preservation of sampler wrap behavior necessary.
 
 ## Topology evidence
 
@@ -129,8 +153,10 @@ out-of-range indices, invalid group lengths, non-finite coordinates, and
 allocation-limit violations produce a diagnostic. Listing validates descriptors
 and ranges; selecting a mesh performs the coordinate decoding and finite check.
 
-Normals, UV sets, colors, material and texture links, scene transforms, skinning,
-animations, and collision remain separate work. No handedness conversion,
+The optional stream-11 UV helper and the separate material resolver support
+a narrow stored base-image preview. Normals, additional UV sets, colors,
+complete material execution, scene transforms, skinning, animations, and
+collision remain separate work. No handedness conversion,
 automatic mirroring, cosmetic pose adjustment, or coordinate reinterpretation
 is applied. A recognizable native geometry preview is evidence of the asset
 layout; comparison with an original rendered scene is still required before
@@ -138,7 +164,7 @@ claiming the game renderer or a playable model has been reconstructed.
 
 ## Run the tests and viewer
 
-Run the 105 synthetic checks without original game files:
+Run the 128 synthetic checks without original game files:
 
 ```powershell
 .\build\Release\dw4_meshes_tests.exe
@@ -147,7 +173,9 @@ Run the 105 synthetic checks without original game files:
 The generated fixtures cover valid IGB reference chains, float decoding and
 bounds, strip winding and group boundaries, connector degenerates, invalid
 references and types, malformed sizes and counts, non-finite positions, and
-vertex/index/expanded-triangle allocation limits. Checks remain active in
+vertex/index/expanded-triangle allocation limits. UV regressions cover exact
+float pairs, preservation of values outside `[0, 1]`, absent/wrong-size streams,
+non-finite components, and independence from plain geometry decoding. Checks remain active in
 Release builds.
 
 Run the separate read-only corpus check:

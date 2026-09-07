@@ -7,7 +7,9 @@ graphics dependencies. `assets` reads boot, DOL, AFS and BNR structures. `igb`
 reads version 6 metadata; `igb_document` loads owned object records, memory
 payloads and validated references. `resources` resolves logical names through
 the original AFS setup, and `textures` decodes verified indexed8/RGBA8 and BC1
-base images. `meshes` decodes positions and triangle indices; `camera` supplies
+base images. `meshes` decodes positions, triangle indices and explicitly requested
+UV streams. `materials` resolves a bounded local/inherited single-stage texture
+binding profile with reference provenance and unsupported-state diagnostics. `camera` supplies
 the host orbit/projection math. `settings` loads and validates host preferences. `dw4_inspect` and
 `dw4_catalog` are read-only CLIs; `dw4_pc` is the native SDL3/OpenGL/ImGui viewer
 and workbench.
@@ -37,9 +39,11 @@ filesystem file against its ISO extent.
    ready-to-use host ABI. See [IGB_OBJECTS.md](IGB_OBJECTS.md).
 3. **In progress:** texture base images and object-space meshes are decoded and
    displayed natively. Triangle lists and grouped 16-bit indexed strips use
-   recovered engine enum values and checked memory streams. Scene transforms,
-   materials, skinning and comparison with the original renderer remain.
-   See [TEXTURES.md](TEXTURES.md), [MESHES.md](MESHES.md) and the evidence in
+   recovered engine enum values and checked memory streams. Original UVs and
+   a verified base-texture binding profile are displayed in Textured mode.
+   Scene transforms, full material state, skinning and comparison with the
+   original renderer remain. See [TEXTURES.md](TEXTURES.md),
+   [MATERIALS.md](MATERIALS.md), [MESHES.md](MESHES.md) and the evidence in
    [MESH_RESEARCH.md](MESH_RESEARCH.md).
 4. Reconstruct scene traversal, animation and actor state. Replace OS/DVD/PAD/GX
    boundaries with native services using explicit interfaces.
@@ -53,6 +57,13 @@ target with optional MSAA resolve. The original coordinate values remain in the
 core data. ImGui displays the resulting texture; it does not generate the 3D
 geometry. See [RENDERER.md](RENDERER.md). Choosing a final game rendering backend
 is still open. Avoid making new gameplay objects depend on ImGui or SDL.
+
+Selecting geometry resolves material provenance without decoding pixels. Entering
+Textured mode explicitly reads the UV stream and bound image and uploads them to
+the GPU. Unsupported bindings do not prevent solid geometry inspection. Binding
+resolution uses object references and a unique checked ancestor path; asset names
+are diagnostic labels, never a texture-selection fallback. This deliberately
+limited resolver is not a complete scene-state traversal engine.
 
 ## Timing and PC settings
 

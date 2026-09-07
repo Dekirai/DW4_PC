@@ -30,6 +30,9 @@ namespace {
     X(PFNGLGETPROGRAMINFOLOGPROC, GetProgramInfoLog) X(PFNGLDELETEPROGRAMPROC, DeleteProgram) \
     X(PFNGLUSEPROGRAMPROC, UseProgram) X(PFNGLGETUNIFORMLOCATIONPROC, GetUniformLocation) \
     X(PFNGLUNIFORMMATRIX4FVPROC, UniformMatrix4fv) X(PFNGLUNIFORM1IPROC, Uniform1i) \
+    X(PFNGLACTIVETEXTUREPROC, ActiveTexture) X(PFNGLBINDSAMPLERPROC, BindSampler) \
+    X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate) \
+    X(PFNGLBLENDEQUATIONSEPARATEPROC, BlendEquationSeparate) \
     X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) \
     X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers) X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) \
     X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
@@ -65,6 +68,8 @@ void discard_prior_errors() {
 struct SavedState {
     Gl& gl;
     GLint draw_fbo{}, read_fbo{}, program{}, vao{}, array_buffer{}, renderbuffer{}, texture{};
+    GLint active_texture{}, texture_zero{}, sampler_zero{}, unpack_buffer{}, unpack_alignment{}, unpack_row_length{}, unpack_skip_rows{}, unpack_skip_pixels{};
+    GLint blend_source_rgb{}, blend_dest_rgb{}, blend_source_alpha{}, blend_dest_alpha{}, blend_equation_rgb{}, blend_equation_alpha{};
     GLint viewport[4]{}, polygon[2]{}, depth_function{};
     GLfloat clear_color[4]{}, line_width{};
     GLdouble clear_depth{};
@@ -77,7 +82,18 @@ struct SavedState {
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read_fbo);
         glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &array_buffer); glGetIntegerv(GL_RENDERBUFFER_BINDING, &renderbuffer);
-        glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture); glGetIntegerv(GL_VIEWPORT, viewport);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &active_texture);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+        gl.ActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture_zero);
+        glGetIntegerv(GL_SAMPLER_BINDING, &sampler_zero);
+        gl.ActiveTexture(static_cast<GLenum>(active_texture));
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &unpack_alignment); glGetIntegerv(GL_UNPACK_ROW_LENGTH, &unpack_row_length);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS, &unpack_skip_rows); glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &unpack_skip_pixels);
+        glGetIntegerv(GL_BLEND_SRC_RGB, &blend_source_rgb); glGetIntegerv(GL_BLEND_DST_RGB, &blend_dest_rgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_source_alpha); glGetIntegerv(GL_BLEND_DST_ALPHA, &blend_dest_alpha);
+        glGetIntegerv(GL_BLEND_EQUATION_RGB, &blend_equation_rgb); glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blend_equation_alpha);
+        glGetIntegerv(GL_VIEWPORT, viewport);
         glGetIntegerv(GL_POLYGON_MODE, polygon); glGetIntegerv(GL_DEPTH_FUNC, &depth_function);
         glGetFloatv(GL_COLOR_CLEAR_VALUE, clear_color); glGetFloatv(GL_LINE_WIDTH, &line_width);
         glGetDoublev(GL_DEPTH_CLEAR_VALUE, &clear_depth);
@@ -90,7 +106,16 @@ struct SavedState {
         gl.UseProgram(static_cast<GLuint>(program)); gl.BindVertexArray(static_cast<GLuint>(vao));
         gl.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(array_buffer));
         gl.BindRenderbuffer(GL_RENDERBUFFER, static_cast<GLuint>(renderbuffer));
+        gl.ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture_zero));
+        gl.BindSampler(0, static_cast<GLuint>(sampler_zero));
+        gl.ActiveTexture(static_cast<GLenum>(active_texture));
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
+        gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(unpack_buffer));
+        glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment); glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, unpack_skip_rows); glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack_skip_pixels);
+        gl.BlendFuncSeparate(static_cast<GLenum>(blend_source_rgb), static_cast<GLenum>(blend_dest_rgb),
+            static_cast<GLenum>(blend_source_alpha), static_cast<GLenum>(blend_dest_alpha));
+        gl.BlendEquationSeparate(static_cast<GLenum>(blend_equation_rgb), static_cast<GLenum>(blend_equation_alpha));
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         // Core profile has one mode and requires GL_FRONT_AND_BACK. Retain room
         // for a second query result for drivers that also return the back mode.
@@ -103,23 +128,53 @@ struct SavedState {
             if (enabled[i]) glEnable(capabilities[i]); else glDisable(capabilities[i]);
         }
     }
+    void forget_texture(GLuint name) {
+        if (texture == static_cast<GLint>(name)) texture = 0;
+        if (texture_zero == static_cast<GLint>(name)) texture_zero = 0;
+    }
 };
+
+GLint wrap_mode(MeshTextureWrap mode) {
+    switch (mode) {
+    case MeshTextureWrap::repeat: return GL_REPEAT;
+    case MeshTextureWrap::clamp_to_edge: return GL_CLAMP_TO_EDGE;
+    case MeshTextureWrap::mirrored_repeat: return GL_MIRRORED_REPEAT;
+    }
+    throw std::runtime_error("Unknown mesh texture wrap mode");
+}
+GLint filter_mode(MeshTextureFilter mode) {
+    switch (mode) {
+    case MeshTextureFilter::nearest: return GL_NEAREST;
+    case MeshTextureFilter::linear: return GL_LINEAR;
+    }
+    throw std::runtime_error("Unknown mesh texture filter mode");
+}
 
 constexpr const char* vertex_source = R"GLSL(#version 330 core
 layout(location = 0) in vec3 position;
+layout(location = 1) in vec2 texture_coordinate;
 uniform mat4 view_projection;
 out vec3 local_position;
+out vec2 uv;
 void main() {
     local_position = position;
+    uv = texture_coordinate;
     gl_Position = view_projection * vec4(position, 1.0);
 }
 )GLSL";
 constexpr const char* fragment_source = R"GLSL(#version 330 core
 in vec3 local_position;
-uniform int wireframe;
+in vec2 uv;
+uniform int draw_mode;
+uniform sampler2D base_texture;
 out vec4 color;
 void main() {
-    if (wireframe != 0) { color = vec4(0.30, 0.90, 0.79, 1.0); return; }
+    if (draw_mode == 1) { color = vec4(0.30, 0.90, 0.79, 1.0); return; }
+    if (draw_mode == 2) {
+        color = texture(base_texture, uv);
+        if (color.a == 0.0) discard;
+        return;
+    }
     vec3 normal = cross(dFdx(local_position), dFdy(local_position));
     float length_squared = dot(normal, normal);
     normal = length_squared > 1e-16 ? normal * inversesqrt(length_squared) : vec3(0.0, 1.0, 0.0);
@@ -132,20 +187,26 @@ void main() {
 class MeshRenderer::Impl {
 public:
     Gl gl;
-    GLuint program{}, vao{}, vertex_buffer{}, index_buffer{};
+    GLuint program{}, vao{}, vertex_buffer{}, index_buffer{}, base_texture{};
     GLuint draw_fbo{}, resolve_fbo{}, texture{}, depth_buffer{}, color_buffer{};
-    GLint matrix_location{-1}, wire_location{-1};
+    GLint matrix_location{-1}, mode_location{-1}, texture_location{-1};
+    bool has_uv{};
     int width{}, height{}, sample_count{}, requested_sample_count{-1};
     std::size_t index_count{};
     std::uint64_t frames{};
     ~Impl() { release_mesh(); release_targets(); if (program) gl.DeleteProgram(program); }
 
     void release_mesh() {
+        release_texture();
         if (vao) gl.DeleteVertexArrays(1, &vao);
         if (vertex_buffer) gl.DeleteBuffers(1, &vertex_buffer);
         if (index_buffer) gl.DeleteBuffers(1, &index_buffer);
         vao = vertex_buffer = index_buffer = 0;
-        index_count = 0; frames = 0;
+        index_count = 0; frames = 0; has_uv = false;
+    }
+    void release_texture() {
+        if (base_texture) glDeleteTextures(1, &base_texture);
+        base_texture = 0;
     }
     void release_targets() {
         if (draw_fbo) gl.DeleteFramebuffers(1, &draw_fbo);
@@ -184,8 +245,9 @@ public:
                 throw std::runtime_error("Mesh program link failed: " + std::string(message.data()));
             }
             matrix_location = gl.GetUniformLocation(program, "view_projection");
-            wire_location = gl.GetUniformLocation(program, "wireframe");
-            if (matrix_location < 0 || wire_location < 0) throw std::runtime_error("Mesh shader uniforms are unavailable");
+            mode_location = gl.GetUniformLocation(program, "draw_mode");
+            texture_location = gl.GetUniformLocation(program, "base_texture");
+            if (matrix_location < 0 || mode_location < 0 || texture_location < 0) throw std::runtime_error("Mesh shader uniforms are unavailable");
             gl.DeleteShader(vertex); gl.DeleteShader(fragment);
         } catch (...) {
             if (vertex) gl.DeleteShader(vertex);
@@ -208,16 +270,18 @@ public:
         if (width == requested_width && height == requested_height && requested_sample_count == desired_samples) return;
         if (requested_width > maximum_size || requested_height > maximum_size)
             throw std::runtime_error("Mesh viewport exceeds the graphics driver's renderbuffer size limit");
-        if (saved.texture == static_cast<GLint>(texture)) saved.texture = 0;
+        saved.forget_texture(texture);
         release_targets();
         try {
+            gl.GenFramebuffers(1, &draw_fbo);
+            gl.ActiveTexture(GL_TEXTURE0); gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
             glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, requested_width, requested_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            gl.GenFramebuffers(1, &draw_fbo); gl.BindFramebuffer(GL_FRAMEBUFFER, draw_fbo);
+            gl.BindFramebuffer(GL_FRAMEBUFFER, draw_fbo);
             gl.GenRenderbuffers(1, &depth_buffer); gl.BindRenderbuffer(GL_RENDERBUFFER, depth_buffer);
             if (desired_samples) gl.RenderbufferStorageMultisample(GL_RENDERBUFFER, desired_samples, GL_DEPTH_COMPONENT24, requested_width, requested_height);
             else gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, requested_width, requested_height);
@@ -244,6 +308,8 @@ MeshRenderer::~MeshRenderer() = default;
 void MeshRenderer::shutdown() { impl_.reset(); }
 void MeshRenderer::clear() { if (impl_) impl_->release_mesh(); }
 bool MeshRenderer::has_mesh() const noexcept { return impl_ && impl_->index_count != 0; }
+bool MeshRenderer::has_texture() const noexcept { return has_mesh() && impl_->has_uv && impl_->base_texture != 0; }
+void MeshRenderer::clear_texture() { if (impl_) impl_->release_texture(); }
 std::size_t MeshRenderer::triangle_count() const noexcept { return impl_ ? impl_->index_count / 3 : 0; }
 std::uint64_t MeshRenderer::rendered_frames() const noexcept { return impl_ ? impl_->frames : 0; }
 int MeshRenderer::samples() const noexcept { return impl_ ? impl_->sample_count : 0; }
@@ -253,6 +319,8 @@ void MeshRenderer::upload(const MeshData& mesh) {
     if (mesh.positions.empty() || mesh.positions.size() > 1048576 || mesh.indices.empty()
         || mesh.indices.size() > 3145728 || mesh.indices.size() % 3)
         throw std::runtime_error("Mesh upload requires bounded triangle indices and positions");
+    if (!mesh.texcoords.empty() && mesh.texcoords.size() != mesh.positions.size())
+        throw std::runtime_error("Mesh texture coordinates must match the vertex count");
     std::array<double, 3> low{}, high{};
     bool first = true;
     for (const auto& position : mesh.positions) {
@@ -274,11 +342,15 @@ void MeshRenderer::upload(const MeshData& mesh) {
     const auto radius = std::sqrt(radius_squared);
     if (radius == 0) throw std::runtime_error("Mesh has no spatial extent to display");
     std::vector<float> vertices;
-    vertices.reserve(mesh.positions.size() * 3);
-    for (const auto& position : mesh.positions) {
+    vertices.reserve(mesh.positions.size() * 5);
+    for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
+        const auto& position = mesh.positions[i];
         vertices.push_back(static_cast<float>((position.x - center[0]) / radius));
         vertices.push_back(static_cast<float>((position.y - center[1]) / radius));
         vertices.push_back(static_cast<float>((position.z - center[2]) / radius));
+        const auto uv = mesh.texcoords.empty() ? Vec2{} : mesh.texcoords[i];
+        if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) throw std::runtime_error("Mesh upload contains a non-finite UV coordinate");
+        vertices.push_back(uv.u); vertices.push_back(uv.v);
     }
     for (const auto index : mesh.indices)
         if (index >= mesh.positions.size()) throw std::runtime_error("Mesh upload index exceeds the vertex buffer");
@@ -290,17 +362,48 @@ void MeshRenderer::upload(const MeshData& mesh) {
         state.gl.GenVertexArrays(1, &state.vao); state.gl.BindVertexArray(state.vao);
         state.gl.GenBuffers(1, &state.vertex_buffer); state.gl.BindBuffer(GL_ARRAY_BUFFER, state.vertex_buffer);
         state.gl.BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(float)), vertices.data(), GL_STATIC_DRAW);
-        state.gl.EnableVertexAttribArray(0); state.gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+        state.gl.EnableVertexAttribArray(0); state.gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), nullptr);
+        state.gl.EnableVertexAttribArray(1); state.gl.VertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+            reinterpret_cast<const void*>(3 * sizeof(float)));
         state.gl.GenBuffers(1, &state.index_buffer); state.gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, state.index_buffer);
         state.gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(std::uint32_t)), mesh.indices.data(), GL_STATIC_DRAW);
         check_gl("Uploading mesh geometry");
         state.index_count = mesh.indices.size();
+        state.has_uv = !mesh.texcoords.empty();
     } catch (...) { state.release_mesh(); throw; }
+}
+
+void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions& options) {
+    clear_texture();
+    if (!has_mesh() || !impl_->has_uv) throw std::runtime_error("A textured mesh requires a UV pair for every vertex");
+    const auto size = std::uint64_t(image.width) * image.height * 4;
+    if (!image.width || !image.height || image.width > 16384 || image.height > 16384 || size > 64u * 1024u * 1024u || size != image.rgba.size())
+        throw std::runtime_error("Texture upload dimensions or RGBA byte count are invalid");
+    const auto wrap_u = wrap_mode(options.wrap_u), wrap_v = wrap_mode(options.wrap_v);
+    const auto min_filter = filter_mode(options.min_filter), mag_filter = filter_mode(options.mag_filter);
+    auto& state = *impl_;
+    SavedState saved(state.gl); discard_prior_errors();
+    GLint maximum = 0; glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
+    if (image.width > static_cast<std::uint32_t>(maximum) || image.height > static_cast<std::uint32_t>(maximum))
+        throw std::runtime_error("Mesh image exceeds the driver's texture size limit");
+    try {
+        state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0); glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+        glGenTextures(1, &state.base_texture); glBindTexture(GL_TEXTURE_2D, state.base_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_u); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_v);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width), static_cast<GLsizei>(image.height),
+            0, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+        check_gl("Uploading mesh texture");
+    } catch (...) { state.release_texture(); throw; }
 }
 
 std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& camera,
     MeshDrawMode mode, int requested_samples) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded");
+    if (mode == MeshDrawMode::textured && !has_texture()) throw std::runtime_error("No verified mesh texture and UVs are uploaded");
     if (width < 1 || height < 1 || width > 4096 || height > 4096 || std::uint64_t(width) * height > 8388608)
         throw std::runtime_error("Mesh viewport exceeds the 4096-axis / 8-megapixel limit");
     const auto matrix = camera.view_projection(static_cast<float>(width) / height);
@@ -318,7 +421,14 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
     glPolygonMode(GL_FRONT_AND_BACK, mode == MeshDrawMode::wireframe ? GL_LINE : GL_FILL); glLineWidth(1);
     state.gl.UseProgram(state.program);
     state.gl.UniformMatrix4fv(state.matrix_location, 1, GL_FALSE, matrix.data());
-    state.gl.Uniform1i(state.wire_location, mode == MeshDrawMode::wireframe ? 1 : 0);
+    state.gl.Uniform1i(state.mode_location, mode == MeshDrawMode::wireframe ? 1 : mode == MeshDrawMode::textured ? 2 : 0);
+    if (mode == MeshDrawMode::textured) {
+        state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindSampler(0, 0); glBindTexture(GL_TEXTURE_2D, state.base_texture);
+        state.gl.Uniform1i(state.texture_location, 0);
+        // Basic inspection compositing, not the original material/alpha state.
+        glEnable(GL_BLEND); state.gl.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+        state.gl.BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    }
     state.gl.BindVertexArray(state.vao);
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(state.index_count), GL_UNSIGNED_INT, nullptr);
     if (state.sample_count) {
