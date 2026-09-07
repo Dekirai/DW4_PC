@@ -1,7 +1,7 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.1 provides a native development workbench and data readers;
+**Version 0.2 provides a native original-texture viewer and resource loader;
 the game is not playable yet.** Gameplay, 3D scenes, combat and game saves
 have not been ported.
 
@@ -14,7 +14,10 @@ game code is not executed. This repository does not contain game files.
 - Validate GameCube headers and DOL sections; identify the USA release.
 - Index both AFS archives without loading the entire large files into memory.
 - Browse archive entries and read bounded byte previews.
-- Read Alchemy IGB v6 metadata: field types, object types and inheritance.
+- Read Alchemy IGB v6 metadata, serialized objects, memory buffers and references.
+- Resolve logical game paths from `ndmw.igb` to checked AFS archive entries.
+- Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
+- Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
 - Request OpenGL MSAA and report the actual sample count provided by the driver.
@@ -84,7 +87,22 @@ Digimon World 4 - Extracted/
 .\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted'
 .\dist\DW4_PC\dw4_inspect.exe 'E:\path\Digimon World 4 - Extracted' --json
 .\dist\DW4_PC\dw4_inspect.exe 'E:\path\Digimon World 4 - Extracted\files\area.afs' --list
+.\dist\DW4_PC\dw4_catalog.exe 'E:\path\Digimon World 4 - Extracted' --find agumon
 ```
+
+Open **Textures** to choose a logical resource or a raw archive entry. These
+examples display the original font atlas and an Agumon card, respectively:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource bectext.igb
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --archive area.afs --entry 621
+```
+
+All 2,274 recognized original IGB documents passed native object loading. All
+25,906 `igImage` objects found in the two archives decoded without errors.
+Those totals include repeated asset instances and verify loading, not each
+image's appearance against the original renderer. The viewer currently decodes
+base images; mipmaps, materials and mesh rendering remain separate work.
 
 With Python 3.10+, you can also compare the extracted files against the
 unmodified ISO. This read-only tool outputs a JSON verification report:
@@ -101,12 +119,15 @@ performs structural checks; the Python verifier additionally checks this hash.
 
 ## Next milestones
 
-The next milestone is a native asset viewer with a decoded game texture and
-mesh, followed by an original scene with a controllable Digimon. Reconstructing
+Original texture viewing and logical asset lookup are available. The next step
+is mesh decoding with verified transforms and materials, followed by an original
+scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
 [Roadmap and acceptance criteria](docs/ROADMAP.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
+[Resource catalog](docs/RESOURCES.md) ·
+[Native texture formats](docs/TEXTURES.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)
 

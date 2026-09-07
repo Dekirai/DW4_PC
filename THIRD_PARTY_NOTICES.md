@@ -23,8 +23,9 @@ build. See `docs/UPSTREAM_AUDIT.md` for findings and limitations.
 Additional IGB format research reference:
 [mateon1's IGB exploration](https://gist.github.com/mateon1/b123a53d824305767989ebc2ba3e5814).
 Its implementation is not included or executed as a dependency. The native
-metadata reader is independently written, bounds checked and validated against
-local files and synthetic fixtures. This is a research reader, not an Alchemy
+metadata/object readers, catalog and texture decoders are independently written,
+bounds checked and validated against local files and synthetic fixtures.
+This is a research loader, not an Alchemy
 engine implementation.
 
 BNR format checks were compared with Dolphin's

@@ -57,8 +57,13 @@ Run public tests with CTest. Optional read-only integration checks require the u
 .\build\Debug\dw4_igb_tests.exe --archives 'PATH\files\area.afs' 'PATH\files\ndmw.afs'
 ```
 
-## Next useful native implementation
+## Object and asset loading
 
-Decode the entry/index and object-instance records of `ndmw.igb`, resolving its AFS setup objects into archive/index resource references. Use owned host records keyed by object index and field slot; validate every reference before following it. Implement the remaining flag-dependent directory/memory-pool blocks before assuming an object buffer's location. Prove a small catalog lookup against the actual files before expanding to scene geometry and textures.
+The separate [object-document reader](IGB_OBJECTS.md) now consumes the entry,
+index, object-instance, memory and optional directory/pool blocks. The metadata
+API remains useful for bounded inspection without loading those payloads.
 
-This can produce stable resource IDs and a tested loading path that later texture packs and mod replacement can use. It does not require pretending that the missing Alchemy bootstrap, rendering or gameplay systems already exist.
+The [resource catalog](RESOURCES.md) resolves the actual AFS setup, and the
+[texture decoder](TEXTURES.md) uses validated image objects and memory records.
+Scene geometry and the missing Alchemy/gameplay runtime still require
+reconstruction.

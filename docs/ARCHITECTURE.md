@@ -4,9 +4,12 @@
 
 `dw4_core` is a C++20 library with explicit byte-order decoding and no console or
 graphics dependencies. `assets` reads boot, DOL, AFS and BNR structures. `igb`
-reads version 6 metadata, not the serialized object graph or rendering data.
-`settings` loads and validates host preferences. `dw4_inspect` is the read-only
-CLI; `dw4_pc` is the native SDL3/OpenGL/ImGui workbench.
+reads version 6 metadata; `igb_document` loads owned object records, memory
+payloads and validated references. `resources` resolves logical names through
+the original AFS setup, and `textures` decodes verified indexed8/RGBA8 and BC1
+base images. `settings` loads and validates host preferences. `dw4_inspect` and
+`dw4_catalog` are read-only CLIs; `dw4_pc` is the native SDL3/OpenGL/ImGui viewer
+and workbench.
 
 AFS payloads are read on demand with limits. Guest addresses remain integers
 inside diagnostics; they are never cast into host pointers. A validated DOL is
@@ -25,12 +28,15 @@ filesystem file against its ISO extent.
 
 ## Engine reconstruction order
 
-1. Resolve the AFS setup in `ndmw.igb`, including stable archive/entry identities.
-2. Decode IGB object instances, memory references, external references and names.
-   Keep on-disk schemas separate from host objects; inherited field slots are
-   format metadata, not a ready-to-use host ABI.
-3. Decode texture storage and mesh/vertex/index layouts. Render one verified
-   original asset; compare its colors, transforms and coordinates to a reference.
+1. **Implemented:** resolve the AFS setup in `ndmw.igb`, including archive/entry
+   identities and logical paths. See [RESOURCES.md](RESOURCES.md).
+2. **Implemented:** decode IGB object instances, memory references and optional
+   directory/pool names. External-object loading is still pending. On-disk schemas
+   stay separate from host objects; inherited slots are format metadata, not a
+   ready-to-use host ABI. See [IGB_OBJECTS.md](IGB_OBJECTS.md).
+3. **In progress:** texture base images are decoded and displayed natively.
+   Decode mesh/vertex/index layouts next; verify transforms, materials and
+   appearance against the original. See [TEXTURES.md](TEXTURES.md).
 4. Reconstruct scene traversal, animation and actor state. Replace OS/DVD/PAD/GX
    boundaries with native services using explicit interfaces.
 5. Recover game loop, combat, inventory, scene transitions and persistence in
@@ -38,7 +44,7 @@ filesystem file against its ISO extent.
    to reference addresses and evidence.
 
 The renderer will eventually consume platform-independent materials and meshes.
-OpenGL currently displays a banner and tools; choosing a final game rendering
+OpenGL currently displays original textures, a banner and tools; choosing a final game rendering
 backend is still open. Avoid making new gameplay objects depend on ImGui or SDL.
 
 ## Timing and PC settings

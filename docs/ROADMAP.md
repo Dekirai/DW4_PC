@@ -6,8 +6,8 @@ estimated before the missing engine and game logic have been measured.
 
 | Stage | Deliverable | Acceptance | Status |
 | --- | --- | --- | --- |
-| 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Initial implementation |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Next |
+| 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
+| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Object documents, resource lookup and texture viewer available; meshes pending |
 | 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |

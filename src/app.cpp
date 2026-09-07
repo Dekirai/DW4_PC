@@ -1,6 +1,9 @@
 #include "dw4/assets.hpp"
 #include "dw4/igb.hpp"
+#include "dw4/igb_document.hpp"
+#include "dw4/resources.hpp"
 #include "dw4/settings.hpp"
+#include "dw4/textures.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
@@ -26,8 +29,12 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #endif
@@ -44,8 +51,21 @@ struct Options {
     std::filesystem::path screenshot;
     int smoke_frames = 0;
     int initial_page = 0;
+    std::string archive_name;
+    std::string resource;
+    std::optional<int> entry;
+    int texture = 0;
+    int max_entry_mib = 64;
     bool help = false;
 };
+
+int parse_integer_option(const std::string& value, const std::string& option, int minimum, int maximum) {
+    int number = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || number < minimum || number > maximum)
+        throw std::runtime_error(option + " requires " + std::to_string(minimum) + " to " + std::to_string(maximum) + ".");
+    return number;
+}
 
 std::vector<std::string> arguments(int argc, char** argv) {
     std::vector<std::string> result;
@@ -65,30 +85,43 @@ std::vector<std::string> arguments(int argc, char** argv) {
 
 Options parse_options(const std::vector<std::string>& args) {
     Options out;
+    bool texture_requested = false;
+    bool page_requested = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
-        if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page")
+        if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
+            args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource")
             throw std::runtime_error("Unknown option: " + args[i]);
         const auto option = args[i];
         if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
         if (option == "--data") out.data = dw4::utf8_path(args[i]);
         else if (option == "--config") out.config = dw4::utf8_path(args[i]);
         else if (option == "--screenshot") out.screenshot = dw4::utf8_path(args[i]);
+        else if (option == "--archive") out.archive_name = args[i];
+        else if (option == "--resource") out.resource = args[i];
+        else if (option == "--entry") out.entry = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
+        else if (option == "--max-entry-mib") out.max_entry_mib = parse_integer_option(args[i], option, 1, 256);
         else if (option == "--page") {
-            const std::array<std::string,5> pages{"overview", "graphics", "controls", "assets", "roadmap"};
+            page_requested = true;
+            const std::array<std::string,6> pages{"overview", "graphics", "controls", "assets", "textures", "roadmap"};
             const auto found = std::find(pages.begin(), pages.end(), args[i]);
-            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets or roadmap.");
+            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures or roadmap.");
             out.initial_page = static_cast<int>(found - pages.begin());
         }
         else {
-            auto parsed = std::from_chars(args[i].data(), args[i].data() + args[i].size(), out.smoke_frames);
-            if (parsed.ec != std::errc{} || parsed.ptr != args[i].data() + args[i].size() ||
-                out.smoke_frames < 1 || out.smoke_frames > 10000)
-                throw std::runtime_error("--smoke-test requires 1 to 10000 frames.");
+            out.smoke_frames = parse_integer_option(args[i], option, 1, 10000);
         }
     }
     if (!out.screenshot.empty() && !out.smoke_frames)
         throw std::runtime_error("--screenshot requires --smoke-test FRAMES.");
+    if (out.entry.has_value() != !out.archive_name.empty())
+        throw std::runtime_error("Use --archive NAME and --entry INDEX together.");
+    if (texture_requested && !out.entry && out.resource.empty())
+        throw std::runtime_error("--texture requires --resource, or --archive and --entry.");
+    if (!out.resource.empty() && out.entry)
+        throw std::runtime_error("Choose --resource or --archive with --entry; these source options cannot be combined.");
+    if (!page_requested && (out.entry || !out.resource.empty())) out.initial_page = 4;
     return out;
 }
 
@@ -171,6 +204,7 @@ public:
     ~Workbench() {
         for (auto* pad : gamepads_) SDL_CloseGamepad(pad);
         if (banner_texture_) glDeleteTextures(1, &banner_texture_);
+        if (asset_texture_) glDeleteTextures(1, &asset_texture_);
         if (imgui_gl_ready_) ImGui_ImplOpenGL3_Shutdown();
         if (imgui_sdl_ready_) ImGui_ImplSDL3_Shutdown();
         if (imgui_ready_) ImGui::DestroyContext();
@@ -224,6 +258,17 @@ public:
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
             }
+            if (options_.entry || !options_.resource.empty()) {
+                if (!asset_texture_) {
+                    std::cerr << "Texture load failed: " << texture_error_ << '\n';
+                    return 3;
+                }
+                const auto& texture = textures_.at(static_cast<std::size_t>(selected_texture_));
+                std::cout << "Texture: " << texture_source_ << " / texture " << selected_texture_
+                          << " / reference " << texture.reference_index << " / " << texture.width << 'x' << texture.height
+                          << " / " << texture.format_name << '\n';
+                if (!loaded_resource_.empty()) std::cout << "Logical resource: " << loaded_resource_ << '\n';
+            }
         }
         return 0;
     }
@@ -253,6 +298,23 @@ private:
     int selected_entry_ = -1;
     std::vector<std::uint8_t> entry_preview_;
     GLuint banner_texture_ = 0;
+    GLuint asset_texture_ = 0;
+    std::optional<dw4::IgbDocument> texture_document_;
+    std::optional<dw4::MountedResources> mounted_resources_;
+    std::string catalog_error_;
+    std::array<char,256> resource_filter_{};
+    std::string loaded_resource_;
+    std::vector<dw4::TextureInfo> textures_;
+    std::string texture_source_;
+    std::string texture_error_;
+    int selected_texture_ = -1;
+    int texture_entry_input_ = 0;
+    int max_entry_mib_ = 64;
+    float texture_zoom_ = 1.0f;
+    ImVec2 texture_pan_{0,0};
+    bool texture_fit_pending_ = true;
+    bool texture_checkerboard_ = true;
+    bool texture_linear_filter_ = false;
     std::vector<SDL_Gamepad*> gamepads_;
 
     void capture_frame(int width, int height) {
@@ -279,6 +341,7 @@ private:
 
     void initialize() {
         page_ = options_.initial_page;
+        max_entry_mib_ = options_.max_entry_mib;
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         sdl_ready_ = true;
         if (!options_.config.empty()) config_ = options_.config;
@@ -340,6 +403,24 @@ private:
         imgui_gl_ready_ = true;
         refresh_gamepads();
         if (!settings_.data_path.empty()) mount_data();
+        if (!options_.resource.empty()) load_resource(options_.resource, options_.texture);
+        else if (options_.entry) {
+            bool found = false;
+            if (disc_) {
+                for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                    if (filename(disc_->archives[i].path) == options_.archive_name) {
+                        select_archive(static_cast<int>(i));
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) texture_error_ = "Archive was not found in the inspected game directory: " + options_.archive_name;
+            else {
+                texture_entry_input_ = *options_.entry;
+                load_texture_entry(*options_.entry, options_.texture);
+            }
+        }
     }
 
     void create_window(int msaa) {
@@ -363,6 +444,9 @@ private:
     }
 
     void mount_data() {
+        clear_texture_document();
+        mounted_resources_.reset();
+        catalog_error_.clear();
         disc_.reset();
         archive_.reset();
         igb_.reset();
@@ -375,6 +459,8 @@ private:
             settings_.data_path = dw4::utf8_path(data_edit_.data());
             if (settings_.data_path.empty()) throw std::runtime_error("Choose the extracted game directory first.");
             disc_ = dw4::assets::inspect_extracted(settings_.data_path);
+            try { mounted_resources_ = dw4::MountedResources::open(settings_.data_path); }
+            catch (const std::exception& error) { catalog_error_ = error.what(); }
             for (const auto& candidate : {disc_->root / "files" / "ndmw.igb", disc_->root / "ndmw.igb"}) {
                 if (std::filesystem::exists(candidate)) {
                     try { igb_ = dw4::read_igb_metadata(candidate); igb_source_ = filename(candidate); }
@@ -406,6 +492,7 @@ private:
     }
 
     void select_archive(int index) {
+        clear_texture_document();
         archive_.reset();
         selected_archive_ = index;
         selected_entry_ = -1;
@@ -413,6 +500,90 @@ private:
         asset_error_.clear();
         try { archive_ = dw4::assets::AfsArchive::open(disc_->archives.at(static_cast<std::size_t>(index)).path); }
         catch (const std::exception& error) { asset_error_ = error.what(); }
+    }
+
+    void clear_texture_document() {
+        if (asset_texture_) { glDeleteTextures(1, &asset_texture_); asset_texture_ = 0; }
+        texture_document_.reset();
+        textures_.clear();
+        selected_texture_ = -1;
+        texture_source_.clear();
+        loaded_resource_.clear();
+        texture_error_.clear();
+        texture_pan_ = ImVec2(0,0);
+        texture_fit_pending_ = true;
+    }
+
+    void load_texture_entry(int entry, int texture_index = 0) {
+        clear_texture_document();
+        try {
+            if (!archive_) throw std::runtime_error("Choose a valid AFS archive first.");
+            if (entry < 0 || static_cast<std::size_t>(entry) >= archive_->entries().size())
+                throw std::runtime_error("Entry index is outside this archive.");
+            max_entry_mib_ = std::clamp(max_entry_mib_, 1, 256);
+            auto bytes = archive_->read(static_cast<std::size_t>(entry),
+                static_cast<std::size_t>(max_entry_mib_) * 1024u * 1024u);
+            texture_document_ = dw4::read_igb_document(std::move(bytes));
+            texture_source_ = filename(archive_->path()) + " / entry " + std::to_string(entry);
+            textures_ = dw4::list_igb_textures(*texture_document_);
+            if (textures_.empty()) throw std::runtime_error("This IGB document contains no igImage textures.");
+            if (texture_index < 0 || static_cast<std::size_t>(texture_index) >= textures_.size())
+                throw std::runtime_error("Texture index is outside this document's texture list.");
+            select_texture(texture_index);
+        } catch (const std::exception& error) { texture_error_ = error.what(); }
+    }
+
+    void load_resource(const std::string& logical_path, int texture_index = 0) {
+        clear_texture_document();
+        try {
+            if (!mounted_resources_) throw std::runtime_error("The logical resource catalog is unavailable: " + catalog_error_);
+            const auto& catalog = mounted_resources_->catalog();
+            const auto* resource = catalog.find(logical_path);
+            if (!resource) throw std::runtime_error("Resource was not found in the catalog: " + logical_path);
+            if (!resource->location) throw std::runtime_error("This catalog resource has no readable AFS entry.");
+            const auto& source_archive = catalog.archives.at(resource->location->archive_index).filename;
+            int archive_index = -1;
+            for (std::size_t i = 0; i < disc_->archives.size(); ++i)
+                if (filename(disc_->archives[i].path) == source_archive) archive_index = static_cast<int>(i);
+            if (archive_index < 0) throw std::runtime_error("The catalog archive is not present in the inspected directory: " + source_archive);
+            select_archive(archive_index);
+            texture_entry_input_ = static_cast<int>(resource->location->entry_index);
+            load_texture_entry(texture_entry_input_, texture_index);
+            if (texture_document_) loaded_resource_ = logical_path;
+        } catch (const std::exception& error) { texture_error_ = error.what(); }
+    }
+
+    void select_texture(int index) {
+        if (asset_texture_) { glDeleteTextures(1, &asset_texture_); asset_texture_ = 0; }
+        texture_error_.clear();
+        selected_texture_ = index;
+        texture_pan_ = ImVec2(0,0);
+        texture_fit_pending_ = true;
+        try {
+            const auto& info = textures_.at(static_cast<std::size_t>(index));
+            if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This texture storage format is not supported yet." : info.diagnostic);
+            const auto pixels = dw4::decode_igb_texture(*texture_document_, info.reference_index);
+            GLint max_size = 0;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_size);
+            if (pixels.width > static_cast<std::uint32_t>(max_size) || pixels.height > static_cast<std::uint32_t>(max_size))
+                throw std::runtime_error("Texture dimensions exceed this graphics driver's limit.");
+            while (glGetError() != GL_NO_ERROR) {}
+            glGenTextures(1, &asset_texture_);
+            glBindTexture(GL_TEXTURE_2D, asset_texture_);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            const auto filter = texture_linear_filter_ ? GL_LINEAR : GL_NEAREST;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, static_cast<GLsizei>(pixels.width),
+                static_cast<GLsizei>(pixels.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.rgba.data());
+            if (glGetError() != GL_NO_ERROR) {
+                glDeleteTextures(1, &asset_texture_);
+                asset_texture_ = 0;
+                throw std::runtime_error("The graphics driver rejected the decoded texture upload.");
+            }
+        } catch (const std::exception& error) { texture_error_ = error.what(); }
     }
 
     void refresh_gamepads() {
@@ -442,7 +613,7 @@ private:
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        const std::array<const char*, 5> pages{"Overview", "Graphics", "Controls", "Original data", "Roadmap"};
+        const std::array<const char*, 6> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Roadmap"};
         for (int i = 0; i < static_cast<int>(pages.size()); ++i) {
             ImGui::PushID(i);
             if (ImGui::Selectable(pages[static_cast<std::size_t>(i)], page_ == i, 0, ImVec2(0, 37))) page_ = i;
@@ -461,7 +632,8 @@ private:
         if (page_ == 1) draw_graphics();
         if (page_ == 2) draw_controls();
         if (page_ == 3) draw_assets();
-        if (page_ == 4) draw_roadmap();
+        if (page_ == 4) draw_textures();
+        if (page_ == 5) draw_roadmap();
         if (!notice_.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
@@ -479,7 +651,7 @@ private:
         ImGui::Spacing();
         ImGui::TextColored(teal, "Native window");
         ImGui::SameLine();
-        ImGui::TextColored(teal, "  Archive inspector");
+        ImGui::TextColored(teal, "  Texture viewer");
         ImGui::SameLine();
         ImGui::TextColored(teal, "  Input diagnostics");
         ImGui::EndChild();
@@ -500,6 +672,8 @@ private:
             label_value("Indexed archives", std::to_string(disc_->archives.size()));
             label_value("PowerPC executable", byte_size(disc_->dol.file_size) + " / inspected only");
             if (ImGui::Button("Explore original data", ImVec2(220, 42))) page_ = 3;
+            ImGui::SameLine();
+            if (ImGui::Button("Open texture viewer", ImVec2(220, 42))) page_ = 4;
         } else {
             paragraph("Connect your extracted USA copy to inspect its executable, archives and original banner.");
             if (ImGui::Button("Connect game directory", ImVec2(250, 42))) page_ = 3;
@@ -685,7 +859,7 @@ private:
                 igb_->header.byte_order == dw4::IgbByteOrder::little ? "little" : "big");
             ImGui::Text("%zu field types / %zu object types / %u declared object instances",
                 igb_->field_types.size(), igb_->object_types.size(), igb_->header.object_count);
-            paragraph("Only the header and type metadata are decoded. Meshes, textures, object instances and scene rendering are not implemented.");
+            paragraph("This panel shows header and type metadata. The Texture viewer reads serialized objects and supported texture pixels. Meshes and scene rendering are not implemented.");
             if (ImGui::BeginTable("igb_types", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 180))) {
                 ImGui::TableSetupColumn("Object type"); ImGui::TableSetupColumn("Parent");
                 ImGui::TableSetupColumn("Fields"); ImGui::TableHeadersRow();
@@ -761,6 +935,12 @@ private:
                  (entry_preview_[40] == 0 && entry_preview_[41] == 0 && entry_preview_[42] == 0xFA && entry_preview_[43] == 0xDA));
             if (igb_cookie || selected.name.ends_with(".igb") || selected.name.ends_with(".IGB")) {
                 ImGui::SameLine();
+                if (ImGui::SmallButton("View textures")) {
+                    texture_entry_input_ = selected_entry_;
+                    load_texture_entry(selected_entry_);
+                    page_ = 4;
+                }
+                ImGui::SameLine();
                 if (ImGui::SmallButton("Read IGB metadata")) {
                     try {
                         const auto prefix = archive_->read_prefix(static_cast<std::size_t>(selected_entry_), 16u * 1024u * 1024u + 64u);
@@ -794,12 +974,193 @@ private:
         } else paragraph("Select an entry to inspect its first 128 bytes. Payloads are read only on selection.");
     }
 
+    void draw_texture_canvas() {
+        const auto& info = textures_.at(static_cast<std::size_t>(selected_texture_));
+        const auto size = ImGui::GetContentRegionAvail();
+        const ImVec2 canvas_size(std::max(1.0f, size.x), std::max(120.0f, size.y));
+        const auto canvas_min = ImGui::GetCursorScreenPos();
+        const ImVec2 canvas_max(canvas_min.x + canvas_size.x, canvas_min.y + canvas_size.y);
+        const ImVec2 center(canvas_min.x + canvas_size.x * 0.5f, canvas_min.y + canvas_size.y * 0.5f);
+        if (texture_fit_pending_) {
+            texture_zoom_ = std::clamp(std::min((canvas_size.x - 32) / static_cast<float>(info.width),
+                (canvas_size.y - 32) / static_cast<float>(info.height)), 0.0625f, 32.0f);
+            texture_pan_ = ImVec2(0,0);
+            texture_fit_pending_ = false;
+        }
+        ImGui::InvisibleButton("texture_canvas", canvas_size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+        auto& io = ImGui::GetIO();
+        if (ImGui::IsItemHovered()) {
+            if (ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY) && io.MouseWheel != 0) {
+                const float old_zoom = texture_zoom_;
+                texture_zoom_ = std::clamp(texture_zoom_ * std::pow(1.2f, io.MouseWheel), 0.0625f, 32.0f);
+                const float ratio = texture_zoom_ / old_zoom;
+                texture_pan_.x = io.MousePos.x + (center.x + texture_pan_.x - io.MousePos.x) * ratio - center.x;
+                texture_pan_.y = io.MousePos.y + (center.y + texture_pan_.y - io.MousePos.y) * ratio - center.y;
+            }
+        }
+        if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Left) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle))) {
+            texture_pan_.x += io.MouseDelta.x;
+            texture_pan_.y += io.MouseDelta.y;
+        }
+        auto* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilled(canvas_min, canvas_max, IM_COL32(10,15,22,255), 6);
+        const ImVec2 image_size(info.width * texture_zoom_, info.height * texture_zoom_);
+        const ImVec2 image_min(center.x + texture_pan_.x - image_size.x * 0.5f,
+            center.y + texture_pan_.y - image_size.y * 0.5f);
+        const ImVec2 image_max(image_min.x + image_size.x, image_min.y + image_size.y);
+        draw->PushClipRect(canvas_min, canvas_max, true);
+        if (texture_checkerboard_) {
+            const ImVec2 visible_min(std::max(canvas_min.x,image_min.x), std::max(canvas_min.y,image_min.y));
+            const ImVec2 visible_max(std::min(canvas_max.x,image_max.x), std::min(canvas_max.y,image_max.y));
+            if (visible_min.x < visible_max.x && visible_min.y < visible_max.y) {
+                draw->PushClipRect(visible_min, visible_max, true);
+                constexpr float tile = 16.0f;
+                const int start_x = static_cast<int>(std::floor((visible_min.x - canvas_min.x) / tile));
+                const int start_y = static_cast<int>(std::floor((visible_min.y - canvas_min.y) / tile));
+                for (int y = start_y; canvas_min.y + y * tile < visible_max.y; ++y)
+                    for (int x = start_x; canvas_min.x + x * tile < visible_max.x; ++x) {
+                        const ImVec2 p(canvas_min.x + x * tile, canvas_min.y + y * tile);
+                        const auto color = (x + y) % 2 ? IM_COL32(53,62,73,255) : IM_COL32(34,42,53,255);
+                        draw->AddRectFilled(p, ImVec2(p.x+tile,p.y+tile), color);
+                    }
+                draw->PopClipRect();
+            }
+        }
+        draw->AddImage(static_cast<ImTextureID>(asset_texture_), image_min, image_max);
+        draw->AddRect(image_min, image_max, IM_COL32(109,132,148,150));
+        draw->PopClipRect();
+    }
+
+    void draw_textures() {
+        title("Texture viewer", "Original IGB texture pixels decoded natively from your game data. Meshes and gameplay are not implemented yet.");
+        if (!disc_) {
+            paragraph("Connect your extracted USA copy before loading an AFS entry.");
+            if (ImGui::Button("Connect original data")) page_ = 3;
+            if (!texture_error_.empty()) paragraph(texture_error_.c_str(), amber);
+            return;
+        }
+        if (mounted_resources_) {
+            ImGui::SetNextItemWidth(210);
+            ImGui::InputTextWithHint("##resource_filter", "Filter logical resource path", resource_filter_.data(), resource_filter_.size());
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            const auto* preview = loaded_resource_.empty() ? "Choose a logical resource from ndmw.igb" : loaded_resource_.c_str();
+            if (ImGui::BeginCombo("##logical_resource", preview, ImGuiComboFlags_HeightLarge)) {
+                const auto& resources = mounted_resources_->catalog().resources;
+                std::vector<std::size_t> visible;
+                for (std::size_t i = 0; i < resources.size(); ++i)
+                    if (!resource_filter_[0] || resources[i].logical_path.find(resource_filter_.data()) != std::string::npos)
+                        visible.push_back(i);
+                ImGuiListClipper clip;
+                clip.Begin(static_cast<int>(visible.size()));
+                while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                    const auto& resource = resources[visible[static_cast<std::size_t>(row)]];
+                    ImGui::BeginDisabled(!resource.location);
+                    if (ImGui::Selectable(resource.logical_path.c_str(), loaded_resource_ == resource.logical_path))
+                        load_resource(resource.logical_path);
+                    ImGui::EndDisabled();
+                }
+                if (visible.empty()) ImGui::TextDisabled("No matching catalog resources.");
+                ImGui::EndCombo();
+            }
+        } else if (!catalog_error_.empty()) paragraph(("Resource catalog unavailable: " + catalog_error_).c_str(), amber);
+        ImGui::SetNextItemWidth(170);
+        const auto archive_name = archive_ ? filename(archive_->path()) : "Choose archive";
+        if (ImGui::BeginCombo("Archive", archive_name.c_str())) {
+            for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(filename(disc_->archives[i].path).c_str(), selected_archive_ == static_cast<int>(i)))
+                    select_archive(static_cast<int>(i));
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(95);
+        ImGui::InputInt("Entry", &texture_entry_input_, 0, 0);
+        ImGui::SameLine();
+        if (ImGui::Button("Load entry")) load_texture_entry(texture_entry_input_);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::InputInt("Limit (MiB)", &max_entry_mib_, 0, 0);
+        max_entry_mib_ = std::clamp(max_entry_mib_, 1, 256);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Maximum AFS entry read: 1-256 MiB.\nDecoded RGBA is independently limited to 64 MiB per texture.");
+        if (!texture_source_.empty())
+            ImGui::TextColored(teal, "%s  |  %zu textures  |  %zu serialized objects", texture_source_.c_str(),
+                textures_.size(), texture_document_->objects.size());
+        else paragraph("Select an IGB entry here, or use View textures in the Original data archive browser.");
+        if (!texture_error_.empty()) paragraph(texture_error_.c_str(), amber);
+        if (textures_.empty()) {
+            paragraph("Only supported base-image layouts are decoded. Unsupported data produces an explicit diagnostic; original files are never modified.");
+            return;
+        }
+        const float panel_height = std::max(270.0f, ImGui::GetContentRegionAvail().y - 67.0f);
+        ImGui::BeginChild("texture_list", ImVec2(235,panel_height), true);
+        ImGui::TextColored(muted, "TEXTURES");
+        ImGui::Separator();
+        ImGui::BeginChild("texture_names", ImVec2(0,std::max(80.0f,ImGui::GetContentRegionAvail().y - 153)), false);
+        ImGuiListClipper texture_clip;
+        texture_clip.Begin(static_cast<int>(textures_.size()));
+        while (texture_clip.Step()) for (int row = texture_clip.DisplayStart; row < texture_clip.DisplayEnd; ++row) {
+            const auto i = static_cast<std::size_t>(row);
+            const auto& info = textures_[i];
+            ImGui::PushID(static_cast<int>(i));
+            const auto label = std::to_string(i) + "  " + (info.name.empty() ? "Unnamed image" : info.name);
+            if (!info.supported) ImGui::PushStyleColor(ImGuiCol_Text, muted);
+            if (ImGui::Selectable(label.c_str(), selected_texture_ == static_cast<int>(i), 0, ImVec2(0,28))) select_texture(static_cast<int>(i));
+            if (!info.supported) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%u x %u / %s\nIGB reference %u", info.name.c_str(),
+                info.width, info.height, info.format_name.c_str(), info.reference_index);
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        if (selected_texture_ >= 0) {
+            const auto& info = textures_[static_cast<std::size_t>(selected_texture_)];
+            ImGui::Separator();
+            ImGui::Text("%u x %u / ref %u", info.width, info.height, info.reference_index);
+            paragraph(info.format_name.c_str());
+            ImGui::TextColored(muted, "%s encoded", byte_size(info.encoded_bytes).c_str());
+            ImGui::TextColored(muted, "Base image only");
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("texture_detail", ImVec2(0,panel_height), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (selected_texture_ >= 0) {
+            if (asset_texture_) {
+                if (ImGui::SmallButton("Fit")) texture_fit_pending_ = true;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("1:1")) { texture_zoom_ = 1; texture_pan_ = ImVec2(0,0); texture_fit_pending_ = false; }
+                ImGui::SameLine();
+                ImGui::TextColored(muted, "%.0f%%", texture_zoom_ * 100);
+                ImGui::SameLine();
+                ImGui::Checkbox("Alpha grid", &texture_checkerboard_);
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Linear", &texture_linear_filter_)) {
+                    glBindTexture(GL_TEXTURE_2D, asset_texture_);
+                    const auto filter = texture_linear_filter_ ? GL_LINEAR : GL_NEAREST;
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+                }
+                if (ImGui::GetWindowWidth() > 700) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(muted, "Wheel: zoom / drag: pan");
+                }
+                draw_texture_canvas();
+            } else {
+                ImGui::Spacing();
+                paragraph("This image could not be decoded.", amber);
+                paragraph(texture_error_.c_str());
+            }
+        }
+        ImGui::EndChild();
+    }
+
     void draw_roadmap() {
         title("The path to a playable port", "A staged development plan. Features below are not available until their implementation is verified.");
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
-            {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, window settings, persistent preferences, SDL input diagnostics, GameCube header / DOL / AFS / banner inspection.", true},
-            {"NEXT", "02  Runtime and first scene", "Recover game behavior, decode Alchemy IGB scenes and textures, implement native rendering and platform services; verify against the original.", false},
+            {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
+            {"IN PROGRESS", "02  Native original-asset viewer", "A native base-texture viewer is available. Mesh decoding, scene transforms, materials and comparison to the original renderer remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -832,7 +1193,12 @@ int main(int argc, char** argv) {
                          "--smoke-test   Render 1-10000 hidden native frames, then exit.\n"
                          "               Does not write settings or launch any emulator.\n"
                          "--screenshot   Save the final smoke-test frame to a BMP path.\n"
-                         "--page         Open overview, graphics, controls, assets or roadmap.\n";
+                         "--page         Open overview, graphics, controls, assets, textures or roadmap.\n"
+                         "--archive      AFS filename inside the game directory; requires --entry.\n"
+                         "--entry        Zero-based AFS entry to load in the texture viewer.\n"
+                         "--resource     Logical catalog path; alternative to --archive/--entry.\n"
+                         "--texture      Zero-based texture-list index (default 0).\n"
+                         "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }
         return Workbench(std::move(options)).run();
