@@ -1,0 +1,45 @@
+name: Native build and parser tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  core:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (no game files required)
+        run: cmake -S . -B build -DDW4_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build --config Debug --parallel
+      - name: Test synthetic fixtures
+        run: ctest --test-dir build -C Debug --output-on-failure
+      - name: Test ISO verifier
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Test CLI on Windows
+        if: runner.os == 'Windows'
+        run: python tests/cli_tests.py build/Debug/dw4_inspect.exe
+      - name: Test CLI on Linux
+        if: runner.os == 'Linux'
+        run: python tests/cli_tests.py build/dw4_inspect
+  windows-app:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure native app
+        run: cmake -S . -B build -DDW4_BUILD_APP=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Package tools and dependency notices
+        run: cmake --install build --config Release --prefix dist/DW4_PC
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DW4-PC-workbench-windows-x64
+          path: dist/DW4_PC/
+          if-no-files-found: error
