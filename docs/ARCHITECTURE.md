@@ -37,6 +37,9 @@ filesystem file against its ISO extent.
 3. **In progress:** texture base images are decoded and displayed natively.
    Decode mesh/vertex/index layouts next; verify transforms, materials and
    appearance against the original. See [TEXTURES.md](TEXTURES.md).
+   Initial vertex-stream and index observations are recorded in
+   [MESH_RESEARCH.md](MESH_RESEARCH.md); topology and material interpretation
+   still need verification before scene rendering.
 4. Reconstruct scene traversal, animation and actor state. Replace OS/DVD/PAD/GX
    boundaries with native services using explicit interfaces.
 5. Recover game loop, combat, inventory, scene transitions and persistence in
