@@ -1,9 +1,12 @@
 #include "dw4/assets.hpp"
+#include "dw4/camera.hpp"
 #include "dw4/igb.hpp"
 #include "dw4/igb_document.hpp"
+#include "dw4/meshes.hpp"
 #include "dw4/resources.hpp"
 #include "dw4/settings.hpp"
 #include "dw4/textures.hpp"
+#include "mesh_renderer.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
@@ -55,6 +58,8 @@ struct Options {
     std::string resource;
     std::optional<int> entry;
     int texture = 0;
+    std::optional<int> mesh;
+    bool mesh_wireframe = false;
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -86,11 +91,13 @@ std::vector<std::string> arguments(int argc, char** argv) {
 Options parse_options(const std::vector<std::string>& args) {
     Options out;
     bool texture_requested = false;
+    bool mesh_mode_requested = false;
     bool page_requested = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
-            args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource")
+            args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
+            args[i] != "--mesh" && args[i] != "--mesh-mode")
             throw std::runtime_error("Unknown option: " + args[i]);
         const auto option = args[i];
         if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
@@ -101,12 +108,18 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--resource") out.resource = args[i];
         else if (option == "--entry") out.entry = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
+        else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--mesh-mode") {
+            if (args[i] != "solid" && args[i] != "wireframe") throw std::runtime_error("--mesh-mode requires solid or wireframe.");
+            out.mesh_wireframe = args[i] == "wireframe";
+            mesh_mode_requested = true;
+        }
         else if (option == "--max-entry-mib") out.max_entry_mib = parse_integer_option(args[i], option, 1, 256);
         else if (option == "--page") {
             page_requested = true;
-            const std::array<std::string,6> pages{"overview", "graphics", "controls", "assets", "textures", "roadmap"};
+            const std::array<std::string,7> pages{"overview", "graphics", "controls", "assets", "textures", "meshes", "roadmap"};
             const auto found = std::find(pages.begin(), pages.end(), args[i]);
-            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures or roadmap.");
+            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures, meshes or roadmap.");
             out.initial_page = static_cast<int>(found - pages.begin());
         }
         else {
@@ -121,7 +134,16 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("--texture requires --resource, or --archive and --entry.");
     if (!out.resource.empty() && out.entry)
         throw std::runtime_error("Choose --resource or --archive with --entry; these source options cannot be combined.");
-    if (!page_requested && (out.entry || !out.resource.empty())) out.initial_page = 4;
+    if (out.mesh && !out.entry && out.resource.empty())
+        throw std::runtime_error("--mesh requires --resource, or --archive and --entry.");
+    if (out.mesh && texture_requested) throw std::runtime_error("Choose --mesh or --texture, not both.");
+    if (out.mesh && page_requested && out.initial_page != 5)
+        throw std::runtime_error("--mesh requires --page meshes when --page is specified.");
+    if (texture_requested && out.initial_page == 5)
+        throw std::runtime_error("Use --mesh for the Meshes page.");
+    if (!page_requested && (out.entry || !out.resource.empty())) out.initial_page = out.mesh ? 5 : 4;
+    if (mesh_mode_requested && out.initial_page != 5)
+        throw std::runtime_error("--mesh-mode requires the Meshes page.");
     return out;
 }
 
@@ -202,6 +224,7 @@ class Workbench {
 public:
     explicit Workbench(Options options) : options_(std::move(options)) {}
     ~Workbench() {
+        mesh_renderer_.shutdown();
         for (auto* pad : gamepads_) SDL_CloseGamepad(pad);
         if (banner_texture_) glDeleteTextures(1, &banner_texture_);
         if (asset_texture_) glDeleteTextures(1, &asset_texture_);
@@ -258,7 +281,18 @@ public:
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
             }
-            if (options_.entry || !options_.resource.empty()) {
+            if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+                if (!mesh_renderer_.has_mesh() || mesh_render_failed_ || mesh_renderer_.rendered_frames() <= mesh_render_start_frame_) {
+                    std::cerr << "Mesh upload/render failed: " << (mesh_error_.empty() ? "No geometry frame rendered." : mesh_error_) << '\n';
+                    return 3;
+                }
+                const auto& mesh = meshes_.at(static_cast<std::size_t>(selected_mesh_));
+                std::cout << "Mesh: " << mesh_source_ << " / mesh " << selected_mesh_ << " / reference " << mesh.reference_index
+                          << " / " << mesh_data_->positions.size() << " vertices / " << mesh_renderer_.triangle_count() << " triangles\n"
+                          << "Mesh render: " << mesh_target_width_ << 'x' << mesh_target_height_ << " / "
+                          << (mesh_wireframe_ ? "wireframe" : "solid") << " / " << mesh_renderer_.samples() << " samples\n";
+                if (!loaded_mesh_resource_.empty()) std::cout << "Logical resource: " << loaded_mesh_resource_ << '\n';
+            } else if (options_.entry || !options_.resource.empty()) {
                 if (!asset_texture_) {
                     std::cerr << "Texture load failed: " << texture_error_ << '\n';
                     return 3;
@@ -315,6 +349,26 @@ private:
     bool texture_fit_pending_ = true;
     bool texture_checkerboard_ = true;
     bool texture_linear_filter_ = false;
+    dw4::viewer::MeshRenderer mesh_renderer_;
+    dw4::OrbitCamera mesh_camera_;
+    std::optional<dw4::assets::AfsArchive> mesh_archive_;
+    std::optional<dw4::IgbDocument> mesh_document_;
+    std::optional<dw4::MeshData> mesh_data_;
+    std::vector<dw4::MeshInfo> meshes_;
+    std::array<char,256> mesh_resource_filter_{};
+    std::string loaded_mesh_resource_;
+    std::string mesh_source_;
+    std::string mesh_error_;
+    int selected_mesh_archive_ = -1;
+    int mesh_entry_input_ = 0;
+    int selected_mesh_ = -1;
+    int mesh_target_width_ = 0;
+    int mesh_target_height_ = 0;
+    int mesh_entry_limit_mib_ = 64;
+    std::uint64_t mesh_render_start_frame_ = 0;
+    bool mesh_wireframe_ = false;
+    bool mesh_render_failed_ = false;
+    bool mesh_scroll_pending_ = false;
     std::vector<SDL_Gamepad*> gamepads_;
 
     void capture_frame(int width, int height) {
@@ -342,6 +396,8 @@ private:
     void initialize() {
         page_ = options_.initial_page;
         max_entry_mib_ = options_.max_entry_mib;
+        mesh_entry_limit_mib_ = options_.max_entry_mib;
+        mesh_wireframe_ = options_.mesh_wireframe;
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         sdl_ready_ = true;
         if (!options_.config.empty()) config_ = options_.config;
@@ -403,7 +459,20 @@ private:
         imgui_gl_ready_ = true;
         refresh_gamepads();
         if (!settings_.data_path.empty()) mount_data();
-        if (!options_.resource.empty()) load_resource(options_.resource, options_.texture);
+        if (options_.initial_page == 5 && !options_.resource.empty()) load_mesh_resource(options_.resource, options_.mesh.value_or(0));
+        else if (options_.initial_page == 5 && options_.entry) {
+            bool found = false;
+            if (disc_) for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                if (filename(disc_->archives[i].path) == options_.archive_name) {
+                    select_mesh_archive(static_cast<int>(i));
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) mesh_error_ = "Archive was not found in the inspected game directory: " + options_.archive_name;
+            else { mesh_entry_input_ = *options_.entry; load_mesh_entry(*options_.entry, options_.mesh.value_or(0)); }
+        }
+        else if (!options_.resource.empty()) load_resource(options_.resource, options_.texture);
         else if (options_.entry) {
             bool found = false;
             if (disc_) {
@@ -445,6 +514,9 @@ private:
 
     void mount_data() {
         clear_texture_document();
+        clear_mesh_document();
+        mesh_archive_.reset();
+        selected_mesh_archive_ = -1;
         mounted_resources_.reset();
         catalog_error_.clear();
         disc_.reset();
@@ -484,6 +556,7 @@ private:
             notice_ = "Original game data inspected successfully.";
             notice_error_ = false;
             if (!disc_->archives.empty()) select_archive(0);
+            if (!disc_->archives.empty()) select_mesh_archive(0);
         } catch (const std::exception& error) {
             asset_error_ = error.what();
             notice_ = asset_error_;
@@ -595,6 +668,84 @@ private:
         SDL_free(ids);
     }
 
+    void clear_mesh_document() {
+        mesh_renderer_.clear();
+        mesh_document_.reset();
+        mesh_data_.reset();
+        meshes_.clear();
+        loaded_mesh_resource_.clear();
+        mesh_source_.clear();
+        mesh_error_.clear();
+        selected_mesh_ = -1;
+        mesh_scroll_pending_ = false;
+        mesh_render_failed_ = false;
+        mesh_target_width_ = mesh_target_height_ = 0;
+        mesh_camera_.reset();
+    }
+
+    void select_mesh_archive(int index) {
+        clear_mesh_document();
+        mesh_archive_.reset();
+        selected_mesh_archive_ = index;
+        try { mesh_archive_ = dw4::assets::AfsArchive::open(disc_->archives.at(static_cast<std::size_t>(index)).path); }
+        catch (const std::exception& error) { mesh_error_ = error.what(); }
+    }
+
+    void load_mesh_entry(int entry, int mesh_index = 0) {
+        clear_mesh_document();
+        try {
+            if (!mesh_archive_) throw std::runtime_error("Choose a valid AFS archive first.");
+            if (entry < 0 || static_cast<std::size_t>(entry) >= mesh_archive_->entries().size())
+                throw std::runtime_error("Entry index is outside this archive.");
+            mesh_entry_limit_mib_ = std::clamp(mesh_entry_limit_mib_, 1, 256);
+            auto bytes = mesh_archive_->read(static_cast<std::size_t>(entry), static_cast<std::size_t>(mesh_entry_limit_mib_) * 1024u * 1024u);
+            mesh_document_ = dw4::read_igb_document(std::move(bytes));
+            mesh_source_ = filename(mesh_archive_->path()) + " / entry " + std::to_string(entry);
+            meshes_ = dw4::list_igb_meshes(*mesh_document_);
+            if (meshes_.empty()) throw std::runtime_error("This IGB document contains no geometry objects.");
+            if (mesh_index < 0 || static_cast<std::size_t>(mesh_index) >= meshes_.size())
+                throw std::runtime_error("Mesh index is outside this document's geometry list.");
+            select_mesh(mesh_index);
+        } catch (const std::exception& error) { mesh_error_ = error.what(); }
+    }
+
+    void load_mesh_resource(const std::string& logical_path, int mesh_index = 0) {
+        clear_mesh_document();
+        try {
+            if (!mounted_resources_) throw std::runtime_error("The logical resource catalog is unavailable: " + catalog_error_);
+            const auto& catalog = mounted_resources_->catalog();
+            const auto* resource = catalog.find(logical_path);
+            if (!resource) throw std::runtime_error("Resource was not found in the catalog: " + logical_path);
+            if (!resource->location) throw std::runtime_error("This catalog resource has no readable AFS entry.");
+            const auto& source_archive = catalog.archives.at(resource->location->archive_index).filename;
+            int archive_index = -1;
+            for (std::size_t i = 0; i < disc_->archives.size(); ++i)
+                if (filename(disc_->archives[i].path) == source_archive) archive_index = static_cast<int>(i);
+            if (archive_index < 0) throw std::runtime_error("The catalog archive is not present in the inspected directory: " + source_archive);
+            select_mesh_archive(archive_index);
+            mesh_entry_input_ = static_cast<int>(resource->location->entry_index);
+            load_mesh_entry(mesh_entry_input_, mesh_index);
+            if (mesh_document_) loaded_mesh_resource_ = logical_path;
+        } catch (const std::exception& error) { mesh_error_ = error.what(); }
+    }
+
+    void select_mesh(int index) {
+        mesh_renderer_.clear();
+        mesh_data_.reset();
+        mesh_error_.clear();
+        mesh_render_failed_ = false;
+        selected_mesh_ = index;
+        mesh_scroll_pending_ = true;
+        mesh_camera_.reset();
+        try {
+            const auto& info = meshes_.at(static_cast<std::size_t>(index));
+            if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This geometry profile is not supported yet." : info.diagnostic);
+            mesh_data_ = dw4::decode_igb_mesh(*mesh_document_, info.reference_index);
+            mesh_renderer_.upload(*mesh_data_);
+            mesh_render_start_frame_ = mesh_renderer_.rendered_frames();
+        } catch (const std::exception& error) { mesh_error_ = error.what(); }
+    }
+
     void draw() {
         const auto* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
@@ -613,7 +764,7 @@ private:
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        const std::array<const char*, 6> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Roadmap"};
+        const std::array<const char*, 7> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Meshes", "Roadmap"};
         for (int i = 0; i < static_cast<int>(pages.size()); ++i) {
             ImGui::PushID(i);
             if (ImGui::Selectable(pages[static_cast<std::size_t>(i)], page_ == i, 0, ImVec2(0, 37))) page_ = i;
@@ -633,7 +784,8 @@ private:
         if (page_ == 2) draw_controls();
         if (page_ == 3) draw_assets();
         if (page_ == 4) draw_textures();
-        if (page_ == 5) draw_roadmap();
+        if (page_ == 5) draw_meshes();
+        if (page_ == 6) draw_roadmap();
         if (!notice_.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
@@ -859,7 +1011,7 @@ private:
                 igb_->header.byte_order == dw4::IgbByteOrder::little ? "little" : "big");
             ImGui::Text("%zu field types / %zu object types / %u declared object instances",
                 igb_->field_types.size(), igb_->object_types.size(), igb_->header.object_count);
-            paragraph("This panel shows header and type metadata. The Texture viewer reads serialized objects and supported texture pixels. Meshes and scene rendering are not implemented.");
+            paragraph("This panel shows header and type metadata. The asset viewers read supported texture pixels and local geometry. Scene reconstruction and gameplay are not implemented.");
             if (ImGui::BeginTable("igb_types", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 180))) {
                 ImGui::TableSetupColumn("Object type"); ImGui::TableSetupColumn("Parent");
                 ImGui::TableSetupColumn("Fields"); ImGui::TableHeadersRow();
@@ -939,6 +1091,13 @@ private:
                     texture_entry_input_ = selected_entry_;
                     load_texture_entry(selected_entry_);
                     page_ = 4;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("View meshes")) {
+                    select_mesh_archive(selected_archive_);
+                    mesh_entry_input_ = selected_entry_;
+                    load_mesh_entry(selected_entry_);
+                    page_ = 5;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Read IGB metadata")) {
@@ -1032,7 +1191,7 @@ private:
     }
 
     void draw_textures() {
-        title("Texture viewer", "Original IGB texture pixels decoded natively from your game data. Meshes and gameplay are not implemented yet.");
+        title("Texture viewer", "Original IGB texture pixels decoded natively from your game data. Final scene appearance and gameplay are not implemented yet.");
         if (!disc_) {
             paragraph("Connect your extracted USA copy before loading an AFS entry.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -1155,12 +1314,156 @@ private:
         ImGui::EndChild();
     }
 
+    void draw_mesh_canvas() {
+        const auto available = ImGui::GetContentRegionAvail();
+        const ImVec2 canvas_size(std::max(1.0f,available.x),std::max(120.0f,available.y));
+        const auto origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("mesh_canvas", canvas_size, ImGuiButtonFlags_MouseButtonLeft |
+            ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        auto& io = ImGui::GetIO();
+        if (ImGui::IsItemHovered() && ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY) && io.MouseWheel != 0)
+            mesh_camera_.zoom(io.MouseWheel);
+        if (ImGui::IsItemActive()) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                (io.KeyShift && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))
+                mesh_camera_.pan(-io.MouseDelta.x / canvas_size.y, io.MouseDelta.y / canvas_size.y);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                mesh_camera_.orbit(-io.MouseDelta.x * 0.008f, -io.MouseDelta.y * 0.008f);
+        }
+        try {
+            double width = std::max(1.0, static_cast<double>(canvas_size.x * io.DisplayFramebufferScale.x));
+            double height = std::max(1.0, static_cast<double>(canvas_size.y * io.DisplayFramebufferScale.y));
+            // Bound the native inspection target independently of the desktop size.
+            const double reduction = std::min({1.0,4096.0 / width,4096.0 / height,std::sqrt(8388608.0 / (width * height))});
+            mesh_target_width_ = std::max(1,static_cast<int>(width * reduction));
+            mesh_target_height_ = std::max(1,static_cast<int>(height * reduction));
+            const auto target = mesh_renderer_.render(mesh_target_width_, mesh_target_height_, mesh_camera_,
+                mesh_wireframe_ ? dw4::viewer::MeshDrawMode::wireframe : dw4::viewer::MeshDrawMode::solid, settings_.msaa);
+            auto* draw = ImGui::GetWindowDrawList();
+            const ImVec2 end(origin.x + canvas_size.x,origin.y + canvas_size.y);
+            draw->AddImage(static_cast<ImTextureID>(target), origin, end, ImVec2(0,1), ImVec2(1,0));
+            draw->AddRect(origin,end,IM_COL32(53,72,88,255),6);
+        } catch (const std::exception& error) {
+            mesh_error_ = error.what();
+            mesh_render_failed_ = true;
+        }
+    }
+
+    void draw_meshes() {
+        title("Mesh viewer", "Original object-space mesh in its stored pose. Materials, scene transforms, skinning and gameplay are not implemented.");
+        if (!disc_) {
+            paragraph("Connect your extracted game copy before loading an IGB mesh.");
+            if (ImGui::Button("Connect original data")) page_ = 3;
+            if (!mesh_error_.empty()) paragraph(mesh_error_.c_str(),amber);
+            return;
+        }
+        if (mounted_resources_) {
+            ImGui::SetNextItemWidth(210);
+            ImGui::InputTextWithHint("##mesh_resource_filter","Filter logical resource path",mesh_resource_filter_.data(),mesh_resource_filter_.size());
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            const auto* preview = loaded_mesh_resource_.empty() ? "Choose a logical resource from ndmw.igb" : loaded_mesh_resource_.c_str();
+            if (ImGui::BeginCombo("##mesh_logical_resource",preview,ImGuiComboFlags_HeightLarge)) {
+                const auto& resources = mounted_resources_->catalog().resources;
+                std::vector<std::size_t> visible;
+                for (std::size_t i = 0; i < resources.size(); ++i)
+                    if (!mesh_resource_filter_[0] || resources[i].logical_path.find(mesh_resource_filter_.data()) != std::string::npos) visible.push_back(i);
+                ImGuiListClipper clip;
+                clip.Begin(static_cast<int>(visible.size()));
+                while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                    const auto& resource = resources[visible[static_cast<std::size_t>(row)]];
+                    ImGui::BeginDisabled(!resource.location);
+                    if (ImGui::Selectable(resource.logical_path.c_str(),loaded_mesh_resource_ == resource.logical_path)) load_mesh_resource(resource.logical_path);
+                    ImGui::EndDisabled();
+                }
+                if (visible.empty()) ImGui::TextDisabled("No matching catalog resources.");
+                ImGui::EndCombo();
+            }
+        } else if (!catalog_error_.empty()) paragraph(("Resource catalog unavailable: " + catalog_error_).c_str(),amber);
+        ImGui::SetNextItemWidth(170);
+        const auto archive_name = mesh_archive_ ? filename(mesh_archive_->path()) : "Choose archive";
+        if (ImGui::BeginCombo("Archive",archive_name.c_str())) {
+            for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(filename(disc_->archives[i].path).c_str(),selected_mesh_archive_ == static_cast<int>(i))) select_mesh_archive(static_cast<int>(i));
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(95);
+        ImGui::InputInt("Entry",&mesh_entry_input_,0,0);
+        ImGui::SameLine();
+        if (ImGui::Button("Load entry")) load_mesh_entry(mesh_entry_input_);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::InputInt("Limit (MiB)",&mesh_entry_limit_mib_,0,0);
+        mesh_entry_limit_mib_ = std::clamp(mesh_entry_limit_mib_,1,256);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Maximum AFS entry read: 1-256 MiB.\nThe mesh decoder and graphics target have independent limits.");
+        if (!mesh_source_.empty()) ImGui::TextColored(teal,"%s  |  %zu geometry objects  |  target %d x %d / MSAA %dx",
+            mesh_source_.c_str(),meshes_.size(),mesh_target_width_,mesh_target_height_,mesh_renderer_.samples());
+        else paragraph("Select an IGB entry here, or use View meshes in the Original data archive browser.");
+        if (!mesh_error_.empty()) paragraph(mesh_error_.c_str(),amber);
+        if (meshes_.empty()) {
+            paragraph("Supported geometry is decoded from its serialized position and topology data. Unsupported layouts remain explicit diagnostics.");
+            return;
+        }
+        const float height = std::max(300.0f,ImGui::GetContentRegionAvail().y - 67.0f);
+        ImGui::BeginChild("mesh_list",ImVec2(235,height),true);
+        ImGui::TextColored(muted,"GEOMETRY");
+        ImGui::Separator();
+        ImGui::BeginChild("mesh_names",ImVec2(0,std::max(80.0f,ImGui::GetContentRegionAvail().y - 188)),false);
+        ImGuiListClipper clip;
+        clip.Begin(static_cast<int>(meshes_.size()));
+        if (mesh_scroll_pending_ && selected_mesh_ >= 0) clip.IncludeItemByIndex(selected_mesh_);
+        while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+            const auto& info = meshes_[static_cast<std::size_t>(row)];
+            ImGui::PushID(row);
+            const auto label = std::to_string(row) + "  " + (info.name.empty() ? "Geometry " + std::to_string(info.reference_index) : info.name);
+            if (!info.supported) ImGui::PushStyleColor(ImGuiCol_Text,muted);
+            if (ImGui::Selectable(label.c_str(),selected_mesh_ == row,0,ImVec2(0,28))) select_mesh(row);
+            if (mesh_scroll_pending_ && selected_mesh_ == row) { ImGui::SetScrollHereY(0.5f); mesh_scroll_pending_ = false; }
+            if (!info.supported) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nIGB reference %u / %s\n%s",info.name.c_str(),info.reference_index,info.topology_name.c_str(),info.diagnostic.c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        if (selected_mesh_ >= 0) {
+            const auto& info = meshes_[static_cast<std::size_t>(selected_mesh_)];
+            ImGui::Separator();
+            ImGui::Text("Reference %u",info.reference_index);
+            ImGui::Text("%u vertices / %u triangles",info.vertex_count,info.triangle_count);
+            paragraph(info.topology_name.c_str());
+            if (mesh_data_) {
+                const auto& bounds = mesh_data_->bounds;
+                ImGui::TextColored(muted,"Min %.3g, %.3g, %.3g",bounds.min.x,bounds.min.y,bounds.min.z);
+                ImGui::TextColored(muted,"Max %.3g, %.3g, %.3g",bounds.max.x,bounds.max.y,bounds.max.z);
+            }
+        }
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("mesh_detail",ImVec2(0,height),true,ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (mesh_renderer_.has_mesh() && !mesh_render_failed_) {
+            if (ImGui::Button("Fit")) mesh_camera_.reset();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(140);
+            int mode = mesh_wireframe_ ? 1 : 0;
+            if (ImGui::Combo("##mesh_draw_mode",&mode,"Solid\0Wireframe\0")) mesh_wireframe_ = mode == 1;
+            if (ImGui::GetWindowWidth() > 650) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
+            draw_mesh_canvas();
+        } else {
+            paragraph("This geometry could not be rendered.",amber);
+            paragraph(mesh_error_.c_str());
+        }
+        ImGui::EndChild();
+    }
+
     void draw_roadmap() {
         title("The path to a playable port", "A staged development plan. Features below are not available until their implementation is verified.");
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
             {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
-            {"IN PROGRESS", "02  Native original-asset viewer", "A native base-texture viewer is available. Mesh decoding, scene transforms, materials and comparison to the original renderer remain.", false},
+            {"IN PROGRESS", "02  Native original-asset viewer", "Native texture and local mesh viewers are available. Scene transforms, materials, animation and comparison to the original renderer remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -1193,11 +1496,13 @@ int main(int argc, char** argv) {
                          "--smoke-test   Render 1-10000 hidden native frames, then exit.\n"
                          "               Does not write settings or launch any emulator.\n"
                          "--screenshot   Save the final smoke-test frame to a BMP path.\n"
-                         "--page         Open overview, graphics, controls, assets, textures or roadmap.\n"
+                         "--page         Open overview, graphics, controls, assets, textures, meshes or roadmap.\n"
                          "--archive      AFS filename inside the game directory; requires --entry.\n"
-                         "--entry        Zero-based AFS entry to load in the texture viewer.\n"
+                         "--entry        Zero-based AFS entry for the selected asset viewer.\n"
                          "--resource     Logical catalog path; alternative to --archive/--entry.\n"
                          "--texture      Zero-based texture-list index (default 0).\n"
+                         "--mesh         Zero-based geometry-list index; opens the Meshes page.\n"
+                         "--mesh-mode    Solid or wireframe mesh inspection (default solid).\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }

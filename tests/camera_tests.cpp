@@ -1,0 +1,62 @@
+#include "dw4/camera.hpp"
+
+#include <array>
+#include <cmath>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+
+namespace {
+void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
+void rejects(const std::function<void()>& action) {
+    try { action(); } catch (const std::invalid_argument&) { return; }
+    throw std::runtime_error("Invalid camera input was accepted");
+}
+std::array<float, 4> project(const std::array<float, 16>& matrix, float x, float y, float z) {
+    std::array<float, 4> result{};
+    for (std::size_t row = 0; row < 4; ++row)
+        result[row] = matrix[row] * x + matrix[4 + row] * y + matrix[8 + row] * z + matrix[12 + row];
+    return result;
+}
+}
+int main() {
+    try {
+        dw4::OrbitCamera camera;
+        const auto initial = camera.view_projection(16.0f / 9);
+        for (float aspect : {0.2f, 1.0f, 16.0f / 9, 4.0f}) {
+            const auto matrix = camera.view_projection(aspect);
+            const auto center = project(matrix, 0, 0, 0);
+            check(std::abs(center[0]) < 1e-5f && std::abs(center[1]) < 1e-5f && center[3] > 0,
+                "Fit must aim at the origin with positive clip W");
+            for (const auto point : {std::array<float, 3>{1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}}) {
+                const auto clip = project(matrix, point[0], point[1], point[2]);
+                check(clip[3] > 0 && std::abs(clip[0]) < clip[3] && std::abs(clip[1]) < clip[3]
+                    && std::abs(clip[2]) < clip[3], "Fitted unit sphere axis escaped the frustum");
+            }
+        }
+        camera.orbit(0.5f, 0.2f);
+        check(camera.view_projection(16.0f / 9) != initial, "Orbit must change the view");
+        camera.zoom(3);
+        check(camera.distance() < 3.2f, "Positive wheel input must approach the mesh");
+        camera.pan(0.2f, 0.1f);
+        const auto moved = project(camera.view_projection(1), 0, 0, 0);
+        check(std::abs(moved[0]) > 0.1f || std::abs(moved[1]) > 0.1f, "Pan must move the target");
+        camera.reset();
+        check(camera.view_projection(16.0f / 9) == initial, "Reset must restore the fitted view");
+        camera.orbit(1e30f, 1e30f); camera.zoom(-1e30f); camera.pan(1e30f, -1e30f);
+        for (auto value : camera.view_projection(0.01f)) check(std::isfinite(value), "Extreme finite controls produced an invalid matrix");
+        camera.zoom(1e30f);
+        check(camera.distance() >= 0.049f && camera.distance() <= 1000, "Zoom range is not bounded");
+        const auto nan = std::numeric_limits<float>::quiet_NaN();
+        const auto infinity = std::numeric_limits<float>::infinity();
+        rejects([&] { camera.orbit(nan, 0); }); rejects([&] { camera.orbit(0, infinity); });
+        rejects([&] { camera.pan(0, nan); }); rejects([&] { camera.zoom(infinity); });
+        rejects([&] { camera.view_projection(0); }); rejects([&] { camera.view_projection(nan); });
+        std::cout << "Camera projection and control tests passed\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "Camera test failure: " << error.what() << '\n';
+        return 1;
+    }
+}

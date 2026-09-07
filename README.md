@@ -1,7 +1,7 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.2 provides a native original-texture viewer and resource loader;
+**Version 0.3 provides native original-texture and 3D geometry viewers;
 the game is not playable yet.** Gameplay, 3D scenes, combat and game saves
 have not been ported.
 
@@ -18,13 +18,16 @@ game code is not executed. This repository does not contain game files.
 - Resolve logical game paths from `ndmw.igb` to checked AFS archive entries.
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
+- Decode original triangle lists and indexed triangle strips from IGB geometry.
+- Inspect original models in 3D with orbit, pan, zoom, solid and wireframe modes.
+- Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
 - Request OpenGL MSAA and report the actual sample count provided by the driver.
 - Inspect SDL-detected gamepads and live input.
 - Save settings locally and validate malformed configuration values.
 
-Graphics settings currently affect the **development window**. Saved gameplay,
+Graphics settings currently affect the **development window and mesh viewer**. Saved gameplay,
 aspect ratio and controller preferences are preparation for future work;
 they do not implement game features. A 144 FPS workbench does not establish
 that DW4 gameplay runs correctly at 144 FPS.
@@ -98,11 +101,24 @@ examples display the original font atlas and an Agumon card, respectively:
 .\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --archive area.afs --entry 621
 ```
 
+Open **Meshes** for native 3D inspection. This example loads Agumon's high-detail
+geometry from the original archive; the second command shows its wireframe:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource _common/p_agumon.igb --mesh 2
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource _common/p_agumon.igb --mesh 2 --mesh-mode wireframe
+```
+
+Drag to orbit, right-drag to pan, and use the wheel to zoom. **Fit** resets the
+inspection camera. Meshes show the stored positions with a plain inspection
+shader. Original materials, texture links, skeleton animation and scene
+transforms are not applied. This is not a playable character or loaded level.
+
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
 Those totals include repeated asset instances and verify loading, not each
 image's appearance against the original renderer. The viewer currently decodes
-base images; mipmaps, materials and mesh rendering remain separate work.
+base images; mipmaps and material reconstruction remain separate work.
 
 With Python 3.10+, you can also compare the extracted files against the
 unmodified ISO. This read-only tool outputs a JSON verification report:
@@ -119,15 +135,17 @@ performs structural checks; the Python verifier additionally checks this hash.
 
 ## Next milestones
 
-Original texture viewing and logical asset lookup are available. The next step
-is mesh decoding with verified transforms and materials, followed by an original
-scene with a controllable Digimon. Reconstructing
+Original textures, logical asset lookup and object-space mesh viewing are
+available. The next step is material/texture linking and verified scene and
+skeleton transforms, followed by an original scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
 [Roadmap and acceptance criteria](docs/ROADMAP.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
 [Resource catalog](docs/RESOURCES.md) ·
 [Native texture formats](docs/TEXTURES.md) ·
+[Mesh formats](docs/MESHES.md) ·
+[Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)
 
