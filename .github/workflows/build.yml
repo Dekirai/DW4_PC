@@ -26,6 +26,12 @@ jobs:
       - name: Test CLI on Linux
         if: runner.os == 'Linux'
         run: python tests/cli_tests.py build/dw4_inspect
+      - name: Test catalog CLI on Windows
+        if: runner.os == 'Windows'
+        run: python tests/catalog_cli_tests.py build/Debug/dw4_catalog.exe
+      - name: Test catalog CLI on Linux
+        if: runner.os == 'Linux'
+        run: python tests/catalog_cli_tests.py build/dw4_catalog
   windows-app:
     runs-on: windows-latest
     steps:

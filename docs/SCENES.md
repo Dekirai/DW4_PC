@@ -95,6 +95,13 @@ image and GPU decoders retain their own smaller per-resource limits.
 
 ## Materials and native rendering
 
+An alternative explicit `SceneOptions::root_control` evaluates the original
+`ALLON` or `ALLOF` command of an exported `beSwitchCtrlInfo` targeting exactly
+the selected root. It is exclusive with manual child inspection and retains
+request provenance in the result. Nested masks and source bytes are preserved.
+See [SCENE_CONTROLS.md](SCENE_CONTROLS.md) for validation, bounds and the distinction
+between a native command effect and full startup execution.
+
 `resolve_igb_material_on_path` uses each instance's exact root-to-owner path.
 Other parents of a shared node do not affect this instance. The nearest unit-zero
 binding and enable state can come from different scopes; all supplied scopes are

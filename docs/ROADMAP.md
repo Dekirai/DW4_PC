@@ -7,7 +7,7 @@ estimated before the missing engine and game logic have been measured.
 | Stage | Deliverable | Acceptance | Status |
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation and static scene/subtree inspection available for verified profiles; full materials and original-frame comparison pending |
+| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
 | 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
@@ -20,9 +20,12 @@ The Agumon viewer decodes original compressed animation tracks and evaluates
 complete bone transforms, including helpers. Synthetic fixtures and original DOL
 arithmetic establish the current sampling, quaternion and hierarchy profile.
 The scene viewer now composes verified static transforms and preserves ordered
-draw instances. The `BG02` map subtree requires an explicit inspection override
-because its root switch is stored disabled. Continue by recovering the game's
-map activation and actor placement/combiner state, then connect a supported
+draw instances. Named packages preserve original member and export order. The
+`BG02` map's disabled switch can now be enabled through its original exported
+controller's `ALLON` command. That command is present in `first.lua`, and its
+dispatcher and mask effect have been traced. The host currently replays it only
+on explicit request. Continue by recovering startup scheduling and controller
+registration, plus actor placement/combiner state, then connect a supported
 animated actor to a verified scene. Compare matching camera/animation states
 against original frames before claiming visual parity. Static inspection and
 clip playback do not establish movement, collision or combat behavior.

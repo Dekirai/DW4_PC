@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/meshes.hpp"
+#include "dw4/scene_controls.hpp"
 
 #include <array>
 #include <cstddef>
@@ -44,6 +45,7 @@ struct SceneData {
     SceneInfo info;
     bool complete{};
     std::optional<std::uint32_t> inspected_root_child;
+    std::optional<SwitchControlRequest> root_control;
     std::vector<SceneInstance> instances;
     MeshBounds bounds{};
     std::vector<SceneDiagnostic> diagnostics;
@@ -56,6 +58,9 @@ struct SceneOptions {
     // Explicit inspection of one child of an igSwitch export root. This replaces
     // only the root's stored selection; nested switches retain their stored bits.
     std::optional<std::uint32_t> inspect_root_child;
+    // Explicit original controller command targeting exactly the selected root.
+    // Mutually exclusive with inspection; nested switches retain stored state.
+    std::optional<SwitchControlRequest> root_control;
 };
 
 // Lists explicit igSceneInfo exports. The selected reference passed to decode

@@ -105,11 +105,18 @@ class Decoder {
 public:
     Decoder(const IgbDocument& document, SceneInfo info, SceneOptions options) : doc(document) {
         result.info = std::move(info); result.inspected_root_child = options.inspect_root_child;
+        result.root_control = options.root_control;
     }
     SceneData decode() {
         if (!result.info.supported) fail(result.info.diagnostic);
         if (result.inspected_root_child && result.info.root_type != "igSwitch")
             fail("root-child inspection requires an exact igSwitch root");
+        if (result.root_control) {
+            if (result.inspected_root_child) fail("controller command and root-child inspection are mutually exclusive");
+            control = evaluate_igb_switch_control(doc,*result.root_control);
+            if (control->info.target_reference != result.info.root_reference)
+                fail("controller target differs from the selected scene root");
+        }
         visit(result.info.root_reference,identity);
         result.complete = result.diagnostics.empty();
         return std::move(result);
@@ -117,6 +124,7 @@ public:
 private:
     const IgbDocument& doc;
     SceneData result;
+    std::optional<SwitchControlState> control;
     std::vector<std::uint32_t> path;
     std::size_t links{}, cached_vertices{}, cached_triangles{};
     std::map<std::uint32_t,MeshData> meshes;
@@ -259,6 +267,7 @@ private:
         }
         const auto descendants = children(node);
         auto selected = type == "igSwitch" ? switch_mask(node,descendants.size()) : std::vector<bool>{};
+        if (path.size() == 1 && control) selected = control->selected_children;
         if (path.size() == 1 && result.inspected_root_child) {
             const auto child = *result.inspected_root_child;
             if (child >= descendants.size() || !descendants[child]) fail("inspection child is outside the root list or null");
@@ -283,5 +292,6 @@ SceneData decode_igb_scene(const IgbDocument& document, std::uint32_t info_refer
     try { return Decoder(document,descriptor(document,info_reference),options).decode(); }
     catch (const IgbError& error) { throw SceneError(error.what()); }
     catch (const MeshError& error) { throw SceneError(error.what()); }
+    catch (const SceneControlError& error) { throw SceneError(error.what()); }
 }
 } // namespace dw4

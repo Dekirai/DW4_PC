@@ -45,7 +45,8 @@ void align(Bytes& bytes) { bytes.resize((bytes.size() + 3) & ~std::size_t(3)); }
 enum Type : std::uint32_t {
     object, object_dir, memory_dir, attr, geometry_attr, object_list, attr_list,
     node_list, node, group, attr_set, geometry_node, transform_node, switch_node,
-    bitmask, scene_info, vertex_array, keep_group, unknown_group
+    bitmask, info_base, scene_info, vertex_array, keep_group, unknown_group,
+    info_list, switch_control, derived_control
 };
 struct Schema { std::string name; std::uint32_t parent, slots; std::vector<IgbObjectField> fields; };
 const std::vector<Schema> schemas{
@@ -64,10 +65,14 @@ const std::vector<Schema> schemas{
     {"igTransform",group,12,{{0,2,4},{5,5,4},{2,7,4},{7,8,64},{6,9,4},{2,11,4}}},
     {"igSwitch",group,9,{{0,2,4},{5,5,4},{2,7,4},{2,8,4}}},
     {"igBitMask",object_list,6,{{1,2,4},{1,3,4},{3,4,4},{5,5,4}}},
-    {"igSceneInfo",object,11,{{0,2,4},{2,5,4},{8,10,12}}},
+    {"igInfo",object,3,{{0,2,4}}},
+    {"igSceneInfo",info_base,11,{{0,2,4},{2,5,4},{8,10,12}}},
     {"igVertexArray1_1",object,12,{{3,2,4},{5,3,4},{5,4,4},{3,7,4},{3,8,4},{2,10,4}}},
     {"beGroupKeep",group,8,{{0,2,4},{5,5,4},{2,7,4}}},
-    {"UnknownGroup",group,8,{{0,2,4},{5,5,4},{2,7,4}}}
+    {"UnknownGroup",group,8,{{0,2,4},{5,5,4},{2,7,4}}},
+    {"igInfoList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"beSwitchCtrlInfo",info_base,8,{{0,2,4},{2,7,4}}},
+    {"UnknownSwitchCtrlInfo",switch_control,8,{{0,2,4},{2,7,4}}}
 };
 // Generated IGB records and local reference graph; no original game bytes.
 struct Graph {
@@ -78,6 +83,7 @@ struct Graph {
         Bytes data;
     };
     std::vector<Record> records;
+    std::uint32_t exported_info_list{null_ref};
     std::uint32_t add(std::uint32_t type) {
         const auto ref = static_cast<std::uint32_t>(records.size());
         Record record; record.type = type;
@@ -146,10 +152,11 @@ struct Graph {
         auto bytes = words({static_cast<std::uint32_t>(entries.size()),count,static_cast<std::uint32_t>(types.size()),
             static_cast<std::uint32_t>(schemas.size()),static_cast<std::uint32_t>(objects.size()),object_count,
             static_cast<std::uint32_t>(memories.size()),memory_count,static_cast<std::uint32_t>(fields.size()),
-            static_cast<std::uint32_t>(field_names.size()),0xfada,0x20000006});
+            static_cast<std::uint32_t>(field_names.size()),0xfada,exported_info_list == null_ref ? 0x20000006u : 0xa0000006u});
         append(bytes,fields); push32(bytes,4); append(bytes,types); append(bytes,entries);
         append(bytes,words({8 + 2 * count,count}));
         for (std::uint32_t i = 0; i < count; ++i) push16(bytes,static_cast<std::uint16_t>(i));
+        if (exported_info_list != null_ref) push32(bytes,exported_info_list);
         append(bytes,objects); append(bytes,memories); return read_igb_document(std::move(bytes));
     }
 };
@@ -183,6 +190,10 @@ struct Fixture : Graph {
         root = add(switch_node); scalar(root,7,list(node_list,children)); scalar(root,8,selection); scalar(info,5,root); return root;
     }
     SceneData decode(SceneOptions options = {}) const { return decode_igb_scene(document(),info,options); }
+    std::uint32_t controller() {
+        const auto ref = add(switch_control); text(ref,2,"Synthetic controller"); scalar(ref,7,root);
+        exported_info_list = list(info_list,{info,ref}); return ref;
+    }
 };
 void throws(const Fixture& fixture, const std::string& reason, SceneOptions options = {}) {
     try { fixture.decode(options); }
@@ -319,9 +330,105 @@ void synthetic() {
     check(!data.complete && data.instances.size() == 1 && data.diagnostics[0].node_reference == dynamic,"Partial traversal is explicitly incomplete");
 }
 
+void controls() {
+    Fixture f; const auto mask = f.mask(34,{0,0});
+    f.switch_root(std::vector<std::uint32_t>(34,f.owner),mask);
+    const auto ref = f.controller();
+    const SwitchControlRequest on{ref,SwitchControlCommand::all_on}, off{ref,SwitchControlCommand::all_off};
+    const SceneOptions activate{std::nullopt,on}, deactivate{std::nullopt,off};
+    const auto doc = f.document(); const auto source = doc.bytes();
+    const Bytes before(source.begin(),source.end());
+    const auto listed = list_igb_switch_controls(doc);
+    check(listed.size() == 1 && listed[0].supported,"Only explicit exported controller is eligible");
+    check(listed[0].reference_index == ref && listed[0].target_reference == f.root &&
+        listed[0].child_count == 34 && listed[0].mask_bit_count == 34,"Keep controller, target and mask provenance");
+    const auto selected = evaluate_igb_switch_control(doc,on);
+    check(selected.selected_children.size() == 34 && std::count(selected.selected_children.begin(),selected.selected_children.end(),true) == 34,
+        "ALLON enables children across word boundary without adding tail bits as children");
+    check(f.decode(activate).instances.size() == 34,"Original controller selects every root child");
+    const auto result = decode_igb_scene(doc,f.info,activate);
+    check(result.root_control && result.root_control->controller_reference == ref && !result.inspected_root_child,
+        "Decoded scene retains controller command provenance");
+    check(f.decode(deactivate).complete && f.decode(deactivate).instances.empty(),"ALLOF produces a complete empty scene");
+    check(f.decode().instances.empty(),"Controller command does not persist into stored selection");
+    check(std::equal(before.begin(),before.end(),doc.bytes().begin(),doc.bytes().end()),"Commands leave original source bytes unchanged");
+    throws(f,"Reject command combined with manual inspection",{0,on});
+    throws(f,"Reject an unexported controller reference",{std::nullopt,SwitchControlRequest{f.root,SwitchControlCommand::all_on}});
+    throws(f,"Reject unknown command enum",{std::nullopt,SwitchControlRequest{ref,static_cast<SwitchControlCommand>(99)}});
+    auto bad = f; bad.scalar(bad.info,5,bad.owner); throws(bad,"Reject controller for another selected root",activate);
+    bad = f; bad.exported_info_list = null_ref; throws(bad,"No object scan fallback without explicit exports",activate);
+    check(list_igb_switch_controls(bad.document()).empty(),"No info list yields no eligible controllers");
+    bad = f; bad.contents(bad.exported_info_list,{bad.info}); throws(bad,"Unexported but present controller is ineligible",activate);
+    bad = f; bad.contents(bad.exported_info_list,{ref,ref}); throws(bad,"Reject repeated controller export",activate);
+    bad = f; bad.contents(bad.exported_info_list,{null_ref}); throws(bad,"Reject null info export",activate);
+    bad = f; bad.contents(bad.exported_info_list,{bad.owner}); throws(bad,"Reject non-info export",activate);
+    bad = f; bad.scalar(bad.exported_info_list,3,4097); throws(bad,"Bound info-list capacity before reading",activate);
+    bad = f; bad.records[ref].type = derived_control;
+    check(!list_igb_switch_controls(bad.document())[0].supported,"Unverified derived controller stays visible with diagnostic");
+    throws(bad,"Reject derived controller execution",activate);
+    for (int kind = 0; kind < 11; ++kind) {
+        bad = f;
+        if (kind == 0) bad.scalar(ref,7,null_ref);
+        if (kind == 1) bad.scalar(ref,7,bad.owner);
+        if (kind == 2) bad.scalar(bad.root,8,null_ref);
+        if (kind == 3) bad.scalar(mask,5,33);
+        if (kind == 4) bad.scalar(mask,2,1);
+        if (kind == 5) bad.scalar(mask,3,1);
+        if (kind == 6) bad.scalar(mask,4,null_ref);
+        if (kind == 7) bad.scalar(mask,5,4194305);
+        if (kind == 8) bad.scalar(mask,3,131073);
+        if (kind == 9) bad.scalar(bad.root,7,bad.attrs);
+        if (kind == 10) bad.scalar(mask,4,bad.positions);
+        const auto values = list_igb_switch_controls(bad.document());
+        check(values.size() == 1 && !values[0].supported && !values[0].diagnostic.empty(),"Malformed controller reports diagnostic");
+        throws(bad,"Malformed controller rejected even when turning off",deactivate);
+    }
+    Fixture nested; const auto inner = nested.switch_root({nested.owner},nested.mask(1,{0}));
+    nested.switch_root({inner},nested.mask(1,{0})); const auto nested_ref = nested.controller();
+    check(nested.decode({std::nullopt,SwitchControlRequest{nested_ref,SwitchControlCommand::all_on}}).instances.empty(),
+        "ALLON of root leaves nested stored switch disabled");
+    Fixture sparse; sparse.switch_root({null_ref,sparse.owner},sparse.mask(2,{0})); const auto sparse_ref = sparse.controller();
+    check(sparse.decode({std::nullopt,SwitchControlRequest{sparse_ref,SwitchControlCommand::all_on}}).instances.size() == 1,
+        "Null child slots remain skipped after ALLON");
+    Fixture empty; empty.switch_root({},empty.mask(0,{})); const auto empty_ref = empty.controller();
+    check(empty.decode({std::nullopt,SwitchControlRequest{empty_ref,SwitchControlCommand::all_on}}).complete,
+        "Zero-bit empty controller target is valid");
+    Fixture budget;
+    // Repeated references need little file space but still consume validation
+    // work. Bound the sum across controllers, not just each individual target.
+    budget.switch_root(std::vector<std::uint32_t>(1048576,budget.owner),null_ref);
+    const auto large_mask = budget.add(bitmask);
+    budget.scalar(large_mask,2,32768); budget.scalar(large_mask,3,32768); budget.scalar(large_mask,5,1048576);
+    budget.scalar(large_mask,4,budget.memory(Bytes(32768*4))); budget.scalar(budget.root,8,large_mask);
+    const auto a = budget.controller(), b = budget.controller(), c = budget.controller(), d = budget.controller(), e = budget.controller();
+    budget.contents(budget.exported_info_list,{a,b,c,d,e});
+    const auto bounded = list_igb_switch_controls(budget.document());
+    check(bounded.size() == 5 && bounded[0].supported && bounded[3].supported && !bounded[4].supported &&
+        bounded[4].diagnostic.find("aggregate") != std::string::npos,"Repeated large controller targets respect aggregate work budget");
+}
+
 void original(const std::filesystem::path& archive_path, std::size_t entry) {
     const auto doc = read_igb_document(assets::AfsArchive::open(archive_path).read(entry));
     const auto infos = list_igb_scenes(doc);
+    for (const auto& controller : list_igb_switch_controls(doc)) {
+        if (!controller.supported) continue;
+        const auto scene = std::find_if(infos.begin(),infos.end(),[&](const auto& info) { return info.root_reference == controller.target_reference; });
+        if (scene == infos.end()) continue;
+        const auto on = decode_igb_scene(doc,scene->info_reference,{std::nullopt,SwitchControlRequest{controller.reference_index,SwitchControlCommand::all_on}});
+        const auto off = decode_igb_scene(doc,scene->info_reference,{std::nullopt,SwitchControlRequest{controller.reference_index,SwitchControlCommand::all_off}});
+        check(off.complete && off.instances.empty(),"Original controller ALLOF is complete and empty");
+        std::cout << "CONTROL ref=" << controller.reference_index << " target=" << controller.target_reference
+            << " ALLON complete=" << on.complete << " instances=" << on.instances.size() << " triangles=" << on.triangle_count << '\n';
+        if (controller.child_count == 1 && on.complete) {
+            const auto inspected = decode_igb_scene(doc,scene->info_reference,{0});
+            check(on.instances.size() == inspected.instances.size(),"Original ALLON agrees with one-child independent inspection");
+            for (std::size_t i = 0; i < on.instances.size(); ++i) {
+                const auto& a = on.instances[i]; const auto& b = inspected.instances[i];
+                check(a.path == b.path && a.geometry_reference == b.geometry_reference && a.world_transform == b.world_transform &&
+                    a.mesh.indices == b.mesh.indices,"Original activation preserves instance identity and transforms");
+            }
+        }
+    }
     for (std::size_t i = 0; i < infos.size(); ++i) {
         const auto& info = infos[i];
         std::cout << "SCENE index=" << i << " info=" << info.info_reference << " root=" << info.root_reference << " name=" << info.name << '\n';
@@ -342,7 +449,7 @@ void original(const std::filesystem::path& archive_path, std::size_t entry) {
 } // namespace
 int main(int argc, char** argv) {
     try {
-        synthetic(); std::cout << "Scene tests passed (" << checks << " checks).\n";
+        synthetic(); controls(); std::cout << "Scene tests passed (" << checks << " checks).\n";
         if (argc == 3) original(argv[1],std::stoul(argv[2]));
         else if (argc != 1) { std::cerr << "Usage: dw4_scenes_tests [AFS ENTRY]\n"; return 2; }
         return 0;

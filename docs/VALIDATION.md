@@ -1,17 +1,28 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.7 static-scene inspection milestone,
+GeForce RTX 5070 Ti. This records the version 0.8 named-package and original
+switch-command inspection milestone,
 not gameplay compatibility or a finished port. Earlier archive, texture, skin and
 animation corpus measurements are retained from their respective milestones;
-the scene, path-material and batch-rendering checks are the new acceptance work.
+the package, switch-controller and related UI checks are the new acceptance work.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, scenes, skinning, animation math, Enbaya, animations, camera, settings | 14/14 suites passed in Release |
+| CTest: assets, IGB metadata, IGB documents, resources, packages, textures, meshes, materials, scenes, skinning, animation math, Enbaya, animations, camera, settings | 15/15 suites passed in Release |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
+| Catalog/package CLI arguments | 5 tests passed, including missing/duplicate/conflicting selectors, empty paths, signed/partial/overflow indices and index-zero handling |
+| Package synthetic fixtures | 95 checks passed in Release and AddressSanitizer: export/member order, catalog identity, exact `/s` handling, malformed input, forged metadata and allocation limits |
+| Original package integration | 8 checks passed in Release and AddressSanitizer; 97 descriptors / 195 members, including 98 preliminary `/s` members; both dng101b1 members match their AFS bytes exactly |
+| Named map export identity | `dng101b1.igb` -> ndmw entry 80 -> member 1 `[0.179]` -> explicit export 7 / scene index 1 / info 3372 / BG02 root 2877 |
+| Original switch command evidence | `first.lua` submits `SWITCHCTRL / ALLON`; original dispatcher, controller registration callback and target-mask effect traced; controller 3471 is explicit export 9 and targets root 2877 |
+| Switch-controller and scene fixtures | 127 combined scene checks pass in Release and AddressSanitizer, including all-on/off, cross-word and nested masks, unchanged bytes, wrong/exported targets, malformed state and cumulative child-validation budget |
+| Original native command replay | ALLON produces 235 instances / 26,352 triangles; ALLOF is complete and empty; every instance path, geometry reference and world transform agrees with explicit child-zero inspection |
+| Package/control UI regression | 36 finite native checks passed: descriptor-only inspection, original commands, source/selector guards, invalid controller/target, empty/no-scene results, all eight pages, font, raw scene, Agumon animation and manual rig |
+| Final compact scene controls | 1280×720 screenshot inspected after tab-fitting adjustment: Instances, Details, State and Status visible; ALLON, ALLOF and Stored selection fit |
+| Named package at 1080p and 4K | All 235 textured batches / 5 images retained; 1290×603 and 3210×1683 scene targets inside 1920×1080 and 3840×2160 host windows, actual 8-sample MSAA |
 | USA DOL identity | SHA-1 matches `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` |
 | ISO versus extracted data | Boot header, DOL, filesystem table and all four filesystem files match |
 | Native boot/DOL inspection | `GDJEB2`, revision byte 0, 10 loaded sections, entry `0x80005240` |
@@ -84,6 +95,7 @@ The additional synthetic checks are:
 ```powershell
 python -m unittest discover -s tests -p 'test_*.py' -v
 python tests/cli_tests.py build/Release/dw4_inspect.exe
+python tests/catalog_cli_tests.py build/Release/dw4_catalog.exe
 ```
 
 Example finite rendering check (output is local and ignored by Git):
@@ -97,6 +109,7 @@ Example finite rendering check (output is local and ignored by Git):
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --rig --bone 8 --rotate-z 45 --screenshot work/agumon-manual-pose.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --animation runD --animation-time 0.2 --screenshot work/agumon-animation.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --archive ndmw.afs --entry 179 --scene-root 6 --scene-inspect-child 0 --scene-mode textured --screenshot work/bg02-scene.bmp
+.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --package dng101b1.igb --package-member 1 --scene-root 1 --scene-switch-control 3471 --scene-switch-command all-on --scene-mode textured --screenshot work/bg02-package.bmp
 .\build\Release\dw4_renderer_tests.exe
 ```
 
@@ -113,8 +126,12 @@ still requires single influences and identity selector transforms. See
 [SKINNING.md](SKINNING.md) and [ANIMATIONS.md](ANIMATIONS.md).
 Static scene inspection now reconstructs a bounded export/subtree profile with
 original placements and explicit root selection. The inspected BG02 switch is
-stored disabled; its labeled root-child override is not recovered game activation.
-Nested masks and source data remain unchanged. The scene renderer applies base
+stored disabled. An explicit original ALLON command can now enable it through
+its exported controller, alongside the separate manual-child inspection option.
+Native script scheduling, staged initialization and the full runtime controller
+lifecycle remain unimplemented. Nested masks and source data remain unchanged.
+See [PACKAGES.md](PACKAGES.md) and [SCENE_ACTIVATION.md](SCENE_ACTIVATION.md).
+The scene renderer applies base
 images with inspection shading; original lighting, render passes, culling and
 transparent-surface ordering are still outstanding. See [SCENES.md](SCENES.md),
 [SCENE_RESEARCH.md](SCENE_RESEARCH.md) and [SCENE_RENDERER.md](SCENE_RENDERER.md).

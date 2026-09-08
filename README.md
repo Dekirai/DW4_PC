@@ -1,9 +1,9 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.7 adds static scene traversal and native map-subtree inspection;
-the game is not playable yet.** Gameplay scene activation, combat and game saves
-have not been ported.
+**Version 0.8 adds named package loading and explicit original switch-controller
+commands; the game is not playable yet.** Startup scheduling, combat and game
+saves have not been ported.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
 original local files directly. The PowerPC `main.dol` is inspected as data;
@@ -16,6 +16,8 @@ game code is not executed. This repository does not contain game files.
 - Browse archive entries and read bounded byte previews.
 - Read Alchemy IGB v6 metadata, serialized objects, memory buffers and references.
 - Resolve logical game paths from `ndmw.igb` to checked AFS archive entries.
+- Read named package descriptors, preserve their ordered members and `/s`
+  loading-stage metadata, and inspect explicitly selected member exports.
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -30,6 +32,8 @@ game code is not executed. This repository does not contain game files.
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit
   root-child inspection for stored disabled exports and per-instance textures.
+- Apply the verified `ALLON` or `ALLOF` command of an exported switch controller
+  to its selected scene root, with command provenance and unchanged source bytes.
 - Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
@@ -166,6 +170,23 @@ selection. This is a view of the original map assets, not a loaded gameplay
 level. The page exposes source paths, matrices and unsupported-state diagnostics.
 See [SCENE_VIEWER.md](docs/SCENE_VIEWER.md) and [SCENES.md](docs/SCENES.md).
 
+The same map can now be reached through its original named package and enabled
+through the controller targeted by the original `first.lua` command:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' `
+  --package dng101b1.igb --package-member 1 --scene-root 1 `
+  --scene-switch-control 3471 --scene-switch-command all-on --scene-mode textured
+```
+
+Package scene indices follow the explicit info-list order, so this is index 1
+instead of the raw-entry index 6. The **State** tab provides **ALLON**, **ALLOF**
+and **Stored selection**. This executes the verified native child-selection
+effect for one controller; original scripts and game startup are not running.
+Use `dw4_catalog EXTRACTED_ROOT --package dng101b1.igb --member 1` to inspect
+member/export provenance without opening the graphics app. See
+[PACKAGE_VIEWER.md](docs/PACKAGE_VIEWER.md) and [SCENE_CONTROLS.md](docs/SCENE_CONTROLS.md).
+
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
 Those totals include repeated asset instances and verify loading, not each
@@ -189,20 +210,23 @@ performs structural checks; the Python verifier additionally checks this hash.
 
 Original textures, logical asset lookup and object-space mesh viewing are
 available, including verified base-texture bindings, original clip decoding and
-static map-subtree inspection. The next step is recovered map activation and
-actor placement, with comparisons against captured original frames, followed by
+static map inspection through named packages and original switch commands.
+The next step is startup scheduling, controller registration and actor placement,
+with comparisons against captured original frames, followed by
 an original scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
 [Roadmap and acceptance criteria](docs/ROADMAP.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
 [Resource catalog](docs/RESOURCES.md) ·
+[Package loading](docs/PACKAGES.md) ·
 [Native texture formats](docs/TEXTURES.md) ·
 [Mesh formats](docs/MESHES.md) ·
 [Material bindings](docs/MATERIALS.md) ·
 [Skinning](docs/SKINNING.md) ·
 [Animation loading](docs/ANIMATIONS.md) ·
 [Static scenes](docs/SCENES.md) ·
+[Original scene commands](docs/SCENE_CONTROLS.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

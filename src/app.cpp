@@ -5,8 +5,10 @@
 #include "dw4/igb_document.hpp"
 #include "dw4/materials.hpp"
 #include "dw4/meshes.hpp"
+#include "dw4/packages.hpp"
 #include "dw4/resources.hpp"
 #include "dw4/scenes.hpp"
+#include "dw4/scene_controls.hpp"
 #include "dw4/settings.hpp"
 #include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
@@ -61,12 +63,16 @@ struct Options {
     int initial_page = 0;
     std::string archive_name;
     std::string resource;
+    std::string package;
+    std::optional<int> package_member;
     std::optional<int> entry;
     int texture = 0;
     std::optional<int> mesh;
     dw4::viewer::MeshDrawMode mesh_mode = dw4::viewer::MeshDrawMode::solid;
     std::optional<int> scene_root;
     std::optional<int> scene_inspect_child;
+    std::optional<int> scene_switch_control;
+    std::optional<dw4::SwitchControlCommand> scene_switch_command;
     dw4::viewer::MeshDrawMode scene_mode = dw4::viewer::MeshDrawMode::solid;
     bool rig = false;
     std::optional<int> bone;
@@ -131,8 +137,9 @@ Options parse_options(const std::vector<std::string>& args) {
         if (args[i] == "--animation-play") { out.animation_play = true; continue; }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
             args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
+            args[i] != "--package" && args[i] != "--package-member" &&
             args[i] != "--mesh" && args[i] != "--mesh-mode" && args[i] != "--scene-root" && args[i] != "--scene-mode" &&
-            args[i] != "--scene-inspect-child" && args[i] != "--bone" &&
+            args[i] != "--scene-inspect-child" && args[i] != "--scene-switch-control" && args[i] != "--scene-switch-command" && args[i] != "--bone" &&
             args[i] != "--rotate-x" && args[i] != "--rotate-y" && args[i] != "--rotate-z" &&
             args[i] != "--animation" && args[i] != "--animation-time")
             throw std::runtime_error("Unknown option: " + args[i]);
@@ -143,11 +150,22 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--screenshot") out.screenshot = dw4::utf8_path(args[i]);
         else if (option == "--archive") out.archive_name = args[i];
         else if (option == "--resource") out.resource = args[i];
+        else if (option == "--package") {
+            if (args[i].empty()) throw std::runtime_error("--package requires an original descriptor resource name.");
+            out.package = args[i];
+        }
+        else if (option == "--package-member") out.package_member = parse_integer_option(args[i],option,0,1000000);
         else if (option == "--entry") out.entry = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
         else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--scene-root") out.scene_root = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--scene-inspect-child") out.scene_inspect_child = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--scene-switch-control") out.scene_switch_control = parse_integer_option(args[i],option,0,1048575);
+        else if (option == "--scene-switch-command") {
+            if (args[i] == "all-on") out.scene_switch_command = dw4::SwitchControlCommand::all_on;
+            else if (args[i] == "all-off") out.scene_switch_command = dw4::SwitchControlCommand::all_off;
+            else throw std::runtime_error("--scene-switch-command requires all-on or all-off.");
+        }
         else if (option == "--bone") out.bone = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--animation") {
             if (args[i].empty()) throw std::runtime_error("--animation requires an original clip name.");
@@ -190,6 +208,16 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("--texture requires --resource, or --archive and --entry.");
     if (!out.resource.empty() && out.entry)
         throw std::runtime_error("Choose --resource or --archive with --entry; these source options cannot be combined.");
+    if (!out.package.empty() && (!out.resource.empty() || out.entry))
+        throw std::runtime_error("Choose --package, --resource or --archive with --entry; these source options cannot be combined.");
+    if (out.package_member && out.package.empty()) throw std::runtime_error("--package-member requires --package NAME.");
+    if (out.package_member && !out.scene_root) throw std::runtime_error("--package-member requires an explicit --scene-root INDEX. Use --package NAME alone to inspect the member list.");
+    if (!out.package.empty() && !out.package_member && (out.scene_root || out.scene_inspect_child || out.scene_switch_control || out.scene_switch_command))
+        throw std::runtime_error("Package scene selection requires an explicit --package-member INDEX.");
+    if (out.scene_switch_control.has_value() != out.scene_switch_command.has_value())
+        throw std::runtime_error("Use --scene-switch-control REFERENCE and --scene-switch-command all-on|all-off together.");
+    if (out.scene_switch_control && out.scene_inspect_child)
+        throw std::runtime_error("Choose an original switch command or a root-child inspection override; they cannot be combined.");
     if (!out.animation.empty()) {
         if (out.bone || rotation_requested) throw std::runtime_error("Choose an animation clip or manual bone rotation; these pose inputs cannot be combined.");
         out.rig = true;
@@ -204,13 +232,13 @@ Options parse_options(const std::vector<std::string>& args) {
     if (rotation_requested && !out.bone)
         throw std::runtime_error("Rotation controls require an explicit --bone INDEX.");
     if (out.rig && !out.mesh) out.mesh = 0;
-    const bool scene_requested = out.scene_root || out.scene_inspect_child || scene_mode_requested || out.initial_page == 6;
+    const bool scene_requested = !out.package.empty() || out.scene_root || out.scene_inspect_child || out.scene_switch_control || scene_mode_requested || out.initial_page == 6;
     if (scene_requested && (out.mesh || texture_requested || mesh_mode_requested))
         throw std::runtime_error("Scene inspection cannot be combined with mesh, rig, animation or texture selection.");
-    if ((out.scene_root || out.scene_inspect_child || scene_mode_requested) && page_requested && out.initial_page != 6)
+    if ((!out.package.empty() || out.scene_root || out.scene_inspect_child || out.scene_switch_control || scene_mode_requested) && page_requested && out.initial_page != 6)
         throw std::runtime_error("Scene options require --page scenes when --page is specified.");
-    if ((out.scene_root || out.scene_inspect_child) && !out.entry && out.resource.empty())
-        throw std::runtime_error("Scene-root and child selection require --resource, or --archive and --entry.");
+    if ((out.scene_root || out.scene_inspect_child || out.scene_switch_control) && !out.entry && out.resource.empty() && out.package.empty())
+        throw std::runtime_error("Scene-root and child selection require --package, --resource, or --archive and --entry.");
     if (!page_requested && scene_requested) out.initial_page = 6;
     if (out.mesh && !out.entry && out.resource.empty())
         throw std::runtime_error("--mesh requires --resource, or --archive and --entry.");
@@ -384,7 +412,34 @@ public:
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
             }
-            if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 6) {
+            if (!options_.package.empty()) {
+                if (!scene_package_ || !scene_package_error_.empty()) {
+                    std::cerr << "Package inspection failed: " << (scene_package_error_.empty() ? "No package descriptor was decoded." : scene_package_error_) << '\n';
+                    return 3;
+                }
+                std::cout << "Package: " << scene_package_->logical_path << " / descriptor " << scene_package_->reference_index
+                          << " / " << scene_package_->members.size() << " original members\n"
+                          << "Package provenance: " << scene_package_->provenance << '\n';
+                if (options_.package_member) {
+                    const auto* member = selected_package_member();
+                    if (!member || !scene_document_) {
+                        std::cerr << "Package member inspection failed: no selected member document was decoded.\n";
+                        return 3;
+                    }
+                    std::cout << "Package member " << member->index << ": " << member->specifier << " / file reference " << member->file_reference
+                              << " / " << scene_package_exports_.size() << " original exports\n"
+                              << "Member provenance: " << member->provenance << '\n';
+                } else {
+                    for (std::size_t i = 0; i < std::min<std::size_t>(64,scene_package_->members.size()); ++i) {
+                        const auto& member = scene_package_->members[i];
+                        std::cout << "Member " << member.index << ": " << member.specifier << " / "
+                                  << (member.supported ? "supported" : member.diagnostic) << '\n';
+                    }
+                    if (scene_package_->members.size() > 64) std::cout << "Additional members remain available in the package selector.\n";
+                    std::cout << "Descriptor inspection only; no member or scene was automatically selected or rendered.\n";
+                }
+            }
+            if ((options_.entry || !options_.resource.empty() || options_.package_member) && options_.initial_page == 6) {
                 if (options_.scene_mode == dw4::viewer::MeshDrawMode::textured && !scene_texture_error_.empty()) {
                     std::cerr << "Textured scene unavailable: " << scene_texture_error_ << '\n';
                     return 3;
@@ -417,7 +472,10 @@ public:
                           << "Scene GPU batches: " << scene_renderer_.batch_count() << " / textured " << scene_renderer_.textured_batch_count()
                           << " / unique textures " << scene_renderer_.texture_count() << '\n';
                 if (!loaded_scene_resource_.empty()) std::cout << "Logical resource: " << loaded_scene_resource_ << '\n';
-                if (scene_data_->inspected_root_child) std::cout << "Inspection override: root child " << *scene_data_->inspected_root_child
+                if (scene_data_->root_control) std::cout << "Original switch command: "
+                    << (scene_data_->root_control->command == dw4::SwitchControlCommand::all_on ? "ALLON" : "ALLOF")
+                    << " / controller " << scene_data_->root_control->controller_reference << ". Game startup is not running.\n";
+                else if (scene_data_->inspected_root_child) std::cout << "Inspection override: root child " << *scene_data_->inspected_root_child
                     << "; runtime activation unverified.\n";
                 else std::cout << "Stored root selection; no activation override.\n";
                 std::cout << "Static exported-root inspection only. Gameplay and original-frame comparison remain pending.\n";
@@ -589,6 +647,12 @@ private:
     std::chrono::steady_clock::time_point mesh_animation_tick_ = std::chrono::steady_clock::now();
     dw4::viewer::MeshRenderer scene_renderer_;
     dw4::OrbitCamera scene_camera_;
+    bool scene_package_mode_ = false;
+    std::optional<dw4::PackageDescriptor> scene_package_;
+    std::vector<dw4::PackageExport> scene_package_exports_;
+    std::string scene_package_path_;
+    std::string scene_package_error_;
+    int selected_package_member_ = -1;
     std::optional<dw4::assets::AfsArchive> scene_archive_;
     std::optional<dw4::IgbDocument> scene_document_;
     std::optional<dw4::SceneData> scene_data_;
@@ -612,6 +676,10 @@ private:
     bool scene_status_tab_pending_ = false;
     bool scene_child_enabled_ = false;
     int scene_child_input_ = 0;
+    std::vector<dw4::SwitchControlInfo> scene_switch_controls_;
+    int selected_scene_switch_control_ = -1;
+    std::string scene_switch_error_;
+    bool scene_state_tab_pending_ = false;
     dw4::viewer::MeshDrawMode scene_mode_ = dw4::viewer::MeshDrawMode::solid;
     std::vector<SDL_Gamepad*> gamepads_;
 
@@ -644,6 +712,7 @@ private:
         mesh_mode_ = options_.mesh_mode;
         scene_entry_limit_mib_ = options_.max_entry_mib;
         scene_mode_ = options_.scene_mode;
+        scene_package_mode_ = !options_.package.empty();
         mesh_rig_enabled_ = options_.rig;
         mesh_animation_mode_ = !options_.animation.empty();
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
@@ -707,7 +776,14 @@ private:
         imgui_gl_ready_ = true;
         refresh_gamepads();
         if (!settings_.data_path.empty()) mount_data();
-        if (options_.initial_page == 6 && !options_.resource.empty()) load_scene_resource(options_.resource, options_.scene_root.value_or(0),options_.scene_inspect_child);
+        std::optional<dw4::SwitchControlRequest> scene_command;
+        if (options_.scene_switch_control) scene_command = dw4::SwitchControlRequest{
+            static_cast<std::uint32_t>(*options_.scene_switch_control),*options_.scene_switch_command};
+        if (!options_.package.empty()) {
+            load_scene_package(options_.package);
+            if (options_.package_member && scene_package_) select_package_member(*options_.package_member,options_.scene_root,options_.scene_inspect_child,scene_command);
+        }
+        else if (options_.initial_page == 6 && !options_.resource.empty()) load_scene_resource(options_.resource, options_.scene_root.value_or(0),options_.scene_inspect_child,scene_command);
         else if (options_.initial_page == 6 && options_.entry) {
             bool found = false;
             if (disc_) for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
@@ -718,7 +794,7 @@ private:
                 }
             }
             if (!found) scene_error_ = "Archive was not found in the inspected game directory: " + options_.archive_name;
-            else { scene_entry_input_ = *options_.entry; load_scene_entry(*options_.entry, options_.scene_root.value_or(0),options_.scene_inspect_child); }
+            else { scene_entry_input_ = *options_.entry; load_scene_entry(*options_.entry, options_.scene_root.value_or(0),options_.scene_inspect_child,scene_command); }
         }
         else if (options_.initial_page == 5 && !options_.resource.empty()) load_mesh_resource(options_.resource, options_.mesh.value_or(0));
         else if (options_.initial_page == 5 && options_.entry) {
@@ -777,6 +853,7 @@ private:
         clear_texture_document();
         clear_mesh_document();
         clear_scene_document();
+        clear_scene_package();
         scene_archive_.reset();
         selected_scene_archive_ = -1;
         mesh_archive_.reset();
@@ -1006,6 +1083,7 @@ private:
     void clear_scene_document() {
         scene_renderer_.clear();
         scene_document_.reset();
+        scene_package_exports_.clear();
         scene_data_.reset();
         scenes_.clear();
         scene_materials_.clear();
@@ -1019,7 +1097,75 @@ private:
         scene_status_tab_pending_ = false;
         scene_child_enabled_ = false;
         scene_child_input_ = 0;
+        scene_switch_controls_.clear();
+        selected_scene_switch_control_ = -1;
+        scene_switch_error_.clear();
+        scene_state_tab_pending_ = false;
         reset_scene_camera();
+    }
+
+    void clear_scene_package() {
+        scene_package_.reset();
+        scene_package_exports_.clear();
+        scene_package_path_.clear();
+        scene_package_error_.clear();
+        selected_package_member_ = -1;
+    }
+
+    const dw4::PackageMember* selected_package_member() const {
+        if (!scene_package_ || selected_package_member_ < 0) return nullptr;
+        for (const auto& member : scene_package_->members)
+            if (member.index == static_cast<std::uint32_t>(selected_package_member_)) return &member;
+        return nullptr;
+    }
+
+    std::string package_member_source(const dw4::PackageMember& member) const {
+        if (!member.location || !mounted_resources_) return "Unresolved archive location";
+        const auto& archives = mounted_resources_->catalog().archives;
+        if (member.location->archive_index >= archives.size()) return "Invalid archive index";
+        return archives[member.location->archive_index].filename + " / entry " + std::to_string(member.location->entry_index);
+    }
+
+    void load_scene_package(const std::string& logical_path) {
+        clear_scene_document();
+        clear_scene_package();
+        scene_archive_.reset();
+        selected_scene_archive_ = -1;
+        scene_package_mode_ = true;
+        scene_package_path_ = logical_path;
+        try {
+            if (!mounted_resources_) throw std::runtime_error("The logical resource catalog is unavailable: " + catalog_error_);
+            scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
+            scene_package_ = dw4::load_package_descriptor(*mounted_resources_,logical_path,
+                static_cast<std::size_t>(scene_entry_limit_mib_) * 1024u * 1024u);
+        } catch (const std::exception& error) { scene_package_error_ = error.what(); }
+    }
+
+    void select_package_member(int index, std::optional<int> root_index = std::nullopt,
+        std::optional<int> inspect_child = std::nullopt, std::optional<dw4::SwitchControlRequest> control = std::nullopt) {
+        clear_scene_document();
+        scene_package_error_.clear();
+        selected_package_member_ = index;
+        try {
+            if (!scene_package_ || !mounted_resources_) throw std::runtime_error("Choose a decoded package descriptor first.");
+            const auto* member = selected_package_member();
+            if (!member) throw std::runtime_error("Package member index is outside the original filename list.");
+            if (!member->supported) throw std::runtime_error(member->diagnostic.empty() ? "This package member form is unsupported." : member->diagnostic);
+            scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
+            scene_document_ = dw4::read_package_member(*mounted_resources_,*member,
+                static_cast<std::size_t>(scene_entry_limit_mib_) * 1024u * 1024u);
+            scene_source_ = package_member_source(*member);
+            scene_package_exports_ = dw4::list_package_exports(*scene_document_);
+            const auto candidates = dw4::list_igb_scenes(*scene_document_);
+            // Package scene choices follow explicit export references in source
+            // order. Unexported descriptors never become a guessed scene root.
+            for (const auto& exported : scene_package_exports_) {
+                const auto found = std::find_if(candidates.begin(),candidates.end(),[&](const auto& info) { return info.info_reference == exported.reference_index; });
+                if (found != candidates.end()) scenes_.push_back(*found);
+            }
+            if (scenes_.empty()) scene_error_ = "This member has no igSceneInfo export in its original info list.";
+            else if (root_index) select_scene(*root_index,inspect_child,control);
+        } catch (const std::exception& error) { scene_package_error_ = error.what(); }
     }
 
     void select_scene_archive(int index) {
@@ -1030,7 +1176,10 @@ private:
         catch (const std::exception& error) { scene_error_ = error.what(); }
     }
 
-    void load_scene_entry(int entry, int root_index = 0, std::optional<int> inspect_child = std::nullopt) {
+    void load_scene_entry(int entry, int root_index = 0, std::optional<int> inspect_child = std::nullopt,
+        std::optional<dw4::SwitchControlRequest> control = std::nullopt) {
+        clear_scene_package();
+        scene_package_mode_ = false;
         clear_scene_document();
         try {
             if (!scene_archive_) throw std::runtime_error("Choose a valid AFS archive first.");
@@ -1042,11 +1191,14 @@ private:
             scene_source_ = filename(scene_archive_->path()) + " / entry " + std::to_string(entry);
             scenes_ = dw4::list_igb_scenes(*scene_document_);
             if (scenes_.empty()) throw std::runtime_error("This IGB document contains no exported scene roots.");
-            select_scene(root_index,inspect_child);
+            select_scene(root_index,inspect_child,control);
         } catch (const std::exception& error) { scene_error_ = error.what(); }
     }
 
-    void load_scene_resource(const std::string& logical_path, int root_index = 0, std::optional<int> inspect_child = std::nullopt) {
+    void load_scene_resource(const std::string& logical_path, int root_index = 0, std::optional<int> inspect_child = std::nullopt,
+        std::optional<dw4::SwitchControlRequest> control = std::nullopt) {
+        clear_scene_package();
+        scene_package_mode_ = false;
         clear_scene_document();
         try {
             if (!mounted_resources_) throw std::runtime_error("The logical resource catalog is unavailable: " + catalog_error_);
@@ -1061,7 +1213,7 @@ private:
             if (archive_index < 0) throw std::runtime_error("The catalog archive is not present in the inspected directory: " + source_archive);
             select_scene_archive(archive_index);
             scene_entry_input_ = static_cast<int>(resource->location->entry_index);
-            load_scene_entry(scene_entry_input_,root_index,inspect_child);
+            load_scene_entry(scene_entry_input_,root_index,inspect_child,control);
             if (scene_document_) loaded_scene_resource_ = logical_path;
         } catch (const std::exception& error) { scene_error_ = error.what(); }
     }
@@ -1117,7 +1269,8 @@ private:
         }
     }
 
-    void select_scene(int index, std::optional<int> inspect_child = std::nullopt) {
+    void select_scene(int index, std::optional<int> inspect_child = std::nullopt,
+        std::optional<dw4::SwitchControlRequest> control = std::nullopt) {
         scene_renderer_.clear();
         scene_data_.reset();
         scene_materials_.clear();
@@ -1130,6 +1283,10 @@ private:
         scene_status_tab_pending_ = false;
         scene_child_enabled_ = inspect_child.has_value();
         scene_child_input_ = inspect_child.value_or(0);
+        scene_switch_controls_.clear();
+        scene_switch_error_.clear();
+        selected_scene_switch_control_ = control ? static_cast<int>(control->controller_reference) : -1;
+        scene_state_tab_pending_ = control.has_value();
         reset_scene_camera();
         try {
             if (!scene_document_) throw std::runtime_error("Load an IGB document before selecting a scene root.");
@@ -1137,18 +1294,22 @@ private:
                 throw std::runtime_error("Scene-root index is outside this document's exported root list.");
             const auto& info = scenes_[static_cast<std::size_t>(index)];
             if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This exported scene descriptor is unsupported." : info.diagnostic);
+            try { scene_switch_controls_ = dw4::list_igb_switch_controls(*scene_document_); }
+            catch (const std::exception& error) { scene_switch_error_ = error.what(); }
             dw4::SceneOptions scene_options;
             if (inspect_child) {
                 if (*inspect_child < 0 || *inspect_child > 1000000) throw std::runtime_error("Inspection child index must be from 0 to 1000000.");
                 scene_options.inspect_root_child = static_cast<std::uint32_t>(*inspect_child);
             }
+            scene_options.root_control = control;
             scene_data_ = dw4::decode_igb_scene(*scene_document_,info.info_reference,scene_options);
             if (!scene_data_->complete) {
                 scene_error_ = "This root contains unsupported static behavior. Inspect its diagnostics; partial geometry is not rendered.";
                 scene_status_tab_pending_ = true;
                 return;
             }
-            if (scene_data_->instances.empty()) throw std::runtime_error(inspect_child ?
+            if (scene_data_->instances.empty()) throw std::runtime_error(control ?
+                "This original switch command selects no visible static geometry." : inspect_child ?
                 "This inspected child has no visible static geometry." :
                 "The stored selection has no visible static geometry. Runtime activation has not been reproduced.");
             selected_scene_instance_ = 0;
@@ -1164,7 +1325,10 @@ private:
             }
             upload_scene_batches(false);
             if (scene_mode_ == dw4::viewer::MeshDrawMode::textured && scene_renderer_.has_mesh()) upload_scene_batches(true);
-        } catch (const std::exception& error) { scene_error_ = error.what(); scene_status_tab_pending_ = true; }
+        } catch (const std::exception& error) {
+            scene_error_ = error.what();
+            scene_status_tab_pending_ = !scene_state_tab_pending_;
+        }
     }
 
     void clear_mesh_document() {
@@ -2404,20 +2568,101 @@ private:
         ImGui::EndChild();
     }
 
+    void draw_scene_package_members() {
+        const auto* selected = selected_package_member();
+        std::string preview = "Choose an original member; no member is selected automatically";
+        if (selected) preview = std::to_string(selected->index) + "  " + selected->specifier + "  /  " + package_member_source(*selected);
+        ImGui::SetNextItemWidth(std::max(160.0f,ImGui::GetContentRegionAvail().x-385));
+        if (ImGui::BeginCombo("Member",preview.c_str(),ImGuiComboFlags_HeightLarge)) {
+            if (scene_package_) {
+                ImGuiListClipper clip;
+                clip.Begin(static_cast<int>(scene_package_->members.size()));
+                while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                    const auto& member = scene_package_->members[static_cast<std::size_t>(row)];
+                    ImGui::PushID(row);
+                    const auto label = std::to_string(member.index) + "  " + member.specifier + "  /  " + package_member_source(member);
+                    ImGui::BeginDisabled(!member.supported);
+                    if (ImGui::Selectable(label.c_str(),selected_package_member_ == static_cast<int>(member.index))) select_package_member(static_cast<int>(member.index));
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s",member.provenance.c_str(),member.diagnostic.c_str());
+                    ImGui::EndDisabled();
+                    ImGui::PopID();
+                }
+                if (scene_package_->members.empty()) ImGui::TextDisabled("This descriptor contains no member records.");
+            } else ImGui::TextDisabled("Choose a package descriptor first.");
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Package info")) ImGui::OpenPopup("package_provenance");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::InputInt("Limit (MiB)",&scene_entry_limit_mib_,0,0);
+        scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Member read limit: 1-256 MiB.\nDescriptor reads also have an independent 4 MiB cap.");
+        if (ImGui::BeginPopup("package_provenance")) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+540);
+            if (scene_package_) {
+                const auto& package = *scene_package_;
+                ImGui::Text("Descriptor %u / %zu original members",package.reference_index,package.members.size());
+                paragraph(package.logical_path.c_str(),teal);
+                paragraph(package.provenance.c_str());
+                ImGui::Text("Stored resolve flag: %s",package.resolve_state ? "true" : "false");
+                if (!package.name.empty()) paragraph(package.name.c_str());
+                if (!package.section.empty()) paragraph(package.section.c_str());
+                if (const auto* member = selected_package_member()) {
+                    ImGui::Separator();
+                    ImGui::Text("Member %u / file reference %u",member->index,member->file_reference);
+                    paragraph(member->specifier.c_str(),teal);
+                    paragraph(member->provenance.c_str());
+                    if (!member->diagnostic.empty()) paragraph(member->diagnostic.c_str(),amber);
+                    for (const auto& alias : member->catalog_paths) ImGui::TextWrapped("Catalog alias: %s",alias.c_str());
+                    ImGui::Text("%zu original exports / %zu scene choices",scene_package_exports_.size(),scenes_.size());
+                    if (!scene_package_exports_.empty()) {
+                        ImGui::BeginChild("package_exports",ImVec2(540,160),true);
+                        ImGuiListClipper clip;
+                        clip.Begin(static_cast<int>(scene_package_exports_.size()));
+                        while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                            const auto& exported = scene_package_exports_[static_cast<std::size_t>(row)];
+                            ImGui::Text("%d / ref %u / %s / %s",row,exported.reference_index,exported.type.c_str(),exported.name.c_str());
+                        }
+                        ImGui::EndChild();
+                    }
+                }
+                paragraph("Member and export references are resolved from original data. No game startup or automatic scene activation is performed.");
+            } else paragraph(scene_package_error_.empty() ? "No decoded package descriptor is selected." : scene_package_error_.c_str(),amber);
+            ImGui::PopTextWrapPos();
+            ImGui::EndPopup();
+        }
+        if (!scene_package_error_.empty()) paragraph(scene_package_error_.c_str(),amber);
+    }
+
     void draw_scenes() {
         title("Static scene inspector", "Original exported roots and checked placement. Game cameras, actors, collision and gameplay remain pending.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB scene.");
             if (ImGui::Button("Connect original data")) page_ = 3;
             if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
+            if (!scene_package_error_.empty()) paragraph(scene_package_error_.c_str(),amber);
             return;
         }
+        int source_mode = scene_package_mode_ ? 1 : 0;
+        ImGui::SetNextItemWidth(110);
+        if (ImGui::Combo("##scene_source_mode",&source_mode,"Resource\0Package\0")) {
+            clear_scene_document();
+            clear_scene_package();
+            scene_package_mode_ = source_mode == 1;
+            scene_archive_.reset();
+            selected_scene_archive_ = -1;
+            scene_entry_input_ = 0;
+            if (!scene_package_mode_ && !disc_->archives.empty()) select_scene_archive(0);
+        }
         if (mounted_resources_) {
-            ImGui::SetNextItemWidth(210);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(170);
             ImGui::InputTextWithHint("##scene_resource_filter","Filter logical resource path",scene_resource_filter_.data(),scene_resource_filter_.size());
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1);
-            const auto* preview = loaded_scene_resource_.empty() ? "Choose a logical resource from ndmw.igb" : loaded_scene_resource_.c_str();
+            const auto* preview = scene_package_mode_ ? (scene_package_path_.empty() ? "Choose a package descriptor" : scene_package_path_.c_str()) :
+                (loaded_scene_resource_.empty() ? "Choose a logical resource from ndmw.igb" : loaded_scene_resource_.c_str());
             if (ImGui::BeginCombo("##scene_logical_resource",preview,ImGuiComboFlags_HeightLarge)) {
                 const auto& resources = mounted_resources_->catalog().resources;
                 std::vector<std::size_t> visible;
@@ -2428,13 +2673,19 @@ private:
                 while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
                     const auto& resource = resources[visible[static_cast<std::size_t>(row)]];
                     ImGui::BeginDisabled(!resource.location);
-                    if (ImGui::Selectable(resource.logical_path.c_str(),loaded_scene_resource_ == resource.logical_path)) load_scene_resource(resource.logical_path);
+                    const bool selected = (scene_package_mode_ ? scene_package_path_ : loaded_scene_resource_) == resource.logical_path;
+                    if (ImGui::Selectable(resource.logical_path.c_str(),selected)) {
+                        if (scene_package_mode_) load_scene_package(resource.logical_path);
+                        else load_scene_resource(resource.logical_path);
+                    }
                     ImGui::EndDisabled();
                 }
                 if (visible.empty()) ImGui::TextDisabled("No matching catalog resources.");
                 ImGui::EndCombo();
             }
         } else if (!catalog_error_.empty()) paragraph(("Resource catalog unavailable: " + catalog_error_).c_str(),amber);
+        if (scene_package_mode_) draw_scene_package_members();
+        else {
         ImGui::SetNextItemWidth(170);
         const auto archive_name = scene_archive_ ? filename(scene_archive_->path()) : "Choose archive";
         if (ImGui::BeginCombo("Archive",archive_name.c_str())) {
@@ -2455,10 +2706,16 @@ private:
         ImGui::InputInt("Limit (MiB)",&scene_entry_limit_mib_,0,0);
         scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Maximum AFS entry read: 1-256 MiB.\nTraversal, geometry, images and graphics targets have independent limits.");
-        if (scene_source_.empty()) paragraph("Choose an original resource to list its explicit scene exports.");
+        }
+        if (scene_source_.empty()) paragraph(scene_package_mode_ ? "Choose an original package member to inspect its exported scene roots." :
+            "Choose an original resource to list its explicit scene exports.");
         else ImGui::TextColored(teal,"%s  |  %zu roots  |  %zu instances  |  target %d x %d / MSAA %dx",scene_source_.c_str(),scenes_.size(),
             scene_renderer_.batch_count(),scene_target_width_,scene_target_height_,scene_renderer_.samples());
-        if (scene_data_ && scene_data_->inspected_root_child)
+        if (scene_data_ && scene_data_->root_control)
+            ImGui::TextColored(teal,"Original switch command: %s / controller %u. Game startup is not running.",
+                scene_data_->root_control->command == dw4::SwitchControlCommand::all_on ? "ALLON" : "ALLOF",
+                scene_data_->root_control->controller_reference);
+        else if (scene_data_ && scene_data_->inspected_root_child)
             ImGui::TextColored(amber,"Inspection override: root child %u; runtime activation unverified.",*scene_data_->inspected_root_child);
         else if (!scenes_.empty()) ImGui::TextColored(muted,"Stored root selection / no activation override.");
         if (scenes_.empty()) {
@@ -2502,7 +2759,8 @@ private:
             if (ImGui::Button("Apply")) select_scene(selected_scene_,scene_child_input_);
         }
         ImGui::EndDisabled();
-        if (ImGui::BeginTabBar("scene_tabs")) {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(4,5));
+        if (ImGui::BeginTabBar("scene_tabs",ImGuiTabBarFlags_FittingPolicyShrink)) {
             if (ImGui::BeginTabItem("Instances")) {
                 if (scene_data_ && scene_data_->complete) {
                     ImGui::TextColored(muted,"%zu instances / %zu transforms",scene_data_->instances.size(),scene_data_->transform_nodes);
@@ -2558,6 +2816,11 @@ private:
                 paragraph("Stored static placement. The inspection camera and base-image profile do not reproduce full game scene behavior.");
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("State",nullptr,scene_state_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+                scene_state_tab_pending_ = false;
+                draw_scene_state();
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Status",nullptr,scene_status_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
                 scene_status_tab_pending_ = false;
                 if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
@@ -2577,6 +2840,7 @@ private:
             }
             ImGui::EndTabBar();
         }
+        ImGui::PopStyleVar();
         ImGui::PopStyleVar(2);
         ImGui::EndChild();
         ImGui::SameLine();
@@ -2599,6 +2863,61 @@ private:
         } else if (scene_renderer_.has_mesh() && !scene_render_failed_) draw_scene_canvas();
         else paragraph("Select a supported exported root to render its static instances.");
         ImGui::EndChild();
+    }
+
+    void draw_scene_state() {
+        if (selected_scene_ < 0 || static_cast<std::size_t>(selected_scene_) >= scenes_.size()) {
+            paragraph("Select an exported scene root to inspect its original switch controls.");
+            return;
+        }
+        const auto root_reference = scenes_[static_cast<std::size_t>(selected_scene_)].root_reference;
+        std::optional<dw4::SwitchControlInfo> selected_control;
+        std::size_t matching_controls = 0;
+        for (const auto& control : scene_switch_controls_) if (control.target_reference == root_reference) {
+            ++matching_controls;
+            if (static_cast<int>(control.reference_index) == selected_scene_switch_control_) selected_control = control;
+        }
+        paragraph("Explicit original switch commands",teal);
+        if (!scene_switch_error_.empty()) paragraph(scene_switch_error_.c_str(),amber);
+        if (!matching_controls) {
+            paragraph("No exported controller targets this exact scene root.");
+        } else {
+            const auto preview = selected_control ? std::to_string(selected_control->reference_index) + "  " + selected_control->name :
+                "Choose an exported controller";
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo("##scene_switch_control",preview.c_str())) {
+                for (const auto& control : scene_switch_controls_) if (control.target_reference == root_reference) {
+                    ImGui::PushID(static_cast<int>(control.reference_index));
+                    ImGui::BeginDisabled(!control.supported);
+                    const auto label = std::to_string(control.reference_index) + "  " + control.name;
+                    if (ImGui::Selectable(label.c_str(),selected_scene_switch_control_ == static_cast<int>(control.reference_index))) {
+                        selected_scene_switch_control_ = static_cast<int>(control.reference_index);
+                        selected_control = control;
+                    }
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Target %u / %u children / %u mask bits\n%s",control.target_reference,
+                            control.child_count,control.mask_bit_count,control.diagnostic.c_str());
+                    ImGui::EndDisabled();
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            if (selected_control) {
+                ImGui::Text("Target %u / %u children",selected_control->target_reference,selected_control->child_count);
+                if (!selected_control->diagnostic.empty()) paragraph(selected_control->diagnostic.c_str(),amber);
+            }
+            std::optional<dw4::SwitchControlCommand> command;
+            ImGui::BeginDisabled(!selected_control || !selected_control->supported);
+            if (ImGui::Button("ALLON")) command = dw4::SwitchControlCommand::all_on;
+            ImGui::SameLine();
+            if (ImGui::Button("ALLOF")) command = dw4::SwitchControlCommand::all_off;
+            ImGui::EndDisabled();
+            if (command && selected_control) select_scene(selected_scene_,std::nullopt,
+                dw4::SwitchControlRequest{selected_control->reference_index,*command});
+        }
+        if (ImGui::Button("Stored selection")) select_scene(selected_scene_);
+        paragraph("Game startup, scripts and staged loading are not running.");
+        if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
     }
 
     void draw_scene_canvas() {
@@ -2677,12 +2996,16 @@ int main(int argc, char** argv) {
                          "--archive      AFS filename inside the game directory; requires --entry.\n"
                          "--entry        Zero-based AFS entry for the selected asset viewer.\n"
                          "--resource     Logical catalog path; alternative to --archive/--entry.\n"
+                         "--package      Exact package descriptor catalog path; lists original members.\n"
+                         "--package-member Original member ordinal; requires --package and --scene-root.\n"
                          "--texture      Zero-based texture-list index (default 0).\n"
                          "--mesh         Zero-based geometry-list index; opens the Meshes page.\n"
                          "--mesh-mode    Solid, wireframe or textured mesh inspection (default solid).\n"
                          "--scene-root   Zero-based exported scene-root index; opens the Scenes page.\n"
                          "--scene-mode   Solid, wireframe or strictly textured static scene inspection.\n"
                          "--scene-inspect-child Explicitly inspect one root-switch child; runtime activation unverified.\n"
+                         "--scene-switch-control Exported controller reference; requires --scene-switch-command.\n"
+                         "--scene-switch-command all-on | all-off; explicit original command, no game startup.\n"
                          "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"

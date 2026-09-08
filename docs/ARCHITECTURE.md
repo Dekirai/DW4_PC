@@ -6,12 +6,16 @@
 graphics dependencies. `assets` reads boot, DOL, AFS and BNR structures. `igb`
 reads version 6 metadata; `igb_document` loads owned object records, memory
 payloads and validated references. `resources` resolves logical names through
-the original AFS setup, and `textures` decodes verified indexed8/RGBA8 and BC1
+the original AFS setup. `packages` follows exported file-list descriptors into
+ordered catalog-addressed members and their explicit info-list exports, retaining
+preliminary `/s` loading-stage metadata. `textures` decodes verified indexed8/RGBA8 and BC1
 base images. `meshes` decodes positions, triangle indices and explicitly requested
 UV streams. `materials` resolves a bounded local/inherited single-stage texture
 binding profile with reference provenance and unsupported-state diagnostics.
 `scenes` traverses verified static export roots into placed geometry instances,
 with explicit source paths, switch selection and bounded transform composition.
+`scene_controls` validates exported switch-controller targets and evaluates
+explicit `ALLON`/`ALLOF` child selection without modifying source bytes.
 `skinning` resolves a bounded geometry/skin/database/skeleton profile, decodes
 single-influence weights and inverse-bind frames, and evaluates explicit manual
 joint deltas or complete bone-local transforms on the CPU. `enbaya` decodes
@@ -87,6 +91,15 @@ option selects one child of a disabled root switch without changing nested
 selection or source data. The application refuses incomplete traversals and uses
 a separate batch renderer with common bounds, camera, depth and MSAA resolve.
 See [SCENES.md](SCENES.md) and [SCENE_RENDERER.md](SCENE_RENDERER.md).
+
+An alternative explicit scene option evaluates an exported `beSwitchCtrlInfo`
+command whose target must be exactly the selected root. It is exclusive with
+manual root-child inspection. The controller decoder validates export identity,
+mask layout and child types, with an aggregate child-validation budget. It does
+not construct runtime controller registrations or run the Lua scheduler. Package
+inspection similarly preserves loading-stage metadata without executing the
+original staged initialization. See [PACKAGES.md](PACKAGES.md),
+[SCENE_CONTROLS.md](SCENE_CONTROLS.md) and [SCENE_ACTIVATION.md](SCENE_ACTIVATION.md).
 
 Skin inspection requires an explicit unique skin/database association and one
 referenced skeleton. Bone-list ordinals, joint indices and per-vertex palette
