@@ -14,6 +14,16 @@ The native application builds these pinned dependencies using CMake:
 `cmake --install` includes both dependency license files. Binary packages must
 retain them. The core parsers and command-line tools have no external libraries.
 
+Lua 4 format and execution reference:
+[official Lua 4.0.1 source](https://www.lua.org/ftp/lua-4.0.1.tar.gz),
+SHA-256 `df746e149cf6939e90009d2e540eee918d585b4d1bc6d68b19316a050d484d2a`.
+The bounded C++ chunk reader and interpreter are independently implemented;
+Lua C source is not linked or vendored. An unmodified official x86 interpreter
+was built only as an ignored local validation oracle for original boot chunks.
+The native runtime intentionally has no Lua file, OS or network libraries.
+See `docs/LUA4.md` and `docs/STARTUP_HOST_RESEARCH.md` for the supported profile
+and independent comparison evidence.
+
 Research reference: [ivanno4317/dw4-gc](https://github.com/ivanno4317/dw4-gc)
 at `794294e17fef0b3ab5eeb15fda9bd57b0dc98a2b`. Its root license is CC0-1.0;
 several bundled SDK and library files have their own notices. This milestone

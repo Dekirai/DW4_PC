@@ -8,7 +8,12 @@ reads version 6 metadata; `igb_document` loads owned object records, memory
 payloads and validated references. `resources` resolves logical names through
 the original AFS setup. `packages` follows exported file-list descriptors into
 ordered catalog-addressed members and their explicit info-list exports, retaining
-preliminary `/s` loading-stage metadata. `textures` decodes verified indexed8/RGBA8 and BC1
+preliminary `/s` loading-stage metadata. `scripts` follows exported embedded Lua
+records and builds an ordered name-resolution plan with separate native
+prerequisite barriers. `lua4` parses and executes a bounded Lua 4 chunk profile
+with persistent globals, typed values and caller-supplied strict host bindings.
+`startup` executes the func/boot phases, supplies explicit inspection state,
+builds the verified common-file queue and resolves its names. `textures` decodes verified indexed8/RGBA8 and BC1
 base images. `meshes` decodes positions, triangle indices and explicitly requested
 UV streams. `materials` resolves a bounded local/inherited single-stage texture
 binding profile with reference provenance and unsupported-state diagnostics.
@@ -44,14 +49,34 @@ mode. Clip replacement validates and uploads before publishing new clip state.
 This is a visual integration boundary, without player input, collision, shadow
 composition, automatic LOD, startup execution or controller lifetime management.
 The startup research distinguishes `func.lua`, `boot.lua`, `start.lua` and
-`first.lua` dispatch order and embedded script lookup behavior; those chunks
-remain original data and are not executed by the host. See
+`first.lua` dispatch order and embedded script lookup behavior. A separate
+startup executor now runs the first two phases with a fresh persistent Lua state.
+It does not alter the scene renderer or execute the later phases. See
 [PLAYER_VIEWER.md](PLAYER_VIEWER.md) and [STARTUP_RESEARCH.md](STARTUP_RESEARCH.md).
 
 AFS payloads are read on demand with limits. Guest addresses remain integers
 inside diagnostics; they are never cast into host pointers. A validated DOL is
 not executable native code. There is currently no PowerPC execution path,
-recompiled game code, gameplay scene activation, or emulated GPU.
+recompiled PowerPC code, gameplay scene activation, or emulated GPU.
+
+Boot execution reads initial package members in preliminary-then-ordinary order,
+retaining their order within each stage and immediately exposing their Lua info
+records. Every matching func chunk runs before the boot phase begins. Unknown
+host effects, malformed data and exhausted budgets stop execution. Native CFL
+methods clear or append to a host queue, suppressing exact duplicate names while
+retaining the first call's provenance. Resolution lowercases ASCII A–Z in each
+request and searches exact catalog keys using one stable index; it never uses
+host filesystem case rules or changes the catalog's global lookup behavior.
+Failed re-resolution clears old locations and success flags before validation.
+
+The fixed boot profile reads at most 32 initial members, 64 MiB per member and
+256 MiB combined. It executes at most 64 chunks with 32,768 instructions each;
+one VM retains bounded globals, closures, strings and tables across chunks.
+The host caps total callbacks, path scan work and queue metadata. Lua file/OS/
+network APIs are absent. There is no coroutine resume past an unknown method.
+Common-resource payload loading, deferred controller registration and layer/text
+initialization form the next native barrier; start/first are never silently
+skipped or marked complete. See [STARTUP_VIEWER.md](STARTUP_VIEWER.md).
 
 The original DOL BSS envelope overlaps some initialized data sections. A future
 loader must zero the envelope before loading initialized sections or clear only

@@ -32,6 +32,12 @@ jobs:
       - name: Test catalog CLI on Linux
         if: runner.os == 'Linux'
         run: python tests/catalog_cli_tests.py build/dw4_catalog
+      - name: Test boot CLI on Windows
+        if: runner.os == 'Windows'
+        run: python tests/boot_cli_tests.py build/Debug/dw4_boot.exe
+      - name: Test boot CLI on Linux
+        if: runner.os == 'Linux'
+        run: python tests/boot_cli_tests.py build/dw4_boot
   windows-app:
     runs-on: windows-latest
     steps:
@@ -44,6 +50,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Test native app argument validation without graphics
         run: python tests/app_cli_tests.py build/Release/dw4_pc.exe
+      - name: Test boot execution argument validation without graphics
+        run: python tests/boot_cli_tests.py build/Release/dw4_boot.exe build/Release/dw4_pc.exe
       - name: Package tools and dependency notices
         run: cmake --install build --config Release --prefix dist/DW4_PC
       - uses: actions/upload-artifact@v4

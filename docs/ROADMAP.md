@@ -28,11 +28,20 @@ on explicit request. A selected original player model/instance/appearance can
 now share this scene's depth target, with the original full entry-point matrix
 replacing its authored outer model transform. Single-clip playback updates only
 the visual's vertex range. Original startup dispatch order and player-matrix
-assignment are documented, while script execution and controller state remain
-unimplemented. Continue with bounded startup execution and player lifecycle,
-then recover movement, collision and the camera. Compare matching camera/animation
+assignment are documented. The first two startup scripts now execute natively;
+later controller state remains unimplemented. Continue with startup dependencies
+and player lifecycle, then recover movement, collision and the camera. Compare matching camera/animation
 states against original frames before claiming visual parity. Explicit visual
 placement and clip playback do not establish gameplay spawning or simulation.
+
+Version 0.10 executes `func.lua` and `boot.lua` in a bounded native Lua 4 VM.
+The host implements proven common-file queue methods and explicit inspection
+state queries, retaining USA constant getters and original name/dedup rules.
+Three profiles match official Lua 4.0.1 execution call-for-call and queue-for-queue.
+Continue by consuming the queue and registering loaded info records, then
+implement layer/text prerequisites and the native calls reached by `start.lua`.
+Do not skip an unsupported host operation or mark a later startup phase complete
+because a script buffer exists. The game still has no controllable player.
 
 ## Requested PC options
 

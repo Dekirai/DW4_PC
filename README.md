@@ -1,13 +1,15 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.9 places supported animated player visuals at original map entry
-points; the game is not playable yet.** Startup execution, player movement,
-collision, combat and game saves have not been ported.
+**Version 0.10 executes the original function and boot scripts natively to build
+their common-resource queue; the game is not playable yet.** Later startup
+stages, player movement, collision, combat and game saves remain unimplemented.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
-original local files directly. The PowerPC `main.dol` is inspected as data;
-game code is not executed. This repository does not contain game files.
+original local files directly. The PowerPC `main.dol` is inspected as data and
+never executed. A bounded native Lua 4 interpreter executes selected embedded
+boot bytecode with explicitly implemented host methods. This repository does
+not contain game files.
 
 ## Current capabilities
 
@@ -18,6 +20,12 @@ game code is not executed. This repository does not contain game files.
 - Resolve logical game paths from `ndmw.igb` to checked AFS archive entries.
 - Read named package descriptors, preserve their ordered members and `/s`
   loading-stage metadata, and inspect explicitly selected member exports.
+- Read exported embedded Lua records and resolve scheduled script names with the
+  original first-match-per-info rule, preserving multiple registered matches.
+- Execute original `func.lua` and `boot.lua` with persistent Lua globals and
+  explicit player/difficulty/camera inspection inputs. Build the original
+  common-resource queue, preserve exact duplicate semantics and resolve requests
+  using the original ASCII lowercase lookup.
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -187,7 +195,7 @@ through the controller targeted by the original `first.lua` command:
 Package scene indices follow the explicit info-list order, so this is index 1
 instead of the raw-entry index 6. The **State** tab provides **ALLON**, **ALLOF**
 and **Stored selection**. This executes the verified native child-selection
-effect for one controller; original scripts and game startup are not running.
+effect for one controller; this scene view does not run original scripts or game startup.
 Use `dw4_catalog EXTRACTED_ROOT --package dng101b1.igb --member 1` to inspect
 member/export provenance without opening the graphics app. See
 [PACKAGE_VIEWER.md](docs/PACKAGE_VIEWER.md) and [SCENE_CONTROLS.md](docs/SCENE_CONTROLS.md).
@@ -211,6 +219,33 @@ application does not execute the original player-generation command or choose a
 gameplay spawn automatically. One visual is supported at a time; slot 0–3 selects
 the original model instance and matching point, without creating a multiplayer
 session. See [PLAYER_VIEWER.md](docs/PLAYER_VIEWER.md).
+
+Open **Startup** to execute a package's first two scheduled scripts. This runs
+the original Lua bytecode through native C++ code, with a strict set of resource
+queue and state-query bindings. The default inspection inputs have no joined
+players, difficulty 0 and camera mode 0; they are not imported save data.
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' `
+  --boot-package dng101b1.igb
+
+.\dist\DW4_PC\dw4_boot.exe 'E:\path\Digimon World 4 - Extracted' `
+  --package dng101b1.igb --boot-player-0 p_agumon `
+  --boot-weapon-0-0 w_sword01 --boot-weapon-0-1 w_gun01
+```
+
+The first example produces 94 distinct resource requests. The second explicitly
+configures one joined player with two weapon names and produces seven. Original
+USA country, area and pack-only methods keep their verified constant return
+value 1. The queue's exact request spelling is retained, while catalog lookup
+lowercases ASCII A–Z as the original resolver does. Every ordered host call and
+queue entry for three test profiles matches an independent official Lua 4.0.1
+reference run.
+
+Execution stops before common-resource loading, deferred controller registration
+and layer/text initialization. `start.lua` and `first.lua` do not run; this page
+does not automatically create a player or turn the scene inspector into gameplay.
+Unknown native effects stop explicitly. See [STARTUP_VIEWER.md](docs/STARTUP_VIEWER.md).
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -236,9 +271,11 @@ performs structural checks; the Python verifier additionally checks this hash.
 Original textures, logical asset lookup and object-space mesh viewing are
 available, including verified base-texture bindings, original clip decoding and
 static map inspection through named packages and original switch commands, plus
-explicitly placed animated player visuals. Original startup script order and
-player-matrix replacement have been traced. The next step is bounded startup
-execution, controller/player state and movement/collision recovery,
+explicitly placed animated player visuals. Original `func.lua` and `boot.lua`
+now execute natively through resource-queue construction. The next step is
+consuming that queue with the original registration order, implementing the
+required layer/controller state, and then reaching player generation in
+`start.lua`, followed by movement/collision recovery,
 with comparisons against captured original frames, followed by
 an original scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
@@ -257,6 +294,8 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Player visuals](docs/PLAYER_VISUAL.md) ·
 [Player placement](docs/PLAYER_PLACEMENT_RESEARCH.md) ·
 [Original startup](docs/STARTUP_RESEARCH.md) ·
+[Embedded scripts](docs/SCRIPTS.md) ·
+[Native Lua 4](docs/LUA4.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

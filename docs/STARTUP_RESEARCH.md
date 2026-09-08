@@ -152,20 +152,19 @@ These scripts depend on game state and native methods. Replaying only the
 switch command does not reproduce the earlier resource loads, actor creation,
 layer construction, flags, camera or player state.
 
-## Narrow next implementation
+## Native implementation status
 
-A bounded startup-inspection API can now produce a provenance-bearing ordered
-plan from explicitly selected loaded package members: retain their exported
-Lua-info order, validate the `_dataList -> _dataObject -> memory` chains,
-and resolve the four scheduled exact names with the original per-info matching
-rule. It should report missing embedded matches and external fallback as
-unsupported, preserve multiple matches across info lists, and limit list work,
-script bytes and duplicate-reference expansion. Synthetic fixtures can exercise
-hidden scripts, conflicting names, repeated data objects, size mismatches and
-invalid references without any game data.
+Version 0.10 implements the bounded embedded-script reader and ordered plan in
+[SCRIPTS.md](SCRIPTS.md), including the original per-info first-match rule,
+unsupported fallback, multiple matches and aggregate ownership/byte budgets.
+The separate [Lua 4 VM](LUA4.md) now executes func and boot with the verified
+native methods described in [STARTUP_HOST_RESEARCH.md](STARTUP_HOST_RESEARCH.md).
+Three explicit input profiles match an independent official Lua 4.0.1 run for
+every ordered host call and resource request.
 
-That plan would describe native scheduling and selected buffers; it would not
-be a Lua interpreter or automatically mark startup complete. Executing a
-bounded subset requires independently specified native-method effects and
-their prerequisites. Actor visual binding and explicit placement can proceed
-as separate inspected state while the full startup runtime remains pending.
+The plan itself never marks native barriers satisfied. Execution currently
+stops after common-resource queue construction/resolution, before the actual
+common loads, deferred controller registration and layer/text initialization.
+These prerequisites must be implemented before start/first execution. Explicit
+actor visual placement remains a separate inspection operation. See
+[STARTUP_VIEWER.md](STARTUP_VIEWER.md).

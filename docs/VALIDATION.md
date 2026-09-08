@@ -1,16 +1,28 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.9 placed animated player visual
-milestone, not gameplay compatibility or a finished port. Earlier archive,
-texture, skin, animation and scene corpus measurements are retained from their
-respective milestones. Player graph/placement, dynamic batch updates, focus,
-app lifecycle and serialized-string budget checks are the new acceptance work.
+GeForce RTX 5070 Ti. This records version 0.10 native func/boot execution,
+not gameplay compatibility or a finished port. Earlier asset, animation,
+placement and renderer measurements are retained from their respective
+milestones. Embedded script ownership, Lua 4 execution, native boot bindings,
+resource resolution and startup UI/CLI checks are the new acceptance work.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, packages, textures, meshes, materials, scenes, player placement, player visual, skinning, animation math, Enbaya, animations, camera, settings | 17/17 suites passed in Release |
+| CTest: existing asset/viewer suites plus scripts, Lua 4 and startup | 20/20 suites passed in Release |
+| Embedded scripts and scheduling | 67 synthetic checks plus 66 original checks passed in Release and fully instrumented AddressSanitizer; exported identity, shared records, first-match shadowing, independent native barriers and aggregate budgets |
+| Original embedded scripts | dng101b1 member 1 exports 55 supported script records; func/boot/start/first references and byte sizes match the recovered chains |
+| Native Lua 4 | 286 synthetic checks plus 10 original checks passed in Release and fully instrumented AddressSanitizer; typed stack/call/closure/table/vararg behavior, malformed chunks, invalid operands, poison-on-failure and cumulative limits |
+| Boot host/resolver fixtures | 36 checks passed in Release and fully instrumented AddressSanitizer; persistent globals, clear/exact dedup, request-only ASCII folding, call provenance, explicit unsupported effects, path/argument validation, canonical selectors and clearing stale resolution |
+| Independent original execution | Native VM and unmodified official Lua 4.0.1 match all 188 ordered host calls/arguments and all 110 total queue entries across zero/one/three-player input profiles |
+| Original zero-player boot | func: 35 instructions / 0 calls; boot: 505 instructions / 105 calls; 94 distinct requests, all catalog-resolved |
+| Original one-player boot | Slot 0 Agumon with sword01/gun01/nil: boot 310 instructions / 34 calls / 7 requests, all catalog-resolved |
+| Original three-player boot | Agumon/Vmon/Dorumon with shared weapons: boot 432 instructions / 49 calls / 9 requests, including original q_ substitution and exact dedup; all resolved |
+| Boot CLI syntax | 8 table-driven test methods cover explicit state, malformed/range/duplicate selectors, nil weapon configuration, fixed USA getters, missing values and mixed app sources; no graphics/data required |
+| Boot app lifecycle | 26 ignored native checks passed: mixed-source guards, input order, zero/one queues, success replaced by failed rerun, recovery, remount/missing mount and exact existing animated-scene pixels before/after boot success/failure; 9 additional tool CLI cases passed |
+| Final packaged startup UI | Original zero/one/three-player queues match all reference entries; finite 1280×720, 1920×1080 and 3840×2160 runs passed and screenshots were inspected; difficulty/camera variants, empty startup without data, missing/unresolved resources and slot-1-only state return the expected results |
+| Version 0.10 viewer regression | All nine pages and the existing textured, animated player scene passed finite runs with the final packaged executable |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
 | Catalog/package CLI arguments | 5 tests passed, including missing/duplicate/conflicting selectors, empty paths, signed/partial/overflow indices and index-zero handling |
@@ -24,7 +36,7 @@ app lifecycle and serialized-string budget checks are the new acceptance work.
 | Combined original map and player | BG02 plus high Agumon: 236 textured batches, six images, 31,886 static vertices plus 1,371 player vertices; full entry matrix replaces authored model-node transform |
 | Original player native variants | Package and direct-AFS sources; high/low appearance, Solid shadow, both entry groups, slots 0 and 3, waitS/runD and finite playback; unsupported shadow material and invalid resource/model/point/group/branch/clip/time fail explicitly |
 | Compact playback and 4K | 1280×720 and 3840×2160 host windows render combined scenes; actual targets 650×243 at MSAA 0 and 3210×1683 at MSAA 8; elevated inspection camera shows group 0, while nearby geometry can obscure group 1 |
-| Startup research | Original file-list manager dispatch order func/boot, then start, then first traced; start calls funcPlayerSet; embedded filename lookup and outer ONE-model matrix replacement documented; no host script execution claimed |
+| Version 0.9 startup research | Original file-list manager dispatch order func/boot, then start, then first traced; start calls funcPlayerSet; embedded filename lookup and outer ONE-model matrix replacement documented; script execution was added in version 0.10 as recorded above |
 | Package synthetic fixtures | 109 checks passed in Release and AddressSanitizer: export/member order, catalog identity, exact `/s` handling, malformed input, forged metadata, NUL-padded repeated names, boundary compatibility and allocation limits |
 | Original package integration | 8 checks passed in Release and AddressSanitizer; 97 descriptors / 195 members, including 98 preliminary `/s` members; both dng101b1 members match their AFS bytes exactly |
 | Named map export identity | `dng101b1.igb` -> ndmw entry 80 -> member 1 `[0.179]` -> explicit export 7 / scene index 1 / info 3372 / BG02 root 2877 |
@@ -108,6 +120,7 @@ python -m unittest discover -s tests -p 'test_*.py' -v
 python tests/cli_tests.py build/Release/dw4_inspect.exe
 python tests/catalog_cli_tests.py build/Release/dw4_catalog.exe
 python tests/app_cli_tests.py build/Release/dw4_pc.exe
+python tests/boot_cli_tests.py build/Release/dw4_boot.exe build/Release/dw4_pc.exe
 ```
 
 Example finite rendering check (output is local and ignored by Git):
@@ -140,8 +153,10 @@ Static scene inspection now reconstructs a bounded export/subtree profile with
 original placements and explicit root selection. The inspected BG02 switch is
 stored disabled. An explicit original ALLON command can now enable it through
 its exported controller, alongside the separate manual-child inspection option.
-Native script scheduling, staged initialization and the full runtime controller
-lifecycle remain unimplemented. Nested masks and source data remain unchanged.
+The original func/boot script order now executes in a bounded native VM and
+builds a resolved resource queue. Later staged initialization and the full
+runtime controller lifecycle remain unimplemented. Nested masks and source
+data remain unchanged. See [STARTUP_VIEWER.md](STARTUP_VIEWER.md).
 Explicit player visual placement now replaces the verified outer model matrix
 and joins original single-clip playback to the scene. It does not execute player
 generation, choose startup state, compose weapons/shadows or simulate movement.

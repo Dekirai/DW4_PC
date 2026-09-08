@@ -12,6 +12,7 @@
 #include "dw4/scenes.hpp"
 #include "dw4/scene_controls.hpp"
 #include "dw4/settings.hpp"
+#include "dw4/startup.hpp"
 #include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
 #include "mesh_renderer.hpp"
@@ -82,6 +83,8 @@ struct Options {
     std::string scene_player_animation;
     std::optional<double> scene_player_time;
     bool scene_player_play = false;
+    std::string boot_package;
+    dw4::BootInputs boot_inputs;
     bool rig = false;
     std::optional<int> bone;
     dw4::Vec3 rotation{};
@@ -139,7 +142,9 @@ Options parse_options(const std::vector<std::string>& args) {
     bool scene_mode_requested = false;
     bool page_requested = false;
     bool rotation_requested = false;
+    bool entry_limit_requested = false;
     std::set<std::string> player_options;
+    std::set<std::string> boot_options;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i].starts_with("--scene-player-") && !player_options.insert(args[i]).second)
             throw std::runtime_error("Duplicate player inspection option: " + args[i]);
@@ -147,6 +152,16 @@ Options parse_options(const std::vector<std::string>& args) {
         if (args[i] == "--rig") { out.rig = true; continue; }
         if (args[i] == "--animation-play") { out.animation_play = true; continue; }
         if (args[i] == "--scene-player-play") { out.scene_player_play = true; continue; }
+        if (args[i].starts_with("--boot-")) {
+            const auto option = args[i];
+            if (!boot_options.insert(option).second) throw std::runtime_error("Duplicate boot option: "+option);
+            if (++i == args.size()) throw std::runtime_error("Missing value for "+option);
+            if (option == "--boot-package") {
+                if (args[i].empty()) throw std::runtime_error("--boot-package requires a named package.");
+                out.boot_package = args[i];
+            } else if (!dw4::set_boot_input_option(out.boot_inputs,option,args[i])) throw std::runtime_error("Unknown option: "+option);
+            continue;
+        }
         if (args[i].starts_with("--scene-player-")) {
             const auto option = args[i];
             if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
@@ -214,12 +229,12 @@ Options parse_options(const std::vector<std::string>& args) {
             if (option == "--mesh-mode") mesh_mode_requested = true;
             else scene_mode_requested = true;
         }
-        else if (option == "--max-entry-mib") out.max_entry_mib = parse_integer_option(args[i], option, 1, 256);
+        else if (option == "--max-entry-mib") { out.max_entry_mib = parse_integer_option(args[i], option, 1, 256); entry_limit_requested = true; }
         else if (option == "--page") {
             page_requested = true;
-            const std::array<std::string,8> pages{"overview", "graphics", "controls", "assets", "textures", "meshes", "scenes", "roadmap"};
+            const std::array<std::string,9> pages{"overview", "graphics", "controls", "assets", "textures", "meshes", "scenes", "roadmap", "startup"};
             const auto found = std::find(pages.begin(), pages.end(), args[i]);
-            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures, meshes, scenes or roadmap.");
+            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures, meshes, scenes, roadmap or startup.");
             out.initial_page = static_cast<int>(found - pages.begin());
         }
         else {
@@ -285,6 +300,17 @@ Options parse_options(const std::vector<std::string>& args) {
     if (!page_requested && !scene_requested && (out.entry || !out.resource.empty())) out.initial_page = out.mesh ? 5 : 4;
     if (mesh_mode_requested && out.initial_page != 5)
         throw std::runtime_error("--mesh-mode requires the Meshes page.");
+    if (out.initial_page == 8 && (!out.package.empty() || !out.resource.empty() || out.entry || out.mesh || out.rig || texture_requested || scene_mode_requested))
+        throw std::runtime_error("The Startup page requires --boot-package rather than viewer source selectors.");
+    if (!boot_options.empty()) {
+        if (out.boot_package.empty()) throw std::runtime_error("Boot inspection state requires --boot-package NAME.");
+        if (entry_limit_requested) throw std::runtime_error("--max-entry-mib applies to asset viewers; boot execution uses its documented fixed member and aggregate limits.");
+        if (!out.package.empty() || !out.resource.empty() || out.entry || out.mesh || out.rig || texture_requested ||
+            scene_requested || mesh_mode_requested || !player_options.empty())
+            throw std::runtime_error("Boot execution cannot be combined with scene, mesh or texture inspection sources.");
+        if (page_requested && out.initial_page != 8) throw std::runtime_error("Boot options require --page startup when --page is specified.");
+        dw4::validate_boot_inputs(out.boot_inputs); out.initial_page = 8;
+    }
     return out;
 }
 
@@ -475,6 +501,17 @@ public:
             if (!options_.data.empty() && !disc_) {
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
+            }
+            if (!options_.boot_package.empty()) {
+                if (!boot_report_ || !boot_report_->boot_scripts_completed || !boot_report_->resources_resolved || !boot_error_.empty()) {
+                    std::cerr << "Boot execution failed: " << (!boot_error_.empty() ? boot_error_ : boot_report_ ? boot_report_->diagnostic : "No report.") << '\n';
+                    return 3;
+                }
+                std::cout << "Original boot scripts executed: " << boot_report_->scripts.size() << " / " << boot_report_->instructions
+                    << " instructions / " << boot_report_->host_calls << " native calls / " << boot_report_->resources.size() << " unique common resources\n"
+                    << "Boot folder: " << boot_report_->folder << " / explicit difficulty " << boot_report_->inputs.difficulty
+                    << " / camera " << boot_report_->inputs.camera_mode << '\n'
+                    << "Next native barrier: " << boot_report_->next_barrier << '\n';
             }
             if (!options_.package.empty()) {
                 if (!scene_package_ || !scene_package_error_.empty()) {
@@ -772,6 +809,12 @@ private:
     bool scene_player_tab_pending_ = false, scene_player_focus_pending_ = false;
     dw4::viewer::MeshDrawMode scene_mode_ = dw4::viewer::MeshDrawMode::solid;
     std::vector<SDL_Gamepad*> gamepads_;
+    std::optional<dw4::BootReport> boot_report_;
+    std::string boot_error_;
+    std::array<char,256> boot_package_input_{};
+    dw4::BootInputs boot_inputs_;
+    std::array<std::array<char,129>,4> boot_player_names_{};
+    std::array<std::array<std::array<char,129>,3>,4> boot_weapon_names_{};
 
     void capture_frame(int width, int height) {
         if (width <= 0 || height <= 0 || width > 16384 || height > 16384)
@@ -942,6 +985,16 @@ private:
                 scene_player_tab_pending_ = true;
             }
         }
+        if (!options_.boot_package.empty()) {
+            std::snprintf(boot_package_input_.data(),boot_package_input_.size(),"%s",options_.boot_package.c_str());
+            boot_inputs_ = options_.boot_inputs;
+            for (std::size_t p = 0; p < 4; ++p) {
+                std::snprintf(boot_player_names_[p].data(),boot_player_names_[p].size(),"%s",boot_inputs_.players[p].model_name.c_str());
+                for (std::size_t s = 0; s < 3; ++s) if (boot_inputs_.players[p].weapon_names[s])
+                    std::snprintf(boot_weapon_names_[p][s].data(),boot_weapon_names_[p][s].size(),"%s",boot_inputs_.players[p].weapon_names[s]->c_str());
+            }
+            run_boot_inspection(options_.boot_package);
+        }
     }
 
     void create_window(int msaa) {
@@ -965,6 +1018,7 @@ private:
     }
 
     void mount_data() {
+        boot_report_.reset(); boot_error_.clear();
         clear_texture_document();
         clear_mesh_document();
         clear_scene_document();
@@ -1933,7 +1987,7 @@ private:
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        const std::array<const char*, 8> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Meshes", "Scenes", "Roadmap"};
+        const std::array<const char*, 9> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Meshes", "Scenes", "Roadmap", "Startup"};
         for (int i = 0; i < static_cast<int>(pages.size()); ++i) {
             ImGui::PushID(i);
             if (ImGui::Selectable(pages[static_cast<std::size_t>(i)], page_ == i, 0, ImVec2(0, 32))) page_ = i;
@@ -1956,6 +2010,7 @@ private:
         if (page_ == 5) draw_meshes();
         if (page_ == 6) draw_scenes();
         if (page_ == 7) draw_roadmap();
+        if (page_ == 8) draw_boot();
         if (!notice_.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
@@ -3319,6 +3374,85 @@ private:
         }
     }
 
+    void run_boot_inspection(const std::string& path) {
+        boot_report_.reset(); boot_error_.clear();
+        try {
+            if (!mounted_resources_) throw std::runtime_error("Mount the original game data before running boot scripts.");
+            boot_report_ = dw4::inspect_package_boot(*mounted_resources_,path,boot_inputs_);
+            if (!boot_report_->boot_scripts_completed) boot_error_ = boot_report_->diagnostic;
+            else if (!boot_report_->resources_resolved) boot_error_ = "Some requested resources do not resolve to readable original catalog entries.";
+        } catch (const std::exception& error) { boot_error_ = error.what(); }
+    }
+
+    void draw_boot() {
+        title("Original boot scripts", "Execute func.lua and boot.lua natively to build the original common-resource queue from explicit inspection inputs.");
+        bool changed = false;
+        ImGui::SetNextItemWidth(std::max(200.0f,ImGui::GetContentRegionAvail().x-230.0f));
+        changed |= ImGui::InputTextWithHint("##boot_package","Logical package descriptor",boot_package_input_.data(),boot_package_input_.size());
+        ImGui::SameLine();
+        const bool run = ImGui::Button("Run boot scripts");
+        if (ImGui::CollapsingHeader("Inspection inputs",boot_report_ ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+            paragraph("These values are explicit test state, not an imported save. USA country, area and pack-only getters retain their original constant 1.");
+            ImGui::SetNextItemWidth(95); changed |= ImGui::InputInt("Difficulty (0-2)",&boot_inputs_.difficulty,0,0);
+            ImGui::SameLine(); ImGui::SetNextItemWidth(95); changed |= ImGui::InputInt("Camera (0-1)",&boot_inputs_.camera_mode,0,0);
+            for (std::size_t p = 0; p < 4; ++p) {
+                ImGui::PushID(static_cast<int>(p));
+                const auto label = "Player "+std::to_string(p);
+                changed |= ImGui::Checkbox(label.c_str(),&boot_inputs_.players[p].joined);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(170);
+                changed |= ImGui::InputTextWithHint("##boot_model","Model name",boot_player_names_[p].data(),boot_player_names_[p].size());
+                if (boot_inputs_.players[p].joined && ImGui::TreeNode("Weapon names (empty = nil)")) {
+                    for (std::size_t s = 0; s < 3; ++s) {
+                        ImGui::SetNextItemWidth(170); const auto slot = "Slot "+std::to_string(s);
+                        changed |= ImGui::InputText(slot.c_str(),boot_weapon_names_[p][s].data(),boot_weapon_names_[p][s].size());
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+        }
+        if (changed) { boot_report_.reset(); boot_error_.clear(); }
+        if (run) {
+            for (std::size_t p = 0; p < 4; ++p) {
+                auto& player = boot_inputs_.players[p];
+                player.model_name = player.joined ? boot_player_names_[p].data() : "";
+                for (std::size_t s = 0; s < 3; ++s) player.weapon_names[s] = player.joined && boot_weapon_names_[p][s][0] ?
+                    std::optional<std::string>(boot_weapon_names_[p][s].data()) : std::nullopt;
+            }
+            run_boot_inspection(boot_package_input_.data());
+        }
+        if (!boot_error_.empty()) paragraph(boot_error_.c_str(),amber);
+        if (!boot_report_) { paragraph("Choose a package and run its first two scheduled scripts. Unknown native effects stop with a diagnostic."); return; }
+        const auto& report = *boot_report_;
+        ImGui::Spacing();
+        ImGui::TextColored(report.boot_scripts_completed ? teal : amber,"%s  |  %zu scripts  |  %llu instructions  |  %zu resources",
+            report.folder.c_str(),report.scripts.size(),static_cast<unsigned long long>(report.instructions),report.resources.size());
+        paragraph(report.next_barrier.c_str(),amber);
+        for (const auto& script : report.scripts) {
+            ImGui::TextColored(script.completed ? teal : amber,"%s: %s / %llu instructions / %llu native calls",script.name.c_str(),
+                script.completed ? "executed" : "stopped",static_cast<unsigned long long>(script.instructions),static_cast<unsigned long long>(script.host_calls));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nInfo %u / script index %u\n%s",script.source.c_str(),script.info_reference,script.data_index,script.diagnostic.c_str());
+        }
+        const float height = std::max(160.0f,ImGui::GetContentRegionAvail().y-70.0f);
+        if (ImGui::BeginTable("boot_queue",3,ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,ImVec2(0,height))) {
+            ImGui::TableSetupColumn("Order",ImGuiTableColumnFlags_WidthFixed,55);
+            ImGui::TableSetupColumn("Original resource request");
+            ImGui::TableSetupColumn("Catalog location",ImGuiTableColumnFlags_WidthFixed,170);
+            ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
+            ImGuiListClipper clip; clip.Begin(static_cast<int>(report.resources.size()));
+            while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                const auto& request = report.resources[static_cast<std::size_t>(row)];
+                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("%d",row);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(request.logical_path.c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s / PC %zu",request.source.c_str(),request.prototype.c_str(),request.pc);
+                ImGui::TableNextColumn();
+                if (request.location) ImGui::Text("Archive %u / %u",request.location->archive_index,request.location->entry_index);
+                else { ImGui::TextColored(amber,"Unresolved"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",request.diagnostic.c_str()); }
+            }
+            ImGui::EndTable();
+        }
+    }
+
     void draw_roadmap() {
         title("The path to a playable port", "A staged development plan. Features below are not available until their implementation is verified.");
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
@@ -3357,7 +3491,7 @@ int main(int argc, char** argv) {
                          "--smoke-test   Render 1-10000 hidden native frames, then exit.\n"
                          "               Does not write settings or launch any emulator.\n"
                          "--screenshot   Save the final smoke-test frame to a BMP path.\n"
-                         "--page         Open overview, graphics, controls, assets, textures, meshes, scenes or roadmap.\n"
+                         "--page         Open overview, graphics, controls, assets, textures, meshes, scenes, roadmap or startup.\n"
                          "--archive      AFS filename inside the game directory; requires --entry.\n"
                          "--entry        Zero-based AFS entry for the selected asset viewer.\n"
                          "--resource     Logical catalog path; alternative to --archive/--entry.\n"
@@ -3379,6 +3513,10 @@ int main(int argc, char** argv) {
                          "--scene-player-group Entry-point group index. Placement replaces the outer model transform.\n"
                          "--scene-player-animation Original clip name; optional --scene-player-time in seconds.\n"
                          "--scene-player-play Start the selected player clip; smoke tests require 2+ frames.\n"
+                         "--boot-package Execute original func/boot scripts of a named package; opens Startup.\n"
+                         "--boot-difficulty 0..2 and --boot-camera 0..1: explicit inspection inputs, default 0.\n"
+                         "--boot-player-N NAME Join slot N=0..3 with this model; default no joined slots.\n"
+                         "--boot-weapon-N-S NAME Weapon for player N, slot S=0..2; omitted slots return nil.\n"
                          "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"
