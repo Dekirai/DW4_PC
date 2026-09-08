@@ -7,7 +7,7 @@ estimated before the missing engine and game logic have been measured.
 | Stage | Deliverable | Acceptance | Status |
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, manual rig inspection and original single-clip animation available for verified profiles; scene transforms, full materials and reference comparison pending |
+| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation and static scene/subtree inspection available for verified profiles; full materials and original-frame comparison pending |
 | 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
@@ -19,9 +19,13 @@ estimated before the missing engine and game logic have been measured.
 The Agumon viewer decodes original compressed animation tracks and evaluates
 complete bone transforms, including helpers. Synthetic fixtures and original DOL
 arithmetic establish the current sampling, quaternion and hierarchy profile.
-Continue stage 1 by comparing matching animation times against recorded original
-frames, then verify scene placement and recover the required actor/combiner state.
-Clip playback alone does not establish movement, collision or combat behavior.
+The scene viewer now composes verified static transforms and preserves ordered
+draw instances. The `BG02` map subtree requires an explicit inspection override
+because its root switch is stored disabled. Continue by recovering the game's
+map activation and actor placement/combiner state, then connect a supported
+animated actor to a verified scene. Compare matching camera/animation states
+against original frames before claiming visual parity. Static inspection and
+clip playback do not establish movement, collision or combat behavior.
 
 ## Requested PC options
 
@@ -32,7 +36,7 @@ Clip playback alone does not establish movement, collision or combat behavior.
 | 16:9 | Stored preference only | Camera, culling, HUD and menus adapted |
 | 144 FPS | Workbench frame pacing | Presentation decoupled from measured original simulation |
 | VSync Off | Host OpenGL swap-interval request | Validated frame pacing in gameplay |
-| MSAA 8x | Host context and mesh viewport requests; actual samples reported and offscreen resolve tested | Full scene target and material coverage validation |
+| MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
 | Keyboard / Mouse | Tool UI input | Complete bindings and appropriate mouse camera support |
 | Xbox / PlayStation | SDL device inspection | Tested gameplay mappings, hotplug and prompts |
 | GameCube | SDL-mapped devices when available | Original mapping, dead zones and adapter support |

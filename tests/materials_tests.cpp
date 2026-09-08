@@ -189,6 +189,7 @@ void synthetic() {
     check(result.scope_node_reference == f.scope && result.inherited,"Record inherited scope");
     check(result.inheritance_path == std::vector<std::uint32_t>{f.owner,f.scope},"Record unique parent path");
     check(result.attribute_list_reference == f.scope_attrs && result.texture_bind_reference == f.bind,"Record attribute and bind references");
+    check(result.state_scope_node_reference==f.scope,"Legacy material enable state uses its binding scope");
     check(result.texture_reference == f.texture && result.image_reference == f.image,"Use explicit image reference, not first image");
     check(result.image_name == "explicit-target.dds" && result.geometry_node_name == "Synthetic geometry","Read target names");
     check(result.wrap_s == MaterialWrap::repeat && result.wrap_t == MaterialWrap::repeat &&
@@ -255,6 +256,119 @@ void synthetic() {
     rejected(bad,"Bound inheritance traversal depth");
     check(!resolve_igb_material(f.document(),f.image).supported,"Reject selected non-geometry object");
     check(!resolve_igb_material(f.document(),99999).supported,"Reject invalid selected reference");
+
+    const auto on_path=[](const Fixture& graph, const std::vector<std::uint32_t>& path) {
+        return resolve_igb_material_on_path(graph.document(),graph.geom,path);
+    };
+    result=on_path(f,{f.scope,f.owner});
+    check(result.supported && result.image_reference==f.image,"Explicit instance path resolves inherited texture");
+    check(result.inheritance_path==std::vector<std::uint32_t>{f.owner,f.scope},"Explicit path provenance retains owner-to-scope order");
+    check(!on_path(f,{f.owner}).supported,"Do not infer texture state above the selected scene root");
+    check(!on_path(f,{}).supported,"Reject empty material path");
+    check(!on_path(f,{f.scope,f.image}).supported,"Reject non-node material path");
+    check(!on_path(f,{f.owner,f.scope}).supported,"Reject disconnected material path");
+    check(!on_path(f,std::vector<std::uint32_t>(65,f.scope)).supported,"Bound explicit material path depth");
+    bad=f; bad.scalar(bad.owner,7,bad.list(node_list,{bad.scope}));
+    check(!on_path(bad,{bad.scope,bad.owner,bad.scope}).supported,"Reject cyclic material path");
+    bad=f; bad.contents(bad.owner_attrs,{bad.geom,bad.geom});
+    check(!on_path(bad,{bad.scope,bad.owner}).supported,"Reject duplicate geometry ownership in explicit path");
+    bad=f; bad.contents(bad.scope_children,{bad.owner,bad.image});
+    check(!on_path(bad,{bad.scope,bad.owner}).supported,"Reject invalid sibling on explicit path edge");
+
+    auto shared=f;
+    const auto second_image=shared.add(image_type); shared.text(second_image,22,"second-instance.dds");
+    const auto second_texture=shared.add(texture_attr); shared.records[second_texture]=shared.records[shared.texture];
+    shared.scalar(second_texture,12,second_image);
+    const auto second_bind=shared.add(texture_bind); shared.scalar(second_bind,4,second_texture);
+    const auto second_scope=shared.add(attr_set); shared.scalar(second_scope,7,shared.scope_children);
+    shared.scalar(second_scope,8,shared.list(attr_list,{shared.state,second_bind}));
+    check(!shared.resolve().supported,"Global parent lookup remains ambiguous for shared instances");
+    const auto first=on_path(shared,{shared.scope,shared.owner}), second=on_path(shared,{second_scope,shared.owner});
+    check(first.supported && second.supported && first.image_reference==shared.image && second.image_reference==second_image,
+        "Same shared geometry uses distinct verified textures on distinct scene paths");
+    const auto second_owner=shared.add(geometry_node); shared.scalar(second_owner,8,shared.owner_attrs);
+    shared.contents(shared.scope_children,{shared.owner,second_owner});
+    check(on_path(shared,{second_scope,second_owner}).image_reference==second_image,"Explicit path distinguishes multiple geometry owners");
+    Fixture local(true);
+    check(on_path(local,{local.owner}).supported,"One-node path supports complete local binding");
+    for (const auto type : {texgen_attr,extra_texture_attr}) {
+        auto inherited=local;const auto modifier=inherited.add(type);
+        inherited.contents(inherited.scope_attrs,{modifier});
+        check(!on_path(inherited,{inherited.scope,inherited.owner}).supported,
+            "A local bind does not reset inherited texture-coordinate state");
+        check(inherited.resolve().supported,"Legacy local material inspection keeps its previous scope boundary");
+        check(on_path(inherited,{inherited.owner}).supported,"State outside the explicit root is not inferred");
+    }
+    for (const auto type : {texture_bind,texture_state}) {
+        auto inherited=local;const auto attribute=inherited.add(type);
+        inherited.scalar(attribute,4,type==texture_bind?inherited.texture:1);
+        inherited.scalar(attribute,5,1);inherited.contents(inherited.scope_attrs,{attribute});
+        check(!on_path(inherited,{inherited.scope,inherited.owner}).supported,
+            "A local unit-zero bind does not disable inherited other texture units");
+    }
+    auto overridden=local;const auto ancestor_state=overridden.add(texture_state);
+    overridden.scalar(ancestor_state,4,0);overridden.contents(overridden.scope_attrs,{ancestor_state});
+    check(on_path(overridden,{overridden.scope,overridden.owner}).supported,
+        "A valid disabled ancestor unit-zero state is overridden by a nearer enabled state");
+    overridden.scalar(ancestor_state,4,2);
+    check(!on_path(overridden,{overridden.scope,overridden.owner}).supported,
+        "Malformed ancestor booleans are rejected even when their state is shadowed");
+    overridden=local;overridden.contents(overridden.scope_attrs,{overridden.bind});
+    check(on_path(overridden,{overridden.scope,overridden.owner}).supported,
+        "A shadowed unit-zero binding need not have an enable state in its own scope");
+    overridden=local;overridden.scalar(overridden.state,4,0);
+    check(!on_path(overridden,{overridden.scope,overridden.owner}).supported,
+        "The nearest disabled texture state is not bypassed by path validation");
+    overridden=local;overridden.contents(overridden.scope_attrs,{overridden.image});
+    check(!on_path(overridden,{overridden.scope,overridden.owner}).supported,
+        "Malformed ancestor attribute lists cannot hide above a local binding");
+    for (const auto target : {local.image,null_ref}) {
+        overridden=local;const auto malformed_bind=overridden.add(texture_bind);
+        overridden.scalar(malformed_bind,4,target);overridden.contents(overridden.scope_attrs,{malformed_bind});
+        check(!on_path(overridden,{overridden.scope,overridden.owner}).supported,
+            "Malformed ancestor texture binding references reject even when shadowed");
+    }
+    auto split=f;
+    split.contents(split.scope_attrs,{split.state});split.contents(split.owner_attrs,{split.geom,split.bind});
+    result=on_path(split,{split.scope,split.owner});
+    check(result.supported && result.image_reference==split.image,
+        "An owner binding independently inherits enable state from its ancestor");
+    check(result.scope_node_reference==split.owner && result.state_scope_node_reference==split.scope
+        && result.attribute_list_reference==split.owner_attrs && result.inherited,
+        "Independent state and binding scopes retain distinct provenance");
+    check(result.inheritance_path==std::vector<std::uint32_t>{split.owner,split.scope},
+        "Material provenance reaches the farther inherited enable scope");
+    check(!split.resolve().supported,"Legacy resolver does not merge partial scopes");
+    split=f;split.contents(split.scope_attrs,{split.bind});split.contents(split.owner_attrs,{split.geom,split.state});
+    result=on_path(split,{split.scope,split.owner});
+    check(result.supported && result.scope_node_reference==split.scope && result.state_scope_node_reference==split.owner,
+        "An owner enable state independently inherits its ancestor binding");
+    split.scalar(split.state,4,0);
+    check(!on_path(split,{split.scope,split.owner}).supported,"Nearest disabled state suppresses an inherited binding");
+    split=f;split.contents(split.scope_attrs,{split.state});split.contents(split.owner_attrs,{split.geom,split.bind});
+    split.scalar(split.state,4,0);
+    check(!on_path(split,{split.scope,split.owner}).supported,"A nearer binding does not enable a disabled inherited state");
+    for (const auto attribute : {local.bind,local.state}) {
+        overridden=local;overridden.contents(overridden.scope_attrs,{attribute,attribute});
+        check(!on_path(overridden,{overridden.scope,overridden.owner}).supported,
+            "Duplicate attributes remain ambiguous even in a shadowed ancestor scope");
+    }
+    split=f;
+    const auto farther=split.add(attr_set);split.scalar(farther,7,split.list(node_list,{split.scope}));
+    split.scalar(farther,8,split.list(attr_list,{split.state}));
+    split.contents(split.scope_attrs,{split.bind});
+    result=on_path(split,{farther,split.scope,split.owner});
+    check(result.supported && result.scope_node_reference==split.scope && result.state_scope_node_reference==farther
+        && result.inheritance_path==std::vector<std::uint32_t>{split.owner,split.scope,farther},
+        "Binding and enable state can come from separate ancestor levels");
+    const auto nearer_image=split.add(image_type);split.text(nearer_image,22,"nearest-binding.dds");
+    const auto nearer_texture=split.add(texture_attr);split.records[nearer_texture]=split.records[split.texture];
+    split.scalar(nearer_texture,12,nearer_image);
+    const auto nearer_bind=split.add(texture_bind);split.scalar(nearer_bind,4,nearer_texture);
+    split.contents(split.owner_attrs,{split.geom,nearer_bind});
+    result=on_path(split,{farther,split.scope,split.owner});
+    check(result.supported && result.image_reference==nearer_image && result.scope_node_reference==split.owner
+        && result.state_scope_node_reference==farther,"Nearest binding wins independently of its farther enable state");
 }
 
 void inspect_original(const IgbDocument& document, std::uint32_t geometry, bool require_supported) {

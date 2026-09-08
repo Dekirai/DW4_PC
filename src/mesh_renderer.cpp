@@ -151,6 +151,15 @@ GLint filter_mode(MeshTextureFilter mode) {
     throw std::runtime_error("Unknown mesh texture filter mode");
 }
 
+std::uint64_t image_bytes(const RgbaImage& image) {
+    if (!image.width || !image.height || image.width > 16384 || image.height > 16384)
+        throw std::runtime_error("Texture upload dimensions or RGBA byte count are invalid");
+    const auto size = std::uint64_t(image.width) * image.height * 4;
+    if (size > 64u * 1024u * 1024u || size != image.rgba.size())
+        throw std::runtime_error("Texture upload dimensions or RGBA byte count are invalid");
+    return size;
+}
+
 constexpr const char* vertex_source = R"GLSL(#version 330 core
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec2 texture_coordinate;
@@ -187,11 +196,19 @@ void main() {
 
 class MeshRenderer::Impl {
 public:
+    struct DrawBatch {
+        std::size_t first_index{}, index_count{};
+        GLuint texture{};
+        bool allow_solid_fallback{};
+    };
     Gl gl;
     GLuint program{}, vao{}, vertex_buffer{}, index_buffer{}, base_texture{};
     GLuint draw_fbo{}, resolve_fbo{}, texture{}, depth_buffer{}, color_buffer{};
     GLint matrix_location{-1}, mode_location{-1}, texture_location{-1};
     bool has_uv{};
+    bool batch_mode{};
+    std::vector<DrawBatch> batches;
+    std::vector<GLuint> batch_textures;
     std::array<double, 3> center{};
     double radius = 1;
     std::vector<float> vertices;
@@ -206,12 +223,38 @@ public:
         if (vertex_buffer) gl.DeleteBuffers(1, &vertex_buffer);
         if (index_buffer) gl.DeleteBuffers(1, &index_buffer);
         vao = vertex_buffer = index_buffer = 0;
-        index_count = 0; frames = 0; has_uv = false;
+        index_count = 0; frames = 0; has_uv = false; batch_mode = false;
+        batches.clear();
         vertices.clear(); center = {}; radius = 1;
     }
     void release_texture() {
         if (base_texture) glDeleteTextures(1, &base_texture);
         base_texture = 0;
+        for (const auto image : batch_textures) glDeleteTextures(1, &image);
+        batch_textures.clear();
+        for (auto& batch : batches) batch.texture = 0;
+    }
+    GLuint upload_texture(const RgbaImage& image, const MeshTextureOptions& options) {
+        const auto wrap_u = wrap_mode(options.wrap_u), wrap_v = wrap_mode(options.wrap_v);
+        const auto min_filter = filter_mode(options.min_filter), mag_filter = filter_mode(options.mag_filter);
+        GLint maximum = 0; glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
+        if (maximum <= 0 || image.width > static_cast<std::uint32_t>(maximum)
+            || image.height > static_cast<std::uint32_t>(maximum))
+            throw std::runtime_error("Mesh image exceeds the driver's texture size limit");
+        GLuint name{};
+        try {
+            gl.ActiveTexture(GL_TEXTURE0); gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0); glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+            glGenTextures(1, &name); glBindTexture(GL_TEXTURE_2D, name);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_u); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_v);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width), static_cast<GLsizei>(image.height),
+                0, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+            check_gl("Uploading mesh texture");
+        } catch (...) { if (name) glDeleteTextures(1, &name); throw; }
+        return name;
     }
     void release_targets() {
         if (draw_fbo) gl.DeleteFramebuffers(1, &draw_fbo);
@@ -313,7 +356,21 @@ MeshRenderer::~MeshRenderer() = default;
 void MeshRenderer::shutdown() { impl_.reset(); }
 void MeshRenderer::clear() { if (impl_) impl_->release_mesh(); }
 bool MeshRenderer::has_mesh() const noexcept { return impl_ && impl_->index_count != 0; }
-bool MeshRenderer::has_texture() const noexcept { return has_mesh() && impl_->has_uv && impl_->base_texture != 0; }
+bool MeshRenderer::has_texture() const noexcept {
+    return has_mesh() && textured_batch_count() == batch_count();
+}
+std::size_t MeshRenderer::batch_count() const noexcept {
+    return has_mesh() ? (impl_->batch_mode ? impl_->batches.size() : 1) : 0;
+}
+std::size_t MeshRenderer::textured_batch_count() const noexcept {
+    if (!has_mesh()) return 0;
+    if (!impl_->batch_mode) return impl_->has_uv && impl_->base_texture ? 1 : 0;
+    return static_cast<std::size_t>(std::count_if(impl_->batches.begin(), impl_->batches.end(),
+        [](const Impl::DrawBatch& batch) { return batch.texture != 0; }));
+}
+std::size_t MeshRenderer::texture_count() const noexcept {
+    return has_mesh() ? (impl_->batch_mode ? impl_->batch_textures.size() : impl_->base_texture ? 1 : 0) : 0;
+}
 void MeshRenderer::clear_texture() { if (impl_) impl_->release_texture(); }
 std::size_t MeshRenderer::triangle_count() const noexcept { return impl_ ? impl_->index_count / 3 : 0; }
 std::uint64_t MeshRenderer::rendered_frames() const noexcept { return impl_ ? impl_->frames : 0; }
@@ -380,9 +437,121 @@ void MeshRenderer::upload(const MeshData& mesh) {
     } catch (...) { state.release_mesh(); throw; }
 }
 
+void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
+    clear();
+    constexpr std::size_t maximum_vertices = 4194304;
+    constexpr std::size_t maximum_indices = 4194304 * 3;
+    constexpr std::uint64_t maximum_images = 256u * 1024u * 1024u;
+    constexpr auto no_image = std::numeric_limits<std::size_t>::max();
+    if (batches.empty() || batches.size() > 4096)
+        throw std::runtime_error("Scene upload requires between 1 and 4096 batches");
+    struct ImageUpload { const RgbaImage* image; MeshTextureOptions options; };
+    std::vector<ImageUpload> images;
+    std::vector<std::size_t> image_indices;
+    image_indices.reserve(batches.size());
+    std::uint64_t total_image_bytes{};
+    std::size_t total_vertices{}, total_indices{};
+    std::array<double, 3> low{}, high{};
+    bool first = true;
+    for (const auto& batch : batches) {
+        if (!batch.mesh) throw std::runtime_error("Scene batch has no source mesh");
+        const auto& mesh = *batch.mesh;
+        if (mesh.positions.empty() || mesh.positions.size() > maximum_vertices - total_vertices
+            || mesh.indices.empty() || mesh.indices.size() % 3
+            || mesh.indices.size() > maximum_indices - total_indices)
+            throw std::runtime_error("Scene upload exceeds its aggregate vertex or triangle limit");
+        total_vertices += mesh.positions.size(); total_indices += mesh.indices.size();
+        if ((!mesh.texcoords.empty() && mesh.texcoords.size() != mesh.positions.size())
+            || (batch.texture && mesh.texcoords.empty()))
+            throw std::runtime_error("Textured scene batches require one UV pair per vertex");
+        for (const auto& position : mesh.positions) {
+            const std::array<double, 3> value{position.x, position.y, position.z};
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                if (!std::isfinite(value[axis])) throw std::runtime_error("Scene upload contains a non-finite coordinate");
+                low[axis] = first ? value[axis] : std::min(low[axis], value[axis]);
+                high[axis] = first ? value[axis] : std::max(high[axis], value[axis]);
+            }
+            first = false;
+        }
+        for (const auto& uv : mesh.texcoords)
+            if (!std::isfinite(uv.u) || !std::isfinite(uv.v))
+                throw std::runtime_error("Scene upload contains a non-finite UV coordinate");
+        for (const auto index : mesh.indices)
+            if (index >= mesh.positions.size()) throw std::runtime_error("Scene index exceeds its own batch's vertex buffer");
+        auto image_index = no_image;
+        if (batch.texture) {
+            const auto bytes = image_bytes(*batch.texture);
+            wrap_mode(batch.texture_options.wrap_u); wrap_mode(batch.texture_options.wrap_v);
+            filter_mode(batch.texture_options.min_filter); filter_mode(batch.texture_options.mag_filter);
+            for (std::size_t i = 0; i < images.size(); ++i)
+                if (images[i].image == batch.texture && images[i].options == batch.texture_options) { image_index = i; break; }
+            if (image_index == no_image) {
+                if (bytes > maximum_images - total_image_bytes)
+                    throw std::runtime_error("Scene upload exceeds the 256-MiB unique texture limit");
+                total_image_bytes += bytes;
+                image_index = images.size(); images.push_back({batch.texture, batch.texture_options});
+            }
+        }
+        image_indices.push_back(image_index);
+    }
+    std::array<double, 3> center{};
+    double radius_squared{};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        center[axis] = (low[axis] + high[axis]) * 0.5;
+        const auto half_extent = (high[axis] - low[axis]) * 0.5;
+        radius_squared += half_extent * half_extent;
+    }
+    const auto radius = std::sqrt(radius_squared);
+    if (!std::isfinite(radius) || radius == 0) throw std::runtime_error("Scene has no finite spatial extent to display");
+    std::vector<float> vertices;
+    std::vector<std::uint32_t> indices;
+    std::vector<Impl::DrawBatch> draws;
+    vertices.reserve(total_vertices * 5); indices.reserve(total_indices); draws.reserve(batches.size());
+    std::uint32_t vertex_base{};
+    for (const auto& batch : batches) {
+        const auto& mesh = *batch.mesh;
+        draws.push_back({indices.size(), mesh.indices.size(), 0, batch.allow_solid_fallback});
+        for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
+            const auto& position = mesh.positions[i];
+            vertices.push_back(static_cast<float>((position.x - center[0]) / radius));
+            vertices.push_back(static_cast<float>((position.y - center[1]) / radius));
+            vertices.push_back(static_cast<float>((position.z - center[2]) / radius));
+            const auto uv = mesh.texcoords.empty() ? Vec2{} : mesh.texcoords[i];
+            vertices.push_back(uv.u); vertices.push_back(uv.v);
+        }
+        for (const auto index : mesh.indices) indices.push_back(vertex_base + index);
+        vertex_base += static_cast<std::uint32_t>(mesh.positions.size());
+    }
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    auto& state = *impl_;
+    SavedState saved(state.gl); discard_prior_errors();
+    try {
+        state.ensure_program();
+        state.batch_textures.reserve(images.size());
+        state.gl.GenVertexArrays(1, &state.vao); state.gl.BindVertexArray(state.vao);
+        state.gl.GenBuffers(1, &state.vertex_buffer); state.gl.BindBuffer(GL_ARRAY_BUFFER, state.vertex_buffer);
+        state.gl.BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(float)), vertices.data(), GL_STATIC_DRAW);
+        state.gl.EnableVertexAttribArray(0); state.gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), nullptr);
+        state.gl.EnableVertexAttribArray(1); state.gl.VertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
+            reinterpret_cast<const void*>(3 * sizeof(float)));
+        state.gl.GenBuffers(1, &state.index_buffer); state.gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, state.index_buffer);
+        state.gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)), indices.data(), GL_STATIC_DRAW);
+        check_gl("Uploading shared scene geometry");
+        for (const auto& image : images) state.batch_textures.push_back(state.upload_texture(*image.image, image.options));
+        for (std::size_t i = 0; i < draws.size(); ++i)
+            if (image_indices[i] != no_image) draws[i].texture = state.batch_textures[image_indices[i]];
+        state.batches = std::move(draws);
+        state.index_count = indices.size(); state.batch_mode = true;
+        state.center = center; state.radius = radius;
+        // Static batches do not keep a second CPU copy of the interleaved VBO.
+        // The source scene owns its original world positions independently.
+    } catch (...) { state.release_mesh(); throw; }
+}
+
 void MeshRenderer::update_positions(std::span<const Vec3> positions) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded for a pose update");
     auto& state = *impl_;
+    if (state.batch_mode) throw std::runtime_error("Static scene batches do not support single-mesh pose updates");
     if (positions.size() != state.vertices.size() / 5)
         throw std::runtime_error("Pose vertex count must match the uploaded mesh");
     auto updated = state.vertices;
@@ -423,36 +592,27 @@ std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point
 }
 
 void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions& options) {
+    if (impl_ && impl_->batch_mode)
+        throw std::runtime_error("Scene materials must be supplied through upload_batches");
     clear_texture();
     if (!has_mesh() || !impl_->has_uv) throw std::runtime_error("A textured mesh requires a UV pair for every vertex");
-    const auto size = std::uint64_t(image.width) * image.height * 4;
-    if (!image.width || !image.height || image.width > 16384 || image.height > 16384 || size > 64u * 1024u * 1024u || size != image.rgba.size())
-        throw std::runtime_error("Texture upload dimensions or RGBA byte count are invalid");
-    const auto wrap_u = wrap_mode(options.wrap_u), wrap_v = wrap_mode(options.wrap_v);
-    const auto min_filter = filter_mode(options.min_filter), mag_filter = filter_mode(options.mag_filter);
+    image_bytes(image);
     auto& state = *impl_;
     SavedState saved(state.gl); discard_prior_errors();
-    GLint maximum = 0; glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
-    if (image.width > static_cast<std::uint32_t>(maximum) || image.height > static_cast<std::uint32_t>(maximum))
-        throw std::runtime_error("Mesh image exceeds the driver's texture size limit");
-    try {
-        state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1); glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0); glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-        glGenTextures(1, &state.base_texture); glBindTexture(GL_TEXTURE_2D, state.base_texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_u); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_v);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(image.width), static_cast<GLsizei>(image.height),
-            0, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
-        check_gl("Uploading mesh texture");
-    } catch (...) { state.release_texture(); throw; }
+    try { state.base_texture = state.upload_texture(image, options); }
+    catch (...) { state.release_texture(); throw; }
 }
 
 std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& camera,
     MeshDrawMode mode, int requested_samples) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded");
-    if (mode == MeshDrawMode::textured && !has_texture()) throw std::runtime_error("No verified mesh texture and UVs are uploaded");
+    if (mode == MeshDrawMode::textured) {
+        if (impl_->batch_mode) {
+            for (const auto& batch : impl_->batches)
+                if (!batch.texture && !batch.allow_solid_fallback)
+                    throw std::runtime_error("Scene Textured mode requires a verified image and UVs for every batch");
+        } else if (!has_texture()) throw std::runtime_error("No verified mesh texture and UVs are uploaded");
+    }
     if (width < 1 || height < 1 || width > 4096 || height > 4096 || std::uint64_t(width) * height > 8388608)
         throw std::runtime_error("Mesh viewport exceeds the 4096-axis / 8-megapixel limit");
     const auto matrix = camera.view_projection(static_cast<float>(width) / height);
@@ -472,14 +632,27 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
     state.gl.UniformMatrix4fv(state.matrix_location, 1, GL_FALSE, matrix.data());
     state.gl.Uniform1i(state.mode_location, mode == MeshDrawMode::wireframe ? 1 : mode == MeshDrawMode::textured ? 2 : 0);
     if (mode == MeshDrawMode::textured) {
-        state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindSampler(0, 0); glBindTexture(GL_TEXTURE_2D, state.base_texture);
+        state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindSampler(0, 0);
         state.gl.Uniform1i(state.texture_location, 0);
         // Basic inspection compositing, not the original material/alpha state.
         glEnable(GL_BLEND); state.gl.BlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
         state.gl.BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
     state.gl.BindVertexArray(state.vao);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(state.index_count), GL_UNSIGNED_INT, nullptr);
+    if (state.batch_mode) {
+        for (const auto& batch : state.batches) {
+            if (mode == MeshDrawMode::textured) {
+                state.gl.Uniform1i(state.mode_location, batch.texture ? 2 : 0);
+                glBindTexture(GL_TEXTURE_2D, batch.texture);
+            }
+            const auto offset = static_cast<std::uintptr_t>(batch.first_index * sizeof(std::uint32_t));
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(batch.index_count), GL_UNSIGNED_INT,
+                reinterpret_cast<const void*>(offset));
+        }
+    } else {
+        if (mode == MeshDrawMode::textured) glBindTexture(GL_TEXTURE_2D, state.base_texture);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(state.index_count), GL_UNSIGNED_INT, nullptr);
+    }
     if (state.sample_count) {
         state.gl.BindFramebuffer(GL_READ_FRAMEBUFFER, state.draw_fbo);
         state.gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, state.resolve_fbo);

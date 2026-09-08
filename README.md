@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.6 adds original animation decoding and native clip inspection;
-the game is not playable yet.** Gameplay, 3D scenes, combat and game saves
+**Version 0.7 adds static scene traversal and native map-subtree inspection;
+the game is not playable yet.** Gameplay scene activation, combat and game saves
 have not been ported.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
@@ -26,6 +26,10 @@ game code is not executed. This repository does not contain game files.
   matrices; inspect the joint hierarchy and manually pose supported meshes.
 - Decode bounded Enbaya animation streams and inspect supported original clips
   with time seeking and playback, including helper-bone transforms.
+- Traverse verified static scene exports with original transforms, ordered
+  switch selection and separate instances for shared graph paths.
+- Inspect placed map geometry under one camera and depth target, with explicit
+  root-child inspection for stored disabled exports and per-instance textures.
 - Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
@@ -33,7 +37,7 @@ game code is not executed. This repository does not contain game files.
 - Inspect SDL-detected gamepads and live input.
 - Save settings locally and validate malformed configuration values.
 
-Graphics settings currently affect the **development window and mesh viewer**. Saved gameplay,
+Graphics settings currently affect the **development window and asset viewers**. Saved gameplay,
 aspect ratio and controller preferences are preparation for future work;
 they do not implement game features. A 144 FPS workbench does not establish
 that DW4 gameplay runs correctly at 144 FPS.
@@ -144,8 +148,23 @@ paused inspection:
 ```
 
 All 82 Agumon clips decode under the current profile. This is a single-clip asset
-viewer: actor state, animation blending, action events, scene placement and
+viewer: actor state, animation blending, action events, actor scene placement and
 comparison against captured original gameplay remain separate work.
+
+Open **Scenes** for static map inspection. The following example selects the
+`BG02` export in `ndmw.afs[179]` and explicitly inspects child zero of its disabled
+root switch:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --archive ndmw.afs --entry 179 --scene-root 6 --scene-inspect-child 0 --scene-mode textured
+```
+
+This subtree contains 235 geometry instances placed through 219 transforms.
+The amber inspection label identifies the root override; nested switches retain
+their stored masks. Omitting `--scene-inspect-child` preserves the empty stored
+selection. This is a view of the original map assets, not a loaded gameplay
+level. The page exposes source paths, matrices and unsupported-state diagnostics.
+See [SCENE_VIEWER.md](docs/SCENE_VIEWER.md) and [SCENES.md](docs/SCENES.md).
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -169,10 +188,10 @@ performs structural checks; the Python verifier additionally checks this hash.
 ## Next milestones
 
 Original textures, logical asset lookup and object-space mesh viewing are
-available, including a verified base-texture binding profile and inverse-bind
-joint inspection and original clip decoding. The next step is comparison against
-captured original animation frames and verified scene transforms, followed by an original scene with a
-controllable Digimon. Reconstructing
+available, including verified base-texture bindings, original clip decoding and
+static map-subtree inspection. The next step is recovered map activation and
+actor placement, with comparisons against captured original frames, followed by
+an original scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
 [Roadmap and acceptance criteria](docs/ROADMAP.md) ·
@@ -183,6 +202,7 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Material bindings](docs/MATERIALS.md) ·
 [Skinning](docs/SKINNING.md) ·
 [Animation loading](docs/ANIMATIONS.md) ·
+[Static scenes](docs/SCENES.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

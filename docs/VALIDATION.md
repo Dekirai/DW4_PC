@@ -1,13 +1,15 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.6 original-clip inspection milestone,
-not gameplay compatibility or a finished port.
+GeForce RTX 5070 Ti. This records the version 0.7 static-scene inspection milestone,
+not gameplay compatibility or a finished port. Earlier archive, texture, skin and
+animation corpus measurements are retained from their respective milestones;
+the scene, path-material and batch-rendering checks are the new acceptance work.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, skinning, animation math, Enbaya, animations, camera, settings | 13/13 suites passed in Release |
+| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, scenes, skinning, animation math, Enbaya, animations, camera, settings | 14/14 suites passed in Release |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
 | USA DOL identity | SHA-1 matches `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` |
@@ -64,6 +66,17 @@ not gameplay compatibility or a finished port.
 | Initial five UI pages | Version 0.1 hidden rendering tests passed; overview, graphics and archive screenshots inspected |
 | 4K/MSAA context | 3840×2160 framebuffer, actual 8 samples, VSync Off reported by native graphics page |
 | Start without game data | Passed; data can be selected later |
+| Static scene fixtures | 80 active checks passed in Release and AddressSanitizer: transforms, DAG instances, ordered geometry emission, masks, explicit inspection, malformed data, incomplete diagnostics and limits |
+| Instance-path materials | 96 synthetic checks passed in Release and AddressSanitizer, including independently inherited bind/enable scopes and full-path texture-modifier rejection |
+| Original BG02 stored state | `ndmw.afs[179]`, scene index 6 / info 3372 / root 2877: stored root mask is zero, so default traversal remains empty |
+| Original BG02 explicit inspection | Root child 0: 462 node visits, 219 transforms, 235 instances from 29 geometry attributes; 31,886 placed vertices and 26,352 triangles; complete static traversal |
+| Independent scene placement | Separate raw-graph traversal and original instruction arithmetic match all 235 owner/geometry/path tuples; matrix component error 0 and maximum world-position component error 9.5367431640625e-7 |
+| Original scene texture coverage | All 235 instances have verified path bindings and correctly sized UVs; 5 unique images decode to 528,384 RGBA bytes |
+| Native scene GPU | Shared placement, differently textured batches, opaque occlusion independent of draw order, texture sharing, one MSAA target, state restoration and malformed/budget rejection passed in Release and AddressSanitizer |
+| Native BG02 scene | Solid, Wireframe and Textured finite renders passed; 720p controls fit and the 1080p scene target uses actual 8-sample MSAA |
+| Native scene at 4K | 3840×2160 host window, 3210×1683 textured scene target, actual 8-sample MSAA, all 235 batches and 5 images retained |
+| Eight-page and viewer regression | All eight pages, original font, manual Agumon pose and textured runD inspection passed finite native runs |
+| Scene error handling | Empty stored selection, invalid root/child, non-switch override, missing source and unsupported dynamic branch exit 3; invalid/mixed CLI options exit 1 |
 
 Run `scripts/build.ps1 -Package` to reproduce the Windows build and CTest.
 The additional synthetic checks are:
@@ -83,6 +96,7 @@ Example finite rendering check (output is local and ignored by Git):
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --screenshot work/agumon-textured.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --rig --bone 8 --rotate-z 45 --screenshot work/agumon-manual-pose.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --animation runD --animation-time 0.2 --screenshot work/agumon-animation.bmp
+.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --archive ndmw.afs --entry 179 --scene-root 6 --scene-inspect-child 0 --scene-mode textured --screenshot work/bg02-scene.bmp
 .\build\Release\dw4_renderer_tests.exe
 ```
 
@@ -92,11 +106,18 @@ check used a local settings file requesting 3840×2160 and MSAA 8x. Borderless
 desktop mode was implemented but not exercised in the hidden-window test.
 
 No physical controller was connected during validation; Xbox, PlayStation and
-GameCube hardware behavior remains unverified. Scene construction, actor and
+GameCube hardware behavior remains unverified. Gameplay scene activation, actor and
 animation-combiner behavior, gameplay, audio, saves, online co-op and modding remain
 unimplemented. Original clip inspection includes helper transforms; skinning
 still requires single influences and identity selector transforms. See
 [SKINNING.md](SKINNING.md) and [ANIMATIONS.md](ANIMATIONS.md).
+Static scene inspection now reconstructs a bounded export/subtree profile with
+original placements and explicit root selection. The inspected BG02 switch is
+stored disabled; its labeled root-child override is not recovered game activation.
+Nested masks and source data remain unchanged. The scene renderer applies base
+images with inspection shading; original lighting, render passes, culling and
+transparent-surface ordering are still outstanding. See [SCENES.md](SCENES.md),
+[SCENE_RESEARCH.md](SCENE_RESEARCH.md) and [SCENE_RENDERER.md](SCENE_RENDERER.md).
 The mesh viewer displays stored or posed positions with inspection shading or a
 verified base-texture binding. Full original materials and comparison against
 recorded gameplay frames remain outstanding. The 3,208 supported bindings are a limited profile, not a claim that all

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@ struct MaterialInfo {
     std::uint32_t geometry_reference{};
     std::optional<std::uint32_t> geometry_node_reference;
     std::optional<std::uint32_t> scope_node_reference;
+    std::optional<std::uint32_t> state_scope_node_reference;
     std::optional<std::uint32_t> attribute_list_reference;
     std::optional<std::uint32_t> texture_bind_reference;
     std::optional<std::uint32_t> texture_reference;
@@ -25,7 +27,9 @@ struct MaterialInfo {
     std::string image_name;
     std::string provenance;
     bool inherited{};
-    // Owner-to-binding-scope references. The caller can display the exact path.
+    // Owner through the farthest selected binding/state scope. Both scopes are
+    // identical for the legacy resolver; explicit scene paths can inherit them
+    // independently. attribute_list_reference is the binding scope's list.
     std::vector<std::uint32_t> inheritance_path;
     MaterialWrap wrap_s{MaterialWrap::repeat};
     MaterialWrap wrap_t{MaterialWrap::repeat};
@@ -42,5 +46,16 @@ struct MaterialInfo {
 // Unsupported/ambiguous state returns supported=false with a diagnostic.
 // The result does not decode UVs/pixels or reconstruct lighting and animation.
 MaterialInfo resolve_igb_material(const IgbDocument& document, std::uint32_t geometry_reference);
+
+// Resolve the same narrow profile on an explicit root-to-geometry-node path.
+// Every edge and geometry ownership is checked. Other parents of shared nodes
+// do not affect this instance; state above the supplied root is not inferred.
+// All supplied ancestor scopes are checked for unhandled texture modifiers and
+// other texture units, even above a complete local unit-zero bind/state pair.
+// The nearest binding and nearest enable state are selected independently;
+// scope_node_reference identifies the binding, state_scope_node_reference its
+// enabling state. Duplicate attributes within one scope remain unsupported.
+MaterialInfo resolve_igb_material_on_path(const IgbDocument& document,
+    std::uint32_t geometry_reference, std::span<const std::uint32_t> root_to_owner);
 
 } // namespace dw4

@@ -227,6 +227,127 @@ void pose_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra
     renderer.clear();
     check(!renderer.has_texture(), "Clearing a posed mesh retained its texture");
 }
+
+void scene_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    auto quad = [](float x, float z, float extent) {
+        dw4::MeshData mesh;
+        mesh.positions = {{x-extent,-extent,z},{x+extent,-extent,z},{x+extent,extent,z},{x-extent,extent,z}};
+        mesh.indices = {0,1,2,0,2,3}; mesh.texcoords.assign(4,{.25f,.25f});
+        return mesh;
+    };
+    auto color_count = [](const std::vector<std::uint8_t>& image, std::array<std::uint8_t,3> color) {
+        std::size_t count{};
+        for (std::size_t i=0;i<image.size();i+=4)
+            if (image[i]==color[0] && image[i+1]==color[1] && image[i+2]==color[2]) ++count;
+        return count;
+    };
+    dw4::OrbitCamera camera; camera.orbit(-.65f,-.35f);
+    auto left=quad(-1,0,.6f),right=quad(1,0,.6f);
+    const dw4::RgbaImage red{1,1,{255,0,0,255}},green{1,1,{0,255,0,255}};
+    std::array<MeshBatch,2> batches{{{&left,&red},{&right,&green}}};
+    TextureCallerState caller;
+    renderer.upload_batches(batches); caller.verify();
+    check(renderer.batch_count()==2 && renderer.textured_batch_count()==2 && renderer.texture_count()==2
+        && renderer.triangle_count()==4 && renderer.has_texture(),"Scene upload lost batches, textures or aggregate triangles");
+    const auto target=renderer.render(128,128,camera,MeshDrawMode::textured);
+    const auto separated=pixels(target,128,128); caller.verify();
+    check(color_count(separated,{255,0,0})>400 && color_count(separated,{0,255,0})>400,
+        "World-positioned batches were independently centered or lost their distinct materials");
+    const auto left_center=renderer.project_to_canvas({-1,0,0},camera,1);
+    const auto right_center=renderer.project_to_canvas({1,0,0},camera,1);
+    check(left_center && right_center && left_center->x<.4f && right_center->x>.6f,
+        "Scene batches did not use one shared source normalization");
+    const auto rendered=renderer.rendered_frames();
+    rejects([&]{renderer.update_positions(left.positions);});
+    rejects([&]{renderer.set_texture(red);});
+    check(renderer.rendered_frames()==rendered && renderer.texture_count()==2,
+        "Unsupported single-mesh operation changed the static scene");
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==separated,
+        "Rejected pose/material mutation corrupted the previous scene");
+    auto disposable_left=left, disposable_right=right;
+    auto disposable_red=red, disposable_green=green;
+    batches={{{&disposable_left,&disposable_red},{&disposable_right,&disposable_green}}};
+    renderer.upload_batches(batches);
+    disposable_left.positions.clear(); disposable_right.positions.clear();
+    disposable_red.rgba.clear(); disposable_green.rgba.clear();
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==separated,
+        "Scene rendering retained borrowed geometry or image buffers after upload");
+
+    auto front=quad(0,.5f,.5f),back=quad(0,-.5f,.9f);
+    batches={{{&front,&red},{&back,&green}}}; renderer.upload_batches(batches);
+    const auto ordered=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    check(color_count(ordered,{255,0,0})>400 && color_count(ordered,{0,255,0})>200,
+        "Scene draw batches did not share their color/depth target");
+    const auto middle=(64u*128+64)*4;
+    check(ordered[middle]==255 && ordered[middle+1]==0,"Front scene geometry failed to occlude a later back batch");
+    std::reverse(batches.begin(),batches.end()); renderer.upload_batches(batches);
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==ordered,
+        "Opaque scene visibility depends on batch order instead of shared depth");
+    const auto msaa=renderer.render(160,96,camera,MeshDrawMode::textured,8);
+    check(coverage(pixels(msaa,160,96))>500,"Shared scene target failed to resize or resolve MSAA");
+    check(renderer.render(160,96,camera,MeshDrawMode::textured,8)==msaa,
+        "Unchanged scene framebuffer request did not reuse its target");
+    const auto solid=pixels(renderer.render(128,128,camera,MeshDrawMode::solid),128,128);
+    const auto wire=pixels(renderer.render(128,128,camera,MeshDrawMode::wireframe),128,128);
+    check(coverage(solid)>500 && coverage(wire)>40 && coverage(wire)<coverage(solid),
+        "Global scene Solid/Wireframe overrides failed");
+    caller.verify();
+
+    const dw4::RgbaImage atlas{2,1,{255,0,0,255,0,255,0,255}};
+    left.texcoords.assign(4,{1.25f,.25f});right.texcoords=left.texcoords;
+    MeshTextureOptions repeat; repeat.min_filter=repeat.mag_filter=MeshTextureFilter::nearest;
+    auto clamp=repeat;clamp.wrap_u=MeshTextureWrap::clamp_to_edge;
+    batches={{{&left,&atlas,repeat},{&right,&atlas,clamp}}}; renderer.upload_batches(batches);
+    const auto samplers=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    check(renderer.texture_count()==2 && color_count(samplers,{255,0,0})>400 && color_count(samplers,{0,255,0})>400,
+        "Scene texture sharing incorrectly merged different per-batch sampler options");
+    batches[1].texture_options=repeat; renderer.upload_batches(batches);
+    check(renderer.texture_count()==1 && renderer.textured_batch_count()==2,
+        "Repeated image identity and equal sampler were uploaded more than once");
+    renderer.clear_texture(); caller.verify();
+    check(renderer.has_mesh() && renderer.batch_count()==2 && renderer.texture_count()==0 && !renderer.has_texture(),
+        "Clearing scene textures destroyed geometry or retained shared image handles");
+    rejects([&]{renderer.render(128,128,camera,MeshDrawMode::textured);});
+
+    batches={{{&left,&red},{&right}}}; renderer.upload_batches(batches);
+    check(renderer.textured_batch_count()==1 && !renderer.has_texture(),"Incomplete texture coverage was reported as complete");
+    rejects([&]{renderer.render(128,128,camera,MeshDrawMode::textured);});
+    check(coverage(pixels(renderer.render(128,128,camera,MeshDrawMode::solid),128,128))>500,
+        "Missing scene texture should leave explicit Solid inspection available");
+    batches[1].allow_solid_fallback=true;renderer.upload_batches(batches);
+    check(color_count(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128),{255,0,0})>400,
+        "Caller-authorized mixed inspection lost the verified textured batch");
+    auto malformed=left;malformed.indices[0]=4;
+    batches[0].mesh=&malformed;
+    rejects([&]{renderer.upload_batches(batches);});
+    check(!renderer.has_mesh() && renderer.batch_count()==0 && renderer.texture_count()==0,
+        "Failed scene replacement retained stale geometry or textures");
+    malformed=left;malformed.texcoords.pop_back();rejects([&]{renderer.upload_batches(batches);});
+    malformed=left;malformed.positions[0].x=std::numeric_limits<float>::infinity();rejects([&]{renderer.upload_batches(batches);});
+    malformed=left;malformed.texcoords[0].u=std::numeric_limits<float>::quiet_NaN();rejects([&]{renderer.upload_batches(batches);});
+    malformed=left;malformed.texcoords.clear();rejects([&]{renderer.upload_batches(batches);});
+    auto bad_image=red;bad_image.rgba.pop_back();batches[0]={&left,&bad_image,{},true};
+    rejects([&]{renderer.upload_batches(batches);}); // Invalid supplied images cannot silently become Solid.
+    batches[0]={nullptr};rejects([&]{renderer.upload_batches(batches);});
+    rejects([&]{renderer.upload_batches({});});
+    std::vector<MeshBatch> excessive(4097,{&left});
+    rejects([&]{renderer.upload_batches(excessive);});
+    auto many_vertices=left;many_vertices.positions.resize(1025);many_vertices.texcoords.clear();
+    excessive.assign(4096,{&many_vertices});rejects([&]{renderer.upload_batches(excessive);});
+    auto many_triangles=left;many_triangles.indices.assign(1025*3,0);
+    excessive.assign(4096,{&many_triangles});rejects([&]{renderer.upload_batches(excessive);});
+    // Five distinct sampler variants would allocate 320 MiB. The aggregate
+    // budget must reject this before any large image reaches the GPU.
+    const dw4::RgbaImage large{4096,4096,std::vector<std::uint8_t>(64u*1024u*1024u,255)};
+    excessive.assign(5,{&left,&large});
+    excessive[1].texture_options.wrap_u=MeshTextureWrap::clamp_to_edge;
+    excessive[2].texture_options.wrap_u=MeshTextureWrap::mirrored_repeat;
+    excessive[3].texture_options.wrap_v=MeshTextureWrap::clamp_to_edge;
+    excessive[4].texture_options.wrap_v=MeshTextureWrap::mirrored_repeat;
+    rejects([&]{renderer.upload_batches(excessive);});
+    caller.verify();renderer.clear();
+}
 }
 int main() {
     Context context;
@@ -283,11 +404,12 @@ int main() {
             rejects([&] { renderer.upload(malformed); });
             texture_checks(renderer, tetra, camera);
             pose_checks(renderer, tetra, camera);
+            scene_checks(renderer);
             renderer.upload(tetra); renderer.clear();
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {

@@ -10,6 +10,8 @@ the original AFS setup, and `textures` decodes verified indexed8/RGBA8 and BC1
 base images. `meshes` decodes positions, triangle indices and explicitly requested
 UV streams. `materials` resolves a bounded local/inherited single-stage texture
 binding profile with reference provenance and unsupported-state diagnostics.
+`scenes` traverses verified static export roots into placed geometry instances,
+with explicit source paths, switch selection and bounded transform composition.
 `skinning` resolves a bounded geometry/skin/database/skeleton profile, decodes
 single-influence weights and inverse-bind frames, and evaluates explicit manual
 joint deltas or complete bone-local transforms on the CPU. `enbaya` decodes
@@ -23,7 +25,7 @@ and workbench.
 AFS payloads are read on demand with limits. Guest addresses remain integers
 inside diagnostics; they are never cast into host pointers. A validated DOL is
 not executable native code. There is currently no PowerPC execution path,
-recompiled game code, scene loader, or emulated GPU.
+recompiled game code, gameplay scene activation, or emulated GPU.
 
 The original DOL BSS envelope overlaps some initialized data sections. A future
 loader must zero the envelope before loading initialized sections or clear only
@@ -49,12 +51,13 @@ filesystem file against its ISO extent.
    a verified base-texture binding profile are displayed in Textured mode.
    Inverse-bind hierarchy inspection and manual single-influence skinning are
    available for a verified profile. Original Enbaya clips are decoded and
-   evaluated with checked full-bone transforms. Scene transforms, full material
+   evaluated with checked full-bone transforms. Static export traversal and
+   original instance transforms are available for a verified profile. Full material
    state, actor/combiner behavior and comparison with the original renderer remain.
    See [SKINNING.md](SKINNING.md), [TEXTURES.md](TEXTURES.md),
    [MATERIALS.md](MATERIALS.md), [MESHES.md](MESHES.md) and the evidence in
    [MESH_RESEARCH.md](MESH_RESEARCH.md).
-4. Reconstruct scene traversal, animation and actor state. Replace OS/DVD/PAD/GX
+4. Extend static traversal into gameplay scene activation, animation and actor state. Replace OS/DVD/PAD/GX
    boundaries with native services using explicit interfaces.
 5. Recover game loop, combat, inventory, scene transitions and persistence in
    narrow, behavior-tested increments. Retain a trace from each adapted function
@@ -72,7 +75,18 @@ Textured mode explicitly reads the UV stream and bound image and uploads them to
 the GPU. Unsupported bindings do not prevent solid geometry inspection. Binding
 resolution uses object references and a unique checked ancestor path; asset names
 are diagnostic labels, never a texture-selection fallback. This deliberately
-limited resolver is not a complete scene-state traversal engine.
+limited resolver is not a complete scene-state traversal engine. For static scene
+instances, a separate path-aware resolver validates the exact supplied ancestry
+and independently inherits unit-zero binding and enable state. Shared graph nodes
+therefore retain the material of each placement without guessing a global parent.
+
+The scene decoder follows an explicitly selected `igSceneInfo` root and records
+unsupported behavior instead of flattening dynamic or unknown nodes. Stored
+switch bits remain authoritative by default. A separate, labeled inspection
+option selects one child of a disabled root switch without changing nested
+selection or source data. The application refuses incomplete traversals and uses
+a separate batch renderer with common bounds, camera, depth and MSAA resolve.
+See [SCENES.md](SCENES.md) and [SCENE_RENDERER.md](SCENE_RENDERER.md).
 
 Skin inspection requires an explicit unique skin/database association and one
 referenced skeleton. Bone-list ordinals, joint indices and per-vertex palette

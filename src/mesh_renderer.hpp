@@ -19,8 +19,20 @@ struct MeshTextureOptions {
     MeshTextureWrap wrap_v = MeshTextureWrap::repeat;
     MeshTextureFilter min_filter = MeshTextureFilter::linear;
     MeshTextureFilter mag_filter = MeshTextureFilter::linear;
+    bool operator==(const MeshTextureOptions&) const = default;
 };
 struct MeshCanvasPoint { float x{}, y{}; };
+
+struct MeshBatch {
+    // Positions must already be in one shared scene coordinate space.
+    // Pointers are borrowed only for upload_batches; no host data is retained.
+    const MeshData* mesh{};
+    const RgbaImage* texture{};
+    MeshTextureOptions texture_options{};
+    // The caller must explicitly label mixed-material inspection. Otherwise
+    // Textured rejects any batch without a verified image and UV stream.
+    bool allow_solid_fallback{};
+};
 
 // Requires the application's current OpenGL 3.3 context for upload/render/clear.
 // Call shutdown before destroying that context. Construction performs no GL work.
@@ -31,6 +43,11 @@ public:
     MeshRenderer(const MeshRenderer&) = delete;
     MeshRenderer& operator=(const MeshRenderer&) = delete;
     void upload(const MeshData& mesh);
+    // Upload all instances into one shared normalization, VBO/index buffer and
+    // depth/MSAA target. Limits: 4,096 batches; 4,194,304 vertices and triangles;
+    // 256 MiB of GPU image copies, with the existing 64 MiB per-image limit.
+    // Shared image pointers with equal sampler options use one GPU texture.
+    void upload_batches(std::span<const MeshBatch> batches);
     // Update a pose in source coordinates while keeping the initial camera
     // normalization, UVs, indices and texture. The vertex count must match.
     // Invalid input leaves the last valid pose available.
@@ -52,7 +69,11 @@ public:
     std::uint32_t render(int width, int height, const OrbitCamera& camera,
         MeshDrawMode mode, int requested_samples = 0);
     bool has_mesh() const noexcept;
+    // True only when all uploaded batches have verified texture/UV data.
     bool has_texture() const noexcept;
+    std::size_t batch_count() const noexcept;
+    std::size_t textured_batch_count() const noexcept;
+    std::size_t texture_count() const noexcept;
     std::size_t triangle_count() const noexcept;
     std::uint64_t rendered_frames() const noexcept;
     int samples() const noexcept;

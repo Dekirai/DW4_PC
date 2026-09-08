@@ -6,6 +6,7 @@
 #include "dw4/materials.hpp"
 #include "dw4/meshes.hpp"
 #include "dw4/resources.hpp"
+#include "dw4/scenes.hpp"
 #include "dw4/settings.hpp"
 #include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
@@ -27,6 +28,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -63,6 +65,9 @@ struct Options {
     int texture = 0;
     std::optional<int> mesh;
     dw4::viewer::MeshDrawMode mesh_mode = dw4::viewer::MeshDrawMode::solid;
+    std::optional<int> scene_root;
+    std::optional<int> scene_inspect_child;
+    dw4::viewer::MeshDrawMode scene_mode = dw4::viewer::MeshDrawMode::solid;
     bool rig = false;
     std::optional<int> bone;
     dw4::Vec3 rotation{};
@@ -117,6 +122,7 @@ Options parse_options(const std::vector<std::string>& args) {
     Options out;
     bool texture_requested = false;
     bool mesh_mode_requested = false;
+    bool scene_mode_requested = false;
     bool page_requested = false;
     bool rotation_requested = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
@@ -125,7 +131,8 @@ Options parse_options(const std::vector<std::string>& args) {
         if (args[i] == "--animation-play") { out.animation_play = true; continue; }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
             args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
-            args[i] != "--mesh" && args[i] != "--mesh-mode" && args[i] != "--bone" &&
+            args[i] != "--mesh" && args[i] != "--mesh-mode" && args[i] != "--scene-root" && args[i] != "--scene-mode" &&
+            args[i] != "--scene-inspect-child" && args[i] != "--bone" &&
             args[i] != "--rotate-x" && args[i] != "--rotate-y" && args[i] != "--rotate-z" &&
             args[i] != "--animation" && args[i] != "--animation-time")
             throw std::runtime_error("Unknown option: " + args[i]);
@@ -139,6 +146,8 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--entry") out.entry = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
         else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--scene-root") out.scene_root = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--scene-inspect-child") out.scene_inspect_child = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--bone") out.bone = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--animation") {
             if (args[i].empty()) throw std::runtime_error("--animation requires an original clip name.");
@@ -152,19 +161,21 @@ Options parse_options(const std::vector<std::string>& args) {
             if (option == "--rotate-z") out.rotation.z = angle;
             rotation_requested = true;
         }
-        else if (option == "--mesh-mode") {
-            if (args[i] == "solid") out.mesh_mode = dw4::viewer::MeshDrawMode::solid;
-            else if (args[i] == "wireframe") out.mesh_mode = dw4::viewer::MeshDrawMode::wireframe;
-            else if (args[i] == "textured") out.mesh_mode = dw4::viewer::MeshDrawMode::textured;
-            else throw std::runtime_error("--mesh-mode requires solid, wireframe or textured.");
-            mesh_mode_requested = true;
+        else if (option == "--mesh-mode" || option == "--scene-mode") {
+            auto& mode = option == "--mesh-mode" ? out.mesh_mode : out.scene_mode;
+            if (args[i] == "solid") mode = dw4::viewer::MeshDrawMode::solid;
+            else if (args[i] == "wireframe") mode = dw4::viewer::MeshDrawMode::wireframe;
+            else if (args[i] == "textured") mode = dw4::viewer::MeshDrawMode::textured;
+            else throw std::runtime_error(option + " requires solid, wireframe or textured.");
+            if (option == "--mesh-mode") mesh_mode_requested = true;
+            else scene_mode_requested = true;
         }
         else if (option == "--max-entry-mib") out.max_entry_mib = parse_integer_option(args[i], option, 1, 256);
         else if (option == "--page") {
             page_requested = true;
-            const std::array<std::string,7> pages{"overview", "graphics", "controls", "assets", "textures", "meshes", "roadmap"};
+            const std::array<std::string,8> pages{"overview", "graphics", "controls", "assets", "textures", "meshes", "scenes", "roadmap"};
             const auto found = std::find(pages.begin(), pages.end(), args[i]);
-            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures, meshes or roadmap.");
+            if (found == pages.end()) throw std::runtime_error("--page requires overview, graphics, controls, assets, textures, meshes, scenes or roadmap.");
             out.initial_page = static_cast<int>(found - pages.begin());
         }
         else {
@@ -193,6 +204,14 @@ Options parse_options(const std::vector<std::string>& args) {
     if (rotation_requested && !out.bone)
         throw std::runtime_error("Rotation controls require an explicit --bone INDEX.");
     if (out.rig && !out.mesh) out.mesh = 0;
+    const bool scene_requested = out.scene_root || out.scene_inspect_child || scene_mode_requested || out.initial_page == 6;
+    if (scene_requested && (out.mesh || texture_requested || mesh_mode_requested))
+        throw std::runtime_error("Scene inspection cannot be combined with mesh, rig, animation or texture selection.");
+    if ((out.scene_root || out.scene_inspect_child || scene_mode_requested) && page_requested && out.initial_page != 6)
+        throw std::runtime_error("Scene options require --page scenes when --page is specified.");
+    if ((out.scene_root || out.scene_inspect_child) && !out.entry && out.resource.empty())
+        throw std::runtime_error("Scene-root and child selection require --resource, or --archive and --entry.");
+    if (!page_requested && scene_requested) out.initial_page = 6;
     if (out.mesh && !out.entry && out.resource.empty())
         throw std::runtime_error("--mesh requires --resource, or --archive and --entry.");
     if (out.mesh && texture_requested) throw std::runtime_error("Choose --mesh or --texture, not both.");
@@ -200,7 +219,7 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("--mesh requires --page meshes when --page is specified.");
     if (texture_requested && out.initial_page == 5)
         throw std::runtime_error("Use --mesh for the Meshes page.");
-    if (!page_requested && (out.entry || !out.resource.empty())) out.initial_page = out.mesh ? 5 : 4;
+    if (!page_requested && !scene_requested && (out.entry || !out.resource.empty())) out.initial_page = out.mesh ? 5 : 4;
     if (mesh_mode_requested && out.initial_page != 5)
         throw std::runtime_error("--mesh-mode requires the Meshes page.");
     return out;
@@ -306,6 +325,7 @@ class Workbench {
 public:
     explicit Workbench(Options options) : options_(std::move(options)) {}
     ~Workbench() {
+        scene_renderer_.shutdown();
         mesh_renderer_.shutdown();
         for (auto* pad : gamepads_) SDL_CloseGamepad(pad);
         if (banner_texture_) glDeleteTextures(1, &banner_texture_);
@@ -364,7 +384,44 @@ public:
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
             }
-            if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+            if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 6) {
+                if (options_.scene_mode == dw4::viewer::MeshDrawMode::textured && !scene_texture_error_.empty()) {
+                    std::cerr << "Textured scene unavailable: " << scene_texture_error_ << '\n';
+                    return 3;
+                }
+                if (!scene_data_ || !scene_data_->complete || scene_data_->instances.empty() ||
+                    !scene_renderer_.has_mesh() || scene_render_failed_ || !scene_error_.empty() ||
+                    scene_renderer_.rendered_frames() <= scene_render_start_frame_) {
+                    std::cerr << "Static scene inspection failed: " << (scene_error_.empty() ?
+                        "No complete static scene was uploaded and rendered." : scene_error_) << '\n';
+                    if (scene_data_) for (std::size_t i = 0; i < std::min<std::size_t>(8,scene_data_->diagnostics.size()); ++i) {
+                        const auto& diagnostic = scene_data_->diagnostics[i];
+                        std::cerr << "Scene node " << diagnostic.node_reference << ": " << diagnostic.reason << '\n';
+                    }
+                    return 3;
+                }
+                if (options_.scene_mode == dw4::viewer::MeshDrawMode::textured &&
+                    (scene_renderer_.textured_batch_count() != scene_data_->instances.size() || !scene_texture_error_.empty())) {
+                    std::cerr << "Textured scene unavailable: " << (scene_texture_error_.empty() ?
+                        "Not every scene instance has a verified GPU texture." : scene_texture_error_) << '\n';
+                    return 3;
+                }
+                std::cout << "Static scene: " << scene_source_ << " / root index " << selected_scene_
+                          << " / " << scene_data_->instances.size() << " instances / " << scene_renderer_.triangle_count() << " triangles\n"
+                          << "Scene export: " << scene_display_name(scene_data_->info) << " / info " << scene_data_->info.info_reference
+                          << " / root " << scene_data_->info.root_reference << " / " << scene_data_->info.root_type << '\n'
+                          << "Scene traversal: " << scene_data_->visited_nodes << " nodes / " << scene_data_->transform_nodes
+                          << " transforms / " << scene_data_->vertex_count << " placed vertices\n"
+                          << "Scene render: " << scene_target_width_ << 'x' << scene_target_height_ << " / "
+                          << mesh_mode_name(scene_mode_) << " / " << scene_renderer_.samples() << " samples\n"
+                          << "Scene GPU batches: " << scene_renderer_.batch_count() << " / textured " << scene_renderer_.textured_batch_count()
+                          << " / unique textures " << scene_renderer_.texture_count() << '\n';
+                if (!loaded_scene_resource_.empty()) std::cout << "Logical resource: " << loaded_scene_resource_ << '\n';
+                if (scene_data_->inspected_root_child) std::cout << "Inspection override: root child " << *scene_data_->inspected_root_child
+                    << "; runtime activation unverified.\n";
+                else std::cout << "Stored root selection; no activation override.\n";
+                std::cout << "Static exported-root inspection only. Gameplay and original-frame comparison remain pending.\n";
+            } else if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
                 if (!options_.animation.empty() && (!mesh_animation_ || !mesh_animation_uploaded_ || !mesh_animation_error_.empty())) {
                     const auto reason = !mesh_animation_error_.empty() ? mesh_animation_error_ :
                         !mesh_rig_error_.empty() ? mesh_rig_error_ : !mesh_error_.empty() ? mesh_error_ : "No decoded animation pose was uploaded.";
@@ -530,6 +587,32 @@ private:
     double mesh_animation_time_ = 0;
     std::uint64_t mesh_animation_upload_count_ = 0;
     std::chrono::steady_clock::time_point mesh_animation_tick_ = std::chrono::steady_clock::now();
+    dw4::viewer::MeshRenderer scene_renderer_;
+    dw4::OrbitCamera scene_camera_;
+    std::optional<dw4::assets::AfsArchive> scene_archive_;
+    std::optional<dw4::IgbDocument> scene_document_;
+    std::optional<dw4::SceneData> scene_data_;
+    std::vector<dw4::SceneInfo> scenes_;
+    std::vector<dw4::MaterialInfo> scene_materials_;
+    std::array<char,256> scene_resource_filter_{};
+    std::string loaded_scene_resource_;
+    std::string scene_source_;
+    std::string scene_error_;
+    std::string scene_texture_error_;
+    int selected_scene_archive_ = -1;
+    int selected_scene_ = -1;
+    int selected_scene_instance_ = -1;
+    int scene_entry_input_ = 0;
+    int scene_entry_limit_mib_ = 64;
+    int scene_target_width_ = 0;
+    int scene_target_height_ = 0;
+    std::uint64_t scene_render_start_frame_ = 0;
+    bool scene_render_failed_ = false;
+    bool scene_fit_pending_ = true;
+    bool scene_status_tab_pending_ = false;
+    bool scene_child_enabled_ = false;
+    int scene_child_input_ = 0;
+    dw4::viewer::MeshDrawMode scene_mode_ = dw4::viewer::MeshDrawMode::solid;
     std::vector<SDL_Gamepad*> gamepads_;
 
     void capture_frame(int width, int height) {
@@ -559,6 +642,8 @@ private:
         max_entry_mib_ = options_.max_entry_mib;
         mesh_entry_limit_mib_ = options_.max_entry_mib;
         mesh_mode_ = options_.mesh_mode;
+        scene_entry_limit_mib_ = options_.max_entry_mib;
+        scene_mode_ = options_.scene_mode;
         mesh_rig_enabled_ = options_.rig;
         mesh_animation_mode_ = !options_.animation.empty();
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
@@ -622,7 +707,20 @@ private:
         imgui_gl_ready_ = true;
         refresh_gamepads();
         if (!settings_.data_path.empty()) mount_data();
-        if (options_.initial_page == 5 && !options_.resource.empty()) load_mesh_resource(options_.resource, options_.mesh.value_or(0));
+        if (options_.initial_page == 6 && !options_.resource.empty()) load_scene_resource(options_.resource, options_.scene_root.value_or(0),options_.scene_inspect_child);
+        else if (options_.initial_page == 6 && options_.entry) {
+            bool found = false;
+            if (disc_) for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                if (filename(disc_->archives[i].path) == options_.archive_name) {
+                    select_scene_archive(static_cast<int>(i));
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) scene_error_ = "Archive was not found in the inspected game directory: " + options_.archive_name;
+            else { scene_entry_input_ = *options_.entry; load_scene_entry(*options_.entry, options_.scene_root.value_or(0),options_.scene_inspect_child); }
+        }
+        else if (options_.initial_page == 5 && !options_.resource.empty()) load_mesh_resource(options_.resource, options_.mesh.value_or(0));
         else if (options_.initial_page == 5 && options_.entry) {
             bool found = false;
             if (disc_) for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
@@ -678,6 +776,9 @@ private:
     void mount_data() {
         clear_texture_document();
         clear_mesh_document();
+        clear_scene_document();
+        scene_archive_.reset();
+        selected_scene_archive_ = -1;
         mesh_archive_.reset();
         selected_mesh_archive_ = -1;
         mounted_resources_.reset();
@@ -720,6 +821,7 @@ private:
             notice_error_ = false;
             if (!disc_->archives.empty()) select_archive(0);
             if (!disc_->archives.empty()) select_mesh_archive(0);
+            if (!disc_->archives.empty()) select_scene_archive(0);
         } catch (const std::exception& error) {
             asset_error_ = error.what();
             notice_ = asset_error_;
@@ -829,6 +931,240 @@ private:
         auto* ids = SDL_GetGamepads(&count);
         for (int i = 0; i < count; ++i) if (auto* pad = SDL_OpenGamepad(ids[i])) gamepads_.push_back(pad);
         SDL_free(ids);
+    }
+
+    void reset_scene_camera() {
+        scene_camera_.reset();
+        // A higher inspection angle makes broad static layouts easier to read.
+        // This remains a host camera; it does not reproduce the game camera.
+        scene_camera_.orbit(0,0.15f);
+        scene_camera_.zoom(6);
+        scene_fit_pending_ = true;
+    }
+
+    void fit_scene_bounds(float aspect) {
+        if (!scene_data_ || !scene_renderer_.has_mesh()) return;
+        const auto& bounds = scene_data_->bounds;
+        auto projected_bounds = [&](const dw4::OrbitCamera& camera) -> std::optional<std::array<float,4>> {
+            std::array<float,4> rectangle{1,1,0,0};
+            for (int corner = 0; corner < 8; ++corner) {
+                const dw4::Vec3 point{corner & 1 ? bounds.max.x : bounds.min.x,
+                    corner & 2 ? bounds.max.y : bounds.min.y,corner & 4 ? bounds.max.z : bounds.min.z};
+                const auto projected = scene_renderer_.project_to_canvas(point,camera,aspect);
+                if (!projected) return std::nullopt;
+                rectangle[0] = std::min(rectangle[0],projected->x); rectangle[1] = std::min(rectangle[1],projected->y);
+                rectangle[2] = std::max(rectangle[2],projected->x); rectangle[3] = std::max(rectangle[3],projected->y);
+            }
+            return rectangle;
+        };
+        auto fits = [&](const dw4::OrbitCamera& camera) {
+            const auto rectangle = projected_bounds(camera);
+            return rectangle && (*rectangle)[0] >= 0.025f && (*rectangle)[1] >= 0.025f && (*rectangle)[2] <= 0.975f && (*rectangle)[3] <= 0.975f;
+        };
+        auto center = [&](dw4::OrbitCamera& camera) {
+            for (int pass = 0; pass < 4; ++pass) {
+                const auto rectangle = projected_bounds(camera);
+                if (!rectangle) break;
+                auto candidate = camera;
+                candidate.pan((((*rectangle)[0]+(*rectangle)[2])*0.5f-0.5f)*aspect,
+                    0.5f-((*rectangle)[1]+(*rectangle)[3])*0.5f);
+                if (!fits(candidate)) break;
+                camera = candidate;
+            }
+        };
+        const float nearest_distance = scene_camera_.distance();
+        for (int step = 0; step < 40 && !fits(scene_camera_); ++step)
+            scene_camera_.zoom(-0.25f);
+        if (!fits(scene_camera_)) throw std::runtime_error("The scene inspection camera could not fit the original bounds.");
+        center(scene_camera_);
+        for (int step = 0; step < 80; ++step) {
+            auto candidate = scene_camera_;
+            candidate.zoom(0.125f);
+            if (candidate.distance() < nearest_distance || !fits(candidate)) break;
+            center(candidate);
+            scene_camera_ = candidate;
+        }
+        scene_fit_pending_ = false;
+    }
+
+    std::string scene_node_name(std::uint32_t reference) const {
+        try {
+            if (scene_document_) {
+                const auto& node = scene_document_->object(reference);
+                if (scene_document_->is_a(node,"igNode")) return std::string(scene_document_->field_string(node,2));
+            }
+        } catch (const std::exception&) { /* A missing display name does not change graph identity. */ }
+        return {};
+    }
+
+    std::string scene_display_name(const dw4::SceneInfo& info) const {
+        if (!info.name.empty()) return info.name;
+        const auto name = scene_node_name(info.root_reference);
+        return name.empty() ? "Root " + std::to_string(info.root_reference) : name;
+    }
+
+    void clear_scene_document() {
+        scene_renderer_.clear();
+        scene_document_.reset();
+        scene_data_.reset();
+        scenes_.clear();
+        scene_materials_.clear();
+        loaded_scene_resource_.clear();
+        scene_source_.clear();
+        scene_error_.clear();
+        scene_texture_error_.clear();
+        selected_scene_ = selected_scene_instance_ = -1;
+        scene_target_width_ = scene_target_height_ = 0;
+        scene_render_failed_ = false;
+        scene_status_tab_pending_ = false;
+        scene_child_enabled_ = false;
+        scene_child_input_ = 0;
+        reset_scene_camera();
+    }
+
+    void select_scene_archive(int index) {
+        clear_scene_document();
+        scene_archive_.reset();
+        selected_scene_archive_ = index;
+        try { scene_archive_ = dw4::assets::AfsArchive::open(disc_->archives.at(static_cast<std::size_t>(index)).path); }
+        catch (const std::exception& error) { scene_error_ = error.what(); }
+    }
+
+    void load_scene_entry(int entry, int root_index = 0, std::optional<int> inspect_child = std::nullopt) {
+        clear_scene_document();
+        try {
+            if (!scene_archive_) throw std::runtime_error("Choose a valid AFS archive first.");
+            if (entry < 0 || static_cast<std::size_t>(entry) >= scene_archive_->entries().size())
+                throw std::runtime_error("Entry index is outside this archive.");
+            scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
+            auto bytes = scene_archive_->read(static_cast<std::size_t>(entry),static_cast<std::size_t>(scene_entry_limit_mib_) * 1024u * 1024u);
+            scene_document_ = dw4::read_igb_document(std::move(bytes));
+            scene_source_ = filename(scene_archive_->path()) + " / entry " + std::to_string(entry);
+            scenes_ = dw4::list_igb_scenes(*scene_document_);
+            if (scenes_.empty()) throw std::runtime_error("This IGB document contains no exported scene roots.");
+            select_scene(root_index,inspect_child);
+        } catch (const std::exception& error) { scene_error_ = error.what(); }
+    }
+
+    void load_scene_resource(const std::string& logical_path, int root_index = 0, std::optional<int> inspect_child = std::nullopt) {
+        clear_scene_document();
+        try {
+            if (!mounted_resources_) throw std::runtime_error("The logical resource catalog is unavailable: " + catalog_error_);
+            const auto& catalog = mounted_resources_->catalog();
+            const auto* resource = catalog.find(logical_path);
+            if (!resource) throw std::runtime_error("Resource was not found in the catalog: " + logical_path);
+            if (!resource->location) throw std::runtime_error("This catalog resource has no readable AFS entry.");
+            const auto& source_archive = catalog.archives.at(resource->location->archive_index).filename;
+            int archive_index = -1;
+            if (disc_) for (std::size_t i = 0; i < disc_->archives.size(); ++i)
+                if (filename(disc_->archives[i].path) == source_archive) archive_index = static_cast<int>(i);
+            if (archive_index < 0) throw std::runtime_error("The catalog archive is not present in the inspected directory: " + source_archive);
+            select_scene_archive(archive_index);
+            scene_entry_input_ = static_cast<int>(resource->location->entry_index);
+            load_scene_entry(scene_entry_input_,root_index,inspect_child);
+            if (scene_document_) loaded_scene_resource_ = logical_path;
+        } catch (const std::exception& error) { scene_error_ = error.what(); }
+    }
+
+    void upload_scene_batches(bool textured) {
+        try {
+            if (!scene_data_ || !scene_data_->complete || scene_data_->instances.empty() || !scene_document_)
+                throw std::runtime_error("A complete, nonempty static scene is required for rendering.");
+            std::vector<dw4::viewer::MeshBatch> batches;
+            std::map<std::uint32_t,dw4::RgbaImage> images;
+            std::size_t image_bytes = 0;
+            batches.reserve(scene_data_->instances.size());
+            for (std::size_t i = 0; i < scene_data_->instances.size(); ++i) {
+                auto& instance = scene_data_->instances[i];
+                dw4::viewer::MeshBatch batch;
+                batch.mesh = &instance.mesh;
+                if (textured) {
+                    const auto& material = scene_materials_.at(i);
+                    if (!material.supported || !material.image_reference || material.geometry_reference != instance.geometry_reference)
+                        throw std::runtime_error("Instance " + std::to_string(i) + " (node " + std::to_string(instance.node_reference) + "): " +
+                            (material.diagnostic.empty() ? "No verified base-image binding is available." : material.diagnostic));
+                    if (instance.mesh.texcoords.empty()) instance.mesh.texcoords = dw4::decode_igb_texcoords(*scene_document_,instance.geometry_reference);
+                    if (instance.mesh.texcoords.size() != instance.mesh.positions.size())
+                        throw std::runtime_error("Instance " + std::to_string(i) + " has a mismatched UV count.");
+                    const auto image_reference = *material.image_reference;
+                    if (!images.contains(image_reference)) {
+                        auto image = dw4::decode_igb_texture(*scene_document_,image_reference);
+                        constexpr std::size_t image_limit = 256u * 1024u * 1024u;
+                        if (image.rgba.size() > image_limit - image_bytes)
+                            throw std::runtime_error("The scene's unique decoded images exceed the 256 MiB inspection limit.");
+                        image_bytes += image.rgba.size();
+                        images.emplace(image_reference,std::move(image));
+                    }
+                    batch.texture = &images.at(image_reference);
+                    batch.texture_options.wrap_u = texture_wrap(material.wrap_s);
+                    batch.texture_options.wrap_v = texture_wrap(material.wrap_t);
+                    batch.texture_options.min_filter = texture_filter(material.min_filter);
+                    batch.texture_options.mag_filter = texture_filter(material.mag_filter);
+                }
+                batches.push_back(batch);
+            }
+            scene_renderer_.upload_batches(batches);
+            if (scene_renderer_.batch_count() != scene_data_->instances.size() ||
+                (textured && scene_renderer_.textured_batch_count() != scene_data_->instances.size()))
+                throw std::runtime_error("The renderer did not retain every requested scene instance.");
+            scene_render_start_frame_ = scene_renderer_.rendered_frames();
+            scene_render_failed_ = false;
+            scene_error_.clear();
+            if (textured) scene_texture_error_.clear();
+        } catch (const std::exception& error) {
+            if (textured) scene_texture_error_ = error.what();
+            else scene_error_ = error.what();
+        }
+    }
+
+    void select_scene(int index, std::optional<int> inspect_child = std::nullopt) {
+        scene_renderer_.clear();
+        scene_data_.reset();
+        scene_materials_.clear();
+        scene_error_.clear();
+        scene_texture_error_.clear();
+        scene_render_failed_ = false;
+        scene_target_width_ = scene_target_height_ = 0;
+        selected_scene_ = index;
+        selected_scene_instance_ = -1;
+        scene_status_tab_pending_ = false;
+        scene_child_enabled_ = inspect_child.has_value();
+        scene_child_input_ = inspect_child.value_or(0);
+        reset_scene_camera();
+        try {
+            if (!scene_document_) throw std::runtime_error("Load an IGB document before selecting a scene root.");
+            if (index < 0 || static_cast<std::size_t>(index) >= scenes_.size())
+                throw std::runtime_error("Scene-root index is outside this document's exported root list.");
+            const auto& info = scenes_[static_cast<std::size_t>(index)];
+            if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This exported scene descriptor is unsupported." : info.diagnostic);
+            dw4::SceneOptions scene_options;
+            if (inspect_child) {
+                if (*inspect_child < 0 || *inspect_child > 1000000) throw std::runtime_error("Inspection child index must be from 0 to 1000000.");
+                scene_options.inspect_root_child = static_cast<std::uint32_t>(*inspect_child);
+            }
+            scene_data_ = dw4::decode_igb_scene(*scene_document_,info.info_reference,scene_options);
+            if (!scene_data_->complete) {
+                scene_error_ = "This root contains unsupported static behavior. Inspect its diagnostics; partial geometry is not rendered.";
+                scene_status_tab_pending_ = true;
+                return;
+            }
+            if (scene_data_->instances.empty()) throw std::runtime_error(inspect_child ?
+                "This inspected child has no visible static geometry." :
+                "The stored selection has no visible static geometry. Runtime activation has not been reproduced.");
+            selected_scene_instance_ = 0;
+            scene_materials_.reserve(scene_data_->instances.size());
+            for (const auto& instance : scene_data_->instances) {
+                try { scene_materials_.push_back(dw4::resolve_igb_material_on_path(*scene_document_,instance.geometry_reference,instance.path)); }
+                catch (const std::exception& error) {
+                    dw4::MaterialInfo material;
+                    material.geometry_reference = instance.geometry_reference;
+                    material.diagnostic = error.what();
+                    scene_materials_.push_back(std::move(material));
+                }
+            }
+            upload_scene_batches(false);
+            if (scene_mode_ == dw4::viewer::MeshDrawMode::textured && scene_renderer_.has_mesh()) upload_scene_batches(true);
+        } catch (const std::exception& error) { scene_error_ = error.what(); scene_status_tab_pending_ = true; }
     }
 
     void clear_mesh_document() {
@@ -1156,10 +1492,10 @@ private:
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        const std::array<const char*, 7> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Meshes", "Roadmap"};
+        const std::array<const char*, 8> pages{"Overview", "Graphics", "Controls", "Original data", "Textures", "Meshes", "Scenes", "Roadmap"};
         for (int i = 0; i < static_cast<int>(pages.size()); ++i) {
             ImGui::PushID(i);
-            if (ImGui::Selectable(pages[static_cast<std::size_t>(i)], page_ == i, 0, ImVec2(0, 37))) page_ = i;
+            if (ImGui::Selectable(pages[static_cast<std::size_t>(i)], page_ == i, 0, ImVec2(0, 32))) page_ = i;
             ImGui::PopID();
         }
         const float bottom = ImGui::GetWindowHeight() - 146;
@@ -1177,7 +1513,8 @@ private:
         if (page_ == 3) draw_assets();
         if (page_ == 4) draw_textures();
         if (page_ == 5) draw_meshes();
-        if (page_ == 6) draw_roadmap();
+        if (page_ == 6) draw_scenes();
+        if (page_ == 7) draw_roadmap();
         if (!notice_.empty()) {
             ImGui::Spacing();
             ImGui::Separator();
@@ -1490,6 +1827,13 @@ private:
                     mesh_entry_input_ = selected_entry_;
                     load_mesh_entry(selected_entry_);
                     page_ = 5;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("View scenes")) {
+                    select_scene_archive(selected_archive_);
+                    scene_entry_input_ = selected_entry_;
+                    load_scene_entry(selected_entry_);
+                    page_ = 6;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Read IGB metadata")) {
@@ -1898,7 +2242,7 @@ private:
     }
 
     void draw_meshes() {
-        title("Mesh viewer", "Original assets with manual posing or animation inspection. Scene placement, full materials and gameplay remain pending.");
+        title("Mesh viewer", "Original assets with manual posing or animation inspection. Full materials, actor behavior and gameplay remain pending.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB mesh.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -2060,12 +2404,243 @@ private:
         ImGui::EndChild();
     }
 
+    void draw_scenes() {
+        title("Static scene inspector", "Original exported roots and checked placement. Game cameras, actors, collision and gameplay remain pending.");
+        if (!disc_) {
+            paragraph("Connect your extracted game copy before loading an IGB scene.");
+            if (ImGui::Button("Connect original data")) page_ = 3;
+            if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
+            return;
+        }
+        if (mounted_resources_) {
+            ImGui::SetNextItemWidth(210);
+            ImGui::InputTextWithHint("##scene_resource_filter","Filter logical resource path",scene_resource_filter_.data(),scene_resource_filter_.size());
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            const auto* preview = loaded_scene_resource_.empty() ? "Choose a logical resource from ndmw.igb" : loaded_scene_resource_.c_str();
+            if (ImGui::BeginCombo("##scene_logical_resource",preview,ImGuiComboFlags_HeightLarge)) {
+                const auto& resources = mounted_resources_->catalog().resources;
+                std::vector<std::size_t> visible;
+                for (std::size_t i = 0; i < resources.size(); ++i)
+                    if (!scene_resource_filter_[0] || resources[i].logical_path.find(scene_resource_filter_.data()) != std::string::npos) visible.push_back(i);
+                ImGuiListClipper clip;
+                clip.Begin(static_cast<int>(visible.size()));
+                while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                    const auto& resource = resources[visible[static_cast<std::size_t>(row)]];
+                    ImGui::BeginDisabled(!resource.location);
+                    if (ImGui::Selectable(resource.logical_path.c_str(),loaded_scene_resource_ == resource.logical_path)) load_scene_resource(resource.logical_path);
+                    ImGui::EndDisabled();
+                }
+                if (visible.empty()) ImGui::TextDisabled("No matching catalog resources.");
+                ImGui::EndCombo();
+            }
+        } else if (!catalog_error_.empty()) paragraph(("Resource catalog unavailable: " + catalog_error_).c_str(),amber);
+        ImGui::SetNextItemWidth(170);
+        const auto archive_name = scene_archive_ ? filename(scene_archive_->path()) : "Choose archive";
+        if (ImGui::BeginCombo("Archive",archive_name.c_str())) {
+            for (std::size_t i = 0; i < disc_->archives.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                if (ImGui::Selectable(filename(disc_->archives[i].path).c_str(),selected_scene_archive_ == static_cast<int>(i))) select_scene_archive(static_cast<int>(i));
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(95);
+        ImGui::InputInt("Entry",&scene_entry_input_,0,0);
+        ImGui::SameLine();
+        if (ImGui::Button("Load entry")) load_scene_entry(scene_entry_input_);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70);
+        ImGui::InputInt("Limit (MiB)",&scene_entry_limit_mib_,0,0);
+        scene_entry_limit_mib_ = std::clamp(scene_entry_limit_mib_,1,256);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Maximum AFS entry read: 1-256 MiB.\nTraversal, geometry, images and graphics targets have independent limits.");
+        if (scene_source_.empty()) paragraph("Choose an original resource to list its explicit scene exports.");
+        else ImGui::TextColored(teal,"%s  |  %zu roots  |  %zu instances  |  target %d x %d / MSAA %dx",scene_source_.c_str(),scenes_.size(),
+            scene_renderer_.batch_count(),scene_target_width_,scene_target_height_,scene_renderer_.samples());
+        if (scene_data_ && scene_data_->inspected_root_child)
+            ImGui::TextColored(amber,"Inspection override: root child %u; runtime activation unverified.",*scene_data_->inspected_root_child);
+        else if (!scenes_.empty()) ImGui::TextColored(muted,"Stored root selection / no activation override.");
+        if (scenes_.empty()) {
+            if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
+            paragraph("Unsupported and dynamic graph behavior is retained as a diagnostic, not guessed into static scenery.");
+            return;
+        }
+        const float height = std::max(300.0f,ImGui::GetContentRegionAvail().y - 67.0f);
+        ImGui::BeginChild("scene_inspector",ImVec2(300,height),true);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(8,5));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8,4));
+        ImGui::SetNextItemWidth(-1);
+        const bool valid_root = selected_scene_ >= 0 && static_cast<std::size_t>(selected_scene_) < scenes_.size();
+        std::string root_label = "Choose an exported root";
+        if (valid_root) {
+            const auto& info = scenes_[static_cast<std::size_t>(selected_scene_)];
+            root_label = std::to_string(selected_scene_) + "  " + scene_display_name(info);
+        }
+        if (ImGui::BeginCombo("##scene_root",root_label.c_str(),ImGuiComboFlags_HeightLarge)) {
+            for (std::size_t i = 0; i < scenes_.size(); ++i) {
+                const auto& info = scenes_[i];
+                ImGui::PushID(static_cast<int>(i));
+                const auto label = std::to_string(i) + "  " + scene_display_name(info);
+                if (!info.supported) ImGui::PushStyleColor(ImGuiCol_Text,muted);
+                if (ImGui::Selectable(label.c_str(),selected_scene_ == static_cast<int>(i))) select_scene(static_cast<int>(i));
+                if (!info.supported) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Export %u / root %u / %s\n%s",info.info_reference,info.root_reference,info.root_type.c_str(),info.diagnostic.c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::BeginDisabled(!valid_root || scenes_[static_cast<std::size_t>(selected_scene_)].root_type != "igSwitch");
+        if (ImGui::Checkbox("Inspect root child",&scene_child_enabled_))
+            select_scene(selected_scene_,scene_child_enabled_ ? std::optional<int>(scene_child_input_) : std::nullopt);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Explicit inspection for an exported igSwitch root.\nThis overrides only its stored mask; runtime activation is unverified.\nOther switch masks remain stored.");
+        if (scene_child_enabled_) {
+            ImGui::SetNextItemWidth(80);
+            ImGui::InputInt("Child",&scene_child_input_,0,0);
+            ImGui::SameLine();
+            if (ImGui::Button("Apply")) select_scene(selected_scene_,scene_child_input_);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::BeginTabBar("scene_tabs")) {
+            if (ImGui::BeginTabItem("Instances")) {
+                if (scene_data_ && scene_data_->complete) {
+                    ImGui::TextColored(muted,"%zu instances / %zu transforms",scene_data_->instances.size(),scene_data_->transform_nodes);
+                    ImGuiListClipper clip;
+                    clip.Begin(static_cast<int>(scene_data_->instances.size()));
+                    while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                        const auto& instance = scene_data_->instances[static_cast<std::size_t>(row)];
+                        ImGui::PushID(row);
+                        auto name = instance.name.empty() ? scene_node_name(instance.node_reference) : instance.name;
+                        if (name.empty()) name = "Node " + std::to_string(instance.node_reference);
+                        const auto label = std::to_string(row) + "  " + name;
+                        if (ImGui::Selectable(label.c_str(),selected_scene_instance_ == row,0,ImVec2(0,26))) selected_scene_instance_ = row;
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Node %u / geometry %u\n%zu vertices / %zu triangles",instance.node_reference,
+                            instance.geometry_reference,instance.mesh.positions.size(),instance.mesh.indices.size()/3);
+                        ImGui::PopID();
+                    }
+                } else paragraph("Instances are not displayed until this root's static traversal is complete.");
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Details")) {
+                if (valid_root) {
+                    const auto& info = scenes_[static_cast<std::size_t>(selected_scene_)];
+                    ImGui::Text("Export %u / root %u",info.info_reference,info.root_reference);
+                    paragraph(info.root_type.c_str());
+                    ImGui::TextColored(muted,"Stored up %.3g, %.3g, %.3g",info.up_direction.x,info.up_direction.y,info.up_direction.z);
+                }
+                if (scene_data_) {
+                    const auto& scene = *scene_data_;
+                    ImGui::Text("%zu visited nodes / %zu transforms",scene.visited_nodes,scene.transform_nodes);
+                    ImGui::Text("%zu vertices / %zu triangles",scene.vertex_count,scene.triangle_count);
+                    if (scene.complete && !scene.instances.empty()) {
+                        ImGui::TextColored(muted,"Min %.4g, %.4g, %.4g",scene.bounds.min.x,scene.bounds.min.y,scene.bounds.min.z);
+                        ImGui::TextColored(muted,"Max %.4g, %.4g, %.4g",scene.bounds.max.x,scene.bounds.max.y,scene.bounds.max.z);
+                    }
+                    if (scene.complete && selected_scene_instance_ >= 0 && static_cast<std::size_t>(selected_scene_instance_) < scene.instances.size()) {
+                        const auto& instance = scene.instances[static_cast<std::size_t>(selected_scene_instance_)];
+                        ImGui::Separator();
+                        ImGui::Text("Instance %d / node %u",selected_scene_instance_,instance.node_reference);
+                        ImGui::Text("Geometry %u",instance.geometry_reference);
+                        std::string path;
+                        for (const auto reference : instance.path) { if (!path.empty()) path += " -> "; path += std::to_string(reference); }
+                        paragraph(path.c_str());
+                        ImGui::TextColored(muted,"Accumulated transform (rows)");
+                        for (std::size_t row = 0; row < 4; ++row) ImGui::Text("%.4g  %.4g  %.4g  %.4g",instance.world_transform[row],
+                            instance.world_transform[4+row],instance.world_transform[8+row],instance.world_transform[12+row]);
+                        if (static_cast<std::size_t>(selected_scene_instance_) < scene_materials_.size()) {
+                            const auto& material = scene_materials_[static_cast<std::size_t>(selected_scene_instance_)];
+                            if (material.supported) { paragraph(material.image_name.c_str(),teal); paragraph(material.provenance.c_str()); }
+                            else paragraph(material.diagnostic.c_str(),amber);
+                        }
+                    }
+                }
+                paragraph("Stored static placement. The inspection camera and base-image profile do not reproduce full game scene behavior.");
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Status",nullptr,scene_status_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+                scene_status_tab_pending_ = false;
+                if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
+                if (!scene_texture_error_.empty()) paragraph(scene_texture_error_.c_str(),amber);
+                if (scene_data_) {
+                    if (scene_data_->complete) paragraph("Static traversal complete for this exported root.",teal);
+                    for (const auto& diagnostic : scene_data_->diagnostics) {
+                        ImGui::Separator();
+                        ImGui::Text("Node %u",diagnostic.node_reference);
+                        paragraph(diagnostic.reason.c_str(),amber);
+                        std::string path;
+                        for (const auto reference : diagnostic.path) { if (!path.empty()) path += " -> "; path += std::to_string(reference); }
+                        paragraph(path.c_str());
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+        ImGui::PopStyleVar(2);
+        ImGui::EndChild();
+        ImGui::SameLine();
+        ImGui::BeginChild("scene_view",ImVec2(0,height),true,ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::Button("Fit")) reset_scene_camera();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140);
+        int mode = scene_mode_ == dw4::viewer::MeshDrawMode::textured ? 2 : scene_mode_ == dw4::viewer::MeshDrawMode::wireframe ? 1 : 0;
+        if (ImGui::Combo("##scene_draw_mode",&mode,"Solid\0Wireframe\0Textured\0")) {
+            scene_mode_ = mode == 2 ? dw4::viewer::MeshDrawMode::textured : mode == 1 ? dw4::viewer::MeshDrawMode::wireframe : dw4::viewer::MeshDrawMode::solid;
+            if (scene_mode_ == dw4::viewer::MeshDrawMode::textured) upload_scene_batches(true);
+            else if (scene_data_ && scene_data_->complete && (!scene_renderer_.has_mesh() || scene_render_failed_)) upload_scene_batches(false);
+        }
+        if (ImGui::GetWindowWidth() > 900) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
+        if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
+        else if (scene_mode_ == dw4::viewer::MeshDrawMode::textured && !scene_texture_error_.empty()) {
+            paragraph("Textured inspection requires a verified image and UVs for every instance.",amber);
+            paragraph(scene_texture_error_.c_str());
+            paragraph("Solid and wireframe modes remain available for complete static geometry.");
+        } else if (scene_renderer_.has_mesh() && !scene_render_failed_) draw_scene_canvas();
+        else paragraph("Select a supported exported root to render its static instances.");
+        ImGui::EndChild();
+    }
+
+    void draw_scene_canvas() {
+        const auto available = ImGui::GetContentRegionAvail();
+        const ImVec2 size(std::max(1.0f,available.x),std::max(120.0f,available.y));
+        const auto origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("scene_canvas",size,ImGuiButtonFlags_MouseButtonLeft |
+            ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+        const auto& io = ImGui::GetIO();
+        if (ImGui::IsItemHovered() && ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY) && io.MouseWheel != 0)
+            scene_camera_.zoom(io.MouseWheel);
+        if (ImGui::IsItemActive()) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+                (io.KeyShift && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))
+                scene_camera_.pan(-io.MouseDelta.x / size.y,io.MouseDelta.y / size.y);
+            else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                scene_camera_.orbit(-io.MouseDelta.x * 0.008f,-io.MouseDelta.y * 0.008f);
+        }
+        try {
+            const double width = std::max(1.0,static_cast<double>(size.x * io.DisplayFramebufferScale.x));
+            const double height = std::max(1.0,static_cast<double>(size.y * io.DisplayFramebufferScale.y));
+            const double reduction = std::min({1.0,4096.0 / width,4096.0 / height,std::sqrt(8388608.0 / (width * height))});
+            scene_target_width_ = std::max(1,static_cast<int>(width * reduction));
+            scene_target_height_ = std::max(1,static_cast<int>(height * reduction));
+            if (scene_fit_pending_) fit_scene_bounds(static_cast<float>(scene_target_width_) / scene_target_height_);
+            const auto target = scene_renderer_.render(scene_target_width_,scene_target_height_,scene_camera_,scene_mode_,settings_.msaa);
+            auto* draw = ImGui::GetWindowDrawList();
+            const ImVec2 end(origin.x+size.x,origin.y+size.y);
+            draw->AddImage(static_cast<ImTextureID>(target),origin,end,ImVec2(0,1),ImVec2(1,0));
+            draw->AddRect(origin,end,IM_COL32(53,72,88,255),6);
+        } catch (const std::exception& error) {
+            scene_error_ = error.what();
+            scene_render_failed_ = true;
+        }
+    }
+
     void draw_roadmap() {
         title("The path to a playable port", "A staged development plan. Features below are not available until their implementation is verified.");
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
             {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
-            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh, texture, manual rig and single-clip animation inspection use checked bindings. Full materials, scene placement and reference comparison remain.", false},
+            {"IN PROGRESS", "02  Native original-asset viewer", "Checked meshes, textures, rigs, clips and static exported scene roots render natively. Full materials, actor state and original-frame comparison remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -2098,13 +2673,16 @@ int main(int argc, char** argv) {
                          "--smoke-test   Render 1-10000 hidden native frames, then exit.\n"
                          "               Does not write settings or launch any emulator.\n"
                          "--screenshot   Save the final smoke-test frame to a BMP path.\n"
-                         "--page         Open overview, graphics, controls, assets, textures, meshes or roadmap.\n"
+                         "--page         Open overview, graphics, controls, assets, textures, meshes, scenes or roadmap.\n"
                          "--archive      AFS filename inside the game directory; requires --entry.\n"
                          "--entry        Zero-based AFS entry for the selected asset viewer.\n"
                          "--resource     Logical catalog path; alternative to --archive/--entry.\n"
                          "--texture      Zero-based texture-list index (default 0).\n"
                          "--mesh         Zero-based geometry-list index; opens the Meshes page.\n"
                          "--mesh-mode    Solid, wireframe or textured mesh inspection (default solid).\n"
+                         "--scene-root   Zero-based exported scene-root index; opens the Scenes page.\n"
+                         "--scene-mode   Solid, wireframe or strictly textured static scene inspection.\n"
+                         "--scene-inspect-child Explicitly inspect one root-switch child; runtime activation unverified.\n"
                          "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"

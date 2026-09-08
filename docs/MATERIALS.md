@@ -24,8 +24,8 @@ if (material.supported) {
 ```
 
 `MaterialInfo` reports support status, a diagnostic when unsupported, the
-selected geometry reference, owner and binding-scope references, the owner-to-
-scope path, attribute-list/bind/texture/image references, original names, and
+selected geometry reference, owner, binding and enable-state scope references,
+the owner-to-scope path, attribute-list/bind/texture/image references, original names, and
 the raw and interpreted sampler values. All reference numbers belong to the
 same owning `IgbDocument`. Archive name and entry index remain the caller's
 source identity; a reference from a different entry must never be reused.
@@ -36,7 +36,7 @@ UV and pixel decoding remain explicit operations which may also reject their
 inputs. The viewer can keep solid geometry available with the reason visible;
 an explicitly requested textured mode requires the complete supported chain.
 
-## Supported graph and state
+## Stored-geometry lookup
 
 The selected object must be an `igGeometryAttr1_5`. Exactly one `igGeometry`
 node must explicitly contain it in its slot-8 `igAttrList`. The resolver checks
@@ -52,7 +52,67 @@ Attribute lists must contain `igAttr` objects, and child lists must contain
 Partial state is not combined across different scopes. Additional `igTexture*`,
 `igMultiTexture*`, and `igTexGen*` state is rejected, including texture matrices
 and alternate coordinate sources. The `igAttrSet::_trigger` boolean is not
-interpreted as an inheritance override: its execution semantics remain unknown.
+interpreted as an inheritance override. Original code pushes attribute state
+before testing this flag and traverses children in either case.
+
+## Explicit scene-instance lookup
+
+Static scene instances carry a checked root-to-owner node path. Resolve their
+material in that context instead of searching globally for a unique parent:
+
+```cpp
+auto material = dw4::resolve_igb_material_on_path(
+    document, instance.geometry_reference, instance.path);
+```
+
+Every supplied edge must connect through a valid `igNodeList`, and the final
+`igGeometry` must uniquely contain the selected geometry attribute. A shared
+node may have other parents outside this path; those instances do not supply
+state to the selected instance. State above the supplied root is not inferred.
+Scene traversal separately determines whether the path is active and supported;
+material resolution does not select switch children or execute node handlers.
+
+On an explicit path, the nearest unit-zero `igTextureBindAttr` and the nearest
+unit-zero `igTextureStateAttr` are selected independently. A binding on a child
+can inherit its enabled state from an ancestor, or a child's state can enable
+an inherited binding. A nearest disabled state rejects textured rendering; an
+older enabled state cannot bypass it. Both attributes must be present somewhere
+on the supplied path.
+
+Every scope on the full path is inspected, including ancestors above a local
+binding. Texture matrices, generated/alternate coordinates, additional texture
+state and other texture units are unsupported anywhere on that path. A local
+binding cannot clear those inherited effects. Duplicate bindings or enable
+states within one scope are rejected as ambiguous. Valid unit-zero states that
+are shadowed by a nearer state are permitted, including a disabled ancestor
+overridden by an enabled child. Invalid attribute lists, boolean values and
+binding reference types still reject even when shadowed.
+
+`scope_node_reference` identifies the binding scope;
+`state_scope_node_reference` identifies the selected enable-state scope.
+`attribute_list_reference` belongs to the binding scope. `inheritance_path`
+runs from the owner through the farther of the two selected scopes, and
+`inherited` is true if either state is inherited. For the stored-geometry
+resolver both scopes remain identical, preserving its conservative same-scope
+behavior.
+
+The original USA `igAttrSet` handler at guest address `0x801DD7C0` supplies the
+execution evidence. Instructions from `0x801DD7FC` through `0x801DD888` push
+attributes to independent stacks selected by attribute type and unit/index.
+The trigger test at `0x801DD898` occurs afterward. A false trigger skips the
+dispatch block, but both branches traverse children at `0x801DD8CC` and restore
+the pushed stacks afterward. These relationships justify independently
+inherited binding and enable state without implementing the full material
+pipeline. Original instruction bytes and generated disassembly remain local.
+
+For the original BG02 sample in `ndmw.afs` entry 179, scene descriptor 3372,
+explicit inspection of root child 0 produces 235 static geometry instances.
+All 235 resolve with this path-aware profile and have matching finite UV arrays.
+Their five unique base images decode to 528,384 RGBA bytes in total. This checks
+the selected inspection subtree; it does not establish that the original actor
+state activates that root child or reproduce original lighting and transparency.
+
+## Texture object profile
 
 The binding's slot 4 must reference an `igTextureAttr` with this measured profile:
 
@@ -116,7 +176,9 @@ ambiguous within one scope. Its solid stored-geometry preview remains available.
 ## Corpus checks and limits
 
 On 2026-09-08, an independent native read-only census checked every geometry
-in both original USA archives with the public material and UV APIs.
+in both original USA archives with the stored-geometry material and UV APIs.
+These counts describe the original same-scope lookup, not the later explicit
+scene-path resolver.
 
 | Archive | IGB files | Geometries checked | Supported bindings | Geometries with valid UVs | Bound images decoded |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -143,7 +205,7 @@ float pairs and rejects non-finite components. The texture reader keeps its
 
 ## Reproduce validation
 
-Run the 55 synthetic graph checks, which require no game files:
+Run the 96 synthetic graph checks, which require no game files:
 
 ```powershell
 .\build\Release\dw4_materials_tests.exe
@@ -156,6 +218,12 @@ disabled/incomplete/duplicate texture state, extra texture transforms, sampler
 guards, and null/wrong-type image/mipmap references. The separate mesh suite
 contains UV byte-size and finite-value regressions. All checks remain active
 in Release builds.
+
+Explicit-path fixtures additionally cover shared instances with different
+materials, independently inherited binding/state, distinct scope provenance,
+disabled-state overrides, whole-path texture-modifier rejection and malformed
+or duplicate attributes above a complete local binding. The stored-geometry
+lookup retains its existing tests and behavior.
 
 Inspect every geometry in the original Agumon sample; supported bindings also
 decode UVs and the explicitly referenced image, while unsupported ones print
