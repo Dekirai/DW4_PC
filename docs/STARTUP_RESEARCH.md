@@ -65,7 +65,7 @@ are not frame counts or durations.
 | 1, 100–102 | Builds the preliminary `/s` queue, loads it and handles sound transfer before queuing remaining descriptor members. |
 | 2 | Loads the remaining filename queue through `0x802F9E98`. On completion, advances to state 3. |
 | 3 | Finds the registered `beLua` manager, resets its Lua state, then calls `func.lua` followed by `boot.lua`. Advances to state 4. |
-| 4, 20, 21 | Processes the additional common-file queue and other loading conditions, with intermediate update states. |
+| 4, 20, 21 | Processes the additional common-file queue and the separate loading-node timing condition, then appends late scenes before advancing through intermediate update states. |
 | 5 | Registers the deferred loaded info records through `0x802FA53C`; advances to state 6. |
 | 6 | Sends the layer controller's `ORDER` command and related layer setup. |
 | 7 | Sends `TEXTCTL INITIALIZE`, then calls `start.lua`. |
@@ -162,9 +162,11 @@ native methods described in [STARTUP_HOST_RESEARCH.md](STARTUP_HOST_RESEARCH.md)
 Three explicit input profiles match an independent official Lua 4.0.1 run for
 every ordered host call and resource request.
 
-The plan itself never marks native barriers satisfied. Execution currently
-stops after common-resource queue construction/resolution, before the actual
-common loads, deferred controller registration and layer/text initialization.
-These prerequisites must be implemented before start/first execution. Explicit
-actor visual placement remains a separate inspection operation. See
+The plan itself never marks native barriers satisfied. Version 0.11 retains the
+successful Lua VM, loads the common documents and reconstructs exact info routing,
+including the late-scene tail. The original loading-node state and active manager
+callbacks remain separate prerequisites, followed by layer/text initialization
+before start/first execution. Explicit actor visual placement remains a separate
+inspection operation. See [STARTUP_LOADING.md](STARTUP_LOADING.md),
+[STARTUP_LOADING_RESEARCH.md](STARTUP_LOADING_RESEARCH.md) and
 [STARTUP_VIEWER.md](STARTUP_VIEWER.md).

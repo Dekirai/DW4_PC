@@ -112,6 +112,33 @@ struct Host {
 };
 } // namespace
 
+struct BootRuntime::Impl {
+    BootReport report;
+    Host host{report};
+    std::unique_ptr<Lua4Vm> vm;
+    bool attempted = false;
+};
+
+BootRuntime::BootRuntime() : impl_(std::make_unique<Impl>()) {}
+BootRuntime::~BootRuntime() = default;
+BootRuntime::BootRuntime(BootRuntime&&) noexcept = default;
+BootRuntime& BootRuntime::operator=(BootRuntime&&) noexcept = default;
+const BootReport& BootRuntime::report() const {
+    if (!impl_) fail("Cannot inspect a moved-from boot runtime.");
+    return impl_->report;
+}
+bool BootRuntime::has_live_state() const noexcept {
+    return impl_ && impl_->vm && impl_->report.boot_scripts_completed;
+}
+Lua4Value BootRuntime::global(std::string_view name) const {
+    if (!has_live_state()) fail("Global inspection requires a successfully completed boot runtime.");
+    return impl_->vm->get_global(name);
+}
+void BootRuntime::resolve_resources(const ResourceCatalog& catalog) {
+    if (!impl_ || !impl_->attempted) fail("Resource resolution requires an executed boot runtime.");
+    resolve_boot_requests(impl_->report,catalog);
+}
+
 void validate_boot_inputs(const BootInputs& input) {
     if (input.difficulty < 0 || input.difficulty > 2 || input.camera_mode < 0 || input.camera_mode > 1)
         fail("Inspection state is outside the supported boot profile.");
@@ -143,20 +170,25 @@ bool set_boot_input_option(BootInputs& input, std::string_view option, std::stri
     return true;
 }
 
-BootReport execute_boot_scripts(std::span<const StartupSource> sources, const std::string& folder, const BootInputs& input) {
-    BootReport report; report.folder = folder; report.inputs = input;
+void BootRuntime::execute(std::span<const StartupSource> sources, const std::string& folder, const BootInputs& input) {
+    if (!impl_) fail("Cannot execute a moved-from boot runtime.");
+    if (impl_->attempted) fail("A boot runtime permits only one execution attempt.");
+    impl_->attempted = true;
+    auto& report = impl_->report;
     report.next_barrier = "Common resource loading, deferred controller registration and layer/text initialization remain pending. start.lua and first.lua have not run.";
     try {
         validate_boot_inputs(input); logical_path(folder);
+        report.folder = folder; report.inputs = input;
         if (sources.empty() || sources.size() > 32) fail("Boot requires 1..32 explicitly ordered script sources.");
         const auto plan = build_igb_startup_plan(sources);
         report.registered_sources = sources.size();
         for (const auto& source : sources) report.registered_scripts += list_igb_scripts(*source.document).size();
         Lua4Limits limits; limits.max_instructions = 32768;
-        Lua4Vm vm(limits); Host host{report};
+        impl_->vm = std::make_unique<Lua4Vm>(limits);
+        auto& vm = *impl_->vm;
         vm.set_global("be",Lua4Value::host_object("be"));
         vm.set_global("gsub",Lua4Value::host_function("gsub"));
-        vm.set_host_handler([&](const Lua4HostCall& call) { return host.call(call); });
+        vm.set_host_handler([state = impl_.get()](const Lua4HostCall& call) { return state->host.call(call); });
         for (const auto& phase : plan.phases) {
             if (phase.kind != StartupPhaseKind::functions && phase.kind != StartupPhaseKind::boot) break;
             if (!phase.lookup_complete) fail(phase.filename+": "+(phase.diagnostics.empty() ? "No complete embedded lookup." : phase.diagnostics.front()));
@@ -181,8 +213,16 @@ BootReport execute_boot_scripts(std::span<const StartupSource> sources, const st
             }
         }
         report.boot_scripts_completed = true;
-    } catch (const std::exception& error) { report.diagnostic = error.what(); }
-    return report;
+    } catch (const std::exception& error) {
+        report.diagnostic = error.what();
+        impl_->vm.reset(); // Failed partial state is never exposed or resumed.
+    }
+}
+
+BootReport execute_boot_scripts(std::span<const StartupSource> sources, const std::string& folder, const BootInputs& input) {
+    BootRuntime runtime;
+    runtime.execute(sources,folder,input);
+    return runtime.report();
 }
 
 void resolve_boot_requests(BootReport& report, const ResourceCatalog& catalog) {

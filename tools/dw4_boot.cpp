@@ -1,4 +1,4 @@
-#include "dw4/startup.hpp"
+#include "dw4/startup_loading.hpp"
 #include "dw4/settings.hpp"
 
 #include <iostream>
@@ -36,15 +36,17 @@ int run(const std::vector<std::string>& args) {
                 "--boot-player-N NAME     Join slot N=0..3 with this model name; default no joined slots.\n"
                 "--boot-weapon-N-S NAME   Weapon name for player N, slot S=0..2; default nil.\n"
                 "USA country, area and pack-only getters retain their original constant 1.\n"
-                "Runs func.lua and boot.lua, building the original common-resource queue.\n"
-                "Stops before common loading/controller registration; start/first and gameplay do not run.\n"
+                "Runs func.lua and boot.lua, then loads the requested common resources and routes their exports.\n"
+                "Retains the VM and loaded documents; stops before runtime manager callbacks.\n"
+                "Loading-screen state, layer/text initialization, start/first and gameplay remain pending.\n"
                 "No original files are modified and no host filesystem Lua API is installed.\n";
             return help ? 0 : 2;
         }
         if (root.empty() || package.empty()) throw std::runtime_error("An extracted game directory and --package are required.");
         const auto resources = dw4::MountedResources::open(dw4::utf8_path(root));
-        const auto report = dw4::inspect_package_boot(resources,package,input);
-        std::cout << "Package: " << report.package_path << " / folder " << report.folder << '\n'
+        const auto session = dw4::load_startup_session(resources,package,input);
+        const auto& report = session.boot.report();
+        std::cout << "Package: " << session.package_path << " / folder " << report.folder << '\n'
             << "Inspection state: difficulty=" << input.difficulty << ", camera=" << input.camera_mode
             << ", USA country/area/pack-only=1\n";
         for (std::size_t i = 0; i < input.players.size(); ++i) {
@@ -64,9 +66,31 @@ int run(const std::vector<std::string>& args) {
             else std::cout << request.diagnostic;
             std::cout << '\n';
         }
-        if (!report.diagnostic.empty()) std::cerr << report.diagnostic << '\n';
-        if (!report.next_barrier.empty()) std::cout << "Next native barrier: " << report.next_barrier << '\n';
-        return report.boot_scripts_completed && report.resources_resolved ? 0 : 3;
+        std::cout << "Loaded files: " << session.files.size() << " / " << session.total_bytes << " bytes / "
+            << session.object_count << " objects / " << session.field_count << " decoded fields\n";
+        for (std::size_t i = 0; i < session.files.size(); ++i) {
+            const auto& file = session.files[i];
+            const auto stage = file.stage == dw4::StartupFileStage::preliminary ? "preliminary" :
+                file.stage == dw4::StartupFileStage::package ? "package" : "common";
+            std::cout << "File " << i << " [" << stage << ' ' << file.ordinal << "]: " << file.requested_path
+                << " / " << file.location.archive_index << ':' << file.location.entry_index << " / " << file.document.bytes().size()
+                << " bytes / " << file.exports.size() << " exports / " << file.document.external_directories.size() << " external-directory metadata names\n";
+        }
+        std::cout << "Info routing: " << session.infos.lua_infos.size() << " immediate Lua / " << session.infos.held_scenes.size()
+            << " held scenes / " << session.infos.deferred_infos.size() << " deferred (including " << session.infos.late_scenes.size() << " late scenes)\n";
+        const auto routes = [&](const char* label, const auto& infos) {
+            for (std::size_t i = 0; i < infos.size(); ++i) {
+                const auto& address = infos[i]; const auto& file = session.files.at(address.file_index);
+                const auto& info = file.exports.at(address.export_index);
+                std::cout << label << ' ' << i << ": file " << address.file_index << " / export " << address.export_index
+                    << " / ref " << address.reference_index << " / " << info.type << " / " << info.name << '\n';
+            }
+        };
+        routes("Lua info",session.infos.lua_infos); routes("Held scene",session.infos.held_scenes); routes("Deferred info",session.infos.deferred_infos);
+        std::cout << "Retained Lua state: " << (session.boot.has_live_state() ? "yes" : "no") << '\n';
+        if (!session.diagnostic.empty()) std::cerr << session.diagnostic << '\n';
+        std::cout << "Next native barrier: " << session.next_barrier << '\n';
+        return session.files_loaded && session.info_routing_complete ? 0 : 3;
     } catch (const std::exception& error) { std::cerr << "dw4_boot: " << error.what() << '\n'; return 1; }
 }
 } // namespace

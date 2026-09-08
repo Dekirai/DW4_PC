@@ -32,8 +32,10 @@ inline void name(Bytes& bytes, const std::string& text) {
 inline void align(Bytes& bytes) { bytes.resize((bytes.size() + 3) & ~std::size_t(3)); }
 
 enum Type : std::uint32_t {
-    object, object_dir, memory_dir, object_list, info_base, info_list,
-    lua_info, lua_list, lua_data, lua_object, derived_info, derived_data, derived_object
+    object, object_dir, memory_dir, object_list, named_object, info_base, info_list,
+    lua_info, lua_list, lua_data, lua_object, derived_info, derived_data, derived_object,
+    node, camera, camera_list, scene_info, derived_scene,
+    file_info, named_list, test_controller
 };
 struct Schema { std::string name; std::uint32_t parent, slots; std::vector<IgbObjectField> fields; };
 inline const std::vector<Schema> schemas{
@@ -41,15 +43,24 @@ inline const std::vector<Schema> schemas{
     {"igObjectDirEntry",object,13,{{0,2,4},{1,11,4},{1,12,4}}},
     {"igMemoryDirEntry",object,14,{{0,2,4},{1,7,4},{1,10,4},{4,11,1},{1,12,4},{1,13,4}}},
     {"igObjectList",object,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"igInfo",object,3,{{0,2,4}}},
+    {"igNamedObject",object,3,{{0,2,4}}},
+    {"igInfo",named_object,3,{{0,2,4}}},
     {"igInfoList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"beLuaInfo",info_base,8,{{0,2,4},{2,7,4}}},
     {"beLuaDataList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"beLuaData",object,4,{{0,2,4},{2,3,4}}},
+    {"beLuaData",named_object,4,{{0,2,4},{2,3,4}}},
     {"beLuaDataObject",object,4,{{1,2,4},{3,3,4}}},
     {"DerivedLuaInfo",lua_info,8,{{0,2,4},{2,7,4}}},
     {"DerivedLuaData",lua_data,4,{{0,2,4},{2,3,4}}},
-    {"DerivedLuaDataObject",lua_object,4,{{1,2,4},{3,3,4}}}
+    {"DerivedLuaDataObject",lua_object,4,{{1,2,4},{3,3,4}}},
+    {"igNode",named_object,3,{{0,2,4}}},
+    {"igCamera",node,3,{{0,2,4}}},
+    {"igCameraList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"igSceneInfo",info_base,8,{{0,2,4},{4,4,1},{2,5,4},{2,7,4}}},
+    {"DerivedSceneInfo",scene_info,8,{{0,2,4},{4,4,1},{2,5,4},{2,7,4}}},
+    {"beFileListInfo",info_base,7,{{0,2,4},{4,4,1},{0,5,4},{2,6,4}}},
+    {"igNamedObjectList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"beTestCtrlInfo",info_base,3,{{0,2,4}}}
 };
 struct ScriptFixture {
     struct Record {

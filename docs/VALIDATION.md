@@ -1,27 +1,35 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records version 0.10 native func/boot execution,
+GeForce RTX 5070 Ti. This records version 0.11 owned startup loading and routing,
 not gameplay compatibility or a finished port. Earlier asset, animation,
 placement and renderer measurements are retained from their respective
-milestones. Embedded script ownership, Lua 4 execution, native boot bindings,
-resource resolution and startup UI/CLI checks are the new acceptance work.
+milestones. Retained Lua runtime ownership, ordered common-file loading,
+source-qualified info routing and startup UI/CLI lifecycle are the new
+acceptance work.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: existing asset/viewer suites plus scripts, Lua 4 and startup | 20/20 suites passed in Release |
+| CTest: existing asset/viewer suites plus scripts, Lua 4, startup and startup loading | 21/21 suites passed in Release |
 | Embedded scripts and scheduling | 67 synthetic checks plus 66 original checks passed in Release and fully instrumented AddressSanitizer; exported identity, shared records, first-match shadowing, independent native barriers and aggregate budgets |
 | Original embedded scripts | dng101b1 member 1 exports 55 supported script records; func/boot/start/first references and byte sizes match the recovered chains |
 | Native Lua 4 | 286 synthetic checks plus 10 original checks passed in Release and fully instrumented AddressSanitizer; typed stack/call/closure/table/vararg behavior, malformed chunks, invalid operands, poison-on-failure and cumulative limits |
-| Boot host/resolver fixtures | 36 checks passed in Release and fully instrumented AddressSanitizer; persistent globals, clear/exact dedup, request-only ASCII folding, call provenance, explicit unsupported effects, path/argument validation, canonical selectors and clearing stale resolution |
+| Boot host/resolver/runtime fixtures | 69 checks passed in Release and fully instrumented AddressSanitizer; prior host/resolver checks plus actual string/table/function/number globals after source destruction, move construction/assignment, stable report identity, failed-state rejection, one-attempt execution and resolution after moves |
+| Startup loading/routing fixtures | 59 checks passed in Release and fully instrumented AddressSanitizer; bounded callback reads, stage/FIFO order, source-qualified aliases, common Lua chunks not rerun, exact scene rules, valid reference zero, malformed/null branches, cumulative camera/name/export limits, failed-prefix counters and independent loading/routing success flags |
+| Original owned startup resources | Zero/one/three profiles retain 96/9/11 files and 14,535,397 / 4,006,731 / 4,747,791 serialized bytes; every document equals its direct AFS payload, including repeated occurrences across profiles |
+| Independent original info routing | All 1,617 qualified routing tuples, including the separate late-scene list, match an independent raw-IGB oracle across three profiles; final deferred counts 583/436/446 and held-scene counts 104/17/19; every ordered source/stage/ordinal/location/size also matches |
+| Retained original boot runtime | All 17 original helper globals survive source/chunk destruction and runtime moves; the actual production Host path still matches official Lua 4.0.1 for all 188 calls/arguments and 110 queue entries, with unchanged instruction counts |
+| Packaged startup CLI | All original ordered queue and qualified Lua/held/deferred entries match the independent oracle for zero/one/three profiles; actual retained Lua state reported after loading |
+| Version 0.11 app lifecycle | 32 isolated native checks passed: successful owned-session counts, invalid input/package/unresolved-resource replacement, clear/remount, fresh-run recovery and byte-identical original 236-batch animated-player framebuffer before/after success, failure and result-view rendering |
+| Version 0.11 startup UI | Packaged finite 1280×720, 1920×1080 and 3840×2160 runs passed; Resources, Loaded files, Deferred and Late views inspected at 720p; difficulty/camera variants, missing/unresolved resources, slot-1-only state, empty startup and all nine pages return expected results |
 | Independent original execution | Native VM and unmodified official Lua 4.0.1 match all 188 ordered host calls/arguments and all 110 total queue entries across zero/one/three-player input profiles |
 | Original zero-player boot | func: 35 instructions / 0 calls; boot: 505 instructions / 105 calls; 94 distinct requests, all catalog-resolved |
 | Original one-player boot | Slot 0 Agumon with sword01/gun01/nil: boot 310 instructions / 34 calls / 7 requests, all catalog-resolved |
 | Original three-player boot | Agumon/Vmon/Dorumon with shared weapons: boot 432 instructions / 49 calls / 9 requests, including original q_ substitution and exact dedup; all resolved |
 | Boot CLI syntax | 8 table-driven test methods cover explicit state, malformed/range/duplicate selectors, nil weapon configuration, fixed USA getters, missing values and mixed app sources; no graphics/data required |
-| Boot app lifecycle | 26 ignored native checks passed: mixed-source guards, input order, zero/one queues, success replaced by failed rerun, recovery, remount/missing mount and exact existing animated-scene pixels before/after boot success/failure; 9 additional tool CLI cases passed |
-| Final packaged startup UI | Original zero/one/three-player queues match all reference entries; finite 1280×720, 1920×1080 and 3840×2160 runs passed and screenshots were inspected; difficulty/camera variants, empty startup without data, missing/unresolved resources and slot-1-only state return the expected results |
+| Version 0.10 boot app lifecycle | 26 ignored native checks passed: mixed-source guards, input order, zero/one queues, success replaced by failed rerun, recovery, remount/missing mount and exact existing animated-scene pixels before/after boot success/failure; 9 additional tool CLI cases passed |
+| Version 0.10 packaged startup UI | Original zero/one/three-player queues match all reference entries; finite 1280×720, 1920×1080 and 3840×2160 runs passed and screenshots were inspected; difficulty/camera variants, empty startup without data, missing/unresolved resources and slot-1-only state return the expected results |
 | Version 0.10 viewer regression | All nine pages and the existing textured, animated player scene passed finite runs with the final packaged executable |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
@@ -154,9 +162,11 @@ original placements and explicit root selection. The inspected BG02 switch is
 stored disabled. An explicit original ALLON command can now enable it through
 its exported controller, alongside the separate manual-child inspection option.
 The original func/boot script order now executes in a bounded native VM and
-builds a resolved resource queue. Later staged initialization and the full
-runtime controller lifecycle remain unimplemented. Nested masks and source
-data remain unchanged. See [STARTUP_VIEWER.md](STARTUP_VIEWER.md).
+builds a resolved resource queue. Version 0.11 retains that live VM, loads the
+common payloads and reconstructs the original info-routing order. The original
+loading-screen gate, active manager callbacks and later layer/text initialization
+remain unimplemented. Nested masks and source data remain unchanged. See
+[STARTUP_LOADING.md](STARTUP_LOADING.md) and [STARTUP_VIEWER.md](STARTUP_VIEWER.md).
 Explicit player visual placement now replaces the verified outer model matrix
 and joins original single-clip playback to the scene. It does not execute player
 generation, choose startup state, compose weapons/shadows or simulate movement.

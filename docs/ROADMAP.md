@@ -38,8 +38,12 @@ Version 0.10 executes `func.lua` and `boot.lua` in a bounded native Lua 4 VM.
 The host implements proven common-file queue methods and explicit inspection
 state queries, retaining USA constant getters and original name/dedup rules.
 Three profiles match official Lua 4.0.1 execution call-for-call and queue-for-queue.
-Continue by consuming the queue and registering loaded info records, then
-implement layer/text prerequisites and the native calls reached by `start.lua`.
+Version 0.11 consumes that queue, retains the live Lua state and decoded files,
+and reconstructs the original immediate/held/deferred info-routing order.
+Continue by implementing the queued managers' real initialization callbacks,
+the original loading-screen state and layer/text prerequisites, then the native
+calls reached by `start.lua`. A retained info record is not an initialized
+controller; generic registration invokes additional per-info and per-RAM work.
 Do not skip an unsupported host operation or mark a later startup phase complete
 because a script buffer exists. The game still has no controllable player.
 

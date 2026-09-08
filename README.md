@@ -1,8 +1,9 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.10 executes the original function and boot scripts natively to build
-their common-resource queue; the game is not playable yet.** Later startup
+**Version 0.11 executes the original function and boot scripts, loads their
+requested resources and reconstructs the original info-routing order;
+the game is not playable yet.** Later startup
 stages, player movement, collision, combat and game saves remain unimplemented.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
@@ -26,6 +27,9 @@ not contain game files.
   explicit player/difficulty/camera inspection inputs. Build the original
   common-resource queue, preserve exact duplicate semantics and resolve requests
   using the original ASCII lowercase lookup.
+- Keep the successful Lua state and all initial/common IGB documents alive in
+  an owned startup session. Preserve source-qualified exports, separate held
+  scenes and append late scenes to the original deferred queue.
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -242,10 +246,17 @@ lowercases ASCII A–Z as the original resolver does. Every ordered host call an
 queue entry for three test profiles matches an independent official Lua 4.0.1
 reference run.
 
-Execution stops before common-resource loading, deferred controller registration
-and layer/text initialization. `start.lua` and `first.lua` do not run; this page
+Version 0.11 also loads and retains every requested IGB document. The one-player
+example owns nine files containing 454 exports; the original routing rules
+produce one Lua info, 17 held scenes and 436 deferred infos. The Startup page
+exposes Resources, Loaded files and Info routing views. The actual Lua state
+and its function definitions remain alive alongside the loaded documents.
+
+Execution stops before the original loading-screen state, runtime manager
+callbacks and layer/text initialization. `start.lua` and `first.lua` do not run; this page
 does not automatically create a player or turn the scene inspector into gameplay.
-Unknown native effects stop explicitly. See [STARTUP_VIEWER.md](docs/STARTUP_VIEWER.md).
+Unknown native effects stop explicitly. See [STARTUP_VIEWER.md](docs/STARTUP_VIEWER.md)
+and [STARTUP_LOADING.md](docs/STARTUP_LOADING.md).
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -272,9 +283,9 @@ Original textures, logical asset lookup and object-space mesh viewing are
 available, including verified base-texture bindings, original clip decoding and
 static map inspection through named packages and original switch commands, plus
 explicitly placed animated player visuals. Original `func.lua` and `boot.lua`
-now execute natively through resource-queue construction. The next step is
-consuming that queue with the original registration order, implementing the
-required layer/controller state, and then reaching player generation in
+now execute natively, followed by common-resource loading and the original
+info-routing order. The next step is implementing the queued managers' actual
+runtime callbacks and the required loading-screen/layer/text state, then reaching player generation in
 `start.lua`, followed by movement/collision recovery,
 with comparisons against captured original frames, followed by
 an original scene with a controllable Digimon. Reconstructing

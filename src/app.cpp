@@ -13,6 +13,7 @@
 #include "dw4/scene_controls.hpp"
 #include "dw4/settings.hpp"
 #include "dw4/startup.hpp"
+#include "dw4/startup_loading.hpp"
 #include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
 #include "mesh_renderer.hpp"
@@ -503,15 +504,21 @@ public:
                 return 2;
             }
             if (!options_.boot_package.empty()) {
-                if (!boot_report_ || !boot_report_->boot_scripts_completed || !boot_report_->resources_resolved || !boot_error_.empty()) {
-                    std::cerr << "Boot execution failed: " << (!boot_error_.empty() ? boot_error_ : boot_report_ ? boot_report_->diagnostic : "No report.") << '\n';
+                if (!boot_session_ || !boot_session_->files_loaded || !boot_session_->info_routing_complete ||
+                    !boot_report_ || !boot_report_->boot_scripts_completed || !boot_report_->resources_resolved || !boot_error_.empty()) {
+                    std::cerr << "Startup loading failed: " << (!boot_error_.empty() ? boot_error_ : boot_session_ ? boot_session_->diagnostic : "No session.") << '\n';
                     return 3;
                 }
                 std::cout << "Original boot scripts executed: " << boot_report_->scripts.size() << " / " << boot_report_->instructions
                     << " instructions / " << boot_report_->host_calls << " native calls / " << boot_report_->resources.size() << " unique common resources\n"
                     << "Boot folder: " << boot_report_->folder << " / explicit difficulty " << boot_report_->inputs.difficulty
                     << " / camera " << boot_report_->inputs.camera_mode << '\n'
-                    << "Next native barrier: " << boot_report_->next_barrier << '\n';
+                    << "Native startup payloads loaded: " << boot_session_->files.size() << " files / " << boot_session_->total_bytes
+                    << " bytes / " << boot_export_count() << " exported info occurrences\n"
+                    << "Info routing: " << boot_session_->infos.lua_infos.size() << " immediate Lua / "
+                    << boot_session_->infos.held_scenes.size() << " held scenes / " << boot_session_->infos.deferred_infos.size()
+                    << " deferred candidates (including " << boot_session_->infos.late_scenes.size() << " late scenes)\n"
+                    << "Next native barrier: " << boot_session_->next_barrier << '\n';
             }
             if (!options_.package.empty()) {
                 if (!scene_package_ || !scene_package_error_.empty()) {
@@ -809,8 +816,11 @@ private:
     bool scene_player_tab_pending_ = false, scene_player_focus_pending_ = false;
     dw4::viewer::MeshDrawMode scene_mode_ = dw4::viewer::MeshDrawMode::solid;
     std::vector<SDL_Gamepad*> gamepads_;
+    std::optional<dw4::StartupSession> boot_session_;
     std::optional<dw4::BootReport> boot_report_;
     std::string boot_error_;
+    int boot_tab_to_select_ = -1;
+    int boot_route_view_ = 0;
     std::array<char,256> boot_package_input_{};
     dw4::BootInputs boot_inputs_;
     std::array<std::array<char,129>,4> boot_player_names_{};
@@ -1018,7 +1028,7 @@ private:
     }
 
     void mount_data() {
-        boot_report_.reset(); boot_error_.clear();
+        clear_boot_inspection();
         clear_texture_document();
         clear_mesh_document();
         clear_scene_document();
@@ -3374,23 +3384,137 @@ private:
         }
     }
 
+    void clear_boot_inspection() {
+        boot_session_.reset();
+        boot_report_.reset();
+        boot_error_.clear();
+        boot_tab_to_select_ = -1;
+        boot_route_view_ = 0;
+    }
+
+    std::size_t boot_export_count() const {
+        std::size_t count = 0;
+        if (boot_session_) for (const auto& file : boot_session_->files) count += file.exports.size();
+        return count;
+    }
+
     void run_boot_inspection(const std::string& path) {
-        boot_report_.reset(); boot_error_.clear();
+        clear_boot_inspection();
         try {
-            if (!mounted_resources_) throw std::runtime_error("Mount the original game data before running boot scripts.");
-            boot_report_ = dw4::inspect_package_boot(*mounted_resources_,path,boot_inputs_);
+            if (!mounted_resources_) throw std::runtime_error("Mount the original game data before running startup loading.");
+            boot_session_ = dw4::load_startup_session(*mounted_resources_,path,boot_inputs_);
+            boot_report_ = boot_session_->boot.report();
             if (!boot_report_->boot_scripts_completed) boot_error_ = boot_report_->diagnostic;
             else if (!boot_report_->resources_resolved) boot_error_ = "Some requested resources do not resolve to readable original catalog entries.";
+            if (!boot_session_->files_loaded || !boot_session_->info_routing_complete) {
+                if (!boot_session_->diagnostic.empty()) boot_error_ = boot_session_->diagnostic;
+                else if (boot_error_.empty()) boot_error_ = "Original payload loading or info routing did not complete.";
+            }
+            boot_tab_to_select_ = 1;
         } catch (const std::exception& error) { boot_error_ = error.what(); }
     }
 
+    void draw_boot_resources(float height) {
+        const auto& report = *boot_report_;
+        if (ImGui::BeginTable("boot_queue",3,ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,ImVec2(0,height))) {
+            ImGui::TableSetupColumn("Order",ImGuiTableColumnFlags_WidthFixed,55);
+            ImGui::TableSetupColumn("Original resource request");
+            ImGui::TableSetupColumn("Catalog location",ImGuiTableColumnFlags_WidthFixed,170);
+            ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
+            ImGuiListClipper clip; clip.Begin(static_cast<int>(report.resources.size()));
+            while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                const auto& request = report.resources[static_cast<std::size_t>(row)];
+                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("%d",row);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(request.logical_path.c_str());
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s / PC %zu",request.source.c_str(),request.prototype.c_str(),request.pc);
+                ImGui::TableNextColumn();
+                if (request.location) ImGui::Text("Archive %u / %u",request.location->archive_index,request.location->entry_index);
+                else { ImGui::TextColored(amber,"Unresolved"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",request.diagnostic.c_str()); }
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    void boot_file_tooltip(const dw4::StartupLoadedFile& file, std::size_t index) const {
+        if (!ImGui::IsItemHovered()) return;
+        ImGui::SetTooltip("File occurrence %zu / original ordinal %u\nRequest: %s\nCatalog: %s\nArchive %u / entry %u\n%zu bytes / %zu exports / %zu external-directory metadata names",
+            index,file.ordinal,file.requested_path.c_str(),file.catalog_path.c_str(),file.location.archive_index,file.location.entry_index,
+            file.document.bytes().size(),file.exports.size(),file.document.external_directories.size());
+    }
+
+    void draw_boot_files(float height) {
+        const auto& files = boot_session_->files;
+        if (ImGui::BeginTable("boot_files",5,ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,ImVec2(0,height))) {
+            ImGui::TableSetupColumn("Order",ImGuiTableColumnFlags_WidthFixed,45);
+            ImGui::TableSetupColumn("Stage",ImGuiTableColumnFlags_WidthFixed,105);
+            ImGui::TableSetupColumn("Loaded original file");
+            ImGui::TableSetupColumn("Bytes",ImGuiTableColumnFlags_WidthFixed,85);
+            ImGui::TableSetupColumn("Exports",ImGuiTableColumnFlags_WidthFixed,65);
+            ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
+            ImGuiListClipper clip; clip.Begin(static_cast<int>(files.size()));
+            while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                const auto& file = files[static_cast<std::size_t>(row)];
+                const char* stage = file.stage == dw4::StartupFileStage::preliminary ? "Preliminary" :
+                    file.stage == dw4::StartupFileStage::package ? "Package" : "Common";
+                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("%d",row);
+                ImGui::TableNextColumn(); ImGui::Text("%s %u",stage,file.ordinal);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(file.requested_path.c_str());
+                boot_file_tooltip(file,static_cast<std::size_t>(row));
+                ImGui::TableNextColumn(); ImGui::Text("%zu",file.document.bytes().size());
+                ImGui::TableNextColumn(); ImGui::Text("%zu",file.exports.size());
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    void draw_boot_routes(float height) {
+        const auto& session = *boot_session_;
+        ImGui::SetNextItemWidth(235);
+        const char* views[]{"Deferred manager candidates", "Immediate Lua route", "Held scenes", "Late scenes (deferred tail)"};
+        ImGui::Combo("##boot_route",&boot_route_view_,views,4);
+        const std::array<const std::vector<dw4::StartupInfoAddress>*,4> lists{
+            &session.infos.deferred_infos,&session.infos.lua_infos,&session.infos.held_scenes,&session.infos.late_scenes};
+        const auto& routes = *lists.at(static_cast<std::size_t>(boot_route_view_));
+        ImGui::SameLine(); ImGui::TextColored(muted,"%zu occurrences",routes.size());
+        const char* descriptions[]{
+            "Ordered candidates only. Runtime manager callbacks have not executed.",
+            "Lua info occurrences routed immediately while loading, in source order.",
+            "Ordinary scenes are held separately for later layer setup.",
+            "Camera and ROOTATTR scenes are also included at the end of the deferred list."};
+        paragraph(descriptions[boot_route_view_],muted);
+        height = std::max(110.0f,height - ImGui::GetFrameHeightWithSpacing() - 35.0f);
+        if (ImGui::BeginTable("boot_routes",5,ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,ImVec2(0,height))) {
+            ImGui::TableSetupColumn("Order",ImGuiTableColumnFlags_WidthFixed,45);
+            ImGui::TableSetupColumn("Source",ImGuiTableColumnFlags_WidthFixed,100);
+            ImGui::TableSetupColumn("Reference",ImGuiTableColumnFlags_WidthFixed,75);
+            ImGui::TableSetupColumn("Original info type",ImGuiTableColumnFlags_WidthFixed,210);
+            ImGui::TableSetupColumn("Name");
+            ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
+            ImGuiListClipper clip; clip.Begin(static_cast<int>(routes.size()));
+            while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
+                const auto& address = routes[static_cast<std::size_t>(row)];
+                const auto& file = session.files.at(address.file_index);
+                const auto& info = file.exports.at(address.export_index);
+                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("%d",row);
+                ImGui::TableNextColumn(); ImGui::Text("%u / %u",address.file_index,address.export_index);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("File occurrence %u / export ordinal %u\n%s\nArchive %u / entry %u / reference %u",
+                    address.file_index,address.export_index,file.requested_path.c_str(),file.location.archive_index,file.location.entry_index,address.reference_index);
+                ImGui::TableNextColumn(); ImGui::Text("%u",address.reference_index);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(info.type.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(info.name.empty() ? "(unnamed)" : info.name.c_str());
+                boot_file_tooltip(file,address.file_index);
+            }
+            ImGui::EndTable();
+        }
+    }
+
     void draw_boot() {
-        title("Original boot scripts", "Execute func.lua and boot.lua natively to build the original common-resource queue from explicit inspection inputs.");
+        title("Original startup loading", "Execute func.lua and boot.lua, load their original resource files, and preserve the native info-routing order.");
         bool changed = false;
         ImGui::SetNextItemWidth(std::max(200.0f,ImGui::GetContentRegionAvail().x-230.0f));
         changed |= ImGui::InputTextWithHint("##boot_package","Logical package descriptor",boot_package_input_.data(),boot_package_input_.size());
         ImGui::SameLine();
-        const bool run = ImGui::Button("Run boot scripts");
+        const bool run = ImGui::Button("Run startup loading");
         if (ImGui::CollapsingHeader("Inspection inputs",boot_report_ ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
             paragraph("These values are explicit test state, not an imported save. USA country, area and pack-only getters retain their original constant 1.");
             ImGui::SetNextItemWidth(95); changed |= ImGui::InputInt("Difficulty (0-2)",&boot_inputs_.difficulty,0,0);
@@ -3411,7 +3535,7 @@ private:
                 ImGui::PopID();
             }
         }
-        if (changed) { boot_report_.reset(); boot_error_.clear(); }
+        if (changed) clear_boot_inspection();
         if (run) {
             for (std::size_t p = 0; p < 4; ++p) {
                 auto& player = boot_inputs_.players[p];
@@ -3422,34 +3546,37 @@ private:
             run_boot_inspection(boot_package_input_.data());
         }
         if (!boot_error_.empty()) paragraph(boot_error_.c_str(),amber);
-        if (!boot_report_) { paragraph("Choose a package and run its first two scheduled scripts. Unknown native effects stop with a diagnostic."); return; }
+        if (!boot_report_) { paragraph("Choose a package and run startup loading. Unknown native effects stop with a diagnostic."); return; }
         const auto& report = *boot_report_;
         ImGui::Spacing();
         ImGui::TextColored(report.boot_scripts_completed ? teal : amber,"%s  |  %zu scripts  |  %llu instructions  |  %zu resources",
             report.folder.c_str(),report.scripts.size(),static_cast<unsigned long long>(report.instructions),report.resources.size());
-        paragraph(report.next_barrier.c_str(),amber);
+        if (boot_session_) {
+            const auto& session = *boot_session_;
+            ImGui::TextColored(session.files_loaded && session.info_routing_complete ? teal : amber,
+                "%zu files / %.2f MiB / %zu exports  |  %zu deferred / %zu held scenes / %zu Lua infos",
+                session.files.size(),static_cast<double>(session.total_bytes)/(1024.0*1024.0),boot_export_count(),
+                session.infos.deferred_infos.size(),session.infos.held_scenes.size(),session.infos.lua_infos.size());
+            paragraph(session.next_barrier.c_str(),amber);
+        }
         for (const auto& script : report.scripts) {
             ImGui::TextColored(script.completed ? teal : amber,"%s: %s / %llu instructions / %llu native calls",script.name.c_str(),
                 script.completed ? "executed" : "stopped",static_cast<unsigned long long>(script.instructions),static_cast<unsigned long long>(script.host_calls));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nInfo %u / script index %u\n%s",script.source.c_str(),script.info_reference,script.data_index,script.diagnostic.c_str());
         }
-        const float height = std::max(160.0f,ImGui::GetContentRegionAvail().y-70.0f);
-        if (ImGui::BeginTable("boot_queue",3,ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,ImVec2(0,height))) {
-            ImGui::TableSetupColumn("Order",ImGuiTableColumnFlags_WidthFixed,55);
-            ImGui::TableSetupColumn("Original resource request");
-            ImGui::TableSetupColumn("Catalog location",ImGuiTableColumnFlags_WidthFixed,170);
-            ImGui::TableSetupScrollFreeze(0,1); ImGui::TableHeadersRow();
-            ImGuiListClipper clip; clip.Begin(static_cast<int>(report.resources.size()));
-            while (clip.Step()) for (int row = clip.DisplayStart; row < clip.DisplayEnd; ++row) {
-                const auto& request = report.resources[static_cast<std::size_t>(row)];
-                ImGui::TableNextRow(); ImGui::TableNextColumn(); ImGui::Text("%d",row);
-                ImGui::TableNextColumn(); ImGui::TextUnformatted(request.logical_path.c_str());
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s / PC %zu",request.source.c_str(),request.prototype.c_str(),request.pc);
-                ImGui::TableNextColumn();
-                if (request.location) ImGui::Text("Archive %u / %u",request.location->archive_index,request.location->entry_index);
-                else { ImGui::TextColored(amber,"Unresolved"); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",request.diagnostic.c_str()); }
+        if (ImGui::BeginTabBar("boot_results")) {
+            const float height = std::max(130.0f,ImGui::GetContentRegionAvail().y-55.0f);
+            if (ImGui::BeginTabItem("Resources",nullptr,boot_tab_to_select_ == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                draw_boot_resources(height); ImGui::EndTabItem();
             }
-            ImGui::EndTable();
+            if (boot_session_ && ImGui::BeginTabItem("Loaded files",nullptr,boot_tab_to_select_ == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                draw_boot_files(height); ImGui::EndTabItem();
+            }
+            if (boot_session_ && ImGui::BeginTabItem("Info routing",nullptr,boot_tab_to_select_ == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                draw_boot_routes(height); ImGui::EndTabItem();
+            }
+            boot_tab_to_select_ = -1;
+            ImGui::EndTabBar();
         }
     }
 
@@ -3513,7 +3640,7 @@ int main(int argc, char** argv) {
                          "--scene-player-group Entry-point group index. Placement replaces the outer model transform.\n"
                          "--scene-player-animation Original clip name; optional --scene-player-time in seconds.\n"
                          "--scene-player-play Start the selected player clip; smoke tests require 2+ frames.\n"
-                         "--boot-package Execute original func/boot scripts of a named package; opens Startup.\n"
+                         "--boot-package Execute original func/boot and load requested assets; opens Startup.\n"
                          "--boot-difficulty 0..2 and --boot-camera 0..1: explicit inspection inputs, default 0.\n"
                          "--boot-player-N NAME Join slot N=0..3 with this model; default no joined slots.\n"
                          "--boot-weapon-N-S NAME Weapon for player N, slot S=0..2; omitted slots return nil.\n"

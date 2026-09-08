@@ -1,9 +1,11 @@
 #pragma once
 
 #include "dw4/resources.hpp"
+#include "dw4/lua4.hpp"
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -55,6 +57,29 @@ void validate_boot_inputs(const BootInputs& inputs);
 // Shared app/CLI parsing for the explicitly named --boot-* state options.
 // Returns false for an unknown option; a recognized malformed value throws.
 bool set_boot_input_option(BootInputs& inputs, std::string_view option, std::string_view value);
+// Owns one boot attempt and its actual Lua globals, closures and strict host.
+// Moving transfers ownership without changing the host/report addresses.
+// Execution failures remain diagnostic and cannot be retried on this runtime.
+class BootRuntime {
+public:
+    BootRuntime();
+    ~BootRuntime();
+    BootRuntime(const BootRuntime&) = delete;
+    BootRuntime& operator=(const BootRuntime&) = delete;
+    BootRuntime(BootRuntime&&) noexcept;
+    BootRuntime& operator=(BootRuntime&&) noexcept;
+    void execute(std::span<const StartupSource> sources,
+        const std::string& folder, const BootInputs& inputs);
+    const BootReport& report() const;
+    void resolve_resources(const ResourceCatalog& catalog);
+    bool has_live_state() const noexcept;
+    // Read-only inspection is available only after both phases succeeded.
+    // Table/function handles remain owned by this runtime; no later execution API.
+    Lua4Value global(std::string_view name) const;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 // Executes only func.lua and boot.lua, with strict CFL/SYS inspection bindings.
 // Unknown native effects stop execution; no staged loading or start/first calls
 // are skipped, mocked or marked complete. Failed partial queues remain diagnostic.

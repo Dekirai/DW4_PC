@@ -1,19 +1,21 @@
 # Native boot-script execution
 
-Version 0.10 executes the original `func.lua` and `boot.lua` chunks through a
-bounded native Lua 4 interpreter. The first chunk installs helper functions;
-the second builds the common-resource queue using explicit inspection state.
+Version 0.11 executes the original `func.lua` and `boot.lua` chunks through a
+bounded native Lua 4 interpreter, then loads the requested common files. The
+first chunk installs helper functions; the second builds the common-resource
+queue using explicit inspection state.
 This is actual bytecode execution with native host bindings, without executing
 PowerPC code or substituting a hand-written copy of the original script.
 
-The resulting queue is resolved against the original catalog. Its payloads are
-not yet loaded or registered with gameplay controllers. `start.lua`, `first.lua`,
+The resulting queue is resolved against the original catalog, loaded into owned
+IGB documents and routed into the original info lists. The live Lua state is
+retained. Gameplay controller initialization remains pending. `start.lua`, `first.lua`,
 player generation, movement, combat and the original game camera do not run.
 
 ## Native application
 
-Open **Startup**, enter a logical package descriptor and select **Run boot
-scripts**. Expand **Inspection inputs** to configure difficulty, camera mode,
+Open **Startup**, enter a logical package descriptor and select **Run startup
+loading**. Expand **Inspection inputs** to configure difficulty, camera mode,
 joined player slots, model names and up to three weapon names per player.
 An empty weapon field represents a nil query result. Changing any visible input
 discards the previous report; Run executes a fresh VM using the current inputs.
@@ -24,16 +26,19 @@ discards the previous report; Run executes a fresh VM using the current inputs.
   --boot-weapon-0-0 w_sword01 --boot-weapon-0-1 w_gun01
 ```
 
-The table preserves the original ordered request names. Hover a request to see
+The **Resources** table preserves the original ordered request names. Hover a request to see
 the source member, prototype and instruction that appended it. Hover a script
 row for its info reference and script-list index. A completed boot report always
 shows the next native barrier, so execution of two scripts cannot be confused
-with completion of the game startup sequence.
+with completion of the game startup sequence. **Loaded files** lists retained
+documents and their byte/export counts; **Info routing** exposes the final
+deferred order, immediate Lua route, held scenes and late-scene tail. These
+are loader lists, not proof that manager callbacks initialized the objects.
 
 The scene inspector remains independent. Its explicit map activation and
 animated visual placement are still available and are not silently coupled to
 boot inspection. No player model is selected from the generated queue without
-the intervening native loading/registration work.
+the intervening native manager initialization work.
 
 ## Command-line tool
 
@@ -53,8 +58,8 @@ They do not import or infer a save, inventory or new-game state. Original USA
 country, area and pack-only getters return constant 1 and cannot be overridden
 through these state options.
 
-The CLI returns 0 when both scheduled chunks complete and every generated
-request resolves, 3 for unsupported execution or unresolved resources, and 1
+The CLI returns 0 when both scheduled chunks complete, all initial/requested
+files decode and info routing completes, 3 for failed execution/loading/routing, and 1
 for malformed arguments or failure to mount the data. In the application,
 `--smoke-test 5 --screenshot work/boot.bmp` runs finite hidden UI frames and
 requires a successful report. `--max-entry-mib` belongs to the asset viewers and
@@ -104,17 +109,19 @@ substitution. It does not constitute three-player gameplay.
 
 ## Bounds and next phase
 
-Boot reads at most 32 initial package members, 64 MiB per member and 256 MiB
-combined. It executes at most 64 chunks with 32,768 instructions per chunk, plus
+Boot reads at most 32 initial package members. Initial and common files together
+are capped at 128 documents, 64 MiB per file and 256 MiB combined. It executes
+at most 64 chunks with 32,768 instructions per chunk, plus
 the Lua parser/VM budgets in [LUA4.md](LUA4.md). Host callbacks are capped at
 32,768 per run. Queue limits are 4,096 distinct requests, 4 MiB of request and
 provenance text and 8 MiB of cumulative path scanning, including duplicates and
 repeated clears. No file, OS or network Lua functions are installed.
 
-The next implementation phase must consume the generated common-resource queue,
-register the loaded info records in the original order, initialize the required
-layers and text state, then execute supported calls reached by `start.lua`.
+The common-resource queue is now loaded and its exports are retained in the
+original routing order. The next phase must implement the original loading-screen
+state, the deferred managers' actual callbacks and required layer/text state,
+then execute supported calls reached by `start.lua`.
 Unknown operations must remain explicit failures. See
 [STARTUP_HOST_RESEARCH.md](STARTUP_HOST_RESEARCH.md),
 [STARTUP_RESEARCH.md](STARTUP_RESEARCH.md), [SCRIPTS.md](SCRIPTS.md) and
-[VALIDATION.md](VALIDATION.md).
+[STARTUP_LOADING.md](STARTUP_LOADING.md) and [VALIDATION.md](VALIDATION.md).

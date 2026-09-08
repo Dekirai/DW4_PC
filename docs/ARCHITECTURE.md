@@ -13,7 +13,10 @@ records and builds an ordered name-resolution plan with separate native
 prerequisite barriers. `lua4` parses and executes a bounded Lua 4 chunk profile
 with persistent globals, typed values and caller-supplied strict host bindings.
 `startup` executes the func/boot phases, supplies explicit inspection state,
-builds the verified common-file queue and resolves its names. `textures` decodes verified indexed8/RGBA8 and BC1
+builds the verified common-file queue and resolves its names. Its move-only
+`BootRuntime` retains the actual successful VM and host state. `startup_loading`
+owns initial/common documents, qualified export identities and the original
+immediate/held/deferred routing lists. `textures` decodes verified indexed8/RGBA8 and BC1
 base images. `meshes` decodes positions, triangle indices and explicitly requested
 UV streams. `materials` resolves a bounded local/inherited single-stage texture
 binding profile with reference provenance and unsupported-state diagnostics.
@@ -74,9 +77,17 @@ The fixed boot profile reads at most 32 initial members, 64 MiB per member and
 one VM retains bounded globals, closures, strings and tables across chunks.
 The host caps total callbacks, path scan work and queue metadata. Lua file/OS/
 network APIs are absent. There is no coroutine resume past an unknown method.
-Common-resource payload loading, deferred controller registration and layer/text
-initialization form the next native barrier; start/first are never silently
-skipped or marked complete. See [STARTUP_VIEWER.md](STARTUP_VIEWER.md).
+Version 0.11 consumes the common queue and retains the decoded files in an owned
+`StartupSession`. Repeated load/export occurrences keep separate identities;
+only exact Lua infos are immediate, while camera/ROOTATTR scenes are appended
+after ordinary deferred infos and other scenes stay in a separate holding list.
+These are loader routes, not completed manager callbacks. Successful byte
+loading and complete routing have separate flags, neither of which bypasses the
+original loading-screen condition. Runtime manager callbacks and layer/text
+initialization remain pending; start/first are never silently skipped or marked
+complete. The CLI and Startup page use the session API, while the original
+`inspect_package_boot` API remains available for queue-only inspection. See
+[STARTUP_LOADING.md](STARTUP_LOADING.md) for ownership and aggregate limits.
 
 The original DOL BSS envelope overlaps some initialized data sections. A future
 loader must zero the envelope before loading initialized sections or clear only

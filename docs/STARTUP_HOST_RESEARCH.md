@@ -214,12 +214,13 @@ reference source, executable and original chunks remain in ignored local work.
 After `func.lua` and `boot.lua` return, the original file-list manager stores
 state 4 at `0x802F9734`. State 4 reads the common list and submits it to
 `0x802F9E98` at `0x802F97D8`; actual IGB loading is requested through
-`0x8006FD34` at `0x802FA4E8`. Loading completion, sound handling, deferred
+`0x8006FD34` at `0x802FA4E8`. Loading completion, loading-node timing, deferred
 registration and later layer/text initialization precede `start.lua`.
 
-The bounded host can therefore execute real script instructions, mutate its
-real deduplicated queue and report checked resource locations, then stop at
-this common-load/registration barrier. Calling `start.lua`, fabricating later
-host results, or marking startup complete would cross that boundary. No player
-creation, first-script switch activation, input, collision or gameplay follows
-merely from a successfully built queue.
+Version 0.10 stopped after real script execution and checked queue construction.
+Version 0.11 adds common payload loading and retained info routing, while the
+loading-node timing state and active manager callbacks remain pending. Calling
+`start.lua`, fabricating later host results, or marking startup complete would
+cross that boundary. No player creation, first-script switch activation, input,
+collision or gameplay follows merely from a successfully built queue. The later
+loading states are refined in [STARTUP_LOADING_RESEARCH.md](STARTUP_LOADING_RESEARCH.md).
