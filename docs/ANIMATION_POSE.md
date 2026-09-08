@@ -166,6 +166,17 @@ the tested MSVC build. Of the original intervals, 672 in 38 clips entered the
 polynomial branch, so this difference from reference trigonometric SLERP is
 exercised by actual supplied files.
 
+A separate full-pose comparison sampled all 82 Agumon clips at zero, one
+quarter, three quarters and the full duration using the production graph,
+codec and original interpolation. For the high-detail geometry this evaluated
+328 poses and 449,688 vertex positions. An independent float32 composition
+probe followed the recovered matrix signs, skipped-root hierarchy,
+paired-single multiplication order and inverse-joint selection using the same
+resolved local channels. Maximum absolute component differences from the
+native double-precision composition were `1.90735e-6` for joint positions and
+`2.38419e-6` for vertex positions, both below `1e-5`. This validates composition
+separately from channel decoding; it is not an independent decoder comparison.
+
 The probe models the relevant arithmetic and explicit float rounding. It does
 not emulate PowerPC exception/status registers, guest execution, rendering or
 the complete animation system. This evidence supports the recovered single-clip
