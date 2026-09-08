@@ -1,9 +1,9 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.8 adds named package loading and explicit original switch-controller
-commands; the game is not playable yet.** Startup scheduling, combat and game
-saves have not been ported.
+**Version 0.9 places supported animated player visuals at original map entry
+points; the game is not playable yet.** Startup execution, player movement,
+collision, combat and game saves have not been ported.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
 original local files directly. The PowerPC `main.dol` is inspected as data;
@@ -34,6 +34,11 @@ game code is not executed. This repository does not contain game files.
   root-child inspection for stored disabled exports and per-instance textures.
 - Apply the verified `ALLON` or `ALLOF` command of an exported switch controller
   to its selected scene root, with command provenance and unchanged source bytes.
+- Follow an explicitly selected player model instance and appearance branch into
+  its original skin, then replace the outer model transform with a checked map
+  entry-point matrix. Animate that visual alongside the map in one depth target.
+- Focus the inspection camera on the placed visual, select its original clips,
+  seek, play/pause and update only its GPU vertex range during playback.
 - Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
@@ -152,7 +157,7 @@ paused inspection:
 ```
 
 All 82 Agumon clips decode under the current profile. This is a single-clip asset
-viewer: actor state, animation blending, action events, actor scene placement and
+viewer: actor state, animation blending, action events and
 comparison against captured original gameplay remain separate work.
 
 Open **Scenes** for static map inspection. The following example selects the
@@ -187,6 +192,26 @@ Use `dw4_catalog EXTRACTED_ROOT --package dng101b1.igb --member 1` to inspect
 member/export provenance without opening the graphics app. See
 [PACKAGE_VIEWER.md](docs/PACKAGE_VIEWER.md) and [SCENE_CONTROLS.md](docs/SCENE_CONTROLS.md).
 
+To add an animated Agumon visual at the first explicitly selected entry point:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' `
+  --package dng101b1.igb --package-member 1 --scene-root 1 `
+  --scene-switch-control 3471 --scene-switch-command all-on --scene-mode textured `
+  --scene-player-resource _common/p_agumon.igb --scene-player-model 1386 `
+  --scene-player-slot 0 --scene-player-branch 1 `
+  --scene-player-point 115 --scene-player-group 0 `
+  --scene-player-animation waitS --scene-player-play
+```
+
+The **Player** tab exposes the model, placement and clip selectors. **Focus
+player** recenters the camera; **Fit** shows the map. These are explicit
+inspection choices, including the entry group and appearance branch. The
+application does not execute the original player-generation command or choose a
+gameplay spawn automatically. One visual is supported at a time; slot 0–3 selects
+the original model instance and matching point, without creating a multiplayer
+session. See [PLAYER_VIEWER.md](docs/PLAYER_VIEWER.md).
+
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
 Those totals include repeated asset instances and verify loading, not each
@@ -210,8 +235,10 @@ performs structural checks; the Python verifier additionally checks this hash.
 
 Original textures, logical asset lookup and object-space mesh viewing are
 available, including verified base-texture bindings, original clip decoding and
-static map inspection through named packages and original switch commands.
-The next step is startup scheduling, controller registration and actor placement,
+static map inspection through named packages and original switch commands, plus
+explicitly placed animated player visuals. Original startup script order and
+player-matrix replacement have been traced. The next step is bounded startup
+execution, controller/player state and movement/collision recovery,
 with comparisons against captured original frames, followed by
 an original scene with a controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
@@ -227,6 +254,9 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Animation loading](docs/ANIMATIONS.md) ·
 [Static scenes](docs/SCENES.md) ·
 [Original scene commands](docs/SCENE_CONTROLS.md) ·
+[Player visuals](docs/PLAYER_VISUAL.md) ·
+[Player placement](docs/PLAYER_PLACEMENT_RESEARCH.md) ·
+[Original startup](docs/STARTUP_RESEARCH.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

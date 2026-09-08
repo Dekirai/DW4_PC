@@ -189,6 +189,7 @@ void pose_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra
     using namespace dw4::viewer;
     renderer.clear();
     rejects([&] { renderer.update_positions(tetra.positions); });
+    rejects([&] { renderer.update_batch_positions(0,tetra.positions); });
     check(!renderer.project_to_canvas({0,0,0}, camera, 1), "Empty renderer projected a stale mesh point");
     auto mesh = tetra;
     mesh.texcoords.assign(mesh.positions.size(), {0.25f, 0.25f});
@@ -224,8 +225,189 @@ void pose_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra
     renderer.update_positions(tetra.positions); caller.verify();
     check(pixels(renderer.render(128, 128, camera, MeshDrawMode::textured), 128, 128) == initial,
         "Restoring source positions did not reproduce the textured reference image");
+    rejects([&] { renderer.update_batch_positions(1,tetra.positions); });
+    renderer.update_batch_positions(0,translated); caller.verify();
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==moved,
+        "Batch-zero update is not compatible with a single uploaded mesh");
+    renderer.update_batch_positions(0,tetra.positions);
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==initial,
+        "Batch-zero reset changed single-mesh UVs or source normalization");
     renderer.clear();
     check(!renderer.has_texture(), "Clearing a posed mesh retained its texture");
+}
+
+void batch_pose_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    auto quad=[](float x,float z,float extent) {
+        dw4::MeshData mesh;
+        mesh.positions={{x-extent,-extent,z},{x+extent,-extent,z},{x+extent,extent,z},{x-extent,extent,z}};
+        mesh.indices={0,1,2,0,2,3};
+        mesh.texcoords={{0,0},{1,0},{1,1},{0,1}};
+        return mesh;
+    };
+    dw4::OrbitCamera camera; camera.orbit(-.65f,-.35f);
+    auto left=quad(-1,0,.4f),actor=quad(0,0,.3f),right=quad(1,0,.4f);
+    // A three-vertex static batch before the four-vertex actor catches incorrect
+    // update offsets; a static batch after it catches an oversized update.
+    left.positions.pop_back();left.texcoords.pop_back();left.indices={0,1,2};
+    const dw4::RgbaImage red{1,1,{255,0,0,255}},blue{1,1,{0,0,255,255}};
+    auto atlas=dw4::RgbaImage{2,2,{0,255,0,255,255,255,0,255,0,255,255,255,255,255,255,255}};
+    MeshTextureOptions sampler;
+    sampler.min_filter=sampler.mag_filter=MeshTextureFilter::nearest;
+    sampler.wrap_u=sampler.wrap_v=MeshTextureWrap::clamp_to_edge;
+    std::array<MeshBatch,3> batches{{{&left,&red},{&actor,&atlas,sampler},{&right,&blue}}};
+    TextureCallerState caller;
+    renderer.upload_batches(batches);caller.verify();
+    const auto target=renderer.render(160,128,camera,MeshDrawMode::textured);
+    const auto initial=pixels(target,160,128);
+    const auto origin=renderer.project_to_canvas({0,0,0},camera,1.25f);
+    check(origin.has_value(),"Actor scene origin was not projected");
+    const auto initial_frames=renderer.rendered_frames();
+    const auto original_positions=actor.positions;
+    auto moved_positions=original_positions;
+    for(auto& point:moved_positions) point.y+=.4f;
+    // Pose updates must use retained immutable UVs, never borrowed host arrays.
+    actor.positions.clear();actor.texcoords.clear();atlas.rgba.clear();
+    renderer.update_batch_positions(1,moved_positions);caller.verify();
+    check(renderer.batch_count()==3 && renderer.textured_batch_count()==3 && renderer.texture_count()==3 &&
+        renderer.triangle_count()==5 && renderer.rendered_frames()==initial_frames,
+        "Actor batch update changed scene identities, materials or frame count");
+    const auto unchanged_origin=renderer.project_to_canvas({0,0,0},camera,1.25f);
+    check(unchanged_origin && unchanged_origin->x==origin->x && unchanged_origin->y==origin->y,
+        "Actor batch update changed the shared source normalization");
+    check(renderer.render(160,128,camera,MeshDrawMode::textured)==target,"Actor update replaced the shared render target");
+    const auto moved=pixels(target,160,128);
+    check(moved!=initial && coverage(moved)>400,"Actor batch pose was ignored or erased the scene");
+    std::size_t static_pixels{};
+    for(std::size_t i=0;i<initial.size();i+=4) {
+        auto is_static=[&](const auto& image) {
+            return image[i+1]==0 && ((image[i]==255 && image[i+2]==0) || (image[i]==0 && image[i+2]==255));
+        };
+        check(is_static(initial)==is_static(moved),"Actor update moved an adjacent static batch or changed its texture");
+        if(is_static(initial)) {
+            ++static_pixels;
+            check(std::equal(initial.begin()+i,initial.begin()+i+4,moved.begin()+i),"Static scene pixels changed during actor update");
+        }
+    }
+    check(static_pixels>300,"Static scene isolation test did not cover enough pixels");
+    rejects([&]{renderer.update_batch_positions(3,moved_positions);});
+    rejects([&]{renderer.update_batch_positions(std::numeric_limits<std::size_t>::max(),moved_positions);});
+    rejects([&]{renderer.update_batch_positions(1,{});});
+    rejects([&]{renderer.update_batch_positions(0,moved_positions);});
+    auto invalid=moved_positions;invalid.pop_back();
+    rejects([&]{renderer.update_batch_positions(1,invalid);});
+    invalid=moved_positions;invalid.front().x+=.1f;invalid.back().z=std::numeric_limits<float>::quiet_NaN();
+    rejects([&]{renderer.update_batch_positions(1,invalid);});
+    invalid=moved_positions;invalid.back().y=std::numeric_limits<float>::infinity();
+    rejects([&]{renderer.update_batch_positions(1,invalid);});
+    caller.verify();
+    check(pixels(renderer.render(160,128,camera,MeshDrawMode::textured),160,128)==moved,
+        "Rejected actor batch input changed the last valid frame");
+    renderer.update_batch_positions(1,original_positions);caller.verify();
+    check(pixels(renderer.render(160,128,camera,MeshDrawMode::textured),160,128)==initial,
+        "Actor reset did not restore exact scene pixels, UVs and textures");
+
+    auto back=quad(0,-.5f,.9f),front=quad(0,.5f,.5f);
+    std::array<MeshBatch,2> depth_batches{{{&back,&blue},{&front,&red}}};
+    renderer.upload_batches(depth_batches);
+    const auto depth_target=renderer.render(128,128,camera,MeshDrawMode::textured,8);
+    const auto in_front=pixels(depth_target,128,128);
+    const auto middle=(64u*128+64)*4;
+    check(in_front[middle]==255 && in_front[middle+2]==0,"Initial actor failed to occlude static scene geometry");
+    auto behind=front.positions;for(auto& point:behind) point.z-=2;
+    renderer.update_batch_positions(1,behind);caller.verify();
+    check(renderer.render(128,128,camera,MeshDrawMode::textured,8)==depth_target,"Actor pose discarded the shared MSAA target");
+    const auto in_back=pixels(depth_target,128,128);
+    check(in_back[middle]==0 && in_back[middle+2]==255,"Updated actor does not share depth with unchanged static batches");
+    renderer.update_batch_positions(1,front.positions);
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured,8),128,128)==in_front,
+        "Actor depth reset did not reproduce exact MSAA scene pixels");
+
+    // Finite world coordinates may overflow float after a tiny scene's fixed
+    // normalization. Reject them before changing any GPU vertex.
+    for(auto& point:back.positions) {point.x*=1e-30f;point.y*=1e-30f;point.z*=1e-30f;}
+    for(auto& point:front.positions) {point.x*=1e-30f;point.y*=1e-30f;point.z*=1e-30f;}
+    renderer.upload_batches(depth_batches);
+    const auto tiny=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    invalid=front.positions;invalid.back().x=std::numeric_limits<float>::max();
+    rejects([&]{renderer.update_batch_positions(1,invalid);});
+    caller.verify();
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==tiny,
+        "Unrepresentable normalized actor coordinate corrupted the previous scene");
+    renderer.clear();
+    rejects([&]{renderer.update_batch_positions(0,front.positions);});
+}
+
+void focus_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    dw4::OrbitCamera camera;camera.orbit(.3f,-.1f);
+    const dw4::MeshBounds actor_bounds{{49,-21,30},{51,-19,30}};
+    renderer.clear();
+    const auto empty_camera=camera.view_projection(1);
+    rejects([&]{renderer.focus_camera(camera,actor_bounds);});
+    check(camera.view_projection(1)==empty_camera,"Empty-renderer focus changed the camera");
+    dw4::MeshData map,actor;
+    map.positions={{-100,-100,0},{100,-100,0},{100,100,0},{-100,100,0}};
+    actor.positions={{49,-21,30},{51,-21,30},{51,-19,30},{49,-19,30}};
+    map.indices=actor.indices={0,1,2,0,2,3};
+    map.texcoords.assign(4,{0,0});actor.texcoords=map.texcoords;
+    const dw4::RgbaImage red{1,1,{255,0,0,255}},green{1,1,{0,255,0,255}};
+    std::array<MeshBatch,2> batches{{{&map,&red},{&actor,&green}}};
+    TextureCallerState caller;
+    renderer.upload_batches(batches);
+    const auto overview=camera;
+    const auto overview_point=renderer.project_to_canvas({50,-20,30},overview,1);
+    check(overview_point.has_value(),"Focus fixture actor was outside the overview projection");
+    renderer.focus_camera(camera,actor_bounds);caller.verify();
+    check(camera.distance()>=.05f && camera.distance()<overview.distance(),"Focusing a tiny scene actor did not approach its bounds");
+    const auto fixed_camera=camera.view_projection(1);
+    for(float aspect : {.2f,1.0f,16.0f/9}) {
+        const auto point=renderer.project_to_canvas({50,-20,30},camera,aspect);
+        check(point && std::abs(point->x-.5f)<2e-5f && std::abs(point->y-.5f)<2e-5f,
+            "Source bounds center is not centered after scene camera focus");
+        for(const auto& corner:actor.positions)
+            check(renderer.project_to_canvas(corner,camera,aspect).has_value(),"Padded focus clipped a source bounds corner");
+    }
+    const auto target=renderer.render(128,128,camera,MeshDrawMode::textured);
+    const auto focused=pixels(target,128,128);
+    std::size_t actor_pixels{};
+    for(std::size_t i=0;i<focused.size();i+=4)
+        if(focused[i]==0 && focused[i+1]==255 && focused[i+2]==0) ++actor_pixels;
+    check(actor_pixels>100,"Tiny actor remained too small after bounds focus");
+    auto shifted=actor.positions;for(auto& point:shifted) point.x+=.3f;
+    renderer.update_batch_positions(1,shifted);
+    check(camera.view_projection(1)==fixed_camera,"Actor animation changed the one-time camera focus");
+    const auto unchanged_overview=renderer.project_to_canvas({50,-20,30},overview,1);
+    check(unchanged_overview && unchanged_overview->x==overview_point->x && unchanged_overview->y==overview_point->y,
+        "Focusing or animating an actor changed the renderer's source normalization");
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)!=focused,
+        "Actor animation did not remain visible through the focused camera");
+    renderer.update_batch_positions(1,actor.positions);
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==focused,
+        "Actor reset failed to reproduce the focused frame");
+    auto invalid=actor_bounds;invalid.min.x=invalid.max.x+1;
+    rejects([&]{renderer.focus_camera(camera,invalid);});
+    invalid=actor_bounds;invalid.max.z=std::numeric_limits<float>::quiet_NaN();
+    rejects([&]{renderer.focus_camera(camera,invalid);});
+    invalid=actor_bounds;invalid.min.y=-std::numeric_limits<float>::infinity();
+    rejects([&]{renderer.focus_camera(camera,invalid);});
+    invalid={{1e30f,1e30f,1e30f},{1e30f,1e30f,1e30f}};
+    rejects([&]{renderer.focus_camera(camera,invalid);});
+    check(camera.view_projection(1)==fixed_camera,"Rejected source focus bounds changed camera state");
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==focused,
+        "Rejected source focus bounds changed the previous rendered scene");
+    renderer.focus_camera(camera,{{50,-20,30},{50,-20,30}});
+    const auto point_focus=renderer.project_to_canvas({50,-20,30},camera,1);
+    check(camera.distance()==.05f && point_focus && std::abs(point_focus->x-.5f)<2e-5f,
+        "Point bounds did not use the minimum centered focus distance");
+    for(auto& point:map.positions) {point.x*=1e-30f;point.y*=1e-30f;point.z*=1e-30f;}
+    for(auto& point:actor.positions) {point.x*=1e-30f;point.y*=1e-30f;point.z*=1e-30f;}
+    renderer.upload_batches(batches);
+    const auto before_overflow=camera.view_projection(1);
+    const auto maximum=std::numeric_limits<float>::max();
+    rejects([&]{renderer.focus_camera(camera,{{-maximum,-maximum,-maximum},{maximum,maximum,maximum}});});
+    check(camera.view_projection(1)==before_overflow,"Unrepresentable focus distance changed the camera");
+    caller.verify();renderer.clear();
 }
 
 void scene_checks(dw4::viewer::MeshRenderer& renderer) {
@@ -405,11 +587,13 @@ int main() {
             texture_checks(renderer, tetra, camera);
             pose_checks(renderer, tetra, camera);
             scene_checks(renderer);
+            batch_pose_checks(renderer);
+            focus_checks(renderer);
             renderer.upload(tetra); renderer.clear();
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {

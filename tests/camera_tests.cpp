@@ -44,6 +44,40 @@ int main() {
         check(std::abs(moved[0]) > 0.1f || std::abs(moved[1]) > 0.1f, "Pan must move the target");
         camera.reset();
         check(camera.view_projection(16.0f / 9) == initial, "Reset must restore the fitted view");
+        camera.orbit(.4f,-.2f);camera.pan(.3f,-.1f);
+        const auto before_focus = camera.view_projection(1);
+        const std::array<float,3> target{4,-3,8};
+        camera.focus(target,3.7f);
+        const auto focused = camera.view_projection(1);
+        check(std::abs(camera.distance()-3.7f)<1e-6f,"Focus did not use the supplied distance");
+        for (std::size_t column=0;column<3;++column)
+            for (std::size_t row=0;row<2;++row)
+                check(focused[column*4+row]==before_focus[column*4+row],"Focus changed the orbit angles");
+        for (float aspect : {.2f,1.0f,16.0f/9,4.0f}) {
+            const auto clip=project(camera.view_projection(aspect),target[0],target[1],target[2]);
+            check(clip[3]>0 && std::abs(clip[0]/clip[3])<1e-5f && std::abs(clip[1]/clip[3])<1e-5f,
+                "Focus target was not centered for the requested aspect ratio");
+        }
+        const auto focus_distance=camera.distance();
+        const auto focus_state=camera.view_projection(1);
+        for (const auto bad_target : {std::array<float,3>{0,0,std::numeric_limits<float>::quiet_NaN()},
+            {std::numeric_limits<float>::infinity(),0,0},{0,10001,0},{-10001,0,0}}) {
+            rejects([&]{camera.focus(bad_target,2);});
+            check(camera.view_projection(1)==focus_state && camera.distance()==focus_distance,
+                "Rejected focus target changed camera state");
+        }
+        for(float bad_distance : {0.0f,-1.0f,std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+            rejects([&]{camera.focus({0,0,0},bad_distance);});
+            check(camera.view_projection(1)==focus_state && camera.distance()==focus_distance,
+                "Rejected focus distance changed camera state");
+        }
+        camera.focus({0,0,0},.00001f);
+        check(camera.distance()==.05f,"Focus did not preserve the minimum zoom distance");
+        camera.focus({10000,-10000,10000},std::numeric_limits<float>::max());
+        check(camera.distance()==1000,"Focus did not preserve the maximum zoom distance");
+        for(auto value:camera.view_projection(.01f)) check(std::isfinite(value),"Bounded extreme focus produced a non-finite matrix");
+        camera.reset();
+        check(camera.view_projection(16.0f/9)==initial,"Reset after focus retained the changed target");
         camera.orbit(1e30f, 1e30f); camera.zoom(-1e30f); camera.pan(1e30f, -1e30f);
         for (auto value : camera.view_projection(0.01f)) check(std::isfinite(value), "Extreme finite controls produced an invalid matrix");
         camera.zoom(1e30f);
@@ -53,7 +87,7 @@ int main() {
         rejects([&] { camera.orbit(nan, 0); }); rejects([&] { camera.orbit(0, infinity); });
         rejects([&] { camera.pan(0, nan); }); rejects([&] { camera.zoom(infinity); });
         rejects([&] { camera.view_projection(0); }); rejects([&] { camera.view_projection(nan); });
-        std::cout << "Camera projection and control tests passed\n";
+        std::cout << "Camera projection, controls and atomic source-target focus tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Camera test failure: " << error.what() << '\n';

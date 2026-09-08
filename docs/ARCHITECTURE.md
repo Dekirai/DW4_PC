@@ -16,6 +16,11 @@ binding profile with reference provenance and unsupported-state diagnostics.
 with explicit source paths, switch selection and bounded transform composition.
 `scene_controls` validates exported switch-controller targets and evaluates
 explicit `ALLON`/`ALLOF` child selection without modifying source bytes.
+`player_placement` reads explicitly exported entry-point groups and preserves
+their full affine matrices. `player_visual` follows an exported player model's
+selected instance, `ONE` record and explicit LOD branch into a supported actor,
+appearance and skin. It validates the authored outer transform but does not
+compose that editor placement: the original generation path replaces it.
 `skinning` resolves a bounded geometry/skin/database/skeleton profile, decodes
 single-influence weights and inverse-bind frames, and evaluates explicit manual
 joint deltas or complete bone-local transforms on the CPU. `enbaya` decodes
@@ -25,6 +30,23 @@ database/binding/track graph, translation mask and original one-clip pose profil
 the host orbit/projection math. `settings` loads and validates host preferences. `dw4_inspect` and
 `dw4_catalog` are read-only CLIs; `dw4_pc` is the native SDL3/OpenGL/ImGui viewer
 and workbench.
+
+The scene viewer holds the map and player as separate owned IGB documents.
+Numeric image references never identify assets across those documents. One
+explicit player visual is appended after the static scene batches. The CPU
+samples a selected clip in skin-local space, applies the entry-point matrix once,
+and replaces only that batch's position range, preserving UVs, materials, indices
+and shared scene normalization. Focus uses world-space visual bounds with the
+same normalization. Changing a map root or member removes the old visual; a
+failed render-mode replacement clears the GPU scene and can be rebuilt in Solid
+mode. Clip replacement validates and uploads before publishing new clip state.
+
+This is a visual integration boundary, without player input, collision, shadow
+composition, automatic LOD, startup execution or controller lifetime management.
+The startup research distinguishes `func.lua`, `boot.lua`, `start.lua` and
+`first.lua` dispatch order and embedded script lookup behavior; those chunks
+remain original data and are not executed by the host. See
+[PLAYER_VIEWER.md](PLAYER_VIEWER.md) and [STARTUP_RESEARCH.md](STARTUP_RESEARCH.md).
 
 AFS payloads are read on demand with limits. Guest addresses remain integers
 inside diagnostics; they are never cast into host pointers. A validated DOL is

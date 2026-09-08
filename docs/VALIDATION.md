@@ -1,26 +1,37 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.8 named-package and original
-switch-command inspection milestone,
-not gameplay compatibility or a finished port. Earlier archive, texture, skin and
-animation corpus measurements are retained from their respective milestones;
-the package, switch-controller and related UI checks are the new acceptance work.
+GeForce RTX 5070 Ti. This records the version 0.9 placed animated player visual
+milestone, not gameplay compatibility or a finished port. Earlier archive,
+texture, skin, animation and scene corpus measurements are retained from their
+respective milestones. Player graph/placement, dynamic batch updates, focus,
+app lifecycle and serialized-string budget checks are the new acceptance work.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, packages, textures, meshes, materials, scenes, skinning, animation math, Enbaya, animations, camera, settings | 15/15 suites passed in Release |
+| CTest: assets, IGB metadata, IGB documents, resources, packages, textures, meshes, materials, scenes, player placement, player visual, skinning, animation math, Enbaya, animations, camera, settings | 17/17 suites passed in Release |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
 | Catalog/package CLI arguments | 5 tests passed, including missing/duplicate/conflicting selectors, empty paths, signed/partial/overflow indices and index-zero handling |
-| Package synthetic fixtures | 95 checks passed in Release and AddressSanitizer: export/member order, catalog identity, exact `/s` handling, malformed input, forged metadata and allocation limits |
+| Native app CLI without graphics | 11 test methods with table-driven subcases passed; explicit player selectors, duplicates, ranges, source conflicts, finite clip time and playback prerequisites; runs in Windows app CI |
+| Player placement fixtures | 66 synthetic checks passed in Release and fully instrumented AddressSanitizer; exported identity, exact groups/slots, affine rotation/scale/reflection, immutable source, invalid links, overflow and aggregate serialized-name budgets |
+| Original entry matrices | Both groups and all four slots in ndmw entry 179 decoded; all 128 matrix components compare bit-for-bit with eight original stored matrices |
+| Player visual fixtures | 118 synthetic checks passed in Release and fully instrumented AddressSanitizer; model instance/ONE/LOD/actor/appearance/skin provenance, malformed or ambiguous ownership, attachments, modifiers, visibility and allocation guards |
+| Original player visual | 12 additional checks passed in Release and AddressSanitizer: Agumon's three explicit branches and fourth model instance select the expected original geometry |
+| Dynamic scene GPU and focus | Release and AddressSanitizer passed isolated actor-batch updates, every static pixel unchanged, UV/sampler retention, occlusion, exact reset, MSAA, stable normalization, source-bounds focus and invalid-input state preservation |
+| App lifecycle integration | 37 ignored local harness checks passed: original shadow Solid to rejected Textured to Solid restores exact pixels; failed clip index/time/post-decode placement retains prior clip/time/vertices/pixels; member changes remove player; invalid resource leaves 235 static batches |
+| Combined original map and player | BG02 plus high Agumon: 236 textured batches, six images, 31,886 static vertices plus 1,371 player vertices; full entry matrix replaces authored model-node transform |
+| Original player native variants | Package and direct-AFS sources; high/low appearance, Solid shadow, both entry groups, slots 0 and 3, waitS/runD and finite playback; unsupported shadow material and invalid resource/model/point/group/branch/clip/time fail explicitly |
+| Compact playback and 4K | 1280×720 and 3840×2160 host windows render combined scenes; actual targets 650×243 at MSAA 0 and 3210×1683 at MSAA 8; elevated inspection camera shows group 0, while nearby geometry can obscure group 1 |
+| Startup research | Original file-list manager dispatch order func/boot, then start, then first traced; start calls funcPlayerSet; embedded filename lookup and outer ONE-model matrix replacement documented; no host script execution claimed |
+| Package synthetic fixtures | 109 checks passed in Release and AddressSanitizer: export/member order, catalog identity, exact `/s` handling, malformed input, forged metadata, NUL-padded repeated names, boundary compatibility and allocation limits |
 | Original package integration | 8 checks passed in Release and AddressSanitizer; 97 descriptors / 195 members, including 98 preliminary `/s` members; both dng101b1 members match their AFS bytes exactly |
 | Named map export identity | `dng101b1.igb` -> ndmw entry 80 -> member 1 `[0.179]` -> explicit export 7 / scene index 1 / info 3372 / BG02 root 2877 |
 | Original switch command evidence | `first.lua` submits `SWITCHCTRL / ALLON`; original dispatcher, controller registration callback and target-mask effect traced; controller 3471 is explicit export 9 and targets root 2877 |
 | Switch-controller and scene fixtures | 127 combined scene checks pass in Release and AddressSanitizer, including all-on/off, cross-word and nested masks, unchanged bytes, wrong/exported targets, malformed state and cumulative child-validation budget |
 | Original native command replay | ALLON produces 235 instances / 26,352 triangles; ALLOF is complete and empty; every instance path, geometry reference and world transform agrees with explicit child-zero inspection |
-| Package/control UI regression | 36 finite native checks passed: descriptor-only inspection, original commands, source/selector guards, invalid controller/target, empty/no-scene results, all eight pages, font, raw scene, Agumon animation and manual rig |
+| Package/control UI regression | 36 finite native checks rerun on version 0.9 passed: descriptor-only inspection, original commands, source/selector guards, invalid controller/target, empty/no-scene results, all eight pages, font, raw scene, Agumon animation and manual rig |
 | Final compact scene controls | 1280×720 screenshot inspected after tab-fitting adjustment: Instances, Details, State and Status visible; ALLON, ALLOF and Stored selection fit |
 | Named package at 1080p and 4K | All 235 textured batches / 5 images retained; 1290×603 and 3210×1683 scene targets inside 1920×1080 and 3840×2160 host windows, actual 8-sample MSAA |
 | USA DOL identity | SHA-1 matches `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` |
@@ -96,6 +107,7 @@ The additional synthetic checks are:
 python -m unittest discover -s tests -p 'test_*.py' -v
 python tests/cli_tests.py build/Release/dw4_inspect.exe
 python tests/catalog_cli_tests.py build/Release/dw4_catalog.exe
+python tests/app_cli_tests.py build/Release/dw4_pc.exe
 ```
 
 Example finite rendering check (output is local and ignored by Git):
@@ -130,6 +142,13 @@ stored disabled. An explicit original ALLON command can now enable it through
 its exported controller, alongside the separate manual-child inspection option.
 Native script scheduling, staged initialization and the full runtime controller
 lifecycle remain unimplemented. Nested masks and source data remain unchanged.
+Explicit player visual placement now replaces the verified outer model matrix
+and joins original single-clip playback to the scene. It does not execute player
+generation, choose startup state, compose weapons/shadows or simulate movement.
+The host inspection camera can be occluded by map geometry and does not reproduce
+the original camera. See [PLAYER_VIEWER.md](PLAYER_VIEWER.md),
+[PLAYER_PLACEMENT_RESEARCH.md](PLAYER_PLACEMENT_RESEARCH.md) and
+[STARTUP_RESEARCH.md](STARTUP_RESEARCH.md).
 See [PACKAGES.md](PACKAGES.md) and [SCENE_ACTIVATION.md](SCENE_ACTIVATION.md).
 The scene renderer applies base
 images with inspection shading; original lighting, render passes, culling and

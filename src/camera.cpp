@@ -44,6 +44,17 @@ void OrbitCamera::pan(float right, float up) {
     for (std::size_t i = 0; i < 3; ++i)
         target_[i] = std::clamp(target_[i] + scale * (right * right_axis[i] + up * up_axis[i]), -10000.0, 10000.0);
 }
+void OrbitCamera::focus(std::array<float,3> normalized_target, float distance) {
+    finite(distance);
+    if (distance <= 0) throw std::invalid_argument("Camera focus distance must be positive");
+    for (const auto component : normalized_target) {
+        finite(component);
+        if (std::abs(component) > 10000.0f)
+            throw std::invalid_argument("Camera focus target must be within +/-10000");
+    }
+    target_ = {normalized_target[0],normalized_target[1],normalized_target[2]};
+    distance_ = std::clamp(double(distance),0.05,1000.0);
+}
 std::array<float, 16> OrbitCamera::view_projection(float aspect) const {
     finite(aspect);
     if (aspect < 0.01f || aspect > 100.0f) throw std::invalid_argument("Camera aspect must be between 0.01 and 100");

@@ -98,8 +98,15 @@ all objects, infer scene ownership, or choose a root. An explicit empty info
 list is valid; a missing list is an error.
 
 Additional limits are 4,096 members/exports and list capacity, 4,096 bytes per
-metadata string, 4 MiB combined export strings, and 65,536 copied aliases with
-an 8 MiB combined alias-string budget. Metadata control characters, wrong
+decoded metadata string, 4 MiB combined export strings, and 65,536 copied aliases
+with an 8 MiB combined alias-string budget. Before trimming trailing NULs, each
+serialized string field is limited to 4,104 bytes, including its length word and
+terminator padding. A separate 4 MiB serialized text scan budget applies to each
+descriptor read and each export-list operation. The descriptor budget is shared
+by its name, section and every filename occurrence; repeated references consume
+the budget again. Thus a small shared object with a padded label cannot multiply
+the permitted string-scanning work. Valid 4,096-byte decoded labels remain
+supported. Metadata control characters, wrong
 field/list types, null required references, malformed list storage, duplicate
 exported descriptors and unsupported descriptor subclasses are rejected.
 The original index-copy profile also limits entry digits to 15 characters.
@@ -113,8 +120,10 @@ The asset-free tests generate their own IGB graph records, catalog and AFS
 payloads. They check explicit list order, hidden-object exclusion, section/name
 distinction, duplicate filename preservation, aliases, `/s` byte equivalence,
 malformed syntax and references, field types, count/capacity limits, byte limits
-and forged member metadata. Temporary test archives contain only synthetic
-data.
+and forged member metadata. Padded labels and repeated filename/export references
+check serialized scan limits independently of decoded length and document size;
+valid maximum-length labels check boundary compatibility. Temporary test archives
+contain only synthetic data.
 
 The optional local-data test checks the descriptor at entry 80 and exact byte
 equivalence for members 178 and 179. It also checks 97 descriptor documents in

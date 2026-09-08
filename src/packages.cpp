@@ -11,6 +11,8 @@ constexpr std::size_t max_descriptor_bytes = 4u * 1024u * 1024u;
 constexpr std::size_t max_read_bytes = 256u * 1024u * 1024u;
 constexpr std::size_t max_list_count = 4096;
 constexpr std::size_t max_string_bytes = 4096;
+constexpr std::size_t max_serialized_string_bytes = max_string_bytes + 8;
+constexpr std::size_t max_text_scan_bytes = 4u * 1024u * 1024u;
 constexpr std::size_t max_alias_bytes = 8u * 1024u * 1024u;
 constexpr std::size_t max_alias_count = 65536;
 
@@ -28,8 +30,16 @@ const IgbFieldValue& field(const IgbDocument& doc, const IgbObject& object,
     return *value;
 }
 
-std::string text(const IgbDocument& doc, const IgbObject& object, std::uint16_t slot) {
-    field(doc, object, slot, "igStringMetaField");
+std::string text(const IgbDocument& doc, const IgbObject& object, std::uint16_t slot,
+    std::size_t& remaining_scan_bytes) {
+    const auto& stored = field(doc, object, slot, "igStringMetaField");
+    // Bound the serialized field before trimming trailing NULs. Charge every
+    // occurrence so shared list references cannot multiply unbounded scans.
+    if (stored.size > max_serialized_string_bytes)
+        fail("serialized metadata string exceeds 4104 bytes");
+    if (stored.size > remaining_scan_bytes)
+        fail("serialized metadata text scan exceeds the 4 MiB budget");
+    remaining_scan_bytes -= stored.size;
     const auto value = doc.field_string(object, slot);
     if (value.size() > max_string_bytes) fail("metadata string exceeds 4096 bytes");
     if (std::any_of(value.begin(), value.end(), [](unsigned char c) { return c < 32 || c == 127; }))
@@ -138,9 +148,10 @@ PackageDescriptor descriptor(const IgbDocument& doc, const ResourceCatalog& cata
     if (!selected) fail("explicit info list has no beFileListInfo descriptor");
     if (!doc.is_a(*selected, "igNamedObject")) fail("descriptor has no igNamedObject ancestry");
     PackageDescriptor output;
+    auto remaining_scan_bytes = max_text_scan_bytes;
     output.reference_index = selected->reference_index;
-    output.name = text(doc, *selected, 2);
-    output.section = text(doc, *selected, 5);
+    output.name = text(doc, *selected, 2, remaining_scan_bytes);
+    output.section = text(doc, *selected, 5, remaining_scan_bytes);
     const auto state = doc.field_bytes(field(doc, *selected, 4, "igBoolMetaField"));
     if (state.size() != 1 || state[0] > 1) fail("descriptor resolve state is not a serialized boolean");
     output.resolve_state = state[0] != 0;
@@ -154,7 +165,7 @@ PackageDescriptor descriptor(const IgbDocument& doc, const ResourceCatalog& cata
         PackageMember member;
         member.index = static_cast<std::uint32_t>(output.members.size());
         member.file_reference = reference;
-        member.specifier = text(doc, object, 2);
+        member.specifier = text(doc, object, 2, remaining_scan_bytes);
         const auto parsed = address(member.specifier, catalog);
         member.location = parsed.location;
         member.suffix = parsed.suffix;
@@ -234,10 +245,11 @@ std::vector<PackageExport> list_package_exports(const IgbDocument& document) {
     try {
         std::vector<PackageExport> result;
         std::size_t string_bytes{};
+        auto remaining_scan_bytes = max_text_scan_bytes;
         for (const auto reference : exports(document)) {
             const auto& object = document.object(reference);
             auto type = document.metadata.object_types.at(object.type_index).name;
-            auto name = text(document, object, 2);
+            auto name = text(document, object, 2, remaining_scan_bytes);
             if (type.size() > max_string_bytes || type.size() + name.size() > max_descriptor_bytes - string_bytes)
                 fail("combined export names exceed the 4 MiB limit");
             string_bytes += type.size() + name.size();

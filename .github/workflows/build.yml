@@ -42,6 +42,8 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Test native app argument validation without graphics
+        run: python tests/app_cli_tests.py build/Release/dw4_pc.exe
       - name: Package tools and dependency notices
         run: cmake --install build --config Release --prefix dist/DW4_PC
       - uses: actions/upload-artifact@v4

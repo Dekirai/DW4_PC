@@ -52,11 +52,21 @@ public:
     // normalization, UVs, indices and texture. The vertex count must match.
     // Invalid input leaves the last valid pose available.
     void update_positions(std::span<const Vec3> positions);
+    // Update one batch by its original upload order, using world positions with
+    // exactly that batch's original vertex count. Other batches, shared source
+    // normalization, UVs, textures and indices remain unchanged. All coordinates
+    // are checked before GPU mutation. A single upload is batch zero.
+    void update_batch_positions(std::size_t batch_index, std::span<const Vec3> positions);
     // Project a source-space point using the same fixed normalization/camera as
     // the mesh. Fractions are relative to the canvas's top-left corner. Points
     // outside the clip volume, including behind the camera, are omitted.
     std::optional<MeshCanvasPoint> project_to_canvas(const Vec3& point,
         const OrbitCamera& camera, float aspect) const;
+    // Aim once at checked bounds in the uploaded scene's source coordinates.
+    // Keeps orbit angles and renderer normalization; uses a padded bounding-
+    // sphere distance and the camera's existing aspect/range handling.
+    // Invalid bounds leave the supplied camera unchanged.
+    void focus_camera(OrbitCamera& camera, const MeshBounds& source_bounds) const;
     // A textured upload requires an explicitly decoded UV pair per vertex.
     // Pixel data is copied to the GPU; no borrowed host pointers are retained.
     void set_texture(const RgbaImage& image, const MeshTextureOptions& options = {});

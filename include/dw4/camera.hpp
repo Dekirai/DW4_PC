@@ -13,6 +13,11 @@ public:
     void zoom(float wheel_steps);
     // Displacements are fractions of the viewport; positive is right/up.
     void pan(float right, float up);
+    // Preserve the orbit angles while aiming at a normalized source-space point.
+    // Target components must be within +/-10000; distance must be positive and
+    // finite, then is clamped to the same 0.05-1000 range as zoom. Invalid input
+    // leaves the previous camera unchanged.
+    void focus(std::array<float,3> normalized_target, float distance);
     // OpenGL column-major matrix, right-handed view, exploratory +Y up.
     std::array<float, 16> view_projection(float aspect) const;
     float distance() const noexcept { return static_cast<float>(distance_); }

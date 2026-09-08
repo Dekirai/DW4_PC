@@ -20,6 +20,11 @@ template<class F> void rejects(F&& operation, const std::string& reason) {
     bool caught = false; try { operation(); } catch (const PackageError&) { caught = true; }
     check(caught, reason);
 }
+template<class F> void rejects_with(F&& operation, const std::string& fragment, const std::string& reason) {
+    std::string diagnostic;
+    try { operation(); } catch (const PackageError& error) { diagnostic = error.what(); }
+    check(!diagnostic.empty() && diagnostic.find(fragment) != std::string::npos, reason);
+}
 void word(Bytes& bytes, std::size_t at, std::uint32_t value) {
     for (std::size_t i=0; i<4; ++i) bytes.at(at+i)=static_cast<std::uint8_t>(value >> (8*i));
 }
@@ -278,9 +283,68 @@ void synthetic() {
     rejects([&] { read_package_descriptor(changed.document(), many_aliases); }, "Expanded catalog-alias bytes exceeded their budget");
     changed = fixture; changed.scalar(changed.info_reference, 3, 4097);
     rejects([&] { list_package_exports(changed.document()); }, "Export list capacity exceeded its budget");
-    changed = fixture; changed.text(changed.exported, 2, std::string(4096, 'x'));
-    changed.contents(changed.info_reference, std::vector<std::uint32_t>(1024, changed.exported));
-    rejects([&] { list_package_exports(changed.document()); }, "Repeated export strings exceeded their combined byte budget");
+    // Type names consume output bytes without consuming serialized name scans.
+    changed = fixture; changed.text(changed.exported, 2, std::string(4000, 'x'));
+    changed.contents(changed.info_reference, std::vector<std::uint32_t>(1046, changed.exported));
+    rejects_with([&] { list_package_exports(changed.document()); }, "combined export names",
+        "Repeated export strings exceeded their combined byte budget");
+}
+
+void text_bounds() {
+    const Fixture fixture;
+    const std::string maximum_label(4096, 'x');
+    auto changed = fixture;
+    changed.text(changed.descriptor, 2, maximum_label);
+    changed.text(changed.descriptor, 5, maximum_label);
+    const auto descriptor = read_package_descriptor(changed.document(), catalog());
+    check(descriptor.name == maximum_label, "A valid 4096-byte descriptor label was rejected");
+    check(descriptor.section == maximum_label, "A valid 4096-byte section label was rejected");
+    changed = fixture; changed.text(changed.first, 2, maximum_label);
+    check(read_package_descriptor(changed.document(), catalog()).members[1].specifier == maximum_label,
+        "A 4096-byte unsupported filename was not retained as a diagnostic row");
+    changed = fixture; changed.text(changed.exported, 2, maximum_label);
+    check(list_package_exports(changed.document())[0].name == maximum_label,
+        "A valid 4096-byte export label was rejected");
+    changed.text(changed.exported, 2, maximum_label + std::string(3, '\0'));
+    check(list_package_exports(changed.document())[0].name == maximum_label,
+        "A 4096-byte export label with terminator padding exceeded the serialized limit");
+
+    for (const auto slot : {std::uint16_t{2}, std::uint16_t{5}}) {
+        changed = fixture; changed.text(changed.descriptor, slot, std::string(8192, '\0'));
+        rejects_with([&] { read_package_descriptor(changed.document(), catalog()); }, "serialized metadata string",
+            "An oversized all-NUL descriptor field bypassed the serialized string limit");
+    }
+    changed = fixture; changed.text(changed.first, 2, "[1.2]" + std::string(8192, '\0'));
+    rejects_with([&] { read_package_descriptor(changed.document(), catalog()); }, "serialized metadata string",
+        "An oversized padded filename bypassed the serialized string limit");
+    changed = fixture; changed.text(changed.exported, 2, std::string(8192, '\0'));
+    rejects_with([&] { list_package_exports(changed.document()); }, "serialized metadata string",
+        "An oversized all-NUL export label bypassed the serialized string limit");
+
+    // Each small shared object has a 4104-byte serialized name. The document
+    // stays small; only repeated visits consume the aggregate scan allowance.
+    changed = fixture; changed.text(changed.first, 2, "[1.2]" + std::string(4094, '\0'));
+    changed.contents(changed.filenames, std::vector<std::uint32_t>(1021, changed.first));
+    const auto repeated = read_package_descriptor(changed.document(), catalog());
+    check(repeated.members.size() == 1021 && repeated.members.back().supported &&
+        repeated.members.back().specifier == "[1.2]", "Bounded padded filename references changed address or order");
+    auto labels = changed;
+    labels.text(labels.descriptor, 2, maximum_label);
+    labels.text(labels.descriptor, 5, maximum_label);
+    rejects_with([&] { read_package_descriptor(labels.document(), catalog()); }, "text scan exceeds",
+        "Descriptor labels and filenames did not share the serialized scan budget");
+    changed.contents(changed.filenames, std::vector<std::uint32_t>(1023, changed.first));
+    rejects_with([&] { read_package_descriptor(changed.document(), catalog()); }, "text scan exceeds",
+        "Repeated padded filenames bypassed the aggregate serialized scan budget");
+
+    changed = fixture; changed.text(changed.exported, 2, "Scene" + std::string(4094, '\0'));
+    changed.contents(changed.info_reference, std::vector<std::uint32_t>(1022, changed.exported));
+    const auto exported = list_package_exports(changed.document());
+    check(exported.size() == 1022 && exported.back().name == "Scene" &&
+        exported.back().reference_index == changed.exported, "Bounded padded export references were deduplicated or altered");
+    changed.contents(changed.info_reference, std::vector<std::uint32_t>(1023, changed.exported));
+    rejects_with([&] { list_package_exports(changed.document()); }, "text scan exceeds",
+        "Repeated padded export labels bypassed the aggregate serialized scan budget");
 }
 
 void write_file(const std::filesystem::path& path, const Bytes& bytes) {
@@ -394,7 +458,7 @@ void original(const std::filesystem::path& root) {
 
 int main(int argc, char** argv) {
     try {
-        synthetic(); mounted();
+        synthetic(); text_bounds(); mounted();
         if (argc == 2) original(std::filesystem::path(argv[1]));
         else if (argc != 1) throw std::runtime_error("Usage: dw4_packages_tests [extracted-data-root]");
         std::cout << "Package tests passed: " << checks << " checks\n";

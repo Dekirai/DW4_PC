@@ -8,7 +8,7 @@ estimated before the missing engine and game logic have been measured.
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
 | 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
-| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
+| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Explicit animated player visual placement available; gameplay spawning, control, collision and combat pending |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
 | 5 | Content modding | Stable asset IDs, validated manifests, texture replacements and documented data schemas | Not implemented |
@@ -24,11 +24,15 @@ draw instances. Named packages preserve original member and export order. The
 `BG02` map's disabled switch can now be enabled through its original exported
 controller's `ALLON` command. That command is present in `first.lua`, and its
 dispatcher and mask effect have been traced. The host currently replays it only
-on explicit request. Continue by recovering startup scheduling and controller
-registration, plus actor placement/combiner state, then connect a supported
-animated actor to a verified scene. Compare matching camera/animation states
-against original frames before claiming visual parity. Static inspection and
-clip playback do not establish movement, collision or combat behavior.
+on explicit request. A selected original player model/instance/appearance can
+now share this scene's depth target, with the original full entry-point matrix
+replacing its authored outer model transform. Single-clip playback updates only
+the visual's vertex range. Original startup dispatch order and player-matrix
+assignment are documented, while script execution and controller state remain
+unimplemented. Continue with bounded startup execution and player lifecycle,
+then recover movement, collision and the camera. Compare matching camera/animation
+states against original frames before claiming visual parity. Explicit visual
+placement and clip playback do not establish gameplay spawning or simulation.
 
 ## Requested PC options
 

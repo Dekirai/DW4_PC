@@ -43,11 +43,44 @@ copy, preserving per-batch sampling. Samplers support the existing verified
 repeat, clamp-to-edge and mirrored-repeat wrapping and nearest/linear filtering.
 
 The fixed normalization is computed once from the union of all instance bounds.
-`project_to_canvas` uses this same scene coordinate space and camera. Static
-batches do not support the single-mesh `update_positions` or `set_texture`
-operations; these calls reject without changing the uploaded scene. Upload a
-new batch list to replace static scene geometry or materials. Existing
-single-mesh animation uploads keep their previous behavior.
+`project_to_canvas` uses this same scene coordinate space and camera. An explicit
+`update_batch_positions(batch_index, world_positions)` updates one instance by
+its original upload ordinal. The caller supplies already posed and placed world
+positions with exactly the original vertex count. The renderer checks the entire
+input, including finite values after normalization, before writing that batch's
+interleaved vertex-buffer range. All other vertex ranges, index identities,
+UVs, images, samplers, the target and the successful-frame count remain unchanged.
+
+```cpp
+scene_renderer.update_batch_positions(actor_batch_index, placed_pose_positions);
+```
+
+The source normalization stays fixed even when a posed actor moves outside its
+initial bounds. Updating an actor therefore does not recenter or resize the rest
+of the scene. Returning the same original positions reconstructs the original GPU
+vertex values. Invalid batch ordinals, counts and non-finite or unrepresentable
+coordinates reject without changing the last valid pose. This does not compute
+animation, skinning, actor placement or movement; those remain caller decisions.
+
+Batch uploads still reject the ambiguous single-mesh `update_positions` and
+`set_texture` calls without changing the scene. Upload a new batch list to change
+topology or materials. Existing single-mesh animation uploads keep their behavior;
+`update_batch_positions(0, positions)` also works for a single mesh.
+
+`focus_camera(camera, source_bounds)` aims the host camera once at a selected
+actor's bounds in the same source coordinate space. It converts the bounds center
+and radius through the fixed scene normalization, keeps the current orbit angles
+and chooses a padded distance for the camera's 45-degree vertical field of view.
+The existing narrow-aspect adjustment still applies. This changes the camera
+target in all three dimensions, so a small actor inside a large map can be
+inspected without rescaling or recentering the scene geometry.
+
+Focus uses the camera's existing 0.05-1000 distance range and accepts ordered
+point bounds at the minimum distance. Non-finite/reversed source bounds,
+normalized targets outside +/-10000 and unrepresentable distances reject before
+changing the camera. The portable `OrbitCamera::focus(target, distance)` also
+validates its input before mutation. The caller applies focus explicitly after
+upload or a user action; animation updates never move this camera target.
 
 ## Modes and diagnostics
 
@@ -84,9 +117,12 @@ The uploader enforces aggregate limits before creating GPU geometry or textures:
   nonzero finite shared spatial extent.
 
 At these geometry limits, the merged interleaved vertex buffer occupies at most
-80 MiB and the index buffer at most 48 MiB. Static uploads release their temporary
-CPU arrays after upload. Repeated references count toward geometry limits because
-each instance occupies its own transformed positions in the merged buffer.
+80 MiB and the index buffer at most 48 MiB. Scene uploads release their temporary
+CPU position/index arrays after upload and retain only immutable UV pairs, at
+most 32 MiB, for subsequent batch updates. One update stages only the selected
+batch's interleaved data, at most 80 MiB under the existing aggregate vertex cap.
+Repeated references count toward geometry limits because each instance occupies
+its own transformed positions in the merged buffer.
 
 The offscreen target retains the existing 4,096-pixel axis and 8,388,608-pixel
 limits. MSAA requests are clamped to supported counts up to eight samples.
@@ -123,7 +159,22 @@ MSAA and animated-position checks, and adds synthetic scene cases that verify:
   reject with complete cleanup.
 - Hostile caller GL state is restored, including sampler zero, another active
   texture unit and a pixel-unpack buffer.
+- An animated middle batch with a textured asymmetric UV atlas changes while
+  every pixel belonging to static batches before and after it remains identical.
+  Different neighboring vertex counts expose incorrect subrange offsets.
+- Actor updates retain the common source normalization, draw/material identities
+  and frame counter, even after borrowed source arrays are changed or released.
+- An updated actor can pass behind unchanged static geometry using the same
+  depth/MSAA target; resetting its original positions reproduces exact pixels.
+- Invalid batch indices/counts, late NaN/Inf coordinates and finite coordinates
+  that overflow the normalized float representation preserve the last valid
+  scene. Batch-zero updates retain single-mesh compatibility.
+- Focusing an actor inside a map approximately 100 times wider centers its source
+  bounds at wide and narrow aspect ratios, keeps every bounds corner visible and
+  produces a useful visible model. Animation and exact reset preserve the fixed
+  normalization and one-time camera focus. Malformed and overflowing focus input
+  leaves the previous camera and rendered scene unchanged.
 
-The isolated Release and AddressSanitizer Debug GPU validations pass on the local
-NVIDIA GeForce RTX 5070 Ti. Asset-free CI does not require a graphics driver; original room/map
-inspection is an additional local acceptance check performed by the application.
+GPU validation runs explicitly on the local NVIDIA GeForce RTX 5070 Ti.
+Asset-free CI does not require a graphics driver; original room/map inspection
+is an additional local acceptance check performed by the application.

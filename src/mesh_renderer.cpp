@@ -200,6 +200,7 @@ public:
         std::size_t first_index{}, index_count{};
         GLuint texture{};
         bool allow_solid_fallback{};
+        std::size_t first_vertex{}, vertex_count{};
     };
     Gl gl;
     GLuint program{}, vao{}, vertex_buffer{}, index_buffer{}, base_texture{};
@@ -209,6 +210,7 @@ public:
     bool batch_mode{};
     std::vector<DrawBatch> batches;
     std::vector<GLuint> batch_textures;
+    std::vector<Vec2> batch_uvs;
     std::array<double, 3> center{};
     double radius = 1;
     std::vector<float> vertices;
@@ -225,6 +227,7 @@ public:
         vao = vertex_buffer = index_buffer = 0;
         index_count = 0; frames = 0; has_uv = false; batch_mode = false;
         batches.clear();
+        batch_uvs.clear();
         vertices.clear(); center = {}; radius = 1;
     }
     void release_texture() {
@@ -506,11 +509,13 @@ void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
     std::vector<float> vertices;
     std::vector<std::uint32_t> indices;
     std::vector<Impl::DrawBatch> draws;
+    std::vector<Vec2> uvs;
     vertices.reserve(total_vertices * 5); indices.reserve(total_indices); draws.reserve(batches.size());
+    uvs.reserve(total_vertices);
     std::uint32_t vertex_base{};
     for (const auto& batch : batches) {
         const auto& mesh = *batch.mesh;
-        draws.push_back({indices.size(), mesh.indices.size(), 0, batch.allow_solid_fallback});
+        draws.push_back({indices.size(), mesh.indices.size(), 0, batch.allow_solid_fallback, vertex_base, mesh.positions.size()});
         for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
             const auto& position = mesh.positions[i];
             vertices.push_back(static_cast<float>((position.x - center[0]) / radius));
@@ -518,6 +523,7 @@ void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
             vertices.push_back(static_cast<float>((position.z - center[2]) / radius));
             const auto uv = mesh.texcoords.empty() ? Vec2{} : mesh.texcoords[i];
             vertices.push_back(uv.u); vertices.push_back(uv.v);
+            uvs.push_back(uv);
         }
         for (const auto index : mesh.indices) indices.push_back(vertex_base + index);
         vertex_base += static_cast<std::uint32_t>(mesh.positions.size());
@@ -543,8 +549,9 @@ void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
         state.batches = std::move(draws);
         state.index_count = indices.size(); state.batch_mode = true;
         state.center = center; state.radius = radius;
-        // Static batches do not keep a second CPU copy of the interleaved VBO.
-        // The source scene owns its original world positions independently.
+        // Retain immutable UV pairs for bounded per-batch pose uploads, without
+        // keeping a second CPU copy of every normalized scene position/index.
+        state.batch_uvs = std::move(uvs);
     } catch (...) { state.release_mesh(); throw; }
 }
 
@@ -571,6 +578,40 @@ void MeshRenderer::update_positions(std::span<const Vec3> positions) {
     state.vertices = std::move(updated);
 }
 
+void MeshRenderer::update_batch_positions(std::size_t batch_index, std::span<const Vec3> positions) {
+    if (!has_mesh()) throw std::runtime_error("No scene is uploaded for a batch pose update");
+    auto& state = *impl_;
+    if (!state.batch_mode) {
+        if (batch_index != 0) throw std::runtime_error("A single uploaded mesh has only batch zero");
+        update_positions(positions);
+        return;
+    }
+    if (batch_index >= state.batches.size()) throw std::runtime_error("Pose batch index exceeds the uploaded scene");
+    const auto& batch = state.batches[batch_index];
+    if (positions.size() != batch.vertex_count)
+        throw std::runtime_error("Pose vertex count must match the selected scene batch");
+    std::vector<float> updated(positions.size() * 5);
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        const std::array<double, 3> position{positions[i].x, positions[i].y, positions[i].z};
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const auto normalized = (position[axis] - state.center[axis]) / state.radius;
+            if (!std::isfinite(normalized) || std::abs(normalized) > std::numeric_limits<float>::max())
+                throw std::runtime_error("Batch pose contains a non-finite or unrepresentable coordinate");
+            updated[i * 5 + axis] = static_cast<float>(normalized);
+        }
+        const auto& uv = state.batch_uvs[batch.first_vertex + i];
+        updated[i * 5 + 3] = uv.u;
+        updated[i * 5 + 4] = uv.v;
+    }
+    // Validation and staging complete before the sole subrange write. Adjacent
+    // vertex ranges and all index/material objects are left intact.
+    SavedState saved(state.gl); discard_prior_errors();
+    state.gl.BindBuffer(GL_ARRAY_BUFFER, state.vertex_buffer);
+    state.gl.BufferSubData(GL_ARRAY_BUFFER, static_cast<GLintptr>(batch.first_vertex * 5 * sizeof(float)),
+        static_cast<GLsizeiptr>(updated.size() * sizeof(float)), updated.data());
+    check_gl("Updating scene batch pose");
+}
+
 std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point,
     const OrbitCamera& camera, float aspect) const {
     if (!has_mesh()) return std::nullopt;
@@ -589,6 +630,30 @@ std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point
         if (!std::isfinite(clip[axis]) || std::abs(clip[axis]) > clip[3]) return std::nullopt;
     return MeshCanvasPoint{static_cast<float>(0.5 + 0.5 * clip[0] / clip[3]),
         static_cast<float>(0.5 - 0.5 * clip[1] / clip[3])};
+}
+
+void MeshRenderer::focus_camera(OrbitCamera& camera, const MeshBounds& source_bounds) const {
+    if (!has_mesh()) throw std::runtime_error("No mesh is uploaded for camera focus");
+    const auto& state = *impl_;
+    const std::array<double,3> low{source_bounds.min.x,source_bounds.min.y,source_bounds.min.z};
+    const std::array<double,3> high{source_bounds.max.x,source_bounds.max.y,source_bounds.max.z};
+    std::array<float,3> target{};
+    std::array<double,3> extents{};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (!std::isfinite(low[axis]) || !std::isfinite(high[axis]) || low[axis] > high[axis])
+            throw std::runtime_error("Camera focus bounds must be finite and ordered");
+        const auto normalized = ((low[axis] + high[axis]) * 0.5 - state.center[axis]) / state.radius;
+        if (!std::isfinite(normalized) || std::abs(normalized) > 10000.0)
+            throw std::runtime_error("Camera focus bounds exceed the normalized target range");
+        target[axis] = static_cast<float>(normalized);
+        extents[axis] = (high[axis] - low[axis]) * 0.5 / state.radius;
+    }
+    constexpr double half_fov_sine = 0.3826834323650898; // Half of the camera's 45-degree vertical field of view.
+    const auto distance = std::max(0.05,1.1 * std::hypot(extents[0],extents[1],extents[2]) / half_fov_sine);
+    if (!std::isfinite(distance) || distance > std::numeric_limits<float>::max())
+        throw std::runtime_error("Camera focus distance is not representable");
+    // All source conversion checks precede the camera's atomic target change.
+    camera.focus(target,static_cast<float>(distance));
 }
 
 void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions& options) {

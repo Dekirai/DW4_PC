@@ -6,6 +6,8 @@
 #include "dw4/materials.hpp"
 #include "dw4/meshes.hpp"
 #include "dw4/packages.hpp"
+#include "dw4/player_placement.hpp"
+#include "dw4/player_visual.hpp"
 #include "dw4/resources.hpp"
 #include "dw4/scenes.hpp"
 #include "dw4/scene_controls.hpp"
@@ -32,6 +34,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -74,6 +77,11 @@ struct Options {
     std::optional<int> scene_switch_control;
     std::optional<dw4::SwitchControlCommand> scene_switch_command;
     dw4::viewer::MeshDrawMode scene_mode = dw4::viewer::MeshDrawMode::solid;
+    std::string scene_player_resource;
+    std::optional<int> scene_player_model, scene_player_slot, scene_player_branch, scene_player_point, scene_player_group;
+    std::string scene_player_animation;
+    std::optional<double> scene_player_time;
+    bool scene_player_play = false;
     bool rig = false;
     std::optional<int> bone;
     dw4::Vec3 rotation{};
@@ -131,10 +139,28 @@ Options parse_options(const std::vector<std::string>& args) {
     bool scene_mode_requested = false;
     bool page_requested = false;
     bool rotation_requested = false;
+    std::set<std::string> player_options;
     for (std::size_t i = 0; i < args.size(); ++i) {
+        if (args[i].starts_with("--scene-player-") && !player_options.insert(args[i]).second)
+            throw std::runtime_error("Duplicate player inspection option: " + args[i]);
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
         if (args[i] == "--rig") { out.rig = true; continue; }
         if (args[i] == "--animation-play") { out.animation_play = true; continue; }
+        if (args[i] == "--scene-player-play") { out.scene_player_play = true; continue; }
+        if (args[i].starts_with("--scene-player-")) {
+            const auto option = args[i];
+            if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
+            if (option == "--scene-player-resource") out.scene_player_resource = args[i];
+            else if (option == "--scene-player-model") out.scene_player_model = parse_integer_option(args[i],option,0,1048575);
+            else if (option == "--scene-player-slot") out.scene_player_slot = parse_integer_option(args[i],option,0,3);
+            else if (option == "--scene-player-branch") out.scene_player_branch = parse_integer_option(args[i],option,0,4095);
+            else if (option == "--scene-player-point") out.scene_player_point = parse_integer_option(args[i],option,0,1048575);
+            else if (option == "--scene-player-group") out.scene_player_group = parse_integer_option(args[i],option,0,4095);
+            else if (option == "--scene-player-animation") out.scene_player_animation = args[i];
+            else if (option == "--scene-player-time") out.scene_player_time = parse_animation_time(args[i]);
+            else throw std::runtime_error("Unknown option: " + option);
+            continue;
+        }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
             args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
             args[i] != "--package" && args[i] != "--package-member" &&
@@ -202,6 +228,15 @@ Options parse_options(const std::vector<std::string>& args) {
     }
     if (!out.screenshot.empty() && !out.smoke_frames)
         throw std::runtime_error("--screenshot requires --smoke-test FRAMES.");
+    if (!player_options.empty()) {
+        if (out.scene_player_resource.empty() || !out.scene_player_model || !out.scene_player_slot ||
+            !out.scene_player_branch || !out.scene_player_point || !out.scene_player_group || !out.scene_root)
+            throw std::runtime_error("Player inspection requires --scene-root and explicit --scene-player-resource, -model, -slot, -branch, -point and -group selectors.");
+        if ((out.scene_player_time || out.scene_player_play || player_options.contains("--scene-player-animation")) && out.scene_player_animation.empty())
+            throw std::runtime_error("Player animation options require a nonempty --scene-player-animation NAME.");
+        if (out.scene_player_play && out.smoke_frames == 1)
+            throw std::runtime_error("Player playback smoke testing requires at least two frames.");
+    }
     if (out.entry.has_value() != !out.archive_name.empty())
         throw std::runtime_error("Use --archive NAME and --entry INDEX together.");
     if (texture_requested && !out.entry && out.resource.empty())
@@ -349,6 +384,34 @@ void configure_style() {
     c[ImGuiCol_NavHighlight] = teal;
 }
 
+struct ScenePlayerState {
+    std::optional<dw4::IgbDocument> document;
+    std::vector<dw4::PlayerModelInfo> models;
+    std::optional<dw4::PlayerVisualData> visual;
+    std::optional<dw4::PlayerPlacement> placement;
+    std::vector<dw4::AnimationInfo> clips;
+    std::optional<dw4::AnimationClip> clip;
+    dw4::MeshData mesh;
+    std::optional<dw4::MaterialInfo> material;
+    std::optional<dw4::RgbaImage> image;
+    std::string resource, error;
+    bool playing = false, loop = true, uploaded = false;
+    double time = 0;
+    std::uint64_t updates = 0;
+    std::chrono::steady_clock::time_point tick = std::chrono::steady_clock::now();
+};
+
+dw4::MeshBounds position_bounds(std::span<const dw4::Vec3> positions) {
+    if (positions.empty()) throw std::runtime_error("Player geometry is empty.");
+    dw4::MeshBounds bounds{positions.front(),positions.front()};
+    for (const auto& p : positions) {
+        bounds.min.x = std::min(bounds.min.x,p.x); bounds.max.x = std::max(bounds.max.x,p.x);
+        bounds.min.y = std::min(bounds.min.y,p.y); bounds.max.y = std::max(bounds.max.y,p.y);
+        bounds.min.z = std::min(bounds.min.z,p.z); bounds.max.z = std::max(bounds.max.z,p.z);
+    }
+    return bounds;
+}
+
 class Workbench {
 public:
     explicit Workbench(Options options) : options_(std::move(options)) {}
@@ -385,6 +448,7 @@ public:
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
             advance_animation_clock();
+            advance_scene_player_clock();
             draw();
             ImGui::Render();
             int width = 0, height = 0;
@@ -456,13 +520,13 @@ public:
                     return 3;
                 }
                 if (options_.scene_mode == dw4::viewer::MeshDrawMode::textured &&
-                    (scene_renderer_.textured_batch_count() != scene_data_->instances.size() || !scene_texture_error_.empty())) {
+                    (scene_renderer_.textured_batch_count() != scene_data_->instances.size() + (scene_player_.uploaded ? 1u : 0u) || !scene_texture_error_.empty())) {
                     std::cerr << "Textured scene unavailable: " << (scene_texture_error_.empty() ?
                         "Not every scene instance has a verified GPU texture." : scene_texture_error_) << '\n';
                     return 3;
                 }
                 std::cout << "Static scene: " << scene_source_ << " / root index " << selected_scene_
-                          << " / " << scene_data_->instances.size() << " instances / " << scene_renderer_.triangle_count() << " triangles\n"
+                          << " / " << scene_data_->instances.size() << " instances / " << scene_data_->triangle_count << " triangles\n"
                           << "Scene export: " << scene_display_name(scene_data_->info) << " / info " << scene_data_->info.info_reference
                           << " / root " << scene_data_->info.root_reference << " / " << scene_data_->info.root_type << '\n'
                           << "Scene traversal: " << scene_data_->visited_nodes << " nodes / " << scene_data_->transform_nodes
@@ -479,6 +543,26 @@ public:
                     << "; runtime activation unverified.\n";
                 else std::cout << "Stored root selection; no activation override.\n";
                 std::cout << "Static exported-root inspection only. Gameplay and original-frame comparison remain pending.\n";
+                if (!options_.scene_player_resource.empty()) {
+                    if (!scene_player_.visual || !scene_player_.placement || !scene_player_.uploaded || !scene_player_.error.empty()) {
+                        std::cerr << "Scene player inspection failed: " << scene_player_.error << '\n'; return 3;
+                    }
+                    if (options_.scene_player_play && scene_player_.updates <= 2) {
+                        std::cerr << "Scene player playback did not upload a pose after placement and initial clip selection.\n"; return 3;
+                    }
+                    const auto& visual = scene_player_.visual->info;
+                    const auto& point = *scene_player_.placement;
+                    std::cout << "Player visual: " << scene_player_.resource << " / model " << visual.request.model_reference
+                        << " / slot " << visual.request.instance_index << " / branch " << visual.request.branch_index
+                        << " / actor " << visual.actor_reference << " / geometry " << visual.geometry_reference << '\n'
+                        << "Player placement: info " << point.info_reference << " / group " << point.group_index
+                        << " / player " << point.player_index << " / transform " << point.transform_reference
+                        << " / position " << point.matrix[12] << ',' << point.matrix[13] << ',' << point.matrix[14] << '\n'
+                        << "Player pose: " << (scene_player_.clip ? scene_player_.clip->info.name : "stored skin vertices")
+                        << " / time " << std::setprecision(9) << scene_player_.time << " / updates " << scene_player_.updates
+                        << " / batch " << scene_data_->instances.size() << '\n'
+                        << "Explicit player visual placement; startup, input, collision and combat are not running.\n";
+                }
             } else if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
                 if (!options_.animation.empty() && (!mesh_animation_ || !mesh_animation_uploaded_ || !mesh_animation_error_.empty())) {
                     const auto reason = !mesh_animation_error_.empty() ? mesh_animation_error_ :
@@ -680,6 +764,12 @@ private:
     int selected_scene_switch_control_ = -1;
     std::string scene_switch_error_;
     bool scene_state_tab_pending_ = false;
+    ScenePlayerState scene_player_;
+    std::array<char,256> scene_player_resource_input_{};
+    std::vector<dw4::PlayerPlacementInfo> scene_player_points_;
+    int scene_player_model_input_ = -1, scene_player_slot_input_ = 0, scene_player_branch_input_ = 0;
+    int scene_player_point_input_ = -1, scene_player_group_input_ = 0;
+    bool scene_player_tab_pending_ = false, scene_player_focus_pending_ = false;
     dw4::viewer::MeshDrawMode scene_mode_ = dw4::viewer::MeshDrawMode::solid;
     std::vector<SDL_Gamepad*> gamepads_;
 
@@ -825,6 +915,31 @@ private:
             else {
                 texture_entry_input_ = *options_.entry;
                 load_texture_entry(*options_.entry, options_.texture);
+            }
+        }
+        if (!options_.scene_player_resource.empty()) {
+            std::snprintf(scene_player_resource_input_.data(),scene_player_resource_input_.size(),"%s",options_.scene_player_resource.c_str());
+            load_scene_player_resource(options_.scene_player_resource);
+            if (scene_player_.document && scene_player_.error.empty()) {
+                scene_player_model_input_ = *options_.scene_player_model;
+                scene_player_slot_input_ = *options_.scene_player_slot;
+                scene_player_branch_input_ = *options_.scene_player_branch;
+                scene_player_point_input_ = *options_.scene_player_point;
+                scene_player_group_input_ = *options_.scene_player_group;
+                place_scene_player();
+                if (scene_player_.uploaded && !options_.scene_player_animation.empty()) {
+                    int found = -1;
+                    for (std::size_t i = 0; i < scene_player_.clips.size(); ++i) {
+                        if (scene_player_.clips[i].name != options_.scene_player_animation) continue;
+                        if (found >= 0) { found = -2; break; }
+                        found = static_cast<int>(i);
+                    }
+                    if (found < 0) scene_player_.error = "Player animation name is missing or ambiguous: " + options_.scene_player_animation;
+                    else select_scene_player_animation(found,options_.scene_player_time.value_or(0));
+                    scene_player_.playing = options_.scene_player_play && scene_player_.error.empty();
+                }
+                scene_state_tab_pending_ = scene_status_tab_pending_ = false;
+                scene_player_tab_pending_ = true;
             }
         }
     }
@@ -1081,6 +1196,7 @@ private:
     }
 
     void clear_scene_document() {
+        clear_scene_player();
         scene_renderer_.clear();
         scene_document_.reset();
         scene_package_exports_.clear();
@@ -1219,13 +1335,14 @@ private:
     }
 
     void upload_scene_batches(bool textured) {
+        scene_player_.uploaded = false;
         try {
             if (!scene_data_ || !scene_data_->complete || scene_data_->instances.empty() || !scene_document_)
                 throw std::runtime_error("A complete, nonempty static scene is required for rendering.");
             std::vector<dw4::viewer::MeshBatch> batches;
             std::map<std::uint32_t,dw4::RgbaImage> images;
             std::size_t image_bytes = 0;
-            batches.reserve(scene_data_->instances.size());
+            batches.reserve(scene_data_->instances.size()+1);
             for (std::size_t i = 0; i < scene_data_->instances.size(); ++i) {
                 auto& instance = scene_data_->instances[i];
                 dw4::viewer::MeshBatch batch;
@@ -1255,15 +1372,42 @@ private:
                 }
                 batches.push_back(batch);
             }
+            const bool has_player = scene_player_.visual && scene_player_.placement;
+            if (has_player) {
+                dw4::viewer::MeshBatch batch;
+                batch.mesh = &scene_player_.mesh;
+                if (textured) {
+                    if (!scene_player_.document || !scene_player_.material || !scene_player_.material->supported ||
+                        !scene_player_.material->image_reference)
+                        throw std::runtime_error("Player appearance has no verified base-image material.");
+                    const auto& material = *scene_player_.material;
+                    if (scene_player_.mesh.texcoords.empty()) scene_player_.mesh.texcoords =
+                        dw4::decode_igb_texcoords(*scene_player_.document,scene_player_.visual->info.geometry_reference);
+                    if (!scene_player_.image) scene_player_.image = dw4::decode_igb_texture(*scene_player_.document,*material.image_reference);
+                    if (scene_player_.image->rgba.size() > 256u*1024u*1024u-image_bytes)
+                        throw std::runtime_error("Map and player decoded images exceed the 256 MiB inspection limit.");
+                    // Reference numbers are local to each document; never share this image by numeric ID with the map.
+                    batch.texture = &*scene_player_.image;
+                    batch.texture_options.wrap_u = texture_wrap(material.wrap_s);
+                    batch.texture_options.wrap_v = texture_wrap(material.wrap_t);
+                    batch.texture_options.min_filter = texture_filter(material.min_filter);
+                    batch.texture_options.mag_filter = texture_filter(material.mag_filter);
+                }
+                batches.push_back(batch);
+            }
             scene_renderer_.upload_batches(batches);
-            if (scene_renderer_.batch_count() != scene_data_->instances.size() ||
-                (textured && scene_renderer_.textured_batch_count() != scene_data_->instances.size()))
+            if (scene_renderer_.batch_count() != batches.size() ||
+                (textured && scene_renderer_.textured_batch_count() != batches.size()))
                 throw std::runtime_error("The renderer did not retain every requested scene instance.");
+            scene_player_.uploaded = has_player;
             scene_render_start_frame_ = scene_renderer_.rendered_frames();
             scene_render_failed_ = false;
             scene_error_.clear();
             if (textured) scene_texture_error_.clear();
         } catch (const std::exception& error) {
+            scene_renderer_.clear();
+            scene_render_failed_ = true;
+            scene_player_.playing = false;
             if (textured) scene_texture_error_ = error.what();
             else scene_error_ = error.what();
         }
@@ -1271,6 +1415,7 @@ private:
 
     void select_scene(int index, std::optional<int> inspect_child = std::nullopt,
         std::optional<dw4::SwitchControlRequest> control = std::nullopt) {
+        clear_scene_player();
         scene_renderer_.clear();
         scene_data_.reset();
         scene_materials_.clear();
@@ -1294,6 +1439,8 @@ private:
                 throw std::runtime_error("Scene-root index is outside this document's exported root list.");
             const auto& info = scenes_[static_cast<std::size_t>(index)];
             if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This exported scene descriptor is unsupported." : info.diagnostic);
+            try { scene_player_points_ = dw4::list_igb_player_placements(*scene_document_); }
+            catch (const std::exception& error) { scene_player_.error = error.what(); }
             try { scene_switch_controls_ = dw4::list_igb_switch_controls(*scene_document_); }
             catch (const std::exception& error) { scene_switch_error_ = error.what(); }
             dw4::SceneOptions scene_options;
@@ -1329,6 +1476,136 @@ private:
             scene_error_ = error.what();
             scene_status_tab_pending_ = !scene_state_tab_pending_;
         }
+    }
+
+    void clear_scene_player() {
+        scene_player_ = {};
+        scene_player_points_.clear();
+        scene_player_model_input_ = scene_player_point_input_ = -1;
+        scene_player_focus_pending_ = scene_player_tab_pending_ = false;
+    }
+
+    void remove_scene_player() {
+        scene_player_.playing = scene_player_.uploaded = false;
+        scene_player_.visual.reset(); scene_player_.placement.reset();
+        scene_player_.clip.reset(); scene_player_.clips.clear();
+        scene_player_.mesh = {}; scene_player_.image.reset(); scene_player_.material.reset();
+        scene_player_.time = 0; scene_player_.updates = 0;
+        scene_player_focus_pending_ = false;
+        // Clear the old dynamic batch even if reloading static materials fails.
+        scene_renderer_.clear();
+        if (scene_data_ && scene_data_->complete && !scene_data_->instances.empty())
+            upload_scene_batches(scene_mode_ == dw4::viewer::MeshDrawMode::textured);
+    }
+
+    void load_scene_player_resource(const std::string& path) {
+        remove_scene_player();
+        scene_player_.document.reset(); scene_player_.models.clear();
+        scene_player_.resource = path; scene_player_.error.clear();
+        scene_player_model_input_ = -1;
+        scene_player_tab_pending_ = true;
+        try {
+            if (!mounted_resources_) throw std::runtime_error("Mount the game's logical resource catalog first.");
+            scene_player_.document = dw4::read_igb_document(mounted_resources_->read(path,
+                static_cast<std::size_t>(std::clamp(scene_entry_limit_mib_,1,256))*1024u*1024u));
+            scene_player_.models = dw4::list_igb_player_models(*scene_player_.document);
+            if (scene_player_.models.empty()) throw std::runtime_error("This resource exports no player model descriptors.");
+        } catch (const std::exception& error) { scene_player_.error = error.what(); }
+    }
+
+    void update_scene_player_pose(double seconds) {
+        try {
+            if (!scene_player_.visual || !scene_player_.placement || !scene_player_.uploaded || !scene_data_)
+                throw std::runtime_error("Place a supported player visual in the scene first.");
+            const auto local = scene_player_.clip ? dw4::sample_animation_pose(*scene_player_.clip,scene_player_.visual->skin,seconds).positions :
+                scene_player_.visual->mesh.positions;
+            auto world = dw4::apply_player_placement(*scene_player_.placement,local);
+            const auto bounds = position_bounds(world);
+            scene_renderer_.update_batch_positions(scene_data_->instances.size(),world);
+            scene_player_.mesh.positions = std::move(world);
+            scene_player_.mesh.bounds = bounds;
+            scene_player_.time = seconds;
+            ++scene_player_.updates;
+            scene_player_.error.clear();
+        } catch (const std::exception& error) { scene_player_.error = error.what(); scene_player_.playing = false; }
+    }
+
+    void select_scene_player_animation(int index, double seconds = 0) {
+        scene_player_.playing = false;
+        try {
+            if (!scene_player_.document || !scene_player_.visual || !scene_player_.uploaded)
+                throw std::runtime_error("Place a supported player visual before selecting its clip.");
+            std::optional<dw4::AnimationClip> candidate;
+            if (index >= 0) {
+                const auto& info = scene_player_.clips.at(static_cast<std::size_t>(index));
+                if (!info.supported) throw std::runtime_error(info.diagnostic);
+                if (!std::isfinite(seconds) || seconds < 0 || seconds > info.duration_seconds)
+                    throw std::runtime_error("Player animation time is outside this clip's duration.");
+                candidate = dw4::decode_igb_animation(*scene_player_.document,scene_player_.visual->skin,info.reference_index);
+            }
+            const auto local = candidate ? dw4::sample_animation_pose(*candidate,scene_player_.visual->skin,seconds).positions :
+                scene_player_.visual->mesh.positions;
+            auto world = dw4::apply_player_placement(*scene_player_.placement,local);
+            const auto bounds = position_bounds(world);
+            scene_renderer_.update_batch_positions(scene_data_->instances.size(),world);
+            scene_player_.clip = std::move(candidate);
+            scene_player_.mesh.positions = std::move(world); scene_player_.mesh.bounds = bounds;
+            scene_player_.time = seconds; ++scene_player_.updates; scene_player_.error.clear();
+            scene_player_.tick = std::chrono::steady_clock::now();
+        } catch (const std::exception& error) { scene_player_.error = error.what(); }
+    }
+
+    void place_scene_player() {
+        remove_scene_player();
+        scene_player_.error.clear();
+        try {
+            if (!scene_data_ || !scene_data_->complete || scene_data_->instances.empty() || !scene_document_)
+                throw std::runtime_error("Select a complete, nonempty map scene before placing a player visual.");
+            if (!scene_player_.document) throw std::runtime_error("Load a player model resource first.");
+            if (scene_player_model_input_ < 0 || scene_player_slot_input_ < 0 || scene_player_slot_input_ > 3 ||
+                scene_player_branch_input_ < 0 || scene_player_point_input_ < 0 || scene_player_group_input_ < 0)
+                throw std::runtime_error("Select an exported model and point descriptor, a player slot from 0 to 3, and nonnegative branch/group indices.");
+            auto visual = dw4::decode_igb_player_visual(*scene_player_.document,{
+                static_cast<std::uint32_t>(scene_player_model_input_),static_cast<std::uint32_t>(scene_player_slot_input_),
+                static_cast<std::uint32_t>(scene_player_branch_input_)});
+            auto placement = dw4::decode_igb_player_placement(*scene_document_,static_cast<std::uint32_t>(scene_player_point_input_),
+                static_cast<std::uint32_t>(scene_player_group_input_),static_cast<std::uint32_t>(scene_player_slot_input_));
+            auto mesh = visual.mesh;
+            mesh.positions = dw4::apply_player_placement(placement,visual.mesh.positions);
+            mesh.bounds = position_bounds(mesh.positions);
+            auto material = dw4::resolve_igb_material(*scene_player_.document,visual.info.geometry_reference);
+            auto clips = dw4::list_igb_animations(*scene_player_.document,visual.skin);
+            scene_player_.visual = std::move(visual); scene_player_.placement = std::move(placement);
+            scene_player_.mesh = std::move(mesh); scene_player_.material = std::move(material); scene_player_.clips = std::move(clips);
+            upload_scene_batches(scene_mode_ == dw4::viewer::MeshDrawMode::textured);
+            if (!scene_player_.uploaded) throw std::runtime_error(scene_mode_ == dw4::viewer::MeshDrawMode::textured ? scene_texture_error_ : scene_error_);
+            scene_player_.updates = 1;
+            // An elevated host inspection angle reduces nearby terrain occlusion.
+            // This is not an original gameplay camera or collision-aware camera.
+            scene_camera_.reset();
+            scene_camera_.orbit(0,0.75f);
+            scene_fit_pending_ = false;
+            scene_player_focus_pending_ = true;
+        } catch (const std::exception& error) {
+            const std::string message = error.what();
+            remove_scene_player();
+            scene_player_.error = message;
+        }
+    }
+
+    void advance_scene_player_clock() {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now-scene_player_.tick).count();
+        scene_player_.tick = now;
+        if (page_ != 6 || !scene_player_.playing || !scene_player_.clip || !scene_player_.uploaded || elapsed <= 0) return;
+        const double duration = scene_player_.clip->info.duration_seconds;
+        if (!std::isfinite(duration) || duration <= 0) { scene_player_.playing = false; return; }
+        double seconds = scene_player_.time + elapsed;
+        if (seconds >= duration) {
+            if (scene_player_.loop) seconds = std::fmod(seconds,duration);
+            else { seconds = duration; scene_player_.playing = false; }
+        }
+        update_scene_player_pose(seconds);
     }
 
     void clear_mesh_document() {
@@ -2636,7 +2913,7 @@ private:
     }
 
     void draw_scenes() {
-        title("Static scene inspector", "Original exported roots and checked placement. Game cameras, actors, collision and gameplay remain pending.");
+        title("Scene inspector", "Original map geometry and explicitly placed animated visuals. Game cameras, startup, collision and gameplay remain pending.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB scene.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -2761,7 +3038,7 @@ private:
         ImGui::EndDisabled();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(4,5));
         if (ImGui::BeginTabBar("scene_tabs",ImGuiTabBarFlags_FittingPolicyShrink)) {
-            if (ImGui::BeginTabItem("Instances")) {
+            if (ImGui::BeginTabItem("Items")) {
                 if (scene_data_ && scene_data_->complete) {
                     ImGui::TextColored(muted,"%zu instances / %zu transforms",scene_data_->instances.size(),scene_data_->transform_nodes);
                     ImGuiListClipper clip;
@@ -2780,7 +3057,7 @@ private:
                 } else paragraph("Instances are not displayed until this root's static traversal is complete.");
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Details")) {
+            if (ImGui::BeginTabItem("Info")) {
                 if (valid_root) {
                     const auto& info = scenes_[static_cast<std::size_t>(selected_scene_)];
                     ImGui::Text("Export %u / root %u",info.info_reference,info.root_reference);
@@ -2821,6 +3098,11 @@ private:
                 draw_scene_state();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Player",nullptr,scene_player_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+                scene_player_tab_pending_ = false;
+                draw_scene_player();
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Status",nullptr,scene_status_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
                 scene_status_tab_pending_ = false;
                 if (!scene_error_.empty()) paragraph(scene_error_.c_str(),amber);
@@ -2847,6 +3129,10 @@ private:
         ImGui::BeginChild("scene_view",ImVec2(0,height),true,ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (ImGui::Button("Fit")) reset_scene_camera();
         ImGui::SameLine();
+        ImGui::BeginDisabled(!scene_player_.uploaded);
+        if (ImGui::Button("Focus player")) scene_player_focus_pending_ = true;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(140);
         int mode = scene_mode_ == dw4::viewer::MeshDrawMode::textured ? 2 : scene_mode_ == dw4::viewer::MeshDrawMode::wireframe ? 1 : 0;
         if (ImGui::Combo("##scene_draw_mode",&mode,"Solid\0Wireframe\0Textured\0")) {
@@ -2863,6 +3149,81 @@ private:
         } else if (scene_renderer_.has_mesh() && !scene_render_failed_) draw_scene_canvas();
         else paragraph("Select a supported exported root to render its static instances.");
         ImGui::EndChild();
+    }
+
+    void draw_scene_player() {
+        if (scene_player_.uploaded && scene_player_.visual && scene_player_.placement) {
+            paragraph(scene_player_.visual->info.model_name.c_str(),teal);
+            const auto& point = *scene_player_.placement;
+            ImGui::Text("Group %u / player %u",point.group_index,point.player_index);
+            ImGui::TextColored(muted,"Position %.3g, %.3g, %.3g",point.matrix[12],point.matrix[13],point.matrix[14]);
+            ImGui::SetNextItemWidth(-1);
+            const char* name = scene_player_.clip ? scene_player_.clip->info.name.c_str() : "Stored skin vertices";
+            if (ImGui::BeginCombo("##scene_player_clip",name)) {
+                if (ImGui::Selectable("Stored skin vertices",!scene_player_.clip)) select_scene_player_animation(-1);
+                for (std::size_t i = 0; i < scene_player_.clips.size(); ++i) {
+                    const auto& clip = scene_player_.clips[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::BeginDisabled(!clip.supported);
+                    if (ImGui::Selectable(clip.name.c_str(),scene_player_.clip && scene_player_.clip->info.reference_index == clip.reference_index))
+                        select_scene_player_animation(static_cast<int>(i));
+                    ImGui::EndDisabled(); ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            if (scene_player_.clip) {
+                if (ImGui::Button(scene_player_.playing ? "Pause" : "Play")) {
+                    scene_player_.playing = !scene_player_.playing;
+                    scene_player_.tick = std::chrono::steady_clock::now();
+                }
+                ImGui::SameLine(); ImGui::Checkbox("Loop",&scene_player_.loop);
+                const double minimum = 0, maximum = scene_player_.clip->info.duration_seconds;
+                double seconds = scene_player_.time;
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::SliderScalar("##scene_player_time",ImGuiDataType_Double,&seconds,&minimum,&maximum,"%.3f s")) {
+                    scene_player_.playing = false; update_scene_player_pose(seconds);
+                }
+            }
+        }
+        if (ImGui::CollapsingHeader("Placement selection",scene_player_.uploaded ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##player_resource","Logical player resource",scene_player_resource_input_.data(),scene_player_resource_input_.size());
+            if (ImGui::Button("Load resource")) load_scene_player_resource(scene_player_resource_input_.data());
+            ImGui::SetNextItemWidth(-1);
+            const auto model_name = scene_player_model_input_ < 0 ? std::string("Choose a player model") : "Model " + std::to_string(scene_player_model_input_);
+            if (ImGui::BeginCombo("##player_model",model_name.c_str())) {
+                for (const auto& model : scene_player_.models) {
+                    ImGui::BeginDisabled(!model.supported);
+                    const auto label = std::to_string(model.reference_index)+"  "+model.name;
+                    if (ImGui::Selectable(label.c_str(),scene_player_model_input_ == static_cast<int>(model.reference_index)))
+                        scene_player_model_input_ = static_cast<int>(model.reference_index);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",model.diagnostic.c_str());
+                    ImGui::EndDisabled();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(-1);
+            const auto point_name = scene_player_point_input_ < 0 ? std::string("Choose map entry points") : "Points " + std::to_string(scene_player_point_input_);
+            if (ImGui::BeginCombo("##player_points",point_name.c_str())) {
+                for (const auto& point : scene_player_points_) {
+                    ImGui::BeginDisabled(!point.supported);
+                    const auto label = std::to_string(point.reference_index)+"  "+point.name;
+                    if (ImGui::Selectable(label.c_str(),scene_player_point_input_ == static_cast<int>(point.reference_index)))
+                        scene_player_point_input_ = static_cast<int>(point.reference_index);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%u groups\n%s",point.group_count,point.diagnostic.c_str());
+                    ImGui::EndDisabled();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SetNextItemWidth(72); ImGui::InputInt("Player slot",&scene_player_slot_input_,0,0);
+            ImGui::SetNextItemWidth(72); ImGui::InputInt("Entry group",&scene_player_group_input_,0,0);
+            ImGui::SetNextItemWidth(72); ImGui::InputInt("LOD branch",&scene_player_branch_input_,0,0);
+            if (ImGui::Button("Place visual")) place_scene_player();
+            if (scene_player_.uploaded) { ImGui::SameLine(); if (ImGui::Button("Remove")) remove_scene_player(); }
+        }
+        if (!scene_player_.error.empty()) paragraph(scene_player_.error.c_str(),amber);
+        paragraph("Explicit visual inspection. Startup, movement, collision and combat are not running.");
+        if (scene_player_.visual && ImGui::CollapsingHeader("Visual provenance")) paragraph(scene_player_.visual->info.provenance.c_str());
     }
 
     void draw_scene_state() {
@@ -2943,6 +3304,10 @@ private:
             scene_target_width_ = std::max(1,static_cast<int>(width * reduction));
             scene_target_height_ = std::max(1,static_cast<int>(height * reduction));
             if (scene_fit_pending_) fit_scene_bounds(static_cast<float>(scene_target_width_) / scene_target_height_);
+            if (scene_player_focus_pending_ && scene_player_.uploaded) {
+                scene_renderer_.focus_camera(scene_camera_,scene_player_.mesh.bounds);
+                scene_player_focus_pending_ = false;
+            }
             const auto target = scene_renderer_.render(scene_target_width_,scene_target_height_,scene_camera_,scene_mode_,settings_.msaa);
             auto* draw = ImGui::GetWindowDrawList();
             const ImVec2 end(origin.x+size.x,origin.y+size.y);
@@ -3006,6 +3371,14 @@ int main(int argc, char** argv) {
                          "--scene-inspect-child Explicitly inspect one root-switch child; runtime activation unverified.\n"
                          "--scene-switch-control Exported controller reference; requires --scene-switch-command.\n"
                          "--scene-switch-command all-on | all-off; explicit original command, no game startup.\n"
+                         "--scene-player-resource Logical player resource; requires explicit --scene-root and all selectors below.\n"
+                         "--scene-player-model Exported player model reference in the player resource.\n"
+                         "--scene-player-slot Player/model instance index from 0 to 3.\n"
+                         "--scene-player-branch Explicit appearance LOD child index.\n"
+                         "--scene-player-point Exported entry-point descriptor reference in the map member.\n"
+                         "--scene-player-group Entry-point group index. Placement replaces the outer model transform.\n"
+                         "--scene-player-animation Original clip name; optional --scene-player-time in seconds.\n"
+                         "--scene-player-play Start the selected player clip; smoke tests require 2+ frames.\n"
                          "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"
