@@ -1,13 +1,13 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.4 textured mesh-viewer milestone,
+GeForce RTX 5070 Ti. This records the version 0.5 manual rig-inspection milestone,
 not gameplay compatibility or a finished port.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, camera, settings | 9/9 suites passed in Release |
+| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, skinning, camera, settings | 10/10 suites passed in Release |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
 | USA DOL identity | SHA-1 matches `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` |
@@ -30,13 +30,24 @@ not gameplay compatibility or a finished port.
 | Original topology identification | DOL enum table confirms triangle list 3 and triangle strip 4; all source index/length constraints checked |
 | Portable orbit camera | Projection/frustum, orbit, pan, zoom bounds, reset and invalid-input tests passed |
 | Native GPU renderer test | Pixel coverage, orbit, wireframe, resize, MSAA resolve, textured colors/UVs/wrapping/filtering/alpha, state restoration and cleanup passed |
+| GPU pose updates | Position changes retain texture, UVs, indices, normalization and frame counter; reset reproduces pixels, invalid updates preserve the prior pose |
+| Joint overlay projection | Uses the same fixed normalization/camera; fitted center, clipping and unchanged reference projection passed |
+| Original skin reference mapping | Agumon geometry 5665 -> selector 5481 -> skin 404 -> database 810 -> skeleton 701; 25 bones, 20 joints, 24 palette entries |
+| Original CPU manual pose | All three Agumon geometries reset with zero measured position error; bone 8 Z+30 degrees changes only vertices mapped to its joint descendants |
+| Original rig corpus | All 894 `ndmw.afs` IGBs screened: 476 geometries with skin buffers, 290 supported with 222,694 vertices; no supported reset/manual-pose failures |
+| Rig reset accuracy | Maximum coordinate error 1.97209e-15 across supported corpus; remaining 186 skinned profiles explicitly unsupported |
+| Skinning synthetic fixtures | 120 checks passed, including noncommuting child rotation, parent propagation/pivot, reset and malformed graph/matrix/palette/cache rejection |
+| Native manual Agumon pose | Textured high geometry, bone 8 (`LArm01`) Z+45 degrees: 252 changed vertices, maximum displacement 4.47705; inverse-bind reset changes zero vertices |
 | Original 3D sample | `ndmw.afs[179]`, reference 3: 24 vertices and 8 triangles rendered |
 | Agumon stored-space preview | `_common/p_agumon.igb`, mesh 2, reference 5665: 1,371 vertices and 1,966 triangles; solid and wireframe screenshots inspected |
 | Agumon bound-image verification | Image 5609, `P_agumon01.dds`, 256×256 BC1: all 65,536 texels opaque; independent Pillow DDS decode matches native RGBA exactly |
 | Agumon textured GPU preview | Original high-detail mesh, 1,371 UV pairs and bound image rendered; yellow skin, green eye, mouth/teeth and white claws visually inspected |
 | Low Agumon textured preview | Mesh 0, image 5597 (`P_agumon02.dds`, 64×64), 570 UV pairs rendered |
 | Unsupported original material | Shadow mesh 1 in Textured mode reports its incomplete/ambiguous scope and exits 3; its Solid preview still succeeds |
-| Mesh MSAA target | 1920×1080 window, 1355×554 textured offscreen mesh target with actual 8 samples |
+| Mesh MSAA target | 1920×1080 window, 1290×554 textured offscreen mesh target with rig inspection and actual 8 samples |
+| Compact rig layout | 1280×720 window: scrollable left Rig tab, visible manual controls and complete posed model in a 636×211 viewport |
+| Manual rig source routing | Logical resource and direct AFS entry both work; low-detail default, high-detail textured/wireframe and combined head-axis deltas render successfully |
+| Explicit rig failures | Helper bone 0, out-of-range bone 25, unsupported box and missing resource exit 3; malformed angles and CLI combinations exit 1 |
 | Seven UI pages | Finite native smoke runs passed, including the existing texture CLI |
 | Textured source routing | Both logical resource and direct AFS entry select the verified original image; missing source exits 3 |
 | Invalid explicit mesh source | Missing resource exits 3; `--mesh` without a source exits 1 |
@@ -61,6 +72,7 @@ Example finite rendering check (output is local and ignored by Git):
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --archive area.afs --entry 621 --screenshot work/card.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --screenshot work/agumon.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --screenshot work/agumon-textured.bmp
+.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --rig --bone 8 --rotate-z 45 --screenshot work/agumon-manual-pose.bmp
 .\build\Release\dw4_renderer_tests.exe
 ```
 
@@ -70,8 +82,11 @@ check used a local settings file requesting 3840×2160 and MSAA 8x. Borderless
 desktop mode was implemented but not exercised in the hidden-window test.
 
 No physical controller was connected during validation; Xbox, PlayStation and
-GameCube hardware behavior remains unverified. Scene construction, skinning,
-animation, gameplay, audio, saves, online co-op and modding remain unimplemented.
+GameCube hardware behavior remains unverified. Scene construction, original
+animation playback, gameplay, audio, saves, online co-op and modding remain
+unimplemented. Skinning support is limited to the verified single-influence
+inverse-bind/manual-delta profile; helpers, multiple influences and nonidentity
+selector transforms need further work. See [SKINNING.md](SKINNING.md).
 The mesh viewer displays stored positions with inspection shading or a verified
 base-texture binding; it does not apply full original materials or final character
 poses. The 3,208 supported bindings are a limited profile, not a claim that all

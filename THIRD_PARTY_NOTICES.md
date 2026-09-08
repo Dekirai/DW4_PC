@@ -28,6 +28,15 @@ bounds checked and validated against local files and synthetic fixtures.
 This is a research loader, not an Alchemy
 engine implementation.
 
+Animation research reference:
+[korenkonder/enbrip](https://github.com/korenkonder/enbrip), MIT license,
+commit `461b7818ec4b1b20ed68b4a7935250f3b4b4ce18`. A local isolated compatibility
+probe compared its Enbaya decoder with original animation streams. The decoder
+is not vendored, linked, or executed by this application. Its unchecked pointer
+reads are not a production parser. See `docs/ANIMATION_RESEARCH.md` for the
+measured scope and remaining validation work. The new manual skinning code uses
+independently verified original matrix/graph evidence, not this animation decoder.
+
 BNR format checks were compared with Dolphin's
 [VolumeGC](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/DiscIO/VolumeGC.cpp)
 and [RGB5A3 decoder](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/VideoCommon/TextureDecoder_Generic.cpp).

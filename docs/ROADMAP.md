@@ -7,7 +7,7 @@ estimated before the missing engine and game logic have been measured.
 | Stage | Deliverable | Acceptance | Status |
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured object-space mesh viewer available for a verified binding profile; scene transforms, full materials and reference comparison pending |
+| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh and inverse-bind/manual joint inspection available for verified profiles; animation, scene transforms, full materials and reference comparison pending |
 | 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
@@ -16,13 +16,14 @@ estimated before the missing engine and game logic have been measured.
 
 ## Next acceptance gate
 
-The textured Agumon preview is a stored-geometry milestone. Continue stage 1 by
-recovering the character's transform hierarchy, skin palette and vertex weights.
-Validate reference ranges, matrix conventions and weight behavior with synthetic
-fixtures and original-data evidence before applying them. Then display a verified
-pose and scene placement, and evaluate an original animation against a recorded
-reference frame. A textured mesh alone does not complete this gate or establish
-movement, collision or combat behavior.
+The Agumon rig inspector reconstructs joint bind frames, validates palette and
+vertex-weight references, and supports manual joint deltas. Continue stage 1 by
+decoding original compressed animation tracks and their helper-bone transforms.
+Validate time sampling, quaternion conventions and hierarchy composition with
+synthetic fixtures and original-data evidence. Then evaluate an original
+animation against a recorded reference frame and verify scene placement. Manual
+posing alone does not complete this gate or establish movement, collision or
+combat behavior.
 
 ## Requested PC options
 

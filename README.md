@@ -1,7 +1,7 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.4 adds original textures on supported native 3D meshes;
+**Version 0.5 adds native skeleton inspection and manual joint posing;
 the game is not playable yet.** Gameplay, 3D scenes, combat and game saves
 have not been ported.
 
@@ -22,6 +22,8 @@ game code is not executed. This repository does not contain game files.
 - Inspect original models in 3D with orbit, pan, zoom, solid and wireframe modes.
 - Resolve explicit local or inherited texture bindings and show supported meshes
   with their original UVs, base image and verified linear/repeat sampler.
+- Read verified single-influence skin weights, joint palettes and inverse-bind
+  matrices; inspect the joint hierarchy and manually pose supported meshes.
 - Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
@@ -116,8 +118,22 @@ Drag to orbit, right-drag to pan, and use the wheel to zoom. **Fit** resets the
 inspection camera. **Textured** applies the image reached through a verified
 single-stage binding. The viewer reports unsupported or ambiguous bindings;
 it never chooses an image by filename or list order. **Solid** is the default
-plain inspection shader. All modes show stored positions without skeleton
-animation or scene transforms. This is not a playable character or loaded level.
+plain inspection shader. The default view shows stored positions. Enable **Inspect
+rig**, then use the left **Rig** tab for a supported skeleton, an X-ray joint
+overlay and manual joint rotation. The reference is reconstructed from the original inverse-bind matrices;
+manual rotation is an inspection control, not a decoded game animation.
+This is not a playable character or loaded level.
+
+The following example rotates the `LArm01` joint in Agumon's left arm while keeping the
+original image, weights and camera normalization:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --rig --bone 8 --rotate-z 45
+```
+
+This sample contains 25 bones and 20 joint matrices; five helper bones have no
+inverse-bind frame and cannot be manually posed by this profile. Original
+animation playback and scene placement remain unimplemented.
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -141,8 +157,9 @@ performs structural checks; the Python verifier additionally checks this hash.
 ## Next milestones
 
 Original textures, logical asset lookup and object-space mesh viewing are
-available, including a verified base-texture binding profile. The next step is
-verified scene and skeleton transforms, followed by an original scene with a
+available, including a verified base-texture binding profile and inverse-bind
+joint inspection. The next step is original animation decoding and verified scene
+transforms, followed by an original scene with a
 controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
@@ -152,6 +169,7 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Native texture formats](docs/TEXTURES.md) ·
 [Mesh formats](docs/MESHES.md) ·
 [Material bindings](docs/MATERIALS.md) ·
+[Skinning](docs/SKINNING.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

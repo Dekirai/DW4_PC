@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 
 namespace dw4::viewer {
 enum class MeshDrawMode { solid, wireframe, textured };
@@ -18,6 +20,7 @@ struct MeshTextureOptions {
     MeshTextureFilter min_filter = MeshTextureFilter::linear;
     MeshTextureFilter mag_filter = MeshTextureFilter::linear;
 };
+struct MeshCanvasPoint { float x{}, y{}; };
 
 // Requires the application's current OpenGL 3.3 context for upload/render/clear.
 // Call shutdown before destroying that context. Construction performs no GL work.
@@ -28,6 +31,15 @@ public:
     MeshRenderer(const MeshRenderer&) = delete;
     MeshRenderer& operator=(const MeshRenderer&) = delete;
     void upload(const MeshData& mesh);
+    // Update a pose in source coordinates while keeping the initial camera
+    // normalization, UVs, indices and texture. The vertex count must match.
+    // Invalid input leaves the last valid pose available.
+    void update_positions(std::span<const Vec3> positions);
+    // Project a source-space point using the same fixed normalization/camera as
+    // the mesh. Fractions are relative to the canvas's top-left corner. Points
+    // outside the clip volume, including behind the camera, are omitted.
+    std::optional<MeshCanvasPoint> project_to_canvas(const Vec3& point,
+        const OrbitCamera& camera, float aspect) const;
     // A textured upload requires an explicitly decoded UV pair per vertex.
     // Pixel data is copied to the GPU; no borrowed host pointers are retained.
     void set_texture(const RgbaImage& image, const MeshTextureOptions& options = {});

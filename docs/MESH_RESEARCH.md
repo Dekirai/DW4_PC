@@ -210,8 +210,10 @@ world placement, materials and original appearance still need verification.
 Keep the position/topology decoder separate from scene traversal. Version 0.4
 adds the verified base-image link and UV stream for the named high Agumon
 appearance; see [MATERIAL_RESEARCH.md](MATERIAL_RESEARCH.md). Next recover the
-skin palette and verify an original pose and placement before claiming scene
-rendering.
+original animation pose and placement before claiming scene rendering.
+Version 0.5 resolves the skin palette and inverse-joint mapping for a strict
+manual inspection profile; see [SKINNING_RESEARCH.md](SKINNING_RESEARCH.md).
+Manual deltas do not establish decoded original animation or scene placement.
 Little-endian evidence from this corpus does not establish every future buffer
 profile. Other topology/index formats and nonzero offset fields should remain
 explicitly unsupported until checked.

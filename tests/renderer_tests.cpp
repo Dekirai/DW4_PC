@@ -184,6 +184,49 @@ void texture_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& te
     rejects([&] { renderer.upload(mesh); });
     caller.verify();
 }
+
+void pose_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra, const dw4::OrbitCamera& camera) {
+    using namespace dw4::viewer;
+    renderer.clear();
+    rejects([&] { renderer.update_positions(tetra.positions); });
+    check(!renderer.project_to_canvas({0,0,0}, camera, 1), "Empty renderer projected a stale mesh point");
+    auto mesh = tetra;
+    mesh.texcoords.assign(mesh.positions.size(), {0.25f, 0.25f});
+    renderer.upload(mesh);
+    const dw4::RgbaImage image{1, 1, {255,0,0,255}};
+    TextureCallerState caller;
+    renderer.set_texture(image);
+    const auto target = renderer.render(128, 128, camera, MeshDrawMode::textured);
+    const auto initial = pixels(target, 128, 128);
+    const auto center = renderer.project_to_canvas({0,0,0}, camera, 1);
+    check(center && std::abs(center->x - 0.5f) < 1e-5f && std::abs(center->y - 0.5f) < 1e-5f,
+        "Canvas projection disagrees with the fitted mesh center");
+    check(!renderer.project_to_canvas({1e6f,1e6f,1e6f}, camera, 1), "Out-of-view joint was not clipped");
+    rejects([&] { renderer.project_to_canvas({0,std::numeric_limits<float>::infinity(),0}, camera, 1); });
+    const auto initial_frames = renderer.rendered_frames();
+    auto translated = tetra.positions;
+    for (auto& point : translated) point.x += 0.8f;
+    renderer.update_positions(translated); caller.verify();
+    const auto shifted_center = renderer.project_to_canvas({0,0,0}, camera, 1);
+    check(shifted_center && shifted_center->x == center->x && shifted_center->y == center->y,
+        "Pose update moved the skeleton overlay's fixed reference normalization");
+    check(renderer.has_texture() && renderer.triangle_count() == 4, "Pose update lost UVs, indices or texture");
+    check(renderer.rendered_frames() == initial_frames, "Pose upload reset the successful-frame counter");
+    check(renderer.render(128, 128, camera, MeshDrawMode::textured) == target, "Pose update replaced the render target");
+    const auto moved = pixels(target, 128, 128);
+    check(moved != initial && coverage(moved) > 200, "Pose update was ignored or camera normalization followed the moving mesh");
+    auto invalid = translated; invalid.pop_back();
+    rejects([&] { renderer.update_positions(invalid); });
+    invalid = translated; invalid[0].y = std::numeric_limits<float>::quiet_NaN();
+    rejects([&] { renderer.update_positions(invalid); });
+    check(pixels(renderer.render(128, 128, camera, MeshDrawMode::textured), 128, 128) == moved,
+        "Rejected pose input changed the previous valid pose");
+    renderer.update_positions(tetra.positions); caller.verify();
+    check(pixels(renderer.render(128, 128, camera, MeshDrawMode::textured), 128, 128) == initial,
+        "Restoring source positions did not reproduce the textured reference image");
+    renderer.clear();
+    check(!renderer.has_texture(), "Clearing a posed mesh retained its texture");
+}
 }
 int main() {
     Context context;
@@ -239,11 +282,12 @@ int main() {
             malformed = tetra; malformed.positions[0].x = std::numeric_limits<float>::infinity();
             rejects([&] { renderer.upload(malformed); });
             texture_checks(renderer, tetra, camera);
+            pose_checks(renderer, tetra, camera);
             renderer.upload(tetra); renderer.clear();
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {

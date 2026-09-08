@@ -18,7 +18,8 @@ namespace {
 // where opengl32.dll exports only OpenGL 1.1 directly.
 #define DW4_GL_FUNCTIONS(X) \
     X(PFNGLGENBUFFERSPROC, GenBuffers) X(PFNGLBINDBUFFERPROC, BindBuffer) \
-    X(PFNGLBUFFERDATAPROC, BufferData) X(PFNGLDELETEBUFFERSPROC, DeleteBuffers) \
+    X(PFNGLBUFFERDATAPROC, BufferData) X(PFNGLBUFFERSUBDATAPROC, BufferSubData) \
+    X(PFNGLDELETEBUFFERSPROC, DeleteBuffers) \
     X(PFNGLGENVERTEXARRAYSPROC, GenVertexArrays) X(PFNGLBINDVERTEXARRAYPROC, BindVertexArray) \
     X(PFNGLDELETEVERTEXARRAYSPROC, DeleteVertexArrays) \
     X(PFNGLVERTEXATTRIBPOINTERPROC, VertexAttribPointer) X(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray) \
@@ -191,6 +192,9 @@ public:
     GLuint draw_fbo{}, resolve_fbo{}, texture{}, depth_buffer{}, color_buffer{};
     GLint matrix_location{-1}, mode_location{-1}, texture_location{-1};
     bool has_uv{};
+    std::array<double, 3> center{};
+    double radius = 1;
+    std::vector<float> vertices;
     int width{}, height{}, sample_count{}, requested_sample_count{-1};
     std::size_t index_count{};
     std::uint64_t frames{};
@@ -203,6 +207,7 @@ public:
         if (index_buffer) gl.DeleteBuffers(1, &index_buffer);
         vao = vertex_buffer = index_buffer = 0;
         index_count = 0; frames = 0; has_uv = false;
+        vertices.clear(); center = {}; radius = 1;
     }
     void release_texture() {
         if (base_texture) glDeleteTextures(1, &base_texture);
@@ -370,7 +375,51 @@ void MeshRenderer::upload(const MeshData& mesh) {
         check_gl("Uploading mesh geometry");
         state.index_count = mesh.indices.size();
         state.has_uv = !mesh.texcoords.empty();
+        state.center = center; state.radius = radius;
+        state.vertices = std::move(vertices);
     } catch (...) { state.release_mesh(); throw; }
+}
+
+void MeshRenderer::update_positions(std::span<const Vec3> positions) {
+    if (!has_mesh()) throw std::runtime_error("No mesh is uploaded for a pose update");
+    auto& state = *impl_;
+    if (positions.size() != state.vertices.size() / 5)
+        throw std::runtime_error("Pose vertex count must match the uploaded mesh");
+    auto updated = state.vertices;
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        const std::array<double, 3> position{positions[i].x, positions[i].y, positions[i].z};
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const auto normalized = (position[axis] - state.center[axis]) / state.radius;
+            if (!std::isfinite(normalized) || std::abs(normalized) > std::numeric_limits<float>::max())
+                throw std::runtime_error("Pose contains a non-finite or unrepresentable coordinate");
+            updated[i * 5 + axis] = static_cast<float>(normalized);
+        }
+    }
+    SavedState saved(state.gl); discard_prior_errors();
+    state.gl.BindBuffer(GL_ARRAY_BUFFER, state.vertex_buffer);
+    state.gl.BufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(updated.size() * sizeof(float)), updated.data());
+    check_gl("Updating mesh pose");
+    state.vertices = std::move(updated);
+}
+
+std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point,
+    const OrbitCamera& camera, float aspect) const {
+    if (!has_mesh()) return std::nullopt;
+    const auto& state = *impl_;
+    const std::array<double, 4> position{(point.x - state.center[0]) / state.radius,
+        (point.y - state.center[1]) / state.radius, (point.z - state.center[2]) / state.radius, 1};
+    for (auto value : position)
+        if (!std::isfinite(value)) throw std::runtime_error("Projected point must be finite");
+    const auto matrix = camera.view_projection(aspect);
+    std::array<double, 4> clip{};
+    for (std::size_t row = 0; row < 4; ++row)
+        for (std::size_t column = 0; column < 4; ++column)
+            clip[row] += matrix[column * 4 + row] * position[column];
+    if (!std::isfinite(clip[3]) || clip[3] <= 0) return std::nullopt;
+    for (std::size_t axis = 0; axis < 3; ++axis)
+        if (!std::isfinite(clip[axis]) || std::abs(clip[axis]) > clip[3]) return std::nullopt;
+    return MeshCanvasPoint{static_cast<float>(0.5 + 0.5 * clip[0] / clip[3]),
+        static_cast<float>(0.5 - 0.5 * clip[1] / clip[3])};
 }
 
 void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions& options) {

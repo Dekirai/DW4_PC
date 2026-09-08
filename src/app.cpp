@@ -6,6 +6,7 @@
 #include "dw4/meshes.hpp"
 #include "dw4/resources.hpp"
 #include "dw4/settings.hpp"
+#include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
 #include "mesh_renderer.hpp"
 
@@ -61,6 +62,9 @@ struct Options {
     int texture = 0;
     std::optional<int> mesh;
     dw4::viewer::MeshDrawMode mesh_mode = dw4::viewer::MeshDrawMode::solid;
+    bool rig = false;
+    std::optional<int> bone;
+    dw4::Vec3 rotation{};
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -70,6 +74,14 @@ int parse_integer_option(const std::string& value, const std::string& option, in
     const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
     if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || number < minimum || number > maximum)
         throw std::runtime_error(option + " requires " + std::to_string(minimum) + " to " + std::to_string(maximum) + ".");
+    return number;
+}
+
+float parse_rotation_option(const std::string& value, const std::string& option) {
+    float number = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || !std::isfinite(number) || number < -180 || number > 180)
+        throw std::runtime_error(option + " requires a finite angle from -180 to 180 degrees.");
     return number;
 }
 
@@ -94,11 +106,14 @@ Options parse_options(const std::vector<std::string>& args) {
     bool texture_requested = false;
     bool mesh_mode_requested = false;
     bool page_requested = false;
+    bool rotation_requested = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
+        if (args[i] == "--rig") { out.rig = true; continue; }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
             args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
-            args[i] != "--mesh" && args[i] != "--mesh-mode")
+            args[i] != "--mesh" && args[i] != "--mesh-mode" && args[i] != "--bone" &&
+            args[i] != "--rotate-x" && args[i] != "--rotate-y" && args[i] != "--rotate-z")
             throw std::runtime_error("Unknown option: " + args[i]);
         const auto option = args[i];
         if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
@@ -110,6 +125,14 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--entry") out.entry = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
         else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--bone") out.bone = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--rotate-x" || option == "--rotate-y" || option == "--rotate-z") {
+            const auto angle = parse_rotation_option(args[i], option);
+            if (option == "--rotate-x") out.rotation.x = angle;
+            if (option == "--rotate-y") out.rotation.y = angle;
+            if (option == "--rotate-z") out.rotation.z = angle;
+            rotation_requested = true;
+        }
         else if (option == "--mesh-mode") {
             if (args[i] == "solid") out.mesh_mode = dw4::viewer::MeshDrawMode::solid;
             else if (args[i] == "wireframe") out.mesh_mode = dw4::viewer::MeshDrawMode::wireframe;
@@ -137,6 +160,13 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("--texture requires --resource, or --archive and --entry.");
     if (!out.resource.empty() && out.entry)
         throw std::runtime_error("Choose --resource or --archive with --entry; these source options cannot be combined.");
+    if (out.rig && !out.entry && out.resource.empty())
+        throw std::runtime_error("--rig requires --resource, or --archive and --entry.");
+    if ((out.bone || rotation_requested) && !out.rig)
+        throw std::runtime_error("--bone and rotation controls require --rig.");
+    if (rotation_requested && !out.bone)
+        throw std::runtime_error("Rotation controls require an explicit --bone INDEX.");
+    if (out.rig && !out.mesh) out.mesh = 0;
     if (out.mesh && !out.entry && out.resource.empty())
         throw std::runtime_error("--mesh requires --resource, or --archive and --entry.");
     if (out.mesh && texture_requested) throw std::runtime_error("Choose --mesh or --texture, not both.");
@@ -308,6 +338,13 @@ public:
                 return 2;
             }
             if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+                if (options_.rig && (!mesh_skin_ || !mesh_pose_ || !mesh_pose_uploaded_ || !mesh_rig_error_.empty() ||
+                    mesh_renderer_.rendered_frames() <= mesh_pose_start_frame_)) {
+                    const auto reason = !mesh_rig_error_.empty() ? mesh_rig_error_ :
+                        !mesh_error_.empty() ? mesh_error_ : "No evaluated pose was uploaded and rendered.";
+                    std::cerr << "Rig inspection failed: " << reason << '\n';
+                    return 3;
+                }
                 if (options_.mesh_mode == dw4::viewer::MeshDrawMode::textured && !mesh_renderer_.has_texture()) {
                     const auto reason = !mesh_material_error_.empty() ? mesh_material_error_ :
                         !mesh_error_.empty() ? mesh_error_ : "No verified material binding and GPU texture are available.";
@@ -328,6 +365,17 @@ public:
                     std::cout << "Bound image: " << mesh_material_->image_name << " / reference " << *mesh_material_->image_reference
                               << " / " << mesh_texture_width_ << 'x' << mesh_texture_height_ << " / " << mesh_data_->texcoords.size() << " UV pairs\n"
                               << "Material provenance: " << mesh_material_->provenance << '\n';
+                }
+                if (options_.rig && mesh_skin_) {
+                    const auto& skin = *mesh_skin_;
+                    std::cout << "Rig: " << skin.info.skeleton_name << " / skeleton " << *skin.info.skeleton_reference
+                              << " / " << skin.bones.size() << " bones / " << skin.joints.size() << " joints / " << skin.influences.size() << " influences\n"
+                              << "Rig provenance: " << skin.info.provenance << '\n'
+                              << "Pose inspection: " << (manual_pose_active() ? "manual joint delta" : "inverse-bind reconstruction")
+                              << " / changed vertices " << mesh_pose_changed_vertices_ << " / max displacement " << mesh_pose_max_displacement_ << '\n';
+                    if (options_.bone) std::cout << "Manual bone: " << selected_bone_ << " / " << skin.bones.at(static_cast<std::size_t>(selected_bone_)).name
+                        << " / XYZ degrees " << mesh_rotation_.x << ',' << mesh_rotation_.y << ',' << mesh_rotation_.z << '\n';
+                    std::cout << "Original compressed animation decoding remains pending.\n";
                 }
             } else if (options_.entry || !options_.resource.empty()) {
                 if (!asset_texture_) {
@@ -410,6 +458,19 @@ private:
     std::uint32_t mesh_texture_height_ = 0;
     bool mesh_render_failed_ = false;
     bool mesh_scroll_pending_ = false;
+    bool mesh_rig_enabled_ = false;
+    bool mesh_skeleton_overlay_ = true;
+    bool mesh_pose_uploaded_ = false;
+    bool mesh_rig_options_consumed_ = false;
+    bool mesh_rig_tab_pending_ = false;
+    std::optional<dw4::SkinningData> mesh_skin_;
+    std::optional<dw4::SkinPose> mesh_pose_;
+    std::string mesh_rig_error_;
+    int selected_bone_ = -1;
+    dw4::Vec3 mesh_rotation_{};
+    std::uint64_t mesh_pose_start_frame_ = 0;
+    std::size_t mesh_pose_changed_vertices_ = 0;
+    double mesh_pose_max_displacement_ = 0;
     std::vector<SDL_Gamepad*> gamepads_;
 
     void capture_frame(int width, int height) {
@@ -439,6 +500,7 @@ private:
         max_entry_mib_ = options_.max_entry_mib;
         mesh_entry_limit_mib_ = options_.max_entry_mib;
         mesh_mode_ = options_.mesh_mode;
+        mesh_rig_enabled_ = options_.rig;
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         sdl_ready_ = true;
         if (!options_.config.empty()) config_ = options_.config;
@@ -711,6 +773,7 @@ private:
 
     void clear_mesh_document() {
         mesh_renderer_.clear();
+        clear_mesh_rig();
         mesh_document_.reset();
         mesh_data_.reset();
         mesh_material_.reset();
@@ -775,6 +838,7 @@ private:
 
     void select_mesh(int index) {
         mesh_renderer_.clear();
+        clear_mesh_rig();
         mesh_data_.reset();
         mesh_material_.reset();
         mesh_material_error_.clear();
@@ -797,7 +861,82 @@ private:
                 if (!mesh_material_->supported) mesh_material_error_ = mesh_material_->diagnostic;
             } catch (const std::exception& error) { mesh_material_error_ = error.what(); }
             if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured) prepare_mesh_texture();
+            if (mesh_rig_enabled_) {
+                const bool initial_request = options_.rig && !mesh_rig_options_consumed_;
+                mesh_rig_options_consumed_ = true;
+                prepare_mesh_rig(initial_request ? options_.bone : std::nullopt,
+                    initial_request ? options_.rotation : dw4::Vec3{});
+            }
         }
+    }
+
+    void clear_mesh_rig() {
+        mesh_skin_.reset();
+        mesh_pose_.reset();
+        mesh_rig_error_.clear();
+        selected_bone_ = -1;
+        mesh_rotation_ = {};
+        mesh_pose_uploaded_ = false;
+        mesh_pose_changed_vertices_ = 0;
+        mesh_pose_max_displacement_ = 0;
+    }
+
+    bool manual_pose_active() const {
+        return mesh_rotation_.x != 0 || mesh_rotation_.y != 0 || mesh_rotation_.z != 0;
+    }
+
+    void update_mesh_pose() {
+        try {
+            if (!mesh_skin_ || !mesh_renderer_.has_mesh()) throw std::runtime_error("No decoded rig and GPU geometry are available.");
+            std::optional<dw4::BoneRotation> rotation;
+            if (selected_bone_ >= 0 && manual_pose_active()) rotation = dw4::BoneRotation{static_cast<std::uint32_t>(selected_bone_), mesh_rotation_};
+            auto pose = dw4::evaluate_skinning(*mesh_skin_, rotation);
+            if (pose.positions.size() != mesh_skin_->source_positions.size() || pose.joint_positions.size() != mesh_skin_->joints.size())
+                throw std::runtime_error("Evaluated pose counts do not match the selected rig.");
+            std::size_t changed = 0;
+            double largest = 0;
+            for (std::size_t i = 0; i < pose.positions.size(); ++i) {
+                const auto& before = mesh_skin_->source_positions[i];
+                const auto& after = pose.positions[i];
+                const auto delta = std::hypot(static_cast<double>(after.x)-before.x,
+                    static_cast<double>(after.y)-before.y,static_cast<double>(after.z)-before.z);
+                if (delta > 0.00001) ++changed;
+                largest = std::max(largest,delta);
+            }
+            mesh_renderer_.update_positions(pose.positions);
+            mesh_pose_ = std::move(pose);
+            mesh_pose_uploaded_ = true;
+            mesh_pose_start_frame_ = mesh_renderer_.rendered_frames();
+            mesh_pose_changed_vertices_ = changed;
+            mesh_pose_max_displacement_ = largest;
+            mesh_rig_error_.clear();
+        } catch (const std::exception& error) { mesh_rig_error_ = error.what(); }
+    }
+
+    void prepare_mesh_rig(std::optional<int> bone = std::nullopt, dw4::Vec3 rotation = {}) {
+        mesh_rig_tab_pending_ = true;
+        try {
+            if (!mesh_document_ || !mesh_data_ || selected_mesh_ < 0 || !mesh_renderer_.has_mesh())
+                throw std::runtime_error("Select decoded geometry before inspecting its rig.");
+            if (!mesh_skin_) {
+                auto skin = dw4::decode_igb_skinning(*mesh_document_, meshes_.at(static_cast<std::size_t>(selected_mesh_)).reference_index);
+                if (skin.source_positions.size() != mesh_data_->positions.size()) throw std::runtime_error("Rig vertex count does not match the selected mesh.");
+                mesh_skin_ = std::move(skin);
+            }
+            selected_bone_ = -1;
+            if (bone) {
+                if (*bone < 0 || static_cast<std::size_t>(*bone) >= mesh_skin_->bones.size())
+                    throw std::runtime_error("Bone index is outside this skeleton.");
+                if (mesh_skin_->bones[static_cast<std::size_t>(*bone)].joint_index < 0)
+                    throw std::runtime_error("This helper bone has no recovered joint frame and cannot be rotated.");
+                selected_bone_ = *bone;
+            } else {
+                for (std::size_t i = 0; i < mesh_skin_->bones.size(); ++i)
+                    if (mesh_skin_->bones[i].joint_index >= 0) { selected_bone_ = static_cast<int>(i); break; }
+            }
+            mesh_rotation_ = rotation;
+            update_mesh_pose();
+        } catch (const std::exception& error) { mesh_rig_error_ = error.what(); }
     }
 
     void prepare_mesh_texture() {
@@ -818,8 +957,14 @@ private:
             sampler.min_filter = texture_filter(mesh_material_->min_filter);
             sampler.mag_filter = texture_filter(mesh_material_->mag_filter);
             mesh_data_->texcoords = std::move(uv);
+            mesh_pose_uploaded_ = false;
             mesh_renderer_.upload(*mesh_data_);
             mesh_renderer_.set_texture(pixels, sampler);
+            if (mesh_rig_enabled_ && mesh_pose_) {
+                mesh_renderer_.update_positions(mesh_pose_->positions);
+                mesh_pose_uploaded_ = true;
+                mesh_pose_start_frame_ = mesh_renderer_.rendered_frames();
+            }
             if (!mesh_renderer_.has_texture()) throw std::runtime_error("The graphics renderer did not retain the verified texture.");
             mesh_texture_width_ = pixels.width;
             mesh_texture_height_ = pixels.height;
@@ -1401,6 +1546,62 @@ private:
         ImGui::EndChild();
     }
 
+    void draw_mesh_rig_controls() {
+        if (!mesh_rig_enabled_) return;
+        if (!mesh_rig_error_.empty()) paragraph(("Rig inspection: " + mesh_rig_error_).c_str(),amber);
+        if (!mesh_skin_) {
+            paragraph("The stored geometry remains available. No verified joint pose is applied.");
+            return;
+        }
+        const auto& skin = *mesh_skin_;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(8,5));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8,6));
+        ImGui::TextColored(teal,"%zu bones / %zu joints",skin.bones.size(),skin.joints.size());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s / %zu palette entries\n%s",skin.info.skeleton_name.c_str(),skin.palette_to_joint.size(),skin.info.provenance.c_str());
+        ImGui::SetNextItemWidth(-1);
+        const auto selected_name = selected_bone_ >= 0 ? std::to_string(selected_bone_) + "  " + skin.bones[static_cast<std::size_t>(selected_bone_)].name : "Choose a joint-bearing bone";
+        if (ImGui::BeginCombo("##manual_bone",selected_name.c_str(),ImGuiComboFlags_HeightLarge)) {
+            for (std::size_t i = 0; i < skin.bones.size(); ++i) {
+                const auto& bone = skin.bones[i];
+                ImGui::BeginDisabled(bone.joint_index < 0);
+                const auto label = std::to_string(i) + "  " + (bone.name.empty() ? "Unnamed helper" : bone.name) + (bone.joint_index < 0 ? " (no joint frame)" : "");
+                if (ImGui::Selectable(label.c_str(),selected_bone_ == static_cast<int>(i))) {
+                    selected_bone_ = static_cast<int>(i);
+                    mesh_rotation_ = {};
+                    update_mesh_pose();
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Bone reference %u / parent bone %d / joint %d",
+                    bone.reference_index,bone.parent,bone.joint_index);
+                ImGui::EndDisabled();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::TextColored(muted,"Manual X / Y / Z degrees");
+        float rotation[3]{mesh_rotation_.x,mesh_rotation_.y,mesh_rotation_.z};
+        ImGui::SetNextItemWidth(-1);
+        ImGui::BeginDisabled(selected_bone_ < 0);
+        if (ImGui::SliderFloat3("##manual_rotation",rotation,-180.0f,180.0f,"%.1f",ImGuiSliderFlags_AlwaysClamp)) {
+            mesh_rotation_ = {rotation[0],rotation[1],rotation[2]};
+            update_mesh_pose();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::Button("Reset")) { mesh_rotation_ = {}; update_mesh_pose(); }
+        ImGui::SameLine();
+        ImGui::Checkbox("X-ray joints",&mesh_skeleton_overlay_);
+        paragraph(manual_pose_active() ? "Manual pose. Original animation pending." : "Inverse-bind inspection. Original animation pending.");
+        if (ImGui::Button("Rig details")) ImGui::OpenPopup("rig_provenance");
+        if (ImGui::BeginPopup("rig_provenance")) {
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+480);
+            ImGui::Text("%s / %zu palette entries",skin.info.skeleton_name.c_str(),skin.palette_to_joint.size());
+            paragraph(skin.info.provenance.c_str());
+            ImGui::Text("%zu changed vertices / max displacement %.5g",mesh_pose_changed_vertices_,mesh_pose_max_displacement_);
+            paragraph("Joint frames come from inverse-bind matrices. Helper-only frames, scene placement and original animation samples are not reconstructed.");
+            ImGui::PopTextWrapPos();
+            ImGui::EndPopup();
+        }
+        ImGui::PopStyleVar(2);
+    }
+
     void draw_mesh_canvas() {
         const auto available = ImGui::GetContentRegionAvail();
         const ImVec2 canvas_size(std::max(1.0f,available.x),std::max(120.0f,available.y));
@@ -1430,6 +1631,28 @@ private:
             const ImVec2 end(origin.x + canvas_size.x,origin.y + canvas_size.y);
             draw->AddImage(static_cast<ImTextureID>(target), origin, end, ImVec2(0,1), ImVec2(1,0));
             draw->AddRect(origin,end,IM_COL32(53,72,88,255),6);
+            if (mesh_rig_enabled_ && mesh_skeleton_overlay_ && mesh_pose_uploaded_ && mesh_skin_ && mesh_pose_) {
+                const float aspect = static_cast<float>(mesh_target_width_) / mesh_target_height_;
+                std::vector<std::optional<ImVec2>> points;
+                points.reserve(mesh_pose_->joint_positions.size());
+                for (const auto& position : mesh_pose_->joint_positions) {
+                    const auto projected = mesh_renderer_.project_to_canvas(position,mesh_camera_,aspect);
+                    if (projected) points.push_back(ImVec2(origin.x+projected->x*canvas_size.x,origin.y+projected->y*canvas_size.y));
+                    else points.push_back(std::nullopt);
+                }
+                draw->PushClipRect(origin,end,true);
+                for (std::size_t i = 0; i < points.size(); ++i) {
+                    if (!points[i]) continue;
+                    const auto& joint = mesh_skin_->joints.at(i);
+                    const bool selected = selected_bone_ >= 0 && joint.bone_index == static_cast<std::uint32_t>(selected_bone_);
+                    const auto color = selected ? IM_COL32(255,190,77,255) : IM_COL32(90,240,225,225);
+                    if (joint.parent_joint >= 0 && static_cast<std::size_t>(joint.parent_joint) < points.size() && points[static_cast<std::size_t>(joint.parent_joint)])
+                        draw->AddLine(*points[static_cast<std::size_t>(joint.parent_joint)],*points[i],color,2.0f);
+                    draw->AddCircleFilled(*points[i],selected ? 5.0f : 3.0f,color);
+                    if (selected) draw->AddText(ImVec2(points[i]->x+8,points[i]->y-17),color,mesh_skin_->bones[joint.bone_index].name.c_str());
+                }
+                draw->PopClipRect();
+            }
         } catch (const std::exception& error) {
             mesh_error_ = error.what();
             mesh_render_failed_ = true;
@@ -1437,7 +1660,7 @@ private:
     }
 
     void draw_meshes() {
-        title("Mesh viewer", "Stored object-space pose with a partial base-color texture profile. Scene transforms, skinning and gameplay are not implemented.");
+        title("Mesh viewer", "Stored geometry, verified base textures and manual rig inspection. Original animation, scene placement and gameplay remain pending.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB mesh.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -1523,7 +1746,9 @@ private:
             return;
         }
         const float height = std::max(300.0f,ImGui::GetContentRegionAvail().y - 67.0f);
-        ImGui::BeginChild("mesh_list",ImVec2(235,height),true);
+        ImGui::BeginChild("mesh_list",ImVec2(mesh_rig_enabled_ ? 300.0f : 235.0f,height),true);
+        if (ImGui::BeginTabBar("mesh_inspector_tabs")) {
+        if (ImGui::BeginTabItem("Geometry")) {
         ImGui::TextColored(muted,"GEOMETRY");
         ImGui::Separator();
         ImGui::BeginChild("mesh_names",ImVec2(0,std::max(80.0f,ImGui::GetContentRegionAvail().y - 188)),false);
@@ -1554,6 +1779,15 @@ private:
                 ImGui::TextColored(muted,"Max %.3g, %.3g, %.3g",bounds.max.x,bounds.max.y,bounds.max.z);
             }
         }
+        ImGui::EndTabItem();
+        }
+        if (mesh_rig_enabled_ && ImGui::BeginTabItem("Rig",nullptr,mesh_rig_tab_pending_ ? ImGuiTabItemFlags_SetSelected : 0)) {
+            mesh_rig_tab_pending_ = false;
+            draw_mesh_rig_controls();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+        }
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("mesh_detail",ImVec2(0,height),true,ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -1566,7 +1800,15 @@ private:
                 mesh_mode_ = mode == 2 ? dw4::viewer::MeshDrawMode::textured : mode == 1 ? dw4::viewer::MeshDrawMode::wireframe : dw4::viewer::MeshDrawMode::solid;
                 if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured) prepare_mesh_texture();
             }
-            if (ImGui::GetWindowWidth() > 650) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Inspect rig",&mesh_rig_enabled_)) {
+                if (mesh_rig_enabled_) prepare_mesh_rig();
+                else {
+                    try { mesh_renderer_.update_positions(mesh_data_->positions); clear_mesh_rig(); }
+                    catch (const std::exception& error) { mesh_rig_enabled_ = true; mesh_rig_error_ = error.what(); }
+                }
+            }
+            if (ImGui::GetWindowWidth() > 900) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
             if (mesh_mode_ != dw4::viewer::MeshDrawMode::textured || mesh_renderer_.has_texture()) draw_mesh_canvas();
             else {
                 paragraph("Textured rendering is unavailable for this geometry.",amber);
@@ -1585,7 +1827,7 @@ private:
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
             {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
-            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh and texture viewers include a verified base-color binding profile. Full materials, scene transforms, animation and reference comparison remain.", false},
+            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh, texture and manual rig viewers use verified bindings. Full materials, scene placement, original animation and reference comparison remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -1625,6 +1867,9 @@ int main(int argc, char** argv) {
                          "--texture      Zero-based texture-list index (default 0).\n"
                          "--mesh         Zero-based geometry-list index; opens the Meshes page.\n"
                          "--mesh-mode    Solid, wireframe or textured mesh inspection (default solid).\n"
+                         "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
+                         "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
+                         "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }

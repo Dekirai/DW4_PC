@@ -1,6 +1,6 @@
 # Native mesh inspection renderer
 
-The version 0.4 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
+The version 0.5 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
 array, position/UV/index buffers and a depth-tested framebuffer. It renders actual
 geometry decoded from an original IGB document. ImGui displays the resulting
 RGBA texture with vertically flipped UVs to account for framebuffer orientation.
@@ -32,10 +32,11 @@ camera does not reconstruct the original game's timing, camera or coordinates.
 - **Textured**: the verified bound base image sampled with original UVs.
 
 Solid shading is an inspection aid. Back-face culling is disabled to inspect
-both sides. Normals, full game materials, scene transforms and skeletal poses
-still require separate loading.
-For a rigged character, stored positions are displayed without executing its
-skinning or animation state.
+both sides. Original normals, full game materials, scene transforms and decoded
+animation poses still require further implementation.
+The default view shows stored positions. Optional rig inspection applies the
+portable skinning module's manual joint pose through position updates; it does
+not execute original animation tracks or active game actor state.
 
 ## Bound texture inspection
 
@@ -61,6 +62,19 @@ establish final original-game appearance. A missing image or UV stream is an
 error in Textured mode, never a successful solid-mode fallback.
 
 ## Framebuffer and ownership
+
+`update_positions()` accepts a same-count source-space pose without replacing
+indices, UVs or the texture. Its normalization stays fixed to the initial mesh,
+so moving a joint does not recenter or rescale the character and camera. A bounded
+CPU copy retains interleaved UVs while the position values are replaced through
+`BufferSubData`, following OpenGL 3.3 section 2.9.2. Non-finite, unrepresentable
+or mismatched input is rejected before changing the GPU pose. Successful-frame
+counters and offscreen targets remain intact.
+
+`project_to_canvas()` uses that same normalization and camera matrix to project
+source-space joint positions into canvas fractions. Points outside the clip
+volume are omitted. The host can draw an explicitly labeled X-ray skeleton
+overlay; its lines are inspection graphics and do not reproduce game rendering.
 
 The viewport is bounded to 4,096 pixels per axis and 8,388,608 pixels in total.
 The application also scales its requested render target to stay within those
@@ -109,6 +123,10 @@ unchanged V coordinates, repeat/clamp/mirror wrapping, linear filtering, alpha
 and missing/malformed UV/image failures. Hostile caller state includes a different
 active texture unit, an overriding sampler, an unpack buffer and padded/skipped
 pixel layout; rendering and upload must restore all of it.
+Pose-update checks translate a textured synthetic mesh without losing its image
+or following it with camera normalization, reject malformed updates while keeping
+the prior pose, and restore source positions to reproduce the initial pixels.
+Canvas projection checks cover the fitted center, fixed normalization and clipping.
 The primitive is a test fixture only; the application loads original game meshes.
 CI builds this executable but does not require a GPU or run it automatically.
 
