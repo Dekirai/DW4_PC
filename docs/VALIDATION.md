@@ -1,13 +1,13 @@
 # Native viewer milestone validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
-GeForce RTX 5070 Ti. This records the version 0.5 manual rig-inspection milestone,
+GeForce RTX 5070 Ti. This records the version 0.6 original-clip inspection milestone,
 not gameplay compatibility or a finished port.
 
 | Check | Result |
 | --- | --- |
 | Release core and native app build | Passed |
-| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, skinning, camera, settings | 10/10 suites passed in Release |
+| CTest: assets, IGB metadata, IGB documents, resources, textures, meshes, materials, skinning, animation math, Enbaya, animations, camera, settings | 13/13 suites passed in Release |
 | Python ISO verifier tests | 6 synthetic tests passed |
 | Native CLI end-to-end tests | 8 synthetic tests passed |
 | USA DOL identity | SHA-1 matches `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` |
@@ -36,8 +36,16 @@ not gameplay compatibility or a finished port.
 | Original CPU manual pose | All three Agumon geometries reset with zero measured position error; bone 8 Z+30 degrees changes only vertices mapped to its joint descendants |
 | Original rig corpus | All 894 `ndmw.afs` IGBs screened: 476 geometries with skin buffers, 290 supported with 222,694 vertices; no supported reset/manual-pose failures |
 | Rig reset accuracy | Maximum coordinate error 1.97209e-15 across supported corpus; remaining 186 skinned profiles explicitly unsupported |
-| Skinning synthetic fixtures | 120 checks passed, including noncommuting child rotation, parent propagation/pivot, reset and malformed graph/matrix/palette/cache rejection |
+| Skinning synthetic fixtures | 153 checks passed, including full helper ancestry, original quaternion signs/norm, noncommuting child rotation, reset and malformed graph/matrix/palette/cache rejection |
 | Native manual Agumon pose | Textured high geometry, bone 8 (`LArm01`) Z+45 degrees: 252 changed vertices, maximum displacement 4.47705; inverse-bind reset changes zero vertices |
+| Original animation graph and poses | All 82 Agumon clips decoded and evaluated at zero, quarter, three-quarter and endpoint times: 8,200 bone transforms with complete mesh/joint outputs |
+| Reference codec compatibility | 55,950 quaternion/translation tuples over every half-sample interval and endpoint match the pinned enbrip implementation at nine significant digits; separate original engine interpolation is documented in ENBAYA.md |
+| Original interpolation math | 49 synthetic checks; 83,400 quaternion comparisons against a bounded scalar interpreter of the original DOL routine match exactly on MSVC; the comparison does not emulate floating exception/status flags |
+| Animation graph fixtures | 50 synthetic checks cover binding identity/ambiguity, masks including bits 31/32, duration, unsupported channels, owned data and original pose guards |
+| Bounded Enbaya fixtures | 201 checks passed in Release and AddressSanitizer, covering packed widths, state changes, malformed/truncated streams, allocation limits and both sampling paths |
+| Native clip inspection | Original textured waitS/runD at zero and quarter time produce distinct inspected frames; 720p controls fit and 1080p uses actual 8-sample MSAA |
+| Native live playback | 32 frames upload 33 evaluated poses and cross the runD endpoint with Loop enabled while retaining texture and UVs |
+| Animation error handling | Missing/case-mismatched names, out-of-duration time, unsupported rig and missing source exit 3; malformed, non-finite, negative or mixed manual/animation CLI inputs exit 1 |
 | Original 3D sample | `ndmw.afs[179]`, reference 3: 24 vertices and 8 triangles rendered |
 | Agumon stored-space preview | `_common/p_agumon.igb`, mesh 2, reference 5665: 1,371 vertices and 1,966 triangles; solid and wireframe screenshots inspected |
 | Agumon bound-image verification | Image 5609, `P_agumon01.dds`, 256×256 BC1: all 65,536 texels opaque; independent Pillow DDS decode matches native RGBA exactly |
@@ -73,6 +81,7 @@ Example finite rendering check (output is local and ignored by Git):
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --screenshot work/agumon.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --screenshot work/agumon-textured.bmp
 .\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --rig --bone 8 --rotate-z 45 --screenshot work/agumon-manual-pose.bmp
+.\build\Release\dw4_pc.exe --data 'PATH\Extracted' --config work/check.ini --smoke-test 5 --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --animation runD --animation-time 0.2 --screenshot work/agumon-animation.bmp
 .\build\Release\dw4_renderer_tests.exe
 ```
 
@@ -82,14 +91,14 @@ check used a local settings file requesting 3840×2160 and MSAA 8x. Borderless
 desktop mode was implemented but not exercised in the hidden-window test.
 
 No physical controller was connected during validation; Xbox, PlayStation and
-GameCube hardware behavior remains unverified. Scene construction, original
-animation playback, gameplay, audio, saves, online co-op and modding remain
-unimplemented. Skinning support is limited to the verified single-influence
-inverse-bind/manual-delta profile; helpers, multiple influences and nonidentity
-selector transforms need further work. See [SKINNING.md](SKINNING.md).
-The mesh viewer displays stored positions with inspection shading or a verified
-base-texture binding; it does not apply full original materials or final character
-poses. The 3,208 supported bindings are a limited profile, not a claim that all
+GameCube hardware behavior remains unverified. Scene construction, actor and
+animation-combiner behavior, gameplay, audio, saves, online co-op and modding remain
+unimplemented. Original clip inspection includes helper transforms; skinning
+still requires single influences and identity selector transforms. See
+[SKINNING.md](SKINNING.md) and [ANIMATIONS.md](ANIMATIONS.md).
+The mesh viewer displays stored or posed positions with inspection shading or a
+verified base-texture binding. Full original materials and comparison against
+recorded gameplay frames remain outstanding. The 3,208 supported bindings are a limited profile, not a claim that all
 198,068 meshes have fully supported materials. See [MATERIALS.md](MATERIALS.md)
 and the corpus diagnostics in [MATERIAL_RESEARCH.md](MATERIAL_RESEARCH.md).
 Base texture decoding does not establish final appearance with the original renderer.

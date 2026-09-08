@@ -1,9 +1,16 @@
 # Original Agumon animation research
 
-Inspected 2026-09-08 using the native, read-only IGB document API and the verified
+Historical version 0.5 investigation, inspected 2026-09-08 using the native,
+read-only IGB document API and the verified
 USA `main.dol`. This records animation availability and reference relationships.
 It does not implement the Enbaya codec or establish a reproduced animation frame.
 The original files and local probes remain outside the public source distribution.
+
+Version 0.6 implements the bounded decoder and single-clip pose path developed
+from these findings. The pre-implementation observations below are retained as
+research history. Current implementation and limits are documented in
+[ENBAYA.md](ENBAYA.md), [ANIMATIONS.md](ANIMATIONS.md) and
+[ANIMATION_POSE.md](ANIMATION_POSE.md).
 
 ## Document graph
 

@@ -7,7 +7,7 @@ estimated before the missing engine and game logic have been measured.
 | Stage | Deliverable | Acceptance | Status |
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh and inverse-bind/manual joint inspection available for verified profiles; animation, scene transforms, full materials and reference comparison pending |
+| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, manual rig inspection and original single-clip animation available for verified profiles; scene transforms, full materials and reference comparison pending |
 | 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Not implemented |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
@@ -16,14 +16,12 @@ estimated before the missing engine and game logic have been measured.
 
 ## Next acceptance gate
 
-The Agumon rig inspector reconstructs joint bind frames, validates palette and
-vertex-weight references, and supports manual joint deltas. Continue stage 1 by
-decoding original compressed animation tracks and their helper-bone transforms.
-Validate time sampling, quaternion conventions and hierarchy composition with
-synthetic fixtures and original-data evidence. Then evaluate an original
-animation against a recorded reference frame and verify scene placement. Manual
-posing alone does not complete this gate or establish movement, collision or
-combat behavior.
+The Agumon viewer decodes original compressed animation tracks and evaluates
+complete bone transforms, including helpers. Synthetic fixtures and original DOL
+arithmetic establish the current sampling, quaternion and hierarchy profile.
+Continue stage 1 by comparing matching animation times against recorded original
+frames, then verify scene placement and recover the required actor/combiner state.
+Clip playback alone does not establish movement, collision or combat behavior.
 
 ## Requested PC options
 

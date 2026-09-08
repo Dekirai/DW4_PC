@@ -1,4 +1,5 @@
 #include "dw4/assets.hpp"
+#include "dw4/animations.hpp"
 #include "dw4/camera.hpp"
 #include "dw4/igb.hpp"
 #include "dw4/igb_document.hpp"
@@ -65,6 +66,9 @@ struct Options {
     bool rig = false;
     std::optional<int> bone;
     dw4::Vec3 rotation{};
+    std::string animation;
+    std::optional<double> animation_time;
+    bool animation_play = false;
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -83,6 +87,14 @@ float parse_rotation_option(const std::string& value, const std::string& option)
     if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || !std::isfinite(number) || number < -180 || number > 180)
         throw std::runtime_error(option + " requires a finite angle from -180 to 180 degrees.");
     return number;
+}
+
+double parse_animation_time(const std::string& value) {
+    double seconds = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), seconds);
+    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || !std::isfinite(seconds) || seconds < 0)
+        throw std::runtime_error("--animation-time requires finite, nonnegative seconds.");
+    return seconds;
 }
 
 std::vector<std::string> arguments(int argc, char** argv) {
@@ -110,10 +122,12 @@ Options parse_options(const std::vector<std::string>& args) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
         if (args[i] == "--rig") { out.rig = true; continue; }
+        if (args[i] == "--animation-play") { out.animation_play = true; continue; }
         if (args[i] != "--data" && args[i] != "--config" && args[i] != "--smoke-test" && args[i] != "--screenshot" && args[i] != "--page" &&
             args[i] != "--archive" && args[i] != "--entry" && args[i] != "--texture" && args[i] != "--max-entry-mib" && args[i] != "--resource" &&
             args[i] != "--mesh" && args[i] != "--mesh-mode" && args[i] != "--bone" &&
-            args[i] != "--rotate-x" && args[i] != "--rotate-y" && args[i] != "--rotate-z")
+            args[i] != "--rotate-x" && args[i] != "--rotate-y" && args[i] != "--rotate-z" &&
+            args[i] != "--animation" && args[i] != "--animation-time")
             throw std::runtime_error("Unknown option: " + args[i]);
         const auto option = args[i];
         if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
@@ -126,6 +140,11 @@ Options parse_options(const std::vector<std::string>& args) {
         else if (option == "--texture") { out.texture = parse_integer_option(args[i], option, 0, 1000000); texture_requested = true; }
         else if (option == "--mesh") out.mesh = parse_integer_option(args[i], option, 0, 1000000);
         else if (option == "--bone") out.bone = parse_integer_option(args[i], option, 0, 1000000);
+        else if (option == "--animation") {
+            if (args[i].empty()) throw std::runtime_error("--animation requires an original clip name.");
+            out.animation = args[i];
+        }
+        else if (option == "--animation-time") out.animation_time = parse_animation_time(args[i]);
         else if (option == "--rotate-x" || option == "--rotate-y" || option == "--rotate-z") {
             const auto angle = parse_rotation_option(args[i], option);
             if (option == "--rotate-x") out.rotation.x = angle;
@@ -160,6 +179,13 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("--texture requires --resource, or --archive and --entry.");
     if (!out.resource.empty() && out.entry)
         throw std::runtime_error("Choose --resource or --archive with --entry; these source options cannot be combined.");
+    if (!out.animation.empty()) {
+        if (out.bone || rotation_requested) throw std::runtime_error("Choose an animation clip or manual bone rotation; these pose inputs cannot be combined.");
+        out.rig = true;
+    }
+    if (out.animation_time && out.animation.empty()) throw std::runtime_error("--animation-time requires --animation NAME.");
+    if (out.animation_play && out.animation.empty()) throw std::runtime_error("--animation-play requires --animation NAME.");
+    if (out.animation_play && out.smoke_frames == 1) throw std::runtime_error("Animation playback smoke testing requires at least two frames.");
     if (out.rig && !out.entry && out.resource.empty())
         throw std::runtime_error("--rig requires --resource, or --archive and --entry.");
     if ((out.bone || rotation_requested) && !out.rig)
@@ -310,6 +336,7 @@ public:
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
+            advance_animation_clock();
             draw();
             ImGui::Render();
             int width = 0, height = 0;
@@ -338,6 +365,16 @@ public:
                 return 2;
             }
             if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+                if (!options_.animation.empty() && (!mesh_animation_ || !mesh_animation_uploaded_ || !mesh_animation_error_.empty())) {
+                    const auto reason = !mesh_animation_error_.empty() ? mesh_animation_error_ :
+                        !mesh_rig_error_.empty() ? mesh_rig_error_ : !mesh_error_.empty() ? mesh_error_ : "No decoded animation pose was uploaded.";
+                    std::cerr << "Animation inspection failed: " << reason << '\n';
+                    return 3;
+                }
+                if (options_.animation_play && mesh_animation_upload_count_ < 2) {
+                    std::cerr << "Animation playback failed: no additional pose was sampled and uploaded.\n";
+                    return 3;
+                }
                 if (options_.rig && (!mesh_skin_ || !mesh_pose_ || !mesh_pose_uploaded_ || !mesh_rig_error_.empty() ||
                     mesh_renderer_.rendered_frames() <= mesh_pose_start_frame_)) {
                     const auto reason = !mesh_rig_error_.empty() ? mesh_rig_error_ :
@@ -371,11 +408,20 @@ public:
                     std::cout << "Rig: " << skin.info.skeleton_name << " / skeleton " << *skin.info.skeleton_reference
                               << " / " << skin.bones.size() << " bones / " << skin.joints.size() << " joints / " << skin.influences.size() << " influences\n"
                               << "Rig provenance: " << skin.info.provenance << '\n'
-                              << "Pose inspection: " << (manual_pose_active() ? "manual joint delta" : "inverse-bind reconstruction")
+                              << "Pose inspection: " << (mesh_animation_mode_ && mesh_animation_uploaded_ ? "decoded animation" : manual_pose_active() ? "manual joint delta" : "inverse-bind reconstruction")
                               << " / changed vertices " << mesh_pose_changed_vertices_ << " / max displacement " << mesh_pose_max_displacement_ << '\n';
                     if (options_.bone) std::cout << "Manual bone: " << selected_bone_ << " / " << skin.bones.at(static_cast<std::size_t>(selected_bone_)).name
                         << " / XYZ degrees " << mesh_rotation_.x << ',' << mesh_rotation_.y << ',' << mesh_rotation_.z << '\n';
-                    std::cout << "Original compressed animation decoding remains pending.\n";
+                    if (!options_.animation.empty() && mesh_animation_) {
+                        const auto& animation = mesh_animation_->info;
+                        std::cout << "Animation: " << animation.name << " / reference " << animation.reference_index << " / source " << animation.source_reference
+                            << " / " << animation.track_count << " tracks / time " << std::setprecision(9) << mesh_animation_time_
+                            << " / duration " << animation.duration_seconds << " seconds\n"
+                            << "Animation provenance: " << animation.provenance << '\n';
+                        std::cout << "Animation pose uploads: " << mesh_animation_upload_count_ << " / "
+                            << (mesh_animation_playing_ ? "playing" : "paused") << '\n';
+                    }
+                    std::cout << "Animation inspection has not been compared to a recorded game frame.\n";
                 }
             } else if (options_.entry || !options_.resource.empty()) {
                 if (!asset_texture_) {
@@ -471,6 +517,19 @@ private:
     std::uint64_t mesh_pose_start_frame_ = 0;
     std::size_t mesh_pose_changed_vertices_ = 0;
     double mesh_pose_max_displacement_ = 0;
+    bool mesh_animation_mode_ = false;
+    bool mesh_animation_catalog_ready_ = false;
+    bool mesh_animation_catalog_attempted_ = false;
+    bool mesh_animation_uploaded_ = false;
+    bool mesh_animation_playing_ = false;
+    bool mesh_animation_loop_ = true;
+    std::vector<dw4::AnimationInfo> mesh_animations_;
+    std::optional<dw4::AnimationClip> mesh_animation_;
+    std::string mesh_animation_error_;
+    int selected_animation_ = -1;
+    double mesh_animation_time_ = 0;
+    std::uint64_t mesh_animation_upload_count_ = 0;
+    std::chrono::steady_clock::time_point mesh_animation_tick_ = std::chrono::steady_clock::now();
     std::vector<SDL_Gamepad*> gamepads_;
 
     void capture_frame(int width, int height) {
@@ -501,6 +560,7 @@ private:
         mesh_entry_limit_mib_ = options_.max_entry_mib;
         mesh_mode_ = options_.mesh_mode;
         mesh_rig_enabled_ = options_.rig;
+        mesh_animation_mode_ = !options_.animation.empty();
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
         sdl_ready_ = true;
         if (!options_.config.empty()) config_ = options_.config;
@@ -866,11 +926,29 @@ private:
                 mesh_rig_options_consumed_ = true;
                 prepare_mesh_rig(initial_request ? options_.bone : std::nullopt,
                     initial_request ? options_.rotation : dw4::Vec3{});
+                if (mesh_animation_mode_ && mesh_skin_) {
+                    prepare_animation_catalog();
+                    if (initial_request && !options_.animation.empty()) select_animation_name(options_.animation,options_.animation_time.value_or(0));
+                    if (initial_request && options_.animation_play && mesh_animation_uploaded_ && mesh_animation_error_.empty()) {
+                        mesh_animation_playing_ = true;
+                        mesh_animation_tick_ = std::chrono::steady_clock::now();
+                    }
+                }
             }
         }
     }
 
     void clear_mesh_rig() {
+        mesh_animations_.clear();
+        mesh_animation_.reset();
+        mesh_animation_catalog_ready_ = false;
+        mesh_animation_catalog_attempted_ = false;
+        mesh_animation_uploaded_ = false;
+        mesh_animation_playing_ = false;
+        mesh_animation_error_.clear();
+        selected_animation_ = -1;
+        mesh_animation_time_ = 0;
+        mesh_animation_upload_count_ = 0;
         mesh_skin_.reset();
         mesh_pose_.reset();
         mesh_rig_error_.clear();
@@ -885,31 +963,35 @@ private:
         return mesh_rotation_.x != 0 || mesh_rotation_.y != 0 || mesh_rotation_.z != 0;
     }
 
+    void upload_mesh_pose(dw4::SkinPose pose) {
+        if (!mesh_skin_ || !mesh_renderer_.has_mesh()) throw std::runtime_error("No decoded rig and GPU geometry are available.");
+        if (pose.positions.size() != mesh_skin_->source_positions.size() || pose.joint_positions.size() != mesh_skin_->joints.size())
+            throw std::runtime_error("Evaluated pose counts do not match the selected rig.");
+        std::size_t changed = 0;
+        double largest = 0;
+        for (std::size_t i = 0; i < pose.positions.size(); ++i) {
+            const auto& before = mesh_skin_->source_positions[i];
+            const auto& after = pose.positions[i];
+            const auto delta = std::hypot(static_cast<double>(after.x)-before.x,
+                static_cast<double>(after.y)-before.y,static_cast<double>(after.z)-before.z);
+            if (delta > 0.00001) ++changed;
+            largest = std::max(largest,delta);
+        }
+        mesh_renderer_.update_positions(pose.positions);
+        mesh_pose_ = std::move(pose);
+        mesh_pose_uploaded_ = true;
+        mesh_pose_start_frame_ = mesh_renderer_.rendered_frames();
+        mesh_pose_changed_vertices_ = changed;
+        mesh_pose_max_displacement_ = largest;
+        mesh_rig_error_.clear();
+    }
+
     void update_mesh_pose() {
         try {
-            if (!mesh_skin_ || !mesh_renderer_.has_mesh()) throw std::runtime_error("No decoded rig and GPU geometry are available.");
+            if (!mesh_skin_) throw std::runtime_error("No decoded rig is available.");
             std::optional<dw4::BoneRotation> rotation;
             if (selected_bone_ >= 0 && manual_pose_active()) rotation = dw4::BoneRotation{static_cast<std::uint32_t>(selected_bone_), mesh_rotation_};
-            auto pose = dw4::evaluate_skinning(*mesh_skin_, rotation);
-            if (pose.positions.size() != mesh_skin_->source_positions.size() || pose.joint_positions.size() != mesh_skin_->joints.size())
-                throw std::runtime_error("Evaluated pose counts do not match the selected rig.");
-            std::size_t changed = 0;
-            double largest = 0;
-            for (std::size_t i = 0; i < pose.positions.size(); ++i) {
-                const auto& before = mesh_skin_->source_positions[i];
-                const auto& after = pose.positions[i];
-                const auto delta = std::hypot(static_cast<double>(after.x)-before.x,
-                    static_cast<double>(after.y)-before.y,static_cast<double>(after.z)-before.z);
-                if (delta > 0.00001) ++changed;
-                largest = std::max(largest,delta);
-            }
-            mesh_renderer_.update_positions(pose.positions);
-            mesh_pose_ = std::move(pose);
-            mesh_pose_uploaded_ = true;
-            mesh_pose_start_frame_ = mesh_renderer_.rendered_frames();
-            mesh_pose_changed_vertices_ = changed;
-            mesh_pose_max_displacement_ = largest;
-            mesh_rig_error_.clear();
+            upload_mesh_pose(dw4::evaluate_skinning(*mesh_skin_, rotation));
         } catch (const std::exception& error) { mesh_rig_error_ = error.what(); }
     }
 
@@ -937,6 +1019,84 @@ private:
             mesh_rotation_ = rotation;
             update_mesh_pose();
         } catch (const std::exception& error) { mesh_rig_error_ = error.what(); }
+    }
+
+    void prepare_animation_catalog() {
+        if (mesh_animation_catalog_attempted_) return;
+        mesh_animation_catalog_attempted_ = true;
+        try {
+            if (!mesh_document_ || !mesh_skin_) throw std::runtime_error("Decode the selected mesh rig before listing its animations.");
+            mesh_animations_ = dw4::list_igb_animations(*mesh_document_,*mesh_skin_);
+            mesh_animation_catalog_ready_ = true;
+            mesh_animation_error_ = mesh_animations_.empty() ? "This rig's owning database contains no animation clips." : "";
+        } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
+    }
+
+    void update_animation_pose(double seconds) {
+        try {
+            if (!mesh_animation_ || !mesh_skin_) throw std::runtime_error("Select a decoded animation clip first.");
+            if (!std::isfinite(seconds) || seconds < 0 || seconds > mesh_animation_->info.duration_seconds)
+                throw std::runtime_error("Animation time is outside this clip's duration.");
+            upload_mesh_pose(dw4::sample_animation_pose(*mesh_animation_,*mesh_skin_,seconds));
+            mesh_animation_time_ = seconds;
+            mesh_animation_uploaded_ = true;
+            ++mesh_animation_upload_count_;
+            mesh_animation_error_.clear();
+        } catch (const std::exception& error) {
+            mesh_animation_error_ = error.what();
+            mesh_animation_playing_ = false;
+        }
+    }
+
+    void select_animation(int index, double seconds = 0) {
+        mesh_animation_playing_ = false;
+        mesh_animation_uploaded_ = false;
+        mesh_animation_.reset();
+        mesh_animation_error_.clear();
+        mesh_animation_time_ = 0;
+        mesh_animation_upload_count_ = 0;
+        selected_animation_ = index;
+        try {
+            if (!mesh_document_ || !mesh_skin_) throw std::runtime_error("No decoded rig is available for animation inspection.");
+            upload_mesh_pose(dw4::evaluate_skinning(*mesh_skin_));
+            if (index < 0 || static_cast<std::size_t>(index) >= mesh_animations_.size()) throw std::runtime_error("Animation index is outside the owning database's clip list.");
+            const auto& info = mesh_animations_[static_cast<std::size_t>(index)];
+            if (!info.supported) throw std::runtime_error(info.diagnostic.empty() ? "This animation binding profile is unsupported." : info.diagnostic);
+            if (!std::isfinite(seconds) || seconds < 0 || seconds > info.duration_seconds)
+                throw std::runtime_error("Animation time is outside this clip's duration.");
+            mesh_animation_ = dw4::decode_igb_animation(*mesh_document_,*mesh_skin_,info.reference_index);
+            update_animation_pose(seconds);
+        } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
+    }
+
+    void select_animation_name(const std::string& name, double seconds) {
+        try {
+            if (!mesh_animation_catalog_ready_) throw std::runtime_error(mesh_animation_error_.empty() ? "The animation list is unavailable." : mesh_animation_error_);
+            int found = -1;
+            for (std::size_t i = 0; i < mesh_animations_.size(); ++i) {
+                if (mesh_animations_[i].name != name) continue;
+                if (found >= 0) throw std::runtime_error("The animation name is ambiguous in this database: " + name);
+                found = static_cast<int>(i);
+            }
+            if (found < 0) throw std::runtime_error("Animation was not found in the selected rig's owning database: " + name);
+            select_animation(found,seconds);
+        } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
+    }
+
+    void advance_animation_clock() {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now-mesh_animation_tick_).count();
+        mesh_animation_tick_ = now;
+        if (page_ != 5 || !mesh_rig_enabled_ || !mesh_animation_mode_ || !mesh_animation_playing_ || !mesh_animation_) return;
+        if (elapsed <= 0) return;
+        const double duration = mesh_animation_->info.duration_seconds;
+        if (!std::isfinite(duration) || duration <= 0) { mesh_animation_playing_ = false; return; }
+        double seconds = mesh_animation_time_ + elapsed;
+        if (seconds >= duration) {
+            if (mesh_animation_loop_) seconds = std::fmod(seconds,duration);
+            else { seconds = duration; mesh_animation_playing_ = false; }
+        }
+        update_animation_pose(seconds);
     }
 
     void prepare_mesh_texture() {
@@ -1546,6 +1706,61 @@ private:
         ImGui::EndChild();
     }
 
+    void draw_animation_controls() {
+        prepare_animation_catalog();
+        ImGui::SetNextItemWidth(-1);
+        const auto* selected_name = selected_animation_ >= 0 && static_cast<std::size_t>(selected_animation_) < mesh_animations_.size()
+            ? mesh_animations_[static_cast<std::size_t>(selected_animation_)].name.c_str() : "Choose an original clip";
+        if (ImGui::BeginCombo("##animation_clip",selected_name,ImGuiComboFlags_HeightLarge)) {
+            for (std::size_t i = 0; i < mesh_animations_.size(); ++i) {
+                const auto& clip = mesh_animations_[i];
+                ImGui::PushID(static_cast<int>(i));
+                if (!clip.supported) ImGui::PushStyleColor(ImGuiCol_Text,muted);
+                const auto label = (clip.name.empty() ? std::string("Unnamed clip") : clip.name) + " / ref " + std::to_string(clip.reference_index);
+                if (ImGui::Selectable(label.c_str(),selected_animation_ == static_cast<int>(i))) select_animation(static_cast<int>(i));
+                if (!clip.supported) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%.6g seconds / %u tracks\n%s\n%s",clip.duration_seconds,clip.track_count,
+                    clip.provenance.c_str(),clip.diagnostic.c_str());
+                ImGui::PopID();
+            }
+            if (mesh_animations_.empty()) ImGui::TextDisabled("No animation clips available.");
+            ImGui::EndCombo();
+        }
+        if (mesh_animation_) {
+            const double duration = mesh_animation_->info.duration_seconds;
+            ImGui::BeginDisabled(!mesh_animation_uploaded_ || !mesh_animation_error_.empty() || duration <= 0);
+            if (ImGui::Button(mesh_animation_playing_ ? "Pause" : "Play")) {
+                if (mesh_animation_playing_) mesh_animation_playing_ = false;
+                else {
+                    if (mesh_animation_time_ >= duration) update_animation_pose(0);
+                    mesh_animation_playing_ = mesh_animation_uploaded_ && mesh_animation_error_.empty();
+                }
+                mesh_animation_tick_ = std::chrono::steady_clock::now();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset")) { mesh_animation_playing_ = false; update_animation_pose(0); }
+            ImGui::SameLine();
+            ImGui::Checkbox("Loop",&mesh_animation_loop_);
+            ImGui::EndDisabled();
+            ImGui::TextColored(muted,"Time %.3f / %.3f seconds",mesh_animation_time_,duration);
+            double seconds = mesh_animation_time_;
+            const double start = 0;
+            ImGui::SetNextItemWidth(-1);
+            ImGui::BeginDisabled(duration <= 0);
+            if (ImGui::SliderScalar("##animation_time",ImGuiDataType_Double,&seconds,&start,&duration,"%.3f s",ImGuiSliderFlags_AlwaysClamp)) {
+                mesh_animation_playing_ = false;
+                update_animation_pose(seconds);
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::Checkbox("X-ray joints",&mesh_skeleton_overlay_);
+        ImGui::SameLine();
+        if (ImGui::Button("Details")) ImGui::OpenPopup("rig_provenance");
+        if (!mesh_animation_error_.empty()) paragraph(mesh_animation_error_.c_str(),amber);
+        else if (!mesh_animation_uploaded_) paragraph("Choose a clip to apply decoded animation. The stored mesh is shown.");
+        else paragraph("Animation inspection. Game-frame comparison pending.");
+    }
+
     void draw_mesh_rig_controls() {
         if (!mesh_rig_enabled_) return;
         if (!mesh_rig_error_.empty()) paragraph(("Rig inspection: " + mesh_rig_error_).c_str(),amber);
@@ -1555,9 +1770,24 @@ private:
         }
         const auto& skin = *mesh_skin_;
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(8,5));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8,6));
-        ImGui::TextColored(teal,"%zu bones / %zu joints",skin.bones.size(),skin.joints.size());
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(8,4));
+        int pose_mode = mesh_animation_mode_ ? 1 : 0;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##pose_source",&pose_mode,"Manual joints\0Animation\0")) {
+            mesh_animation_mode_ = pose_mode == 1;
+            mesh_animation_playing_ = false;
+            if (mesh_animation_mode_) {
+                prepare_animation_catalog();
+                if (mesh_animation_) update_animation_pose(mesh_animation_time_);
+                else {
+                    try { upload_mesh_pose(dw4::evaluate_skinning(skin)); }
+                    catch (const std::exception& error) { mesh_rig_error_ = error.what(); }
+                }
+            } else { mesh_animation_uploaded_ = false; update_mesh_pose(); }
+        }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s / %zu palette entries\n%s",skin.info.skeleton_name.c_str(),skin.palette_to_joint.size(),skin.info.provenance.c_str());
+        if (mesh_animation_mode_) draw_animation_controls();
+        else {
         ImGui::SetNextItemWidth(-1);
         const auto selected_name = selected_bone_ >= 0 ? std::to_string(selected_bone_) + "  " + skin.bones[static_cast<std::size_t>(selected_bone_)].name : "Choose a joint-bearing bone";
         if (ImGui::BeginCombo("##manual_bone",selected_name.c_str(),ImGuiComboFlags_HeightLarge)) {
@@ -1588,14 +1818,22 @@ private:
         if (ImGui::Button("Reset")) { mesh_rotation_ = {}; update_mesh_pose(); }
         ImGui::SameLine();
         ImGui::Checkbox("X-ray joints",&mesh_skeleton_overlay_);
-        paragraph(manual_pose_active() ? "Manual pose. Original animation pending." : "Inverse-bind inspection. Original animation pending.");
-        if (ImGui::Button("Rig details")) ImGui::OpenPopup("rig_provenance");
+        ImGui::SameLine();
+        if (ImGui::Button("Details")) ImGui::OpenPopup("rig_provenance");
+        paragraph(manual_pose_active() ? "Manual joint delta." : "Inverse-bind inspection.");
+        }
         if (ImGui::BeginPopup("rig_provenance")) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+480);
             ImGui::Text("%s / %zu palette entries",skin.info.skeleton_name.c_str(),skin.palette_to_joint.size());
             paragraph(skin.info.provenance.c_str());
             ImGui::Text("%zu changed vertices / max displacement %.5g",mesh_pose_changed_vertices_,mesh_pose_max_displacement_);
-            paragraph("Joint frames come from inverse-bind matrices. Helper-only frames, scene placement and original animation samples are not reconstructed.");
+            if (mesh_animation_mode_ && mesh_animation_) {
+                const auto& clip = *mesh_animation_;
+                paragraph(clip.info.provenance.c_str());
+                ImGui::Text("%u original tracks / %u samples per second / %zu decoded frames",clip.info.track_count,
+                    clip.channels.sample_rate(),clip.channels.frame_count());
+                paragraph("Decoded source channels drive the checked skeleton mapping. Scene placement, full game materials and recorded-frame comparison remain incomplete.");
+            } else paragraph("Joint frames come from inverse-bind matrices. Manual deltas are inspection controls, not original animation samples.");
             ImGui::PopTextWrapPos();
             ImGui::EndPopup();
         }
@@ -1644,7 +1882,7 @@ private:
                 for (std::size_t i = 0; i < points.size(); ++i) {
                     if (!points[i]) continue;
                     const auto& joint = mesh_skin_->joints.at(i);
-                    const bool selected = selected_bone_ >= 0 && joint.bone_index == static_cast<std::uint32_t>(selected_bone_);
+                    const bool selected = !mesh_animation_mode_ && selected_bone_ >= 0 && joint.bone_index == static_cast<std::uint32_t>(selected_bone_);
                     const auto color = selected ? IM_COL32(255,190,77,255) : IM_COL32(90,240,225,225);
                     if (joint.parent_joint >= 0 && static_cast<std::size_t>(joint.parent_joint) < points.size() && points[static_cast<std::size_t>(joint.parent_joint)])
                         draw->AddLine(*points[static_cast<std::size_t>(joint.parent_joint)],*points[i],color,2.0f);
@@ -1660,7 +1898,7 @@ private:
     }
 
     void draw_meshes() {
-        title("Mesh viewer", "Stored geometry, verified base textures and manual rig inspection. Original animation, scene placement and gameplay remain pending.");
+        title("Mesh viewer", "Original assets with manual posing or animation inspection. Scene placement, full materials and gameplay remain pending.");
         if (!disc_) {
             paragraph("Connect your extracted game copy before loading an IGB mesh.");
             if (ImGui::Button("Connect original data")) page_ = 3;
@@ -1827,7 +2065,7 @@ private:
         struct Stage { const char* state; const char* heading; const char* body; bool ready; };
         const std::array<Stage,6> stages{{
             {"AVAILABLE", "01  Native workbench & data inspection", "Windows x64 interface, host settings, SDL input diagnostics, GameCube / AFS inspection, IGB object parsing and logical resource lookup.", true},
-            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh, texture and manual rig viewers use verified bindings. Full materials, scene placement, original animation and reference comparison remain.", false},
+            {"IN PROGRESS", "02  Native original-asset viewer", "Native mesh, texture, manual rig and single-clip animation inspection use checked bindings. Full materials, scene placement and reference comparison remain.", false},
             {"PLANNED", "03  Playable original campaign", "Character movement, combat, maps, AI, progression, audio, saves and local four-player co-op with behavior tests.", false},
             {"PLANNED", "04  PC graphics and controls", "Game resolution, borderless mode, widescreen, high frame rate presentation, MSAA, keyboard / mouse and controller bindings.", false},
             {"PLANNED", "05  Online four-player co-op", "Define authority and synchronization, deterministic state where needed, lobby flow, disconnect handling and full-session testing.", false},
@@ -1870,6 +2108,9 @@ int main(int argc, char** argv) {
                          "--rig          Decode the selected mesh rig and inspect inverse-bind joint frames.\n"
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"
+                         "--animation    Original clip name in the selected rig's database; implies --rig.\n"
+                         "--animation-time Paused clip time in seconds (default 0); requires --animation.\n"
+                         "--animation-play Start playback at the selected time; smoke tests require 2+ frames.\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }

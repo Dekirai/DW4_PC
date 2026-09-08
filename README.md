@@ -1,7 +1,7 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.5 adds native skeleton inspection and manual joint posing;
+**Version 0.6 adds original animation decoding and native clip inspection;
 the game is not playable yet.** Gameplay, 3D scenes, combat and game saves
 have not been ported.
 
@@ -24,6 +24,8 @@ game code is not executed. This repository does not contain game files.
   with their original UVs, base image and verified linear/repeat sampler.
 - Read verified single-influence skin weights, joint palettes and inverse-bind
   matrices; inspect the joint hierarchy and manually pose supported meshes.
+- Decode bounded Enbaya animation streams and inspect supported original clips
+  with time seeking and playback, including helper-bone transforms.
 - Render a bounded offscreen mesh viewport with depth testing and optional MSAA.
 - Decode and display the original 96×32 banner from `opening.bnr` natively.
 - Configure workbench window resolution, display mode, VSync and frame limit.
@@ -132,8 +134,18 @@ original image, weights and camera normalization:
 ```
 
 This sample contains 25 bones and 20 joint matrices; five helper bones have no
-inverse-bind frame and cannot be manually posed by this profile. Original
-animation playback and scene placement remain unimplemented.
+inverse-bind frame and cannot be manually posed by this profile. The animation
+path uses the full hierarchy, including those helpers. In the **Rig** tab, choose
+**Animation** to select an original clip, play/pause or seek. For a reproducible
+paused inspection:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --animation runD --animation-time 0.2
+```
+
+All 82 Agumon clips decode under the current profile. This is a single-clip asset
+viewer: actor state, animation blending, action events, scene placement and
+comparison against captured original gameplay remain separate work.
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -158,8 +170,8 @@ performs structural checks; the Python verifier additionally checks this hash.
 
 Original textures, logical asset lookup and object-space mesh viewing are
 available, including a verified base-texture binding profile and inverse-bind
-joint inspection. The next step is original animation decoding and verified scene
-transforms, followed by an original scene with a
+joint inspection and original clip decoding. The next step is comparison against
+captured original animation frames and verified scene transforms, followed by an original scene with a
 controllable Digimon. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
@@ -170,6 +182,7 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Mesh formats](docs/MESHES.md) ·
 [Material bindings](docs/MATERIALS.md) ·
 [Skinning](docs/SKINNING.md) ·
+[Animation loading](docs/ANIMATIONS.md) ·
 [Native renderer](docs/RENDERER.md) ·
 [Upstream source audit](docs/UPSTREAM_AUDIT.md) ·
 [Milestone validation](docs/VALIDATION.md)

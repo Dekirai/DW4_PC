@@ -307,6 +307,85 @@ void synthetic() {
     rejects([&]{ evaluate_skinning(invalid); },"Reject public non-cancelling inverse bind");
 }
 
+void absolute_bone_poses() {
+    const auto skin = Fixture{}.decode();
+    std::vector<SkinMatrix> locals{identity(),skin.joints[0].bind_world,identity(),skin.joints[1].bind_local};
+    const auto reset = evaluate_bone_transforms(skin,locals);
+    check(near(reset.positions[0],{2,0,0}) && near(reset.positions[1],{4,1,0}) && near(reset.positions[2],{1,1,0}),
+        "Complete explicit locals reconstruct the synthetic bind reference");
+    // The root helper has no joint, but its rotation and translation carry both joints.
+    locals[0][0] = locals[0][5] = 0; locals[0][1] = 1; locals[0][4] = -1; locals[0][12] = 2;
+    const auto root = evaluate_bone_transforms(skin,locals);
+    check(near(root.positions[0],{2,2,0}) && near(root.positions[1],{1,4,0}),"Absolute root helper moves all weighted branches");
+    check(near(root.joint_positions[0],{2,1,0}) && near(root.joint_positions[1],{2,3,0}),"Joint output remains joint ordinal order after helper motion");
+    locals[0] = identity();
+    // The intervening helper rotates X, while the child's bind-local rotates Z.
+    // Their noncommuting product is independently checked by concrete points.
+    locals[2][5] = locals[2][10] = 0; locals[2][6] = 1; locals[2][9] = -1; locals[2][13] = 2;
+    const auto helper = evaluate_bone_transforms(skin,locals);
+    check(near(helper.positions[0],{2,0,0}) && near(helper.positions[1],{4,2,1}) && near(helper.positions[2],{1,2,1}),
+        "Noncommuting intervening helper affects only its descendants in parent-times-local order");
+    check(near(helper.joint_positions[1],{3,2,0}),"Helper translation precedes descendant local rotation");
+    check(near(evaluate_skinning(skin).positions[1],{4,1,0}),"Full-bone pose leaves manual reset and original data intact");
+    auto bad_locals = locals; bad_locals.pop_back();
+    rejects([&]{ evaluate_bone_transforms(skin,bad_locals); },"Reject missing absolute bone local");
+    bad_locals = locals; bad_locals.push_back(identity());
+    rejects([&]{ evaluate_bone_transforms(skin,bad_locals); },"Reject excess absolute bone local");
+    bad_locals = locals; bad_locals[2][0] = std::numeric_limits<double>::quiet_NaN();
+    rejects([&]{ evaluate_bone_transforms(skin,bad_locals); },"Reject non-finite helper matrix");
+    bad_locals = locals; bad_locals[0][3] = 1;
+    rejects([&]{ evaluate_bone_transforms(skin,bad_locals); },"Reject projective root matrix");
+    bad_locals = locals; bad_locals[0][12] = std::numeric_limits<double>::max();
+    rejects([&]{ evaluate_bone_transforms(skin,bad_locals); },"Reject full-bone posed float overflow");
+    auto invalid = skin; invalid.bones[0].parent = 3;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject a cycle through joint-free helpers");
+    invalid = skin; invalid.bones[2].parent = 99;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject full-bone parent outside array");
+    invalid = skin; invalid.bones[2].parent = -2;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject invalid negative full-bone parent");
+    invalid = skin; invalid.bones[2].joint_index = 0;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject duplicate full-bone joint owner");
+    invalid = skin; invalid.bones[3].joint_index = -1;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject missing full-bone joint owner");
+    invalid = skin; invalid.joints[1].bone_index = 2;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject mismatched full-bone joint mapping");
+    invalid = skin; invalid.joints[0].inverse_bind[12] += 1;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject inconsistent full-bone inverse reference");
+    invalid = skin; invalid.palette_to_joint.push_back(99);
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject unused invalid full-bone palette entry");
+    invalid = skin; invalid.influences[0].weight = .5f;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject unsupported full-bone weight");
+    invalid = skin; invalid.influences[0].joint_index = 1;
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject inconsistent full-bone influence mapping");
+    invalid = skin; invalid.source_positions[0].x = std::numeric_limits<float>::infinity();
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject non-finite full-bone source position");
+    invalid = skin; invalid.influences.clear();
+    rejects([&]{ evaluate_bone_transforms(invalid,locals); },"Reject mismatched full-bone vertex count");
+    invalid = skin; invalid.bones.resize(1025); bad_locals.resize(1025,identity());
+    rejects([&]{ evaluate_bone_transforms(invalid,bad_locals); },"Reject oversized full-bone hierarchy before traversal");
+    // Full-bone evaluation intentionally uses its explicit local transforms,
+    // rather than the helper-skipping caches used by manual inspection.
+    invalid = skin; invalid.joints[0].bind_local[12] += 100;
+    check(near(evaluate_bone_transforms(invalid,locals).positions[1],{4,2,1}),"Explicit locals do not reuse manual bind-local caches");
+
+    const auto identity_transform = original_bone_transform({0,0,0,1},{2,3,4});
+    check(identity_transform[0] == 1 && identity_transform[5] == 1 && identity_transform[10] == 1 &&
+        identity_transform[12] == 2 && identity_transform[13] == 3 && identity_transform[14] == 4,
+        "Original identity quaternion preserves absolute translation");
+    const auto cyclic = original_bone_transform({.5f,.5f,.5f,.5f},{0,0,0});
+    check(cyclic[0] == 0 && cyclic[1] == 0 && cyclic[2] == 1 && cyclic[4] == 1 && cyclic[5] == 0 &&
+        cyclic[6] == 0 && cyclic[8] == 0 && cyclic[9] == 1 && cyclic[10] == 0,
+        "Original XYZW matrix signs send X to Z, Y to X, Z to Y");
+    const auto opposite = original_bone_transform({-.5f,-.5f,-.5f,-.5f},{0,0,0});
+    check(cyclic == opposite,"Opposite quaternion signs preserve the original matrix");
+    const auto nonunit = original_bone_transform({0,0,.5f,.5f},{0,0,0});
+    check(nonunit[0] == .5 && nonunit[1] == -.5 && nonunit[4] == .5 && nonunit[5] == .5 && nonunit[10] == 1,
+        "Original quaternion conversion does not silently normalize a non-unit sample");
+    for (const auto value : {std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity(),std::numeric_limits<float>::max()})
+        rejects([&]{ original_bone_transform({value,0,0,1},{0,0,0}); },"Reject invalid original quaternion component or output overflow");
+    rejects([&]{ original_bone_transform({0,0,0,1},{std::numeric_limits<float>::infinity(),0,0}); },"Reject invalid original absolute translation");
+}
+
 void inspect_original(const IgbDocument& document, std::uint32_t geometry, bool required) {
     const auto info=inspect_igb_skinning(document,geometry);
     std::cout<<"geometry="<<geometry<<" supported="<<info.supported<<" diagnostic="<<info.diagnostic<<'\n';
@@ -324,7 +403,7 @@ void inspect_original(const IgbDocument& document, std::uint32_t geometry, bool 
 }
 int run(const std::vector<std::filesystem::path>& args) {
     try {
-        synthetic();
+        synthetic(); absolute_bone_poses();
         if (args.size()==3 || args.size()==4) {
             const auto archive=assets::AfsArchive::open(args[1]);
             const auto document=read_igb_document(archive.read(std::stoul(args[2].string())));

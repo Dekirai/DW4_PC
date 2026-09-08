@@ -11,6 +11,12 @@ animation, recover an idle pose, execute the animation combiner, or establish
 actor placement in a scene. Reset removes the user rotation and reconstructs
 the original stored mesh positions.
 
+Version 0.6 also exposes `original_bone_transform()` and
+`evaluate_bone_transforms()` for a complete bone-local transform array. This
+separate path includes helper ancestors and supports the checked original
+animation loader. See [ANIMATIONS.md](ANIMATIONS.md) and the original arithmetic
+evidence in [ANIMATION_POSE.md](ANIMATION_POSE.md).
+
 ## Public API
 
 ```cpp
@@ -196,7 +202,7 @@ input/count limits also apply. Manual rotations must be finite and between
 minus and plus 360 degrees per axis; the UI may offer a narrower range.
 Pose matrices and final float positions are checked for finite range.
 
-Run the 120 synthetic checks without original assets:
+Run the synthetic checks without original assets:
 
 ```powershell
 .\build\Release\dw4_skinning_tests.exe

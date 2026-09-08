@@ -1,6 +1,6 @@
 # Native mesh inspection renderer
 
-The version 0.5 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
+The version 0.6 mesh viewer uses an OpenGL 3.3 vertex/fragment program, a vertex
 array, position/UV/index buffers and a depth-tested framebuffer. It renders actual
 geometry decoded from an original IGB document. ImGui displays the resulting
 RGBA texture with vertically flipped UVs to account for framebuffer orientation.
@@ -32,11 +32,10 @@ camera does not reconstruct the original game's timing, camera or coordinates.
 - **Textured**: the verified bound base image sampled with original UVs.
 
 Solid shading is an inspection aid. Back-face culling is disabled to inspect
-both sides. Original normals, full game materials, scene transforms and decoded
-animation poses still require further implementation.
-The default view shows stored positions. Optional rig inspection applies the
-portable skinning module's manual joint pose through position updates; it does
-not execute original animation tracks or active game actor state.
+both sides. Original normals, full game materials and scene transforms still
+require further implementation. The default view shows stored positions.
+Optional rig inspection applies manual joint deltas or decoded original clip
+poses through position updates. It does not execute active game actor state.
 
 ## Bound texture inspection
 

@@ -391,4 +391,85 @@ SkinPose evaluate_skinning(const SkinningData& data, std::optional<BoneRotation>
     return result;
 }
 
+SkinMatrix original_bone_transform(const std::array<float, 4>& quaternion, Vec3 translation) {
+    for (const auto value : quaternion) if (!std::isfinite(value)) fail("bone quaternion contains a non-finite value");
+    if (!finite(translation)) fail("bone translation contains a non-finite value");
+    const double x = quaternion[0], y = quaternion[1], z = quaternion[2], w = quaternion[3];
+    auto result = identity();
+    // Preserve the flat matrix indexing and signs of 0x8012bcdc. In our host
+    // column-vector convention this differs from a Hamilton active rotation.
+    result[0] = 1 - 2*y*y - 2*z*z;
+    result[1] = 2*x*y - 2*z*w;
+    result[2] = 2*x*z + 2*y*w;
+    result[4] = 2*x*y + 2*z*w;
+    result[5] = 1 - 2*x*x - 2*z*z;
+    result[6] = 2*y*z - 2*x*w;
+    result[8] = 2*x*z - 2*y*w;
+    result[9] = 2*y*z + 2*x*w;
+    result[10] = 1 - 2*x*x - 2*y*y;
+    result[12] = translation.x; result[13] = translation.y; result[14] = translation.z;
+    validate_matrix(result);
+    for (const auto value : result)
+        if (std::abs(value) > std::numeric_limits<float>::max()) fail("bone transform exceeds finite float range");
+    return result;
+}
+
+SkinPose evaluate_bone_transforms(const SkinningData& data, std::span<const SkinMatrix> local_transforms) {
+    if (data.source_positions.empty() || data.source_positions.size() > max_vertices || data.influences.size() != data.source_positions.size())
+        fail("source position/influence counts are invalid");
+    if (data.bones.empty() || data.bones.size() > max_bones || data.joints.empty() || data.joints.size() > max_joints ||
+        data.palette_to_joint.empty() || data.palette_to_joint.size() > max_joints) fail("pose skeleton/palette counts are invalid");
+    if (local_transforms.size() != data.bones.size()) fail("absolute local transform count must equal the full bone count");
+    for (const auto index : data.palette_to_joint) if (index >= data.joints.size()) fail("pose palette entry is outside the joint array");
+    std::vector<bool> mapped(data.joints.size());
+    for (std::size_t index = 0; index < data.bones.size(); ++index) {
+        const auto& bone = data.bones[index];
+        if (bone.parent < -1 || (bone.parent >= 0 && static_cast<std::size_t>(bone.parent) >= data.bones.size()))
+            fail("pose bone parent is outside the skeleton");
+        if (bone.joint_index < -1 || (bone.joint_index >= 0 && static_cast<std::size_t>(bone.joint_index) >= data.joints.size()))
+            fail("pose bone joint index is outside the joint array");
+        validate_matrix(local_transforms[index]);
+        if (bone.joint_index < 0) continue;
+        const auto joint_index = static_cast<std::size_t>(bone.joint_index);
+        if (mapped[joint_index] || data.joints[joint_index].bone_index != index)
+            fail("pose bone-to-joint mapping is inconsistent");
+        mapped[joint_index] = true;
+        const auto& joint = data.joints[joint_index];
+        validate_matrix(joint.inverse_bind); validate_matrix(joint.bind_world);
+        if (!is_identity(multiply(joint.bind_world,joint.inverse_bind)) || !is_identity(multiply(joint.inverse_bind,joint.bind_world)))
+            fail("pose bind matrices do not cancel");
+    }
+    if (std::find(mapped.begin(),mapped.end(),false) != mapped.end()) fail("pose joint matrix has no matching bone");
+    std::vector<SkinMatrix> bone_world(data.bones.size());
+    std::vector<std::uint8_t> visited(data.bones.size());
+    std::function<void(std::size_t)> evaluate = [&](std::size_t index) {
+        if (visited[index] == 2) return;
+        if (visited[index] == 1) fail("pose bone hierarchy contains a cycle");
+        visited[index] = 1;
+        const auto parent = data.bones[index].parent;
+        if (parent >= 0) {
+            evaluate(static_cast<std::size_t>(parent));
+            bone_world[index] = multiply(bone_world[static_cast<std::size_t>(parent)],local_transforms[index]);
+        } else bone_world[index] = local_transforms[index];
+        visited[index] = 2;
+    };
+    for (std::size_t index = 0; index < data.bones.size(); ++index) evaluate(index);
+    std::vector<SkinMatrix> skin(data.joints.size());
+    SkinPose result;
+    result.joint_positions.reserve(data.joints.size()); result.positions.reserve(data.source_positions.size());
+    for (std::size_t index = 0; index < data.joints.size(); ++index) {
+        const auto& world = bone_world[data.joints[index].bone_index];
+        skin[index] = multiply(world,data.joints[index].inverse_bind);
+        result.joint_positions.push_back(transform(world,{0,0,0}));
+    }
+    for (std::size_t index = 0; index < data.source_positions.size(); ++index) {
+        const auto& influence = data.influences[index];
+        if (influence.weight != 1.f || influence.palette_index >= data.palette_to_joint.size() ||
+            influence.joint_index >= skin.size() || data.palette_to_joint[influence.palette_index] != influence.joint_index)
+            fail("pose influence is outside the single-weight palette profile");
+        result.positions.push_back(transform(skin[influence.joint_index],data.source_positions[index]));
+    }
+    return result;
+}
+
 } // namespace dw4

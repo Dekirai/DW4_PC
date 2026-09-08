@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,5 +93,16 @@ SkinningData decode_igb_skinning(const IgbDocument& document, std::uint32_t geom
 // be selected. Null rotation reconstructs the original stored positions.
 // Nonzero rotation is a user-authored local joint delta, not decoded game motion.
 SkinPose evaluate_skinning(const SkinningData& data, std::optional<BoneRotation> rotation = std::nullopt);
+
+// Evaluate complete absolute local bone transforms in bone ordinal order.
+// Every helper participates in parent_world * local. Joint world matrices are
+// selected through joint_index, then multiplied by the stored inverse bind.
+// This generic operation does not infer missing locals or animation offsets.
+SkinPose evaluate_bone_transforms(const SkinningData& data, std::span<const SkinMatrix> local_transforms);
+
+// Original USA quaternion-to-matrix arithmetic at guest 0x8012bcdc. Components
+// are X/Y/Z/W; their norm is preserved, with no implicit normalization. The
+// selected absolute local translation is copied directly to elements 12..14.
+SkinMatrix original_bone_transform(const std::array<float, 4>& quaternion, Vec3 translation);
 
 } // namespace dw4

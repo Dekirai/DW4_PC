@@ -12,7 +12,10 @@ UV streams. `materials` resolves a bounded local/inherited single-stage texture
 binding profile with reference provenance and unsupported-state diagnostics.
 `skinning` resolves a bounded geometry/skin/database/skeleton profile, decodes
 single-influence weights and inverse-bind frames, and evaluates explicit manual
-joint deltas on the CPU. `camera` supplies
+joint deltas or complete bone-local transforms on the CPU. `enbaya` decodes
+bounded packed streams into immutable samples; `animations` validates the
+database/binding/track graph, translation mask and original one-clip pose profile.
+`camera` supplies
 the host orbit/projection math. `settings` loads and validates host preferences. `dw4_inspect` and
 `dw4_catalog` are read-only CLIs; `dw4_pc` is the native SDL3/OpenGL/ImGui viewer
 and workbench.
@@ -45,8 +48,9 @@ filesystem file against its ISO extent.
    recovered engine enum values and checked memory streams. Original UVs and
    a verified base-texture binding profile are displayed in Textured mode.
    Inverse-bind hierarchy inspection and manual single-influence skinning are
-   available for a verified profile. Scene transforms, full material state,
-   original animation decoding and comparison with the original renderer remain.
+   available for a verified profile. Original Enbaya clips are decoded and
+   evaluated with checked full-bone transforms. Scene transforms, full material
+   state, actor/combiner behavior and comparison with the original renderer remain.
    See [SKINNING.md](SKINNING.md), [TEXTURES.md](TEXTURES.md),
    [MATERIALS.md](MATERIALS.md), [MESHES.md](MESHES.md) and the evidence in
    [MESH_RESEARCH.md](MESH_RESEARCH.md).
@@ -76,8 +80,13 @@ indices remain separate. Affine inversion reconstructs bind frames from the
 original inverse-joint matrices; stored translation arrays are not substituted
 for that reference space. Manual local joint deltas propagate through the
 recovered joint hierarchy. The renderer updates positions while preserving
-the source mesh's normalization, indices, UVs and GPU texture. Original animation
-tracks, helper-bone transforms and actor state require their own runtime.
+the source mesh's normalization, indices, UVs and GPU texture. A separate animation
+path follows explicit database bindings, decodes a selected clip and uses the
+original translation mask to select sampled or skeleton-constant translations.
+Quaternion conversion preserves the original signs and norm. Helpers participate
+in the full bone hierarchy. Only the verified single-clip, no-modifier skeleton
+profile is accepted; actor state and animation blending remain unimplemented.
+See [ANIMATIONS.md](ANIMATIONS.md) and [ANIMATION_POSE.md](ANIMATION_POSE.md).
 
 ## Timing and PC settings
 
