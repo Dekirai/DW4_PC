@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.20 adds original action command execution, waits, node timing and
-fade/flash state in the portable core. The full original game, including local
+Version 0.21 adds owned original ACTION actor buffers, activation, deactivation
+and reactivation in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -81,8 +81,10 @@ not contain game files.
 - Execute prepared ACTION2 programs with original motion, joint, fade, wait and
   flash commands, same-action suppression, named timers and freeze behavior.
   Four original Agumon sequence instances drive their own combined poses in core
-  integration tests. Event consumers, actor lifecycle and effect rendering remain
-  pending. See [ACTIONS.md](docs/ACTIONS.md).
+  integration tests. Prepared actor groups now allocate all ordered actor buffers
+  and release them through the original NDSP path, preserving node clocks for
+  reactivation. Actor traversal, event consumers and effect rendering remain
+  pending. See [ACTIONS.md](docs/ACTIONS.md) and [ACTION_ACTORS.md](docs/ACTION_ACTORS.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit

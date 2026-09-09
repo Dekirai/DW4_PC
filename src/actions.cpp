@@ -93,7 +93,7 @@ struct Running {
 };
 char first(std::string_view value) { return value.empty() ? '\0' : value[0]; }
 bool reserved(std::string_view name) {
-    constexpr std::array<std::string_view,6> commands{"ISCOMEND","ISRUN","GETNAMELIST","GETAPPEARANCELIST","GETBONEMATRIX","NDSP"};
+    constexpr std::array<std::string_view,5> commands{"ISCOMEND","ISRUN","GETNAMELIST","GETAPPEARANCELIST","GETBONEMATRIX"};
     return std::find(commands.begin(),commands.end(),name)!=commands.end();
 }
 } // namespace
@@ -175,6 +175,26 @@ ActionRuntime decode_action_runtime(const IgbDocument& doc,ActionProgram program
     auto combiner=decode_animation_combiner(doc,sources,program.rams()[ram_no].combiner_reference);
     return {std::move(program),sources,ram_no,std::move(combiner)};
 }
+ActionRuntime::ActionRuntime(ActionProgram program,const AnimationSourceRuntime& sources,std::int32_t ram_no,
+    AnimationCombiner combiner,ActionActorGroup actors)
+    :ActionRuntime(std::move(program),sources,ram_no,std::move(combiner)) {
+    const auto& ram=program_->rams()[ram_no_];
+    if (actors.source()!=program_->source() || actors.ram_reference()!=ram.reference || actors.combiner_reference()!=ram.combiner_reference)
+        fail("Actor group differs from the owning ACTION source/RAM/combiner.");
+    for (const auto& actor:actors.definitions())
+        if (actor.bone_count!=combiner_.cached_matrices().size()) fail("Actor bone allocation differs from the owning combiner.");
+    for (const auto& actor:actors.states())
+        if (actor.combiner_reference || !actor.bone_matrices.empty() || !actor.joint_matrices.empty())
+            fail("Action runtime requires a prepared unattached actor group.");
+    actors_=std::move(actors);
+}
+ActionRuntime decode_action_actor_runtime(const IgbDocument& doc,ActionProgram program,const AnimationSourceRuntime& sources,std::int32_t ram_no) {
+    if (ram_no<0 || static_cast<std::size_t>(ram_no)>=program.rams().size()) fail("Action RAM selection is out of range.");
+    const auto& ram=program.rams()[ram_no];
+    auto actors=decode_action_actor_group(doc,ram.reference,ram.combiner_reference,program.source());
+    auto combiner=decode_animation_combiner(doc,sources,ram.combiner_reference);
+    return {std::move(program),sources,ram_no,std::move(combiner),std::move(actors)};
+}
 std::uint64_t ActionRuntime::node_time(std::uint64_t time) const { return dw4::node_time(node_,time); }
 std::string_view ActionRuntime::current_action() const noexcept { return current_ ? program_->actions()[*current_].name : std::string_view{}; }
 bool ActionRuntime::command_end() const noexcept {
@@ -200,19 +220,24 @@ ActionResult ActionRuntime::dispatch(AnimationSourceRuntime& sources,ActionServi
     name_check(name);
     combiner_.require_sources(sources);
     if (name=="ONFREEZE" || name=="OFFREEZE") { freeze(name=="ONFREEZE",time); return {}; }
-    if (reserved(name)) fail("This ACTION query/deactivation requires the outer actor service.");
+    if (reserved(name)) fail("This ACTION query requires the outer messenger/traversal service.");
+    if (name=="NDSP" && !actors_) fail("NDSP requires an owned prepared actor group.");
     Running guard(running_);
     if (pending_broadcast_) {
         const auto result=deliver(services,{}); if (result.stop==ActionStop::broadcast_required) return result;
     }
+    if (name=="NDSP") { deactivate(); return {}; }
     const auto& definitions=program_->actions();
     const auto found=std::find_if(definitions.begin(),definitions.end(),[&](const auto& value){return value.name==name;});
     if (found==definitions.end()) fail("Requested action is absent from the owning program.");
     if (!found->command_list_present) fail("Ordinary action execution requires a non-null command list.");
     const auto index=static_cast<std::size_t>(found-definitions.begin());
     if (!active_) {
+        auto next_actors=actors_;
+        if (next_actors) next_actors->activate(program_->rams()[ram_no_].combiner_reference);
         auto next=combiner_; next.set_request_time(100000000);
         next.add_base(sources,program_->animations().front().first,next.request_time(time)); combiner_=std::move(next);
+        actors_=std::move(next_actors);
         active_=true; work_.motion.state=0; work_.fade_state=0; work_.wait_state=0; work_.motion.no_interpolation=true;
     } else work_.motion.no_interpolation=false;
     visible_=true;
@@ -221,6 +246,13 @@ ActionResult ActionRuntime::dispatch(AnimationSourceRuntime& sources,ActionServi
         return status();
     current_=index; cursor_=0; suspended_.reset(); dispatch_pending_=true;
     return finish_dispatch(services,run(sources,services,time));
+}
+void ActionRuntime::deactivate() {
+    // 802F1B10..1DB0: release node attributes/work/timers and actor caches.
+    // The node clock, source clocks, cached combiner matrices and actor links survive.
+    appearance_={}; visible_=false; work_={}; timers_.clear(); active_=false;
+    current_.reset(); cursor_=0; suspended_.reset(); dispatch_pending_=false;
+    combiner_.clear(); actors_->deactivate();
 }
 ActionResult ActionRuntime::dispatch(AnimationSourceRuntime& sources,ActionServices& services,const ModelActionRequest& request,std::uint64_t time) {
     if (request.source!=program_->source() || request.info_name!=program_->name() || request.ram_no!=ram_no_)

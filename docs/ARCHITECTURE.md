@@ -145,11 +145,19 @@ fields, original wait/virtual callbacks and complete player construction remain
 outside this prepared-work API. The application does not use it as a replacement
 for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 
+Version 0.21 adds `action_actors` and the actor-aware ACTION factory. A qualified
+prepared RAM owns every ordered actor's combiner link and identity bone/joint
+allocation. NDSP releases actor buffers, action work, timers and attributes;
+reactivation preserves node clocks and retained combiner matrices. The command-only
+factory still rejects cleanup without actor ownership. Original traversal and
+cached bone queries remain separate from the existing skin-pose inspection API.
+See [ACTION_ACTORS.md](ACTION_ACTORS.md).
+
 Version 0.20 adds `actions`: immutable qualified ACTION2 programs and per-RAM
 command, timer, node, appearance and combiner state. Exact model sequence ACTION
 recipients execute the recovered five command types with retained wait/resume
 positions and original update order. Required RNG/broadcast services and explicit
-suspension preserve successful prefixes. Complete actor allocation, messenger
+suspension preserve successful prefixes. Complete actor traversal, messenger
 consumers, scene attribute attachment and outer player callbacks remain separate;
 the preview still uses its provisional controller. See [ACTIONS.md](ACTIONS.md).
 

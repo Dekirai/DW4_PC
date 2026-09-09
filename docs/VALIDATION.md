@@ -1,4 +1,36 @@
-# Native ACTION2 validation
+# Native ACTION actor lifetime validation
+
+Version 0.21 was validated locally on 2026-09-09 with MSVC 19.51. The portable
+core now owns prepared ACTION actor buffers and executes activation, NDSP and
+reactivation. Original actor traversal and messenger consumers remain pending.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 33/33 CTest suites and 6 Python verifier tests passed; no production compiler warnings |
+| Asset-free lifecycle coverage | 124 ACTION checks, 60 actor graph/lifetime checks and 86 combiner checks passed |
+| Original actor graph | All four Agumon RAMs decode three actors each; each actor allocates 25 bone and 20 joint matrices, releases them and reactivates |
+| Original ACTION regression | All 182 ordinary actions complete their command/effect phases, then deactivate and reactivate; NDSP bypasses its null list |
+| Original pose regression | 369 commands, 4,157 action poses / 5,699,247 finite vertices, plus four weapon sequences producing 240 poses / 329,040 finite vertices |
+| Original lifecycle instruction probe | 14 bounded activation/NDSP scenarios pass, including the first/middle allocated-actor barrier, attribute cleanup loops and frozen-node retention |
+| Native buffer comparison | 13 original/native actor buffer transitions match all 208 compared allocation-prefix, link-selection, storage-presence and identity fields |
+| Packaged walking regression | 120 frames, 198 simulation steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads; pause/restart/focus-loss replay passed |
+| Packaged visual inspection | Overview and walking captures inspected; version 0.21 visible, original Agumon/map render at 1236x600 with 8x MSAA on an RTX 5070 Ti |
+
+The lifecycle instruction probe executes original activation/cleanup branches
+and identity initialization with prepared objects. Allocation, destruction,
+metadata lookup, combiner operations, timer deletion and list-capacity services
+are explicit hooks; their bodies are not independently validated by this probe.
+The 208-field native comparison covers actor buffers only, excluding guest
+pointers/refcounts, node/work/attribute/timer fields and those hook bodies.
+
+The original-data tests exercise production decoding and runtime methods with a
+recording event sink. Identity actor buffers are not evaluated bone caches.
+These results do not establish event-consumer execution, actor traversal,
+rendered fade/flash effects, connected multiplayer or a complete original game.
+See [ACTION_ACTORS.md](ACTION_ACTORS.md) for ownership and remaining boundaries.
+Generated probes, original data and captures remain ignored.
+
+## Native ACTION2 validation
 
 Version 0.20 was validated locally on 2026-09-09 with MSVC 19.51. Prepared
 ACTION2 programs now execute motion, joint, fade, wait and flash effects. Full

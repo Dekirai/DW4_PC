@@ -103,6 +103,46 @@ void snapshots_and_order() {
         "Fixed-state evaluation rebuilds only rotation and translation fields");
 }
 
+void clearing_and_reactivation() {
+    auto sources=library(); sources.initialize_action_offset();
+    sources.set_mode(100,AnimationPlayMode::bounce);
+    sources.set_mode(200,AnimationPlayMode::offset_clamp);
+    auto c=combiner(sources); c.set_request_time((4ull<<32)+123);
+    check(!c.clear() && !c.cache_valid() && c.states().empty(),
+        "Clearing an empty invalid combiner returns false without creating states");
+    c.add_base(sources,100,7); c.append_blend(sources,200,window(),9);
+    c.evaluate(sources,start); c.evaluate(sources,start+duration/2);
+    const auto saved=c.cached_matrices(); const auto last_id=c.states().back().id;
+    auto peer=c;
+    check(c.clear() && c.states().empty() && !c.cache_valid(),
+        "Clearing a live transition removes every state and invalidates its cache");
+    check(c.cached_matrices()==saved && c.request_time(0)==(4ull<<32)+123,
+        "Clear preserves the last evaluated matrices and full-width request clock");
+    check(sources.mode(100)==AnimationPlayMode::bounce && sources.mode(200)==AnimationPlayMode::offset_clamp &&
+        sources.action_offset_initialized(),"Clear preserves the owning source runtime configuration");
+    check(peer.states().size()==2 && peer.cache_valid() && peer.cached_matrices()==saved,
+        "Clearing one combiner preserves another combiner's states and cache");
+    check(!c.clear() && c.update(sources,start+duration)==0 &&
+        c.evaluate(sources,start+duration)==saved && !c.cache_valid(),
+        "Repeated clear and empty updates preserve the last pose without reviving removed tracks");
+    auto alien=library();
+    rejects([&]{c.add_base(alien,100,0);},"Clear retains the original library identity for activation");
+    rejects([&]{c.evaluate(alien,start);},"Empty cleared combiners still reject unrelated source runtimes");
+    c.add_base(sources,300,c.request_time(0));
+    check(c.states().size()==1 && c.states()[0].id>last_id && c.states()[0].clip_reference==300 &&
+        c.states()[0].combine_mode==0 && c.states()[0].clock.time_scale==1 && c.states()[0].clock.time_bias==0 &&
+        c.states()[0].time_requested==(4ull<<32)+123,
+        "Reactivation creates one fresh base with preserved ownership and request time");
+    check(c.evaluate(sources,start+duration/2)[1][12]==18 && c.cache_valid(),
+        "Reactivation samples new tracks even at the last cached timestamp");
+    c.snapshot(); const auto fixed=c.cached_matrices();
+    check(c.clear() && c.states().empty() && c.cached_matrices()==fixed && !c.cache_valid(),
+        "Clear also removes fixed snapshot channels while preserving their cached matrices");
+    c.append_blend(sources,200,window(),c.request_time(0));
+    check(c.states().size()==1 && c.states()[0].combine_mode==0 && c.evaluate(sources,start)[1][12]==10,
+        "A blend appended after clear becomes the sole base without obsolete snapshot tracks");
+}
+
 void motion_and_ownership() {
     auto sources=library(); sources.initialize_action_offset(); auto c=combiner(sources); c.add_base(sources,100,0);
     AnimationMotionWork work{true,false,0};
@@ -168,6 +208,9 @@ void parsing_and_guards() {
     auto valid=f; valid.records[valid.combiner_ref].values[14]=words({123,4}); valid.scalar(valid.combiner_ref,10,1);
     c=decode_animation_combiner(valid.document(),sources,valid.combiner_ref);
     check(c.cache_valid() && c.request_time(0)==(4ull<<32)+123,"Preserve serialized full-width clock override and cache flag");
+    const auto empty_matrices=c.cached_matrices();
+    check(!c.clear() && c.cache_valid() && c.cached_matrices()==empty_matrices && c.request_time(0)==(4ull<<32)+123,
+        "Clearing an empty serialized combiner preserves its valid cache and request clock");
     auto reject=[&](const Prepared& bad,const char* reason) {
         rejects([&]{decode_animation_combiner(bad.document(),sources,bad.combiner_ref);},reason);
     };
@@ -261,7 +304,7 @@ void original(const std::vector<std::filesystem::path>& args) {
 }
 int run(const std::vector<std::filesystem::path>& args) {
     try {
-        transitions(); snapshots_and_order(); motion_and_ownership(); parsing_and_guards();
+        transitions(); snapshots_and_order(); clearing_and_reactivation(); motion_and_ownership(); parsing_and_guards();
         if (args.size()==4) original(args);
         else if (args.size()!=1) throw std::runtime_error("Usage: dw4_animation_combiner_tests [archive.afs entry geometry-reference]");
         std::cout<<checks<<" animation combiner checks passed\n"; return 0;

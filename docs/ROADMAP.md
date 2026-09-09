@@ -22,6 +22,12 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.21 adds prepared ACTION actor ownership and NDSP cleanup. All ordered
+actor buffers belong to their selected RAM; activation, deactivation and
+reactivation preserve the original work lifetime and retained node clocks.
+Actor traversal, cached bone queries, messenger consumers and full player
+construction remain required. See [ACTION_ACTORS.md](ACTION_ACTORS.md).
+
 Version 0.20 adds prepared ACTION2 execution: exact action dispatch, retained
 cursors, motion/joint/fade/wait/flash effects, original node timing and freeze.
 All 182 ordinary Agumon actions complete their command/effect phases in local

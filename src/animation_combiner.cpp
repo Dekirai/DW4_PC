@@ -152,6 +152,12 @@ void AnimationCombiner::snapshot() {
     std::vector<AnimationCombinerState> replacement; replacement.push_back(std::move(state));
     states_=std::move(replacement); ++next_id_; cache_valid_=false;
 }
+bool AnimationCombiner::clear() noexcept {
+    if (states_.empty()) return false;
+    cache_valid_=false;
+    states_.clear(); // Full-binding bone tracks are owned by each state's channels.
+    return true;
+}
 std::size_t AnimationCombiner::update_impl(AnimationSourceRuntime& sources, std::uint64_t time) {
     require_sources(sources); const auto count=states_.size();
     for (auto& state:states_) if (state.status==0 || state.is_new) advance_animation_clock(state.clock,sources.state_clock_,time);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/animation_combiner.hpp"
+#include "dw4/action_actors.hpp"
 #include "dw4/motion_timer.hpp"
 
 #include <functional>
@@ -82,18 +83,21 @@ struct ActionResult {
 };
 
 // ACTION2 execution on explicitly prepared animation/node state. Owns command
-// cursors, timers and attribute overrides; actor creation and rendering consume
-// these states separately. All five authored command types retain their effects.
+// cursors, timers and attribute overrides. An explicitly attached actor group
+// adds original activation/NDSP ownership; traversal and rendering remain separate.
 class ActionRuntime {
 public:
     ActionRuntime(ActionProgram program, const AnimationSourceRuntime& sources,
         std::int32_t ram_no, AnimationCombiner combiner);
+    ActionRuntime(ActionProgram program, const AnimationSourceRuntime& sources,
+        std::int32_t ram_no, AnimationCombiner combiner, ActionActorGroup actors);
     const ActionProgram& program() const noexcept { return *program_; }
     const ActionWork& work() const noexcept { return work_; }
     const ActionAppearance& appearance() const noexcept { return appearance_; }
     const AnimationCombiner& combiner() const noexcept { return combiner_; }
     const std::map<std::string,MotionTimer>& timers() const noexcept { return timers_; }
     const AnimationStateClock& node_clock() const noexcept { return node_; }
+    const ActionActorGroup* actors() const noexcept { return actors_ ? &*actors_ : nullptr; }
     bool active() const noexcept { return active_; }
     bool visible() const noexcept { return visible_; }
     bool command_end() const noexcept;
@@ -118,6 +122,7 @@ private:
     AnimationStateClock node_;
     ActionWork work_;
     ActionAppearance appearance_;
+    std::optional<ActionActorGroup> actors_;
     std::map<std::string,MotionTimer> timers_;
     std::optional<std::size_t> current_;
     std::optional<ActionBroadcast> pending_broadcast_;
@@ -133,7 +138,12 @@ private:
     void fade_update(std::uint64_t time);
     void flash_update(std::uint64_t time);
     bool wait_ready(AnimationSourceRuntime& sources,std::uint64_t time);
+    void deactivate();
 };
+// Prepared commands only: NDSP remains an explicit missing-actor boundary.
 ActionRuntime decode_action_runtime(const IgbDocument& document,ActionProgram program,
+    const AnimationSourceRuntime& sources,std::int32_t ram_no);
+// Own every actor in this RAM's prepared graph and execute its activation/NDSP.
+ActionRuntime decode_action_actor_runtime(const IgbDocument& document,ActionProgram program,
     const AnimationSourceRuntime& sources,std::int32_t ram_no);
 } // namespace dw4

@@ -192,6 +192,95 @@ void service_boundaries() {
     rejects([&]{runtime.dispatch(sources,service,"zero",start);},"Zero random divisor fails explicitly");
     check(runtime.command_index()==1 && runtime.update(sources,service,start).stop==ActionStop::command_failed,"Failed command remains at its retry boundary");
 }
+ActionRuntime actor_runtime(const Fixture& f,const AnimationSourceRuntime& sources,std::int32_t ram=0) {
+    auto program=f.program();
+    const auto definition=program.rams().at(ram);
+    ActionActorGroup actors(program.source(),definition.reference,definition.combiner_reference,
+        {{900,950,2,1},{901,951,2,1},{902,952,2,1}});
+    return {std::move(program),sources,ram,decode_animation_combiner(f.document(),sources,definition.combiner_reference),std::move(actors)};
+}
+void actor_lifecycle() {
+    Fixture f;
+    f.action("active",{f.command(action_motion,"Synthetic clip"),f.command(action_fade,"IN",4,1),
+        f.command(action_flash,"Damage"),f.command(action_wait,"Frame",10)});
+    f.action("empty",{});
+    f.action("joint",{f.command(action_joint,"section",2,8)});
+    f.action("unsupported",{f.command(action_fade,"HIDE"),f.add(object)});
+    auto sources=f.library(); Services service;
+    auto runtime=actor_runtime(f,sources);
+    runtime.dispatch(sources,service,"NDSP",start);
+    check(!runtime.active() && runtime.actors()->states().size()==3 && service.events.empty(),"Inactive NDSP owns cleanup without an action list or broadcast");
+    runtime.dispatch(sources,service,"joint",start);
+    runtime.dispatch(sources,service,"active",start);
+    for (const auto& actor:runtime.actors()->states()) {
+        check(actor.combiner_reference==f.combiners[0] && actor.bone_matrices.size()==2 && actor.joint_matrices.size()==1,
+            "Activation owns all actor buffers, including unselected appearance branches");
+        check(actor.bone_matrices[0][0]==1 && actor.bone_matrices[1][15]==1 && actor.joint_matrices[0][12]==0,
+            "New actor buffers contain original identity matrices");
+    }
+    runtime.pose(sources,f.data,start);
+    runtime.freeze(true,start+tick);
+    const auto node=runtime.node_clock(); const auto cached=runtime.combiner().cached_matrices();
+    const auto old_id=runtime.combiner().states().front().id;
+    auto independent=runtime; const auto events=service.events.size();
+    check(runtime.timers().size()==3 && runtime.work().joint_state!=0 && runtime.appearance().color && runtime.work().frozen,
+        "Cleanup starts from populated work, named timers, node phase and shared appearance attributes");
+    runtime.dispatch(sources,service,"NDSP",start+20*tick);
+    check(!runtime.active() && !runtime.visible() && runtime.current_action().empty() && runtime.command_index()==0 && !runtime.command_end(),
+        "NDSP releases command work and hides the instance");
+    check(runtime.timers().empty() && !runtime.appearance().color && !runtime.appearance().blend && !runtime.appearance().texture &&
+        !runtime.appearance().lighting && !runtime.work().frozen && runtime.work().joint_state==0 && runtime.work().flash_state==0,
+        "NDSP releases all timers and attributes and discards the old work fields");
+    check(runtime.node_clock().time_scale==node.time_scale && runtime.node_clock().time_bias==node.time_bias &&
+        runtime.node_clock().local_time==node.local_time,"NDSP retains the frozen node clock exactly");
+    check(runtime.combiner().states().empty() && !runtime.combiner().cache_valid() && runtime.combiner().cached_matrices()==cached &&
+        runtime.combiner().request_time(55)==100000000,"NDSP clears combiner states while preserving its last matrices and request clock");
+    for (const auto& actor:runtime.actors()->states())
+        check(actor.bone_matrices.empty() && actor.joint_matrices.empty() && actor.combiner_reference==f.combiners[0],
+            "NDSP releases both actor arrays while retaining the combiner link");
+    check(independent.active() && independent.work().frozen && independent.actors()->states()[0].bone_matrices.size()==2,
+        "Runtime copies own independent actor buffers and work");
+    check(service.events.size()==events && runtime.update(sources,service,start+100*tick).stop==ActionStop::end,
+        "NDSP and inactive update emit no action broadcast");
+    runtime.dispatch(sources,service,"active",start+100*tick);
+    check(runtime.active() && runtime.command_index()==4 && runtime.work().wait_state==1 && !runtime.work().frozen &&
+        runtime.combiner().states().front().id>old_id && service.events.size()==events+1,
+        "The same action reactivates with fresh work, cursor and owned animation state");
+    check(runtime.node_clock().time_scale==0 && runtime.node_clock().time_bias==node.time_bias &&
+        runtime.actors()->states()[2].joint_matrices[0][0]==1,"Reactivation allocates identity buffers without resetting node phase or speed");
+    runtime.dispatch(sources,service,"OFFREEZE",start+100*tick);
+    check(runtime.node_clock().time_scale==1,"Explicit unfreeze can resume a node retained through deactivation");
+    runtime.dispatch(sources,service,"unsupported",start);
+    runtime.dispatch(sources,service,"NDSP",start);
+    check(runtime.resume(sources,service,start).stop==ActionStop::end && runtime.current_action().empty(),
+        "NDSP discards a suspended command prefix");
+
+    auto pending=actor_runtime(f,sources); ActionServices missing;
+    pending.dispatch(sources,missing,"empty",start);
+    check(pending.dispatch(sources,missing,"NDSP",start).stop==ActionStop::broadcast_required && pending.active(),
+        "An unresolved earlier event blocks acceptance of a new native command");
+    pending.dispatch(sources,service,"NDSP",start);
+    check(!pending.active() && service.events.back().action=="empty","A retried event is delivered before accepting NDSP, which adds none");
+    auto unowned=f.runtime(sources);
+    rejects([&]{unowned.dispatch(sources,service,"NDSP",start);},"Command-only runtime cannot silently omit actor cleanup");
+    for (int i=0;i<4;++i) {
+        auto player=actor_runtime(f,sources,i); player.dispatch(sources,service,"active",start);
+        auto sibling=player; player.dispatch(sources,service,"NDSP",start);
+        check(!player.active() && sibling.active() && sibling.actors()->states()[0].combiner_reference==f.combiners[i],
+            "Every prepared RAM binds its own combiner and preserves independent actor lifetime");
+    }
+    const auto program=f.program();
+    auto reject_group=[&](ActionActorGroup group) {
+        rejects([&]{ActionRuntime candidate(program,sources,0,decode_animation_combiner(f.document(),sources,f.combiners[0]),std::move(group));},
+            "Actor runtime rejects mismatched or already attached prepared ownership");
+    };
+    reject_group(ActionActorGroup("other",f.rams[0],f.combiners[0],{{900,950,2,1}}));
+    reject_group(ActionActorGroup(program.source(),f.rams[1],f.combiners[0],{{900,950,2,1}}));
+    reject_group(ActionActorGroup(program.source(),f.rams[0],f.combiners[1],{{900,950,2,1}}));
+    reject_group(ActionActorGroup(program.source(),f.rams[0],f.combiners[0],{{900,950,3,1}}));
+    auto attached=ActionActorGroup(program.source(),f.rams[0],f.combiners[0],{{900,950,2,1}});
+    attached.activate(f.combiners[0]); reject_group(std::move(attached));
+}
 void malformed_and_ownership() {
     Fixture f; const auto command=f.command(action_motion,"Synthetic clip"); f.action("idle",{command});
     auto sources=f.library(); Services service;
@@ -252,7 +341,7 @@ void original(const std::filesystem::path& root) {
     const std::array<std::string,4> run_clips{"runD","runS","runA","runG"};
     Services service; std::vector<ActionRuntime> players; std::vector<ModelSequenceRuntime> models;
     for (int i=0;i<4;++i) {
-        players.push_back(decode_action_runtime(doc,program,sources,i));
+        players.push_back(decode_action_actor_runtime(doc,program,sources,i));
         ModelMotionPose pose({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}); set_player_turn_rates(pose);
         models.emplace_back(sequence,ModelControlState(pose),program.name(),i);
         models.back().set_label("SQ_WAIT",labels[i]); models.back().set_label("SQ_WALK",labels[i]);
@@ -279,10 +368,11 @@ void original(const std::filesystem::path& root) {
         sources.clip(*players[i].combiner().states()[0].clip_reference).info.name==run_clips[i],"Each original ACTION RAM ends at its own weapon's running clip");
     std::size_t commands=0, action_poses=0, action_vertices=0;
     for (const auto& action:program.actions()) {
-        auto local_sources=sources; auto runtime=decode_action_runtime(doc,program,local_sources,0);
+        auto local_sources=sources; auto runtime=decode_action_actor_runtime(doc,program,local_sources,0);
         if (action.name=="NDSP") {
             check(!action.command_list_present,"Original NDSP is a native-command placeholder");
-            rejects([&]{runtime.dispatch(local_sources,service,action.name,1000000000);},"Original NDSP requires actor deactivation services");
+            runtime.dispatch(local_sources,service,action.name,1000000000);
+            check(!runtime.active() && runtime.actors()->states().size()==3,"Original NDSP bypasses its null command list and owns actor cleanup");
             continue;
         }
         const auto result=runtime.dispatch(local_sources,service,action.name,1000000000);
@@ -302,13 +392,21 @@ void original(const std::filesystem::path& root) {
         }
         if (!completed) throw std::runtime_error("Original action did not finish its commands/effects: "+action.name);
         check(completed,"Original action wait/effect sequence completes within its reference-time budget");
+        const auto event_count=service.events.size();
+        runtime.dispatch(local_sources,service,"NDSP",11000000000);
+        check(!runtime.active() && runtime.timers().empty() && runtime.combiner().states().empty() && service.events.size()==event_count,
+            "Every original action deactivates without residual work or extra events");
+        for (const auto& actor:runtime.actors()->states())
+            check(actor.bone_matrices.empty() && actor.joint_matrices.empty(),"Every original action frees all LOD actor buffers");
+        runtime.dispatch(local_sources,service,action.name,12000000000);
+        check(runtime.active() && service.events.size()==event_count+1,"Every original action can reactivate after NDSP");
     }
     std::cout<<"Original ACTION2 actions="<<program.actions().size()<<" executed_commands="<<commands<<" action_poses="<<action_poses<<" action_vertices="<<action_vertices
         <<" sequence_players=4 sequence_poses="<<poses<<" sequence_vertices="<<vertices<<'\n';
 }
 int run(const std::vector<std::filesystem::path>& args) {
     try {
-        dispatch_and_waits(); joint_and_freeze(); appearance_and_order(); service_boundaries(); malformed_and_ownership();
+        dispatch_and_waits(); joint_and_freeze(); appearance_and_order(); service_boundaries(); actor_lifecycle(); malformed_and_ownership();
         if (args.size()==2) original(args[1]);
         else if (args.size()!=1) throw std::runtime_error("Usage: dw4_actions_tests [EXTRACTED_ROOT]");
         std::cout<<checks<<" action checks passed\n"; return 0;

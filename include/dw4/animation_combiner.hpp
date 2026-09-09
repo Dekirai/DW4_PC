@@ -70,6 +70,9 @@ public:
         AnimationBlendWindow blend, std::uint64_t requested_time, std::int64_t animation_start_time = 0);
     // 801D2840: use the LAST evaluated matrices, even after time has advanced.
     void snapshot();
+    // 801D215C: remove all states and their bone tracks, retaining matrices and clocks.
+    // Empty combiners return false without changing their cache-valid flag.
+    bool clear() noexcept;
     // 801CFFB4: advance clocks, start explicit blends, retire earlier tracks.
     // Returns the state count from before retirement, as the original does.
     std::size_t update(AnimationSourceRuntime& sources, std::uint64_t world_time);

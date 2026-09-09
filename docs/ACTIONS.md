@@ -5,8 +5,11 @@ Version 0.20 adds `actions` to the portable core. It owns an explicitly selected
 animation combiner, named timers and appearance overrides. Model sequence ACTION
 requests can execute these effects through an exact source/info/RAM recipient.
 
+Version 0.21 adds [owned actor activation and NDSP cleanup](ACTION_ACTORS.md)
+through `decode_action_actor_runtime()`. The command-only factory remains available.
+
 This is a prepared-runtime boundary. Complete manager registration, actor
-creation, scene attribute attachment, rendering, broadcast consumers and the
+traversal, scene attribute attachment, rendering, broadcast consumers and the
 outer player/controller frame loop remain unfinished. The walking preview does
 not yet use this interpreter. Four independently evaluated RAMs do not establish
 connected local multiplayer or original gameplay parity.
@@ -146,16 +149,19 @@ an implementation of the original event consumers.
 
 `ISCOMEND` and `ISRUN` have typed inspection equivalents (`command_end()` and
 `active()`). The original command interface for these queries, appearance/bone
-queries and NDSP still requires outer actor services and rejects here. Full
-deactivation must remove actor caches, attributes, timers and combiner state;
-pretending the NDSP placeholder is an empty action would skip those effects.
+queries still requires outer messenger/traversal services and rejects here.
+NDSP executes only when an owned actor group was supplied. It removes actor
+caches, attributes, timers, command work and combiner state while retaining the
+node clock. The NDSP placeholder is never treated as an empty action list.
 
 ## Validation
 
-The 91-check asset-free ACTION suite covers typed/bounded decoding, first/same-action
+The asset-free ACTION suite covers typed/bounded decoding, first/same-action
 dispatch, retained cursors, frame/motion/joint waits, freeze and timer reuse,
 appearance quantization and shared cleanup, missing/failed/reentrant services,
-source/recipient ownership and four independent RAMs.
+source/recipient ownership and four independent RAMs. Version 0.21 extends it
+with activation/NDSP/reactivation, independent actor buffers, frozen node-clock
+retention, suspended cleanup and pending-event ordering.
 
 An ignored independent instruction probe compares 20,000 operations: 5,000
 node clocks, 5,000 timer speed changes, 2,000 joint set/update pairs, 2,000 random
@@ -168,18 +174,23 @@ dispatcher, actor allocation or original rendered frames.
 Local Agumon integration decodes 183 action definitions, 82 clips and four
 prepared RAMs. All 182 ordinary action lists complete their commands and active
 motion/fade/flash phases: 369 executed command occurrences, 4,157 poses and
-5,699,247 finite vertex positions. NDSP's null list is retained and its required
-outer service is checked. Four actual weapon WAIT/WALK sequences additionally
+5,699,247 finite vertex positions. Version 0.21 additionally deactivates and
+reactivates every ordinary action, with all actor buffers owned. NDSP's null list
+is retained and bypassed by its native lifecycle path. Four actual weapon WAIT/WALK sequences additionally
 dispatch their actions into 240 complete poses / 329,040 finite vertices with
 interrupted transitions. These checks use the production codec/pose path and a
 recording broadcast sink; they do not prove connected multiplayer, combat
 semantics or visual effect rendering.
 
+The original synchronous recipients, nullable matching and sound/effect
+subcommand boundary are recorded in [ACTION_EVENTS_RESEARCH.md](ACTION_EVENTS_RESEARCH.md).
+Those consumers remain pending implementation.
+
 ```powershell
 .\build\Release\dw4_actions_tests.exe 'PATH\Extracted'
 ```
 
-Next recover complete actor/work construction and event routing, attach owned
+Next recover actor traversal and event routing, attach owned
 node/appearance state to rendering, then connect the original outer player
 callbacks, input, collision and camera. The full original game remains the
 acceptance target described in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).

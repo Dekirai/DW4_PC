@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DW4_PC VERSION 0.20.0 LANGUAGES C CXX)
+project(DW4_PC VERSION 0.21.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,7 +9,7 @@ include(CTest)
 
 add_library(dw4_core src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp src/lua4.cpp src/startup.cpp src/startup_loading.cpp src/controllers.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/materials.cpp src/scenes.cpp src/scene_controls.cpp src/player_placement.cpp src/player_visual.cpp src/skinning.cpp src/animation_math.cpp src/enbaya.cpp src/animations.cpp src/camera.cpp src/settings.cpp src/walking.cpp src/walking_collision.cpp)
 target_include_directories(dw4_core PUBLIC include)
-target_sources(dw4_core PRIVATE src/motion.cpp src/motion_timer.cpp src/model_motion.cpp src/model_control.cpp src/model_sequence.cpp src/animation_timing.cpp src/animation_combiner.cpp src/actions.cpp)
+target_sources(dw4_core PRIVATE src/motion.cpp src/motion_timer.cpp src/model_motion.cpp src/model_control.cpp src/model_sequence.cpp src/animation_timing.cpp src/animation_combiner.cpp src/actions.cpp src/action_actors.cpp)
 # Recovered scalar operations round separately; explicit std::fma in local
 # translation remains fused. Preserve IEEE zero-frame infinity/NaN behavior.
 if(MSVC)
@@ -32,7 +32,7 @@ add_executable(dw4_boot tools/dw4_boot.cpp)
 target_link_libraries(dw4_boot PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite assets igb igb_document resources packages scripts lua4 startup startup_loading controllers pad motion model_motion model_control model_sequence textures meshes materials scenes player_placement player_visual skinning animation_math animation_timing enbaya animations animation_combiner actions camera settings walking walking_collision)
+  foreach(suite assets igb igb_document resources packages scripts lua4 startup startup_loading controllers pad motion model_motion model_control model_sequence textures meshes materials scenes player_placement player_visual skinning animation_math animation_timing enbaya animations animation_combiner actions action_actors camera settings walking walking_collision)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
