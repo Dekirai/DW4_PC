@@ -22,6 +22,15 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.17 retains model sequence programs, weapon label selection and command
+positions in native runtime state. It runs the supported control/motion commands,
+preserves label barriers and local jumps, and exposes required ACTION dispatch.
+All 9,060 SEQ programs found in the original archive corpus decode; their
+447,274 command occurrences include unsupported runtime effects. Decoding those
+records is not execution of the whole corpus. Next implement ACTION manager
+behavior, full sequence-entry/outer callbacks and original wait/resume rules,
+then connect original player state, collision and camera. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
+
 Version 0.16 adds original CTRL/PDMOVE effects, movement timer/position-lock
 preparation, player turn rates and post-input WAIT/WALK requests. All 668 original
 CTRL/PDMOVE records decode; 10,000 bounded instruction comparisons pass. Explicit

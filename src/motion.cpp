@@ -6,6 +6,13 @@
 #include <string_view>
 
 namespace dw4 {
+void MotionChannels::on_sequence_change() {
+    if (!allocated_) return;
+    auto candidate = states_;
+    for (std::size_t i=0;i<3;++i) if (candidate[i].stop_on_sequence) stop_motion(candidate[i]);
+    candidate[3].active=false; candidate[3].speed=0;
+    states_=candidate;
+}
 namespace {
 static_assert(std::numeric_limits<float>::is_iec559 && std::numeric_limits<float>::digits == 24);
 [[noreturn]] void fail(const char* message) { throw MotionError(message); }

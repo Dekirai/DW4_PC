@@ -1,4 +1,30 @@
-# Native model control and preparation validation
+# Native model sequence validation
+
+Version 0.17 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. The portable command runner retains original model sequence
+state, weapon sections, supported control/motion effects and required ACTION
+requests. Complete outer player callbacks and ACTION execution remain pending;
+the walking preview continues using its provisional host controller.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed without compiler warnings; 29/29 CTest suites and 6 Python verifier tests passed |
+| Sequence fixtures | 65 asset-free checks cover original list slots, aliases, retained state, label caches/barriers, command-name precedence, nested jumps, movement stop rules, failed/reentrant services and malformed/bounded input |
+| Original Agumon sequence integration | 193 additional checks pass across both entry groups, all four slots and all four weapon sections; original lists request the matching WAIT/RUN/WAIT actions and travel approximately 8.275 local units at explicit cached delta 1 |
+| Complete SEQ corpus decode | 9,060 programs, 80,621 sequence occurrences and 447,274 command occurrences in 2,273 archive IGBs; zero rejections; unsupported runtime commands are retained, not executed |
+| Independent command instruction oracle | 6,000 bounded command programs match at the supplied list/string/channel allocation and ACTION service boundaries; NaN sign/payload excluded |
+| Independent label instruction oracle | 3,000 programs with 24,539 set/lookup pairs match original label tables and cached offsets; missing original labels produce an explicit native guard |
+| Packaged walking regression | 120-frame SDL replay passes with 198 steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads and final (-292,40,431); pause/restart/focus-loss checks pass |
+| Packaged visual inspection | 1280x720 overview and walking captures inspected; version 0.17 visible, Agumon and original map render in the 1236x600 walking target with 8x MSAA |
+
+The original-data fixture supplies a recording ACTION service to verify requests;
+it does not execute the animation manager, full sequence entry or player creation.
+The instruction probes use synthetic prepared work and supplied external service
+boundaries. They do not establish allocator behavior, full callbacks, original
+gameplay or physical multiplayer. Original bytes/probes/captures remain ignored.
+See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md) for exact scope and source addresses.
+
+## Native model control and preparation validation
 
 Version 0.16 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. Original CTRL/PDMOVE effects, movement preparation, player

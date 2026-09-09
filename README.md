@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.16 adds original model control commands, movement preparation and
-WAIT/WALK sequence requests to the portable core. The full original game, including local
+Version 0.17 adds an owned original model command runner with weapon labels,
+sequence jumps and movement transitions. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -56,6 +56,10 @@ not contain game files.
   the original post-input WAIT/WALK request rules. Player turn rates are recovered;
   full player creation and sequence/action execution remain pending. These core
   effects do not change the preview. See [MODEL_CONTROL.md](docs/MODEL_CONTROL.md).
+- Run supported original sequence commands with retained cursors and label caches.
+  Preserve weapon-section boundaries, nested local jumps and sequence-stop motion.
+  ACTION requests require a supplied execution service; complete animation/action
+  and outer player callbacks remain pending. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md).
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.

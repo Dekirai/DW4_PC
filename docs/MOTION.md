@@ -129,7 +129,10 @@ the trailing bytes. MOVEEX stores its stop fields after scalar configuration.
 delta. `translation_updated` records whether a translation channel began active,
 even when the resulting displacement is zero. Empty, unallocated channels do
 not query the timer. Invalid native input does not partially publish state.
-Sequence-stop is retained data; sequence changes are not dispatched here.
+Sequence-stop is retained data in this decoder. Version 0.17 adds
+`MotionChannels::on_sequence_change`: stop flagged XYZ channels using the stored
+stop parameters, and deactivate rotation with zero speed while preserving its
+other fields. This is the loop at `8030EA1C..8030EA74`, not full controller dispatch.
 
 ## Timer and local transform
 

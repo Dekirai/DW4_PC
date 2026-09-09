@@ -138,8 +138,11 @@ a successful empty update.
 .\build\Release\dw4_model_control_tests.exe 'E:\path\Digimon World 4 - Extracted'
 ```
 
+Version 0.17 connects the owned control fields to a supported sequence command
+runner, weapon labels and sequence-stop motion. ACTION execution and full
+sequence-entry callbacks remain required; see [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 Next connect complete player construction, source-qualified ONE/RAM ownership,
-original input and sequence/action execution, then attachment/collision and
+original input and the remaining sequence/action effects, then attachment/collision and
 camera state. The existing walking preview keeps its provisional host movement
 and clip choices. The complete game and local multiplayer remain the acceptance
 target in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).

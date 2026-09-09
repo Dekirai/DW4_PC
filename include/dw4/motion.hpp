@@ -86,6 +86,9 @@ public:
     // 8030A448: rotation channel, model turning, then local translation. Uses
     // an explicit owned model pose; no attachment, collision or trace callbacks.
     ModelMotionStep advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time);
+    // 8030EA1C..8030EA74: stop flagged XYZ channels using their stored stop
+    // parameters; always deactivate rotation and clear only its speed.
+    void on_sequence_change();
     const std::array<MotionState, 4>& states() const noexcept { return states_; }
     bool allocated() const noexcept { return allocated_; }
 private:

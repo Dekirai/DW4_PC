@@ -132,6 +132,19 @@ matrix-derived Y angles. Full work construction, named RAM ownership, original
 input/sequence callbacks, attachments and collision remain required; none of
 these APIs replaces the preview controller. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
+Version 0.17 adds `model_sequence`. An immutable program owns source identity and
+ordered decoded SEQ/command records; each runtime owns its label bindings,
+cached offsets, current command position and model control state. Selection
+implements the owned control/motion portion of ordinary sequence entry. The
+runner consumes supported commands, stops at weapon LABEL boundaries and retains
+new state across ordinary local sequence jumps. Missing ACTION execution and
+unsupported controller/command effects stop at the exact unconsumed command;
+completed prefix effects survive. A supplied ACTION dispatcher must perform the
+external effect, not merely acknowledge a name. Subcommand cleanup, collision
+fields, original wait/virtual callbacks and complete player construction remain
+outside this prepared-work API. The application does not use it as a replacement
+for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
+
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded
 query hierarchies and advances a grounded controller over continuously supported

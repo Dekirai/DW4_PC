@@ -3,8 +3,9 @@
 The four physical-pad state machines are implemented in `pad.hpp` / `pad.cpp`.
 Version 0.14 also implements the scalar movement objects, command decoder,
 elapsed timer and local translation described in [MOTION.md](MOTION.md).
-The remaining player-preparation and sequence findings are evidence for the next
-native runtime boundary. These have **not** replaced the walking preview's host
+Versions 0.16/0.17 add supported preparation, control and sequence command
+effects, described in [MODEL_CONTROL.md](MODEL_CONTROL.md) and
+[MODEL_SEQUENCE.md](MODEL_SEQUENCE.md). These have **not** replaced the walking preview's host
 movement, camera, collision response or animation selection. Four independent
 input states do not establish a running four-player game.
 
@@ -347,6 +348,22 @@ The lists also contain CTRL `toWalk` reference `6499` and `toWait` reference
 RUN clip crosses these original weapon branches. The action names above must
 still be resolved through their action/animation runtime, including transitions,
 timing and events; they are not an instruction to guess a pair of clip substrings.
+
+Version 0.17 follows these ordered lists with a retained native command cursor
+and the original label cache. A second LABEL stops dispatch without consuming
+that label, preventing fallthrough into another weapon section. Supported
+ordinary sequence entry resets control state and applies the original channel
+stop rules. Complete entry callbacks and ACTION execution are still required.
+
+ACTION handler `8030943C` sends category `ACTION` (`80426770`), the info name,
+RAM number and action name through messenger `80305ED0`. Agumon's separate
+`beAction2Info` reference 546 uses animation database 810 and action data list
+5550 (183 records). `WAITD1` resolves to data 5487/list 4412/command 12
+(`beAction2MOTIONSET`, `waitD`). `RUNND1` resolves to data 4411/list 3075,
+containing commands 12 (`waitD`) and 3702 (`runD`) in that order. Each carries
+strings `RR` and `LP` and a float value 8. The other weapon branches similarly
+pair their wait/run names. The ACTION manager's interpretation of those fields,
+blending, timing and events must be recovered before treating them as clip playback.
 
 Agumon's `HIT` record points through AABox list `6395` to box `1316`, with bounds
 `(-2.5,0,-2.5)` to `(2.5,7,2.5)`. This is original authored collision metadata,
