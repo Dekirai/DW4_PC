@@ -41,7 +41,7 @@ const std::vector<Schema> schemas{
     {"igAnimationTrackList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationDatabase",object,10,{{2,5,4},{2,6,4},{2,7,4},{2,9,4}}},
     {"igSkin",object,2,{}},
-    {"igSkeleton",object,5,{{3,3,4},{2,4,4}}},
+    {"igSkeleton",object,7,{{3,3,4},{2,4,4},{3,5,4},{1,6,4}}},
     {"igSkeletonBoneInfo",object,5,{{0,2,4},{1,3,4},{1,4,4}}},
     {"igAnimation",object,11,{{0,2,4},{1,3,4},{2,4,4},{2,5,4},{2,6,4},{7,7,8},{7,8,8},{7,9,8},{2,10,4}}},
     {"igAnimationBinding",object,7,{{2,2,4},{3,3,4},{1,4,4},{2,5,4},{2,6,4}}},
@@ -50,7 +50,7 @@ const std::vector<Schema> schemas{
     {"igEnbayaAnimationSource",object,6,{{3,2,4},{4,3,3},{4,4,1},{6,5,4}}},
     {"igBitMask",object,6,{{1,2,4},{1,3,4},{3,4,4},{5,5,4}}},
     {"igAnimationTransitionDefinitionList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"igAnimationCombiner",object,15,{{2,3,4},{2,4,4},{2,5,4},{2,6,4},{3,8,4},{7,9,8},{4,10,1},{7,14,8}}},
+    {"igAnimationCombiner",object,15,{{2,3,4},{2,4,4},{2,5,4},{2,6,4},{3,8,4},{7,9,8},{4,10,1},{4,11,1},{3,12,4},{3,13,4},{7,14,8}}},
     {"igIntList",object,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationStateList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationCombinerBoneInfoListList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
@@ -176,6 +176,7 @@ struct Fixture : Graph {
             data.bones.push_back({bone,"Bone "+std::to_string(i),i ? 0 : -1,i ? 0 : -1});
         }
         bones_list=list(bone_list,bones); scalar(skeleton,4,bones_list);
+        scalar(skeleton,5,memory(floats({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}))); scalar(skeleton,6,1);
         offsets=memory(floats({10,0,0,0,2,0})); scalar(skeleton,3,offsets);
         scalar(database,7,list(skin_list,{skin})); skeletons_list=list(skeleton_list,{skeleton}); scalar(database,5,skeletons_list);
         data.info.supported=true; data.info.skin_reference=skin; data.info.database_reference=database; data.info.skeleton_reference=skeleton;

@@ -84,8 +84,8 @@ void malformed_graphs() {
     rejects_fixture([](auto& f){f.scalar(f.actors[0],15,1);},"Reject force-cache traversal restoration");
     rejects_fixture([](auto& f){f.scalar(f.actors[0],16,1);},"Reject a serialized used-cache flag");
     rejects_fixture([](auto& f){f.scalar(f.actors[0],19,0);},"Reject changed serialized update state");
-    rejects_fixture([](auto& f){action_actor_fixture::word(f.records[f.actors[0]].values[14],48,std::bit_cast<std::uint32_t>(2.0f));},
-        "Reject nonidentity actor transform restoration");
+    rejects_fixture([](auto& f){action_actor_fixture::word(f.records[f.actors[0]].values[14],48,0x7f800000u);},
+        "Reject non-finite actor transforms");
     Fixture fixture; auto doc=fixture.document();
     auto& actor=doc.objects[doc.references[fixture.actors[0]].value_index];
     auto* matrix=const_cast<IgbFieldValue*>(doc.field(actor,14)); matrix->type_index=1;
@@ -98,6 +98,9 @@ void malformed_graphs() {
     auto reordered=fixture; std::reverse(reordered.appearances.begin(),reordered.appearances.end());
     reordered.contents(reordered.appearances_list,reordered.appearances);
     check(reordered.group().definitions()[0].appearance_reference==fixture.appearances[0],"Appearance association follows explicit actor references");
+    auto translated=fixture;
+    action_actor_fixture::word(translated.records[fixture.actors[0]].values[14],48,std::bit_cast<std::uint32_t>(2.0f));
+    check(translated.group().definitions()[0].transform[12]==2,"Actor traversal retains the authored finite transform");
 }
 void original(const char* directory) {
     const auto resources=MountedResources::open(directory);

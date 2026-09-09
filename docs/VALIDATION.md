@@ -1,4 +1,37 @@
-# Native ACTION actor lifetime validation
+# Native actor hierarchy and traversal validation
+
+Version 0.22 was validated locally on 2026-09-09 with MSVC 19.51. The portable
+core now owns shared bone/joint caches, computes the original ordinary actor
+hierarchy and exposes cached named bone queries. Complete renderer traversal,
+event consumers and original gameplay integration remain pending.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 35/35 CTest suites and 6 Python verifier tests passed; no production compiler warnings |
+| New synthetic coverage | 248 animation math checks, 46 hierarchy checks and 50 traversal checks passed; actor lifecycle coverage now contains 61 checks |
+| Original actor traversal | Four Agumon instances, three appearances, 720 traversals and 18,000 cached bone queries; freeze, interrupted actions, direct-pose invalidation and NDSP/reactivation included |
+| Original graph validation | 484 hierarchy checks and 548,694 traversal checks passed using original Agumon data |
+| Matrix instruction comparison | 7,415 cases, 101,168 exact finite output words, 996 finite-input overflow rejections and 96 invalid-input rejections; zero mismatches |
+| Hierarchy instruction comparison | 64 bounded cases match all 12,976 output float words; helpers, root exclusion, joint-index permutation and retained root are covered |
+| Original ACTION regression | All 182 ordinary actions complete, deactivate and reactivate; 369 commands, 4,157 poses / 5,699,247 finite vertices, plus 240 sequence poses / 329,040 finite vertices |
+| Packaged walking regression | 120 frames, 198 steps, 101.333 travel, 46 idle/152 run steps and 102 pose uploads; pause/restart/focus-loss replay passed |
+| Packaged visual inspection | Overview and walking captures inspected; version 0.22 visible, original Agumon/map render at 1236x600 with 8x MSAA on an RTX 5070 Ti |
+
+The matrix comparison decodes original paired-single words with exact integer
+binary32 arithmetic and the startup NI=1/RN=00 profile. Its 1,271 finite
+subnormal/underflow cases include an inferred extreme fused tininess boundary;
+they are not physical-console measurements or a claim of universal Dolphin
+equality. See [ANIMATION_HIERARCHY.md](ANIMATION_HIERARCHY.md) for primary sources,
+the inference and the unchanged numeric scope of older math helpers.
+
+The hierarchy probe executes original integer control flow with explicit
+bone-count, copy and matrix services. Original-data tests exercise production
+decoding and runtime state; the broadcast sink records events. The packaged
+preview retains its prior pose/controller path. These checks do not establish
+original rendered-frame parity, event playback, connected multiplayer or the
+complete game. Original data, probes and captures remain ignored.
+
+## Native ACTION actor lifetime validation
 
 Version 0.21 was validated locally on 2026-09-09 with MSVC 19.51. The portable
 core now owns prepared ACTION actor buffers and executes activation, NDSP and

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <set>
 
 namespace dw4 {
@@ -77,6 +78,8 @@ ActionActorGroup::ActionActorGroup(std::string source,std::uint32_t ram_referenc
             value.joint_count>value.bone_count || value.bone_count!=definitions_.front().bone_count ||
             value.joint_count!=definitions_.front().joint_count)
             fail("Action actors require one bounded common skeleton.");
+        for (const auto element:value.transform)
+            if (!std::isfinite(element)) fail("Action actor transform is non-finite.");
         states_.push_back({value.reference,value.appearance_reference,{},{},{}});
     }
 }
@@ -156,13 +159,14 @@ ActionActorGroup decode_action_actor_group(const IgbDocument& doc,std::uint32_t 
             if (!read.list(read.ref(actor,13),"igAnimationModifierList",max_bones).empty())
                 fail("Action actor modifiers require traversal integration.");
             const auto bytes=doc.field_bytes(read.field(actor,14,"igMatrix44fMetaField",64));
+            AnimationMatrix transform{};
             for (std::size_t at=0;at<16;++at) {
                 std::uint32_t bits=0; for (std::size_t byte=0;byte<4;++byte) bits|=std::uint32_t(bytes[at*4+byte])<<(byte*8);
-                if (std::bit_cast<float>(bits)!=(at%5==0 ? 1.0f : 0.0f)) fail("Nonidentity action actor transforms require traversal integration.");
+                transform[at]=std::bit_cast<float>(bits);
             }
             read.default_bool(actor,15,false); read.default_bool(actor,16,false);
             read.default_bool(actor,19,true); read.default_bool(actor,20,true);
-            definitions.push_back({ref,appearance,bones.size(),joints});
+            definitions.push_back({ref,appearance,bones.size(),joints,transform});
         }
         return ActionActorGroup(std::move(source),ram_reference,combiner_reference,std::move(definitions));
     } catch (const ActionActorError&) { throw; }

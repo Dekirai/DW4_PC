@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.22 adds explicit ordinary actor traversal, original float hierarchy
+calculation and cached bone queries. Four original Agumon instances pass 720
+traversals across their three appearances; independent hierarchy instruction
+checks match 12,976 float words. Shared arrays persist through NDSP and are
+invalidated by new local sampling. Complete renderer context/appearance
+traversal and outer player scheduling remain required before gameplay integration.
+See [ANIMATION_HIERARCHY.md](ANIMATION_HIERARCHY.md).
+
 Version 0.21 adds prepared ACTION actor ownership and NDSP cleanup. All ordered
 actor buffers belong to their selected RAM; activation, deactivation and
 reactivation preserve the original work lifetime and retained node clocks.

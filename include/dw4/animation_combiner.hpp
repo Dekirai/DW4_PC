@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/animation_math.hpp"
+#include "dw4/animation_hierarchy.hpp"
 #include "dw4/animations.hpp"
 
 #include <map>
@@ -56,9 +57,16 @@ struct AnimationCombinerState {
 class AnimationCombiner {
 public:
     AnimationCombiner(const AnimationSourceRuntime& sources, std::vector<AnimationMatrix> cached_matrices);
+    AnimationCombiner(const AnimationSourceRuntime& sources, std::vector<AnimationMatrix> cached_matrices,
+        AnimationHierarchyDefinition hierarchy, std::vector<AnimationMatrix> bone_matrices,
+        std::vector<AnimationMatrix> joint_matrices);
     const std::vector<AnimationCombinerState>& states() const noexcept { return states_; }
     const std::vector<AnimationMatrix>& cached_matrices() const noexcept { return matrices_; }
     bool cache_valid() const noexcept { return cache_valid_; }
+    const AnimationHierarchyDefinition* hierarchy() const noexcept { return hierarchy_.get(); }
+    bool hierarchy_valid() const noexcept { return hierarchy_valid_; }
+    const std::vector<AnimationMatrix>& bone_matrices() const noexcept { return bone_matrices_; }
+    const std::vector<AnimationMatrix>& joint_matrices() const noexcept { return joint_matrices_; }
     void set_request_time(std::uint64_t time) noexcept { clock_override_=time; }
     std::uint64_t request_time(std::uint64_t system_time) const noexcept {
         return clock_override_==std::numeric_limits<std::uint64_t>::max() ? system_time : clock_override_;
@@ -78,6 +86,9 @@ public:
     std::size_t update(AnimationSourceRuntime& sources, std::uint64_t world_time);
     // 801D0C14: preserve same-time cached matrices; update before sampling.
     const std::vector<AnimationMatrix>& evaluate(AnimationSourceRuntime& sources, std::uint64_t world_time);
+    // Ordinary no-modifier actor traversal. Root is overwritten even on a cache hit;
+    // bones 1+ and joint matrices are shared by all actors using this combiner.
+    void traverse(AnimationSourceRuntime& sources,const AnimationMatrix& root,std::uint64_t world_time);
     SkinPose pose(AnimationSourceRuntime& sources, const SkinningData& skin, std::uint64_t world_time);
     void clear_new_flags() noexcept;
     void set_state_speed(std::size_t index, std::uint64_t world_time, float speed);
@@ -86,12 +97,16 @@ public:
 private:
     friend class ActionRuntime;
     friend AnimationCombiner decode_animation_combiner(const IgbDocument&, const AnimationSourceRuntime&, std::uint32_t);
+    friend AnimationCombiner decode_animation_actor_combiner(const IgbDocument&, const AnimationSourceRuntime&, std::uint32_t);
     std::shared_ptr<const AnimationSourceRuntime::Library> library_;
     std::vector<AnimationCombinerState> states_;
     std::vector<AnimationMatrix> matrices_;
+    std::shared_ptr<const AnimationHierarchyDefinition> hierarchy_;
+    std::vector<AnimationMatrix> bone_matrices_, joint_matrices_;
     std::uint64_t next_id_ = 1, cached_time_{};
     std::uint64_t clock_override_ = std::numeric_limits<std::uint64_t>::max();
     bool cache_valid_{};
+    bool hierarchy_valid_{};
     void require_sources(const AnimationSourceRuntime& sources) const;
     std::vector<std::size_t> order() const;
     void add(const AnimationSourceRuntime& sources, std::uint32_t clip_reference,
@@ -104,6 +119,10 @@ private:
 // Requires empty state/track lists with the complete owning skeleton binding.
 // Actor/hierarchy setup and the optional cleanCombinerStates debug path remain separate.
 AnimationCombiner decode_animation_combiner(const IgbDocument& document,
+    const AnimationSourceRuntime& sources, std::uint32_t combiner_reference);
+// Additionally own the original serialized shared hierarchy/blend arrays and
+// skeleton. Missing shared arrays never become implicit identity allocations.
+AnimationCombiner decode_animation_actor_combiner(const IgbDocument& document,
     const AnimationSourceRuntime& sources, std::uint32_t combiner_reference);
 
 struct AnimationMotionCommand {

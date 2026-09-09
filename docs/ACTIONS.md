@@ -7,6 +7,8 @@ requests can execute these effects through an exact source/info/RAM recipient.
 
 Version 0.21 adds [owned actor activation and NDSP cleanup](ACTION_ACTORS.md)
 through `decode_action_actor_runtime()`. The command-only factory remains available.
+Version 0.22 adds [ordinary actor hierarchy traversal](ANIMATION_HIERARCHY.md)
+and the read-only `bone_matrix()` query to the actor-aware runtime.
 
 This is a prepared-runtime boundary. Complete manager registration, actor
 traversal, scene attribute attachment, rendering, broadcast consumers and the
@@ -149,7 +151,9 @@ an implementation of the original event consumers.
 
 `ISCOMEND` and `ISRUN` have typed inspection equivalents (`command_end()` and
 `active()`). The original command interface for these queries, appearance/bone
-queries still requires outer messenger/traversal services and rejects here.
+queries still requires outer messenger services and rejects here. The typed
+`bone_matrix()` API now implements the active-gated cached bone read, while
+`traverse_actor()` explicitly supplies its original hierarchy calculation.
 NDSP executes only when an owned actor group was supplied. It removes actor
 caches, attributes, timers, command work and combiner state while retaining the
 node clock. The NDSP placeholder is never treated as an empty action list.
@@ -190,7 +194,7 @@ Those consumers remain pending implementation.
 .\build\Release\dw4_actions_tests.exe 'PATH\Extracted'
 ```
 
-Next recover actor traversal and event routing, attach owned
+Next recover complete appearance/context traversal and event routing, attach owned
 node/appearance state to rendering, then connect the original outer player
 callbacks, input, collision and camera. The full original game remains the
 acceptance target described in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).

@@ -181,8 +181,11 @@ ActionRuntime::ActionRuntime(ActionProgram program,const AnimationSourceRuntime&
     const auto& ram=program_->rams()[ram_no_];
     if (actors.source()!=program_->source() || actors.ram_reference()!=ram.reference || actors.combiner_reference()!=ram.combiner_reference)
         fail("Actor group differs from the owning ACTION source/RAM/combiner.");
-    for (const auto& actor:actors.definitions())
+    for (const auto& actor:actors.definitions()) {
         if (actor.bone_count!=combiner_.cached_matrices().size()) fail("Actor bone allocation differs from the owning combiner.");
+        if (combiner_.hierarchy() && actor.joint_count!=combiner_.hierarchy()->inverse_joint_matrices().size())
+            fail("Actor joint allocation differs from the owning combiner hierarchy.");
+    }
     for (const auto& actor:actors.states())
         if (actor.combiner_reference || !actor.bone_matrices.empty() || !actor.joint_matrices.empty())
             fail("Action runtime requires a prepared unattached actor group.");
@@ -190,9 +193,30 @@ ActionRuntime::ActionRuntime(ActionProgram program,const AnimationSourceRuntime&
 }
 ActionRuntime decode_action_actor_runtime(const IgbDocument& doc,ActionProgram program,const AnimationSourceRuntime& sources,std::int32_t ram_no) {
     if (ram_no<0 || static_cast<std::size_t>(ram_no)>=program.rams().size()) fail("Action RAM selection is out of range.");
+    // Each RAM becomes an independent native owner. Validate the complete
+    // program before copying any selected actor graph or mutable cache arrays.
+    std::set<std::size_t> mutable_memories,inverse_memories;
+    const auto memory_index=[&](const IgbObject& object,std::uint16_t slot) -> std::optional<std::size_t> {
+        if (field(doc,object,slot,"igMemoryRefMetaField").size!=4) fail("Invalid action cache memory reference width.");
+        const auto ref=doc.field_reference(object,slot);
+        if (!ref || doc.memory(*ref).empty()) return {};
+        return doc.references.at(*ref).value_index;
+    };
+    for (const auto& owner:program.rams()) {
+        const auto& combiner=typed(doc,owner.combiner_reference,"igAnimationCombiner");
+        for (const auto slot:std::array<std::uint16_t,3>{8,12,13}) {
+            const auto memory=memory_index(combiner,slot);
+            if (memory && !mutable_memories.insert(*memory).second)
+                fail("Aliased mutable ACTION cache ownership requires shared-memory restoration.");
+        }
+        const auto& skeleton=typed(doc,reference(doc,combiner,3),"igSkeleton");
+        if (const auto inverse=memory_index(skeleton,5)) inverse_memories.insert(*inverse);
+    }
+    for (const auto inverse:inverse_memories)
+        if (mutable_memories.contains(inverse)) fail("Mutable ACTION caches cannot alias immutable inverse-joint input.");
     const auto& ram=program.rams()[ram_no];
     auto actors=decode_action_actor_group(doc,ram.reference,ram.combiner_reference,program.source());
-    auto combiner=decode_animation_combiner(doc,sources,ram.combiner_reference);
+    auto combiner=decode_animation_actor_combiner(doc,sources,ram.combiner_reference);
     return {std::move(program),sources,ram_no,std::move(combiner),std::move(actors)};
 }
 std::uint64_t ActionRuntime::node_time(std::uint64_t time) const { return dw4::node_time(node_,time); }
@@ -410,5 +434,45 @@ void ActionRuntime::freeze(bool frozen,std::uint64_t time) {
 }
 SkinPose ActionRuntime::pose(AnimationSourceRuntime& sources,const SkinningData& skin,std::uint64_t time) {
     Running guard(running_); return combiner_.pose(sources,skin,node_time(time));
+}
+void ActionRuntime::traverse_actor(AnimationSourceRuntime& sources,std::size_t actor_index,
+    const AnimationMatrix& model_view,const AnimationMatrix& inverse_view,std::uint64_t parent_time) {
+    Running guard(running_); combiner_.require_sources(sources);
+    if (!active_ || !actors_) fail("Actor traversal requires an active owned ACTION actor group.");
+    if (actor_index>=actors_->states().size()) fail("Actor traversal selection is outside its RAM.");
+    const auto& definition=actors_->definitions()[actor_index];
+    const auto& original=actors_->states()[actor_index];
+    if (original.combiner_reference!=program_->rams()[ram_no_].combiner_reference ||
+        original.bone_matrices.size()!=definition.bone_count || original.joint_matrices.size()!=definition.joint_count)
+        fail("Actor traversal requires its original activation buffers and combiner link.");
+    for (const auto value:inverse_view) finite(value);
+    auto candidate=*this; auto candidate_sources=sources;
+    auto& actor=candidate.actors_->state(actor_index);
+    actor.model_view=model_view; actor.inverse_view=inverse_view; actor.cache_used=false;
+    const auto time=candidate.node_time(parent_time); candidate.node_.local_time=signed_bits(time);
+    const auto root=original_matrix_multiply(model_view,definition.transform);
+    candidate.combiner_.traverse(candidate_sources,root,time);
+    *this=std::move(candidate); sources=std::move(candidate_sources);
+}
+std::optional<AnimationMatrix> ActionRuntime::bone_matrix(std::string_view name) const {
+    if (!active_) return {};
+    name_check(name);
+    if (!actors_ || !combiner_.hierarchy()) fail("Cached bone query requires an owned actor and decoded hierarchy.");
+    const auto& actor=actors_->states().front();
+    if (actor.combiner_reference!=program_->rams()[ram_no_].combiner_reference)
+        fail("First ACTION actor is not attached to the selected combiner.");
+    // 8020323C -> 80077768: fixed ASCII uppercase table, first matching bone.
+    const auto uppercase=[](unsigned char value) { return value>='a' && value<='z' ? value-('a'-'A') : value; };
+    const auto equal=[&](std::string_view candidate) {
+        return candidate.size()==name.size() && std::equal(candidate.begin(),candidate.end(),name.begin(),
+            [&](unsigned char a,unsigned char b){return uppercase(a)==uppercase(b);});
+    };
+    const auto& bones=combiner_.hierarchy()->bones();
+    const auto found=std::find_if(bones.begin(),bones.end(),[&](const auto& bone){return equal(bone.name);});
+    if (found==bones.end()) fail("Requested cached bone is absent from the actor skeleton.");
+    const auto index=static_cast<std::size_t>(found-bones.begin());
+    const auto& matrices=actor.cache_used ? actor.bone_matrices : combiner_.bone_matrices();
+    if (index>=matrices.size()) fail("Actor bone query cache is not allocated for its skeleton.");
+    return matrices[index]; // Original messenger receives a full matrix copy.
 }
 } // namespace dw4

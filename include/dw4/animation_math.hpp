@@ -18,6 +18,11 @@ std::array<float, 4> original_interpolate_rotation(const std::array<float, 4>& a
     const std::array<float, 4>& b, float blend);
 
 using AnimationMatrix = std::array<float, 16>;
+// 80128690: conventional column-major left * right (guest r5 * r4).
+// Round the first product to float, then fuse terms 1, 2 and 3 in order.
+// Uses the startup NI=1, nearest-even profile: retain subnormal inputs and
+// flush each tiny unrounded result to signed zero. Inputs/results must be finite.
+AnimationMatrix original_matrix_multiply(const AnimationMatrix& left, const AnimationMatrix& right);
 // 8012BCDC writes only the nine rotation entries of an existing flat matrix.
 // Preserve float operation order and all translation/affine entries.
 void original_rotation_matrix(const std::array<float, 4>& rotation, AnimationMatrix& matrix);

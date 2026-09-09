@@ -5,8 +5,8 @@ every actor in one explicitly prepared RAM, allocates the original bone/joint
 matrix arrays on activation, and releases them through NDSP. Reactivation
 retains the original node clock while creating fresh action work.
 
-This implements actor buffer lifetime. It does not yet implement actor traversal,
-cached bone queries, rendering, manager registration or complete player creation.
+Version 0.22 adds [ordinary actor hierarchy traversal and cached bone queries](ANIMATION_HIERARCHY.md).
+Rendering, manager registration and complete player creation remain pending.
 The walking preview continues to use its existing provisional controller.
 
 ## Evidence
@@ -39,7 +39,7 @@ ownership, unique actor/appearance identities, field types, widths, references
 and list capacity/memory ranges.
 
 The current profile requires little-endian data, null serialized actor combiner
-and matrix references, an identity actor transform, empty animation modifiers,
+and matrix references, a finite actor transform, empty animation modifiers,
 default traversal flags and an empty node attribute list. Existing live caches,
 modifiers, attributes or aliased ownership require a restoration path and reject.
 Limits are 64 actors, 1,024 bones, 256 joints and a 4,096-byte explicit source.
@@ -77,7 +77,7 @@ uses request time `100000000`. Node phase and speed survive. In particular,
 deactivating a frozen runtime leaves node speed zero even though the new work's
 freeze flag defaults false; an explicit unfreeze restores speed one.
 
-## Remaining traversal boundary
+## Traversal integration
 
 Original actor traversal at `801DCF30` selects private actor caches only when
 modifiers or the force-cache flag require them; otherwise it uses shared
@@ -85,15 +85,16 @@ combiner hierarchy/blend arrays. `GETBONEMATRIX` at `802F18A4` reads the first
 actor's selected cached matrix and copies it into the messenger result. It does
 not force a new pose calculation. Allocation alone cannot provide that behavior.
 
-Consequently the new identity buffers are never advertised as evaluated bone
-matrices. `ActionRuntime::pose()` retains its existing independent skin-pose
-inspection path. Actor traversal, hierarchy/cache validity, original transform
-composition and the query/renderer consumers are the next integration boundary.
+Consequently private identity buffers are never advertised as evaluated bone
+matrices. Version 0.22 retains and evaluates the separate shared combiner arrays
+through `traverse_actor()`, then reads them through `bone_matrix()`.
+`ActionRuntime::pose()` retains its independent skin-pose inspection path.
+Complete renderer context/appearance traversal and attachment consumers remain.
 See [ACTIONS.md](ACTIONS.md) and [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
 ## Validation
 
-The asset-free actor suite passes 60 checks, including malformed typed graphs,
+The asset-free actor suite passes 61 checks, including malformed typed graphs,
 all ordered appearances, identity initialization, first/middle activation
 barriers, joint-only replacement, independent copies and complete deallocation.
 The ACTION suite passes 124 checks including actor-aware cleanup/reactivation

@@ -16,12 +16,16 @@ public:
 struct ActionActorDefinition {
     std::uint32_t reference{}, appearance_reference{};
     std::size_t bone_count{}, joint_count{};
+    AnimationMatrix transform{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
 };
 
 struct ActionActorState {
     std::uint32_t reference{}, appearance_reference{};
     std::optional<std::uint32_t> combiner_reference;
     std::vector<AnimationMatrix> bone_matrices, joint_matrices;
+    AnimationMatrix model_view{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    AnimationMatrix inverse_view{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    bool cache_used{};
 };
 
 // Owns the verified ACTION2 allocation/deallocation effects for every actor in
@@ -51,7 +55,7 @@ private:
 };
 
 // Prepared profile: local typed lists, unique actors/appearances, null actor
-// combiner/matrix fields, identity transforms and empty modifier/attribute
+// combiner/matrix fields, finite transforms and empty modifier/attribute
 // lists. The explicit combiner selects the skeleton used for allocation.
 ActionActorGroup decode_action_actor_group(const IgbDocument& document,
     std::uint32_t ram_reference, std::uint32_t combiner_reference, std::string source);

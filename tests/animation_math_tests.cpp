@@ -79,9 +79,75 @@ void matrices() {
     }
 }
 
+void matrix_products() {
+    using dw4::AnimationMatrix;
+    using dw4::original_matrix_multiply;
+    // Synthetic inputs evaluated through the original 80128690 paired-single
+    // instructions, with independently rounded binary32 products and FMAs.
+    const AnimationMatrix left{1,2,0,0, 3,1,0,0, 0,0,1,0, 5,7,11,1};
+    const AnimationMatrix right{0,1,0,0, -1,0,0,0, 0,0,1,0, 2,4,9,1};
+    check(original_matrix_multiply(left,right)==AnimationMatrix{3,1,0,0, -1,-2,0,0, 0,0,1,0, 19,15,20,1},
+        "Matrix multiplication uses column-major left times right");
+    check(original_matrix_multiply(right,left)==AnimationMatrix{-2,1,0,0, -1,3,0,0, 0,0,1,0, -5,9,20,1},
+        "Noncommuting matrix inputs preserve their requested order");
+    AnimationMatrix full_left{},full_right{};
+    for (std::size_t i=0;i<16;++i) { full_left[i]=static_cast<float>(i+1);full_right[i]=static_cast<float>(i+17); }
+    check(original_matrix_multiply(full_left,full_right)==AnimationMatrix{
+        538,612,686,760, 650,740,830,920, 762,868,974,1080, 874,996,1118,1240},
+        "Full matrix multiplication evaluates all sixteen entries without an affine shortcut");
+    const auto from_word=[](std::uint32_t value) { return std::bit_cast<float>(value); };
+    const auto dot=[](const std::array<float,4>& a,const std::array<float,4>& b) {
+        AnimationMatrix first{},second{};
+        for (std::size_t i=0;i<4;++i) { first[i*4]=a[i];second[i]=b[i]; }
+        return original_matrix_multiply(first,second)[0];
+    };
+    const float above_one=from_word(0x3f800001u),below_one=from_word(0x3f7ffffeu);
+    check(std::bit_cast<std::uint32_t>(dot({above_one,-1,0,0},{below_one,1,0,0}))==0,
+        "The first matrix product rounds before later fused accumulation");
+    check(std::bit_cast<std::uint32_t>(dot({-1,above_one,0,0},{1,below_one,0,0}))==0xa8800000u,
+        "Fused matrix terms preserve residuals lost by separate multiply and add");
+    check(dot({1e20f,-1e20f,3,4},{1,1,1,1})==7,
+        "Matrix accumulation keeps original k0, k1, k2, k3 cancellation order");
+    const auto large=std::numeric_limits<float>::max();
+    check(dot({large,-large,0,0},{1,2,0,0})==-large,
+        "A fused term remains valid when its unrounded product exceeds float range");
+    const auto minimum=std::numeric_limits<float>::min(),tiny=std::numeric_limits<float>::denorm_min();
+    const auto before_one=from_word(0x3f7fffffu);
+    check(dot({minimum,0,0,0},{before_one,1,1,1})==0,
+        "NI flush precedes initial-product rounding up to the smallest normal float");
+    check(std::bit_cast<std::uint32_t>(dot({-minimum,-0.0f,-0.0f,-0.0f},{before_one,1,1,1}))==0x80000000u,
+        "NI underflow preserves the negative zero sign");
+    check(dot({tiny,0,0,0},{from_word(0x7e800000u),1,1,1})==from_word(0x34000000u),
+        "Paired loads preserve subnormal inputs which multiply to normal results");
+    check(dot({0,tiny,0,0},{1,from_word(0x7e800000u),1,1})==from_word(0x34000000u),
+        "Fused terms also retain subnormal multiplicands");
+    check(dot({minimum,tiny,0,0},{1,-tiny,1,1})==0,
+        "NI detects a fused result below min-normal even when double rounding hides the deficit");
+    check(std::bit_cast<std::uint32_t>(dot({-minimum,tiny,-0.0f,-0.0f},{1,tiny,1,1}))==0x80000000u,
+        "The negative fused min-normal boundary flushes toward signed zero");
+    check(dot({minimum,minimum,minimum,0},{0.5f,0.5f,1,1})==minimum,
+        "NI flushes every intermediate result before the following fused term");
+    check(dot({minimum,tiny,0,0},{1,tiny,1,1})==minimum,
+        "A fused exact result above min-normal remains normal at the same rounded word");
+    rejects([&]{dot({large,-large,0,0},{2,2,0,0});},
+        "Reject the original initial-product overflow even when an exact wider sum cancels");
+    rejects([&]{dot({large,large,large,large},{1,1,1,1});},"Reject finite-input matrix accumulation overflow");
+    AnimationMatrix zeros{},ones{};zeros.fill(-0.0f);ones.fill(1);
+    for (auto value:original_matrix_multiply(zeros,ones))
+        check(std::bit_cast<std::uint32_t>(value)==0x80000000u,"Matrix multiplication preserves negative zero products and sums");
+    for (const auto invalid:{std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+        for (std::size_t i=0;i<16;++i) {
+            auto bad=left;bad[i]=invalid;
+            rejects([&]{original_matrix_multiply(bad,zeros);},"Reject every non-finite left component even with a zero right matrix");
+            bad=right;bad[i]=invalid;
+            rejects([&]{original_matrix_multiply(zeros,bad);},"Reject every non-finite right component even with a zero left matrix");
+        }
+    }
+}
+
 int main() {
     try {
-        matrices();
+        matrices(); matrix_products();
         // These small synthetic values were independently evaluated through a
         // bounded scalar interpreter of guest 0x8012be90. They are not game data.
         const Quaternion identity{0,0,0,1}, half_turn{0,0,1,0};

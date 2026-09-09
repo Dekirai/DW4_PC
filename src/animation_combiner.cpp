@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
+#include <set>
 
 namespace dw4 {
 namespace {
@@ -64,6 +65,18 @@ AnimationCombiner::AnimationCombiner(const AnimationSourceRuntime& sources, std:
     : library_(sources.library_), matrices_(std::move(cached_matrices)) {
     validate_matrices(matrices_,library_->clips.front().bone_references.size());
 }
+AnimationCombiner::AnimationCombiner(const AnimationSourceRuntime& sources,std::vector<AnimationMatrix> matrices,
+    AnimationHierarchyDefinition hierarchy,std::vector<AnimationMatrix> bones,std::vector<AnimationMatrix> joints)
+    :AnimationCombiner(sources,std::move(matrices)) {
+    const auto& clip=library_->clips.front();
+    if (hierarchy.skeleton_reference()!=clip.info.skeleton_reference || hierarchy.bones().size()!=clip.bone_references.size())
+        fail("Animation hierarchy differs from the bound skeleton.");
+    for (std::size_t i=0;i<hierarchy.bones().size();++i)
+        if (hierarchy.bones()[i].reference!=clip.bone_references[i]) fail("Animation hierarchy bone identity/order differs from its library.");
+    validate_matrices(bones,hierarchy.bones().size()); validate_matrices(joints,hierarchy.inverse_joint_matrices().size());
+    hierarchy_=std::make_shared<const AnimationHierarchyDefinition>(std::move(hierarchy));
+    bone_matrices_=std::move(bones); joint_matrices_=std::move(joints);
+}
 AnimationCombiner decode_animation_combiner(const IgbDocument& doc, const AnimationSourceRuntime& sources, std::uint32_t reference) {
     try {
         if (doc.metadata.header.byte_order!=IgbByteOrder::little) fail("Combiner byte order is outside the verified profile.");
@@ -105,6 +118,56 @@ AnimationCombiner decode_animation_combiner(const IgbDocument& doc, const Animat
         const auto valid=doc.field(object,10);
         if (!valid || valid->size!=1 || doc.field_bytes(*valid)[0]>1) fail("Invalid combiner cache-valid byte.");
         result.cache_valid_=doc.field_bytes(*valid)[0]!=0; result.cached_time_=time(9); result.clock_override_=time(14);
+        return result;
+    } catch (const AnimationError&) { throw; }
+      catch (const std::exception& error) { throw AnimationError(error.what()); }
+}
+AnimationCombiner decode_animation_actor_combiner(const IgbDocument& doc,const AnimationSourceRuntime& sources,std::uint32_t ref) {
+    try {
+        auto prepared=decode_animation_combiner(doc,sources,ref);
+        const auto& object=doc.object(ref);
+        const auto field=[&](std::uint16_t slot,std::string_view type,std::size_t width) -> const IgbFieldValue& {
+            const auto* value=doc.field(object,slot);
+            if (!value || value->size!=width || doc.metadata.field_types.at(value->type_index).name!=type)
+                fail("Unexpected shared animation cache field type or width.");
+            return *value;
+        };
+        if (doc.field(object,11) && doc.field_bytes(field(11,"igBoolMetaField",1))[0]!=0)
+            fail("Serialized updated animation hierarchy requires live-state restoration.");
+        field(9,"igLongMetaField",8); field(10,"igBoolMetaField",1); field(14,"igLongMetaField",8);
+        field(3,"igObjectRefMetaField",4);
+        auto hierarchy=decode_animation_hierarchy(doc,*doc.field_reference(object,3));
+        std::set<std::size_t> cache_memories;
+        for (const auto slot:std::array<std::uint16_t,3>{8,12,13}) {
+            field(slot,"igMemoryRefMetaField",4);
+            const auto memory=doc.field_reference(object,slot);
+            if (memory && !doc.memory(*memory).empty() && !cache_memories.insert(doc.references.at(*memory).value_index).second)
+                fail("Aliased mutable animation caches require shared-memory restoration.");
+        }
+        const auto& skeleton=doc.object(hierarchy.skeleton_reference());
+        const auto inverse=doc.field_reference(skeleton,5);
+        if (inverse && !doc.memory(*inverse).empty() && cache_memories.contains(doc.references.at(*inverse).value_index))
+            fail("Animation caches cannot alias immutable inverse-joint input.");
+        const auto matrices=[&](std::uint16_t slot,std::size_t count) {
+            field(slot,"igMemoryRefMetaField",4);
+            const auto memory=doc.field_reference(object,slot);
+            if (!memory) {
+                if (!count) return std::vector<AnimationMatrix>{};
+                fail("Original shared animation matrix array is absent.");
+            }
+            const auto bytes=doc.memory(*memory);
+            if (bytes.size()!=count*64) fail("Shared animation matrix array size differs from its skeleton.");
+            std::vector<AnimationMatrix> result(count);
+            for (std::size_t bone=0;bone<count;++bone) for (std::size_t i=0;i<16;++i) {
+                std::uint32_t bits=0;
+                for (std::size_t byte=0;byte<4;++byte) bits|=std::uint32_t(bytes[bone*64+i*4+byte])<<(byte*8);
+                result[bone][i]=std::bit_cast<float>(bits);
+            }
+            return result;
+        };
+        auto bones=matrices(12,hierarchy.bones().size()), joints=matrices(13,hierarchy.inverse_joint_matrices().size());
+        AnimationCombiner result(sources,std::move(prepared.matrices_),std::move(hierarchy),std::move(bones),std::move(joints));
+        result.cache_valid_=prepared.cache_valid_; result.cached_time_=prepared.cached_time_; result.clock_override_=prepared.clock_override_;
         return result;
     } catch (const AnimationError&) { throw; }
       catch (const std::exception& error) { throw AnimationError(error.what()); }
@@ -227,13 +290,30 @@ void AnimationCombiner::evaluate_impl(AnimationSourceRuntime& sources, std::uint
             matrices_[bone][12]=value.translation.x; matrices_[bone][13]=value.translation.y; matrices_[bone][14]=value.translation.z;
         }
     }
-    cached_time_=time; cache_valid_=true;
+    cached_time_=time; cache_valid_=true; hierarchy_valid_=false;
 }
 const std::vector<AnimationMatrix>& AnimationCombiner::evaluate(AnimationSourceRuntime& sources, std::uint64_t time) {
     auto candidate=*this; auto candidate_sources=sources;
     try { candidate.evaluate_impl(candidate_sources,time); }
     catch (const AnimationMathError& error) { throw AnimationError(error.what()); }
     *this=std::move(candidate); sources=std::move(candidate_sources); return matrices_;
+}
+void AnimationCombiner::traverse(AnimationSourceRuntime& sources,const AnimationMatrix& root,std::uint64_t time) {
+    require_sources(sources);
+    if (!hierarchy_) fail("Actor traversal requires decoded shared animation caches and skeleton.");
+    for (const auto value:root) if (!std::isfinite(value)) fail("Actor traversal root contains a non-finite component.");
+    if (root[3]!=0 || root[7]!=0 || root[11]!=0 || root[15]!=1)
+        fail("Actor traversal root is outside the verified affine profile.");
+    auto candidate=*this; auto candidate_sources=sources;
+    try {
+        candidate.bone_matrices_[0]=root;
+        candidate.evaluate_impl(candidate_sources,time);
+        if (!candidate.hierarchy_valid_) {
+            evaluate_animation_hierarchy(*candidate.hierarchy_,candidate.matrices_,candidate.bone_matrices_,candidate.joint_matrices_);
+            candidate.hierarchy_valid_=true;
+        }
+    } catch (const std::exception& error) { throw AnimationError(error.what()); }
+    *this=std::move(candidate); sources=std::move(candidate_sources);
 }
 SkinPose AnimationCombiner::pose(AnimationSourceRuntime& sources, const SkinningData& skin, std::uint64_t time) {
     require_sources(sources); const auto& clip=library_->clips.front();

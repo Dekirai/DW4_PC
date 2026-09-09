@@ -1,6 +1,7 @@
 #include "dw4/animation_math.hpp"
 
 #include <cmath>
+#include <limits>
 
 namespace dw4 {
 namespace {
@@ -9,6 +10,37 @@ namespace {
 void finite_quaternion(const std::array<float,4>& value) {
     for (const auto component : value)
         if (!std::isfinite(component)) fail("Animation quaternion contains a non-finite component");
+}
+
+float matrix_product(float a,float b) {
+    const float rounded=a*b;
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum) return std::copysign(0.0f,rounded);
+    // A binary32 product is exact in binary64. Gekko NI mode tests tininess
+    // before rounding, including products that would round up to min-normal.
+    if (magnitude==minimum && std::abs(static_cast<double>(a)*static_cast<double>(b))<minimum)
+        return std::copysign(0.0f,rounded);
+    return rounded;
+}
+
+float matrix_fused_sum(float a,float b,float addend) {
+    const float rounded=std::fma(a,b,addend);
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum) return std::copysign(0.0f,rounded);
+    if (magnitude!=minimum) return rounded;
+
+    // Only the min-normal boundary needs more than the correctly rounded
+    // float FMA. TwoSum retains the exact low part of product + addend even
+    // when a tiny product is lost by a double addition at that boundary.
+    const double product=static_cast<double>(a)*static_cast<double>(b);
+    const double sum=product+static_cast<double>(addend);
+    const double virtual_addend=sum-product;
+    const double error=(product-(sum-virtual_addend))+
+        (static_cast<double>(addend)-virtual_addend);
+    if (std::abs(sum)<minimum || (std::abs(sum)==minimum &&
+        ((sum>0 && error<0) || (sum<0 && error>0))))
+        return std::copysign(0.0f,rounded);
+    return rounded;
 }
 
 std::array<float,2> polynomial_weights(float dot, float time) {
@@ -77,6 +109,19 @@ std::array<float,4> original_interpolate_rotation(const std::array<float,4>& a,
         result[i] = std::fma(weights[0],a[i],second);
     }
     finite_quaternion(result);
+    return result;
+}
+
+AnimationMatrix original_matrix_multiply(const AnimationMatrix& left, const AnimationMatrix& right) {
+    for (auto value:left) if (!std::isfinite(value)) fail("Animation matrix contains a non-finite component");
+    for (auto value:right) if (!std::isfinite(value)) fail("Animation matrix contains a non-finite component");
+    AnimationMatrix result{};
+    for (std::size_t column=0;column<4;++column) for (std::size_t row=0;row<4;++row) {
+        float value=matrix_product(left[row],right[column*4]);
+        for (std::size_t k=1;k<4;++k) value=matrix_fused_sum(left[k*4+row],right[column*4+k],value);
+        if (!std::isfinite(value)) fail("Animation matrix arithmetic overflow");
+        result[column*4+row]=value;
+    }
     return result;
 }
 

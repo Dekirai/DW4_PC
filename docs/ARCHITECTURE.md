@@ -145,6 +145,14 @@ fields, original wait/virtual callbacks and complete player construction remain
 outside this prepared-work API. The application does not use it as a replacement
 for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 
+Version 0.22 adds `animation_hierarchy` and shared combiner bone/joint caches.
+An explicit ACTION actor traversal consumes current view attributes and parent
+time, applies node timing once, writes root0 and evaluates the no-modifier
+hierarchy when invalid. Successful local sampling invalidates it even through
+direct pose APIs. Cached bone queries use the first actor and ASCII-folded first
+name match, without forcing evaluation. Renderer context stacks and full node/
+appearance traversal remain separate. See [ANIMATION_HIERARCHY.md](ANIMATION_HIERARCHY.md).
+
 Version 0.21 adds `action_actors` and the actor-aware ACTION factory. A qualified
 prepared RAM owns every ordered actor's combiner link and identity bone/joint
 allocation. NDSP releases actor buffers, action work, timers and attributes;

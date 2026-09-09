@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.21 adds owned original ACTION actor buffers, activation, deactivation
-and reactivation in the portable core. The full original game, including local
+Version 0.22 adds original actor hierarchy calculation, shared matrix caches
+and cached bone queries in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -83,8 +83,12 @@ not contain game files.
   Four original Agumon sequence instances drive their own combined poses in core
   integration tests. Prepared actor groups now allocate all ordered actor buffers
   and release them through the original NDSP path, preserving node clocks for
-  reactivation. Actor traversal, event consumers and effect rendering remain
+  reactivation. Ordinary actor traversal and cached bone queries now use the
+  original shared hierarchy; full renderer integration and event consumers remain
   pending. See [ACTIONS.md](docs/ACTIONS.md) and [ACTION_ACTORS.md](docs/ACTION_ACTORS.md).
+- Evaluate the original no-modifier bone/joint hierarchy with ordered float
+  matrix operations, helper bones, retained cache validity and node-adjusted
+  traversal time. See [ANIMATION_HIERARCHY.md](docs/ANIMATION_HIERARCHY.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit

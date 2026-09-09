@@ -114,6 +114,13 @@ public:
     // action restart: completed commands and their cursor remain committed.
     ActionResult resume(AnimationSourceRuntime& sources,ActionServices& services,std::uint64_t system_time);
     SkinPose pose(AnimationSourceRuntime& sources,const SkinningData& skin,std::uint64_t system_time);
+    // Explicit traversal of one prepared actor through this node's clock. The
+    // Caller supplies parent traversal time and current view attributes. The
+    // model-view matrix already includes outer/node transforms, not actor transform.
+    void traverse_actor(AnimationSourceRuntime& sources,std::size_t actor_index,
+        const AnimationMatrix& model_view,const AnimationMatrix& inverse_view,std::uint64_t parent_time);
+    // Original active-gated cached query: no sampling or traversal is implied.
+    std::optional<AnimationMatrix> bone_matrix(std::string_view name) const;
     void freeze(bool frozen,std::uint64_t system_time);
 private:
     std::shared_ptr<const ActionProgram> program_;
