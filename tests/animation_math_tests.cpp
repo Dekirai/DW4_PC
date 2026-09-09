@@ -79,6 +79,131 @@ void matrices() {
     }
 }
 
+void rotation_matrix_ni() {
+    // Synthetic vectors evaluated by exact integer arithmetic through the
+    // original scalar instruction words, using startup NI=1/RN=00.
+    struct Case {
+        std::array<std::uint32_t,4> rotation;
+        std::array<std::uint32_t,9> expected;
+        const char* reason;
+    };
+    const Case cases[]{
+        {{0,0,0x00400000u,0x3f7fffffu},
+            {0x3f800000u,0,0,0,0x3f800000u,0,0,0,0x3f800000u},
+            "Scalar product flush precedes rounding up to min-normal"},
+        {{0x3f800000u,0x80000000u,0x80400000u,0x3f7fffffu},
+            {0x3f800000u,0,0x80800000u,0x80000000u,0xbf800000u,0xbfffffffu,0x80800000u,0x3fffffffu,0xbf800000u},
+            "Scalar underflow and later sums preserve the original signed zeros"},
+        {{0x5f000000u,0,0,1},
+            {0x3f800000u,0,0,0,0xff000000u,0x95000000u,0,0x15000000u,0xff000000u},
+            "Scalar loads retain a subnormal W component which produces normal cross terms"},
+        {{1,0x5f000000u,0,0},
+            {0xff000000u,0x15000000u,0,0x15000000u,0x3f800000u,0,0,0,0xff000000u},
+            "An input remains usable after its separately doubled value underflows"},
+        {{1,0,0,0x5f000000u},
+            {0x3f800000u,0,0,0,0x3f800000u,0,0,0,0x3f800000u},
+            "Doubling underflow is flushed before multiplication by a large W"},
+        {{0x3f000000u,0x00800001u,0x00800000u,0x3f000000u},
+            {0x3f800000u,0,0x01000000u,0x01000000u,0x3f000000u,0xbf000000u,0x80000000u,0x3f000000u,0x3f000000u},
+            "Subtraction of normal cross terms flushes tiny positive and negative residuals"},
+        {{0x3f000000u,0x00800001u,0x80800000u,0x3f000000u},
+            {0x3f800000u,0x01000000u,0,0,0x3f000000u,0xbf000000u,0x81000000u,0x3f000000u,0x3f000000u},
+            "Addition of opposite normal cross terms flushes its tiny result"},
+    };
+    constexpr std::array<std::size_t,9> written{0,1,2,4,5,6,8,9,10};
+    constexpr std::array<std::size_t,7> untouched{3,7,11,12,13,14,15};
+    constexpr std::array<std::uint32_t,7> preserved{
+        0x80000000u,1,0x80000001u,0x007fffffu,0x807fffffu,0x00800000u,0xff7fffffu};
+    dw4::AnimationMatrix initial{};
+    for (std::size_t i=0;i<initial.size();++i) initial[i]=static_cast<float>(i+1);
+    for (std::size_t i=0;i<untouched.size();++i) initial[untouched[i]]=std::bit_cast<float>(preserved[i]);
+    for (const auto& value:cases) {
+        Quaternion rotation{};
+        for (std::size_t i=0;i<rotation.size();++i) rotation[i]=std::bit_cast<float>(value.rotation[i]);
+        auto matrix=initial;
+        dw4::original_rotation_matrix(rotation,matrix);
+        for (std::size_t i=0;i<written.size();++i)
+            check(std::bit_cast<std::uint32_t>(matrix[written[i]])==value.expected[i],value.reason);
+        for (std::size_t i=0;i<untouched.size();++i)
+            check(std::bit_cast<std::uint32_t>(matrix[untouched[i]])==preserved[i],
+                "Quaternion conversion preserves every untouched word including subnormals and negative zero");
+    }
+    const auto same_words=[](const dw4::AnimationMatrix& a,const dw4::AnimationMatrix& b) {
+        for (std::size_t i=0;i<a.size();++i)
+            if (std::bit_cast<std::uint32_t>(a[i])!=std::bit_cast<std::uint32_t>(b[i])) return false;
+        return true;
+    };
+    for (std::size_t i=0;i<4;++i) for (const auto invalid:{
+        std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
+        Quaternion rotation{0,0,0,1};rotation[i]=invalid;auto matrix=initial;
+        rejects([&]{dw4::original_rotation_matrix(rotation,matrix);},"Reject each nonfinite quaternion input");
+        check(same_words(matrix,initial),"Invalid quaternion input leaves all matrix words unchanged");
+    }
+    for (std::size_t i=0;i<initial.size();++i) {
+        auto matrix=initial;matrix[i]=std::numeric_limits<float>::quiet_NaN();const auto saved=matrix;
+        rejects([&]{dw4::original_rotation_matrix({0,0,0,1},matrix);},"Reject nonfinite existing matrix fields even if they would be overwritten");
+        check(same_words(matrix,saved),"Invalid matrix input leaves all matrix words unchanged");
+    }
+    auto matrix=initial;
+    rejects([&]{dw4::original_rotation_matrix({std::numeric_limits<float>::max(),0,0,0},matrix);},
+        "Reject finite quaternion input whose scalar arithmetic overflows");
+    check(same_words(matrix,initial),"Scalar arithmetic failure preserves the complete existing matrix");
+}
+
+void skin_points() {
+    using dw4::AnimationMatrix;
+    using dw4::original_skin_point;
+    const AnimationMatrix matrix{1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16};
+    check(original_skin_point(matrix,{2,3,4})==std::array<float,3>{66,76,86},
+        "CPU skinning uses the selected column-major matrix and returns XYZ without dividing by W");
+    AnimationMatrix discarded{};discarded[0]=discarded[5]=discarded[10]=discarded[15]=1;
+    discarded[3]=discarded[7]=std::numeric_limits<float>::max();
+    check(original_skin_point(discarded,{2,3,4})==std::array<float,3>{2,3,4},
+        "Overflow in the discarded fourth lane does not invalidate finite skin coordinates");
+    const auto first_word=[](const std::array<float,4>& row,const std::array<float,3>& point) {
+        AnimationMatrix value{};
+        for (std::size_t i=0;i<row.size();++i) value[4*i]=row[i];
+        return std::bit_cast<std::uint32_t>(original_skin_point(value,point)[0]);
+    };
+    const auto word=[](std::uint32_t value) { return std::bit_cast<float>(value); };
+    const auto above_one=word(0x3f800001u),below_one=word(0x3f7ffffeu);
+    check(first_word({above_one,-1,0,0},{below_one,1,0})==0,
+        "Skinning rounds its initial X product before Y accumulation");
+    check(first_word({-1,above_one,0,0},{1,below_one,0})==0xa8800000u,
+        "Skinning fuses the Y term with the rounded X product");
+    check(first_word({-1,0,above_one,0},{1,0,below_one})==0xa8800000u,
+        "Skinning fuses the Z term with accumulated XY");
+    check(first_word({0,0,above_one,-1},{0,0,below_one})==0,
+        "Translation is added after the Z term has rounded, without fusion");
+    check(first_word({1e20f,-1e20f,3,4},{1,1,1})==std::bit_cast<std::uint32_t>(7.0f),
+        "CPU skinning preserves X, Y, Z, translation cancellation order");
+    const auto minimum=std::numeric_limits<float>::min(),tiny=std::numeric_limits<float>::denorm_min();
+    check(first_word({minimum,0,0,0},{word(0x3f7fffffu),1,1})==0,
+        "Skinning applies NI before initial-product rounding up to min-normal");
+    check(first_word({word(0x7e800000u),0,0,0},{tiny,0,0})==0x34000000u,
+        "Skin point loads preserve a subnormal coordinate that produces a normal result");
+    check(first_word({-minimum,-0.0f,-0.0f,-0.0f},{word(0x3f7fffffu),1,1})==0x80000000u,
+        "Skinning retains negative zero after NI underflow and translation addition");
+    check(first_word({word(0x00800001u),0,0,-minimum},{1,0,0})==0,
+        "Separate translation addition flushes a tiny cancellation result");
+    check(first_word({0,0,0,tiny},{0,0,0})==0,
+        "A subnormal translation is loaded intact then flushed by the final arithmetic operation");
+    for (std::size_t row=0;row<3;++row) {
+        AnimationMatrix overflow{};overflow[row]=std::numeric_limits<float>::max();
+        rejects([&]{original_skin_point(overflow,{2,0,0});},"Reject overflow in each returned skin coordinate");
+    }
+    for (const auto invalid:{std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
+        for (std::size_t i=0;i<matrix.size();++i) {
+            auto bad=matrix;bad[i]=invalid;
+            rejects([&]{original_skin_point(bad,{0,0,0});},"Reject every nonfinite skin matrix input even in the discarded row");
+        }
+        for (std::size_t i=0;i<3;++i) {
+            std::array<float,3> bad{};bad[i]=invalid;
+            rejects([&]{original_skin_point(matrix,bad);},"Reject every nonfinite skin point coordinate");
+        }
+    }
+}
+
 void matrix_products() {
     using dw4::AnimationMatrix;
     using dw4::original_matrix_multiply;
@@ -147,7 +272,7 @@ void matrix_products() {
 
 int main() {
     try {
-        matrices(); matrix_products();
+        matrices(); rotation_matrix_ni(); matrix_products(); skin_points();
         // These small synthetic values were independently evaluated through a
         // bounded scalar interpreter of guest 0x8012be90. They are not game data.
         const Quaternion identity{0,0,0,1}, half_turn{0,0,1,0};

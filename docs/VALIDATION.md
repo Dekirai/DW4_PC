@@ -1,4 +1,35 @@
-# Native actor hierarchy and traversal validation
+# Native actor cache rendering validation
+
+Version 0.23 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. Original actor cache capture and single-influence CPU
+deformation now feed an explicit prepared draw. Its camera and fit remain host
+inspection state; complete appearance traversal and gameplay remain pending.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 36/36 CTest suites passed; no production compiler warnings; 6 Python verifier tests passed |
+| CLI validation | 16 app option suites and 10 walking option suites passed without opening a graphics context |
+| New core coverage | 41 actor skin checks and 463 animation math checks passed; source/RAM/actor/binding identity, permuted and repeated palette entries, private/shared caches, retained frames, malformed graphs and finite-result rejection covered |
+| Original actor skin integration | 36 captures across four RAMs and all three appearances, 24,024 deformed vertices, 24,989 checks passed |
+| Quaternion instruction comparison | 16,578 cases, 239,440 exact finite words, 1,553 finite-input overflow and 60 invalid-input rejections; all 10,250 supplied-data rotations unchanged; zero mismatches |
+| CPU skin-loop instruction comparison | 1,612 cases, 7,327 positions and 226,991 executed guest instructions; 18,894 exact finite XYZ words and 1,029 finite-input overflow/NaN rejections; zero mismatches |
+| Prepared GPU rendering | Exact image comparison against separately specified clip-space geometry verifies raw coordinates, noncommuting root/projection, position updates/reset, API separation, invalid-input rejection and GL state preservation |
+| Packaged actor inspection | High-detail body in RAM 0, low-detail body in RAM 1 and solid shadow geometry in RAM 2 each render 8 frames; RAM 3 high-detail run playback renders 120 frames with 121 pose uploads |
+| Original traversal and ACTION regression | 720 traversals and 18,000 cached bone queries pass; all 182 ordinary actions plus NDSP, 369 commands, 4,157 poses and 240 four-instance sequence poses pass |
+| Packaged walking regression | 120 frames, 198 steps, 101.333 travel, 46 idle/152 run steps and 102 pose uploads; pause/restart/focus-loss replay passed |
+| Visual inspection | Actor body/shadow/playback, overview and walking screenshots inspected; version 0.23 and 8x MSAA visible; body targets 1290x554 and walking target 1236x600 |
+
+Math comparisons use the independently implemented original instruction model
+and startup NI=1/RN=00 profile, including the documented inferred extreme fused
+tininess boundary. They were rerun against helpers linked to the final core
+implementation. They do not establish physical Gekko/GX parity. Original-data
+integration exercises production decoding and caches; synthetic GPU checks
+establish transform order, not original lighting, material or raster output.
+The shadow geometry is inspected in Solid mode because its full original
+effective material is unsupported. Original data, probes and images stay ignored.
+See [ACTOR_SKIN.md](ACTOR_SKIN.md) for exact source and execution boundaries.
+
+## Native actor hierarchy and traversal validation
 
 Version 0.22 was validated locally on 2026-09-09 with MSVC 19.51. The portable
 core now owns shared bone/joint caches, computes the original ordinary actor

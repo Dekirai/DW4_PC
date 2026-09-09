@@ -164,12 +164,16 @@ constexpr const char* vertex_source = R"GLSL(#version 330 core
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec2 texture_coordinate;
 uniform mat4 view_projection;
+uniform mat4 model_view;
+uniform int prepared_draw;
 out vec3 local_position;
 out vec2 uv;
 void main() {
-    local_position = position;
+    vec4 point = vec4(position, 1.0);
+    if (prepared_draw != 0) point = model_view * point;
+    local_position = point.xyz;
     uv = texture_coordinate;
-    gl_Position = view_projection * vec4(position, 1.0);
+    gl_Position = view_projection * point;
 }
 )GLSL";
 constexpr const char* fragment_source = R"GLSL(#version 330 core
@@ -207,8 +211,10 @@ public:
     GLuint program{}, vao{}, vertex_buffer{}, index_buffer{}, base_texture{};
     GLuint draw_fbo{}, resolve_fbo{}, texture{}, depth_buffer{}, color_buffer{};
     GLint matrix_location{-1}, mode_location{-1}, texture_location{-1};
+    GLint model_view_location{-1}, prepared_location{-1};
     bool has_uv{};
     bool batch_mode{};
+    bool prepared{};
     std::vector<DrawBatch> batches;
     std::vector<GLuint> batch_textures;
     std::vector<Vec2> batch_uvs;
@@ -226,7 +232,7 @@ public:
         if (vertex_buffer) gl.DeleteBuffers(1, &vertex_buffer);
         if (index_buffer) gl.DeleteBuffers(1, &index_buffer);
         vao = vertex_buffer = index_buffer = 0;
-        index_count = 0; frames = 0; has_uv = false; batch_mode = false;
+        index_count = 0; frames = 0; has_uv = false; batch_mode = false; prepared = false;
         batches.clear();
         batch_uvs.clear();
         vertices.clear(); center = {}; radius = 1;
@@ -299,7 +305,10 @@ public:
             matrix_location = gl.GetUniformLocation(program, "view_projection");
             mode_location = gl.GetUniformLocation(program, "draw_mode");
             texture_location = gl.GetUniformLocation(program, "base_texture");
-            if (matrix_location < 0 || mode_location < 0 || texture_location < 0) throw std::runtime_error("Mesh shader uniforms are unavailable");
+            model_view_location = gl.GetUniformLocation(program, "model_view");
+            prepared_location = gl.GetUniformLocation(program, "prepared_draw");
+            if (matrix_location < 0 || mode_location < 0 || texture_location < 0 || model_view_location < 0 || prepared_location < 0)
+                throw std::runtime_error("Mesh shader uniforms are unavailable");
             gl.DeleteShader(vertex); gl.DeleteShader(fragment);
         } catch (...) {
             if (vertex) gl.DeleteShader(vertex);
@@ -381,6 +390,12 @@ std::uint64_t MeshRenderer::rendered_frames() const noexcept { return impl_ ? im
 int MeshRenderer::samples() const noexcept { return impl_ ? impl_->sample_count : 0; }
 
 void MeshRenderer::upload(const MeshData& mesh) {
+    upload_impl(mesh,false);
+}
+void MeshRenderer::upload_prepared(const MeshData& mesh) {
+    upload_impl(mesh,true);
+}
+void MeshRenderer::upload_impl(const MeshData& mesh,bool prepared) {
     clear();
     if (mesh.positions.empty() || mesh.positions.size() > 1048576 || mesh.indices.empty()
         || mesh.indices.size() > 3145728 || mesh.indices.size() % 3)
@@ -411,9 +426,9 @@ void MeshRenderer::upload(const MeshData& mesh) {
     vertices.reserve(mesh.positions.size() * 5);
     for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
         const auto& position = mesh.positions[i];
-        vertices.push_back(static_cast<float>((position.x - center[0]) / radius));
-        vertices.push_back(static_cast<float>((position.y - center[1]) / radius));
-        vertices.push_back(static_cast<float>((position.z - center[2]) / radius));
+        vertices.push_back(prepared ? position.x : static_cast<float>((position.x - center[0]) / radius));
+        vertices.push_back(prepared ? position.y : static_cast<float>((position.y - center[1]) / radius));
+        vertices.push_back(prepared ? position.z : static_cast<float>((position.z - center[2]) / radius));
         const auto uv = mesh.texcoords.empty() ? Vec2{} : mesh.texcoords[i];
         if (!std::isfinite(uv.u) || !std::isfinite(uv.v)) throw std::runtime_error("Mesh upload contains a non-finite UV coordinate");
         vertices.push_back(uv.u); vertices.push_back(uv.v);
@@ -437,6 +452,7 @@ void MeshRenderer::upload(const MeshData& mesh) {
         state.index_count = mesh.indices.size();
         state.has_uv = !mesh.texcoords.empty();
         state.center = center; state.radius = radius;
+        state.prepared = prepared;
         state.vertices = std::move(vertices);
     } catch (...) { state.release_mesh(); throw; }
 }
@@ -566,7 +582,7 @@ void MeshRenderer::update_positions(std::span<const Vec3> positions) {
     for (std::size_t i = 0; i < positions.size(); ++i) {
         const std::array<double, 3> position{positions[i].x, positions[i].y, positions[i].z};
         for (std::size_t axis = 0; axis < 3; ++axis) {
-            const auto normalized = (position[axis] - state.center[axis]) / state.radius;
+            const auto normalized = state.prepared ? position[axis] : (position[axis] - state.center[axis]) / state.radius;
             if (!std::isfinite(normalized) || std::abs(normalized) > std::numeric_limits<float>::max())
                 throw std::runtime_error("Pose contains a non-finite or unrepresentable coordinate");
             updated[i * 5 + axis] = static_cast<float>(normalized);
@@ -617,6 +633,7 @@ std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point
     const OrbitCamera& camera, float aspect) const {
     if (!has_mesh()) return std::nullopt;
     const auto& state = *impl_;
+    if (state.prepared) throw std::runtime_error("Prepared geometry requires explicit model-view and projection for canvas coordinates");
     const std::array<double, 4> position{(point.x - state.center[0]) / state.radius,
         (point.y - state.center[1]) / state.radius, (point.z - state.center[2]) / state.radius, 1};
     for (auto value : position)
@@ -636,6 +653,7 @@ std::optional<MeshCanvasPoint> MeshRenderer::project_to_canvas(const Vec3& point
 void MeshRenderer::focus_camera(OrbitCamera& camera, const MeshBounds& source_bounds) const {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded for camera focus");
     const auto& state = *impl_;
+    if (state.prepared) throw std::runtime_error("Prepared geometry requires explicit camera placement");
     const std::array<double,3> low{source_bounds.min.x,source_bounds.min.y,source_bounds.min.z};
     const std::array<double,3> high{source_bounds.max.x,source_bounds.max.y,source_bounds.max.z};
     std::array<float,3> target{};
@@ -671,6 +689,18 @@ void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions&
 
 std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& camera,
     MeshDrawMode mode, int requested_samples, std::optional<std::size_t> occluded_batch) {
+    if (impl_ && impl_->prepared) throw std::runtime_error("Prepared geometry requires explicit model-view and projection matrices");
+    constexpr std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    return render_matrices(width,height,identity,camera.view_projection(static_cast<float>(width)/std::max(height,1)),mode,requested_samples,occluded_batch);
+}
+std::uint32_t MeshRenderer::render_prepared(int width,int height,
+    const std::array<float,16>& model_view,const std::array<float,16>& projection,MeshDrawMode mode,int requested_samples) {
+    if (!impl_ || !impl_->prepared) throw std::runtime_error("Explicit matrix rendering requires prepared source coordinates");
+    return render_matrices(width,height,model_view,projection,mode,requested_samples,std::nullopt);
+}
+std::uint32_t MeshRenderer::render_matrices(int width,int height,
+    const std::array<float,16>& model_view,const std::array<float,16>& matrix,
+    MeshDrawMode mode,int requested_samples,std::optional<std::size_t> occluded_batch) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded");
     if (occluded_batch && *occluded_batch >= batch_count())
         throw std::runtime_error("Occluded batch index is outside the uploaded scene");
@@ -683,7 +713,8 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
     }
     if (width < 1 || height < 1 || width > 4096 || height > 4096 || std::uint64_t(width) * height > 8388608)
         throw std::runtime_error("Mesh viewport exceeds the 4096-axis / 8-megapixel limit");
-    const auto matrix = camera.view_projection(static_cast<float>(width) / height);
+    for (const auto value:model_view) if (!std::isfinite(value)) throw std::runtime_error("Prepared model-view contains a non-finite value");
+    for (const auto value:matrix) if (!std::isfinite(value)) throw std::runtime_error("Prepared projection contains a non-finite value");
     auto& state = *impl_;
     SavedState saved(state.gl); discard_prior_errors();
     state.targets(width, height, requested_samples, saved);
@@ -698,6 +729,8 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
     glPolygonMode(GL_FRONT_AND_BACK, mode == MeshDrawMode::wireframe ? GL_LINE : GL_FILL); glLineWidth(1);
     state.gl.UseProgram(state.program);
     state.gl.UniformMatrix4fv(state.matrix_location, 1, GL_FALSE, matrix.data());
+    state.gl.UniformMatrix4fv(state.model_view_location, 1, GL_FALSE, model_view.data());
+    state.gl.Uniform1i(state.prepared_location,state.prepared ? 1 : 0);
     state.gl.Uniform1i(state.mode_location, mode == MeshDrawMode::wireframe ? 1 : mode == MeshDrawMode::textured ? 2 : 0);
     if (mode == MeshDrawMode::textured) {
         state.gl.ActiveTexture(GL_TEXTURE0); state.gl.BindSampler(0, 0);

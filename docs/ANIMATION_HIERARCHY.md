@@ -82,6 +82,12 @@ empty-modifier, false-force profile sets `cache_used` false and uses shared
 combiner arrays. It writes shared bone0 as `model_view * actor_transform` before
 sampling, including a same-time cache hit. Private actor arrays remain unused.
 
+The shared actor-entry operation is `ActionActorGroup::traverse()`. It receives
+already converted node time and validates activation and combiner ownership.
+`ActionRuntime::traverse_actor()` supplies its active gate, one node-time
+conversion and atomic runtime publication. The prepared clip inspector uses
+the same group operation after its own explicit time conversion.
+
 After local evaluation, a false hierarchy-valid flag triggers calculation:
 
 1. Start at bone1, preserving bone0.
@@ -118,8 +124,12 @@ Flushing an extreme fused result such as `2^-126 - 2^-298` is an inference from
 the pre-round rule. The helper and exact oracle preserve that deficit; Dolphin's
 double intermediate can lose it, and the cited hardware test does not cover it.
 These boundary vectors therefore require a physical Gekko comparison before a
-hardware-parity claim. Older animation helpers retain their separate numeric
-profiles.
+hardware-parity claim. Version 0.23 also applies NI flushing to each scalar
+multiply/add/subtract in the recovered `8012BCDC` quaternion-to-matrix routine.
+Its seven untouched matrix entries remain bit-identical. The CPU skin-point
+helper uses the paired-single multiply/fused sums followed by separate
+translation addition; see [ACTOR_SKIN.md](ACTOR_SKIN.md). Other older animation
+helpers retain their separate numeric profiles.
 
 Successful new local sampling invalidates hierarchy even when invoked through
 the existing direct pose API. Same-time and no-state early returns preserve it.

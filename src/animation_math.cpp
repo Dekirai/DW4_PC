@@ -23,6 +23,16 @@ float matrix_product(float a,float b) {
     return rounded;
 }
 
+float matrix_sum(float a,float b) {
+    const float rounded=a+b;
+    // A tiny sum of binary32 operands is exactly representable: both inputs
+    // are multiples of 2^-149. No pre-round min-normal correction is needed.
+    return std::abs(rounded)<std::numeric_limits<float>::min() ?
+        std::copysign(0.0f,rounded) : rounded;
+}
+
+float matrix_difference(float a,float b) { return matrix_sum(a,-b); }
+
 float matrix_fused_sum(float a,float b,float addend) {
     const float rounded=std::fma(a,b,addend);
     const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
@@ -125,17 +135,35 @@ AnimationMatrix original_matrix_multiply(const AnimationMatrix& left, const Anim
     return result;
 }
 
+std::array<float,3> original_skin_point(const AnimationMatrix& matrix, const std::array<float,3>& point) {
+    for (auto value:matrix) if (!std::isfinite(value)) fail("Animation skin matrix contains a non-finite component");
+    for (auto value:point) if (!std::isfinite(value)) fail("Animation skin point contains a non-finite component");
+    std::array<float,3> result{};
+    for (std::size_t row=0;row<result.size();++row) {
+        float value=matrix_product(matrix[row],point[0]);
+        value=matrix_fused_sum(matrix[4+row],point[1],value);
+        value=matrix_fused_sum(matrix[8+row],point[2],value);
+        value=matrix_sum(matrix[12+row],value);
+        if (!std::isfinite(value)) fail("Animation skin point arithmetic overflow");
+        result[row]=value;
+    }
+    return result;
+}
+
 void original_rotation_matrix(const std::array<float,4>& q, AnimationMatrix& matrix) {
     finite_quaternion(q);
     for (auto value : matrix) if (!std::isfinite(value)) fail("Animation matrix contains a non-finite component");
-    const float y2=2*q[1], z2=2*q[2], x2=2*q[0];
-    const float yy=y2*q[1], zz=z2*q[2], xx=x2*q[0];
-    const float zw=z2*q[3], yx=y2*q[0], yw=y2*q[3], zx=z2*q[0];
-    const float xw=x2*q[3], zy=z2*q[1];
+    const float y2=matrix_product(2,q[1]), z2=matrix_product(2,q[2]), x2=matrix_product(2,q[0]);
+    const float yy=matrix_product(y2,q[1]), zz=matrix_product(z2,q[2]), xx=matrix_product(x2,q[0]);
+    const float zw=matrix_product(z2,q[3]), yx=matrix_product(y2,q[0]);
+    const float yw=matrix_product(y2,q[3]), zx=matrix_product(z2,q[0]);
+    const float xw=matrix_product(x2,q[3]), zy=matrix_product(z2,q[1]);
     auto result=matrix;
-    result[0]=1-(yy+zz); result[1]=yx-zw; result[2]=zx+yw;
-    result[4]=yx+zw; result[5]=1-(xx+zz); result[6]=zy-xw;
-    result[8]=zx-yw; result[9]=zy+xw; result[10]=1-(xx+yy);
+    result[0]=matrix_difference(1,matrix_sum(yy,zz));
+    result[1]=matrix_difference(yx,zw); result[2]=matrix_sum(zx,yw);
+    result[4]=matrix_sum(yx,zw); result[5]=matrix_difference(1,matrix_sum(xx,zz));
+    result[6]=matrix_difference(zy,xw); result[8]=matrix_difference(zx,yw);
+    result[9]=matrix_sum(zy,xw); result[10]=matrix_difference(1,matrix_sum(xx,yy));
     for (auto value : result) if (!std::isfinite(value)) fail("Animation matrix arithmetic overflow");
     matrix=result;
 }

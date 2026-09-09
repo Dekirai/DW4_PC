@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.23 connects an explicitly selected actor's main skin to the cached
+joint palette, recovered CPU vertex deformation and a native prepared draw.
+The captured root/model-view is applied once before a separate projection.
+This visible integration uses a host inspection camera; original camera,
+complete effective appearance/material traversal, action events and player
+scheduling remain required. See [ACTOR_SKIN.md](ACTOR_SKIN.md).
+
 Version 0.22 adds explicit ordinary actor traversal, original float hierarchy
 calculation and cached bone queries. Four original Agumon instances pass 720
 traversals across their three appearances; independent hierarchy instruction

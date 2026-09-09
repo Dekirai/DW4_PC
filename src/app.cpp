@@ -1,4 +1,6 @@
 #include "dw4/assets.hpp"
+#include "dw4/actions.hpp"
+#include "dw4/actor_skin.hpp"
 #include "dw4/animations.hpp"
 #include "dw4/camera.hpp"
 #include "dw4/igb.hpp"
@@ -28,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -95,6 +98,7 @@ struct Options {
     std::string animation;
     std::optional<double> animation_time;
     bool animation_play = false;
+    std::optional<int> actor_info, actor_ram, actor_index;
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -157,9 +161,20 @@ Options parse_options(const std::vector<std::string>& args) {
     bool entry_limit_requested = false;
     std::set<std::string> player_options;
     std::set<std::string> boot_options;
+    std::set<std::string> actor_options;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i].starts_with("--scene-player-") && !player_options.insert(args[i]).second)
             throw std::runtime_error("Duplicate player inspection option: " + args[i]);
+        if (args[i].starts_with("--actor-")) {
+            const auto option = args[i];
+            if (!actor_options.insert(option).second) throw std::runtime_error("Duplicate actor inspection option: " + option);
+            if (++i == args.size()) throw std::runtime_error("Missing value for " + option);
+            if (option == "--actor-info") out.actor_info = parse_integer_option(args[i],option,0,1048575);
+            else if (option == "--actor-ram") out.actor_ram = parse_integer_option(args[i],option,0,1023);
+            else if (option == "--actor-index") out.actor_index = parse_integer_option(args[i],option,0,63);
+            else throw std::runtime_error("Unknown option: " + option);
+            continue;
+        }
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
         if (args[i] == "--play" || args[i] == "--play-smoke") {
             auto& flag = args[i] == "--play" ? out.play : out.play_smoke;
@@ -285,6 +300,8 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("Use --scene-switch-control REFERENCE and --scene-switch-command all-on|all-off together.");
     if (out.scene_switch_control && out.scene_inspect_child)
         throw std::runtime_error("Choose an original switch command or a root-child inspection override; they cannot be combined.");
+    if (!actor_options.empty() && (!out.actor_info || !out.actor_ram || !out.actor_index || out.animation.empty()))
+        throw std::runtime_error("Actor inspection requires --actor-info REFERENCE, --actor-ram SLOT, --actor-index INDEX and --animation NAME together.");
     if (!out.animation.empty()) {
         if (out.bone || rotation_requested) throw std::runtime_error("Choose an animation clip or manual bone rotation; these pose inputs cannot be combined.");
         out.rig = true;
@@ -460,11 +477,69 @@ dw4::MeshBounds position_bounds(std::span<const dw4::Vec3> positions) {
     return bounds;
 }
 
+constexpr dw4::AnimationMatrix actor_identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+
+// Explicit clip inspection owns the real prepared graph and source clocks. It
+// does not dispatch an ACTION or pretend to consume its gameplay events.
+struct MeshActorPreview {
+    dw4::AnimationSourceRuntime sources;
+    dw4::AnimationCombiner combiner, initial_combiner;
+    dw4::ActionActorGroup actors;
+    dw4::ActorSkinBinding binding;
+    dw4::AnimationStateClock node_clock;
+    dw4::AnimationMatrix placement;
+    std::optional<dw4::ActorSkinFrame> frame;
+    std::optional<std::uint32_t> clip_reference;
+    std::uint64_t node_time{};
+
+    MeshActorPreview(dw4::AnimationSourceRuntime loaded_sources,const dw4::ActionRuntime& prepared,
+        dw4::ActorSkinBinding selected_binding,const dw4::AnimationMatrix& fit)
+        : sources(std::move(loaded_sources)),combiner(prepared.combiner()),initial_combiner(combiner),
+          actors(*prepared.actors()),binding(std::move(selected_binding)),node_clock(prepared.node_clock()),placement(fit) {
+        actors.activate(actors.combiner_reference());
+    }
+    dw4::SkinPose seek(std::uint32_t clip,double seconds) {
+        if (!std::isfinite(seconds) || seconds<0 || seconds>600)
+            throw std::runtime_error("Prepared actor inspection time exceeds the bounded clip profile.");
+        if (clip_reference!=clip) {
+            // A new inspection selection starts from the authored prepared
+            // caches; clear/add alone intentionally retains same-time caches.
+            combiner=initial_combiner;
+            sources.set_mode(clip,dw4::AnimationPlayMode::clamp);
+            combiner.add_base(sources,clip,0);
+            clip_reference=clip;
+        }
+        auto converted=node_clock;
+        dw4::change_animation_speed(converted,static_cast<std::uint64_t>(seconds*1e9),0);
+        node_time=std::bit_cast<std::uint64_t>(converted.time_bias);
+        node_clock.local_time=converted.time_bias;
+        actors.traverse(combiner,sources,binding.actor_index(),actor_identity,actor_identity,node_time);
+        frame=dw4::capture_actor_skin(binding,actors,combiner);
+        return dw4::evaluate_actor_skin(binding,*frame);
+    }
+    void view(const dw4::CameraMatrices& camera) {
+        // Only the host inspection camera and fitting placement are composed
+        // here. The original actor transform is applied by traverse exactly once.
+        dw4::AnimationMatrix inverse=actor_identity;
+        for (std::size_t column=0;column<3;++column) for (std::size_t row=0;row<3;++row)
+            inverse[column*4+row]=camera.view[row*4+column];
+        for (std::size_t row=0;row<3;++row) {
+            double value=0;
+            for (std::size_t k=0;k<3;++k) value-=double(inverse[k*4+row])*camera.view[12+k];
+            inverse[12+row]=static_cast<float>(value);
+        }
+        actors.traverse(combiner,sources,binding.actor_index(),
+            dw4::original_matrix_multiply(camera.view,placement),inverse,node_time);
+        frame=dw4::capture_actor_skin(binding,actors,combiner);
+    }
+};
+
 class Workbench {
 public:
     explicit Workbench(Options options) : options_(std::move(options)) {}
     ~Workbench() {
         scene_renderer_.shutdown();
+        mesh_actor_renderer_.shutdown();
         mesh_renderer_.shutdown();
         for (auto* pad : gamepads_) SDL_CloseGamepad(pad);
         if (banner_texture_) glDeleteTextures(1, &banner_texture_);
@@ -653,6 +728,10 @@ public:
                         << "Explicit player visual placement; startup, input, collision and combat are not running.\n";
                 }
             } else if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
+                auto& mesh_renderer = active_mesh_renderer();
+                if (options_.actor_info && (!mesh_actor_ || !mesh_actor_->frame || !mesh_actor_->clip_reference)) {
+                    std::cerr << "Prepared actor inspection failed: " << mesh_animation_error_ << '\n'; return 3;
+                }
                 if (!options_.animation.empty() && (!mesh_animation_ || !mesh_animation_uploaded_ || !mesh_animation_error_.empty())) {
                     const auto reason = !mesh_animation_error_.empty() ? mesh_animation_error_ :
                         !mesh_rig_error_.empty() ? mesh_rig_error_ : !mesh_error_.empty() ? mesh_error_ : "No decoded animation pose was uploaded.";
@@ -664,27 +743,36 @@ public:
                     return 3;
                 }
                 if (options_.rig && (!mesh_skin_ || !mesh_pose_ || !mesh_pose_uploaded_ || !mesh_rig_error_.empty() ||
-                    mesh_renderer_.rendered_frames() <= mesh_pose_start_frame_)) {
+                    mesh_renderer.rendered_frames() <= mesh_pose_start_frame_)) {
                     const auto reason = !mesh_rig_error_.empty() ? mesh_rig_error_ :
                         !mesh_error_.empty() ? mesh_error_ : "No evaluated pose was uploaded and rendered.";
                     std::cerr << "Rig inspection failed: " << reason << '\n';
                     return 3;
                 }
-                if (options_.mesh_mode == dw4::viewer::MeshDrawMode::textured && !mesh_renderer_.has_texture()) {
+                if (options_.mesh_mode == dw4::viewer::MeshDrawMode::textured && !mesh_renderer.has_texture()) {
                     const auto reason = !mesh_material_error_.empty() ? mesh_material_error_ :
                         !mesh_error_.empty() ? mesh_error_ : "No verified material binding and GPU texture are available.";
                     std::cerr << "Textured mesh unavailable: " << reason << '\n';
                     return 3;
                 }
-                if (!mesh_renderer_.has_mesh() || mesh_render_failed_ || mesh_renderer_.rendered_frames() <= mesh_render_start_frame_) {
+                if (!mesh_renderer.has_mesh() || mesh_render_failed_ || mesh_renderer.rendered_frames() <= mesh_render_start_frame_) {
                     std::cerr << "Mesh upload/render failed: " << (mesh_error_.empty() ? "No geometry frame rendered." : mesh_error_) << '\n';
                     return 3;
                 }
                 const auto& mesh = meshes_.at(static_cast<std::size_t>(selected_mesh_));
                 std::cout << "Mesh: " << mesh_source_ << " / mesh " << selected_mesh_ << " / reference " << mesh.reference_index
-                          << " / " << mesh_data_->positions.size() << " vertices / " << mesh_renderer_.triangle_count() << " triangles\n"
+                          << " / " << mesh_data_->positions.size() << " vertices / " << mesh_renderer.triangle_count() << " triangles\n"
                           << "Mesh render: " << mesh_target_width_ << 'x' << mesh_target_height_ << " / "
-                          << mesh_mode_name(mesh_mode_) << " / " << mesh_renderer_.samples() << " samples\n";
+                          << mesh_mode_name(mesh_mode_) << " / " << mesh_renderer.samples() << " samples\n";
+                if (mesh_actor_) {
+                    const auto& binding=mesh_actor_->binding;
+                    std::cout << "Prepared actor: " << binding.source() << " / info " << *options_.actor_info
+                        << " / RAM " << binding.ram_reference() << " / actor " << binding.actor_reference()
+                        << " / appearance " << binding.appearance_reference() << " / combiner " << binding.combiner_reference()
+                        << " / selector " << binding.selector_reference() << " / palette " << binding.skin().palette_to_joint.size()
+                        << " / node time " << mesh_actor_->node_time << " / rendered " << mesh_actor_renderer_.rendered_frames() << '\n'
+                        << "Original cached CPU skin deformation and captured root; host inspection camera. Action events and original camera remain pending.\n";
+                }
                 if (!loaded_mesh_resource_.empty()) std::cout << "Logical resource: " << loaded_mesh_resource_ << '\n';
                 if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured && mesh_material_) {
                     std::cout << "Bound image: " << mesh_material_->image_name << " / reference " << *mesh_material_->image_reference
@@ -786,6 +874,8 @@ private:
     bool texture_checkerboard_ = true;
     bool texture_linear_filter_ = false;
     dw4::viewer::MeshRenderer mesh_renderer_;
+    dw4::viewer::MeshRenderer mesh_actor_renderer_;
+    std::optional<MeshActorPreview> mesh_actor_;
     dw4::OrbitCamera mesh_camera_;
     std::optional<dw4::assets::AfsArchive> mesh_archive_;
     std::optional<dw4::IgbDocument> mesh_document_;
@@ -2073,6 +2163,8 @@ private:
     }
 
     void clear_mesh_rig() {
+        mesh_actor_.reset();
+        mesh_actor_renderer_.clear();
         mesh_animations_.clear();
         mesh_animation_.reset();
         mesh_animation_catalog_ready_ = false;
@@ -2097,8 +2189,17 @@ private:
         return mesh_rotation_.x != 0 || mesh_rotation_.y != 0 || mesh_rotation_.z != 0;
     }
 
-    void upload_mesh_pose(dw4::SkinPose pose) {
-        if (!mesh_skin_ || !mesh_renderer_.has_mesh()) throw std::runtime_error("No decoded rig and GPU geometry are available.");
+    bool actor_preview_requested() const {
+        return options_.actor_info.has_value() && mesh_rig_enabled_ && mesh_animation_mode_;
+    }
+
+    dw4::viewer::MeshRenderer& active_mesh_renderer() {
+        return actor_preview_requested() ? mesh_actor_renderer_ : mesh_renderer_;
+    }
+
+    void upload_mesh_pose(dw4::SkinPose pose,bool prepared = false) {
+        auto& renderer = prepared ? mesh_actor_renderer_ : mesh_renderer_;
+        if (!mesh_skin_ || !renderer.has_mesh()) throw std::runtime_error("No decoded rig and GPU geometry are available.");
         if (pose.positions.size() != mesh_skin_->source_positions.size() || pose.joint_positions.size() != mesh_skin_->joints.size())
             throw std::runtime_error("Evaluated pose counts do not match the selected rig.");
         std::size_t changed = 0;
@@ -2111,10 +2212,10 @@ private:
             if (delta > 0.00001) ++changed;
             largest = std::max(largest,delta);
         }
-        mesh_renderer_.update_positions(pose.positions);
+        renderer.update_positions(pose.positions);
         mesh_pose_ = std::move(pose);
         mesh_pose_uploaded_ = true;
-        mesh_pose_start_frame_ = mesh_renderer_.rendered_frames();
+        mesh_pose_start_frame_ = renderer.rendered_frames();
         mesh_pose_changed_vertices_ = changed;
         mesh_pose_max_displacement_ = largest;
         mesh_rig_error_.clear();
@@ -2166,12 +2267,66 @@ private:
         } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
     }
 
+    void prepare_mesh_actor() {
+        if (mesh_actor_) return;
+        if (!mesh_document_ || !mesh_data_ || !mesh_skin_ || !options_.actor_info || !options_.actor_ram || !options_.actor_index)
+            throw std::runtime_error("Prepared actor inspection requires explicit source, RAM, actor and geometry.");
+        // The archive/entry identity is available even while a logical resource
+        // is still loading, and remains qualified when the user changes sources.
+        const auto program=dw4::decode_action_program(*mesh_document_,static_cast<std::uint32_t>(*options_.actor_info),mesh_source_);
+        std::vector<dw4::AnimationClip> clips;
+        for (const auto& info:mesh_animations_)
+            clips.push_back(dw4::decode_igb_animation(*mesh_document_,*mesh_skin_,info.reference_index));
+        dw4::AnimationSourceRuntime sources(mesh_source_,std::move(clips));
+        sources.initialize_action_offset();
+        const auto prepared=dw4::decode_action_actor_runtime(*mesh_document_,program,sources,*options_.actor_ram);
+        if (!prepared.actors()) throw std::runtime_error("The prepared RAM has no owned actor group.");
+        auto binding=dw4::decode_actor_skin_binding(*mesh_document_,*prepared.actors(),
+            static_cast<std::size_t>(*options_.actor_index),meshes_.at(static_cast<std::size_t>(selected_mesh_)).reference_index);
+        const auto& bounds=mesh_data_->bounds;
+        const std::array<double,3> center{(double(bounds.min.x)+bounds.max.x)*0.5,
+            (double(bounds.min.y)+bounds.max.y)*0.5,(double(bounds.min.z)+bounds.max.z)*0.5};
+        const double radius=std::hypot(double(bounds.max.x)-center[0],double(bounds.max.y)-center[1],double(bounds.max.z)-center[2]);
+        if (!std::isfinite(radius) || radius<=0) throw std::runtime_error("Prepared actor inspection requires finite nonempty bounds.");
+        auto fit=actor_identity;
+        for (std::size_t i=0;i<3;++i) { fit[i*5]=static_cast<float>(1/radius); fit[12+i]=static_cast<float>(-center[i]/radius); }
+        MeshActorPreview candidate(std::move(sources),prepared,std::move(binding),fit);
+        mesh_actor_renderer_.upload_prepared(*mesh_data_);
+        mesh_render_start_frame_=mesh_actor_renderer_.rendered_frames();
+        mesh_actor_=std::move(candidate);
+    }
+
+    void prepare_actor_texture() {
+        if (mesh_actor_renderer_.has_texture()) return;
+        if (!mesh_actor_ || !mesh_data_ || !mesh_document_ || !mesh_material_ || !mesh_material_->supported || !mesh_material_->image_reference)
+            throw std::runtime_error("Prepared actor draw requires a verified texture binding.");
+        const auto reference=mesh_actor_->binding.geometry_reference();
+        if (mesh_material_->geometry_reference!=reference) throw std::runtime_error("Actor texture belongs to another geometry.");
+        auto geometry=*mesh_data_;
+        geometry.texcoords=dw4::decode_igb_texcoords(*mesh_document_,reference);
+        const auto pixels=dw4::decode_igb_texture(*mesh_document_,*mesh_material_->image_reference);
+        dw4::viewer::MeshTextureOptions sampler;
+        sampler.wrap_u=texture_wrap(mesh_material_->wrap_s); sampler.wrap_v=texture_wrap(mesh_material_->wrap_t);
+        sampler.min_filter=texture_filter(mesh_material_->min_filter); sampler.mag_filter=texture_filter(mesh_material_->mag_filter);
+        mesh_actor_renderer_.upload_prepared(geometry);
+        if (mesh_pose_ && mesh_animation_uploaded_) mesh_actor_renderer_.update_positions(mesh_pose_->positions);
+        mesh_actor_renderer_.set_texture(pixels,sampler);
+        mesh_texture_width_=pixels.width; mesh_texture_height_=pixels.height;
+        mesh_pose_start_frame_=mesh_actor_renderer_.rendered_frames();
+    }
+
     void update_animation_pose(double seconds) {
         try {
             if (!mesh_animation_ || !mesh_skin_) throw std::runtime_error("Select a decoded animation clip first.");
             if (!std::isfinite(seconds) || seconds < 0 || seconds > mesh_animation_->info.duration_seconds)
                 throw std::runtime_error("Animation time is outside this clip's duration.");
-            upload_mesh_pose(dw4::sample_animation_pose(*mesh_animation_,*mesh_skin_,seconds));
+            if (actor_preview_requested()) {
+                prepare_mesh_actor();
+                auto candidate=*mesh_actor_;
+                auto pose=candidate.seek(mesh_animation_->info.reference_index,seconds);
+                upload_mesh_pose(std::move(pose),true);
+                mesh_actor_=std::move(candidate);
+            } else upload_mesh_pose(dw4::sample_animation_pose(*mesh_animation_,*mesh_skin_,seconds));
             mesh_animation_time_ = seconds;
             mesh_animation_uploaded_ = true;
             ++mesh_animation_upload_count_;
@@ -2300,7 +2455,7 @@ private:
         const float bottom = ImGui::GetWindowHeight() - 146;
         if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
         ImGui::Separator();
-        ImGui::TextColored(teal, "VERSION 0.22");
+        ImGui::TextColored(teal, "VERSION 0.23");
         paragraph("Development workbench");
         paragraph("Walking preview available.");
         ImGui::EndChild();
@@ -2901,12 +3056,14 @@ private:
             }
             ImGui::EndDisabled();
         }
-        ImGui::Checkbox("X-ray joints",&mesh_skeleton_overlay_);
-        ImGui::SameLine();
+        if (!actor_preview_requested()) {
+            ImGui::Checkbox("X-ray joints",&mesh_skeleton_overlay_);
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Details")) ImGui::OpenPopup("rig_provenance");
         if (!mesh_animation_error_.empty()) paragraph(mesh_animation_error_.c_str(),amber);
         else if (!mesh_animation_uploaded_) paragraph("Choose a clip to apply decoded animation. The stored mesh is shown.");
-        else paragraph("Animation inspection. Game-frame comparison pending.");
+        else paragraph(actor_preview_requested() ? "Original actor cache playback. Inspection camera." : "Animation inspection. Game-frame comparison pending.");
     }
 
     void draw_mesh_rig_controls() {
@@ -2980,6 +3137,13 @@ private:
                 paragraph(clip.info.provenance.c_str());
                 ImGui::Text("%u original tracks / %u samples per second / %zu decoded frames",clip.info.track_count,
                     clip.channels.sample_rate(),clip.channels.frame_count());
+                if (actor_preview_requested() && mesh_actor_) {
+                    const auto& binding=mesh_actor_->binding;
+                    ImGui::Text("RAM %u / actor %u / appearance %u",binding.ram_reference(),binding.actor_reference(),binding.appearance_reference());
+                    ImGui::Text("Combiner %u / selector %u / node time %llu",binding.combiner_reference(),binding.selector_reference(),
+                        static_cast<unsigned long long>(mesh_actor_->node_time));
+                    paragraph("Original shared hierarchy and palette caches drive CPU deformation. The captured root is applied once before projection. This prepared clip view does not dispatch actions or their gameplay events.");
+                }
                 paragraph("Decoded source channels drive the checked skeleton mapping. Scene placement, full game materials and recorded-frame comparison remain incomplete.");
             } else paragraph("Joint frames come from inverse-bind matrices. Manual deltas are inspection controls, not original animation samples.");
             ImGui::PopTextWrapPos();
@@ -3011,13 +3175,21 @@ private:
             const double reduction = std::min({1.0,4096.0 / width,4096.0 / height,std::sqrt(8388608.0 / (width * height))});
             mesh_target_width_ = std::max(1,static_cast<int>(width * reduction));
             mesh_target_height_ = std::max(1,static_cast<int>(height * reduction));
-            const auto target = mesh_renderer_.render(mesh_target_width_, mesh_target_height_, mesh_camera_,
-                mesh_mode_, settings_.msaa);
+            std::uint32_t target;
+            if (actor_preview_requested()) {
+                if (!mesh_actor_ || !mesh_actor_->frame || !mesh_animation_uploaded_)
+                    throw std::runtime_error("No prepared actor pose is available: " + mesh_animation_error_);
+                if (mesh_mode_==dw4::viewer::MeshDrawMode::textured) prepare_actor_texture();
+                const auto camera=mesh_camera_.matrices(static_cast<float>(mesh_target_width_)/mesh_target_height_);
+                mesh_actor_->view(camera);
+                target=mesh_actor_renderer_.render_prepared(mesh_target_width_,mesh_target_height_,
+                    mesh_actor_->frame->model_view,camera.projection,mesh_mode_,settings_.msaa);
+            } else target=mesh_renderer_.render(mesh_target_width_,mesh_target_height_,mesh_camera_,mesh_mode_,settings_.msaa);
             auto* draw = ImGui::GetWindowDrawList();
             const ImVec2 end(origin.x + canvas_size.x,origin.y + canvas_size.y);
             draw->AddImage(static_cast<ImTextureID>(target), origin, end, ImVec2(0,1), ImVec2(1,0));
             draw->AddRect(origin,end,IM_COL32(53,72,88,255),6);
-            if (mesh_rig_enabled_ && mesh_skeleton_overlay_ && mesh_pose_uploaded_ && mesh_skin_ && mesh_pose_) {
+            if (!actor_preview_requested() && mesh_rig_enabled_ && mesh_skeleton_overlay_ && mesh_pose_uploaded_ && mesh_skin_ && mesh_pose_) {
                 const float aspect = static_cast<float>(mesh_target_width_) / mesh_target_height_;
                 std::vector<std::optional<ImVec2>> points;
                 points.reserve(mesh_pose_->joint_positions.size());
@@ -3097,14 +3269,14 @@ private:
         mesh_entry_limit_mib_ = std::clamp(mesh_entry_limit_mib_,1,256);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Maximum AFS entry read: 1-256 MiB.\nThe mesh decoder and graphics target have independent limits.");
         if (!mesh_source_.empty()) ImGui::TextColored(teal,"%s  |  %zu geometry objects  |  target %d x %d / MSAA %dx",
-            mesh_source_.c_str(),meshes_.size(),mesh_target_width_,mesh_target_height_,mesh_renderer_.samples());
+            mesh_source_.c_str(),meshes_.size(),mesh_target_width_,mesh_target_height_,active_mesh_renderer().samples());
         else paragraph("Select an IGB entry here, or use View meshes in the Original data archive browser.");
         if (!mesh_error_.empty()) paragraph(mesh_error_.c_str(),amber);
         if (mesh_material_ && mesh_material_->supported && mesh_material_->image_reference) {
             const auto& material = *mesh_material_;
             const auto name = material.image_name.empty() ? std::string("Unnamed image") : material.image_name;
             ImGui::TextColored(teal,"Bound image: %s / reference %u%s",name.c_str(),*material.image_reference,
-                mesh_renderer_.has_texture() ? " / uploaded" : " / not uploaded");
+                active_mesh_renderer().has_texture() ? " / uploaded" : " / not uploaded");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",material.provenance.c_str());
             if (ImGui::CollapsingHeader("Material binding provenance / partial profile")) {
                 paragraph(material.provenance.c_str());
@@ -3120,7 +3292,7 @@ private:
                 }
                 ImGui::Text("Stored sampler values: wrap S/T %u/%u, min/mag %u/%u",material.raw_wrap_s,material.raw_wrap_t,
                     material.raw_min_filter,material.raw_mag_filter);
-                if (mesh_renderer_.has_texture()) ImGui::Text("Decoded image %u x %u / %zu UV pairs",mesh_texture_width_,mesh_texture_height_,mesh_data_->texcoords.size());
+                if (active_mesh_renderer().has_texture()) ImGui::Text("Decoded image %u x %u / %zu UV pairs",mesh_texture_width_,mesh_texture_height_,mesh_data_->texcoords.size());
                 paragraph("Only the verified base-color profile is applied. Full game materials, mip selection and scene appearance remain separate work.");
             }
             if (!mesh_material_error_.empty()) paragraph(("Textured mode unavailable: " + mesh_material_error_).c_str(),amber);
@@ -3950,6 +4122,9 @@ int main(int argc, char** argv) {
                          "--animation    Original clip name in the selected rig's database; implies --rig.\n"
                          "--animation-time Paused clip time in seconds (default 0); requires --animation.\n"
                          "--animation-play Start playback at the selected time; smoke tests require 2+ frames.\n"
+                         "--actor-info   Explicit ACTION2 info reference for original actor-cache clip inspection.\n"
+                         "--actor-ram    Prepared RAM slot; use with --actor-info, --actor-index and --animation.\n"
+                         "--actor-index  Ordered actor in the RAM; --mesh must select its main-skin geometry.\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
         }

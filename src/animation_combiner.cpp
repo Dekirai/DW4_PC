@@ -66,8 +66,11 @@ AnimationCombiner::AnimationCombiner(const AnimationSourceRuntime& sources, std:
     validate_matrices(matrices_,library_->clips.front().bone_references.size());
 }
 AnimationCombiner::AnimationCombiner(const AnimationSourceRuntime& sources,std::vector<AnimationMatrix> matrices,
-    AnimationHierarchyDefinition hierarchy,std::vector<AnimationMatrix> bones,std::vector<AnimationMatrix> joints)
+    AnimationHierarchyDefinition hierarchy,std::vector<AnimationMatrix> bones,std::vector<AnimationMatrix> joints,
+    std::optional<std::uint32_t> reference)
     :AnimationCombiner(sources,std::move(matrices)) {
+    if (reference==0xffffffffu) fail("Animation combiner identity cannot be a null reference.");
+    reference_=reference;
     const auto& clip=library_->clips.front();
     if (hierarchy.skeleton_reference()!=clip.info.skeleton_reference || hierarchy.bones().size()!=clip.bone_references.size())
         fail("Animation hierarchy differs from the bound skeleton.");
@@ -115,6 +118,7 @@ AnimationCombiner decode_animation_combiner(const IgbDocument& doc, const Animat
         for (std::size_t bone=0;bone<matrices.size();++bone) for (std::size_t i=0;i<16;++i)
             matrices[bone][i]=std::bit_cast<float>(word(bytes,bone*64+i*4));
         AnimationCombiner result(sources,std::move(matrices));
+        result.reference_=reference;
         const auto valid=doc.field(object,10);
         if (!valid || valid->size!=1 || doc.field_bytes(*valid)[0]>1) fail("Invalid combiner cache-valid byte.");
         result.cache_valid_=doc.field_bytes(*valid)[0]!=0; result.cached_time_=time(9); result.clock_override_=time(14);
@@ -166,7 +170,7 @@ AnimationCombiner decode_animation_actor_combiner(const IgbDocument& doc,const A
             return result;
         };
         auto bones=matrices(12,hierarchy.bones().size()), joints=matrices(13,hierarchy.inverse_joint_matrices().size());
-        AnimationCombiner result(sources,std::move(prepared.matrices_),std::move(hierarchy),std::move(bones),std::move(joints));
+        AnimationCombiner result(sources,std::move(prepared.matrices_),std::move(hierarchy),std::move(bones),std::move(joints),ref);
         result.cache_valid_=prepared.cache_valid_; result.cached_time_=prepared.cached_time_; result.clock_override_=prepared.clock_override_;
         return result;
     } catch (const AnimationError&) { throw; }

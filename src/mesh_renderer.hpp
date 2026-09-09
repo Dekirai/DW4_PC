@@ -43,13 +43,17 @@ public:
     MeshRenderer(const MeshRenderer&) = delete;
     MeshRenderer& operator=(const MeshRenderer&) = delete;
     void upload(const MeshData& mesh);
+    // Keep original source coordinates for an explicitly prepared draw. Unlike
+    // ordinary mesh inspection, no center/radius normalization is baked in.
+    void upload_prepared(const MeshData& mesh);
     // Upload all instances into one shared normalization, VBO/index buffer and
     // depth/MSAA target. Limits: 4,096 batches; 4,194,304 vertices and triangles;
     // 256 MiB of GPU image copies, with the existing 64 MiB per-image limit.
     // Shared image pointers with equal sampler options use one GPU texture.
     void upload_batches(std::span<const MeshBatch> batches);
     // Update a pose in source coordinates while keeping the initial camera
-    // normalization, UVs, indices and texture. The vertex count must match.
+    // normalization (or raw prepared coordinates), UVs, indices and texture.
+    // The vertex count must match.
     // Invalid input leaves the last valid pose available.
     void update_positions(std::span<const Vec3> positions);
     // Update one batch by its original upload order, using world positions with
@@ -60,12 +64,14 @@ public:
     // Project a source-space point using the same fixed normalization/camera as
     // the mesh. Fractions are relative to the canvas's top-left corner. Points
     // outside the clip volume, including behind the camera, are omitted.
+    // Prepared uploads require explicit matrix projection and reject here.
     std::optional<MeshCanvasPoint> project_to_canvas(const Vec3& point,
         const OrbitCamera& camera, float aspect) const;
     // Aim once at checked bounds in the uploaded scene's source coordinates.
     // Keeps orbit angles and renderer normalization; uses a padded bounding-
     // sphere distance and the camera's existing aspect/range handling.
     // Invalid bounds leave the supplied camera unchanged.
+    // Prepared uploads require explicit camera placement and reject here.
     void focus_camera(OrbitCamera& camera, const MeshBounds& source_bounds) const;
     // A textured upload requires an explicitly decoded UV pair per vertex.
     // Pixel data is copied to the GPU; no borrowed host pointers are retained.
@@ -84,6 +90,11 @@ public:
     std::uint32_t render(int width, int height, const OrbitCamera& camera,
         MeshDrawMode mode, int requested_samples = 0,
         std::optional<std::size_t> occluded_batch = std::nullopt);
+    // Apply captured model-view once, then projection as a separate GPU stage.
+    // Requires upload_prepared; does not apply the inspection OrbitCamera.
+    std::uint32_t render_prepared(int width, int height,
+        const std::array<float,16>& model_view, const std::array<float,16>& projection,
+        MeshDrawMode mode, int requested_samples = 0);
     bool has_mesh() const noexcept;
     // True only when all uploaded batches have verified texture/UV data.
     bool has_texture() const noexcept;
@@ -97,5 +108,9 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;
+    void upload_impl(const MeshData& mesh, bool prepared);
+    std::uint32_t render_matrices(int width, int height,
+        const std::array<float,16>& model_view, const std::array<float,16>& projection,
+        MeshDrawMode mode, int requested_samples, std::optional<std::size_t> occluded_batch);
 };
 } // namespace dw4::viewer

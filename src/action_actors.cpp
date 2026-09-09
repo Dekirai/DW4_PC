@@ -1,4 +1,5 @@
 #include "dw4/action_actors.hpp"
+#include "dw4/animation_combiner.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -105,6 +106,28 @@ std::size_t ActionActorGroup::activate(std::uint32_t combiner_reference) {
         state.bone_matrices=std::move(bones); state.joint_matrices=std::move(joints); ++allocated;
     }
     return allocated;
+}
+
+void ActionActorGroup::traverse(AnimationCombiner& combiner,AnimationSourceRuntime& sources,
+    std::size_t actor_index,const AnimationMatrix& model_view,const AnimationMatrix& inverse_view,std::uint64_t node_time) {
+    if (actor_index>=states_.size()) fail("Actor traversal selection is outside its RAM.");
+    if (combiner.source()!=source_ || (combiner.reference() && combiner.reference()!=combiner_reference_))
+        fail("Actor traversal combiner belongs to another source or RAM.");
+    const auto& definition=definitions_[actor_index];
+    const auto& actor=states_[actor_index];
+    if (actor.reference!=definition.reference || actor.appearance_reference!=definition.appearance_reference ||
+        actor.combiner_reference!=combiner_reference_ || actor.bone_matrices.size()!=definition.bone_count ||
+        actor.joint_matrices.size()!=definition.joint_count || !combiner.hierarchy() ||
+        combiner.hierarchy()->bones().size()!=definition.bone_count ||
+        combiner.hierarchy()->inverse_joint_matrices().size()!=definition.joint_count)
+        fail("Actor traversal requires its original activation buffers and bound hierarchy.");
+    for (const auto value:inverse_view) if (!std::isfinite(value)) fail("Actor inverse-view contains a non-finite component.");
+    const auto root=original_matrix_multiply(model_view,definition.transform);
+    // Combiner traversal publishes its own source/cache candidates atomically.
+    // The remaining fixed-size actor attribute copies cannot allocate or fail.
+    combiner.traverse(sources,root,node_time);
+    auto& output=states_[actor_index];
+    output.model_view=model_view; output.inverse_view=inverse_view; output.cache_used=false;
 }
 
 void ActionActorGroup::deactivate() noexcept {

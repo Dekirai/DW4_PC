@@ -7,6 +7,8 @@
 #include <string>
 
 namespace dw4 {
+class AnimationCombiner;
+class AnimationSourceRuntime;
 
 class ActionActorError : public std::runtime_error {
 public:
@@ -45,6 +47,11 @@ public:
     // 802F1F60: stop the ENTIRE loop at the first allocated bone array, before
     // assigning its combiner. Returns the number of newly allocated actors.
     std::size_t activate(std::uint32_t combiner_reference);
+    // Ordinary actor-entry traversal at already converted node time. Retain
+    // view state and write/evaluate the owning combiner's shared matrices.
+    void traverse(AnimationCombiner& combiner,AnimationSourceRuntime& sources,
+        std::size_t actor_index,const AnimationMatrix& model_view,
+        const AnimationMatrix& inverse_view,std::uint64_t node_time);
     // 802F1D18: release both arrays for all actors, retaining combiner links.
     void deactivate() noexcept;
 private:

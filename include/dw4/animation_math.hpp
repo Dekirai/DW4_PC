@@ -23,8 +23,13 @@ using AnimationMatrix = std::array<float, 16>;
 // Uses the startup NI=1, nearest-even profile: retain subnormal inputs and
 // flush each tiny unrounded result to signed zero. Inputs/results must be finite.
 AnimationMatrix original_matrix_multiply(const AnimationMatrix& left, const AnimationMatrix& right);
+// Single-influence CPU skin loop 800FAA70: first X product, fused Y/Z terms,
+// then a separate translation add under startup NI=1/RN=00. Return XYZ only;
+// no homogeneous division. All inputs and returned components must be finite.
+std::array<float,3> original_skin_point(const AnimationMatrix& matrix, const std::array<float,3>& point);
 // 8012BCDC writes only the nine rotation entries of an existing flat matrix.
-// Preserve float operation order and all translation/affine entries.
+// Scalar operations use startup NI=1/RN=00, retaining subnormal inputs and
+// flushing tiny arithmetic results. Preserve all seven untouched entries.
 void original_rotation_matrix(const std::array<float, 4>& rotation, AnimationMatrix& matrix);
 // 8012B8A8: inverse conversion used by interrupted-transition snapshots.
 // Preserves branch/tie order and nonunit output; does not orthonormalize.

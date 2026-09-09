@@ -439,19 +439,9 @@ void ActionRuntime::traverse_actor(AnimationSourceRuntime& sources,std::size_t a
     const AnimationMatrix& model_view,const AnimationMatrix& inverse_view,std::uint64_t parent_time) {
     Running guard(running_); combiner_.require_sources(sources);
     if (!active_ || !actors_) fail("Actor traversal requires an active owned ACTION actor group.");
-    if (actor_index>=actors_->states().size()) fail("Actor traversal selection is outside its RAM.");
-    const auto& definition=actors_->definitions()[actor_index];
-    const auto& original=actors_->states()[actor_index];
-    if (original.combiner_reference!=program_->rams()[ram_no_].combiner_reference ||
-        original.bone_matrices.size()!=definition.bone_count || original.joint_matrices.size()!=definition.joint_count)
-        fail("Actor traversal requires its original activation buffers and combiner link.");
-    for (const auto value:inverse_view) finite(value);
     auto candidate=*this; auto candidate_sources=sources;
-    auto& actor=candidate.actors_->state(actor_index);
-    actor.model_view=model_view; actor.inverse_view=inverse_view; actor.cache_used=false;
     const auto time=candidate.node_time(parent_time); candidate.node_.local_time=signed_bits(time);
-    const auto root=original_matrix_multiply(model_view,definition.transform);
-    candidate.combiner_.traverse(candidate_sources,root,time);
+    candidate.actors_->traverse(candidate.combiner_,candidate_sources,actor_index,model_view,inverse_view,time);
     *this=std::move(candidate); sources=std::move(candidate_sources);
 }
 std::optional<AnimationMatrix> ActionRuntime::bone_matrix(std::string_view name) const {

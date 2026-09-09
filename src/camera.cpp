@@ -55,7 +55,7 @@ void OrbitCamera::focus(std::array<float,3> normalized_target, float distance) {
     target_ = {normalized_target[0],normalized_target[1],normalized_target[2]};
     distance_ = std::clamp(double(distance),0.05,1000.0);
 }
-std::array<float, 16> OrbitCamera::view_projection(float aspect) const {
+std::array<std::array<double,16>,2> OrbitCamera::matrix_pair(float aspect) const {
     finite(aspect);
     if (aspect < 0.01f || aspect > 100.0f) throw std::invalid_argument("Camera aspect must be between 0.01 and 100");
     const auto backward = outward(yaw_, pitch_);
@@ -75,6 +75,19 @@ std::array<float, 16> OrbitCamera::view_projection(float aspect) const {
     const Matrix projection{scale / aspect, 0, 0, 0, 0, scale, 0, 0,
         0, 0, -(far_plane + near_plane) / (far_plane - near_plane), -1,
         0, 0, -(2 * far_plane * near_plane) / (far_plane - near_plane), 0};
+    return {view,projection};
+}
+CameraMatrices OrbitCamera::matrices(float aspect) const {
+    const auto pair=matrix_pair(aspect);
+    CameraMatrices result;
+    for (std::size_t i=0;i<16;++i) {
+        result.view[i]=static_cast<float>(pair[0][i]);
+        result.projection[i]=static_cast<float>(pair[1][i]);
+    }
+    return result;
+}
+std::array<float,16> OrbitCamera::view_projection(float aspect) const {
+    const auto [view,projection]=matrix_pair(aspect);
     std::array<float, 16> result{};
     for (std::size_t column = 0; column < 4; ++column)
         for (std::size_t row = 0; row < 4; ++row) {

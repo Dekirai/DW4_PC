@@ -19,12 +19,43 @@ std::array<float, 4> project(const std::array<float, 16>& matrix, float x, float
         result[row] = matrix[row] * x + matrix[4 + row] * y + matrix[8 + row] * z + matrix[12 + row];
     return result;
 }
+void separate_matrix_checks(const dw4::OrbitCamera& camera,float aspect) {
+    const auto pair=camera.matrices(aspect);
+    for(const auto& matrix:{pair.view,pair.projection})
+        for(const auto value:matrix) check(std::isfinite(value),"Separate camera matrix contains a non-finite value");
+    check(pair.view[3]==0 && pair.view[7]==0 && pair.view[11]==0 && pair.view[15]==1,
+        "Separate camera view must retain an affine homogeneous row");
+    check(pair.projection[3]==0 && pair.projection[7]==0 && pair.projection[11]==-1 && pair.projection[15]==0,
+        "Separate camera projection lost perspective clip W");
+    for(std::size_t first=0;first<3;++first)
+        for(std::size_t second=0;second<3;++second) {
+            float dot=0;
+            for(std::size_t column=0;column<3;++column)
+                dot+=pair.view[column*4+first]*pair.view[column*4+second];
+            check(std::abs(dot-(first==second ? 1.0f : 0.0f))<1e-6f,
+                "Separate camera view mixed lens scaling into the orbit basis");
+        }
+    const auto combined=camera.view_projection(aspect);
+    for(const auto point:{std::array<float,3>{0,0,0},{1,-2,3},{-.5f,.25f,-.75f}}) {
+        const auto view=project(pair.view,point[0],point[1],point[2]);
+        const auto clip=project(pair.projection,view[0],view[1],view[2]);
+        const auto legacy=project(combined,point[0],point[1],point[2]);
+        for(std::size_t axis=0;axis<4;++axis)
+            // Legacy composition rounds only after its double matrix product;
+            // separate float stages introduce one additional rounding boundary.
+            check(std::abs(clip[axis]-legacy[axis])<3e-5f*(1+std::abs(legacy[axis])),
+                "Separate view then projection disagrees with the legacy camera");
+        check(clip[3]==-view[2],"Separate projection did not derive clip W from view depth");
+    }
+}
 }
 int main() {
     try {
         dw4::OrbitCamera camera;
         const auto initial = camera.view_projection(16.0f / 9);
+        const auto initial_pair=camera.matrices(16.0f/9);
         for (float aspect : {0.2f, 1.0f, 16.0f / 9, 4.0f}) {
+            separate_matrix_checks(camera,aspect);
             const auto matrix = camera.view_projection(aspect);
             const auto center = project(matrix, 0, 0, 0);
             check(std::abs(center[0]) < 1e-5f && std::abs(center[1]) < 1e-5f && center[3] > 0,
@@ -42,8 +73,11 @@ int main() {
         camera.pan(0.2f, 0.1f);
         const auto moved = project(camera.view_projection(1), 0, 0, 0);
         check(std::abs(moved[0]) > 0.1f || std::abs(moved[1]) > 0.1f, "Pan must move the target");
+        for(float aspect:{.2f,1.0f,4.0f}) separate_matrix_checks(camera,aspect);
         camera.reset();
         check(camera.view_projection(16.0f / 9) == initial, "Reset must restore the fitted view");
+        check(camera.matrices(16.0f/9).view==initial_pair.view && camera.matrices(16.0f/9).projection==initial_pair.projection,
+            "Reset did not restore both separate camera stages");
         camera.orbit(.4f,-.2f);camera.pan(.3f,-.1f);
         const auto before_focus = camera.view_projection(1);
         const std::array<float,3> target{4,-3,8};
@@ -54,6 +88,12 @@ int main() {
             for (std::size_t row=0;row<2;++row)
                 check(focused[column*4+row]==before_focus[column*4+row],"Focus changed the orbit angles");
         for (float aspect : {.2f,1.0f,16.0f/9,4.0f}) {
+            separate_matrix_checks(camera,aspect);
+            const auto view=project(camera.matrices(aspect).view,target[0],target[1],target[2]);
+            const auto expected_distance=camera.distance()/(aspect<1 ? aspect : 1);
+            check(std::abs(view[0])<1e-5f && std::abs(view[1])<1e-5f
+                && std::abs(view[2]+expected_distance)<1e-5f && view[3]==1,
+                "Separate view did not center the focus target at the aspect-adjusted distance");
             const auto clip=project(camera.view_projection(aspect),target[0],target[1],target[2]);
             check(clip[3]>0 && std::abs(clip[0]/clip[3])<1e-5f && std::abs(clip[1]/clip[3])<1e-5f,
                 "Focus target was not centered for the requested aspect ratio");
@@ -76,6 +116,8 @@ int main() {
         camera.focus({10000,-10000,10000},std::numeric_limits<float>::max());
         check(camera.distance()==1000,"Focus did not preserve the maximum zoom distance");
         for(auto value:camera.view_projection(.01f)) check(std::isfinite(value),"Bounded extreme focus produced a non-finite matrix");
+        for(const auto& matrix:{camera.matrices(.01f).view,camera.matrices(.01f).projection})
+            for(auto value:matrix) check(std::isfinite(value),"Bounded extreme focus produced a non-finite separate matrix");
         camera.reset();
         check(camera.view_projection(16.0f/9)==initial,"Reset after focus retained the changed target");
         camera.orbit(1e30f, 1e30f); camera.zoom(-1e30f); camera.pan(1e30f, -1e30f);
@@ -87,7 +129,16 @@ int main() {
         rejects([&] { camera.orbit(nan, 0); }); rejects([&] { camera.orbit(0, infinity); });
         rejects([&] { camera.pan(0, nan); }); rejects([&] { camera.zoom(infinity); });
         rejects([&] { camera.view_projection(0); }); rejects([&] { camera.view_projection(nan); });
-        std::cout << "Camera projection, controls and atomic source-target focus tests passed\n";
+        const auto valid_pair=camera.matrices(1);
+        for(float aspect:{0.0f,-1.0f,.009f,100.01f,nan,infinity}) {
+            rejects([&]{camera.matrices(aspect);});
+            check(camera.matrices(1).view==valid_pair.view && camera.matrices(1).projection==valid_pair.projection,
+                "Rejected separate-matrix aspect changed the camera");
+        }
+        for(float aspect:{.01f,100.0f})
+            for(const auto& matrix:{camera.matrices(aspect).view,camera.matrices(aspect).projection})
+                for(auto value:matrix) check(std::isfinite(value),"Extreme controls produced a non-finite separate matrix");
+        std::cout << "Camera projection, separate view/lens stages, controls and atomic source-target focus tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Camera test failure: " << error.what() << '\n';

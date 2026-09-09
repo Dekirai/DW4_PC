@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.22 adds original actor hierarchy calculation, shared matrix caches
-and cached bone queries in the portable core. The full original game, including local
+Version 0.23 connects original actor matrix caches to native CPU skin deformation
+and a prepared mesh draw with separate model-view and projection. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -84,11 +84,15 @@ not contain game files.
   integration tests. Prepared actor groups now allocate all ordered actor buffers
   and release them through the original NDSP path, preserving node clocks for
   reactivation. Ordinary actor traversal and cached bone queries now use the
-  original shared hierarchy; full renderer integration and event consumers remain
+  original shared hierarchy; full appearance traversal and event consumers remain
   pending. See [ACTIONS.md](docs/ACTIONS.md) and [ACTION_ACTORS.md](docs/ACTION_ACTORS.md).
 - Evaluate the original no-modifier bone/joint hierarchy with ordered float
   matrix operations, helper bones, retained cache validity and node-adjusted
   traversal time. See [ANIMATION_HIERARCHY.md](docs/ANIMATION_HIERARCHY.md).
+- Render an explicitly selected actor's main skin using its original shared
+  palette caches and recovered single-influence CPU deformation. The captured
+  root is applied once before projection. This prepared clip view retains a
+  host inspection camera. See [ACTOR_SKIN.md](docs/ACTOR_SKIN.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit
@@ -225,9 +229,23 @@ paused inspection:
 .\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured --animation runD --animation-time 0.2
 ```
 
-All 82 Agumon clips decode under the current profile. This is a single-clip asset
-viewer: actor state, animation blending, action events and
-comparison against captured original gameplay remain separate work.
+All 82 Agumon clips decode under the current profile. To render through the
+prepared original actor's shared hierarchy and palette caches, select its
+ACTION2 info, RAM slot and ordered actor explicitly:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' `
+  --resource _common/p_agumon.igb --mesh 2 --mesh-mode textured `
+  --actor-info 546 --actor-ram 0 --actor-index 1 `
+  --animation waitS --animation-time 0.4 --animation-play
+```
+
+This selects Agumon's high-detail main skin. The geometry must belong to the
+selected actor; mismatched selections reject. Clip playback uses original
+node/source clocks, cached float hierarchy and CPU skin arithmetic, with an
+explicit host fitting transform and inspection camera. Action dispatch/events,
+automatic LOD and original-frame comparison remain separate work. See
+[ACTOR_SKIN.md](docs/ACTOR_SKIN.md).
 
 Open **Scenes** for static map inspection. The following example selects the
 `BG02` export in `ndmw.afs[179]` and explicitly inspects child zero of its disabled

@@ -236,6 +236,108 @@ void pose_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra
     check(!renderer.has_texture(), "Clearing a posed mesh retained its texture");
 }
 
+void prepared_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& tetra,
+    const dw4::OrbitCamera& camera) {
+    using namespace dw4::viewer;
+    constexpr std::array<float,16> identity{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    // These are already CPU-deformed source positions. Their offset and scale
+    // must survive upload; the captured root is applied only at draw time.
+    dw4::MeshData deformed;
+    deformed.positions={{6,2,1},{10,2,3},{10,6,5},{6,6,3}};
+    deformed.indices={0,1,2,0,2,3};
+    deformed.texcoords.assign(4,{.25f,.25f});
+    constexpr std::array<float,16> root{
+        .125f,0,.125f,0, 0,.25f,-.125f,0, .125f,-.125f,0,0, -1.5f,-.5f,-.25f,1};
+    constexpr std::array<float,16> projection{
+        1.5f,-.25f,0,0, 0,.5f,0,0, .25f,0,.5f,0, .125f,-.125f,0,1};
+    // Independently specified clip-space corners use exact binary fractions.
+    // The two matrices do not commute, and every source coordinate contributes.
+    auto expected=deformed;
+    expected.positions={{-.75f,-.03125f,.125f},{.5f,-.34375f,.375f},
+        {.75f,-.03125f,.125f},{-.5f,.28125f,-.125f}};
+    const dw4::RgbaImage red{1,1,{255,0,0,255}};
+    TextureCallerState caller;
+    MeshRenderer reference;
+    reference.upload_prepared(expected); reference.set_texture(red);
+    const auto initial_reference=pixels(reference.render_prepared(128,128,identity,identity,MeshDrawMode::textured),128,128);
+    check(coverage(initial_reference)>1500 && coverage(initial_reference)<2500,
+        "Prepared identity draw changed raw clip-space geometry");
+    caller.verify();
+    renderer.upload_prepared(deformed); renderer.set_texture(red); caller.verify();
+    rejects([&]{renderer.project_to_canvas({0,0,0},camera,1);});
+    auto focused=camera;
+    rejects([&]{renderer.focus_camera(focused,deformed.bounds);});
+    check(focused.view_projection(1)==camera.view_projection(1),"Prepared focus rejection changed the camera");
+    const auto target=renderer.render_prepared(128,128,root,projection,MeshDrawMode::textured);
+    const auto initial=pixels(target,128,128);
+    check(initial==initial_reference,
+        "Prepared draw normalized CPU positions or changed root/projection order or application count");
+    check(renderer.triangle_count()==2 && renderer.has_texture(),"Prepared upload lost indices or texture");
+    caller.verify();
+    const auto initial_frames=renderer.rendered_frames();
+    rejects([&]{renderer.render(128,128,camera,MeshDrawMode::textured);});
+    check(renderer.rendered_frames()==initial_frames && pixels(target,128,128)==initial,
+        "Rejected ordinary draw changed a prepared target");
+
+    auto moved=deformed.positions;
+    for(auto& point:moved) {point.x+=.5f;point.y-=.25f;point.z+=.125f;}
+    expected.positions={{-.609375f,-.08984375f,.171875f},{.640625f,-.40234375f,.421875f},
+        {.890625f,-.08984375f,.171875f},{-.359375f,.22265625f,-.078125f}};
+    reference.update_positions(expected.positions);
+    const auto moved_reference=pixels(reference.render_prepared(128,128,identity,identity,MeshDrawMode::textured),128,128);
+    renderer.update_positions(moved); caller.verify();
+    check(renderer.rendered_frames()==initial_frames,"Prepared pose update reset the frame counter");
+    check(renderer.render_prepared(128,128,root,projection,MeshDrawMode::textured)==target,
+        "Prepared pose update replaced the render target");
+    const auto moved_image=pixels(target,128,128);
+    check(moved_image==moved_reference && moved_image!=initial,
+        "Prepared pose update lost raw coordinates or reapplied CPU deformation");
+    check(renderer.has_texture() && renderer.triangle_count()==2,"Prepared pose update lost mesh attributes");
+
+    const auto valid_frames=renderer.rendered_frames();
+    for(const auto invalid:{std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+        for(std::size_t index=0;index<16;++index) {
+            auto bad=root;bad[index]=invalid;
+            rejects([&]{renderer.render_prepared(128,128,bad,projection,MeshDrawMode::textured);});
+            bad=projection;bad[index]=invalid;
+            rejects([&]{renderer.render_prepared(128,128,root,bad,MeshDrawMode::textured);});
+        }
+        for(std::size_t axis=0;axis<3;++axis) {
+            auto bad=moved;
+            if(axis==0) bad[0].x=invalid;
+            else if(axis==1) bad[0].y=invalid;
+            else bad[0].z=invalid;
+            rejects([&]{renderer.update_positions(bad);});
+        }
+    }
+    auto short_pose=moved;short_pose.pop_back();
+    rejects([&]{renderer.update_positions(short_pose);});
+    rejects([&]{renderer.render_prepared(0,128,root,projection,MeshDrawMode::textured);});
+    check(renderer.rendered_frames()==valid_frames && pixels(target,128,128)==moved_image,
+        "Rejected prepared input changed the render target or frame counter");
+    check(pixels(renderer.render_prepared(128,128,root,projection,MeshDrawMode::textured),128,128)==moved_image,
+        "Rejected prepared pose changed the last valid GPU positions");
+    caller.verify();
+    renderer.update_batch_positions(0,deformed.positions);
+    check(pixels(renderer.render_prepared(128,128,root,projection,MeshDrawMode::textured),128,128)==initial,
+        "Prepared batch-zero reset lost raw coordinate mode");
+    for(const auto invalid:{std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity()}) {
+        auto bad=deformed;bad.positions[1].z=invalid;
+        rejects([&]{renderer.upload_prepared(bad);});
+        check(!renderer.has_mesh(),"Invalid prepared upload retained stale geometry");
+    }
+    renderer.upload(tetra);
+    rejects([&]{renderer.render_prepared(128,128,root,projection,MeshDrawMode::solid);});
+    check(coverage(pixels(renderer.render(128,128,camera,MeshDrawMode::solid),128,128))>200,
+        "Ordinary upload retained prepared coordinate mode");
+    const std::array<MeshBatch,1> batches{{{&deformed}}};
+    renderer.upload_batches(batches);
+    rejects([&]{renderer.render_prepared(128,128,root,projection,MeshDrawMode::solid);});
+    renderer.clear();
+    rejects([&]{renderer.render_prepared(128,128,root,projection,MeshDrawMode::solid);});
+    caller.verify();
+}
+
 void batch_pose_checks(dw4::viewer::MeshRenderer& renderer) {
     using namespace dw4::viewer;
     auto quad=[](float x,float z,float extent) {
@@ -656,6 +758,7 @@ int main() {
             rejects([&] { renderer.upload(malformed); });
             texture_checks(renderer, tetra, camera);
             pose_checks(renderer, tetra, camera);
+            prepared_checks(renderer, tetra, camera);
             scene_checks(renderer);
             batch_pose_checks(renderer);
             occluded_batch_checks(renderer);
@@ -664,7 +767,7 @@ int main() {
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, occluded-only actor visibility, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, prepared raw CPU positions with separate root/projection, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, occluded-only actor visibility, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {

@@ -59,6 +59,14 @@ class AppCliTests(unittest.TestCase):
         ]
 
     @staticmethod
+    def actor_options() -> list[str]:
+        # The animation implies --rig and mesh zero; --help avoids asset reads.
+        return [
+            "--resource", "synthetic-actor.igb", "--animation", "synthetic-clip",
+            "--actor-info", "0", "--actor-ram", "0", "--actor-index", "0",
+        ]
+
+    @staticmethod
     def replace(arguments: list[str], option: str, value: str) -> list[str]:
         result = arguments.copy()
         result[result.index(option) + 1] = value
@@ -177,6 +185,58 @@ class AppCliTests(unittest.TestCase):
             *base, "--scene-switch-control", "0", "--scene-switch-command", "all-on",
             "--scene-inspect-child", "0",
         ], "cannot be combined")
+
+    def test_actor_selection_accepts_implied_rig_and_explicit_mesh(self) -> None:
+        base = self.actor_options()
+        self.accepted(base)
+        self.accepted([*base, "--rig", "--mesh", "1", "--page", "meshes"])
+        self.accepted(["--archive", "synthetic.afs", "--entry", "0", *base[2:]])
+        self.accepted([
+            *base, "--animation-time", "0.5", "--animation-play", "--smoke-test", "2",
+        ])
+
+    def test_actor_selectors_and_animation_are_required_together(self) -> None:
+        base = self.actor_options()
+        for option in ("--actor-info", "--actor-ram", "--actor-index", "--animation"):
+            with self.subTest(missing=option):
+                incomplete = base.copy()
+                start = incomplete.index(option)
+                del incomplete[start:start + 2]
+                self.rejected(incomplete, "Actor inspection requires")
+        for option in ("--actor-info", "--actor-ram", "--actor-index"):
+            with self.subTest(only=option):
+                self.rejected(["--resource", "synthetic-actor.igb", option, "0"], "Actor inspection requires")
+        self.rejected(self.replace(base, "--animation", ""), "--animation requires an original clip name")
+
+    def test_actor_numeric_syntax_and_ranges(self) -> None:
+        base = self.actor_options()
+        limits = {"--actor-info": 1048575, "--actor-ram": 1023, "--actor-index": 63}
+        for option, maximum in limits.items():
+            with self.subTest(option=option, boundary=maximum):
+                self.accepted(self.replace(base, option, str(maximum)))
+            for value in ("-1", str(maximum + 1), "+1", "1x", "1.5", " 1", "1 ", "", "2147483648"):
+                with self.subTest(option=option, value=value):
+                    self.rejected(self.replace(base, option, value), option + " requires")
+
+    def test_actor_missing_values_unknown_and_duplicate_options(self) -> None:
+        base = self.actor_options()
+        for option in ("--actor-info", "--actor-ram", "--actor-index"):
+            with self.subTest(option=option, invalid="missing"):
+                self.rejected([option], "Missing value for " + option)
+            with self.subTest(option=option, invalid="duplicate"):
+                self.rejected([*base, option, "0"], "Duplicate actor inspection option")
+        self.rejected(["--actor-unknown", "0"], "Unknown option: --actor-unknown")
+
+    def test_actor_selection_preserves_source_and_mode_constraints(self) -> None:
+        base = self.actor_options()
+        self.rejected(base[2:], "--rig requires --resource, or --archive and --entry")
+        self.rejected([*base, "--scene-root", "0"], "Scene inspection cannot be combined")
+        for options in (["--bone", "0"], ["--rotate-x", "0"], ["--rotate-y", "1"], ["--rotate-z", "-1"]):
+            with self.subTest(manual=options):
+                self.rejected([*base, *options], "Choose an animation clip or manual bone rotation")
+        for option in ("--actor-info", "--actor-ram", "--actor-index"):
+            with self.subTest(play=option):
+                self.rejected(["--play", option, "0"], "--play cannot be combined")
 
 
 if __name__ == "__main__":

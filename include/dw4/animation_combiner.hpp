@@ -59,7 +59,11 @@ public:
     AnimationCombiner(const AnimationSourceRuntime& sources, std::vector<AnimationMatrix> cached_matrices);
     AnimationCombiner(const AnimationSourceRuntime& sources, std::vector<AnimationMatrix> cached_matrices,
         AnimationHierarchyDefinition hierarchy, std::vector<AnimationMatrix> bone_matrices,
-        std::vector<AnimationMatrix> joint_matrices);
+        std::vector<AnimationMatrix> joint_matrices, std::optional<std::uint32_t> reference = std::nullopt);
+    const std::string& source() const noexcept { return library_->source; }
+    // Decoded ownership, or an explicit native prepared identity. Unqualified
+    // arithmetic-only combiners cannot be selected as an actor's render cache.
+    std::optional<std::uint32_t> reference() const noexcept { return reference_; }
     const std::vector<AnimationCombinerState>& states() const noexcept { return states_; }
     const std::vector<AnimationMatrix>& cached_matrices() const noexcept { return matrices_; }
     bool cache_valid() const noexcept { return cache_valid_; }
@@ -99,6 +103,7 @@ private:
     friend AnimationCombiner decode_animation_combiner(const IgbDocument&, const AnimationSourceRuntime&, std::uint32_t);
     friend AnimationCombiner decode_animation_actor_combiner(const IgbDocument&, const AnimationSourceRuntime&, std::uint32_t);
     std::shared_ptr<const AnimationSourceRuntime::Library> library_;
+    std::optional<std::uint32_t> reference_;
     std::vector<AnimationCombinerState> states_;
     std::vector<AnimationMatrix> matrices_;
     std::shared_ptr<const AnimationHierarchyDefinition> hierarchy_;

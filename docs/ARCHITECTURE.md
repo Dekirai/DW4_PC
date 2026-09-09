@@ -34,6 +34,13 @@ single-influence weights and inverse-bind frames, and evaluates explicit manual
 joint deltas or complete bone-local transforms on the CPU. `enbaya` decodes
 bounded packed streams into immutable samples; `animations` validates the
 database/binding/track graph, translation mask and original one-clip pose profile.
+`actor_skin` binds a source-qualified prepared actor's explicit main geometry,
+captures existing root/joint palette caches by value, and deforms vertices with
+the original one-influence CPU arithmetic. The prepared renderer retains raw
+coordinates and applies the captured model-view and separate projection. The
+mesh workbench owns an explicit prepared clip session with original node/source
+clocks and host camera/fitting placement; it does not dispatch ACTION events.
+See [ACTOR_SKIN.md](ACTOR_SKIN.md) for graph ownership and arithmetic provenance.
 `camera` supplies
 the host orbit/projection math. `settings` loads and validates host preferences. `dw4_inspect` and
 `dw4_catalog` are read-only CLIs; `dw4_pc` is the native SDL3/OpenGL/ImGui viewer
