@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <limits>
-#include <optional>
 
 namespace dw4 {
 // Owned numeric fields of igAnimationState, not an actor or complete combiner.
@@ -71,7 +70,8 @@ public:
 private:
     float duration_{};
     AnimationPlayMode mode_{};
-    std::optional<std::int64_t> saved_time_;
-    float saved_seconds_{};
+    // Metadata defaults at 801C2058..801C2084: both cached times start at -1.
+    std::int64_t saved_time_ = -1;
+    float saved_seconds_ = -1;
 };
 } // namespace dw4

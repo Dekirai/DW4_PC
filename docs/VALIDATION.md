@@ -8,7 +8,7 @@ state management remains pending; the preview retains its provisional controller
 | Check | Evidence |
 | --- | --- |
 | Release build and package | Passed without compiler warnings; 30/30 CTest suites and 6 Python verifier tests passed |
-| Animation timing fixtures | 59 asset-free checks cover signed/unsigned coarse clocks, shared caches, speed-origin continuity, saturation, blend rounding, exceptional durations, endpoint branches and runtime modes |
+| Animation timing fixtures | 62 asset-free checks cover signed/unsigned coarse clocks, original metadata cache defaults, shared caches, speed-origin continuity, saturation, blend rounding, exceptional durations, endpoint branches and runtime modes |
 | Animation graph and layer fixtures | 66 asset-free checks, including timed sampling, cache publication on success, layer order, original quaternion behavior, fused cancellation and invalid inputs |
 | Original Agumon integration | 5,659 additional checks pass for all 82 clips; five modes at six local-time fractions add 2,460 complete timed poses and finite layer evaluations |
 | Independent timing instruction oracle | 30,000 operations in 1,000 shared-cache programs match at prepared-object and duration-service boundaries; NaN payloads excluded |

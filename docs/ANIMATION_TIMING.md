@@ -23,6 +23,7 @@ Addresses identify guest instructions, never host pointers.
 | `801D0668..801D06AC` | Elapsed blend fraction and fused weight arithmetic |
 | `802F10D0..802F1130` | Speed change preserving the time origin |
 | `801E52FC..801E53C0` | Shared source timestamp cache and integer-to-source-time mapping |
+| `801C2058..801C2090`, field offsets `804AFC28/2C` | Both source cache fields default to `-1` |
 | `801E4FE8` | Five source play modes and shared remainder cache |
 | `802EFDC8`, store at `802EFE04` | ACTION2 initialization of the shared time offset |
 | `801D10C0..801D111C` | Ordered quaternion/translation combination after source selection |
@@ -73,10 +74,11 @@ nanosecond conversion.
 `AnimationWrapContext` owns the remainder cache shared between sources and modes.
 Its offset starts at zero. Explicit `initialize_action_offset()` installs the
 original ACTION2 constant `0xbd088889`, approximately `-1/30`, without resetting
-the remainder cache. Source construction begins uncached; original source-object
-construction and lifetime have not been implemented. After a successful sample,
-cache hits compare the complete input timestamp. Changing mode at the same
-timestamp deliberately retains that cached result.
+the remainder cache. Both source cache fields start at `-1`, as established by
+the original nonserialized metadata defaults. An initial timestamp of `-1`
+therefore returns `-1` before mapping. Subsequent cache hits compare the complete
+input timestamp. Changing mode at the same timestamp deliberately retains that
+cached result. Complete source-object construction and lifetime remain pending.
 
 | Mode | Original mapped-time behavior |
 | --- | --- |
@@ -122,7 +124,7 @@ resolve partial bindings, or create the original interrupted-transition snapshot
 
 ## Validation and remaining integration
 
-The asset-free timing suite has 59 checks. The animation graph suite has 66,
+The asset-free timing suite has 62 checks. The animation graph suite has 66,
 including integer-time sampling, failure-atomic caches, ordered layers and a
 fixed cancellation case that distinguishes fused translation arithmetic from a
 separately rounded sum. Original files are optional for local integration:

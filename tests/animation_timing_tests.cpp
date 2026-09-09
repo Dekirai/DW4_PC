@@ -101,6 +101,12 @@ void wrapping() {
     rejects([&]{ context.map(std::numeric_limits<float>::infinity(), 1, AnimationPlayMode::repeat); });
     rejects([&]{ context.map(1, std::numeric_limits<float>::denorm_min(), AnimationPlayMode::repeat); });
     AnimationSourceClock source(1);
+    check(source.sample_time(-1, context) == -1, "Original source metadata cache sentinel changed.");
+    source.set_mode(AnimationPlayMode::bounce);
+    check(source.sample_time(-1, context) == -1, "Mode change invalidated the original initial cache hit.");
+    check(source.sample_time(0, context) == 0 && source.sample_time(-1, context) == 0,
+        "A sampled source incorrectly restored its initial cache sentinel.");
+    source.set_mode(AnimationPlayMode::repeat);
     check(source.sample_time(std::int64_t(tick)-1, context) == 0, "Source sub-tick conversion.");
     check(std::bit_cast<std::uint32_t>(source.sample_time(tick, context)) == 0x3989705f, "Source's original time-unit constant.");
     source.set_mode(AnimationPlayMode::clamp);

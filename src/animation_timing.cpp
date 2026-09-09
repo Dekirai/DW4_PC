@@ -119,7 +119,7 @@ AnimationSourceClock::AnimationSourceClock(float duration, AnimationPlayMode mod
     if (duration < 0) throw AnimationError("Animation source duration must not be negative.");
 }
 float AnimationSourceClock::sample_time(std::int64_t local_time, AnimationWrapContext& context) {
-    if (saved_time_ && *saved_time_ == local_time) return saved_seconds_;
+    if (saved_time_ == local_time) return saved_seconds_;
     const auto coarse = std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(bits(local_time) >> 18));
     const float seconds = static_cast<float>(coarse) *
         std::bit_cast<float>(std::uint32_t{0x3989705f});
