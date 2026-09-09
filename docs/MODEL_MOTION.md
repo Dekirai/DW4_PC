@@ -29,11 +29,13 @@ links Dolphin nor executes the DOL. Original code/data dumps stay outside Git.
 
 `ModelTurn` owns desired angles, per-axis rates and applied angles, corresponding
 to work offsets `80/84/88`, `8C/90/94` and `98/9C/A0`. `ModelMotionPose` owns the
-model matrix and translated flag (`78`). Its constructor requires an explicit
+model matrix and motion-written `_isHitCheck` flag (`78`, exposed as `translated`). Its constructor requires an explicit
 matrix. The caller must prepare matching angle/rate state; zero-initialized
 fields do not establish the original spawn or player defaults. The original
 matrix path reaches the model through the RAM dictionary's `ONE` record. Named
-dictionary/model ownership and preparation remain outside this API.
+dictionary/model ownership and full preparation remain outside this API.
+Version 0.16 adds explicit player rate and matrix-heading helpers, plus the
+separate `_isPosLock` flag at `A8`. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
 Copying a pose, timer or channel set produces independent state. No host pointers
 refer into serialized game data. Matrix updates do not mutate the source IGB.
@@ -154,8 +156,9 @@ To repeat the data checks after building, provide your own extracted files:
 .\build\Release\dw4_model_motion_tests.exe 'E:\path\Digimon World 4 - Extracted'
 ```
 
-Next connect actual player work preparation and spawn angles, original
-input/sequence/action selection, recovered collision response and camera state.
+Version 0.16 recovers player turn rates, heading preparation, CTRL/PDMOVE effects
+and post-input sequence requests. Next connect full player work construction,
+original input/sequence/action execution, collision response and camera state.
 Model motion alone does not execute startup, animation transitions, combat,
 progression, saves or the original multiplayer loop. The full acceptance target
 remains [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).

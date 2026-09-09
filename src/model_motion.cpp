@@ -81,6 +81,26 @@ void euler_basis(std::array<float,16>& matrix, const std::array<float,3>& angles
 }
 } // namespace
 
+void set_player_turn_rates(ModelMotionPose& pose) noexcept {
+    pose.turn.rate = {0,7,0}; // 80456F68 and 8045700C, already radians/frame.
+}
+void synchronize_model_heading(ModelMotionPose& pose) {
+    // 8012D434 transforms (0,0,1) without translation. Retain zero products:
+    // directly copying the Z column changes signed-zero and non-finite cases.
+    std::array<float,3> forward;
+    for (std::size_t row=0;row<3;++row) {
+        const float y = 0.0f * pose.matrix[4+row];
+        const float xy = std::fma(0.0f,pose.matrix[row],y);
+        forward[row] = std::fma(1.0f,pose.matrix[8+row],xy);
+    }
+    // The caller uses only X/Z; the original temporary Y is not published.
+    finite(forward[0]); finite(forward[2]);
+    const float heading = static_cast<float>(std::atan2(static_cast<double>(forward[0]),
+        static_cast<double>(forward[2])));
+    finite(heading);
+    pose.turn.desired[1] = heading; pose.turn.applied[1] = heading;
+}
+
 bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time, bool force) {
     auto candidate_timer = timer;
     auto angles = pose.turn.desired;

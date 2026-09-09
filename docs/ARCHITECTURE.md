@@ -114,13 +114,23 @@ walking preview or a complete original actor/sequence/turning/collision loop.
 See [MOTION.md](MOTION.md) for source addresses and validation.
 
 Version 0.15 adds `model_motion`: caller-prepared desired/rate/applied angles,
-an owned model matrix and the original translated flag. The combined motion
+an owned model matrix and the motion-written `_isHitCheck` flag. The combined motion
 API ticks the rotation channel, updates Y angle/rate, applies recovered Euler
 turning, then translates along the resulting basis using the same cached timer.
 Repeated float angle wrapping is batched exactly within eligible exponent bins.
-No player defaults, spawn-angle extraction or original controller callbacks are
-assumed. These are native pose effects before collision, not a full actor loop.
+These are native pose effects before collision, not a full actor loop.
 See [MODEL_MOTION.md](MODEL_MOTION.md).
+
+Version 0.16 adds `model_control`: one explicitly prepared model owns motion
+channels, an optional elapsed timer, CTRL mode/phase, PDMOVE parameters and the
+fall-check flag. MOVE/MOVEEX creates the missing timer and releases position lock
+with original heading synchronization before configuring channels. CTRL/PDMOVE
+has separate effects. The post-input control API preserves existing requests
+and exposes the original WAIT/WALK dispatch decision without executing an
+animation/action sequence. Explicit helpers recover player rates `(0,7,0)` and
+matrix-derived Y angles. Full work construction, named RAM ownership, original
+input/sequence callbacks, attachments and collision remain required; none of
+these APIs replaces the preview controller. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded

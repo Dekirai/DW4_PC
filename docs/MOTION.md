@@ -171,7 +171,9 @@ fields, the turning helper, matrix assignment callbacks, trace output and
 attachment/MOVERL branches are not implemented by `MotionStep.rotation`.
 Version 0.15 adds a separate `advance_model` path for the recovered rotation,
 turning and translation order; see [MODEL_MOTION.md](MODEL_MOTION.md). Original
-model preparation, setter/trace callbacks and attachment behavior remain pending.
+full model preparation, setter/trace callbacks and attachment behavior remain pending.
+Version 0.16 adds a supported command preparation/control layer, including
+timer creation and position-lock release; see [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
 ## Validation and next integration
 
@@ -194,8 +196,8 @@ These are arithmetic and data comparisons, not a captured original gameplay
 comparison. Local probes and disassembly remain ignored under `work/v14-*`.
 Public tests use independently generated synthetic data only.
 
-Next connect retained per-player work, timer lifecycle, input/sequence dispatch,
-matching weapon/action animation, the recovered model turning and original collision
+Next connect full retained per-player work, named timer ownership, input/sequence execution,
+matching weapon/action animation, recovered model turning and original collision
 response. Preserve original spawn basis and independent player ownership.
 The preview's 120 Hz solver, speed 80 and host camera remain provisional; changing
 one constant alone would not establish original movement. See

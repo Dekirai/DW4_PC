@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.16 adds original CTRL/PDMOVE effects, movement timer/position-lock
+preparation, player turn rates and post-input WAIT/WALK requests. All 668 original
+CTRL/PDMOVE records decode; 10,000 bounded instruction comparisons pass. Explicit
+command effects also pass at all eight stored entry matrices. Full player work
+construction, named RAM ownership, input and sequence/action execution remain
+the next boundary before collision and camera integration. These core changes
+do not replace the provisional walking controller. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
+
 Version 0.15 connects the original motion channels to recovered turning and an
 owned model matrix in their original order. Four original entry matrices and
 Agumon commands pass data integration checks; original player preparation,

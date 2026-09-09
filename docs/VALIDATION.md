@@ -1,4 +1,30 @@
-# Native model turning and movement validation
+# Native model control and preparation validation
+
+Version 0.16 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. Original CTRL/PDMOVE effects, movement preparation, player
+turn rates and post-input sequence requests now run in the portable core.
+Full original player construction, input and sequence/action execution remain
+pending. The walking preview retains its provisional host controller.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed without compiler warnings; 28/28 CTest suites and 6 Python verifier tests passed; installed executable matches the build by SHA-256 |
+| Model control fixtures | 64 asset-free checks: original rates, FMA signed-zero heading, timer/position-lock preparation, exact CTRL/PDMOVE fields and names, byte/phase branches, request priority, independent state, dependency guards and atomic failures |
+| Complete CTRL/PDMOVE scan | All 668 records in 2,273 recognized archive IGBs decode: 526 CTRL and 142 PDMOVE; zero rejections |
+| Independent control instruction oracle | 10,000 cases, 2,500 each for CTRL, PDMOVE, post-input control and MOVE; zero mismatches at the supported service boundaries |
+| Original command/placement integration | 49 additional checks pass using Agumon Move 130 / Stop 1540, CTRL 6499 / 622 and all eight PLAYERPOINT 115 matrices; explicit command effects request WAIT/WALK and travel approximately 8.275 local units over 18 Move / six Stop updates at cached delta 1 |
+| Packaged walking regression | 120-frame SDL replay passed: unchanged 198 host steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads and final (-292,40,431); pause/restart/focus-loss checks passed |
+| Packaged visual inspection | 1280x720 overview and walking captures inspected; version 0.16 visible; Agumon and original map render in the 1236x600 walking target with 8x MSAA |
+
+The oracle executes a bounded instruction profile with synthetic named objects
+and preallocated channel/list capacity. Host atan2, timer creation and sequence
+dispatch are supplied boundaries. It does not establish original libm parity,
+allocator behavior, full sequence execution or gameplay equivalence. The optional
+data checks explicitly apply commands at stored matrices; they are not original
+player creation, a scheduler run or physical multiplayer. Original bytes,
+instruction probes and captures remain ignored. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
+
+## Native model turning and movement validation
 
 Version 0.15 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. It adds the recovered model turn interpolation and combined

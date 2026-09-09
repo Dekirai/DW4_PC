@@ -1,0 +1,54 @@
+#pragma once
+
+#include "dw4/model_motion.hpp"
+
+#include <optional>
+#include <string_view>
+#include <variant>
+
+namespace dw4 {
+struct ModelCtrlCommand {
+    std::uint32_t reference_index{};
+    std::string name;
+};
+struct PadMotionCommand {
+    std::uint32_t reference_index{};
+    std::string name;
+    float value{}, frames{};
+};
+using ModelCommand = std::variant<MotionCommand,ModelCtrlCommand,PadMotionCommand>;
+// Exact MOVE/MOVEEX/CTRL/PDMOVE records only. Unknown CTRL names are successful
+// no-ops; PDMOVE selects Move parameters only for the exact name "Move".
+ModelCommand decode_model_command(const IgbDocument& document, std::uint32_t reference_index);
+
+// Owned motion/control fields for one explicitly prepared ONE model. This is
+// not the complete beModelCtrlInfoWork or original player construction routine.
+struct ModelControlState {
+    explicit ModelControlState(ModelMotionPose prepared_pose) : pose(prepared_pose) {}
+    ModelMotionPose pose;
+    MotionChannels channels;
+    std::optional<MotionTimer> elapsed_timer; // This RAM's named KEIKATIMER.
+    std::int32_t mode{}, phase{}; // _ctrlSt0 / _ctrlSt1, work+3C/+40.
+    std::optional<std::array<float,4>> pad_motion; // Stop value/frame, Move value/frame.
+    bool check_fall = true; // _isFallCheck, work+DA; CTRL changes the flag only.
+};
+// MOVE/MOVEEX: ensure the timer, release position lock and synchronize heading,
+// then configure the channels. CTRL and PDMOVE have no implicit timer/motion.
+// Validation failures preserve the complete owned state.
+void apply_model_command(ModelControlState& state, const ModelCommand& command, std::uint64_t world_time);
+
+struct ModelControlDecision {
+    std::string requested_sequence;
+    bool dispatch_sequence{};
+};
+// 80309168 after the original input callback: preserve an existing request;
+// otherwise apply modes 1/2/3. key_input is the original byte, including its
+// distinct !=0 and ==1 branches. The caller supplies current/requested names
+// after frame reset/input. A dispatch result still requires the real sequence
+// callback; this function never pretends to execute its animation/actions.
+ModelControlDecision update_model_control(ModelControlState& state, std::uint8_t key_input,
+    std::string_view current_sequence, std::string_view requested_sequence);
+// Motion part only, after control/sequence dispatch. Does not execute the outer
+// attachment/position-lock, action wait, collision or player update callbacks.
+ModelMotionStep advance_model_motion(ModelControlState& state, std::uint64_t world_time);
+} // namespace dw4

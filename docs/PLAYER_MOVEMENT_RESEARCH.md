@@ -289,8 +289,25 @@ negative direction. A moved result is not normalized again before storage.
 Version 0.15 implements this turning path, the Euler matrix construction at
 `801292D4` and their ordering with motion channels. Matrix reset globals are
 traced to initializer `8012F57C`; see [MODEL_MOTION.md](MODEL_MOTION.md).
-Default per-axis rates, spawn-angle preparation and all mode changes remain
-integration work; no guessed player turn speed is established here.
+Version 0.16 traces actual player preparation to virtual slot `98` of vtable
+`804E7DAC`, function `8034D61C`. Stores `8034D788/78C/790` set the turn rates to
+`(0,7,0)`, using constants `80456F68` and `8045700C`. These are already radians
+per original frame unit; the Y rate is not seven degrees. Full player work
+construction, equipment and generation callbacks remain unimplemented.
+
+Base dispatch `8030D910` synchronizes Y after that preparation path at
+`8030DAA4..8030DADC`. Direction helper `8012D434` transforms global +Z by the
+model basis, followed by float-rounded `atan2(X,Z)` into desired/applied Y.
+MOVE handler `8030A6BC` repeats this synchronization when releasing `_isPosLock`
+at work `A8`, after ensuring `KEIKATIMER`. Metadata registration `802C6C7C`
+identifies work `78` as the separate `_isHitCheck` flag. The native helper keeps
+the original FMA zero products: copying the Z column directly changes signed-zero
+heading cases. Host atan2 remains an explicit math-library boundary.
+
+CTRL handler `80308EC0`, PDMOVE handler `8030AEE0` and the post-input part of
+`80309168` now have owned native effects. WAIT/WALK output is a sequence request,
+not execution of its weapon/action list. See [MODEL_CONTROL.md](MODEL_CONTROL.md)
+for exact byte branches, prerequisites, source fields and validation.
 
 ## Agumon sequence parameters and animation pairing
 
