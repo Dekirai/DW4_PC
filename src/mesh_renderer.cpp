@@ -180,6 +180,7 @@ uniform sampler2D base_texture;
 out vec4 color;
 void main() {
     if (draw_mode == 1) { color = vec4(0.30, 0.90, 0.79, 1.0); return; }
+    if (draw_mode == 3) { color = vec4(1.0, 0.72, 0.22, 1.0); return; }
     if (draw_mode == 2) {
         color = texture(base_texture, uv);
         if (color.a == 0.0) discard;
@@ -669,8 +670,10 @@ void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions&
 }
 
 std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& camera,
-    MeshDrawMode mode, int requested_samples) {
+    MeshDrawMode mode, int requested_samples, std::optional<std::size_t> occluded_batch) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded");
+    if (occluded_batch && *occluded_batch >= batch_count())
+        throw std::runtime_error("Occluded batch index is outside the uploaded scene");
     if (mode == MeshDrawMode::textured) {
         if (impl_->batch_mode) {
             for (const auto& batch : impl_->batches)
@@ -704,17 +707,33 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
         state.gl.BlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
     state.gl.BindVertexArray(state.vao);
+    const auto draw_silhouette = [&](std::size_t count, const void* offset) {
+        // Test against static depth before this batch writes its own front
+        // surfaces. Otherwise rear faces would highlight an unobstructed actor.
+        glDepthFunc(GL_GREATER); glDepthMask(GL_FALSE); glDisable(GL_BLEND);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        state.gl.Uniform1i(state.mode_location, 3);
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT, offset);
+        glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE);
+        glPolygonMode(GL_FRONT_AND_BACK, mode == MeshDrawMode::wireframe ? GL_LINE : GL_FILL);
+        if (mode == MeshDrawMode::textured) glEnable(GL_BLEND);
+        state.gl.Uniform1i(state.mode_location, mode == MeshDrawMode::wireframe ? 1 : mode == MeshDrawMode::textured ? 2 : 0);
+    };
     if (state.batch_mode) {
-        for (const auto& batch : state.batches) {
+        for (std::size_t index = 0; index < state.batches.size(); ++index) {
+            const auto& batch = state.batches[index];
+            const auto offset = static_cast<std::uintptr_t>(batch.first_index * sizeof(std::uint32_t));
+            if (occluded_batch && *occluded_batch == index)
+                draw_silhouette(batch.index_count, reinterpret_cast<const void*>(offset));
             if (mode == MeshDrawMode::textured) {
                 state.gl.Uniform1i(state.mode_location, batch.texture ? 2 : 0);
                 glBindTexture(GL_TEXTURE_2D, batch.texture);
             }
-            const auto offset = static_cast<std::uintptr_t>(batch.first_index * sizeof(std::uint32_t));
             glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(batch.index_count), GL_UNSIGNED_INT,
                 reinterpret_cast<const void*>(offset));
         }
     } else {
+        if (occluded_batch) draw_silhouette(state.index_count, nullptr);
         if (mode == MeshDrawMode::textured) glBindTexture(GL_TEXTURE_2D, state.base_texture);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(state.index_count), GL_UNSIGNED_INT, nullptr);
     }

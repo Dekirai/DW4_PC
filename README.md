@@ -1,10 +1,11 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.11 executes the original function and boot scripts, loads their
-requested resources and reconstructs the original info-routing order;
-the game is not playable yet.** Later startup
-stages, player movement, collision, combat and game saves remain unimplemented.
+**Version 0.12 includes a native walking preview: control Agumon in an original
+map with keyboard or an SDL-mapped gamepad.** It uses original map, model,
+textures, floor/wall collision geometry and idle/run animations. Movement and the
+follow camera are provisional native implementations. The complete original
+game, combat, progression, audio and saves remain unimplemented.
 
 The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
 original local files directly. The PowerPC `main.dol` is inspected as data and
@@ -14,6 +15,9 @@ not contain game files.
 
 ## Current capabilities
 
+- Play the original `dng101b1` / `BG02` map with camera-relative movement,
+  original floor following, automatic idle/run animation, pause and restart.
+  See [PLAY_PREVIEW.md](docs/PLAY_PREVIEW.md) for controls and current limits.
 - Validate GameCube headers and DOL sections; identify the USA release.
 - Index both AFS archives without loading the entire large files into memory.
 - Browse archive entries and read bounded byte previews.
@@ -58,7 +62,7 @@ not contain game files.
 - Inspect SDL-detected gamepads and live input.
 - Save settings locally and validate malformed configuration values.
 
-Graphics settings currently affect the **development window and asset viewers**. Saved gameplay,
+Graphics settings currently affect the **walking preview, development window and asset viewers**. Saved gameplay,
 aspect ratio and controller preferences are preparation for future work;
 they do not implement game features. A 144 FPS workbench does not establish
 that DW4 gameplay runs correctly at 144 FPS.
@@ -82,6 +86,14 @@ under **Original data** and select **Remember directory**. Alternatively:
 
 ```powershell
 .\scripts\run.ps1 -Data 'E:\path\Digimon World 4 - Extracted'
+```
+
+Select **Play walking preview** on the Overview page. Move with **WASD**, arrow
+keys or a gamepad's left stick; right-drag to orbit, use the wheel to zoom,
+**Escape / Start** to pause and **R** to restart. To launch directly:
+
+```powershell
+.\dist\DW4_PC\dw4_pc.exe --data 'E:\path\Digimon World 4 - Extracted' --play
 ```
 
 You can also build manually in an x64 developer shell:

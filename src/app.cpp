@@ -16,6 +16,8 @@
 #include "dw4/startup_loading.hpp"
 #include "dw4/skinning.hpp"
 #include "dw4/textures.hpp"
+#include "dw4/walking.hpp"
+#include "dw4/walking_collision.hpp"
 #include "mesh_renderer.hpp"
 
 #include <SDL3/SDL.h>
@@ -84,6 +86,7 @@ struct Options {
     std::string scene_player_animation;
     std::optional<double> scene_player_time;
     bool scene_player_play = false;
+    bool play = false, play_smoke = false;
     std::string boot_package;
     dw4::BootInputs boot_inputs;
     bool rig = false;
@@ -138,6 +141,14 @@ std::vector<std::string> arguments(int argc, char** argv) {
 
 Options parse_options(const std::vector<std::string>& args) {
     Options out;
+    if (std::find(args.begin(),args.end(),"--play") != args.end()) {
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (args[i] == "--play" || args[i] == "--play-smoke" || args[i] == "--help" || args[i] == "-h") continue;
+            if (args[i] == "--data" || args[i] == "--config" || args[i] == "--smoke-test" || args[i] == "--screenshot") { ++i; continue; }
+            if (args[i].starts_with("--play-")) throw std::runtime_error("Unknown option: "+args[i]);
+            throw std::runtime_error("--play cannot be combined with viewer, page or boot options: "+args[i]);
+        }
+    }
     bool texture_requested = false;
     bool mesh_mode_requested = false;
     bool scene_mode_requested = false;
@@ -150,6 +161,11 @@ Options parse_options(const std::vector<std::string>& args) {
         if (args[i].starts_with("--scene-player-") && !player_options.insert(args[i]).second)
             throw std::runtime_error("Duplicate player inspection option: " + args[i]);
         if (args[i] == "--help" || args[i] == "-h") { out.help = true; continue; }
+        if (args[i] == "--play" || args[i] == "--play-smoke") {
+            auto& flag = args[i] == "--play" ? out.play : out.play_smoke;
+            if (flag) throw std::runtime_error("Duplicate play option: " + args[i]);
+            flag = true; continue;
+        }
         if (args[i] == "--rig") { out.rig = true; continue; }
         if (args[i] == "--animation-play") { out.animation_play = true; continue; }
         if (args[i] == "--scene-player-play") { out.scene_player_play = true; continue; }
@@ -312,6 +328,11 @@ Options parse_options(const std::vector<std::string>& args) {
         if (page_requested && out.initial_page != 8) throw std::runtime_error("Boot options require --page startup when --page is specified.");
         dw4::validate_boot_inputs(out.boot_inputs); out.initial_page = 8;
     }
+    if (out.play_smoke && (!out.play || out.smoke_frames < 120))
+        throw std::runtime_error("--play-smoke requires --play and --smoke-test of at least 120 frames.");
+    if (out.play && (scene_requested || page_requested || !out.resource.empty() || out.entry || out.mesh || out.rig ||
+        texture_requested || mesh_mode_requested || entry_limit_requested || !boot_options.empty() || !player_options.empty()))
+        throw std::runtime_error("--play uses its verified original scene profile and cannot be combined with viewer, page or boot options.");
     return out;
 }
 
@@ -462,8 +483,10 @@ public:
         int frames = 0;
         while (running) {
             const auto frame_start = std::chrono::steady_clock::now();
+            if (options_.play_smoke) inject_play_smoke(frames);
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
+                handle_play_event(event);
                 ImGui_ImplSDL3_ProcessEvent(&event);
                 if (event.type == SDL_EVENT_QUIT ||
                     (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == SDL_GetWindowID(window_)))
@@ -476,7 +499,9 @@ public:
             ImGui::NewFrame();
             advance_animation_clock();
             advance_scene_player_clock();
+            advance_play();
             draw();
+            if (quit_requested_) running = false;
             ImGui::Render();
             int width = 0, height = 0;
             SDL_GetWindowSizeInPixels(window_, &width, &height);
@@ -502,6 +527,26 @@ public:
             if (!options_.data.empty() && !disc_) {
                 std::cerr << "Data inspection failed: " << asset_error_ << '\n';
                 return 2;
+            }
+            if (options_.play) {
+                if (!play_active_ || !play_world_ || !scene_player_.uploaded || !play_error_.empty() ||
+                    !scene_player_.error.empty() || !scene_renderer_.has_texture() || scene_renderer_.rendered_frames() == 0) {
+                    std::cerr << "Walking preview failed: " << play_error_ << '\n'; return 3;
+                }
+                const auto p = play_walker_.position();
+                std::cout << "Native walking preview: original dng101b1/BG02, Agumon, floor info 1768\n"
+                    << "Walking floor triangles: " << play_world_->triangle_count() << " / wall triangles " << play_world_->wall_triangle_count()
+                    << " / position " << p.x << ',' << p.y << ',' << p.z << '\n'
+                    << "Walking simulation: " << play_steps_ << " steps / distance " << play_distance_ << " / idle " << play_idle_samples_
+                    << " / run " << play_run_samples_ << " / pose uploads " << scene_player_.updates << '\n'
+                    << "Walking render: " << scene_target_width_ << 'x' << scene_target_height_ << " / " << scene_renderer_.samples() << " samples\n";
+                if (options_.play_smoke) {
+                    std::cout << "SDL keyboard replay: pause " << play_pause_verified_ << " / restart " << play_restart_verified_ << " / focus loss " << play_focus_verified_ << '\n';
+                    if (play_distance_ < 20 || !play_run_samples_ || !play_idle_samples_ || !play_pause_verified_ || !play_restart_verified_ || !play_focus_verified_ ||
+                        std::hypot(p.x-play_spawn_.matrix[12],p.z-play_spawn_.matrix[14]) < 1) {
+                        std::cerr << "Walking input replay did not satisfy movement, idle/run, pause and restart checks.\n"; return 3;
+                    }
+                }
             }
             if (!options_.boot_package.empty()) {
                 if (!boot_session_ || !boot_session_->files_loaded || !boot_session_->info_routing_complete ||
@@ -682,6 +727,23 @@ public:
     }
 
 private:
+    bool play_active_ = false, play_paused_ = false, quit_requested_ = false;
+    bool play_pad_start_ = false, play_running_clip_ = false;
+    std::array<bool, SDL_SCANCODE_COUNT> play_keys_{};
+    std::optional<dw4::WalkingWorld> play_world_;
+    dw4::Walker play_walker_;
+    dw4::PlayerPlacement play_spawn_;
+    dw4::Vec3 play_grounded_spawn_{};
+    float play_spawn_facing_ = 0;
+    std::optional<dw4::AnimationClip> play_idle_clip_, play_run_clip_;
+    std::string play_error_;
+    double play_accumulator_ = 0, play_distance_ = 0;
+    std::uint64_t play_steps_ = 0, play_run_samples_ = 0, play_idle_samples_ = 0;
+    float play_zoom_ = 1;
+    bool play_pause_verified_ = false, play_restart_verified_ = false, play_focus_verified_ = false;
+    dw4::Vec3 play_pause_position_{};
+    double play_pause_time_ = 0;
+    std::chrono::steady_clock::time_point play_tick_ = std::chrono::steady_clock::now();
     Options options_;
     dw4::Settings settings_;
     std::filesystem::path config_;
@@ -901,7 +963,7 @@ private:
         ImGui::CreateContext();
         imgui_ready_ = true;
         auto& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
         io.IniFilename = nullptr;
 #ifdef _WIN32
         wchar_t windows_dir[MAX_PATH]{};
@@ -1005,6 +1067,7 @@ private:
             }
             run_boot_inspection(options_.boot_package);
         }
+        if (options_.play) start_play();
     }
 
     void create_window(int msaa) {
@@ -1543,6 +1606,7 @@ private:
     }
 
     void clear_scene_player() {
+        stop_play();
         scene_player_ = {};
         scene_player_points_.clear();
         scene_player_model_input_ = scene_player_point_input_ = -1;
@@ -1550,6 +1614,7 @@ private:
     }
 
     void remove_scene_player() {
+        stop_play();
         scene_player_.playing = scene_player_.uploaded = false;
         scene_player_.visual.reset(); scene_player_.placement.reset();
         scene_player_.clip.reset(); scene_player_.clips.clear();
@@ -1661,7 +1726,7 @@ private:
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now-scene_player_.tick).count();
         scene_player_.tick = now;
-        if (page_ != 6 || !scene_player_.playing || !scene_player_.clip || !scene_player_.uploaded || elapsed <= 0) return;
+        if (play_active_ || page_ != 6 || !scene_player_.playing || !scene_player_.clip || !scene_player_.uploaded || elapsed <= 0) return;
         const double duration = scene_player_.clip->info.duration_seconds;
         if (!std::isfinite(duration) || duration <= 0) { scene_player_.playing = false; return; }
         double seconds = scene_player_.time + elapsed;
@@ -1670,6 +1735,234 @@ private:
             else { seconds = duration; scene_player_.playing = false; }
         }
         update_scene_player_pose(seconds);
+    }
+
+    void stop_play() {
+        play_active_ = false; play_paused_ = false;
+        play_keys_.fill(false); play_accumulator_ = 0;
+        play_world_.reset(); play_idle_clip_.reset(); play_run_clip_.reset();
+    }
+
+    void start_play() {
+        stop_play(); play_error_.clear();
+        try {
+            if (!disc_ || !disc_->header.is_dw4_usa() || !mounted_resources_)
+                throw std::runtime_error("Mount the extracted USA GameCube game before starting the walking preview.");
+            // Explicit verified asset profile; this does not bypass a partially executed game startup.
+            load_scene_package("dng101b1.igb");
+            if (!scene_package_) throw std::runtime_error(scene_package_error_);
+            select_package_member(1,1,std::nullopt,dw4::SwitchControlRequest{3471,dw4::SwitchControlCommand::all_on});
+            if (!scene_data_ || !scene_data_->complete || !scene_document_) throw std::runtime_error(scene_error_);
+            scene_mode_ = dw4::viewer::MeshDrawMode::textured;
+            load_scene_player_resource("_common/p_agumon.igb");
+            scene_player_model_input_ = 1386; scene_player_slot_input_ = 0; scene_player_branch_input_ = 1;
+            scene_player_point_input_ = 115; scene_player_group_input_ = 0;
+            place_scene_player();
+            if (!scene_player_.uploaded || !scene_player_.visual || !scene_player_.error.empty())
+                throw std::runtime_error(scene_player_.error);
+            const auto floor_meshes = dw4::decode_walking_collision(*scene_document_,1768);
+            auto walls = dw4::decode_walking_walls(*scene_document_,1953);
+            auto doors = dw4::decode_walking_walls(*scene_document_,192);
+            for (auto& door : doors) walls.push_back(std::move(door));
+            play_world_.emplace(floor_meshes,walls);
+            play_spawn_ = *scene_player_.placement;
+            const auto clip = [&](const char* name) {
+                const dw4::AnimationInfo* selected = nullptr;
+                for (const auto& item : scene_player_.clips) if (item.name == name) {
+                    if (selected) throw std::runtime_error("Ambiguous walking animation.");
+                    selected = &item;
+                }
+                if (!selected || !selected->supported || selected->duration_seconds <= 0)
+                    throw std::runtime_error(std::string("Walking animation is unavailable: ")+name);
+                return dw4::decode_igb_animation(*scene_player_.document,scene_player_.visual->skin,selected->reference_index);
+            };
+            play_idle_clip_ = clip("waitS"); play_run_clip_ = clip("runD");
+            play_active_ = true; play_paused_ = false; play_pad_start_ = false;
+            play_distance_ = 0; play_steps_ = play_idle_samples_ = play_run_samples_ = 0;
+            play_pause_verified_ = play_restart_verified_ = play_focus_verified_ = false;
+            restart_play();
+            play_grounded_spawn_ = play_walker_.position(); play_spawn_facing_ = play_walker_.facing();
+            page_ = 0;
+        } catch (const std::exception& error) {
+            play_error_ = error.what(); stop_play();
+        }
+    }
+
+    void restart_play() {
+        if (!play_world_ || !scene_player_.placement || !play_idle_clip_) return;
+        play_walker_.reset({play_spawn_.matrix[12],play_spawn_.matrix[13],play_spawn_.matrix[14]},*play_world_,
+            std::atan2(play_spawn_.matrix[8],play_spawn_.matrix[10]));
+        *scene_player_.placement = play_spawn_;
+        scene_player_.clip = *play_idle_clip_; scene_player_.playing = false;
+        scene_player_.time = 0; play_running_clip_ = false;
+        play_keys_.fill(false); play_accumulator_ = 0; play_zoom_ = 1;
+        scene_camera_.reset(); scene_camera_.orbit(-0.65f,0.9f);
+        scene_fit_pending_ = scene_player_focus_pending_ = false;
+        apply_walk_pose();
+        play_tick_ = std::chrono::steady_clock::now();
+    }
+
+    void apply_walk_pose() {
+        const auto p = play_walker_.position();
+        const float c = std::cos(play_walker_.facing()), s = std::sin(play_walker_.facing());
+        // Host controller yaw replaces the actor's outer orientation; source skin remains unchanged.
+        scene_player_.placement->matrix = {c,0,-s,0, 0,1,0,0, s,0,c,0, p.x,p.y,p.z,1};
+        update_scene_player_pose(scene_player_.time);
+        if (!scene_player_.error.empty()) throw std::runtime_error(scene_player_.error);
+    }
+
+    void pause_play(bool pause) {
+        play_paused_ = pause; play_keys_.fill(false); play_accumulator_ = 0;
+        play_tick_ = std::chrono::steady_clock::now();
+    }
+
+    void handle_play_event(const SDL_Event& event) {
+        if (!play_active_) return;
+        if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST && event.window.windowID == SDL_GetWindowID(window_)) {
+            pause_play(true); return;
+        }
+        if ((event.type != SDL_EVENT_KEY_DOWN && event.type != SDL_EVENT_KEY_UP) || event.key.windowID != SDL_GetWindowID(window_)) return;
+        const auto key = event.key.scancode;
+        if (key < 0 || key >= SDL_SCANCODE_COUNT) return;
+        if (event.type == SDL_EVENT_KEY_UP) { play_keys_[key] = false; return; }
+        if (event.key.repeat) return;
+        if (key == SDL_SCANCODE_ESCAPE) pause_play(!play_paused_);
+        else if (key == SDL_SCANCODE_R && !play_paused_) restart_play();
+        else if (!play_paused_) play_keys_[key] = true;
+    }
+
+    void inject_play_smoke(int frame) {
+        if (!play_active_) return;
+        const auto key = [&](SDL_Scancode code, bool down) {
+            SDL_Event event{}; event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+            event.key.windowID = SDL_GetWindowID(window_); event.key.scancode = code;
+            event.key.down = down;
+            if (!SDL_PushEvent(&event)) throw std::runtime_error(SDL_GetError());
+        };
+        if (frame == 4) key(SDL_SCANCODE_W,true);
+        if (frame == 44) { key(SDL_SCANCODE_W,false); key(SDL_SCANCODE_D,true); }
+        if (frame == 74) key(SDL_SCANCODE_D,false);
+        if (frame == 80) {
+            play_pause_position_ = play_walker_.position(); play_pause_time_ = scene_player_.time;
+            key(SDL_SCANCODE_ESCAPE,true); key(SDL_SCANCODE_ESCAPE,false);
+        }
+        if (frame == 90) key(SDL_SCANCODE_W,true);
+        if (frame == 100) {
+            const auto p = play_walker_.position();
+            play_pause_verified_ = play_paused_ && p.x == play_pause_position_.x && p.y == play_pause_position_.y &&
+                p.z == play_pause_position_.z && scene_player_.time == play_pause_time_;
+            key(SDL_SCANCODE_ESCAPE,true); key(SDL_SCANCODE_ESCAPE,false);
+        }
+        if (frame == 102) {
+            play_pause_position_ = play_walker_.position(); play_pause_time_ = scene_player_.time;
+            SDL_Event lost{}; lost.type = SDL_EVENT_WINDOW_FOCUS_LOST; lost.window.windowID = SDL_GetWindowID(window_);
+            if (!SDL_PushEvent(&lost)) throw std::runtime_error(SDL_GetError());
+            key(SDL_SCANCODE_W,true);
+        }
+        if (frame == 103) {
+            const auto p = play_walker_.position();
+            play_focus_verified_ = play_paused_ && p.x == play_pause_position_.x && p.y == play_pause_position_.y &&
+                p.z == play_pause_position_.z && scene_player_.time == play_pause_time_ && !play_keys_[SDL_SCANCODE_W];
+            key(SDL_SCANCODE_ESCAPE,true); key(SDL_SCANCODE_ESCAPE,false);
+        }
+        if (frame == 105) { key(SDL_SCANCODE_R,true); key(SDL_SCANCODE_R,false); }
+        if (frame == 106) {
+            const auto p = play_walker_.position();
+            play_restart_verified_ = p.x == play_grounded_spawn_.x && p.y == play_grounded_spawn_.y && p.z == play_grounded_spawn_.z &&
+                play_walker_.facing() == play_spawn_facing_ && !play_walker_.moving() && !play_running_clip_ &&
+                scene_player_.clip && scene_player_.clip->info.name == "waitS" && scene_player_.time < 0.02;
+        }
+        if (frame == 110) key(SDL_SCANCODE_D,true);
+        if (frame == 119) key(SDL_SCANCODE_D,false);
+    }
+
+    void advance_play() {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now-play_tick_).count(); play_tick_ = now;
+        if (!play_active_ || !play_world_) return;
+        try {
+            bool start = false;
+            if (!options_.smoke_frames) for (auto* pad : gamepads_) start |= SDL_GetGamepadButton(pad,SDL_GAMEPAD_BUTTON_START);
+            if (start && !play_pad_start_) pause_play(!play_paused_);
+            play_pad_start_ = start;
+            if (play_paused_ || (!options_.smoke_frames && SDL_GetKeyboardFocus() != window_)) return;
+            float right = float(play_keys_[SDL_SCANCODE_D] || play_keys_[SDL_SCANCODE_RIGHT]) - float(play_keys_[SDL_SCANCODE_A] || play_keys_[SDL_SCANCODE_LEFT]);
+            float forward = float(play_keys_[SDL_SCANCODE_W] || play_keys_[SDL_SCANCODE_UP]) - float(play_keys_[SDL_SCANCODE_S] || play_keys_[SDL_SCANCODE_DOWN]);
+            if (!options_.smoke_frames) for (auto* pad : gamepads_) {
+                const float x = SDL_GetGamepadAxis(pad,SDL_GAMEPAD_AXIS_LEFTX)/32768.0f;
+                const float z = -SDL_GetGamepadAxis(pad,SDL_GAMEPAD_AXIS_LEFTY)/32768.0f;
+                const float length = std::hypot(x,z);
+                if (length > 0.2f && std::hypot(right,forward) < (length-0.2f)/0.8f) {
+                    right = x/length*std::min(1.0f,(length-0.2f)/0.8f);
+                    forward = z/length*std::min(1.0f,(length-0.2f)/0.8f);
+                }
+            }
+            const double dt = options_.play_smoke ? 1.0/60.0 : std::clamp(elapsed,0.0,0.1);
+            scene_camera_.orbit(float((int(play_keys_[SDL_SCANCODE_E])-int(play_keys_[SDL_SCANCODE_Q]))*dt*1.5),0);
+            const float yaw = scene_camera_.yaw();
+            const float x = right*std::cos(yaw)-forward*std::sin(yaw);
+            const float z = -right*std::sin(yaw)-forward*std::cos(yaw);
+            // Provisional host simulation, independent of the chosen presentation limit.
+            constexpr double step = 1.0/120.0;
+            play_accumulator_ = std::min(play_accumulator_+dt,0.1);
+            while (play_accumulator_+1e-12 >= step) {
+                const auto before = play_walker_.position();
+                play_walker_.advance(x,z,step,*play_world_);
+                const auto after = play_walker_.position();
+                play_distance_ += std::hypot(double(after.x-before.x),double(after.z-before.z));
+                const bool moving = play_walker_.moving();
+                if (moving != play_running_clip_) {
+                    scene_player_.clip = moving ? *play_run_clip_ : *play_idle_clip_;
+                    scene_player_.time = 0; play_running_clip_ = moving;
+                }
+                scene_player_.time = std::fmod(scene_player_.time+step,scene_player_.clip->info.duration_seconds);
+                ++play_steps_; if (moving) ++play_run_samples_; else ++play_idle_samples_;
+                play_accumulator_ -= step;
+            }
+            apply_walk_pose();
+        } catch (const std::exception& error) { play_error_ = error.what(); pause_play(true); }
+    }
+
+    void draw_play() {
+        const auto* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->Pos); ImGui::SetNextWindowSize(viewport->Size);
+        ImGui::Begin("Walking preview",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::TextColored(teal,"DIGIMON WORLD 4 / PC"); ImGui::SameLine();
+        ImGui::TextColored(muted,"  Walking preview"); ImGui::SameLine();
+        if (ImGui::Button(play_paused_ ? "Resume" : "Pause")) pause_play(!play_paused_);
+        ImGui::TextUnformatted("WASD / Arrows / Left stick: move    Right-drag / Q E: camera    Wheel: zoom    R: restart    Esc / Start: pause");
+        const auto size = ImGui::GetContentRegionAvail(); const auto origin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("play_canvas",size,ImGuiButtonFlags_MouseButtonRight);
+        auto& io = ImGui::GetIO();
+        if (!play_paused_ && ImGui::IsItemHovered()) {
+            play_zoom_ = std::clamp(play_zoom_*std::exp(-0.12f*io.MouseWheel),0.55f,2.5f);
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) scene_camera_.orbit(-io.MouseDelta.x*0.008f,
+                std::clamp(scene_camera_.pitch()-io.MouseDelta.y*0.008f,0.7f,1.45f)-scene_camera_.pitch());
+        }
+        try {
+            const auto p = play_walker_.position(); const float radius = 15*play_zoom_;
+            scene_renderer_.focus_camera(scene_camera_,{{p.x-radius,p.y+3-radius,p.z-radius},{p.x+radius,p.y+3+radius,p.z+radius}});
+            const double width = std::max(1.0,double(size.x*io.DisplayFramebufferScale.x));
+            const double height = std::max(1.0,double(size.y*io.DisplayFramebufferScale.y));
+            const double reduction = std::min({1.0,4096.0/width,4096.0/height,std::sqrt(8388608.0/(width*height))});
+            scene_target_width_ = std::max(1,int(width*reduction)); scene_target_height_ = std::max(1,int(height*reduction));
+            const auto texture = scene_renderer_.render(scene_target_width_,scene_target_height_,scene_camera_,scene_mode_,settings_.msaa,scene_data_->instances.size());
+            ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(texture),origin,{origin.x+size.x,origin.y+size.y},{0,1},{1,0});
+        } catch (const std::exception& error) { play_error_ = error.what(); pause_play(true); }
+        ImGui::End();
+        if (play_paused_) {
+            ImGui::SetNextWindowPos({viewport->Pos.x+viewport->Size.x*0.5f,viewport->Pos.y+viewport->Size.y*0.5f},ImGuiCond_Always,{0.5f,0.5f});
+            ImGui::SetNextWindowSize({420,0});
+            ImGui::Begin("Paused",nullptr,ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
+            paragraph("Walking preview",teal);
+            if (!play_error_.empty()) paragraph(play_error_.c_str(),amber);
+            if (ImGui::Button("Resume",{-1,36})) pause_play(false);
+            if (ImGui::Button("Restart at map entrance",{-1,36})) { restart_play(); pause_play(false); }
+            if (ImGui::Button("Return to workbench",{-1,36})) { stop_play(); page_ = 0; }
+            if (ImGui::Button("Exit",{-1,36})) quit_requested_ = true;
+            ImGui::End();
+        }
     }
 
     void clear_mesh_document() {
@@ -1980,6 +2273,7 @@ private:
     }
 
     void draw() {
+        if (play_active_) { draw_play(); return; }
         const auto* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->Pos);
         ImGui::SetNextWindowSize(viewport->Size);
@@ -2006,9 +2300,9 @@ private:
         const float bottom = ImGui::GetWindowHeight() - 146;
         if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
         ImGui::Separator();
-        ImGui::TextColored(amber, "MILESTONE 01");
+        ImGui::TextColored(teal, "VERSION 0.12");
         paragraph("Development workbench");
-        paragraph("Gameplay not ported yet.");
+        paragraph("Walking preview available.");
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("content", ImVec2(0, 0), false);
@@ -2031,10 +2325,14 @@ private:
     }
 
     void draw_overview() {
-        title("A native foundation.", "Digimon World 4 PC  /  Windows x64  /  Development workbench");
+        title("Digimon World 4 PC", "Native walking preview  /  Original GameCube assets");
         ImGui::BeginChild("status", ImVec2(0, 155), true);
-        ImGui::TextColored(amber, "GAMEPLAY NOT PORTED YET");
-        paragraph("This executable renders its own native interface and reads your original GameCube data. The game engine, combat, maps and playable characters still need to be ported.", ImVec4(0.86f,0.90f,0.96f,1));
+        ImGui::TextColored(teal, "EXPLORE THE ORIGINAL MAP");
+        paragraph("Control Agumon with WASD or a gamepad. Original map, model, floor geometry and animations; provisional native movement. Combat, progression and saves are still in development.", ImVec4(0.86f,0.90f,0.96f,1));
+        ImGui::BeginDisabled(!mounted_resources_);
+        if (ImGui::Button("Play walking preview", ImVec2(240,36))) start_play();
+        ImGui::EndDisabled();
+        if (!play_error_.empty()) paragraph(play_error_.c_str(),amber);
         ImGui::Spacing();
         ImGui::TextColored(teal, "Native window");
         ImGui::SameLine();
@@ -2092,7 +2390,7 @@ private:
     }
 
     void draw_graphics() {
-        title("Graphics", "These settings control this native workbench window. A game renderer is not implemented yet.");
+        title("Graphics", "Window and rendering settings for the native walking preview and asset viewers.");
         ImGui::TextColored(teal, "ACTIVE WINDOW SETTINGS");
         const std::array<std::pair<int,int>,4> sizes{{{1280,720},{1920,1080},{2560,1440},{3840,2160}}};
         int resolution = 0;
@@ -2205,7 +2503,7 @@ private:
         for (int i = 0; i < 4; ++i) if (settings_.controls == modes[i]) mode = i;
         ImGui::SetNextItemWidth(320);
         if (ImGui::Combo("Preferred input", &mode, "Keyboard / Mouse\0Xbox Controller\0PlayStation Controller\0GameCube Controller\0")) settings_.controls = modes[mode];
-        paragraph("This records your preference. Gameplay bindings, mouse camera, rebinding and four-player input routing are not implemented.");
+        paragraph("The walking preview supports WASD, arrows, mouse camera and SDL-mapped gamepads. Rebinding and four-player input routing remain in development.");
         if (ImGui::Button("Save preference")) save();
     }
 
@@ -2246,7 +2544,7 @@ private:
                 igb_->header.byte_order == dw4::IgbByteOrder::little ? "little" : "big");
             ImGui::Text("%zu field types / %zu object types / %u declared object instances",
                 igb_->field_types.size(), igb_->object_types.size(), igb_->header.object_count);
-            paragraph("This panel shows header and type metadata. The asset viewers read supported texture pixels and local geometry. Scene reconstruction and gameplay are not implemented.");
+            paragraph("This panel shows header and type metadata. Use the walking preview to explore the supported original map.");
             if (ImGui::BeginTable("igb_types", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, ImVec2(0, 180))) {
                 ImGui::TableSetupColumn("Object type"); ImGui::TableSetupColumn("Parent");
                 ImGui::TableSetupColumn("Fields"); ImGui::TableHeadersRow();
@@ -3610,8 +3908,10 @@ int main(int argc, char** argv) {
         auto options = parse_options(arguments(argc, argv));
         if (options.help) {
             std::cout << "Digimon World 4 PC - native development workbench\n"
-                         "Gameplay is not ported yet. Original game data is read only.\n\n"
+                         "Native walking preview and asset workbench. Original game data is read only.\n\n"
                          "Usage: dw4_pc [--data EXTRACTED_DIRECTORY] [--config SETTINGS_FILE]\n"
+                         "  --play                       Control Agumon in the original map\n"
+                         "  --play-smoke                 Replay movement/pause/restart; requires --play --smoke-test 120 or more\n"
                          "              [--smoke-test FRAMES]\n\n"
                          "--data         Inspect this extracted game directory (not an ISO).\n"
                          "--config       Use this INI file; independent of the game directory.\n"

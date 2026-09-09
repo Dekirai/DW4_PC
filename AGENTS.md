@@ -1,11 +1,12 @@
 # Working on DW4_PC
 
-This is a native C++20 port effort, presently a data-reader/workbench milestone.
+This is a native C++20 port effort with an original-asset walking preview and workbench.
 Keep all source code, identifiers, comments, documentation, README content,
 commit messages and application text in English, as requested by the owner.
 Read README.md, docs/ARCHITECTURE.md and docs/ROADMAP.md before extending scope.
-Do not describe the workbench as a playable game or claim stored preferences are
-implemented gameplay. Continue toward the next acceptance gate in the roadmap.
+Keep the provisional walking preview distinct from the original game baseline;
+do not claim stored preferences implement gameplay. Continue toward the next
+acceptance gate in the roadmap.
 
 Use the current repository checkout. Preserve user changes and keep generated
 builds in ignored build/ or dist/. Original game data is supplied outside this

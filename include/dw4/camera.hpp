@@ -21,6 +21,8 @@ public:
     // OpenGL column-major matrix, right-handed view, exploratory +Y up.
     std::array<float, 16> view_projection(float aspect) const;
     float distance() const noexcept { return static_cast<float>(distance_); }
+    float yaw() const noexcept { return static_cast<float>(yaw_); }
+    float pitch() const noexcept { return static_cast<float>(pitch_); }
 
 private:
     double yaw_ = 0.65;

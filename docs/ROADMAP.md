@@ -8,13 +8,23 @@ estimated before the missing engine and game logic have been measured.
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
 | 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
-| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Explicit animated player visual placement available; gameplay spawning, control, collision and combat pending |
+| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview with original floor geometry, animations and host follow camera available; original actor lifecycle, complete collision, enemies and combat pending |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
 | 5 | Content modding | Stable asset IDs, validated manifests, texture replacements and documented data schemas | Not implemented |
 | 6 | Online four-player co-op | End-to-end multi-machine play, state consistency, latency/disconnect handling and save ownership | Not implemented |
 
 ## Next acceptance gate
+
+Version 0.12 adds a controllable original-map walking preview in response to the
+owner's request for an initial interactive state. Its bounded host controller
+follows decoded original floor collision triangles and uses original idle/run
+clips. The camera and movement constants are provisional. Pause and restart are
+native preview state; this does not complete original startup or stage 2's
+enemy/combat criteria. Static original wall geometry now constrains a provisional
+body circle; door state remains fixed. See [PLAY_PREVIEW.md](PLAY_PREVIEW.md).
+Next, recover original movement and collision response, then one enemy and
+verified combat.
 
 The Agumon viewer decodes original compressed animation tracks and evaluates
 complete bone transforms, including helpers. Synthetic fixtures and original DOL
@@ -45,7 +55,8 @@ the original loading-screen state and layer/text prerequisites, then the native
 calls reached by `start.lua`. A retained info record is not an initialized
 controller; generic registration invokes additional per-info and per-RAM work.
 Do not skip an unsupported host operation or mark a later startup phase complete
-because a script buffer exists. The game still has no controllable player.
+because a script buffer exists. The separate walking preview explicitly loads
+one verified asset profile; it does not mark those startup stages complete.
 
 ## Requested PC options
 

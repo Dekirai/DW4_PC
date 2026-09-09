@@ -1,4 +1,31 @@
-# Native viewer milestone validation
+# Native walking preview validation
+
+Version 0.12 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. This establishes an interactive native original-map walking
+state, not completion of the original game or its startup sequence.
+
+| Check | Evidence |
+| --- | --- |
+| Release build | Native executable, portable core and package built successfully |
+| Asset-free tests | 23/23 CTest suites; 6 verifier, 8 inspect CLI, 5 catalog CLI, 8 boot CLI, 11 app CLI and 10 play CLI tests passed |
+| Walking solver | 683 synthetic checks: slopes, shared edges, tiny gaps, stepped/stacked floors, bounded hierarchy, swept wall radius, sliding, overhead walls, malformed input and equal travel at 30/60/144 Hz |
+| Collision reader | 40 synthetic checks plus 5 original checks; 102 original floor triangles and 228 original wall/door triangles preserve their source coordinates and stored inner switch selection |
+| Original assets | Map package dng101b1 member 1 / BG02, player model 1386, original entry 115/group 0/player 0, waitS/runD clips; 236 textured GPU batches and six images |
+| SDL keyboard replay | 120-frame run: 198 host simulation steps, 101.333 units of total travel, 46 idle and 152 running steps, 102 pose uploads; final position (-292,40,431) after restart and further movement |
+| Pause, restart, focus loss | Production replay asserts frozen position/animation, cleared held inputs and exact grounded spawn/facing/idle restoration; all three checks passed |
+| Original-data lifecycle | 37 local harness checks passed: movement in all four directions, stable map batches/textures, pause, held-key clearing, restart, return to workbench, fresh start, remount, missing-resource failure and recovery |
+| Rendering | 1280x720, 1920x1080 and 3840x2160 windows passed the same replay with identical simulation results; scene targets 1236x600, 1876x960 and 3796x2040; driver supplied 0/8/8 MSAA samples |
+| Visibility and GPU state | Original GPU suite plus partial-occlusion silhouette, unchanged visible texture, no self-highlighting, invalid batch rejection, resize, MSAA and state restoration passed |
+| Visual inspection | App-rendered walking, spawn, pause and overview frames inspected; original Agumon is visible in the corridor, with gold hidden-surface indication when needed |
+
+The 120 Hz solver, speed, body dimensions and follow camera are provisional
+native behavior. These finite runs are not a sustained FPS benchmark. Physical
+Xbox/PlayStation/GameCube device compatibility, original collision parity,
+enemies, combat, doors, audio, progression, saves and multiplayer remain open.
+Original-data captures and harnesses are ignored local files; CI needs no game
+assets. [PLAY_PREVIEW.md](PLAY_PREVIEW.md) describes launch and controls.
+
+## Earlier viewer and startup validation
 
 Local validation completed 2026-09-08 on Windows x64, MSVC 19.51, NVIDIA
 GeForce RTX 5070 Ti. This records version 0.11 owned startup loading and routing,

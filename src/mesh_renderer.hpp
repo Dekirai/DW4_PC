@@ -76,8 +76,14 @@ public:
     // Returns an RGBA GL texture. Display with vertically flipped UVs in ImGui.
     // Targets are limited to 4096 per axis and 8,388,608 pixels. MSAA is requested
     // independently for this target, clamped to the driver limit and 8 samples.
+    // Optional host visibility aid: draw the chosen batch's occluded geometry
+    // in opaque gold against the depth of preceding batches, before drawing its
+    // normal visible surfaces. Place the player after the static scene batches.
+    // The default retains ordinary scene rendering. Invalid indices reject
+    // before changing any GPU state or the previous render target.
     std::uint32_t render(int width, int height, const OrbitCamera& camera,
-        MeshDrawMode mode, int requested_samples = 0);
+        MeshDrawMode mode, int requested_samples = 0,
+        std::optional<std::size_t> occluded_batch = std::nullopt);
     bool has_mesh() const noexcept;
     // True only when all uploaded batches have verified texture/UV data.
     bool has_texture() const noexcept;

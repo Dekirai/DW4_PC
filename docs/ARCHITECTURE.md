@@ -49,7 +49,7 @@ same normalization. Changing a map root or member removes the old visual; a
 failed render-mode replacement clears the GPU scene and can be rebuilt in Solid
 mode. Clip replacement validates and uploads before publishing new clip state.
 
-This is a visual integration boundary, without player input, collision, shadow
+The inspection path is a visual integration boundary, without player input, collision, shadow
 composition, automatic LOD, startup execution or controller lifetime management.
 The startup research distinguishes `func.lua`, `boot.lua`, `start.lua` and
 `first.lua` dispatch order and embedded script lookup behavior. A separate
@@ -88,6 +88,18 @@ initialization remain pending; start/first are never silently skipped or marked
 complete. The CLI and Startup page use the session API, while the original
 `inspect_package_boot` API remains available for queue-only inspection. See
 [STARTUP_LOADING.md](STARTUP_LOADING.md) for ownership and aggregate limits.
+
+Version 0.12 adds a separate native walking preview. `walking_collision` reads
+the explicitly selected original floor and wall models; `walking` builds bounded
+query hierarchies and advances a grounded controller over continuously supported
+triangle paths, with a swept body circle against static wall/door triangles.
+The application supplies keyboard/gamepad input in camera space,
+advances provisional host movement at 120 Hz, selects original idle/run clips
+and updates the dynamic player batch. Presentation has its own frame limit.
+These constants are not attributed to original game timing. The preview does
+not execute the unfinished startup stages, construct original actor controllers,
+or implement dynamic character collision, combat or saves. See
+[PLAY_PREVIEW.md](PLAY_PREVIEW.md) and [WALKING_COLLISION_RESEARCH.md](WALKING_COLLISION_RESEARCH.md).
 
 The original DOL BSS envelope overlaps some initialized data sections. A future
 loader must zero the envelope before loading initialized sections or clear only

@@ -50,6 +50,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Test native app argument validation without graphics
         run: python tests/app_cli_tests.py build/Release/dw4_pc.exe
+      - name: Test native play argument validation without graphics
+        run: python tests/play_cli_tests.py build/Release/dw4_pc.exe
       - name: Test boot execution argument validation without graphics
         run: python tests/boot_cli_tests.py build/Release/dw4_boot.exe build/Release/dw4_pc.exe
       - name: Package tools and dependency notices

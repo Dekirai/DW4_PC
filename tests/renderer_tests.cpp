@@ -338,6 +338,76 @@ void batch_pose_checks(dw4::viewer::MeshRenderer& renderer) {
     rejects([&]{renderer.update_batch_positions(0,front.positions);});
 }
 
+void occluded_batch_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    auto quad = [](float left, float right, float z) {
+        dw4::MeshData mesh;
+        mesh.positions={{left,-.7f,z},{right,-.7f,z},{right,.7f,z},{left,.7f,z}};
+        mesh.indices={0,1,2,0,2,3}; mesh.texcoords.assign(4,{0,0});
+        return mesh;
+    };
+    auto wall=quad(-1.2f,0,.7f),actor=quad(-.7f,.7f,0);
+    // A rear surface makes drawing the visibility aid after normal actor depth
+    // observably wrong: it would paint over the otherwise visible green body.
+    const auto rear=quad(-.7f,.7f,-.2f);
+    actor.positions.insert(actor.positions.end(),rear.positions.begin(),rear.positions.end());
+    actor.texcoords.resize(8,{0,0});
+    actor.indices.insert(actor.indices.end(),{6,5,4,7,6,4});
+    const dw4::RgbaImage red{1,1,{255,0,0,255}},green{1,1,{0,255,0,255}};
+    const std::array<MeshBatch,2> batches{{{&wall,&red},{&actor,&green}}};
+    dw4::OrbitCamera camera; camera.orbit(-.65f,-.35f);
+    TextureCallerState caller;
+    renderer.upload_batches(batches); caller.verify();
+    GLint previous_depth_function{}; glGetIntegerv(GL_DEPTH_FUNC,&previous_depth_function);
+    glDepthFunc(GL_ALWAYS);
+    const auto normal=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    const auto target=renderer.render(128,128,camera,MeshDrawMode::textured,0,1);
+    const auto highlighted=pixels(target,128,128);
+    caller.verify();
+    GLint restored{}; glGetIntegerv(GL_DEPTH_FUNC,&restored);
+    check(restored==GL_ALWAYS,"Visibility aid leaked its depth comparison into the caller");
+    auto is_color=[](const auto& image,std::size_t i,std::array<int,3> color) {
+        return std::abs(int(image[i])-color[0])<=1 && std::abs(int(image[i+1])-color[1])<=1 &&
+            std::abs(int(image[i+2])-color[2])<=1 && image[i+3]==255;
+    };
+    std::size_t gold{},green_pixels{};
+    for(std::size_t i=0;i<normal.size();i+=4) {
+        if(!std::equal(normal.begin()+i,normal.begin()+i+4,highlighted.begin()+i)) {
+            check(is_color(normal,i,{255,0,0}) && is_color(highlighted,i,{255,184,56}),
+                "Visibility aid changed a visible actor, background or nonoccluding surface");
+            ++gold;
+        }
+        if(is_color(normal,i,{0,255,0})) {
+            check(std::equal(normal.begin()+i,normal.begin()+i+4,highlighted.begin()+i),
+                "Actor rear faces painted over its normally visible texture");
+            ++green_pixels;
+        }
+    }
+    check(gold>100 && green_pixels>100,"Partial occlusion fixture did not cover both hidden and visible actor regions");
+    const auto frames=renderer.rendered_frames();
+    rejects([&]{renderer.render(160,96,camera,MeshDrawMode::textured,8,2);});
+    rejects([&]{renderer.render(160,96,camera,MeshDrawMode::textured,8,std::numeric_limits<std::size_t>::max());});
+    check(renderer.rendered_frames()==frames && pixels(target,128,128)==highlighted,
+        "Invalid visibility aid index changed the prior render target or frame counter");
+    caller.verify();
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128)==normal,
+        "Disabling the visibility aid did not restore the exact ordinary scene");
+    const auto multisampled=pixels(renderer.render(160,96,camera,MeshDrawMode::textured,8,1),160,96);
+    std::size_t msaa_gold{},msaa_green{};
+    for(std::size_t i=0;i<multisampled.size();i+=4) {
+        msaa_gold+=is_color(multisampled,i,{255,184,56});
+        msaa_green+=is_color(multisampled,i,{0,255,0});
+    }
+    check(msaa_gold>50 && msaa_green>50 && coverage(multisampled)>200,
+        "Visibility aid failed after viewport resize or MSAA resolve");
+    renderer.upload(actor); renderer.set_texture(green);
+    const auto unobstructed=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    check(pixels(renderer.render(128,128,camera,MeshDrawMode::textured,0,0),128,128)==unobstructed,
+        "An unobstructed actor was highlighted against its own depth");
+    caller.verify(); glDepthFunc(static_cast<GLenum>(previous_depth_function));
+    renderer.clear();
+}
+
 void focus_checks(dw4::viewer::MeshRenderer& renderer) {
     using namespace dw4::viewer;
     dw4::OrbitCamera camera;camera.orbit(.3f,-.1f);
@@ -588,12 +658,13 @@ int main() {
             pose_checks(renderer, tetra, camera);
             scene_checks(renderer);
             batch_pose_checks(renderer);
+            occluded_batch_checks(renderer);
             focus_checks(renderer);
             renderer.upload(tetra); renderer.clear();
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, occluded-only actor visibility, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {
