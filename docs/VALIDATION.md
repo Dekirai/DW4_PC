@@ -1,4 +1,28 @@
-# Native initialization and pad validation
+# Native motion and timer validation
+
+Version 0.14 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. The original motion arithmetic and timer are portable core
+implementations; the walking preview still uses its provisional host controller.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed; 26/26 CTest suites, 6 verifier tests, 9 boot CLI, 11 app CLI and 10 play CLI tests passed |
+| Motion fixtures | 168 checks: six modes, preserved/impulse speed, strict crossings, expiry before clamp, exact-zero sentinel, signed deltas, valid zero-frame infinity/NaN, malformed schema and atomic input failure |
+| Channels, matrix and timer | Independent owned channels, shared cached delta, initial cached frame 1, coarse clock/float rounding/wrap, signed scale and elapsed time, saturation, strict expiry, preserved restart fields, local scale/rotation and explicit fused translation |
+| Complete original command scan | All 3,796 MOVE/MOVEEX records in 2,273 recognized archive IGBs decoded; 197 MOVEEX and 131 zero-frame records; zero rejections |
+| Independent scalar instruction oracle | 18,000 setups and 54,000 ticks agree with a bounded interpreter of the supplied PPC routines, including expiry/stop, overflow and unordered comparisons; finite/infinite results checked by bits, NaN payloads excluded |
+| Agumon original commands | All 16 MOVE records decode; original Move 130 reaches speed 0.7 and travels approximately 6.65 over 18 delta-1 updates; Stop 1540 travels approximately 1.625 over six updates and becomes inactive |
+| Packaged walking regression | 120-frame SDL replay passed: unchanged 198 steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads and final (-292,40,431); pause/restart/focus-loss checks passed |
+| Packaged visual inspection | 1280x720 overview and walking frames inspected, driver supplied 8x MSAA; version 0.14 and existing preview scope remain visible |
+
+Original instructions/data and local oracle probes remain ignored. These checks
+establish the supported arithmetic/data profile, not a full original gameplay
+comparison. NaN payloads, FP exception flags and guest subnormal modes are not
+modeled. Original actor/sequence state, turn interpolation, collision response,
+timer ownership and scheduling are required before integrating this core into
+the original game. See [MOTION.md](MOTION.md).
+
+## Native initialization and pad validation
 
 Version 0.13 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. This increment reconstructs preliminary loading, supported

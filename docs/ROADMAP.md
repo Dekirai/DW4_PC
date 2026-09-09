@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.14 implements original scalar movement channels, MOVE/MOVEEX decoding,
+local model translation and the cached elapsed timer. All 3,796 discovered
+original commands decode, including 131 zero-frame records. The next movement
+boundary is retained player/sequence state, original turning and collision
+integration with reference comparisons. This core does not replace the preview's
+provisional controller. See [MOTION.md](MOTION.md).
+
 Version 0.13 separates preliminary loading from aggregate boot inspection and
 implements StaticInfo/SwitchCtrl registration effects plus four independent
 original pad states. The original preliminary sound gate still blocks complete

@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.13 adds the first native controller initialization callbacks and
-original four-port pad state processing. The full original game, including local
+Version 0.14 adds original movement channels, MOVE/MOVEEX command decoding and
+their elapsed timer in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -45,6 +45,10 @@ not contain game files.
 - Process four independent original pad states in the portable core, with
   recovered button edges, stick directions and repeat timing. Device assignment
   and an original multiplayer gameplay session remain pending.
+- Advance original six-mode motion objects with preserved speed, expiry,
+  zero-frame arithmetic and a shared original elapsed timer. Decode MOVE/MOVEEX
+  records and apply local model-basis translation. Player-state, turning and
+  collision integration remain pending. See [MOTION.md](docs/MOTION.md).
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -344,6 +348,7 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Player visuals](docs/PLAYER_VISUAL.md) ·
 [Player placement](docs/PLAYER_PLACEMENT_RESEARCH.md) ·
 [Original startup](docs/STARTUP_RESEARCH.md) ·
+[Original movement core](docs/MOTION.md) ·
 [Embedded scripts](docs/SCRIPTS.md) ·
 [Native Lua 4](docs/LUA4.md) ·
 [Native renderer](docs/RENDERER.md) ·

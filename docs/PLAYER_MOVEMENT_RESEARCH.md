@@ -1,8 +1,10 @@
 # Original player movement and input research
 
 The four physical-pad state machines are implemented in `pad.hpp` / `pad.cpp`.
-The movement, turning and sequence findings below are evidence for the next
-native runtime boundary. They have **not** replaced the walking preview's host
+Version 0.14 also implements the scalar movement objects, command decoder,
+elapsed timer and local translation described in [MOTION.md](MOTION.md).
+The remaining turning and sequence findings are evidence for the next
+native runtime boundary. These have **not** replaced the walking preview's host
 movement, camera, collision response or animation selection. Four independent
 input states do not establish a running four-player game.
 
@@ -242,12 +244,15 @@ It stores speed and returns `float(speed * delta)`. Reaching exactly zero in
 a stopping mode does not deactivate until a subsequent crossing. This updates
 velocity **before** computing displacement. Subdividing every update into
 120 Hz host steps changes acceleration travel and cannot be assumed faithful.
-The original has no finite/zero-denominator guards; a native API should explicitly
-reject malformed or unsupported inputs rather than inventing a fallback.
+The original has no finite/zero-denominator guards. Version 0.14's full archive
+scan found 131 valid zero-frame commands: the native scalar implementation
+preserves derived infinity/NaN and ordered branch behavior. It validates finite
+authored parameters and rejects non-finite geometry at the matrix boundary,
+without inventing a fallback displacement. See [MOTION.md](MOTION.md).
 
-This setup/tick/stop group is a concrete bounded candidate for the next native
-port, with synthetic fixtures for preserved speed, all six modes, expiry and
-zero crossings. It is intentionally not integrated or implemented in this increment.
+This setup/tick/stop group is now implemented with synthetic fixtures and a
+separate original-instruction comparison. It remains outside the full original
+actor runtime and the walking preview.
 
 ## Timing, local translation and turning
 
@@ -261,9 +266,10 @@ Elapsed-timer query `8031E4C4`, used for `KEIKATIMER`, computes the difference
 between consecutive accumulated timer values, converts and divides by the same
 constant at `80452BF8`, and caps the result at 3.0 (`80452BFC`). It caches that
 result against the application world timestamp. Multiple channel/rotation
-queries within one world timestamp return the same delta. The underlying
-pause/resume and accumulated-timer implementation at `8031E36C` still needs
-complete tracing before a native clock can replace this runtime dependency.
+queries within one world timestamp return the same delta. Version 0.14 traces
+and implements the coarse-clock/scale/bias arithmetic at `8031E36C` and timer
+start/cache/expiry state. Pause/rate-change setters, named timer ownership and
+the frame scheduler remain integration work; this is not yet a native game clock.
 
 Integrator `8030A448` accesses four movement channels through work `+C8`.
 Channel 3 changes desired rotation, then `8030C85C` updates the model's rotation.
@@ -331,8 +337,8 @@ provisional host choices.
 ## Next integration boundary
 
 Keep presentation frame limiting separate from original pad-manager updates.
-Next, implement and verify the bounded movement scalar objects, then connect
-them to retained player runtime state, elapsed timers, original local matrices,
+The bounded movement scalar objects, elapsed timer and local translation are
+implemented. Next connect them to retained player runtime state, timer lifecycle,
 matching weapon/action selection and recovered collision response. Preserve
 entry-point rotation and per-player ownership. Camera-relative heading depends
 on the original camera runtime, not the preview orbit camera.

@@ -104,6 +104,15 @@ physical slots. Platform sampling and game player ownership are separate from
 button edges, directional masks and update-count repeats. These original input
 rules are not yet wired into a multiplayer gameplay state machine.
 
+Version 0.14 adds `motion` and `motion_timer`: original six-mode scalar state,
+exact MOVE/MOVEEX decoding, four owned channels, cached elapsed timing and local
+model-basis translation. Authored zero-frame commands retain their original
+infinity/NaN arithmetic; the native matrix boundary rejects non-finite results
+explicitly. These modules consume caller-owned state and timestamps without
+creating an OS clock or assuming a simulation rate. They are not wired into the
+walking preview or a complete original actor/sequence/turning/collision loop.
+See [MOTION.md](MOTION.md) for source addresses and validation.
+
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded
 query hierarchies and advances a grounded controller over continuously supported
