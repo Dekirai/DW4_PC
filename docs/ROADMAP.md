@@ -22,13 +22,22 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.20 adds prepared ACTION2 execution: exact action dispatch, retained
+cursors, motion/joint/fade/wait/flash effects, original node timing and freeze.
+All 182 ordinary Agumon actions complete their command/effect phases in local
+core integration. Four actual weapon sequences additionally dispatch actions
+into 240 poses; 20,000 numeric/state instruction comparisons pass. Complete
+actor construction, broadcast consumers, scene attribute attachment and outer
+player callbacks remain required before connecting original gameplay.
+The preview and connected local multiplayer remain separate unfinished work.
+See [ACTIONS.md](ACTIONS.md).
+
 Version 0.19 adds prepared combiner decoding, owned states, priority-ordered
 retirement, cached-pose snapshots and explicit MOTIONSET/motion-update effects.
 Four original Agumon combiners pass 240 combined poses with interrupted weapon
 idle/run transitions. Independent instruction checks cover 10,000 state updates
-and 30,556 matrix/quaternion conversions. Full ACTION2 work construction, name
-dispatch, command cursors, events and node timing remain the next boundary before
-connecting model sequence ACTION requests to original player animation. This
+and 30,556 matrix/quaternion conversions. Version 0.20 adds the prepared ACTION2
+path above; full actor/work construction and event integration remain. This
 core increment does not change the walking preview or provide connected local
 multiplayer. See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
 

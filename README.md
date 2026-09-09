@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.19 adds owned animation combiners, interrupted-pose snapshots and
-explicit MOTIONSET effects in the portable core. The full original game, including local
+Version 0.20 adds original action command execution, waits, node timing and
+fade/flash state in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -58,8 +58,8 @@ not contain game files.
   effects do not change the preview. See [MODEL_CONTROL.md](docs/MODEL_CONTROL.md).
 - Run supported original sequence commands with retained cursors and label caches.
   Preserve weapon-section boundaries, nested local jumps and sequence-stop motion.
-  ACTION requests require a supplied execution service; complete animation/action
-  and outer player callbacks remain pending. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md).
+  ACTION requests can route to their prepared action runtime; complete actor
+  construction and outer player callbacks remain pending. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md).
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -76,8 +76,13 @@ not contain game files.
 - Read prepared original animation combiners, retain independent state clocks,
   retire completed transitions and resume interrupted blends from the last cached
   pose. Apply explicit MOTIONSET and motion-update effects to a resolved clip.
-  Full ACTION state management and preview integration remain pending.
+  Full actor construction and preview integration remain pending.
   See [ANIMATION_COMBINER.md](docs/ANIMATION_COMBINER.md).
+- Execute prepared ACTION2 programs with original motion, joint, fade, wait and
+  flash commands, same-action suppression, named timers and freeze behavior.
+  Four original Agumon sequence instances drive their own combined poses in core
+  integration tests. Event consumers, actor lifecycle and effect rendering remain
+  pending. See [ACTIONS.md](docs/ACTIONS.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit

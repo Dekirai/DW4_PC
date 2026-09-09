@@ -24,7 +24,9 @@ inline void align(Bytes& bytes) { bytes.resize((bytes.size()+3)&~std::size_t(3))
 enum Type : std::uint32_t { object, object_dir, memory_dir, object_list, skin_list, skeleton_list,
     bone_list, animation_list, binding_list, track_list, database_type, skin_type, skeleton_type,
     bone_type, animation_type, binding_type, track_type, transform_type, source_type, mask_type,
-    transition_list, combiner_type, int_list, state_list, combiner_lists, combiner_tracks };
+    transition_list, combiner_type, int_list, state_list, combiner_lists, combiner_tracks,
+    action_info, action_ram, action_node, action_data, action_data_list, named_list,
+    action_ram_list, action_combiner_list, action_motion, action_joint, action_fade, action_wait, action_flash };
 struct Schema { std::string name; std::uint32_t parent, slots; std::vector<IgbObjectField> fields; };
 const std::vector<Schema> schemas{
     {"igObject",null_ref,2,{}},
@@ -37,7 +39,7 @@ const std::vector<Schema> schemas{
     {"igAnimationList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationBindingList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationTrackList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"igAnimationDatabase",object,8,{{2,5,4},{2,6,4},{2,7,4}}},
+    {"igAnimationDatabase",object,10,{{2,5,4},{2,6,4},{2,7,4},{2,9,4}}},
     {"igSkin",object,2,{}},
     {"igSkeleton",object,5,{{3,3,4},{2,4,4}}},
     {"igSkeletonBoneInfo",object,5,{{0,2,4},{1,3,4},{1,4,4}}},
@@ -52,7 +54,20 @@ const std::vector<Schema> schemas{
     {"igIntList",object,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationStateList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationCombinerBoneInfoListList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"igAnimationCombinerBoneInfoList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}}
+    {"igAnimationCombinerBoneInfoList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"beAction2Info",object,10,{{0,2,4},{2,6,4},{2,8,4},{2,9,4}}},
+    {"beAction2InfoRam",object,15,{{2,10,4},{2,11,4},{2,14,4}}},
+    {"beModelCtrlNode2",object,15,{{8,13,4},{7,14,8}}},
+    {"beAction2Data",object,4,{{0,2,4},{2,3,4}}},
+    {"beAction2DataList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"igNamedObjectList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"beBaseInfoRamList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"igAnimationCombinerList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"beAction2MOTIONSET",object,6,{{0,2,4},{0,3,4},{8,4,4},{0,5,4}}},
+    {"beAction2JOINTSET",object,6,{{0,2,4},{8,3,4},{8,4,4},{0,5,4}}},
+    {"beAction2FADESET",object,5,{{0,2,4},{8,3,4},{8,4,4}}},
+    {"beAction2WAITCHECK",object,4,{{0,2,4},{8,3,4}}},
+    {"beAction2FLASHSET",object,3,{{0,2,4}}}
 };
 // These synthetic records share only the test writer with the skinning tests.
 struct Graph {
@@ -97,7 +112,7 @@ struct Graph {
     }
     IgbDocument document() const {
         const std::vector<std::string> field_names{"igStringMetaField","igIntMetaField","igObjectRefMetaField",
-            "igMemoryRefMetaField","igBoolMetaField","igUnsignedIntMetaField","igEnumMetaField","igLongMetaField"};
+            "igMemoryRefMetaField","igBoolMetaField","igUnsignedIntMetaField","igEnumMetaField","igLongMetaField","igFloatMetaField"};
         Bytes fields(field_names.size() * 12);
         for (std::size_t i = 0; i < field_names.size(); ++i) {
             word(fields, i * 12, static_cast<std::uint32_t>(field_names[i].size() + 1));

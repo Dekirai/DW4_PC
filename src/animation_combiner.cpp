@@ -257,6 +257,11 @@ void AnimationCombiner::set_state_speed(std::size_t index, std::uint64_t time, f
     if (index>=states_.size()) fail("Animation speed target is outside the state list.");
     change_animation_speed(states_[index].clock,time,speed);
 }
+std::int64_t AnimationCombiner::advance_state_clock(AnimationSourceRuntime& sources, std::size_t index, std::uint64_t time) {
+    require_sources(sources);
+    if (index>=states_.size()) fail("Animation clock target is outside the state list.");
+    return advance_animation_clock(states_[index].clock,sources.state_clock_,time);
+}
 
 void apply_animation_motion(AnimationCombiner& combiner, AnimationSourceRuntime& sources, AnimationMotionWork& work,
     const AnimationMotionCommand& command, std::uint64_t system_time, std::uint64_t node_time) {

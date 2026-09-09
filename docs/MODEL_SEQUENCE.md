@@ -119,8 +119,8 @@ ordinals 0/4/8/12. These original lists now drive the supported native command
 effects; command references are not manually selected by the integration test.
 
 The separate `beAction2Info` 546 uses database 810 and data list 5550 with 183
-actions. The following are observed serialized records, not recovered execution
-semantics for the ACTION manager:
+actions. The following serialized records also drive the prepared ACTION2
+runtime introduced in version 0.20; see [ACTIONS.md](ACTIONS.md):
 
 | Weapon | WAIT action / motion command | RUN action / ordered motion commands |
 | --- | --- | --- |
@@ -130,8 +130,9 @@ semantics for the ACTION manager:
 | gun | WAITG1: data 1300 -> list 2760 -> 724 (`waitG`) | RUNNG1: data 2886 -> list 780 -> 724, 497 (`waitG`, `runG`) |
 
 These `beAction2MOTIONSET` records have strings `RR`, `LP` and float value 8.
-Their state transitions, blending, event/timing behavior and actor ownership
-must be recovered before replacing the preview's direct clip selection.
+Their command lists, blending, timers and owned action states now execute in the
+portable core. Complete actor ownership and broadcast consumers remain required
+before replacing the preview's direct clip selection.
 
 ## Validation
 

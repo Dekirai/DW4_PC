@@ -27,4 +27,7 @@ std::int64_t motion_timer_time(const MotionTimer& timer, std::uint64_t world_tim
 // by 16666667.0f, and capped above at 3. Negative deltas are not clamped away.
 float motion_timer_frames(MotionTimer& timer, std::uint64_t world_time);
 bool motion_timer_expired(const MotionTimer& timer, std::uint64_t world_time);
+// 8031E654: preserve phase when changing a named timer's speed. On a real
+// change the cached frame result becomes zero; timestamps remain untouched.
+void change_motion_timer_speed(MotionTimer& timer, std::uint64_t world_time, float speed);
 } // namespace dw4

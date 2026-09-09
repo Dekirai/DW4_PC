@@ -55,4 +55,11 @@ float motion_timer_frames(MotionTimer& timer, std::uint64_t world_time) {
 bool motion_timer_expired(const MotionTimer& timer, std::uint64_t world_time) {
     return timer.end_time < motion_timer_time(timer,world_time);
 }
+void change_motion_timer_speed(MotionTimer& timer, std::uint64_t world_time, float speed) {
+    validate(timer);
+    if (!std::isfinite(speed)) throw MotionError("Motion timer speed must be finite.");
+    if (timer.time_scale==speed) return;
+    const auto bias=std::bit_cast<std::uint64_t>(timer.time_bias)+scaled_clock(world_time,timer.time_scale)-scaled_clock(world_time,speed);
+    timer.time_bias=std::bit_cast<std::int64_t>(bias); timer.time_scale=speed; timer.cached_frames=0;
+}
 } // namespace dw4

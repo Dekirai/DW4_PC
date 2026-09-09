@@ -1,4 +1,31 @@
-# Native animation combiner validation
+# Native ACTION2 validation
+
+Version 0.20 was validated locally on 2026-09-09 with MSVC 19.51. Prepared
+ACTION2 programs now execute motion, joint, fade, wait and flash effects. Full
+actor construction, event consumers and renderer integration remain pending.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 32/32 CTest suites and 6 Python verifier tests passed; no compiler warnings |
+| ACTION fixtures | 91 asset-free checks cover typed/bounded graphs, first/same-action dispatch, cursor and wait behavior, timer phase/freeze, raw/packed color, shared attribute cleanup, required/failed/reentrant services and source/info/RAM ownership |
+| Original ACTION integration | 183 Agumon definitions decode; all 182 ordinary actions complete their command and motion/fade/flash phases; NDSP remains an explicit outer actor boundary |
+| Original action poses | 369 command occurrences, 4,157 complete poses and 5,699,247 finite vertex positions |
+| Original sequence-to-action integration | Four independent weapon sequence instances apply their real ACTION lists into 240 poses / 329,040 finite vertices, including interrupted transitions |
+| Independent instruction comparison | 20,000 node, timer-speed, joint, random-wait, fade and flash operations match all compared numeric/state fields at explicit prepared-object and service boundaries |
+| Packaged walking regression | 120-frame replay passes with 198 steps, 101.333 travel, 46 idle/152 run steps and 102 pose uploads; pause/restart/focus-loss checks pass |
+| Packaged visual inspection | Overview and walking captures inspected; version 0.20 visible, original map/Agumon render at 1236x600 with 8x MSAA on an RTX 5070 Ti |
+
+The instruction probe executes original arithmetic and state branches, including
+color conversion with original initialized bounds. It supplies prepared objects,
+list removal and timer/RNG service results; those external bodies, the complete
+dispatcher and actor allocation are outside the independent comparison. The
+original-data tests use production codec/pose evaluation and a recording
+broadcast sink. They establish neither event-consumer execution nor rendered
+fade/flash behavior, physical multiplayer or original gameplay-frame parity.
+See [ACTIONS.md](ACTIONS.md) for exact ownership, numerical and integration limits.
+Original bytes, probes and captures stay ignored; distributed fixtures are synthetic.
+
+## Native animation combiner validation
 
 Version 0.19 was validated locally on 2026-09-09 with MSVC 19.51. The portable
 core now retains prepared combiner states and cached-pose snapshots and applies

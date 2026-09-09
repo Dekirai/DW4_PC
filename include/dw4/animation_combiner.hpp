@@ -17,7 +17,8 @@ public:
     const std::string& source() const noexcept;
     const std::vector<AnimationClip>& clips() const noexcept { return library_->clips; }
     const AnimationClip& clip(std::uint32_t reference) const;
-    void initialize_action_offset() noexcept { wrapping_.initialize_action_offset(); }
+    void initialize_action_offset() noexcept { wrapping_.initialize_action_offset(); action_offset_initialized_=true; }
+    bool action_offset_initialized() const noexcept { return action_offset_initialized_; }
     void set_mode(std::uint32_t clip_reference, AnimationPlayMode mode);
     AnimationPlayMode mode(std::uint32_t clip_reference) const;
 private:
@@ -31,6 +32,7 @@ private:
     std::vector<AnimationSourceClock> clocks_;
     AnimationClockCache state_clock_;
     AnimationWrapContext wrapping_;
+    bool action_offset_initialized_{};
     std::vector<EnbayaTransform> sample(std::uint32_t clip_reference, std::int64_t time);
 };
 
@@ -57,6 +59,7 @@ public:
     const std::vector<AnimationCombinerState>& states() const noexcept { return states_; }
     const std::vector<AnimationMatrix>& cached_matrices() const noexcept { return matrices_; }
     bool cache_valid() const noexcept { return cache_valid_; }
+    void set_request_time(std::uint64_t time) noexcept { clock_override_=time; }
     std::uint64_t request_time(std::uint64_t system_time) const noexcept {
         return clock_override_==std::numeric_limits<std::uint64_t>::max() ? system_time : clock_override_;
     }
@@ -75,7 +78,10 @@ public:
     SkinPose pose(AnimationSourceRuntime& sources, const SkinningData& skin, std::uint64_t world_time);
     void clear_new_flags() noexcept;
     void set_state_speed(std::size_t index, std::uint64_t world_time, float speed);
+    // ACTION2 WAITCHECK refreshes the sole state's clock without evaluating its pose.
+    std::int64_t advance_state_clock(AnimationSourceRuntime& sources, std::size_t index, std::uint64_t world_time);
 private:
+    friend class ActionRuntime;
     friend AnimationCombiner decode_animation_combiner(const IgbDocument&, const AnimationSourceRuntime&, std::uint32_t);
     std::shared_ptr<const AnimationSourceRuntime::Library> library_;
     std::vector<AnimationCombinerState> states_;

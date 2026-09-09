@@ -162,9 +162,10 @@ independent codec validation or comparisons with original gameplay frames.
 
 ## Remaining boundaries
 
-Full ACTION2 work construction, database/name dispatch, same-action suppression,
-action command cursors, WAIT/FADE/FLASH behavior, events and outer player callbacks
-remain pending. So do partial bindings, mirrored tracks, modifiers, cycle matching,
+Version 0.20 adds prepared database/name dispatch, same-action suppression,
+command cursors and JOINT/WAIT/FADE/FLASH state in [ACTIONS.md](ACTIONS.md).
+Full actor/work construction, event consumers, scene attachment and outer player
+callbacks remain pending. So do partial bindings, mirrored tracks, modifiers, cycle matching,
 nonempty named transitions and the optional `cleanCombinerStates` path. The
 original option's BSS default is false; this implementation covers that default.
 The remaining actor and node hierarchy preparation must be recovered before this

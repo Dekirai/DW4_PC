@@ -145,6 +145,14 @@ fields, original wait/virtual callbacks and complete player construction remain
 outside this prepared-work API. The application does not use it as a replacement
 for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 
+Version 0.20 adds `actions`: immutable qualified ACTION2 programs and per-RAM
+command, timer, node, appearance and combiner state. Exact model sequence ACTION
+recipients execute the recovered five command types with retained wait/resume
+positions and original update order. Required RNG/broadcast services and explicit
+suspension preserve successful prefixes. Complete actor allocation, messenger
+consumers, scene attribute attachment and outer player callbacks remain separate;
+the preview still uses its provisional controller. See [ACTIONS.md](ACTIONS.md).
+
 Version 0.19 adds `animation_combiner`. An immutable document-qualified clip
 library is shared by owned source runtimes; copies share decoded data but retain
 independent clocks and play modes. Each combiner owns its states, full bone
@@ -152,16 +160,17 @@ bindings and last evaluated float matrices. Prepared serialized combiners can
 seed those caches explicitly. Priority-ordered retirement and fixed snapshots
 support interrupted transitions. MOTIONSET helpers require an already resolved
 clip plus explicit system/node timestamps. Updates publish combiner, source and
-work changes only on success. Generic ACTION dispatch, actor construction and
-preview integration remain pending. See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
+work changes only on success. Version 0.20 supplies the prepared ACTION dispatch
+path above; actor construction and preview integration remain pending.
+See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
 
 Version 0.18 adds `animation_timing`: owned animation-state clocks, explicit
 MOTIONSET numeric blend preparation, shared source wrapping caches and recovered
 speed-origin adjustment. `animations` can sample decoded clips and full skin poses
 from these integer local times, then mix already-bound layers using original
 quaternion and fused translation arithmetic. Source ownership and mode caching
-are explicit. Version 0.19 adds the bounded state/snapshot path above; the full
-ACTION2 loop and preview integration remain pending. See
+are explicit. Versions 0.19/0.20 add bounded state/snapshot and prepared ACTION2
+execution; full actor and preview integration remain pending. See
 [ANIMATION_TIMING.md](ANIMATION_TIMING.md).
 
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
