@@ -1,4 +1,33 @@
-# Native animation timing and layer validation
+# Native animation combiner validation
+
+Version 0.19 was validated locally on 2026-09-09 with MSVC 19.51. The portable
+core now retains prepared combiner states and cached-pose snapshots and applies
+explicit MOTIONSET effects. Full ACTION/actor integration remains pending.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 31/31 CTest suites and 6 Python verifier tests passed |
+| Combiner fixtures | 73 asset-free checks cover priority/retirement, interrupted snapshots, new flags, same-time cache, motion phases, system/node timestamp separation, four owned clocks, source sharing and malformed prepared graphs |
+| Matrix and animation graph fixtures | 151 math checks and 69 graph checks passed, including independent synthetic snapshot expectations and exact duration/priority metadata |
+| Original clip regression | All 82 Agumon clips pass the existing sample, five-mode timing, complete pose and layer checks; 5,728 total checks including the asset-free fixtures |
+| Original combiner integration | All four prepared Agumon combiners load; eight original idle/run MOTIONSET records drive 240 complete poses with 329,040 finite vertex positions and four interrupted transitions |
+| Independent state-update instruction oracle | 10,000 updates in 500 programs / 17,692 commands match at explicit prepared-object and list/pool service boundaries; NaN payload excluded |
+| Independent matrix instruction oracle | 30,556 conversions / 305,224 float fields match; nonfinite guest outputs require native rejection |
+| Original square-root rounding probe | 25,166,839 positive float cases match the original estimate plus three double Newton steps; exhaustive mantissas for both exponent parities, all float subnormals and normal exponent boundaries |
+| Packaged walking regression | 120-frame replay passes with 198 steps, 101.333 travel and 102 pose uploads; pause, restart and focus-loss checks pass |
+| Packaged visual inspection | Overview and walking captures inspected on an RTX 5070 Ti; version 0.19 visible, original map/Agumon render at 1236x600 with 8x MSAA |
+
+The state probe executes the original update/retirement-marking instructions.
+It supplies prepared creation fields, empty named-transition lookup, signed
+division, replace-index rebuilding and list/pool removal services. Those service
+bodies and the complete actor are outside that comparison. Original combined
+poses use production channel/skin evaluation; they are not independent codec
+validation or original gameplay-frame comparisons. See
+[ANIMATION_COMBINER.md](ANIMATION_COMBINER.md) for the implementation profile,
+numeric evidence and remaining boundaries. Original files and local probes stay
+ignored; published tests contain synthetic data only.
+
+## Native animation timing and layer validation
 
 Version 0.18 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. The portable core implements recovered numeric animation

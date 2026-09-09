@@ -79,4 +79,49 @@ std::array<float,4> original_interpolate_rotation(const std::array<float,4>& a,
     finite_quaternion(result);
     return result;
 }
+
+void original_rotation_matrix(const std::array<float,4>& q, AnimationMatrix& matrix) {
+    finite_quaternion(q);
+    for (auto value : matrix) if (!std::isfinite(value)) fail("Animation matrix contains a non-finite component");
+    const float y2=2*q[1], z2=2*q[2], x2=2*q[0];
+    const float yy=y2*q[1], zz=z2*q[2], xx=x2*q[0];
+    const float zw=z2*q[3], yx=y2*q[0], yw=y2*q[3], zx=z2*q[0];
+    const float xw=x2*q[3], zy=z2*q[1];
+    auto result=matrix;
+    result[0]=1-(yy+zz); result[1]=yx-zw; result[2]=zx+yw;
+    result[4]=yx+zw; result[5]=1-(xx+zz); result[6]=zy-xw;
+    result[8]=zx-yw; result[9]=zy+xw; result[10]=1-(xx+yy);
+    for (auto value : result) if (!std::isfinite(value)) fail("Animation matrix arithmetic overflow");
+    matrix=result;
+}
+std::array<float,4> original_matrix_rotation(const AnimationMatrix& m) {
+    for (auto value : m) if (!std::isfinite(value)) fail("Animation matrix contains a non-finite component");
+    const float xy=m[0]+m[5], trace=m[10]+xy;
+    std::array<float,4> result{};
+    const auto root=[](float value) {
+        // The original positive-float frsqrte + three double Newton steps
+        // round to this float square root. Nonpositive inputs skip those steps.
+        if (!std::isfinite(value)) fail("Animation snapshot trace overflow");
+        return value>0 ? std::sqrt(value) : value;
+    };
+    if (trace>=0) {
+        const float length=root(1+trace), scale=0.5f/length;
+        result={scale*(m[9]-m[6]),scale*(m[2]-m[8]),scale*(m[4]-m[1]),0.5f*length};
+    } else {
+        std::size_t axis=m[5]>m[0] ? 1 : 0;
+        if (m[10]>m[axis*5]) axis=2;
+        if (axis==0) {
+            const float length=root(m[15]+(m[0]-(m[5]+m[10]))), scale=0.5f/length;
+            result={0.5f*length,scale*(m[1]+m[4]),scale*(m[8]+m[2]),scale*(m[9]-m[6])};
+        } else if (axis==1) {
+            const float length=root(m[15]+(m[5]-(m[10]+m[0]))), scale=0.5f/length;
+            result={scale*(m[1]+m[4]),0.5f*length,scale*(m[6]+m[9]),scale*(m[2]-m[8])};
+        } else {
+            const float length=root(m[15]+(m[10]-xy)), scale=0.5f/length;
+            result={scale*(m[8]+m[2]),scale*(m[6]+m[9]),0.5f*length,scale*(m[4]-m[1])};
+        }
+    }
+    finite_quaternion(result);
+    return result;
+}
 } // namespace dw4

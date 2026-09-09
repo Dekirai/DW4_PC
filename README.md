@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.18 adds original animation clocks, source play modes and ordered
-pose-layer mixing in the portable core. The full original game, including local
+Version 0.19 adds owned animation combiners, interrupted-pose snapshots and
+explicit MOTIONSET effects in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -72,8 +72,12 @@ not contain game files.
   with time seeking and playback, including helper-bone transforms.
 - Sample decoded clips through recovered integer animation clocks and shared
   source caches; prepare original blend weights and mix ordered bone layers.
-  Full ACTION state management and preview integration remain pending.
   See [ANIMATION_TIMING.md](docs/ANIMATION_TIMING.md).
+- Read prepared original animation combiners, retain independent state clocks,
+  retire completed transitions and resume interrupted blends from the last cached
+  pose. Apply explicit MOTIONSET and motion-update effects to a resolved clip.
+  Full ACTION state management and preview integration remain pending.
+  See [ANIMATION_COMBINER.md](docs/ANIMATION_COMBINER.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit

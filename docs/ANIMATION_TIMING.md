@@ -7,6 +7,11 @@ complete skin poses. These are dependencies for ACTION2, not a complete action
 manager or animation combiner. The walking preview still uses its host controller
 and single-clip selection.
 
+Version 0.19 builds the prepared combiner/state and explicit MOTIONSET path on
+these primitives. Source identities now have an owned library/runtime registry.
+See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md) for that increment and its
+remaining ACTION/actor boundaries.
+
 ## Original evidence
 
 The implementation was recovered from the supplied USA GameCube DOL, disc ID

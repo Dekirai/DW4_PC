@@ -17,4 +17,12 @@ public:
 std::array<float, 4> original_interpolate_rotation(const std::array<float, 4>& a,
     const std::array<float, 4>& b, float blend);
 
+using AnimationMatrix = std::array<float, 16>;
+// 8012BCDC writes only the nine rotation entries of an existing flat matrix.
+// Preserve float operation order and all translation/affine entries.
+void original_rotation_matrix(const std::array<float, 4>& rotation, AnimationMatrix& matrix);
+// 8012B8A8: inverse conversion used by interrupted-transition snapshots.
+// Preserves branch/tie order and nonunit output; does not orthonormalize.
+std::array<float, 4> original_matrix_rotation(const AnimationMatrix& matrix);
+
 } // namespace dw4

@@ -22,13 +22,22 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.19 adds prepared combiner decoding, owned states, priority-ordered
+retirement, cached-pose snapshots and explicit MOTIONSET/motion-update effects.
+Four original Agumon combiners pass 240 combined poses with interrupted weapon
+idle/run transitions. Independent instruction checks cover 10,000 state updates
+and 30,556 matrix/quaternion conversions. Full ACTION2 work construction, name
+dispatch, command cursors, events and node timing remain the next boundary before
+connecting model sequence ACTION requests to original player animation. This
+core increment does not change the walking preview or provide connected local
+multiplayer. See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
+
 Version 0.18 adds original animation clocks, MOTIONSET numeric blend fields,
 source play modes and ordered pose-layer mixing. Instruction comparisons pass
 30,000 timing operations and 10,000 layer tuples; all 82 Agumon clips pass timed
-pose integration. Complete ACTION2/combiner state ownership, interrupted-pose
-snapshots and retirement remain the next boundary before connecting the model
-sequence ACTION requests to actual original player animation. The walking preview
-retains its provisional behavior. See [ANIMATION_TIMING.md](ANIMATION_TIMING.md).
+pose integration. Version 0.19 extends those primitives into the bounded
+combiner path described above. The walking preview retains its provisional
+behavior. See [ANIMATION_TIMING.md](ANIMATION_TIMING.md).
 
 Version 0.17 retains model sequence programs, weapon label selection and command
 positions in native runtime state. It runs the supported control/motion commands,

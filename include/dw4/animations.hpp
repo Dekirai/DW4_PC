@@ -25,6 +25,9 @@ struct AnimationInfo {
     std::uint32_t track_count{};
     std::uint32_t source_reference{};
     std::uint32_t skeleton_reference{};
+    std::int32_t priority{};
+    std::uint32_t transition_count{};
+    std::int64_t duration_ticks{};
     std::string provenance;
 };
 

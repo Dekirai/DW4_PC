@@ -145,13 +145,23 @@ fields, original wait/virtual callbacks and complete player construction remain
 outside this prepared-work API. The application does not use it as a replacement
 for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 
+Version 0.19 adds `animation_combiner`. An immutable document-qualified clip
+library is shared by owned source runtimes; copies share decoded data but retain
+independent clocks and play modes. Each combiner owns its states, full bone
+bindings and last evaluated float matrices. Prepared serialized combiners can
+seed those caches explicitly. Priority-ordered retirement and fixed snapshots
+support interrupted transitions. MOTIONSET helpers require an already resolved
+clip plus explicit system/node timestamps. Updates publish combiner, source and
+work changes only on success. Generic ACTION dispatch, actor construction and
+preview integration remain pending. See [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
+
 Version 0.18 adds `animation_timing`: owned animation-state clocks, explicit
 MOTIONSET numeric blend preparation, shared source wrapping caches and recovered
 speed-origin adjustment. `animations` can sample decoded clips and full skin poses
 from these integer local times, then mix already-bound layers using original
 quaternion and fused translation arithmetic. Source ownership and mode caching
-are explicit. State selection/retirement, cached-pose snapshots and the full
-ACTION2 loop remain pending; the preview does not yet use this path. See
+are explicit. Version 0.19 adds the bounded state/snapshot path above; the full
+ACTION2 loop and preview integration remain pending. See
 [ANIMATION_TIMING.md](ANIMATION_TIMING.md).
 
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
@@ -248,8 +258,10 @@ original translation mask to select sampled or skeleton-constant translations.
 Quaternion conversion preserves the original signs and norm. Helpers participate
 in the full bone hierarchy. Only the verified single-clip, no-modifier skeleton
 profile is accepted. Original timing and ordered layer arithmetic are available
-in the core; full actor and animation-combiner state management remain pending.
-See [ANIMATIONS.md](ANIMATIONS.md) and [ANIMATION_POSE.md](ANIMATION_POSE.md).
+in the core, alongside the prepared full-binding combiner and snapshot path.
+Full actor/ACTION integration and additional combiner profiles remain pending.
+See [ANIMATIONS.md](ANIMATIONS.md), [ANIMATION_POSE.md](ANIMATION_POSE.md) and
+[ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
 
 ## Timing and PC settings
 

@@ -111,6 +111,10 @@ public:
         const auto duration = ticks(doc,animation,9);
         if (duration == 0 || duration > 600ull * 1000000000ull) fail("duration is outside (0,600] seconds");
         info.duration_seconds = static_cast<double>(duration) / 1e9;
+        info.duration_ticks = static_cast<std::int64_t>(duration);
+        info.priority = doc.field_i32(animation,3);
+        if (const auto transitions=doc.field_reference(animation,6))
+            info.transition_count=static_cast<std::uint32_t>(list(*transitions,"igAnimationTransitionDefinitionList",max_links).size());
         const auto bindings = list(reference(doc,animation,4),"igAnimationBindingList",max_bones);
         if (bindings.size() != 1) fail("clip must have exactly one binding");
         const auto& binding = typed(bindings[0],"igAnimationBinding");
