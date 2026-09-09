@@ -254,6 +254,19 @@ void synthetic() {
     skin.palette_to_joint={0}; skin.influences={{0,0,1}}; skin.source_positions={{1,0,0}};
     const auto posed=sample_animation_pose(posed_clip,skin,0);
     check(posed.positions.size()==1 && posed.positions[0].x==1 && posed.joint_positions.size()==1,"Original one-clip pose wrapper");
+    AnimationSourceClock source(clip.channels.duration()); AnimationWrapContext timing;
+    const auto timed=sample_animation_at_local_time(clip,2000000000,source,timing);
+    check(timed.size()==2 && timed[0].translation.x==10,"Original integer-time sampling preserves selected translations");
+    AnimationSourceClock posed_source(posed_clip.channels.duration());
+    check(sample_animation_pose_at_local_time(posed_clip,skin,2000000000,posed_source,timing).positions[0].x==1,
+        "Integer-time path reaches the actual skin pose evaluator");
+    AnimationSourceClock wrong_source(1);
+    rejects([&]{sample_animation_at_local_time(clip,0,wrong_source,timing);},"Reject timing for a different source duration");
+    AnimationSourceClock failed_source(clip.channels.duration(),AnimationPlayMode::clamp);
+    auto malformed=clip; malformed.bone_references.clear();
+    rejects([&]{sample_animation_at_local_time(malformed,2000000000,failed_source,timing);},"Reject malformed timed clip");
+    failed_source.set_mode(AnimationPlayMode::repeat);
+    check(failed_source.sample_time(2000000000,timing)<clip.channels.duration(),"Failed pose must not commit source cache");
     rejects([&]{ sample_animation_pose(clip,skin,0); },"Reject animated/translated skipped root");
     auto invalid_skin=skin; invalid_skin.bones[0].joint_index=0;
     rejects([&]{ sample_animation_pose(posed_clip,invalid_skin,0); },"Original root must be a helper");
@@ -296,9 +309,33 @@ void synthetic() {
     check(boundary[31].translation.x==0 && boundary[32].translation.x==0,"Mask high bit and next word low bit select sampled channels");
 }
 
+void layers() {
+    std::vector<EnbayaTransform> a(2), b(2);
+    a[0].translation={8,-4,2}; b[0].translation={-8,12,6};
+    a[1].rotation={0,0,0,2}; b[1].rotation={0,0,0,-2};
+    auto result=blend_animation_samples(a,b,0.25f);
+    check(result.size()==2 && result[0].translation.x==4 && result[0].translation.y==0 && result[0].translation.z==3,
+        "Ordered layer translation weights");
+    check(result[1].rotation[3]==2,"Blending must preserve original sign selection without normalization");
+    check(a[0].translation.x==8 && b[0].translation.x==-8,"Layer mixing mutated input channels");
+    check(blend_animation_samples(b,a,0.25f)[0].translation.x==-4,"Reversing ordered layers must change the result");
+    a[0].translation.x=1e10f; b[0].translation.x=-1e10f;
+    const auto cancellation=blend_animation_samples(a,b,std::nextafter(0.5f,1.0f));
+    check(std::bit_cast<std::uint32_t>(cancellation[0].translation.x)==0xc48a817c,
+        "Original fused translation rounding was replaced by a separately rounded sum");
+    rejects([&]{blend_animation_samples({},b,0);},"Reject absent base layer");
+    rejects([&]{blend_animation_samples(a,{b[0]},0);},"Reject mismatched layer bone counts");
+    rejects([&]{blend_animation_samples(a,b,-0.1f);},"Reject negative blend weight at pose boundary");
+    rejects([&]{blend_animation_samples(a,b,std::numeric_limits<float>::quiet_NaN());},"Reject NaN blend weight at pose boundary");
+    b[0].rotation[0]=std::numeric_limits<float>::infinity();
+    rejects([&]{blend_animation_samples(a,b,0);},"Weight zero does not skip invalid incoming rotation");
+    b[0].rotation={0,0,0,1}; b[0].translation.x=std::numeric_limits<float>::infinity();
+    rejects([&]{blend_animation_samples(a,b,1);},"Reject non-finite layer translation");
+}
+
 int run(const std::vector<std::filesystem::path>& args) {
     try {
-        synthetic();
+        synthetic(); layers();
         if (args.size()==4) {
             const auto doc=read_igb_document(assets::AfsArchive::open(args[1]).read(std::stoul(args[2].string())));
             const auto skin=decode_igb_skinning(doc,static_cast<std::uint32_t>(std::stoul(args[3].string())));
@@ -311,6 +348,20 @@ int run(const std::vector<std::filesystem::path>& args) {
                     check(values.size()==skin.bones.size(),"Original sampled bone count"); samples+=values.size();
                     const auto pose=sample_animation_pose(clip,skin,info.duration_seconds*fraction);
                     check(pose.positions.size()==skin.source_positions.size() && pose.joint_positions.size()==skin.joints.size(),"Original evaluated pose counts");
+                }
+                AnimationWrapContext timing; timing.initialize_action_offset();
+                for (const auto mode:{AnimationPlayMode::repeat,AnimationPlayMode::clamp,AnimationPlayMode::bounce,
+                        AnimationPlayMode::loop,AnimationPlayMode::offset_clamp}) {
+                    AnimationSourceClock source(clip.channels.duration(),mode);
+                    for (const double fraction:{0.0,0.25,0.75,1.0,1.25,2.75}) {
+                        const auto ticks=static_cast<std::int64_t>(info.duration_seconds*fraction*1000000000.0);
+                        const auto timed=sample_animation_at_local_time(clip,ticks,source,timing);
+                        const auto pose=sample_animation_pose_at_local_time(clip,skin,ticks,source,timing);
+                        check(timed.size()==skin.bones.size() && pose.positions.size()==skin.source_positions.size(),
+                            "Original timed clip sampling and pose counts");
+                        const auto mixed=blend_animation_samples(timed,timed,0.5f);
+                        check(mixed.size()==timed.size() && std::isfinite(mixed.back().rotation[3]),"Original timed layer evaluation");
+                    }
                 }
                 ++decoded;
                 std::cout<<info.name<<" reference="<<info.reference_index<<" duration="<<info.duration_seconds<<" tracks="<<info.track_count<<'\n';

@@ -145,6 +145,15 @@ fields, original wait/virtual callbacks and complete player construction remain
 outside this prepared-work API. The application does not use it as a replacement
 for those effects or for the preview controller. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
 
+Version 0.18 adds `animation_timing`: owned animation-state clocks, explicit
+MOTIONSET numeric blend preparation, shared source wrapping caches and recovered
+speed-origin adjustment. `animations` can sample decoded clips and full skin poses
+from these integer local times, then mix already-bound layers using original
+quaternion and fused translation arithmetic. Source ownership and mode caching
+are explicit. State selection/retirement, cached-pose snapshots and the full
+ACTION2 loop remain pending; the preview does not yet use this path. See
+[ANIMATION_TIMING.md](ANIMATION_TIMING.md).
+
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded
 query hierarchies and advances a grounded controller over continuously supported
@@ -238,7 +247,8 @@ path follows explicit database bindings, decodes a selected clip and uses the
 original translation mask to select sampled or skeleton-constant translations.
 Quaternion conversion preserves the original signs and norm. Helpers participate
 in the full bone hierarchy. Only the verified single-clip, no-modifier skeleton
-profile is accepted; actor state and animation blending remain unimplemented.
+profile is accepted. Original timing and ordered layer arithmetic are available
+in the core; full actor and animation-combiner state management remain pending.
 See [ANIMATIONS.md](ANIMATIONS.md) and [ANIMATION_POSE.md](ANIMATION_POSE.md).
 
 ## Timing and PC settings

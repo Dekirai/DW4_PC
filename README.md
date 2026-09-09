@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.17 adds an owned original model command runner with weapon labels,
-sequence jumps and movement transitions. The full original game, including local
+Version 0.18 adds original animation clocks, source play modes and ordered
+pose-layer mixing in the portable core. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -70,6 +70,10 @@ not contain game files.
   matrices; inspect the joint hierarchy and manually pose supported meshes.
 - Decode bounded Enbaya animation streams and inspect supported original clips
   with time seeking and playback, including helper-bone transforms.
+- Sample decoded clips through recovered integer animation clocks and shared
+  source caches; prepare original blend weights and mix ordered bone layers.
+  Full ACTION state management and preview integration remain pending.
+  See [ANIMATION_TIMING.md](docs/ANIMATION_TIMING.md).
 - Traverse verified static scene exports with original transforms, ordered
   switch selection and separate instances for shared graph paths.
 - Inspect placed map geometry under one camera and depth target, with explicit
@@ -354,6 +358,7 @@ the missing gameplay and engine logic is the largest remaining part of the proje
 [Material bindings](docs/MATERIALS.md) ·
 [Skinning](docs/SKINNING.md) ·
 [Animation loading](docs/ANIMATIONS.md) ·
+[Original animation timing](docs/ANIMATION_TIMING.md) ·
 [Static scenes](docs/SCENES.md) ·
 [Original scene commands](docs/SCENE_CONTROLS.md) ·
 [Player visuals](docs/PLAYER_VISUAL.md) ·

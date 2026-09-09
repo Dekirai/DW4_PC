@@ -3,7 +3,10 @@
 Version 0.6 adds a checked link between a decoded skin and its original Enbaya
 animation clips. The portable API owns its decoded data and has no graphics or
 window dependencies. It implements a single-clip asset inspection path, without
-actor state, action events, blending, root-motion extraction or scene placement.
+actor state, action events, root-motion extraction or scene placement. Version
+0.18 additionally exposes original integer-time sampling and ordered two-layer
+arithmetic; full combiner behavior remains pending. See
+[ANIMATION_TIMING.md](ANIMATION_TIMING.md).
 
 ## Graph and source profile
 
@@ -80,5 +83,11 @@ three quarters and the endpoint of each duration: 8,200 bone transforms, with
 complete mesh/joint pose evaluation. This establishes native decoding and the
 current composition profile. Comparison with captured original gameplay frames
 and full combiner/actor behavior remain outstanding.
+
+Version 0.18 adds five source play modes at six integer-time fractions per clip,
+including beyond-duration times: 2,460 additional complete poses and finite
+layer evaluation. The suite now has 66 asset-free checks and 5,659 additional
+checks with the original Agumon data. Timed APIs publish source/wrapping caches
+only after successful sampling. They do not change the viewer's existing loop.
 
 See [ANIMATION_VIEWER.md](ANIMATION_VIEWER.md) for native playback and CLI usage.

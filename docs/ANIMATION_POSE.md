@@ -6,6 +6,11 @@ animation transitions, modifiers, action events and a comparison with a recorded
 original renderer frame remain separate work. Manual inverse-bind posing stays
 available through its existing independent API.
 
+Version 0.18 adds original clock/source mapping and ordered layer arithmetic
+in the portable core. Full transition state management remains separate work.
+See [ANIMATION_TIMING.md](ANIMATION_TIMING.md) for source addresses, ownership,
+instruction comparisons and timed integration results.
+
 The following evidence was recovered on 2026-09-08 from the USA executable with
 SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Addresses below are guest
 addresses, never host pointers. Original bytes, frame exports and disassembly

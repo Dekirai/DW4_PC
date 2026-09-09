@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.18 adds original animation clocks, MOTIONSET numeric blend fields,
+source play modes and ordered pose-layer mixing. Instruction comparisons pass
+30,000 timing operations and 10,000 layer tuples; all 82 Agumon clips pass timed
+pose integration. Complete ACTION2/combiner state ownership, interrupted-pose
+snapshots and retirement remain the next boundary before connecting the model
+sequence ACTION requests to actual original player animation. The walking preview
+retains its provisional behavior. See [ANIMATION_TIMING.md](ANIMATION_TIMING.md).
+
 Version 0.17 retains model sequence programs, weapon label selection and command
 positions in native runtime state. It runs the supported control/motion commands,
 preserves label barriers and local jumps, and exposes required ACTION dispatch.

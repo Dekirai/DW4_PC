@@ -1,4 +1,29 @@
-# Native model sequence validation
+# Native animation timing and layer validation
+
+Version 0.18 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. The portable core implements recovered numeric animation
+clocks, source wrapping and ordered layer arithmetic. Complete ACTION/combiner
+state management remains pending; the preview retains its provisional controller.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed without compiler warnings; 30/30 CTest suites and 6 Python verifier tests passed |
+| Animation timing fixtures | 59 asset-free checks cover signed/unsigned coarse clocks, shared caches, speed-origin continuity, saturation, blend rounding, exceptional durations, endpoint branches and runtime modes |
+| Animation graph and layer fixtures | 66 asset-free checks, including timed sampling, cache publication on success, layer order, original quaternion behavior, fused cancellation and invalid inputs |
+| Original Agumon integration | 5,659 additional checks pass for all 82 clips; five modes at six local-time fractions add 2,460 complete timed poses and finite layer evaluations |
+| Independent timing instruction oracle | 30,000 operations in 1,000 shared-cache programs match at prepared-object and duration-service boundaries; NaN payloads excluded |
+| Independent layer instruction oracle | 10,000 tuples / 70,000 float32 quaternion and translation components match; half use decoded original rotations, half synthetic rotations |
+| Packaged walking regression | 120-frame SDL replay passes with 198 steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads and final (-292,40,431); pause/restart/focus-loss checks pass |
+| Packaged visual inspection | 1280x720 overview and walking captures inspected; version 0.18 visible, original Agumon/map render in the 1236x600 walking target with 8x MSAA |
+
+The instruction probes cover numeric operations and bound channel mixing, not
+the complete ACTION state machine, source construction, snapshots, events or
+actor lifecycle. Timed original-data checks use the production codec and pose
+path; they are not independent codec or original gameplay-frame comparisons.
+Original bytes, local probes and captures remain ignored. See
+[ANIMATION_TIMING.md](ANIMATION_TIMING.md) for ownership and exact boundaries.
+
+## Native model sequence validation
 
 Version 0.17 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. The portable command runner retains original model sequence

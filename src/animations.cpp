@@ -1,4 +1,5 @@
 #include "dw4/animations.hpp"
+#include "dw4/animation_math.hpp"
 #include "dw4/igb_document.hpp"
 
 #include <algorithm>
@@ -242,5 +243,58 @@ SkinPose sample_animation_pose(const AnimationClip& clip, const SkinningData& sk
         return evaluate_bone_transforms(skin,locals);
     } catch (const SkinningError& error) { throw AnimationError(error.what()); }
       catch (const EnbayaError& error) { throw AnimationError(error.what()); }
+}
+
+namespace {
+double checked_source_time(const AnimationClip& clip, std::int64_t local_time,
+    AnimationSourceClock& source, AnimationWrapContext& context) {
+    if (source.duration() != clip.channels.duration())
+        fail("source clock duration does not match the decoded clip");
+    const double seconds = source.sample_time(local_time, context);
+    if (seconds > clip.info.duration_seconds + 1.1e-9)
+        fail("source timing exceeds the decoded clip; short-source terminal sampling is unverified");
+    // Serialized nanoseconds and the Enbaya duration agree within 1.1 ns.
+    return std::min(seconds, clip.info.duration_seconds);
+}
+} // namespace
+std::vector<EnbayaTransform> sample_animation_at_local_time(const AnimationClip& clip,
+    std::int64_t local_time, AnimationSourceClock& source, AnimationWrapContext& context) {
+    auto candidate_source = source; auto candidate_context = context;
+    auto result = sample_animation(clip, checked_source_time(clip, local_time, candidate_source, candidate_context));
+    source = candidate_source; context = candidate_context;
+    return result;
+}
+SkinPose sample_animation_pose_at_local_time(const AnimationClip& clip, const SkinningData& skin,
+    std::int64_t local_time, AnimationSourceClock& source, AnimationWrapContext& context) {
+    auto candidate_source = source; auto candidate_context = context;
+    auto result = sample_animation_pose(clip, skin, checked_source_time(clip, local_time, candidate_source, candidate_context));
+    source = candidate_source; context = candidate_context;
+    return result;
+}
+std::vector<EnbayaTransform> blend_animation_samples(const std::vector<EnbayaTransform>& base,
+    const std::vector<EnbayaTransform>& next, float weight) {
+    if (base.empty() || base.size() > max_bones || base.size() != next.size())
+        fail("animation layer bone counts are inconsistent");
+    if (!std::isfinite(weight) || weight < 0 || weight > 1)
+        fail("animation layer weight must be finite and within [0,1]");
+    const float inverse = 1.0f - weight;
+    std::vector<EnbayaTransform> result; result.reserve(base.size());
+    for (std::size_t i = 0; i < base.size(); ++i) {
+        if (!finite(base[i].translation) || !finite(next[i].translation))
+            fail("animation layer translation is non-finite");
+        EnbayaTransform value;
+        try { value.rotation = original_interpolate_rotation(base[i].rotation, next[i].rotation, weight); }
+        catch (const AnimationMathError& error) { throw AnimationError(error.what()); }
+        const auto component = [&](float a, float b) {
+            const float weighted = weight * b;
+            const float mixed = std::fma(a, inverse, weighted);
+            if (!std::isfinite(mixed)) fail("animation layer translation overflow");
+            return mixed;
+        };
+        value.translation = {component(base[i].translation.x, next[i].translation.x),
+            component(base[i].translation.y, next[i].translation.y), component(base[i].translation.z, next[i].translation.z)};
+        result.push_back(value);
+    }
+    return result;
 }
 } // namespace dw4

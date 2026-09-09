@@ -2,6 +2,7 @@
 
 #include "dw4/enbaya.hpp"
 #include "dw4/skinning.hpp"
+#include "dw4/animation_timing.hpp"
 
 #include <cstdint>
 #include <string>
@@ -50,4 +51,18 @@ std::vector<EnbayaTransform> sample_animation(const AnimationClip& clip, double 
 // at bone zero, parents before children and joint indices in traversal order.
 // This does not execute actor state, blending, root motion or scene placement.
 SkinPose sample_animation_pose(const AnimationClip& clip, const SkinningData& skin, double time_seconds);
+// Original integer local-time -> shared source-clock mapping -> decoded samples.
+// Source clock duration must match this clip. Copies of both caches are published
+// only after sampling succeeds. Short-source fallback beyond the decoded clip's
+// extent remains an explicit unsupported boundary, never a guessed terminal pose.
+std::vector<EnbayaTransform> sample_animation_at_local_time(const AnimationClip& clip,
+    std::int64_t local_time, AnimationSourceClock& source, AnimationWrapContext& context);
+SkinPose sample_animation_pose_at_local_time(const AnimationClip& clip, const SkinningData& skin,
+    std::int64_t local_time, AnimationSourceClock& source, AnimationWrapContext& context);
+// Original ordered two-layer bone combination at 801D10C0..801D111C.
+// Inputs must already use the same bound bone order and translation selection.
+// No endpoint shortcut or normalization: weight zero can still execute the
+// original quaternion polynomial branch. Does not select/retire combiner states.
+std::vector<EnbayaTransform> blend_animation_samples(const std::vector<EnbayaTransform>& base,
+    const std::vector<EnbayaTransform>& next, float weight);
 } // namespace dw4
