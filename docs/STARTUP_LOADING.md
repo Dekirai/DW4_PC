@@ -10,6 +10,13 @@ This completes bounded payload decoding and the recovered info-routing rules.
 It does not execute the original loading-screen state, manager initialization
 callbacks, layer/text setup, `start.lua` or `first.lua`.
 
+Version 0.13 research establishes that preliminary `/s` registration and a real
+sound-transfer gate precede ordinary loading and func/boot in the original.
+`StartupSession` bypasses these for inspection. Its aggregate routes are not the
+original later registration queue. Use `load_startup_preliminary` for the
+separate `/s` boundary and supported native callbacks; see
+[CONTROLLERS.md](CONTROLLERS.md) and [AUDIO_STARTUP_RESEARCH.md](AUDIO_STARTUP_RESEARCH.md).
+
 ## Loading order and ownership
 
 `load_startup_session` reads the exact package descriptor, validates its member
@@ -43,8 +50,8 @@ order. It applies exact type comparisons recovered from the original loader:
 | Other exact `igSceneInfo` | Separate held-scene list |
 | Every other info type | Ordinary deferred queue |
 
-After all common documents have loaded, late scenes are appended to the end of
-the deferred queue in their original encounter order. No name/type/reference
+After all common documents have loaded, this inspection appends late scenes to
+the aggregate deferred queue in encounter order. No name/type/reference
 deduplication takes place. Empty export names are valid. A null camera list is
 empty; reference zero is a valid reference. The camera branch does not require
 a graph. Without cameras, a null graph is rejected because the original code

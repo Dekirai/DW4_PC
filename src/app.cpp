@@ -2300,7 +2300,7 @@ private:
         const float bottom = ImGui::GetWindowHeight() - 146;
         if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
         ImGui::Separator();
-        ImGui::TextColored(teal, "VERSION 0.12");
+        ImGui::TextColored(teal, "VERSION 0.13");
         paragraph("Development workbench");
         paragraph("Walking preview available.");
         ImGui::EndChild();
@@ -3807,7 +3807,7 @@ private:
     }
 
     void draw_boot() {
-        title("Original startup loading", "Execute func.lua and boot.lua, load their original resource files, and preserve the native info-routing order.");
+        title("Startup inspection", "Execute func/boot and inspect loaded resources. Original preliminary initialization and sound gates are bypassed here.");
         bool changed = false;
         ImGui::SetNextItemWidth(std::max(200.0f,ImGui::GetContentRegionAvail().x-230.0f));
         changed |= ImGui::InputTextWithHint("##boot_package","Logical package descriptor",boot_package_input_.data(),boot_package_input_.size());

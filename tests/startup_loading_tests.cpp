@@ -276,8 +276,87 @@ void loading() {
     many.descriptor.contents(many.filenames,std::vector<std::uint32_t>(33,repeated_member)); many.refresh(); failed = many.load();
     check(!failed.files_loaded && many.reads.size() == 1,"Bound initial member count before loading any member");
 }
+void preliminary_loading() {
+    LoaderFixture f;
+    // These chunks are intentionally not executable Lua. This stage must retain
+    // their bytes without parsing/executing func or boot before native gates.
+    f.preliminary = Graph{};
+    f.preliminary.add_info({{"func.lua",Bytes{0xde,0xad}},{"boot.lua",Bytes{0xbe,0xef}}});
+    f.refresh(); f.assets.erase(2); f.assets.erase(3); f.assets.erase(4);
+    auto stage=load_startup_preliminary(f.catalog,f.reader(),"test.igb");
+    check(stage.files_loaded && stage.info_routing_complete && stage.diagnostic.empty(),
+        "Load preliminary files without executing their synthetic invalid Lua chunks");
+    check(f.reads.size()==2 && f.reads[0].first==ResourceLocation{0,0} && f.reads[1].first==ResourceLocation{0,1},
+        "Only descriptor and exact /s payload are read; ordinary and common assets may be unavailable");
+    check(f.reads[0].second==4u*1024u*1024u && f.reads[1].second==64u*1024u*1024u,
+        "Preliminary loader retains independent descriptor and member caps");
+    check(stage.files.size()==1 && stage.files[0].stage==StartupFileStage::preliminary && stage.files[0].ordinal==1 &&
+        stage.infos.lua_infos.size()==1,"Retain original member ordinal after selecting only /s files");
+    check(stage.package && stage.package->members.size()==2 && stage.package->members[0].suffix.empty() &&
+        stage.package->members[0].location==ResourceLocation{0,2} && stage.package->logical_path=="test.igb" &&
+        stage.package->location==ResourceLocation{0,0} && stage.package->name=="SyntheticFolder",
+        "Retain the original descriptor and ordinary-member plan for a later gated stage");
+    check(stage.next_barrier.find("SOUND")!=std::string::npos,"Successful preliminary loading retains the original audio/controller barrier");
+
+    LoaderFixture ordered;
+    const auto original_names=ordered.descriptor.document().object_list(ordered.filenames);
+    const auto shared=ordered.descriptor.named(named_object,"[0.3]/s");
+    ordered.descriptor.contents(ordered.filenames,{*original_names[0],shared,*original_names[1],shared});
+    ordered.refresh(); ordered.assets.erase(2); ordered.assets.erase(4);
+    stage=load_startup_preliminary(ordered.catalog,ordered.reader(),"test.igb");
+    check(stage.files_loaded && stage.info_routing_complete && ordered.reads.size()==4,
+        "Repeated preliminary members remain separate loads");
+    const std::array<std::uint32_t,4> expected{0,3,1,3};
+    for(std::size_t i=0;i<expected.size();++i) check(ordered.reads[i].first.entry_index==expected[i],
+        "Preliminary read order follows descriptor order rather than archive index or catalog order");
+    check(stage.files[0].ordinal==1 && stage.files[1].ordinal==2 && stage.files[2].ordinal==3 &&
+        stage.files[0].document.bytes().data()!=stage.files[2].document.bytes().data(),
+        "Preserve original ordinals and independently owned repeated payloads");
+    check(stage.infos.deferred_infos==std::vector<StartupInfoAddress>{{0,1,ordered.shared_controller},{2,1,ordered.shared_controller},
+        {0,0,ordered.shared_late},{2,0,ordered.shared_late}},"Route only preliminary source-qualified export occurrences");
+    ordered.assets.clear(); auto moved=std::move(stage);
+    check(!moved.files[2].document.bytes().empty() && moved.package->members[3].specifier=="[0.3]/s",
+        "Preliminary stage owns descriptor strings and documents after reader storage disappears");
+
+    LoaderFixture zero;
+    const auto names=zero.descriptor.document().object_list(zero.filenames);
+    zero.descriptor.contents(zero.filenames,{*names[0]}); zero.refresh(); zero.assets.erase(2);
+    stage=load_startup_preliminary(zero.catalog,zero.reader(),"test.igb");
+    check(stage.files_loaded && stage.info_routing_complete && stage.files.empty() && zero.reads.size()==1 &&
+        stage.infos.deferred_infos.empty() && stage.total_bytes==0 && stage.package->members.size()==1,
+        "Zero /s members is a complete empty preliminary phase, not permission to load ordinary data");
+
+    LoaderFixture missing;
+    const auto second=missing.descriptor.named(named_object,"[0.3]/s");
+    const auto missing_names=missing.descriptor.document().object_list(missing.filenames);
+    missing.descriptor.contents(missing.filenames,{*missing_names[0],*missing_names[1],second});
+    missing.refresh(); missing.assets.erase(3); missing.assets.erase(2);
+    stage=load_startup_preliminary(missing.catalog,missing.reader(),"test.igb");
+    check(!stage.files_loaded && !stage.info_routing_complete && stage.files.size()==1 && stage.package &&
+        stage.infos.lua_infos.empty() && stage.infos.deferred_infos.empty() && missing.reads.size()==3 &&
+        missing.reads.back().first.entry_index==3,"Failed later /s read retains owned prefix but publishes no completed routing");
+    check(stage.total_bytes==stage.files[0].document.bytes().size() && stage.object_count==stage.files[0].document.objects.size() &&
+        stage.diagnostic.find("member 2")!=std::string::npos,"Partial preliminary failure reports its member and exact retained totals");
+    missing.assets.clear(); check(!stage.files[0].document.bytes().empty(),"Failed preliminary prefix does not borrow reader buffers");
+
+    LoaderFixture malformed;
+    const auto bad_scene=malformed.preliminary.scene("ROOTATTR");
+    malformed.preliminary.scalar(bad_scene,5,null_ref); malformed.preliminary.publish({bad_scene}); malformed.refresh();
+    malformed.assets.erase(2);
+    stage=load_startup_preliminary(malformed.catalog,malformed.reader(),"test.igb");
+    check(stage.files_loaded && !stage.info_routing_complete && stage.files.size()==1 && stage.infos.late_scenes.empty() &&
+        malformed.reads.size()==2,"Malformed preliminary scene routing cannot read ordinary data or publish partial routes");
+    malformed.preliminary.publish({null_ref}); malformed.refresh(); malformed.reads.clear();
+    stage=load_startup_preliminary(malformed.catalog,malformed.reader(),"test.igb");
+    check(!stage.files_loaded && stage.files.empty() && stage.total_bytes==0 && malformed.reads.size()==2,
+        "Malformed preliminary exports reject before publishing that decoded file");
+    stage=load_startup_preliminary(f.catalog,{},"test.igb");
+    check(!stage.files_loaded && !stage.package && !stage.diagnostic.empty(),"Absent reader cannot claim a loaded descriptor");
+    stage=load_startup_preliminary(f.catalog,[](ResourceLocation,std::size_t cap) {return Bytes(cap+1);},"test.igb");
+    check(!stage.files_loaded && !stage.package && stage.files.empty(),"Preliminary reader enforces the supplied cap before parsing");
+}
 } // namespace
 int main() {
-    try { routing(); loading(); std::cout << "Startup loading tests passed: " << checks << " checks\n"; return 0; }
+    try { routing(); loading(); preliminary_loading(); std::cout << "Startup loading tests passed: " << checks << " checks\n"; return 0; }
     catch (const std::exception& error) { std::cerr << "Startup loading test failure after " << checks << " checks: " << error.what() << '\n'; return 1; }
 }

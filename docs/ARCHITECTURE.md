@@ -89,6 +89,21 @@ complete. The CLI and Startup page use the session API, while the original
 `inspect_package_boot` API remains available for queue-only inspection. See
 [STARTUP_LOADING.md](STARTUP_LOADING.md) for ownership and aggregate limits.
 
+Version 0.13 separates preliminary `/s` loading from that aggregate inspection
+path. The original registers preliminary infos and waits for sound-bank transfer
+before ordinary files and func/boot. A `StartupPreliminaryStage` therefore owns
+only the descriptor and preliminary documents, without a Lua VM. `controllers`
+implements recovered StaticInfo/SwitchCtrl callback effects in owned native
+manager, RAM and messenger state. Its ordered-prefix mode preserves earlier
+effects and stops at the first unsupported handler. A fresh prepared callback
+context is explicit; complete original manager construction and audio services
+remain pending. See [CONTROLLERS.md](CONTROLLERS.md).
+
+The portable `pad` module implements independent original input state for four
+physical slots. Platform sampling and game player ownership are separate from
+button edges, directional masks and update-count repeats. These original input
+rules are not yet wired into a multiplayer gameplay state machine.
+
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded
 query hierarchies and advances a grounded controller over continuously supported

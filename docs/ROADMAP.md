@@ -16,6 +16,18 @@ estimated before the missing engine and game logic have been measured.
 
 ## Next acceptance gate
 
+The current acceptance target is the full original game, including local
+one-to-four-player play with independent connected controllers. Quality-of-life
+changes and optional enhancements follow that baseline. The walking preview
+does not satisfy this target. Track reference evidence and outstanding original
+systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
+
+Version 0.13 separates preliminary loading from aggregate boot inspection and
+implements StaticInfo/SwitchCtrl registration effects plus four independent
+original pad states. The original preliminary sound gate still blocks complete
+startup. These foundations do not satisfy the original multiplayer or game
+baseline gates. See [CONTROLLERS.md](CONTROLLERS.md).
+
 Version 0.12 adds a controllable original-map walking preview in response to the
 owner's request for an initial interactive state. Its bounded host controller
 follows decoded original floor collision triangles and uses original idle/run

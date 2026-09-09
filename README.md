@@ -1,7 +1,11 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-**Version 0.12 includes a native walking preview: control Agumon in an original
+Version 0.13 adds the first native controller initialization callbacks and
+original four-port pad state processing. The full original game, including local
+multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
+
+**The native walking preview lets you control Agumon in an original
 map with keyboard or an SDL-mapped gamepad.** It uses original map, model,
 textures, floor/wall collision geometry and idle/run animations. Movement and the
 follow camera are provisional native implementations. The complete original
@@ -32,8 +36,15 @@ not contain game files.
   common-resource queue, preserve exact duplicate semantics and resolve requests
   using the original ASCII lowercase lookup.
 - Keep the successful Lua state and all initial/common IGB documents alive in
-  an owned startup session. Preserve source-qualified exports, separate held
-  scenes and append late scenes to the original deferred queue.
+  an owned inspection session, with source-qualified export routing. Its
+  aggregate routes span stages and are not the original later registration queue.
+- Load only preliminary `/s` members before ordinary package files and boot.
+  Initialize supported StaticInfo/SwitchCtrl callbacks into owned RAM, manager
+  and messenger state; stop the ordered callback prefix at an unknown handler.
+  See [CONTROLLERS.md](docs/CONTROLLERS.md).
+- Process four independent original pad states in the portable core, with
+  recovered button edges, stick directions and repeat timing. Device assignment
+  and an original multiplayer gameplay session remain pending.
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -258,17 +269,33 @@ lowercases ASCII A–Z as the original resolver does. Every ordered host call an
 queue entry for three test profiles matches an independent official Lua 4.0.1
 reference run.
 
-Version 0.11 also loads and retains every requested IGB document. The one-player
+The inspection session also loads and retains every requested IGB document. The one-player
 example owns nine files containing 454 exports; the original routing rules
-produce one Lua info, 17 held scenes and 436 deferred infos. The Startup page
+produce one Lua info, 17 held scenes and 436 aggregate deferred infos. The Startup page
 exposes Resources, Loaded files and Info routing views. The actual Lua state
 and its function definitions remain alive alongside the loaded documents.
 
-Execution stops before the original loading-screen state, runtime manager
-callbacks and layer/text initialization. `start.lua` and `first.lua` do not run; this page
+This inspection bypasses preliminary initialization and the sound-transfer gate,
+which the original performs before func/boot. Its aggregate queue must not be
+replayed as the original later registration queue. The original loading-screen
+state, remaining runtime managers and layer/text initialization are still pending.
+`start.lua` and `first.lua` do not run; this page
 does not automatically create a player or turn the scene inspector into gameplay.
 Unknown native effects stop explicitly. See [STARTUP_VIEWER.md](docs/STARTUP_VIEWER.md)
 and [STARTUP_LOADING.md](docs/STARTUP_LOADING.md).
+
+To exercise only the recovered preliminary loading and callback boundary:
+
+```powershell
+.\dist\DW4_PC\dw4_boot.exe 'E:\path\Digimon World 4 - Extracted' --package dng101b1.igb --preliminary
+```
+
+This command supplies a fresh prepared system/messenger callback context and
+reads only `/s` members. On the original package it initializes StaticInfo and
+stops at the next Sound callback, preserving the completed native effects.
+Exit code 3 identifies the remaining native barrier; no ordinary files, func/boot
+or common resources are executed. Full original manager construction and audio
+services are separate prerequisites.
 
 All 2,274 recognized original IGB documents passed native object loading. All
 25,906 `igImage` objects found in the two archives decoded without errors.
@@ -295,12 +322,12 @@ Original textures, logical asset lookup and object-space mesh viewing are
 available, including verified base-texture bindings, original clip decoding and
 static map inspection through named packages and original switch commands, plus
 explicitly placed animated player visuals. Original `func.lua` and `boot.lua`
-now execute natively, followed by common-resource loading and the original
-info-routing order. The next step is implementing the queued managers' actual
-runtime callbacks and the required loading-screen/layer/text state, then reaching player generation in
-`start.lua`, followed by movement/collision recovery,
-with comparisons against captured original frames, followed by
-an original scene with a controllable Digimon. Reconstructing
+execute natively in the inspection path. Preliminary loading and the first
+controller callbacks now have separate native implementations. The next steps
+are original audio services and manager preparation, layer/text state and player
+generation in `start.lua`, alongside movement/collision and camera recovery.
+Original-reference comparisons and independent controller slots are required
+throughout. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.
 
 [Roadmap and acceptance criteria](docs/ROADMAP.md) ·

@@ -8,6 +8,13 @@ Keep the provisional walking preview distinct from the original game baseline;
 do not claim stored preferences implement gameplay. Continue toward the next
 acceptance gate in the roadmap.
 
+The owner's current goal is the complete original-faithful game, including local
+one-to-four-player play with separate connected controllers. Prioritize original
+behavior and reference investigation over quality-of-life additions. The walking
+preview's host movement, camera and timing do not satisfy that goal. Keep unknown
+native effects explicit and compare recovered animation, collision, camera,
+combat, progression and persistence behavior against original evidence.
+
 Use the current repository checkout. Preserve user changes and keep generated
 builds in ignored build/ or dist/. Original game data is supplied outside this
 repository through --data; do not commit game binaries, textures, archive

@@ -12,6 +12,11 @@ initialize a Static controller and its messenger recipient without processing
 its embedded sound data. It does not establish the loading-screen gate, later
 controller callbacks, layer/text setup, script startup or a gameplay update.
 
+The first info belongs to the preliminary `/s` phase. Later research confirms
+that this phase registers before func/boot and the deferred list is subsequently
+cleared. The version 0.11 combined inspection list is not the original later
+registration queue. See [AUDIO_STARTUP_RESEARCH.md](AUDIO_STARTUP_RESEARCH.md).
+
 ## Manager identity and dispatch
 
 The original manager setup creates `beStaticInfoCtl` through `0x802B8078` and
@@ -191,3 +196,29 @@ unprocessed at this boundary.
 An explicit controller callback inspection can demonstrate these effects while
 the original loading-screen gate is still pending. It must not mark the full
 startup sequence complete or skip the next unsupported deferred callback.
+
+## Switch controller registration
+
+`beSwitchCtrl` uses factory `0x802B7D74`, type storage `0x80534720`, size
+`0x20` and vtable `0x804DF9F8`. Its common accepted-info path is the same
+`0x802F251C` routine, with exact expected type `beSwitchCtrlInfo`. The per-RAM
+hook `0x80315D40` calls messenger helper `0x80305308` with category
+`SWITCHCTRL`. That helper uses the RAM's parent-info name, falling back to an
+empty string for null, and its current RAM ordinal. The callback does not read
+or change the target `igSwitch`.
+
+The original ordinary map member exports `beSwitchCtrlInfo` reference 3471 at
+export 9. RAM list 3475 contains RAM 3443; target slot 7 references switch 2877.
+Explicit inspection of this callback creates `SWITCHCTRL / empty name / 0` for
+RAM 3443. It leaves switch 2877's stored selection unchanged. This info appears
+at aggregate deferred index 11 in the one-player inspection profile, but that
+ordinal is not evidence that preliminary controllers may be skipped or replayed
+at a later original stage.
+
+Messenger insertion `0x803050A8` searches categories by exact string equality
+through `0x800695CC`, creates a category only when missing, and appends recipient,
+name and index to parallel ordered lists. It does not deduplicate equal keys or
+RAM aliases. Messenger insertion initialization `0x80304BB0` activates the
+messenger itself. Base preparation `0x802F24B0` resolves the system and messenger;
+the native callback API requires these dependencies explicitly. It does not
+claim that the original whole manager registry or its other preparations ran.

@@ -74,6 +74,56 @@ std::vector<std::uint8_t> read(const StartupAssetReader& reader, ResourceLocatio
     if (bytes.size() > limit) fail("Asset reader exceeded its supplied byte limit.");
     return bytes;
 }
+PackageDescriptor load_descriptor(const ResourceCatalog& catalog, const StartupAssetReader& reader,
+    const std::string& package_path) {
+    validate_resource_catalog(catalog);
+    if (!reader) fail("No asset reader was supplied.");
+    if (package_path.empty() || package_path.size() > 4096) fail("Invalid package path length.");
+    const auto* descriptor = catalog.find(package_path);
+    if (!descriptor || !descriptor->location) fail("Package has no exact available catalog entry.");
+    auto package = read_package_descriptor(read_igb_document(read(reader,*descriptor->location,4u*1024u*1024u)),catalog);
+    if (package.members.empty() || package.members.size() > 32) fail("Initial package must contain 1..32 members.");
+    package.logical_path = package_path; package.location = descriptor->location;
+    return package;
+}
+struct FileBudget {
+    std::size_t references{}, entries{}, metadata_bytes{}, export_count{}, text_bytes{};
+};
+// Both readers own the same file/total fields. Keep limits and publication in
+// one place while preserving separate phase-completion flags and runtime state.
+template<class Destination>
+void append_loaded_file(Destination& destination, FileBudget& budget, const StartupAssetReader& reader,
+    StartupFileStage stage, std::uint32_t ordinal, std::string requested, std::string catalog_path,
+    ResourceLocation location) {
+    if (destination.files.size() >= max_files) fail("Loaded file count exceeds 128.");
+    if (requested.size() > 4096 || catalog_path.size() > 4096) fail("Loaded path exceeds 4,096 bytes.");
+    auto next_budget = budget;
+    charge(requested.size()+catalog_path.size(),next_budget.text_bytes,max_text_bytes,"Loaded metadata text");
+    auto bytes = read(reader,location,std::min(max_file_bytes,max_total_bytes-destination.total_bytes));
+    // Check declared aggregate record counts before constructing another graph.
+    {
+        const auto metadata = read_igb_metadata(bytes);
+        charge(metadata.metadata_bytes,next_budget.metadata_bytes,max_metadata_bytes,"Combined IGB metadata");
+        charge(metadata.header.object_count,next_budget.references,max_records,"Combined declared reference");
+        charge(metadata.header.memory_reference_count,next_budget.references,max_records,"Combined declared reference");
+        charge(metadata.header.entry_count,next_budget.entries,max_records,"Combined declared entry");
+    }
+    auto document = read_igb_document(std::move(bytes));
+    std::size_t fields = 0;
+    for (const auto& entry : document.entries) fields += entry.fields.size();
+    for (const auto& object : document.objects) fields += object.fields.size();
+    auto object_count = destination.object_count, field_count = destination.field_count, total_bytes = destination.total_bytes;
+    charge(document.objects.size(),object_count,max_records,"Combined object");
+    charge(fields,field_count,max_fields,"Combined decoded field");
+    export_preflight(document,next_budget.text_bytes);
+    auto exports = list_package_exports(document);
+    charge(exports.size(),next_budget.export_count,max_exports,"Combined info export");
+    for (const auto& item : exports) charge(item.type.size()+item.name.size(),next_budget.text_bytes,max_text_bytes,"Loaded metadata text");
+    charge(document.bytes().size(),total_bytes,max_total_bytes,"Combined serialized file");
+    destination.files.push_back({stage,ordinal,std::move(requested),std::move(catalog_path),location,std::move(document),std::move(exports)});
+    destination.object_count = object_count; destination.field_count = field_count; destination.total_bytes = total_bytes;
+    budget = next_budget;
+}
 } // namespace
 
 StartupInfoRoutes route_startup_infos(std::span<const StartupSource> input) {
@@ -106,47 +156,16 @@ StartupInfoRoutes route_startup_infos(std::span<const StartupSource> input) {
 StartupSession load_startup_session(const ResourceCatalog& catalog, const StartupAssetReader& reader,
     const std::string& package_path, const BootInputs& inputs) {
     StartupSession session; session.package_path = package_path;
-    session.next_barrier = "Original loading-screen state, runtime manager callbacks and layer/text initialization remain pending. start.lua and first.lua have not run.";
+    session.next_barrier = "Aggregate inspection bypasses original preliminary controller initialization and audio gates. Later loading-screen state, runtime manager callbacks and layer/text initialization remain pending. start.lua and first.lua have not run.";
     std::string current = package_path;
     try {
-        validate_boot_inputs(inputs); validate_resource_catalog(catalog);
-        if (!reader) fail("No asset reader was supplied.");
-        if (package_path.empty() || package_path.size() > 4096) fail("Invalid package path length.");
-        const auto* descriptor = catalog.find(package_path);
-        if (!descriptor || !descriptor->location) fail("Package has no exact available catalog entry.");
-        auto package = read_package_descriptor(read_igb_document(read(reader,*descriptor->location,4u*1024u*1024u)),catalog);
-        if (package.members.empty() || package.members.size() > 32) fail("Initial package must contain 1..32 members.");
-        std::size_t references = 0, entries = 0, metadata_bytes = 0, export_count = 0, text_bytes = 0;
+        validate_boot_inputs(inputs);
+        auto package = load_descriptor(catalog,reader,package_path);
+        FileBudget budget;
         const auto load = [&](StartupFileStage stage, std::uint32_t ordinal, std::string requested,
             std::string catalog_path, ResourceLocation location) {
             current = requested;
-            if (session.files.size() >= max_files) fail("Loaded file count exceeds 128.");
-            if (requested.size() > 4096 || catalog_path.size() > 4096) fail("Loaded path exceeds 4,096 bytes.");
-            charge(requested.size()+catalog_path.size(),text_bytes,max_text_bytes,"Loaded metadata text");
-            auto bytes = read(reader,location,std::min(max_file_bytes,max_total_bytes-session.total_bytes));
-            // Inspect declared record counts before constructing another graph.
-            // Metadata is temporary here; the owned document parses it independently.
-            {
-                const auto metadata = read_igb_metadata(bytes);
-                charge(metadata.metadata_bytes,metadata_bytes,max_metadata_bytes,"Combined IGB metadata");
-                charge(metadata.header.object_count,references,max_records,"Combined declared reference");
-                charge(metadata.header.memory_reference_count,references,max_records,"Combined declared reference");
-                charge(metadata.header.entry_count,entries,max_records,"Combined declared entry");
-            }
-            auto document = read_igb_document(std::move(bytes));
-            std::size_t fields = 0;
-            for (const auto& entry : document.entries) fields += entry.fields.size();
-            for (const auto& object : document.objects) fields += object.fields.size();
-            auto object_count = session.object_count, field_count = session.field_count, total_bytes = session.total_bytes;
-            charge(document.objects.size(),object_count,max_records,"Combined object");
-            charge(fields,field_count,max_fields,"Combined decoded field");
-            export_preflight(document,text_bytes);
-            auto exports = list_package_exports(document);
-            charge(exports.size(),export_count,max_exports,"Combined info export");
-            for (const auto& item : exports) charge(item.type.size()+item.name.size(),text_bytes,max_text_bytes,"Loaded metadata text");
-            charge(document.bytes().size(),total_bytes,max_total_bytes,"Combined serialized file");
-            session.files.push_back({stage,ordinal,std::move(requested),std::move(catalog_path),location,std::move(document),std::move(exports)});
-            session.object_count = object_count; session.field_count = field_count; session.total_bytes = total_bytes;
+            append_loaded_file(session,budget,reader,stage,ordinal,std::move(requested),std::move(catalog_path),location);
         };
         for (const bool preliminary : {true,false}) for (const auto& member : package.members) {
             if ((member.suffix == "/s") != preliminary) continue;
@@ -172,6 +191,33 @@ StartupSession load_startup_session(const ResourceCatalog& catalog, const Startu
         session.info_routing_complete = true;
     } catch (const std::exception& error) { session.diagnostic = current+": "+error.what(); }
     return session;
+}
+
+StartupPreliminaryStage load_startup_preliminary(const ResourceCatalog& catalog, const StartupAssetReader& reader,
+    const std::string& package_path) {
+    StartupPreliminaryStage stage; stage.package_path = package_path;
+    stage.next_barrier = "Preliminary controller initialization and the SOUND transfer gate precede ordinary package members and func/boot execution.";
+    std::string current = package_path;
+    try {
+        stage.package = load_descriptor(catalog,reader,package_path);
+        FileBudget budget;
+        for (const auto& member : stage.package->members) {
+            if (member.suffix != "/s") continue;
+            current = package_path+" / member "+std::to_string(member.index)+" "+member.specifier;
+            if (!member.supported || !member.location) fail("Unsupported preliminary member: "+member.diagnostic);
+            append_loaded_file(stage,budget,reader,StartupFileStage::preliminary,member.index,current,"",*member.location);
+        }
+        stage.files_loaded = true;
+        stage.infos = route_startup_infos(sources(stage.files));
+        stage.info_routing_complete = true;
+    } catch (const std::exception& error) { stage.diagnostic = current+": "+error.what(); }
+    return stage;
+}
+
+StartupPreliminaryStage load_startup_preliminary(const MountedResources& resources, const std::string& package_path) {
+    return load_startup_preliminary(resources.catalog(),[&](ResourceLocation location, std::size_t limit) {
+        return resources.archives().at(location.archive_index).read(location.entry_index,limit);
+    },package_path);
 }
 
 StartupSession load_startup_session(const MountedResources& resources,

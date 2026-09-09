@@ -12,6 +12,13 @@ IGB documents and routed into the original info lists. The live Lua state is
 retained. Gameplay controller initialization remains pending. `start.lua`, `first.lua`,
 player generation, movement, combat and the original game camera do not run.
 
+This page is aggregate inspection: it bypasses the original preliminary
+controller initialization and sound gate, which actually precede func/boot.
+Its combined deferred list must not be replayed as the original later queue.
+The separate `dw4_boot --preliminary` path loads only `/s` files and exercises
+supported callbacks before reaching the sound barrier. See
+[CONTROLLERS.md](CONTROLLERS.md).
+
 ## Native application
 
 Open **Startup**, enter a logical package descriptor and select **Run startup

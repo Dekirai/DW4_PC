@@ -1,4 +1,5 @@
 #include "dw4/startup_loading.hpp"
+#include "dw4/controllers.hpp"
 #include "dw4/settings.hpp"
 
 #include <iostream>
@@ -7,9 +8,58 @@
 #include <vector>
 
 namespace {
+int run_preliminary(const dw4::MountedResources& resources, const std::string& package) {
+    const auto stage = dw4::load_startup_preliminary(resources, package);
+    std::cout << "Preliminary package: " << package << '\n'
+        << "Native callback context: fresh prepared system/messenger dependencies.\n"
+        << "Original manager construction and audio services are not implemented by this context.\n"
+        << "Preliminary files: " << stage.files.size() << " / " << stage.total_bytes << " bytes\n";
+    std::vector<dw4::StartupSource> sources;
+    for (std::size_t i = 0; i < stage.files.size(); ++i) {
+        const auto& file = stage.files[i];
+        std::cout << "File " << i << " [preliminary " << file.ordinal << "]: " << file.requested_path
+            << " / " << file.location.archive_index << ':' << file.location.entry_index
+            << " / " << file.exports.size() << " exports\n";
+        sources.push_back({&file.document, file.requested_path});
+    }
+    if (!stage.files_loaded || !stage.info_routing_complete) {
+        std::cerr << stage.diagnostic << '\n';
+        std::cout << "No preliminary callbacks ran after incomplete loading or routing.\n";
+        return 3;
+    }
+    // These are explicit dependencies of the recovered callbacks, not evidence
+    // that the original full registry construction and preparation already ran.
+    const auto callbacks = dw4::initialize_controller_prefix(sources, stage.infos.deferred_infos, {true, true});
+    for (const auto& step : callbacks.steps) {
+        std::cout << "Callback " << step.deferred_index << ": file " << step.source.file_index
+            << " / export " << step.source.export_index << " / ref " << step.source.reference_index
+            << " / " << step.type << " / " << (step.completed ? "initialized" : "stopped") << '\n';
+    }
+    std::cout << "Initialized infos: " << callbacks.registered_infos.size()
+        << " / owned RAMs: " << callbacks.rams.size() << " / recipients: " << callbacks.recipients.size() << '\n';
+    for (const auto& recipient : callbacks.recipients) {
+        const auto& ram = callbacks.rams.at(recipient.ram_index);
+        std::cout << "Recipient: " << recipient.category << " / " << recipient.name << " / " << recipient.instance_index
+            << " / RAM " << ram.object.file_index << ':' << ram.object.reference_index << '\n';
+    }
+    for (const auto& ram : callbacks.rams) {
+        std::cout << "RAM " << ram.object.file_index << ':' << ram.object.reference_index
+            << ": parent info " << ram.parent_info.file_index << ':' << ram.parent_info.reference_index
+            << " / ordinal " << ram.ram_no << " / isRun " << ram.is_run << " / state";
+        for (const auto value : ram.state) std::cout << ' ' << value;
+        std::cout << '\n';
+    }
+    if (!callbacks.diagnostic.empty()) std::cout << "Next native barrier: " << callbacks.diagnostic << '\n';
+    else std::cout << "Next native barrier: original SOUND SEARCH / MAKEBINLIST / ISDONETRANS services.\n";
+    std::cout << "No ordinary package members or common resources were requested.\n"
+        << "func.lua and boot.lua were not executed.\n";
+    // Even an empty or fully supported preliminary queue cannot establish the
+    // original sound-transfer gate. This command never reports complete startup.
+    return 3;
+}
 int run(const std::vector<std::string>& args) {
     try {
-        bool help = false;
+        bool help = false, preliminary = false, inspection_input = false;
         std::string root, package;
         dw4::BootInputs input;
         std::set<std::string> seen;
@@ -21,32 +71,43 @@ int run(const std::vector<std::string>& args) {
                 root = option; continue;
             }
             if (!seen.insert(option).second) throw std::runtime_error("Duplicate option: "+option);
+            if (option == "--preliminary") { preliminary = true; continue; }
             if (++i == args.size()) throw std::runtime_error("Missing value for "+option);
             if (option == "--package") {
                 package = args[i];
                 if (package.empty()) throw std::runtime_error("Package name is empty.");
-            } else if (!dw4::set_boot_input_option(input,option,args[i])) throw std::runtime_error("Unknown option: "+option);
+            } else {
+                if (!dw4::set_boot_input_option(input,option,args[i])) throw std::runtime_error("Unknown option: "+option);
+                inspection_input = true;
+            }
         }
+        if (preliminary && inspection_input) throw std::runtime_error("--preliminary stops before boot; boot inspection inputs do not apply.");
         dw4::validate_boot_inputs(input);
         if (help || args.empty()) {
             std::cout << "DW4 native boot-script execution\n"
                 "Usage: dw4_boot EXTRACTED_ROOT --package LOGICAL_PATH [inspection state]\n"
+                "       dw4_boot EXTRACTED_ROOT --package LOGICAL_PATH --preliminary\n"
+                "--preliminary           Load only /s members and run supported callbacks in order.\n"
+                "                        Uses explicit prepared callback dependencies; stops before sound services/boot.\n"
                 "--boot-difficulty 0..2   Explicit DIFFICULTY input (default 0).\n"
                 "--boot-camera 0..1       Explicit CAMERAMODE input (default 0).\n"
                 "--boot-player-N NAME     Join slot N=0..3 with this model name; default no joined slots.\n"
                 "--boot-weapon-N-S NAME   Weapon name for player N, slot S=0..2; default nil.\n"
                 "USA country, area and pack-only getters retain their original constant 1.\n"
                 "Runs func.lua and boot.lua, then loads the requested common resources and routes their exports.\n"
-                "Retains the VM and loaded documents; stops before runtime manager callbacks.\n"
-                "Loading-screen state, layer/text initialization, start/first and gameplay remain pending.\n"
+                "Default mode is aggregate inspection: original preliminary callbacks and sound gates are bypassed.\n"
+                "Retains the VM and loaded documents; aggregate routes are not the original later registration queue.\n"
+                "Loading-screen state, remaining managers, layer/text initialization and start/first remain pending.\n"
                 "No original files are modified and no host filesystem Lua API is installed.\n";
             return help ? 0 : 2;
         }
         if (root.empty() || package.empty()) throw std::runtime_error("An extracted game directory and --package are required.");
         const auto resources = dw4::MountedResources::open(dw4::utf8_path(root));
+        if (preliminary) return run_preliminary(resources,package);
         const auto session = dw4::load_startup_session(resources,package,input);
         const auto& report = session.boot.report();
-        std::cout << "Package: " << session.package_path << " / folder " << report.folder << '\n'
+        std::cout << "Aggregate inspection; original preliminary initialization and sound gates have not run.\n"
+            << "Package: " << session.package_path << " / folder " << report.folder << '\n'
             << "Inspection state: difficulty=" << input.difficulty << ", camera=" << input.camera_mode
             << ", USA country/area/pack-only=1\n";
         for (std::size_t i = 0; i < input.players.size(); ++i) {

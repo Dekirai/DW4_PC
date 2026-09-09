@@ -62,6 +62,14 @@ class BootCliTests(unittest.TestCase):
                         ["--boot-area", "0"], ["--boot-pack-only", "0"]]:
             self.each(options, 1)
 
+    def test_preliminary_stage_options(self):
+        exe = EXECUTABLES[0]
+        self.invoke(exe, ["--package", "synthetic.igb", "--preliminary"], 0)
+        self.invoke(exe, ["--preliminary", "--preliminary"], 1)
+        self.invoke(exe, ["--preliminary", "--boot-difficulty", "0"], 1)
+        self.invoke(exe, ["--boot-player-0", "p_test", "--preliminary"], 1)
+        self.invoke(exe, ["--preliminary", "--package"], 1)
+
     def test_app_source_guards(self):
         if len(EXECUTABLES) < 2:
             self.skipTest("The app executable is checked only by Windows app CI.")

@@ -1,4 +1,35 @@
-# Native walking preview validation
+# Native initialization and pad validation
+
+Version 0.13 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. This increment reconstructs preliminary loading, supported
+native callback effects and original physical-pad state. It does not complete
+the original startup, audio backend or multiplayer game.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed; 25/25 CTest suites, 6 verifier tests, 9 boot CLI and 11 app CLI tests passed |
+| Native controller fixtures | 50 checks: exact exports/schema, owned state, source-qualified aliases, captured recipient keys, preserved RAM fields, ordered unknown-handler stop, atomic malformed steps and budgets |
+| Startup loading fixtures | 81 checks including the prior aggregate path and new preliminary-only reader order, descriptor retention, empty `/s` subset, repeated loads, partial ownership, malformed routes and byte caps |
+| Original preliminary trace | Only `ndmw.afs[80]` descriptor and `[178]` member requested; one retained file, 222,408 bytes and four exports; no ordinary/common read |
+| Original callback effects | Preliminary Static info 499 / RAM 496 registers `STATICINFO / dng101b1 / 0`, then Sound info 3 stops the prefix; separate explicit Switch inspection initializes info 3471 / RAM 3443 without changing its target |
+| Packaged preliminary CLI | Reports preserved native RAM/recipient state and returns the expected exit 3 at `beSoundInfo`; func/boot do not execute |
+| Original pad fixtures | 2,130 checks: radius and angular boundaries, strict/inclusive comparisons, chord edges, independent stick/button repeat timers, four physical slots, freeze/disconnect/reconnect, invalid-input atomicity and raw GC conversion |
+| Independent pad conversion oracle | Every 65,536 raw button mask agrees with interpreted original conversion instructions; all 131,072 signed-byte stick pairs across main/C-stick agree with the SDK branch formulas |
+| Aggregate inspection regression | One-player profile retains nine files, 4,006,731 bytes, 454 exports, one Lua info, 17 held scenes and 436 aggregate deferred infos; actual Lua state remains alive |
+| Startup UI | Finite packaged 1280x720 run passed; inspected screenshot shows explicit preliminary/audio bypass scope and readable owned-file results |
+| Walking regression | Packaged 120-frame replay passed with unchanged 198 simulation steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads, final (-292,40,431), and pause/restart/focus-loss checks |
+
+The native pad library has no device enumeration or original player-join state;
+four independent synthetic slots do not establish physical multiplayer gameplay.
+Host libm results at angular boundaries are not claimed bitwise identical to the
+original PPC math library. Preliminary callback dependencies are explicit and do
+not establish the original complete manager registry or sound-transfer services.
+The existing aggregate inspection queue spans phases and must not be replayed as
+the original later registration queue. See [CONTROLLERS.md](CONTROLLERS.md),
+[PLAYER_MOVEMENT_RESEARCH.md](PLAYER_MOVEMENT_RESEARCH.md) and
+[AUDIO_STARTUP_RESEARCH.md](AUDIO_STARTUP_RESEARCH.md).
+
+## Native walking preview validation
 
 Version 0.12 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. This establishes an interactive native original-map walking
