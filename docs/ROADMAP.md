@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.15 connects the original motion channels to recovered turning and an
+owned model matrix in their original order. Four original entry matrices and
+Agumon commands pass data integration checks; original player preparation,
+input/sequence/action dispatch, camera and collision response remain the next
+boundary. These checks do not establish connected local multiplayer or original
+gameplay. See [MODEL_MOTION.md](MODEL_MOTION.md).
+
 Version 0.14 implements original scalar movement channels, MOVE/MOVEEX decoding,
 local model translation and the cached elapsed timer. All 3,796 discovered
 original commands decode, including 131 zero-frame records. The next movement

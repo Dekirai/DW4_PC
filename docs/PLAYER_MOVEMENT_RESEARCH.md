@@ -3,7 +3,7 @@
 The four physical-pad state machines are implemented in `pad.hpp` / `pad.cpp`.
 Version 0.14 also implements the scalar movement objects, command decoder,
 elapsed timer and local translation described in [MOTION.md](MOTION.md).
-The remaining turning and sequence findings are evidence for the next
+The remaining player-preparation and sequence findings are evidence for the next
 native runtime boundary. These have **not** replaced the walking preview's host
 movement, camera, collision response or animation selection. Four independent
 input states do not establish a running four-player game.
@@ -286,8 +286,11 @@ the step is rate times timer delta; current and target angles are reduced by
 the stored float tau, then interpolation follows the shortest arc and snaps
 when the remaining angle is at most the step. Equal opposite arcs choose the
 negative direction. A moved result is not normalized again before storage.
-Default per-axis rates, all mode changes, and the Euler matrix construction
-at `801292D4` remain integration work; no guessed turn speed is established here.
+Version 0.15 implements this turning path, the Euler matrix construction at
+`801292D4` and their ordering with motion channels. Matrix reset globals are
+traced to initializer `8012F57C`; see [MODEL_MOTION.md](MODEL_MOTION.md).
+Default per-axis rates, spawn-angle preparation and all mode changes remain
+integration work; no guessed player turn speed is established here.
 
 ## Agumon sequence parameters and animation pairing
 

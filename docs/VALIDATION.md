@@ -1,4 +1,31 @@
-# Native motion and timer validation
+# Native model turning and movement validation
+
+Version 0.15 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
+GeForce RTX 5070 Ti. It adds the recovered model turn interpolation and combined
+rotation/translation order to the portable core. The walking preview still uses
+its provisional host controller; original player preparation and dispatch remain
+required before that core can drive the original game.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | Passed; 27/27 CTest suites and 6 Python verifier tests passed |
+| Model motion fixtures | 65 asset-free checks: shortest-arc ties, signed steps, exact-zero/force branches, timer side effects, Euler basis and position, negative zero, update order, independent ownership and atomic failure |
+| Accumulated angles | Accelerated wrapping matches a separate literal repeated-float loop across both signs and exponent boundaries through magnitude 2^27; stagnant original loops stop explicitly |
+| Independent instruction oracle | 9,000 cases: 6,000 standalone turns and 3,000 combined ticks; all 8,434 published states/matrices match by bits, with 566 original non-finite poses rejected at the native boundary and zero mismatches |
+| Original Agumon commands and placements | 22 additional checks pass using Move 130 / Stop 1540 and all four PLAYERPOINT 115/group-0 matrices; 18 Move and six Stop updates at explicit cached delta 1 travel approximately 8.275 units along each source basis and stop |
+| Packaged walking regression | 120-frame SDL replay passed: unchanged 198 host steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads and final (-292,40,431); pause/restart/focus-loss checks passed |
+| Packaged visual inspection | 1280x720 overview and walking frames inspected; version 0.15 is visible, and the walking target is 1236x600 with driver-supplied 8x MSAA |
+
+The instruction oracle shares host double sine/cosine and IEEE float FMA with
+the native boundary. Its bitwise matches establish surrounding arithmetic and
+control flow, not equivalence to the original PPC math library. NaN payloads,
+FPSCR exception flags and guest subnormal modes remain outside this profile.
+The original-data fixture exercises four stored placements, not original spawn
+initialization, physical multiplayer or the game's scheduler. Original data,
+instruction probes and captures remain ignored. See [MODEL_MOTION.md](MODEL_MOTION.md)
+for source addresses, supported effects and remaining integration work.
+
+## Native motion and timer validation
 
 Version 0.14 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. The original motion arithmetic and timer are portable core

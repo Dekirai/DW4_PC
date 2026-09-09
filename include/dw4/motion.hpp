@@ -10,6 +10,8 @@
 #include <string>
 
 namespace dw4 {
+struct ModelMotionPose;
+struct ModelMotionStep;
 class MotionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -81,6 +83,9 @@ public:
     void apply(const MotionCommand& command);
     MotionStep advance(float delta_frames); // Original order: rotation, X, Y, Z.
     MotionStep advance(MotionTimer& timer, std::uint64_t world_time);
+    // 8030A448: rotation channel, model turning, then local translation. Uses
+    // an explicit owned model pose; no attachment, collision or trace callbacks.
+    ModelMotionStep advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time);
     const std::array<MotionState, 4>& states() const noexcept { return states_; }
     bool allocated() const noexcept { return allocated_; }
 private:

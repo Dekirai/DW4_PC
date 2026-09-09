@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.14 adds original movement channels, MOVE/MOVEEX command decoding and
-their elapsed timer in the portable core. The full original game, including local
+Version 0.15 connects original motion channels, turning and local translation
+in an owned native model pose. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -47,8 +47,11 @@ not contain game files.
   and an original multiplayer gameplay session remain pending.
 - Advance original six-mode motion objects with preserved speed, expiry,
   zero-frame arithmetic and a shared original elapsed timer. Decode MOVE/MOVEEX
-  records and apply local model-basis translation. Player-state, turning and
-  collision integration remain pending. See [MOTION.md](docs/MOTION.md).
+  records and apply local model-basis translation. See [MOTION.md](docs/MOTION.md).
+- Apply recovered Euler turning before local movement, preserving arc/timer
+  rules, matrix arithmetic and independently owned model state. Original player
+  preparation, actions and collision integration remain pending; the preview
+  still uses its provisional controller. See [MODEL_MOTION.md](docs/MODEL_MOTION.md).
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.

@@ -113,6 +113,15 @@ creating an OS clock or assuming a simulation rate. They are not wired into the
 walking preview or a complete original actor/sequence/turning/collision loop.
 See [MOTION.md](MOTION.md) for source addresses and validation.
 
+Version 0.15 adds `model_motion`: caller-prepared desired/rate/applied angles,
+an owned model matrix and the original translated flag. The combined motion
+API ticks the rotation channel, updates Y angle/rate, applies recovered Euler
+turning, then translates along the resulting basis using the same cached timer.
+Repeated float angle wrapping is batched exactly within eligible exponent bins.
+No player defaults, spawn-angle extraction or original controller callbacks are
+assumed. These are native pose effects before collision, not a full actor loop.
+See [MODEL_MOTION.md](MODEL_MOTION.md).
+
 Version 0.12 adds a separate native walking preview. `walking_collision` reads
 the explicitly selected original floor and wall models; `walking` builds bounded
 query hierarchies and advances a grounded controller over continuously supported
