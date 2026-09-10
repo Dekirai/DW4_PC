@@ -1,6 +1,7 @@
 #include "dw4/action_event_runtime.hpp"
 #include "action_event_tables_fixture.hpp"
 #include "player_runtime_binding_fixture.hpp"
+#include "action_fixture.hpp"
 
 #include <iostream>
 #include <type_traits>
@@ -23,6 +24,7 @@ struct Fixture {
     ef::Fixture events;
     std::uint32_t wait_sequence{},walk_sequence{};
     std::vector<std::pair<std::uint32_t,std::string>> command_types;
+    std::vector<std::pair<std::uint32_t,std::uint32_t>> lua_modes;
     Fixture() {
         for (const auto index:{0u,2u}) {
             events.text(events.se_rows[index],2,player_name);
@@ -44,6 +46,11 @@ struct Fixture {
             auto descriptor=doc.metadata.object_types[object.type_index]; descriptor.name=type; descriptor.parent_index=pf::object;
             object.type_index=static_cast<std::uint32_t>(doc.metadata.object_types.size()); doc.metadata.object_types.push_back(std::move(descriptor));
         }
+        for(const auto& [ref,storage]:lua_modes) {
+            auto& object=doc.objects.at(doc.references.at(ref).value_index);
+            const auto& memory=doc.memories.at(doc.references.at(storage).value_index);
+            object.fields.push_back({3,0,memory.offset,memory.size});
+        }
         return decode_player_runtime_binding(doc,player.runtime_request(instance),"synthetic/player.igb",occurrence);
     }
     ActionEventTableProgram sounds() const { return decode_action_event_tables(events.document(),events.se,"synthetic/sounds.igb",7); }
@@ -60,6 +67,12 @@ struct Fixture {
     std::uint32_t command(std::string type,std::string name) {
         const auto ref=player.add(pf::unknown_node); player.text(ref,2,name);
         command_types.emplace_back(ref,std::move(type)); return ref;
+    }
+    std::uint32_t lua(std::string prefix,std::optional<std::string> mode) {
+        const auto ref=command("beModelCtrlLUACALL",std::move(prefix));
+        auto bytes=pf::words({mode ? static_cast<std::uint32_t>(mode->size()+1) : 0});
+        if(mode)pf::name(bytes,*mode);
+        lua_modes.emplace_back(ref,player.memory(std::move(bytes)));return ref;
     }
 };
 struct Delivered {
@@ -413,12 +426,118 @@ void repeated_consumer_owners() {
     rejects([&]{runtime.register_consumer(different_kind,true);},"A physical RAM cannot silently change consumer manager kinds");
     check(runtime.messenger().registration_count()==before,"Rejected cross-kind owner changes do not append registration rows");
 }
+void immediate_lua_owner_and_nested_guards() {
+    Fixture f;f.one_sound_and_effect();
+    const auto lua=f.lua("script",std::nullopt),tail=f.command("beModelCtrlCTRL","toWalk");
+    f.player.scalar(f.wait_sequence,3,f.player.list(pf::named_list,{lua,tail}));
+    ActionEventRuntime runtime;const auto id=runtime.register_model(f.binding(),prepared_model(),true);
+    const auto other=runtime.register_model(f.binding(1),prepared_model(),true);
+    runtime.select_sequence(id,"SQ_WAIT");runtime.select_sequence(other,"SQ_WALK");
+    runtime.register_consumer(f.sounds(),true);runtime.broadcast(id,f.event());
+    check(runtime.subcommands(id).entries().size()==1,"Lua ownership fixture requires one unstarted sound.");
+    action_fixture::Fixture animation;auto sources=animation.library();ActionServices action;
+    unsigned calls{},effects{},plays{};
+    const ModelLuaDispatch dispatch=[&](const ModelLuaRequest& request) {
+        ++calls;
+        check(request.source=="synthetic/player.igb" && request.command_reference==lua && request.info_name==player_name &&
+            request.ram_no==0 && request.script_prefix=="script" && !request.event,
+            "Immediate Lua retry must retain its exact command identity and nullable event.");
+        const auto nested_reject=[&](auto operation,std::string_view expected) {
+            std::string diagnostic;
+            try {operation();}catch(const std::exception& error) {diagnostic=error.what();}
+            check(diagnostic.find(expected)!=std::string::npos,"Nested sequence entry did not reject at its wrapper preflight.");
+        };
+        nested_reject([&]{runtime.run_sequence(other,44);},"Nested prepared sequence");
+        nested_reject([&]{runtime.run_action_sequence(other,sources,44,action);},"Nested prepared ACTION sequence");
+        check(runtime.sequence(other).command_index()==0 && runtime.sequence(other).current_sequence()=="SQ_WALK" &&
+            !runtime.sequence(other).selection_pending() && !runtime.last_action_result(other),
+            "Rejected nested entry latched or changed the other model's sequence/action work.");
+        if(calls==1) {++effects;return false;}
+        return true;
+    };
+    auto result=runtime.run_sequence(id,17,{},{},{},dispatch);
+    check(result.stop==ModelSequenceStop::lua_required && result.command_reference==lua && runtime.sequence(id).lua_pending() &&
+        runtime.sequence(id).command_index()==0 && runtime.sequence(id).model().mode==0,
+        "Incomplete immediate Lua must retain its cursor and stop before the next command.");
+    ModelSubcommandServices services;services.play_sound=[&](const auto&) {++plays;return ModelSoundPlayResult{true,0,0};};
+    rejects([&]{runtime.update_subcommands(id,3,services);},"A pending Lua call allowed a later model frame.");
+    rejects([&]{runtime.select_sequence(id,"SQ_WALK");},"Selection discarded an invoked Lua continuation without a messenger handle.");
+    check(plays==0 && runtime.subcommands(id).entries().size()==1 && runtime.subcommands(id).entries()[0].elapsed==0 &&
+        runtime.sequence(id).command_index()==0 && runtime.sequence(id).current_sequence()=="SQ_WAIT" &&
+        !runtime.sequence(id).selection_pending(),"Rejected Lua interruption changed queue timing or published sequence entry.");
+    result=runtime.run_sequence(id,17,{},{},{},dispatch);
+    check(result.stop==ModelSequenceStop::end && calls==2 && effects==1 && !runtime.sequence(id).lua_pending() &&
+        runtime.sequence(id).model().mode==2,"Lua retry replayed a completed prefix or failed to execute its later command.");
+    check(runtime.run_sequence(other,44).stop==ModelSequenceStop::end &&
+        runtime.select_sequence(other,"SQ_WAIT").complete(),"Nested preflight left a hidden sequence-time or selection latch.");
+    check(runtime.update_subcommands(id,3,services).complete() && plays==1 && runtime.subcommands(id).entries().empty(),
+        "Completed Lua failed to release its frame-processing boundary.");
+}
+void immediate_lua_fault() {
+    Fixture f;f.one_sound_and_effect();const auto lua=f.lua("uncertain",std::string{});
+    f.player.scalar(f.wait_sequence,3,f.player.list(pf::named_list,{lua}));
+    ActionEventRuntime runtime;const auto id=runtime.register_model(f.binding(),prepared_model(),true);
+    runtime.select_sequence(id,"SQ_WAIT");runtime.register_consumer(f.sounds(),true);runtime.broadcast(id,f.event());
+    unsigned calls{},plays{};
+    const ModelLuaDispatch dispatch=[&](const ModelLuaRequest& request)->bool {
+        ++calls;check(request.event==std::optional<std::string>{""},"Empty Lua event was collapsed to null.");
+        throw std::runtime_error("Script may already have committed its effect.");
+    };
+    rejects([&]{runtime.run_sequence(id,1,{},{},{},dispatch);},"Throwing Lua callback did not report failure.");
+    rejects([&]{runtime.run_sequence(id,1,{},{},{},dispatch);},"Faulted Lua was replayed.");
+    rejects([&]{runtime.select_sequence(id,"SQ_WALK");},"Selection discarded uncertain Lua ownership.");
+    ModelSubcommandServices services;services.play_sound=[&](const auto&){++plays;return ModelSoundPlayResult{true,0,0};};
+    rejects([&]{runtime.update_subcommands(id,1,services);},"Uncertain Lua allowed another frame's manager effects.");
+    check(calls==1 && runtime.sequence(id).command_index()==0 && runtime.sequence(id).current_sequence()=="SQ_WAIT" &&
+        !runtime.sequence(id).selection_pending() && runtime.sequence(id).lua_faulted() && plays==0 &&
+        runtime.subcommands(id).entries().size()==1 && runtime.subcommands(id).entries()[0].elapsed==0,
+        "Uncertain Lua service was replayed or changed the selected command/queued frame.");
+}
+void immediate_lua_owned_dispatch() {
+    Fixture f;const auto lua=f.lua("nested_effect","Step"),tail=f.command("beModelCtrlCTRL","toWalk");
+    f.player.scalar(f.wait_sequence,3,f.player.list(pf::named_list,{lua,tail}));
+    ActionEventRuntime runtime;const auto id=runtime.register_model(f.binding(),prepared_model(),true);
+    const auto other=runtime.register_model(f.binding(1),prepared_model(),true);
+    runtime.select_sequence(id,"SQ_WAIT");runtime.select_sequence(other,"SQ_WALK");
+    const ControllerObjectId first{91,1},second{92,2};
+    runtime.register_recipient(first,"LUA_EFFECT",std::nullopt,-1);runtime.register_recipient(second,"LUA_EFFECT",std::nullopt,-1);
+    unsigned first_calls{},second_calls{},second_effects{},lua_calls{};std::optional<MessengerDispatch> pending;
+    runtime.set_external_services({{},[&](ControllerObjectId recipient)->MessengerManager {
+        return {[&,recipient](NativeMessenger& messenger,const MessengerDelivery& delivery) {
+            check(delivery.message.command=="APPLY" && messenger.buffer().integers()==std::vector<std::int32_t>{73},
+                "Immediate Lua nested delivery lost its captured message payload.");
+            if(recipient==first) {++first_calls;return MessengerCallResult{true,1,{}};}
+            ++second_calls;if(second_calls==1)return MessengerCallResult{false,0,"Awaiting script effect."};
+            ++second_effects;return MessengerCallResult{true,1,{}};
+        },{}};
+    }});
+    const ModelLuaDispatch dispatch=[&](const ModelLuaRequest& request) {
+        ++lua_calls;check(request.command_reference==lua && request.event=="Step","Nested Lua retry changed its original command.");
+        if(!pending) {
+            auto& messenger=runtime.messenger();messenger.select("LUA_EFFECT",std::nullopt,-1);
+            messenger.buffer().add_int(73);pending.emplace(messenger.begin_send("APPLY"));
+        }
+        const auto result=runtime.resume(*pending);
+        if(result.stop!=MessengerStop::completed)return false;
+        pending.reset();return true;
+    };
+    check(runtime.run_sequence(id,18,{},{},{},dispatch).stop==ModelSequenceStop::lua_required &&
+        first_calls==1 && second_calls==1 && pending,"Immediate Lua did not retain its partial synchronous delivery.");
+    rejects([&]{runtime.messenger();},"Suspended Lua delivery exposed mutable shared arguments.");
+    rejects([&]{runtime.run_sequence(other,19);},"Another sequence bypassed a suspended Lua-owned delivery.");
+    check(runtime.run_sequence(id,18,{},{},{},dispatch).stop==ModelSequenceStop::end && lua_calls==2 &&
+        first_calls==1 && second_calls==2 && second_effects==1 && !pending && runtime.sequence(id).model().mode==2,
+        "Owning Lua retry replayed a completed recipient or could not finish its retained dispatch.");
+    check(runtime.run_sequence(id,20,{},{},{},dispatch).stop==ModelSequenceStop::end && lua_calls==2 &&
+        runtime.run_sequence(other,19).stop==ModelSequenceStop::end,"Completed Lua retained a stale dispatch/sequence ownership gate.");
+}
 }
 
 int main() {
     try {
         cross_source_and_duplicates(); inactive_targets(); nested_resume_and_snapshot(); sequence_cleanup_before_selection();
         local_jump_cleanup(); visible_selection_phases(); repeated_consumer_owners(); source_occurrence_consistency(); atomic_registration_limit();
+        immediate_lua_owner_and_nested_guards();immediate_lua_fault();immediate_lua_owned_dispatch();
         std::cout<<checks<<" action event runtime checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr<<"Action event runtime failure after "<<checks<<" checks: "<<error.what()<<'\n'; return 1; }
 }

@@ -16,8 +16,13 @@ struct PadMotionCommand {
     std::string name;
     float value{}, frames{};
 };
-using ModelCommand = std::variant<MotionCommand,ModelCtrlCommand,PadMotionCommand>;
-// Exact MOVE/MOVEEX/CTRL/PDMOVE records only. Unknown CTRL names are successful
+struct ModelMutekiCommand {
+    std::uint32_t reference_index{};
+    std::string name;
+    float frames{};
+};
+using ModelCommand = std::variant<MotionCommand,ModelCtrlCommand,PadMotionCommand,ModelMutekiCommand>;
+// Exact MOVE/MOVEEX/CTRL/PDMOVE/MUTEKI records only. Unknown CTRL names are successful
 // no-ops; PDMOVE selects Move parameters only for the exact name "Move".
 ModelCommand decode_model_command(const IgbDocument& document, std::uint32_t reference_index);
 
@@ -31,9 +36,14 @@ struct ModelControlState {
     std::int32_t mode{}, phase{}; // _ctrlSt0 / _ctrlSt1, work+3C/+40.
     std::optional<std::array<float,4>> pad_motion; // Stop value/frame, Move value/frame.
     bool check_fall = true; // _isFallCheck, work+DA; CTRL changes the flag only.
+    std::optional<std::string> bullet_hit_script,wall_hit_script,floor_hit_script; // Work+30/34/38; null differs from empty.
+    std::uint8_t wall_check=1,floor_check=1; // Work+D8/D9.
+    float invulnerability_frames{}; // Work+7C; negative persists until ordinary entry.
 };
 // MOVE/MOVEEX: ensure the timer, release position lock and synchronize heading,
-// then configure the channels. CTRL and PDMOVE have no implicit timer/motion.
+// then configure the channels. MUTEKI ensures that same timer, then changes
+// wall/floor flags or assigns its frame value. Existing timers never restart.
+// CTRL and PDMOVE have no implicit timer/motion.
 // Validation failures preserve the complete owned state.
 void apply_model_command(ModelControlState& state, const ModelCommand& command, std::uint64_t world_time);
 

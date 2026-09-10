@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.25 adds retained original model waits, live ACTION completion queries
-and resumable prepared attack commands with separate original pad slots. The full original game, including local
+Version 0.26 adds original timed HITBOX work, checked world-space query boxes
+and resumable collision/script dispatch on prepared player state. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -18,6 +18,13 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Run original HITBOX Set/AllClear commands in the same ordered queue as sounds
+  and effects, and send their checked boxes through the original messenger.
+  MUTEKI fields and LUACALL callback assignment retain their original sequence
+  behavior. Collision target managers and actual hit-script execution remain
+  required before combat works. See [MODEL_HITBOX.md](docs/MODEL_HITBOX.md) and
+  [COLLISION_MATH.md](docs/COLLISION_MATH.md).
 
 - Decode original WCHECK occurrences, retain each player's attack wait/latch,
   and resume the live sequence cursor through qualified ACTION queries.

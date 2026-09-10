@@ -15,9 +15,21 @@ struct PlayerWaitServices {
     // Selecting/running a prepared sequence alone does not implement this hook.
     std::function<bool(std::string_view)> dispatch_sequence;
 };
+struct ModelHitboxServices {
+    // Request mode supplies the original debug color selection. False retains
+    // this display operation; the service owns any committed internal prefix.
+    std::function<bool(ControllerObjectId,const ModelHitboxCheckRequest&,const CollisionBox&)> debug_box;
+    ModelLuaDispatch lua;
+};
+enum class ModelHitboxStop { complete, debug_required, collision_registration_required, collision_delivery_required, lua_required };
+struct ModelHitboxResult {
+    ModelHitboxStop stop = ModelHitboxStop::complete;
+    std::uint64_t entry_id{};
+    std::string diagnostic;
+};
 // Explicitly prepared model work and loaded event-consumer RAMs. This owns
-// ordinary sound/effect queues and synchronous messenger continuations, not
-// original player creation, a frame scheduler, audio playback or effect actors.
+// ordinary sound/effect/HITBOX queues and synchronous messenger continuations,
+// not original player creation, a frame scheduler or complete external managers.
 // Object IDs distinguish repeated source loads; message matching does not.
 class ActionEventRuntime {
 public:
@@ -41,6 +53,12 @@ public:
     const ModelSequenceRuntime& sequence(ControllerObjectId id) const;
     const ModelSubcommandQueue& subcommands(ControllerObjectId id) const;
     void set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label);
+    // Explicit live ONE work replacement; preserves sequence/wait cursors.
+    // Callers prepare this state; it does not create original player work.
+    void prepare_model_state(ControllerObjectId id,ModelControlState state);
+    // Prepared combination of the original controller/debug-node gates.
+    void set_hitbox_debug(ControllerObjectId id,bool enabled);
+    ModelHitboxResult hitbox_result(ControllerObjectId id) const;
 
     // Only the owned sequence-selection and subcommand-cleanup effects. Other
     // original entry callbacks (collision, action waits, player work) remain
@@ -52,14 +70,15 @@ public:
         const ModelSubcommandServices& services = {});
     ModelSequenceResult run_sequence(ControllerObjectId id,std::uint64_t world_time,
         const ModelActionDispatch& action = {},const ModelSubcommandServices& services = {},
-        const ModelActionTryDispatch& try_action = {});
+        const ModelActionTryDispatch& try_action = {},const ModelLuaDispatch& lua = {});
     // Dispatch/resume the registered ACTION without replaying its committed
     // command prefix. Shared random state stays in action; broadcasts use this
     // owner's messenger. A suspended invocation retains its original time and
     // requires the same source/service owners and unchanged live ACTION state.
     // Complete any older unrelated ACTION broadcast before starting this call.
     ModelSequenceResult run_action_sequence(ControllerObjectId id,AnimationSourceRuntime& sources,
-        std::uint64_t world_time,ActionServices& action,const ModelSubcommandServices& services = {});
+        std::uint64_t world_time,ActionServices& action,const ModelSubcommandServices& services = {},
+        const ModelLuaDispatch& lua = {});
     std::optional<ActionResult> last_action_result(ControllerObjectId id) const;
     // Explicit prepared work, not original player initialization. Entry clears
     // only name; control and attack latch fields survive ordinary selections.
@@ -71,14 +90,18 @@ public:
     // live command work suspends; an empty result is never treated as false.
     std::optional<bool> query_action_complete(ControllerObjectId model);
     ModelSubcommandResult update_subcommands(ControllerObjectId id,float system_frame_delta,
-        const ModelSubcommandServices& services = {});
+        const ModelSubcommandServices& services = {},const ModelHitboxServices& hitbox = {});
     ModelSubcommandResult resume_subcommands(ControllerObjectId id,
-        const ModelSubcommandServices& services = {});
+        const ModelSubcommandServices& services = {},const ModelHitboxServices& hitbox = {});
 
     // Registration/explicit sending access. Do not retain this mutable reference
     // across a suspended top-level send; the original shared buffer must survive
     // until that same send resumes. Access while suspended rejects.
     NativeMessenger& messenger();
+    // Registration leaves the shared buffer and cached recipient sets intact;
+    // it can supply a missing recipient while a prepared service is suspended.
+    void register_recipient(ControllerObjectId id,std::string category,
+        std::optional<std::string> name,std::int32_t index);
     // Unowned registered RAMs require explicit real managers and activity.
     void set_external_services(MessengerServices services);
     MessengerResult resume(MessengerDispatch& dispatch);

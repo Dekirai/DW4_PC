@@ -35,6 +35,12 @@ cache hit cannot. Captured indices remain independent of later RAM aliases.
 
 ## Delivery and shared values
 
+Object-list entries explicitly distinguish null, a source-qualified controller
+RAM and a retained immutable `CollisionBox`. HITBOX uses the latter; a temporary
+AABox never receives a fabricated RAM identity. The box survives paused sends
+and remains valid until its native owners and shared buffer release it. Box
+payloads require finite coordinates but preserve signed/inverted extents.
+
 `80305A28` captures the current selected record and its initial row count,
 then reads rows and request index during iteration. Enabled-only skips inactive
 ordinary recipients only when its byte equals exactly 1. Request index -2

@@ -46,9 +46,10 @@ void ModelSubcommandQueue::transfer(ModelSubcommandQueue&& other) {
     cursor_=other.cursor_; remaining_=other.remaining_; frame_delta_=other.frame_delta_;
     context_=std::move(other.context_); current_advanced_=other.current_advanced_;
     current_start_=other.current_start_; faulted_=other.faulted_;
+    hitbox_check_pending_=other.hitbox_check_pending_;
     other.entries_.clear(); other.operation_=Operation::none;
     other.cursor_=other.remaining_=0; other.current_advanced_=other.current_start_=false;
-    other.faulted_=false;
+    other.faulted_=other.hitbox_check_pending_=false;
 }
 ModelSubcommandQueue::ModelSubcommandQueue(ModelSubcommandQueue&& other) { transfer(std::move(other)); }
 ModelSubcommandQueue& ModelSubcommandQueue::operator=(ModelSubcommandQueue&& other) {
@@ -74,6 +75,39 @@ std::uint64_t ModelSubcommandQueue::append_effect(ModelEffectSubcommand command)
     entries_.push_back({id,0,delay,false,ModelEffectSubcommandState{std::move(command),-1,false}});
     ++next_id_; return id;
 }
+std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command) {
+    require_appendable(); finite(command.delay); finite(command.length);
+    for(float value:command.offset) finite(value);
+    for(float value:command.box_size) finite(value);
+    const float end=command.length==-1.0f ? 100000000.0f : elapsed_sum(command.delay,command.length);
+    finite(end);
+    const auto quotient=command.kind/10000; // Signed truncation toward zero, including negative kinds.
+    const std::int32_t mode=quotient==0 ? (command.kind<1000 ? 0 : 2) :
+        quotient==6 ? 1 : (quotient==7 || quotient==8 ? 2 : 0);
+    const auto id=next_id_;
+    const float delay=command.delay;
+    entries_.push_back({id,0,delay,false,ModelHitboxSubcommandState{std::move(command),mode,end}});
+    ++next_id_; return id;
+}
+void ModelSubcommandQueue::clear_hitboxes() {
+    require_usable();
+    if(hitbox_check_pending_)
+        throw std::logic_error("Complete the pending hitbox check before clearing model subcommands.");
+    // Removing an earlier entry shifts the retained native cursor. Entries
+    // appended after an update's count snapshot do not belong to its remainder.
+    for(std::size_t index=0;index<entries_.size();) {
+        if(!std::holds_alternative<ModelHitboxSubcommandState>(entries_[index].value)) {++index;continue;}
+        if(operation_!=Operation::none) {
+            if(index<cursor_) --cursor_;
+            else if(index-cursor_<remaining_) {
+                --remaining_;
+                if(index==cursor_) current_advanced_=current_start_=false;
+            }
+        }
+        entries_.erase(entries_.begin()+static_cast<std::ptrdiff_t>(index));
+    }
+    if(operation_==Operation::update && remaining_==0) operation_=Operation::none;
+}
 ModelSubcommandResult ModelSubcommandQueue::update(float frames,ModelSubcommandContext context,
     const ModelSubcommandServices& services) {
     require_usable();
@@ -94,6 +128,8 @@ ModelSubcommandResult ModelSubcommandQueue::resume(const ModelSubcommandServices
 }
 ModelSubcommandResult ModelSubcommandQueue::cleanup(const ModelSubcommandServices& services) {
     require_usable();
+    if(hitbox_check_pending_)
+        throw std::logic_error("Complete the pending hitbox check before model subcommand cleanup.");
     if(operation_!=Operation::cleanup) {
         operation_=Operation::cleanup; cursor_=0; remaining_=entries_.size();
         current_advanced_=current_start_=false;
@@ -110,6 +146,7 @@ ModelSubcommandResult ModelSubcommandQueue::start(ModelSubcommandEntry& entry,
         if(keep) sound->handle=result.handle;
         return {};
     }
+    if(std::holds_alternative<ModelHitboxSubcommandState>(entry.value)) return check_hitbox(entry,services);
     auto& effect=std::get<ModelEffectSubcommandState>(entry.value);
     if(!effect.space_selected) {
         if(!services.find_effect_space) return needs(ModelSubcommandStop::effect_space_required,entry);
@@ -125,17 +162,27 @@ ModelSubcommandResult ModelSubcommandQueue::start(ModelSubcommandEntry& entry,
     if(!services.generate_effect(request)) return needs(ModelSubcommandStop::effect_generate_required,entry);
     keep=effect.command.sequence_dead; return {};
 }
+ModelSubcommandResult ModelSubcommandQueue::check_hitbox(ModelSubcommandEntry& entry,
+    const ModelSubcommandServices& services) {
+    if(!services.check_hitbox) return needs(ModelSubcommandStop::hitbox_check_required,entry);
+    const auto& hitbox=std::get<ModelHitboxSubcommandState>(entry.value);
+    const ModelHitboxCheckRequest request{entry.id,hitbox.command,hitbox.bullet_mode,context_};
+    hitbox_check_pending_=true;
+    if(!services.check_hitbox(request)) return needs(ModelSubcommandStop::hitbox_check_required,entry);
+    hitbox_check_pending_=false;
+    return {};
+}
 ModelSubcommandResult ModelSubcommandQueue::clean(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services) {
     if(const auto* sound=std::get_if<ModelSoundSubcommandState>(&entry.value)) {
         if(sound->handle!=0 && (!services.sound_volume_down || !services.sound_volume_down(sound->handle)))
             return needs(ModelSubcommandStop::sound_volume_down_required,entry);
-    } else {
-        const auto& effect=std::get<ModelEffectSubcommandState>(entry.value);
-        if(effect.command.sequence_dead && entry.started && effect.ram_no!=-1 &&
-           (!services.erase_effect || !services.erase_effect(effect.command.model_name,effect.ram_no)))
+    } else if(const auto* effect=std::get_if<ModelEffectSubcommandState>(&entry.value)) {
+        if(effect->command.sequence_dead && entry.started && effect->ram_no!=-1 &&
+           (!services.erase_effect || !services.erase_effect(effect->command.model_name,effect->ram_no)))
             return needs(ModelSubcommandStop::effect_erase_required,entry);
     }
+    // SCHitBox's cleanup virtual 802E93B4 is empty.
     return {};
 }
 ModelSubcommandResult ModelSubcommandQueue::process(const ModelSubcommandServices& services) {
@@ -155,7 +202,13 @@ ModelSubcommandResult ModelSubcommandQueue::process(const ModelSubcommandService
                     current_advanced_=true;
                 }
                 if(current_start_) result=start(entry,services,keep);
-                // Both retained ordinary types have the original always-true update virtual.
+                else if(entry.started) {
+                    if(const auto* hitbox=std::get_if<ModelHitboxSubcommandState>(&entry.value)) {
+                        if(entry.elapsed>=hitbox->end_frame) keep=false;
+                        else result=check_hitbox(entry,services);
+                    }
+                    // Sound/effect retained types have the always-true update virtual.
+                }
             }
             if(!result.complete()) {processing_=false;return result;}
             if(operation_==Operation::cleanup || keep) ++cursor_;

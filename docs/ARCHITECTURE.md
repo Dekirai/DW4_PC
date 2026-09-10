@@ -2,6 +2,19 @@
 
 ## Implemented boundary
 
+Version 0.26 adds exact HITBOX command decoding and a third typed entry in the
+ordered model subcommand queue. `collision_math` reconstructs the query AABox
+from the source ONE matrix with recovered float and homogeneous-W arithmetic.
+`action_event_runtime` retains the box through debug, CHKBULLET delivery and
+source BHit Lua service phases. Typed messenger objects distinguish these boxes
+from controller RAM identities. MUTEKI and LUACALL own the represented collision
+flags, invulnerability value and callback prefixes; ordinary sequence entry
+resets them after queue cleanup. Registered target categories are a prepared
+prerequisite, and missing managers/scripts remain explicit service boundaries.
+This does not implement target collision responses or original combat. See
+[MODEL_HITBOX.md](MODEL_HITBOX.md), [COLLISION_MATH.md](COLLISION_MATH.md) and
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
 Version 0.25 adds `model_wait` for common model waits and the original player
 attack fallback. `model_sequence` owns WCHECK assignment and entry-time clearing;
 `action_queries` exposes a live, checked ISCOMEND messenger endpoint.

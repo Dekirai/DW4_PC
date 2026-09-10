@@ -1,6 +1,8 @@
 #include "dw4/model_sequence.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <utility>
 
 namespace dw4 {
@@ -9,6 +11,11 @@ constexpr std::size_t max_sequences=4096,max_commands=65536,max_text=8u*1024u*10
 void checked_name(std::string_view value) {
     if(value.size()>4096 || value.find('\0')!=std::string_view::npos)
         throw MotionError("Sequence names must contain at most 4096 bytes without NUL.");
+}
+void checked_entry_fields(const ModelControlState& state) {
+    for(const auto* script:{&state.bullet_hit_script,&state.wall_hit_script,&state.floor_hit_script})
+        if(*script)checked_name(**script);
+    if(!std::isfinite(state.invulnerability_frames))throw MotionError("Prepared invulnerability frames must be finite.");
 }
 void charge(std::size_t value,std::size_t& total,std::size_t limit) {
     if(value>limit-total)throw MotionError("Model sequence allocation budget exceeded.");
@@ -32,6 +39,23 @@ std::string text(const IgbDocument& doc,const IgbObject& obj,std::uint16_t slot,
     charge(f.size,budget,max_text);
     const auto value=doc.field_string(obj,slot);checked_name(value);charge(value.size(),budget,max_text);
     return std::string(value);
+}
+float number(const IgbDocument& doc,const IgbObject& obj,std::uint16_t slot) {
+    if(field(doc,obj,slot,"igFloatMetaField").size!=4)throw MotionError("Invalid sequence float width.");
+    const auto value=doc.field_f32(obj,slot);
+    if(!std::isfinite(value))throw MotionError("Sequence command parameters must be finite.");
+    return value;
+}
+std::array<float,3> vector(const IgbDocument& doc,const IgbObject& obj,std::uint16_t slot) {
+    const auto& f=field(doc,obj,slot,"igVec3fMetaField");
+    if(f.size!=12)throw MotionError("Invalid sequence vector width.");
+    const auto bytes=doc.field_bytes(f);std::array<float,3> result;
+    for(std::size_t i=0;i<3;++i) {
+        std::uint32_t word=0;for(std::size_t j=0;j<4;++j)word|=std::uint32_t(bytes[4*i+j])<<(8*j);
+        result[i]=std::bit_cast<float>(word);
+        if(!std::isfinite(result[i]))throw MotionError("Sequence command vectors must be finite.");
+    }
+    return result;
 }
 std::uint32_t reference(const IgbDocument& doc,const IgbObject& obj,std::uint16_t slot) {
     if(field(doc,obj,slot,"igObjectRefMetaField").size!=4)throw MotionError("Invalid sequence reference width.");
@@ -86,7 +110,7 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& doc,std::uint32_t
             if(command.type.size()>256)throw MotionError("Sequence command type exceeds its byte budget.");
             charge(command.type.size(),bytes,max_text);
             const auto& type=command.type;
-            if(type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX" || type=="beModelCtrlCTRL" || type=="beModelCtrlPDMOVE") {
+            if(type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX" || type=="beModelCtrlCTRL" || type=="beModelCtrlPDMOVE" || type=="beModelCtrlMUTEKI") {
                 command.name=text(doc,object,2,bytes);command.opcode=ModelSequenceOpcode::model;
                 command.model_command=decode_model_command(doc,*entry);charge(command.name.size(),bytes,max_text);
                 if(type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX")charge(type.size(),bytes,max_text);
@@ -100,6 +124,18 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& doc,std::uint32_t
                     auto scope=text(doc,object,3,bytes);
                     if(doc.field(object,3)->size!=4)command.label_sequence=std::move(scope);
                 }
+            } else if(type=="beModelCtrlHITBOX") {
+                command.name=text(doc,object,2,bytes);command.opcode=ModelSequenceOpcode::hitbox;
+                if(field(doc,object,3,"igIntMetaField").size!=4)throw MotionError("Invalid HITBOX kind width.");
+                // The checked prepared profile validates every serialized field,
+                // including parameters ignored by AllClear and unknown names.
+                ModelHitboxSubcommand parameters{doc.field_i32(object,3),number(doc,object,4),number(doc,object,5),
+                    vector(doc,object,6),vector(doc,object,7)};
+                command.hitbox_command=ModelHitboxCommand{*entry,command.name,parameters};charge(command.name.size(),bytes,max_text);
+            } else if(type=="beModelCtrlLUACALL") {
+                command.name=text(doc,object,2,bytes);command.opcode=ModelSequenceOpcode::lua_call;
+                auto mode=text(doc,object,3,bytes);
+                if(doc.field(object,3)->size!=4)command.lua_mode=std::move(mode);
             }
             decoded.commands.push_back(std::move(command));
         }
@@ -111,21 +147,27 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& doc,std::uint32_t
 ModelSequenceRuntime::ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
     std::string info_name,std::int32_t ram_no)
     :program_(std::make_shared<const ModelSequenceProgram>(std::move(program))),model_(std::move(model)),
-    info_name_(std::move(info_name)),ram_no_(ram_no) {checked_name(info_name_);}
+    info_name_(std::move(info_name)),ram_no_(ram_no) {checked_name(info_name_);checked_entry_fields(model_);}
 
 std::string_view ModelSequenceRuntime::current_sequence() const noexcept {
     return current_ ? std::string_view(program_->sequences()[*current_].name) : std::string_view{};
 }
+void ModelSequenceRuntime::require_no_lua_fault() const {
+    if(lua_faulted_)throw MotionError("The Lua callback has an uncertain outcome; this sequence owner cannot resume or mutate.");
+}
 ModelControlState& ModelSequenceRuntime::model() {
-    if(running_ || selection_pending_)throw MotionError("Model mutation is unavailable during sequence execution or pending selection.");
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Model mutation is unavailable during sequence execution or pending selection/Lua.");
     return model_;
 }
 ModelWaitState& ModelSequenceRuntime::wait_state() {
-    if(running_ || selection_pending_)throw MotionError("Wait mutation is unavailable during sequence execution or pending selection.");
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Wait mutation is unavailable during sequence execution or pending selection/Lua.");
     return wait_;
 }
 void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::string label) {
-    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
     if(sequence)checked_name(*sequence);
     checked_name(label);
     auto candidate=labels_;
@@ -140,14 +182,17 @@ void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::st
     labels_=std::move(candidate);
 }
 void ModelSequenceRuntime::select(std::string_view sequence) {
-    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
     auto candidate=*this;
     candidate.begin_select(sequence); candidate.finish_select();
     *this=std::move(candidate);
 }
 void ModelSequenceRuntime::begin_select(std::string_view sequence) {
-    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
     checked_name(sequence);if(!ordinary(sequence))throw MotionError("This command requires the outer model controller.");
+    checked_entry_fields(model_);
     const auto& data=program_->sequences();
     const auto found=std::find_if(data.begin(),data.end(),[&](const auto& item){return item.name==sequence;});
     if(found==data.end())throw MotionError("Requested model sequence is absent from its owned program.");
@@ -176,19 +221,25 @@ void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     selection_pending_=true;
 }
 void ModelSequenceRuntime::complete_selection() {
+    checked_entry_fields(model_);
     auto candidate=model_;
-    candidate.check_fall=true;candidate.channels.on_sequence_change();
+    candidate.bullet_hit_script.reset();candidate.wall_hit_script.reset();candidate.floor_hit_script.reset();
+    candidate.wall_check=1;candidate.floor_check=1;candidate.check_fall=true;
+    if(candidate.invulnerability_frames<0)candidate.invulnerability_frames=0;
+    candidate.channels.on_sequence_change();
     model_=std::move(candidate);selection_pending_=false;
 }
 void ModelSequenceRuntime::finish_select() {
-    if(running_)throw MotionError("Reentrant sequence mutation is unsupported.");
+    require_no_lua_fault();
+    if(running_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending Lua.");
     if(!selection_pending_)throw MotionError("No sequence selection is pending.");
     if(pending_jump_)throw MotionError("Resume the pending local jump through its cleanup hook.");
     complete_selection();
 }
 
 ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup,
-    const ModelActionTryDispatch& try_action) {
+    const ModelActionTryDispatch& try_action,const ModelHitboxDispatch& hitbox,const ModelLuaDispatch& lua) {
+    require_no_lua_fault();
     if(running_)throw MotionError("Reentrant sequence execution is unsupported.");
     if(!current_)throw MotionError("Model sequence work has not been selected/prepared.");
     if(selection_pending_ && !pending_jump_)throw MotionError("Finish the pending sequence selection before executing commands.");
@@ -261,6 +312,33 @@ ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const Mod
             std::string name=command.name;wait_.name=std::move(name);
             ++cursor_;++result.commands_executed;
             return stopped(ModelSequenceStop::waiting);
+        }
+        case ModelSequenceOpcode::hitbox: {
+            if(command.name!="Set" && command.name!="AllClear")break;
+            if(!hitbox)return stopped(ModelSequenceStop::hitbox_required);
+            running_=true;bool complete;
+            try {complete=hitbox(*command.hitbox_command);}catch(...) {running_=false;throw;}
+            running_=false;if(!complete)return stopped(ModelSequenceStop::hitbox_required);
+            break;
+        }
+        case ModelSequenceOpcode::lua_call: {
+            // 8030B8A4 only these exact modes configure a later callback.
+            // Prefix null was normalized to owned empty during decoding.
+            std::optional<std::string>* target=nullptr;
+            if(command.lua_mode=="BHit")target=&model_.bullet_hit_script;
+            else if(command.lua_mode=="WHit")target=&model_.wall_hit_script;
+            else if(command.lua_mode=="FHit")target=&model_.floor_hit_script;
+            if(target) {*target=std::string(command.name);break;}
+            if(!lua)return stopped(ModelSequenceStop::lua_required);
+            // Request allocation has no external effect. Only exceptions from
+            // an actually invoked Lua owner make this cursor unsafe to replay.
+            const ModelLuaRequest request{program_->source(),command.reference_index,info_name_,ram_no_,command.name,command.lua_mode};
+            running_=true;bool complete;
+            try {complete=lua(request);}
+            catch(...) {running_=false;lua_faulted_=true;throw;}
+            running_=false;lua_pending_=!complete;
+            if(!complete)return stopped(ModelSequenceStop::lua_required);
+            break;
         }
         case ModelSequenceOpcode::unsupported:return stopped(ModelSequenceStop::unsupported_command);
         }

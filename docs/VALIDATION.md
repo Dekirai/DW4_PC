@@ -1,4 +1,35 @@
-# Native model wait and live ACTION query validation
+# Native HITBOX and collision dispatch validation
+
+Version 0.26.0 was validated locally on 2026-09-10 with MSVC 19.51. Timed
+HITBOX work now reaches real collision/script service boundaries through the
+prepared player runtime. Target body collision, damage, full Lua context and
+original player construction/entry remain required for playable combat.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 48/48 CTest suites passed; no compiler warnings; 6 Python verifier tests passed |
+| HITBOX lifecycle | 65 synthetic checks; 2,106 original-instruction cases match across 1,690,336 instructions at 577 addresses; existing sound/effect suite retains 67 passing checks |
+| Query-box arithmetic | 92 synthetic checks; 4,599 instruction cases, 22,728 exact finite output words and 2,222,379 instructions, zero mismatches; includes 693 cases using all 231 original Set vectors under three explicit matrices |
+| Prepared HITBOX integration | 216 checks cover typed retained boxes, three recipient categories, attachment/source identities, live post-debug matrix and post-query script reads, registration/manager/Lua pauses and callback ownership |
+| Sequence and control | 230/1,114 synthetic/original-inclusive sequence checks; 86/140 control checks; all 352 Agumon HITBOX and 62 MUTEKI occurrences decoded; LUACALL pending/fault and post-cleanup field resets covered |
+| Full archive SEQ scan | All 9,060 SEQ programs, 80,621 sequence occurrences and 447,274 commands across 2,273 IGB files decode with zero rejections |
+| Wrapper Lua continuation | Prepared event runtime passes 275 checks, including incomplete/uncertain immediate Lua, nested-call preflight and retained messenger delivery without recipient replay |
+| Messenger regression | 109 synthetic checks; rebuilt original comparison matches 84 scenarios, 2,722 operations, 2,389,520 instructions and 2,028 callback/result rows |
+| Original four-instance boundary | Player waits pass 107 checks; all four actual SQ_ATCK1 labels append Set129, start TALKWF and reach WCHECK516. An eligible check then retains the missing HITPLAYERTALK registration boundary |
+| ACTION/event regressions | 6,034,137 ACTION checks across 183 actions, 369 commands, 4,157 poses and 240 sequence poses; original player events pass 108 checks |
+| Packaged app | 16 app and 10 walking argument suites pass; actor inspection renders 120 frames/121 pose uploads; walking replay renders 120 frames, 198 steps, 101.333 travel and 102 pose uploads |
+| Visual inspection | Version 0.26.0 actor and walking captures inspected on an RTX 5070 Ti; walking retains pause/restart/focus-loss replay and its 1236x600 target |
+
+The first Set129 is a talk-category query, not evidence of attack damage.
+Synthetic managers exercise dispatch and continuation contracts; they do not
+implement the game's target collision or Lua behavior. Original-instruction
+comparisons use explicit bounded helper profiles and do not establish physical
+Gekko execution. The app captures show the prepared viewer and provisional
+walking path. Original assets, probes and captures remain ignored. See
+[MODEL_HITBOX.md](MODEL_HITBOX.md), [COLLISION_MATH.md](COLLISION_MATH.md) and
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
+## Native model wait and live ACTION query validation
 
 Version 0.25.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
 model waits now use registered live ACTION work and separately selected original

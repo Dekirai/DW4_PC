@@ -1,14 +1,20 @@
 #pragma once
 
 #include "dw4/controllers.hpp"
+#include "dw4/collision_math.hpp"
 
 #include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <variant>
 
 namespace dw4 {
 class MessengerError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
+using MessengerBox = std::shared_ptr<const CollisionBox>;
+// A null object, an owned controller identity, or a retained temporary AABox.
+// A transient geometric object never masquerades as a source-qualified RAM.
+using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox>;
 
 // One shared argument/result object. Selection clears it; sending does not.
 // Finite scalar/vector values retain their words. Matrix PSQ copies flush tiny
@@ -27,6 +33,7 @@ public:
     void add_vector(std::array<float,3> value);
     void add_matrix(std::array<float,16> value);
     void add_object(std::optional<ControllerObjectId> value);
+    void add_box(MessengerBox value);
     void add_string(std::optional<std::string> value);
     const auto& booleans() const noexcept { return booleans_; }
     const auto& integers() const noexcept { return integers_; }
@@ -45,7 +52,7 @@ private:
     std::vector<std::int64_t> integers64_;
     std::vector<std::array<float,3>> vectors_;
     std::vector<std::array<float,16>> matrices_;
-    std::vector<std::optional<ControllerObjectId>> objects_;
+    std::vector<MessengerObject> objects_;
     std::vector<std::optional<std::string>> strings_;
     void check_append(std::size_t bytes) const;
 };
@@ -125,6 +132,7 @@ public:
     const MessengerBuffer& buffer() const;
     const MessengerMessage& selected() const;
     std::size_t registration_count() const noexcept;
+    bool has_category(std::string_view category) const noexcept;
     std::size_t registration_text_bytes() const noexcept;
     MessengerDispatch begin_send(std::string command);
     MessengerDispatch begin_send_to(std::string category,std::optional<std::string> name,

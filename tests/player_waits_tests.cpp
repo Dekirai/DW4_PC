@@ -357,17 +357,22 @@ void original(const std::filesystem::path& root) {
     }
     // Recipient sets are captured by the original messenger cache. Register
     // all four loaded owners before selecting/sending the first query.
+    const std::array<std::uint32_t,4> wait_cursors{4,29,46,74};
     for(std::uint32_t i=0;i<4;++i) {
         events.select_sequence(ids[i],"SQ_ATCK1");
-        const auto result=events.run_sequence(ids[i],1000000000);
-        check(result.stop==ModelSequenceStop::unsupported_command && result.type=="beModelCtrlHITBOX" && !actions[i]->active(),
-            "Original attack sequence bypassed its unimplemented HITBOX controller boundary.");
-        // Explicit prepared attack work only. The initial actual sequence
-        // above cannot execute fully until its HITBOX owner is recovered.
-        services.try_broadcast=events.action_services(ids[i]).try_broadcast;
-        check(actions[i]->dispatch(sources,services,"KATCA3",1000000000).stop==ActionStop::waiting && actions[i]->work().wait_state==2,
-            "Prepared original KATCA3 failed to start its actual motion wait.");
-        events.prepare_wait_state(ids[i],{"Action",1,0,0});
+        const auto result=events.run_action_sequence(ids[i],sources,1000000000,services);
+        check(result.stop==ModelSequenceStop::waiting && result.command_reference==516u && result.commands_executed==4 &&
+            events.sequence(ids[i]).command_index()==wait_cursors[i] && events.sequence(ids[i]).wait_state().name=="Action" &&
+            actions[i]->current_action()=="TALKWF",
+            "Original attack did not execute Set129 and its actual TALKWF ACTION before yielding at WCHECK516.");
+        const auto& entries=events.subcommands(ids[i]).entries();
+        check(entries.size()==1 && std::holds_alternative<ModelHitboxSubcommandState>(entries.front().value),
+            "Original first attack hitbox was not appended to its owning model queue.");
+        const auto& hitbox=std::get<ModelHitboxSubcommandState>(entries.front().value);
+        check(!entries.front().started && entries.front().elapsed==0 && hitbox.bullet_mode==1 && hitbox.end_frame==2 &&
+            hitbox.command.kind==60000 && hitbox.command.delay==1 && hitbox.command.length==1 &&
+            hitbox.command.offset==std::array<float,3>{0,4,7} && hitbox.command.box_size==std::array<float,3>{3,3,3},
+            "Original Set129 lost its deferred talk hitbox timing or authored geometry.");
         check(events.query_action_complete(ids[i])==actions[i]->query_command_end(),"Original player query did not read its corresponding live ACTION RAM.");
     }
     pads.update(samples);std::size_t passes{};
@@ -375,10 +380,27 @@ void original(const std::filesystem::path& root) {
         PlayerWaitServices supplied;supplied.pads=&pads;
         const auto result=events.update_wait(ids[i],supplied);
         check(result.complete() && events.sequence(ids[i]).wait_state().name=="Action" && actions[i]->query_command_end()==false,
-            "Original attack wait silently resumed unsupported MODELCTRL commands or invented ACTION completion.");++passes;
+            "Original TALKWF wait consumed its next model command before the live ACTION completed.");++passes;
         check(actions[i]->actors()->ram_reference()==events.binding(ids[i]).action_ram_reference(),"Original wait processing changed its actor RAM owner.");
     }
-    std::cout<<"Original prepared player waits: players=4 HITBOX_boundaries=4 actual_KATCA3_starts=4 wait_passes="<<passes<<"\n";
+    // This prepared fixture owns four real player graphs, but has no recovered
+    // collision scene. Reach the actual delayed check only after all four
+    // players have progressed; the missing target registration remains pending.
+    const auto result=events.update_subcommands(ids[0],1);
+    check(result.stop==ModelSubcommandStop::hitbox_check_required &&
+        events.hitbox_result(ids[0]).stop==ModelHitboxStop::collision_registration_required &&
+        events.subcommands(ids[0]).pending() && events.subcommands(ids[0]).entries().front().started &&
+        events.subcommands(ids[0]).entries().front().elapsed==1,
+        "Original Set129 invented collision success without a registered HITPLAYERTALK scene.");
+    check(events.resume_subcommands(ids[0]).stop==ModelSubcommandStop::hitbox_check_required &&
+        events.subcommands(ids[0]).entries().size()==1 && events.subcommands(ids[0]).entries().front().elapsed==1 &&
+        events.hitbox_result(ids[0]).stop==ModelHitboxStop::collision_registration_required,
+        "Unavailable collision retry duplicated the original hitbox or advanced its cached frame time.");
+    rejects([&]{events.update_subcommands(ids[1],1);},"Another original player bypassed the suspended collision owner.");
+    check(events.subcommands(ids[1]).entries().front().elapsed==0 && !events.subcommands(ids[1]).entries().front().started,
+        "Rejected collision interleaving partially advanced the second player's hitbox.");
+    std::cout<<"Original prepared player waits: players=4 actual_Set129_appends=4 actual_TALKWF_starts=4 wait_passes="<<passes
+        <<" unavailable_collision_boundaries=1\n";
 }
 int run(const std::vector<std::filesystem::path>& args) {
     try {

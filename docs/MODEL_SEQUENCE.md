@@ -33,8 +33,8 @@ integer is field 3; its named list is field 4. Each exact `beModelCtrlData` has
 name field 2 and a command-list reference at field 3. Ordered list occurrences,
 aliases and duplicate names are preserved; lookup uses the first match.
 
-Supported command payloads are MOVE/MOVEEX/CTRL/PDMOVE from the existing decoders,
-LABEL, LABELCTRL, ACTION, JUMP and exact WCHECK. LABELCTRL adds a sequence-key string at field 3.
+Supported command payloads are MOVE/MOVEEX/CTRL/PDMOVE/MUTEKI from the existing decoders,
+LABEL, LABELCTRL, ACTION, JUMP, exact WCHECK, HITBOX and LUACALL. LABELCTRL adds a sequence-key string at field 3.
 Unknown command types retain their type and source reference without interpreting
 their payload. They stop execution when reached. Successful corpus decoding does
 not mean that unsupported commands execute.
@@ -46,6 +46,26 @@ count, field widths, references, null entries and accumulated alias work are
 checked before publishing a program. Original bytes remain unchanged.
 
 ## Owned state and selection
+
+Version 0.26 decodes exact HITBOX fields 2..7: name, signed kind, start, length,
+offset and box size. Set and AllClear require the real ordered queue service;
+false retains the command cursor. Other names are original successful no-ops.
+Every typed field is still validated, including unused AllClear payloads. The
+command does not itself wait. See [MODEL_HITBOX.md](MODEL_HITBOX.md).
+
+LUACALL at `8030B8A4` uses nullable prefix/mode fields 2/3. Exact BHit, WHit and
+FHit assign their corresponding owned callback prefix, converting null prefix
+to non-null empty. Other modes, including null, invoke the required Lua/context
+service with source info name, RAM and unchanged nullable event. No service
+means no command consumption. Once an invoked service returns false, the live
+command remains pending and sequence/mutable-work replacement is forbidden
+until its retry completes. A throwing Lua service faults that sequence owner;
+uncertain effects cannot be replayed by selecting or running again.
+
+After subcommand cleanup, ordinary entry clears all three prefixes, enables
+wall/floor/fall checks and clamps only strictly negative invulnerability to +0,
+then applies existing channel stops (`8030E9DC..8030EA74`). Missing complete
+player entry/status callbacks remain separate from these owned field effects.
 
 An immutable `ModelSequenceProgram` owns the source label and decoded records.
 Runtime copies share that immutable program and independently own model control,
@@ -82,14 +102,15 @@ Mutable model access and unrelated selection/label changes reject while pending.
 Legacy `select` still performs both phases on a candidate before publication.
 Local JUMP with an owner cleanup hook uses the phased path, retaining original
 jump metadata across a suspended callback while the destination is already
-visible. A retry without that required hook stays suspended. These phases do
-not implement the missing full-work callback/collision strings or player virtual
-entry/status callbacks. See [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+visible. A retry without that required hook stays suspended. Version 0.26 also
+applies the post-cleanup callback-prefix, wall/floor and invulnerability resets
+described above. Player virtual entry/status callbacks remain separate. See
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
 
-This is **not complete sequence entry**. The original also resets subcommands,
-callback strings, wall/floor flags and another timer field, and invokes
-controller virtual callbacks. The caller must implement those effects and the
-surrounding player preparation; this API does not acknowledge them as executed.
+This is **not complete sequence entry**. The sequence owner requires its caller
+to perform original subcommand cleanup; the integrated event runtime supplies
+that ordered queue operation. Complete player preparation and controller virtual
+entry/status callbacks remain required and are not acknowledged by this API.
 `SQ_ERAS` and `SQ_ERAS2` have different original lifecycle paths and are excluded
 from ordinary selection.
 
@@ -163,11 +184,13 @@ before replacing the preview's direct clip selection.
 
 ## Validation
 
-- **65 asset-free checks** exercise ordered ownership, inherited SEQ fields,
+- **230 asset-free checks** exercise ordered ownership, inherited SEQ fields,
   label caching, weapon barriers, nested jumps, explicit unsupported/action
-  boundaries, failed/reentrant callbacks, sequence-stop fields and input budgets.
-- **193 additional original-data checks** use both groups/all four entry matrices
-  and all four Agumon weapon sections. Original WAIT/WALK lists request the
+  boundaries, WCHECK, HITBOX/MUTEKI fields, Lua suspension/fault ownership,
+  failed/reentrant callbacks, sequence-stop fields and input budgets.
+- **884 additional original-data checks** cover all 259 WCHECK, 352 HITBOX and
+  62 MUTEKI occurrences, both groups/all four entry matrices and all four Agumon
+  weapon sections, for **1,114 checks** with assets. Original WAIT/WALK lists request the
   matching actions and retain approximately 8.275 local travel over 18 Move and
   six Stop updates at explicitly cached delta 1. A supplied recording service
   validates ACTION requests, not animation playback or full player construction.

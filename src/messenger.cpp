@@ -54,8 +54,17 @@ void MessengerBuffer::add_matrix(std::array<float,16> value) {
     check_append(64); matrices_.push_back(value); ++entries_; bytes_+=64;
 }
 void MessengerBuffer::add_object(std::optional<ControllerObjectId> value) {
-    constexpr auto size=sizeof(value);
-    check_append(size); objects_.push_back(value); ++entries_; bytes_+=size;
+    constexpr auto size=sizeof(MessengerObject);
+    check_append(size);
+    if(value) objects_.emplace_back(*value); else objects_.emplace_back(std::monostate{});
+    ++entries_; bytes_+=size;
+}
+void MessengerBuffer::add_box(MessengerBox value) {
+    if(!value) throw MessengerError("A retained AABox object must not be null; append a null object explicitly.");
+    for(const auto number:value->minimum) finite(number);
+    for(const auto number:value->maximum) finite(number);
+    constexpr auto size=sizeof(MessengerObject)+sizeof(CollisionBox);
+    check_append(size); objects_.emplace_back(std::move(value)); ++entries_; bytes_+=size;
 }
 void MessengerBuffer::add_string(std::optional<std::string> value) {
     text_check(value);
@@ -152,6 +161,10 @@ const MessengerMessage& NativeMessenger::selected() const {
     return impl_->cache[impl_->order.front()].message;
 }
 std::size_t NativeMessenger::registration_count() const noexcept { return impl_ ? impl_->registrations.size() : 0; }
+bool NativeMessenger::has_category(std::string_view category) const noexcept {
+    return impl_ && std::any_of(impl_->registrations.begin(),impl_->registrations.end(),
+        [&](const auto& registration) { return registration.category==category; });
+}
 std::size_t NativeMessenger::registration_text_bytes() const noexcept { return impl_ ? impl_->registration_text : 0; }
 MessengerDispatch NativeMessenger::begin_send(std::string command) {
     selected(); text_check(std::string_view(command));

@@ -15,6 +15,11 @@ struct ModelEffectSubcommand {
     std::array<float,3> offset{}, rotation{};
     bool sequence_dead{}, position_lock{};
 };
+struct ModelHitboxSubcommand {
+    std::int32_t kind{};
+    float delay{}, length{}; // Original cached-frame units.
+    std::array<float,3> offset{}, box_size{}; // Full world-axis box extents.
+};
 struct ModelSubcommandOwner {
     std::string model_name; // Caller applies original null-name -> empty fallback.
     std::int32_t ram_no{};
@@ -24,6 +29,12 @@ struct ModelSubcommandContext {
     ModelSubcommandOwner source;
     // ONE work +dc/+e0 when attached; otherwise GENERATE uses source again.
     std::optional<ModelSubcommandOwner> attachment;
+};
+struct ModelHitboxCheckRequest {
+    std::uint64_t entry_id{}; // Stable within this queue; not a guest object ID.
+    ModelHitboxSubcommand command;
+    std::int32_t bullet_mode{};
+    ModelSubcommandContext context;
 };
 struct ModelEffectGenerateRequest {
     std::optional<std::string> model_name, sequence_name;
@@ -50,6 +61,10 @@ struct ModelSubcommandServices {
     std::function<ModelEffectSpaceResult(const std::optional<std::string>&)> find_effect_space;
     std::function<bool(const ModelEffectGenerateRequest&)> generate_effect;
     std::function<bool(const std::optional<std::string>&,std::int32_t)> erase_effect; // SQ_ERAS.
+    // Owns the complete 8030FEEC geometry/debug/CHKBULLET/BHit operation. Unlike
+    // the services above, false may retain a completed internal prefix; the
+    // callback must resume that same request without replaying its effects.
+    std::function<bool(const ModelHitboxCheckRequest&)> check_hitbox;
 };
 struct ModelSoundSubcommandState {
     std::optional<std::string> name;
@@ -60,15 +75,21 @@ struct ModelEffectSubcommandState {
     std::int32_t ram_no = -1;
     bool space_selected{}; // Native resume boundary after completed FIND_SPACE.
 };
+struct ModelHitboxSubcommandState {
+    ModelHitboxSubcommand command;
+    std::int32_t bullet_mode{};
+    float end_frame{};
+};
 struct ModelSubcommandEntry {
     std::uint64_t id{};
     float elapsed{}, delay{};
     bool started{};
-    std::variant<ModelSoundSubcommandState,ModelEffectSubcommandState> value;
+    std::variant<ModelSoundSubcommandState,ModelEffectSubcommandState,ModelHitboxSubcommandState> value;
 };
 enum class ModelSubcommandStop {
     complete, sound_play_required, sound_volume_down_required,
-    effect_space_required, effect_generate_required, effect_erase_required
+    effect_space_required, effect_generate_required, effect_erase_required,
+    hitbox_check_required
 };
 struct ModelSubcommandResult {
     ModelSubcommandStop stop = ModelSubcommandStop::complete;
@@ -76,8 +97,8 @@ struct ModelSubcommandResult {
     bool complete() const noexcept { return stop==ModelSubcommandStop::complete; }
 };
 
-// Ordinary MODELCTRL sound/effect list only. Original bullet/collision commands
-// are not represented. External manager resource ownership remains in services.
+// Ordered ordinary MODELCTRL sound/effect/hitbox list. External manager resource
+// ownership and the complete collision check operation remain in services.
 // Move-only: copying live sound/effect handles would duplicate cleanup ownership.
 // Destruction does not pretend external cleanup succeeded; call cleanup explicitly.
 class ModelSubcommandQueue {
@@ -92,6 +113,11 @@ public:
     bool faulted() const noexcept { return faulted_; }
     std::uint64_t append_sound(float delay,std::optional<std::string> name);
     std::uint64_t append_effect(ModelEffectSubcommand command);
+    std::uint64_t append_hitbox(ModelHitboxSubcommand command);
+    // 80310A68 with exact SCHitBox type: remove matching entries immediately,
+    // retaining every sound/effect entry and any pending pass position.
+    // An invoked, incomplete hitbox check must finish before clear or cleanup.
+    void clear_hitboxes();
     // 803107E0/80310754. Caller supplies beSystem::_frameTimeF (+28), computed
     // from world delta / 16666667.0f. This is NOT the capped per-RAM MotionTimer.
     // Every original entry advances once; callback appends wait
@@ -111,6 +137,7 @@ private:
     void require_appendable() const;
     ModelSubcommandResult process(const ModelSubcommandServices&);
     ModelSubcommandResult start(ModelSubcommandEntry&,const ModelSubcommandServices&,bool& keep);
+    ModelSubcommandResult check_hitbox(ModelSubcommandEntry&,const ModelSubcommandServices&);
     ModelSubcommandResult clean(ModelSubcommandEntry&,const ModelSubcommandServices&);
     void transfer(ModelSubcommandQueue&&);
     std::deque<ModelSubcommandEntry> entries_;
@@ -120,5 +147,6 @@ private:
     float frame_delta_{};
     ModelSubcommandContext context_;
     bool current_advanced_{}, current_start_{}, processing_{}, faulted_{};
+    bool hitbox_check_pending_{};
 };
 } // namespace dw4

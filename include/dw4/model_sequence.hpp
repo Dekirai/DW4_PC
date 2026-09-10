@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/model_control.hpp"
+#include "dw4/model_subcommands.hpp"
 #include "dw4/model_wait.hpp"
 
 #include <functional>
@@ -8,13 +9,20 @@
 #include <vector>
 
 namespace dw4 {
-enum class ModelSequenceOpcode { model, label, label_control, action, jump, wait_check, unsupported };
+struct ModelHitboxCommand {
+    std::uint32_t reference_index{};
+    std::string name; // Serialized null becomes the original non-null empty name.
+    ModelHitboxSubcommand parameters;
+};
+enum class ModelSequenceOpcode { model, label, label_control, action, jump, wait_check, hitbox, lua_call, unsupported };
 struct ModelSequenceCommand {
     std::uint32_t reference_index{};
     std::string type, name;
     ModelSequenceOpcode opcode = ModelSequenceOpcode::unsupported;
     std::optional<ModelCommand> model_command;
     std::optional<std::string> label_sequence; // LABELCTRL's nullable field 3.
+    std::optional<ModelHitboxCommand> hitbox_command;
+    std::optional<std::string> lua_mode; // LUACALL's nullable field 3; empty differs from null.
 };
 struct ModelSequenceData {
     std::uint32_t reference_index{};
@@ -44,7 +52,7 @@ struct ModelSequenceLabel {
     std::int32_t cached_offset = -1;
     bool operator==(const ModelSequenceLabel&) const = default;
 };
-enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting };
+enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting, hitbox_required, lua_required };
 struct ModelSequenceResult {
     ModelSequenceStop stop{};
     std::uint32_t commands_executed{};
@@ -62,6 +70,20 @@ using ModelActionDispatch = std::function<void(const ModelActionRequest&)>;
 // False retains the ACTION cursor. Any externally completed dispatch prefix
 // must be owned by the supplied service and resumed, never repeated on retry.
 using ModelActionTryDispatch = std::function<bool(const ModelActionRequest&)>;
+using ModelHitboxDispatch = std::function<bool(const ModelHitboxCommand&)>;
+struct ModelLuaRequest {
+    std::string source;
+    std::optional<std::uint32_t> command_reference; // Null for runtime-generated collision callbacks.
+    std::string info_name;
+    std::int32_t ram_no{};
+    std::string script_prefix; // Original slot2 null becomes non-null empty.
+    std::optional<std::string> event; // Original nullable modeName, passed unchanged.
+};
+// Immediate LUACALL requires the real Lua/context owner. False retains the
+// command cursor; services own any completed external prefix across retries.
+// An exception has an uncertain external outcome and permanently faults this
+// sequence owner; no later execution, selection or mutable state access is allowed.
+using ModelLuaDispatch = std::function<bool(const ModelLuaRequest&)>;
 // Optional owner hook for ordinary local jumps. The destination and early
 // control resets are already visible. False retains that pending selection;
 // no destination command runs until this same cleanup completes. The hook
@@ -86,6 +108,8 @@ public:
     const std::vector<ModelSequenceLabel>& labels() const noexcept { return labels_; }
     bool selection_pending() const noexcept { return selection_pending_; }
     bool jump_pending() const noexcept { return pending_jump_.has_value(); }
+    bool lua_pending() const noexcept { return lua_pending_; }
+    bool lua_faulted() const noexcept { return lua_faulted_; }
     // 8030B014: replace the first sequence-key entry or append; invalidate offset.
     void set_label(std::optional<std::string> sequence,std::string label);
     // Owned selection/control/motion effects of ordinary sequence entry only.
@@ -100,9 +124,11 @@ public:
     // and another selection are blocked pending finish. Other full-work fields
     // and callbacks remain external.
     void begin_select(std::string_view sequence);
-    // 8030EA08..8030EA74: after cleanup, set check_fall and apply sequence
-    // stops to the current channels. A pending local jump can only finish
-    // through run(), so a missing cleanup hook cannot be bypassed here.
+    // 8030E9DC..8030EA74: after cleanup, clear BHit/WHit/FHit script names,
+    // enable wall/floor/fall checks, clamp strictly negative invulnerability
+    // to +0, then apply sequence stops to the current channels. A pending local
+    // jump can only finish through run(), so a missing cleanup hook cannot be
+    // bypassed here.
     void finish_select();
     // 8030C3AC. Successful command effects are retained as an ordered prefix.
     // Missing ACTION dispatch stops BEFORE consuming the action. A supplied
@@ -115,8 +141,14 @@ public:
     // its condition. An engaged wait name (including empty) blocks another run;
     // the owning wait resolver must clear it before calling run to resume the
     // retained cursor. Per-player callbacks and wait resolution remain external.
+    // HITBOX Set/AllClear and immediate LUACALL require their owning services;
+    // missing/false callbacks stop before consuming the command. Exact LUACALL
+    // BHit/WHit/FHit modes only assign owned callback prefixes locally.
+    // Once Lua is invoked and returns false, only run may resume that command;
+    // selection and mutable state access cannot abandon its external prefix.
     ModelSequenceResult run(std::uint64_t world_time,const ModelActionDispatch& action = {},
-        const ModelSequenceCleanup& cleanup = {},const ModelActionTryDispatch& try_action = {});
+        const ModelSequenceCleanup& cleanup = {},const ModelActionTryDispatch& try_action = {},
+        const ModelHitboxDispatch& hitbox = {},const ModelLuaDispatch& lua = {});
 private:
     std::shared_ptr<const ModelSequenceProgram> program_;
     ModelControlState model_;
@@ -132,7 +164,8 @@ private:
         bool cleanup_complete{};
     };
     std::optional<PendingJump> pending_jump_;
-    bool running_{},selection_pending_{};
+    bool running_{},selection_pending_{},lua_faulted_{},lua_pending_{};
+    void require_no_lua_fault() const;
     void complete_selection();
 };
 } // namespace dw4

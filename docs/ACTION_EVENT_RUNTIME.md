@@ -1,10 +1,10 @@
 # Prepared player ownership and ACTION events
 
-Version 0.25 connects explicitly prepared MODELCTRL work, live ACTION queries,
-retained waits, loaded Se/ActionStarter tables and owned sound/effect subcommands. It does not
+Version 0.26 connects explicitly prepared MODELCTRL work, live ACTION queries,
+retained waits, loaded Se/ActionStarter tables and owned sound/effect/HITBOX subcommands. It does not
 finish original player construction or startup. The walking preview still uses
 its provisional input, movement and camera. Audio playback, generated effect
-actors, collision callbacks and the outer player scheduler remain required.
+actors, target collision managers, script context and the outer player scheduler remain required.
 
 ## Graph ownership
 
@@ -84,6 +84,57 @@ The outer `dispatch_sequence` hook still requires player entry/status effects.
 An explicit test callback may select and run a prepared sequence to exercise
 continuation ordering, but it does not establish the complete original dispatch.
 
+## Timed HITBOX delivery and source scripts
+
+`run_sequence` and `run_action_sequence` append exact Set work or perform
+AllClear on the same ordered subcommand queue. The command itself does not
+wait. `update_subcommands` and `resume_subcommands` bind each eligible check to
+the owner's current ONE matrix. The queue controls start/end timing; the
+runtime owns the complete debug, message and BHit continuation.
+
+The query box uses [recovered AABox math](COLLISION_MATH.md). A prepared active
+debug gate requires its real callback before delivery. The retained box keeps
+the earlier geometry; matrix and attachment message fields are read after debug,
+as in the original. `prepare_model_state` explicitly replaces live ONE/work
+state without changing cursors. A running check callback can use it for original
+live work changes; an unrelated caller cannot replace paused work. The debug
+request includes mode for the original RGBA: mode 0 blue, mode 1 yellow and
+mode 2 red, each with alpha 0.5 (`80310100..80310180`).
+
+The message selects `HITPLAYERBULLET`, `HITPLAYERTALK` or `HITENEMYBULLET` by the
+original kind-derived mode, with null name, index -1 and enabled-only byte 1.
+CHKBULLET carries kind, a retained typed AABox, current matrix, and the attachment
+name/RAM if present, otherwise source name/RAM. A source alone does not prove an
+empty collision scene: this prepared adapter requires a registered target
+category before sending. `register_recipient` can supply that missing category
+without overwriting the shared buffer or invalidating cached recipients.
+Registered inactive targets can legitimately finish with no result. Activity
+and target manager implementations remain explicit services.
+
+After the complete send, a nonempty **boolean list** triggers the live source
+BHit prefix if present, including an empty configured prefix. A stored false
+boolean still counts. The resulting `ModelLuaRequest` retains source info/RAM,
+prefix and event `BHit`; an attachment changes the query identity but not this
+source callback identity. Lua and its shared context must actually execute
+through the supplied service. Missing or false services preserve the completed
+debug/query prefix; `hitbox_result` reports the precise remaining boundary.
+Later active checks rebuild geometry from current work.
+
+Suspended checks protect their model and shared messenger from unrelated work.
+Same-model sequence entry/execution during a check rejects before mutation.
+Nested sequence passes and nested subcommand passes are outside the prepared
+continuation profile and reject before another owner changes. Callback-owned
+messenger handles, including query and broadcast helpers, resume
+inside their owning subcommand pass. Exceptions fault the queue because external
+effects may already have occurred. See [MODEL_HITBOX.md](MODEL_HITBOX.md).
+
+The sequence Lua service also receives immediate LUACALL requests. Exact BHit,
+WHit and FHit modes only assign owned prefixes; other modes require real script
+execution. Ordinary entry clears these prefixes, restores wall/floor/fall flags
+and clamps strictly negative invulnerability after subcommand cleanup. Positive
+invulnerability countdown, target hit filtering, damage, original player entry
+and complete Lua context remain separate implementation boundaries.
+
 ## Loaded consumers and message delivery
 
 `action_event_tables` reads exact exported `beSeInfo` and
@@ -138,7 +189,7 @@ resuming; an exception indicates an uncertain effect and faults the dispatch.
 Sequence entry uses two visible phases. After validation, `begin_select`
 publishes the new sequence name, data/cursor, label count and CTRL/PDMOVE/wait-name reset.
 Cleanup callbacks therefore see the new sequence, as at `8030E980..8030E9D0`.
-The owned fall-check and motion-channel changes follow completed cleanup through
+The owned collision-script/flag, invulnerability and motion-channel changes follow completed cleanup through
 `finish_select`; no new command runs beforehand. An ordinary local JUMP enters
 the same phases through its owner hook and retains its original command metadata
 across suspension. Omitting a required cleanup hook on retry cannot bypass it.

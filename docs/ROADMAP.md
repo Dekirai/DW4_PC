@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.26 runs original HITBOX commands through timed work, exact query-box
+math and resumable CHKBULLET/BHit service dispatch. Original SQ_ATCK1 preparation
+can now reach TALKWF and WCHECK without skipping the first hitbox. Complete
+target collision managers, script context, player construction and outer
+entry/status effects are still required; this does not establish attack damage.
+See [MODEL_HITBOX.md](MODEL_HITBOX.md).
+
 Version 0.25 resolves original common/player waits against registered live
 ACTION work and separate original pad slots. WCHECK advances and retains its
 cursor; unavailable services suspend without replaying completed commands or

@@ -5,6 +5,19 @@ Version 0.16 implements supported control fields for one explicitly prepared
 requests. These portable core functions do not construct an original player,
 execute its animation/action sequences or replace the walking preview.
 
+Version 0.26 adds MUTEKI assignment and the collision-related work fields used
+by sequence entry and source hit scripts. Exact OFFWALL/ONWALL and
+OFFFLOOR/ONFLOOR names set work bytes D8/D9 to zero/one. Every other name,
+including null or empty, assigns the finite frame value to work 7C. The original
+handler at `8030C1F0` ensures the same KEIKATIMER before either branch; an
+existing timer is preserved. This assignment does not yet implement positive
+invulnerability countdown or a target collision manager.
+
+Owned BHit/WHit/FHit prefixes at work 30/34/38 distinguish null from empty.
+Ordinary sequence entry clears them after queue cleanup, enables wall/floor/fall
+checks, and changes strictly negative invulnerability to positive zero while
+preserving negative zero. See [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
+
 ## Evidence and ownership
 
 Evidence comes from the owner's USA `GDJEB2` revision-0 DOL, SHA-1

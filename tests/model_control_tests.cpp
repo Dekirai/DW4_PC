@@ -20,7 +20,10 @@ template<class F> void rejects(F action) {
 }
 bool same(const ModelControlState& a,const ModelControlState& b) {
     return a.pose==b.pose && a.channels.states()==b.channels.states() && a.channels.allocated()==b.channels.allocated() &&
-        a.elapsed_timer==b.elapsed_timer && a.mode==b.mode && a.phase==b.phase && a.pad_motion==b.pad_motion && a.check_fall==b.check_fall;
+        a.elapsed_timer==b.elapsed_timer && a.mode==b.mode && a.phase==b.phase && a.pad_motion==b.pad_motion && a.check_fall==b.check_fall &&
+        a.bullet_hit_script==b.bullet_hit_script && a.wall_hit_script==b.wall_hit_script && a.floor_hit_script==b.floor_hit_script &&
+        a.wall_check==b.wall_check && a.floor_check==b.floor_check &&
+        std::bit_cast<std::uint32_t>(a.invulnerability_frames)==std::bit_cast<std::uint32_t>(b.invulnerability_frames);
 }
 MotionCommand movement(float value=1,float frames=2) {
     MotionCommand command;command.type="beModelCtrlMOVE";command.name="Move";command.channel=2;
@@ -39,7 +42,8 @@ struct Fixture : dw4::test::ScriptFixture {
         auto& object=doc.objects.at(doc.references.at(command).value_index);
         const auto offset=doc.memories.at(doc.references.at(storage).value_index).offset;
         if(type!="beModelCtrlCTRL") {
-            object.fields.push_back({3,8,offset,4});object.fields.push_back({4,8,offset+4,4});
+            object.fields.push_back({3,8,offset,4});
+            if(type!="beModelCtrlMUTEKI")object.fields.push_back({4,8,offset+4,4});
         }
         return doc;
     }
@@ -123,6 +127,47 @@ void controls_and_parameters() {
     check(state.pad_motion==std::optional{std::array<float,4>{2,0,0.7f,6}},"Nonexact PDMOVE name must select the Stop pair, including zero frames.");
     check(!state.elapsed_timer && !state.channels.allocated(),"CTRL/PDMOVE unexpectedly allocated motion or time.");
 }
+void muteki_fields_and_shared_timer() {
+    ModelControlState state{ModelMotionPose(identity)};
+    check(state.wall_check==1 && state.floor_check==1 && state.invulnerability_frames==0 && !state.bullet_hit_script &&
+        !state.wall_hit_script && !state.floor_hit_script,"Prepared entry field defaults changed.");
+    state.pose.position_locked=true;state.mode=3;state.phase=9;state.check_fall=false;
+    state.bullet_hit_script="bullet";state.wall_hit_script="";state.floor_hit_script="floor";
+    state.wall_check=255;state.floor_check=128;state.invulnerability_frames=42;
+    apply_model_command(state,Fixture("beModelCtrlMUTEKI","OFFWALL",-1).decode(),123);
+    check(state.wall_check==0 && state.floor_check==128 && state.invulnerability_frames==42 &&
+        state.elapsed_timer && state.elapsed_timer->saved_world_time==123 && state.elapsed_timer->cached_frames==1,
+        "OFFWALL failed to ensure KEIKATIMER or overwrote unrelated counter/check fields.");
+    const auto timer=state.elapsed_timer;
+    apply_model_command(state,Fixture("beModelCtrlMUTEKI","ONWALL",999).decode(),456);
+    apply_model_command(state,Fixture("beModelCtrlMUTEKI","OFFFLOOR",999).decode(),456);
+    check(state.wall_check==1 && state.floor_check==0 && state.invulnerability_frames==42 && state.elapsed_timer==timer,
+        "Exact MUTEKI flag names assigned frame values or restarted an existing timer.");
+    apply_model_command(state,Fixture("beModelCtrlMUTEKI","ONFLOOR",999).decode(),456);
+    check(state.floor_check==1 && !state.check_fall && state.pose.position_locked && state.mode==3 && state.phase==9 &&
+        !state.channels.allocated() && state.bullet_hit_script=="bullet" && state.wall_hit_script=="" && state.floor_hit_script=="floor",
+        "MUTEKI flag commands changed pose, fall, channels, callbacks or control state.");
+    for(const auto& [name,value]:std::array<std::pair<const char*,float>,5>{{{"ON",-1.f},{"OFF",0.f},{"offwall",2.f},{"",-0.0f},{"3.0",17.f}}}) {
+        const auto command=Fixture("beModelCtrlMUTEKI",name,value).decode();
+        check(std::holds_alternative<ModelMutekiCommand>(command) && std::get<ModelMutekiCommand>(command).name==name,
+            "MUTEKI did not decode as its exact owned command.");
+        apply_model_command(state,command,789);
+        check(std::bit_cast<std::uint32_t>(state.invulnerability_frames)==std::bit_cast<std::uint32_t>(value) &&
+            state.wall_check==1 && state.floor_check==1 && state.elapsed_timer==timer,"MUTEKI parsed its name or normalized the authored float.");
+    }
+    Fixture nullable("beModelCtrlMUTEKI","unused",23);nullable.records[nullable.command].values[2]=dw4::test::words({0});
+    apply_model_command(state,nullable.decode(),789);check(state.invulnerability_frames==23,"Null MUTEKI name failed to take the frame assignment path.");
+    apply_model_command(state,movement(),900);
+    check(state.elapsed_timer==timer && !state.pose.position_locked && state.channels.allocated(),"MOVE did not reuse MUTEKI's existing KEIKATIMER.");
+    const auto saved=state;
+    rejects([&]{apply_model_command(state,ModelMutekiCommand{0,"OFFWALL",std::numeric_limits<float>::infinity()},901);});
+    check(same(state,saved),"Invalid native MUTEKI partially changed the shared timer or flags.");
+    auto doc=Fixture("beModelCtrlMUTEKI","ON",-1).document();doc.objects[0].fields.back().type_index=1;
+    rejects([&]{decode_model_command(doc,0);});
+    doc=Fixture("beModelCtrlMUTEKI","ON",-1).document();doc.objects[0].fields.back().size=3;rejects([&]{decode_model_command(doc,0);});
+    rejects([&]{Fixture("beModelCtrlMUTEKI","ONWALL",std::numeric_limits<float>::quiet_NaN()).decode();});
+    rejects([&]{Fixture("beModelCtrlMuteki","ON",-1).decode();});
+}
 void post_input_transitions() {
     ModelControlState state{ModelMotionPose(identity)};
     state.mode=2;
@@ -184,6 +229,11 @@ void original_data(const std::filesystem::path& root) {
     const auto to_walk=decode_model_command(player,6499),to_wait=decode_model_command(player,622);
     check(std::get<ModelCtrlCommand>(to_walk).name=="toWalk" && std::get<ModelCtrlCommand>(to_wait).name=="toWait",
         "Original WAIT/WALK control records have changed.");
+    for(const auto& [reference,value]:std::array<std::pair<std::uint32_t,float>,5>{{{78u,-1.f},{1183u,30.f},{1905u,18.f},{86u,120.f},{1710u,180.f}}}) {
+        const auto command=decode_model_command(player,reference);
+        check(std::get<ModelMutekiCommand>(command).reference_index==reference && std::get<ModelMutekiCommand>(command).frames==value,
+            "Original shared MUTEKI float/reference changed.");
+    }
     for(std::uint32_t group=0;group<2;++group)for(std::uint32_t slot=0;slot<4;++slot) {
         const auto placement=decode_igb_player_placement(map,115,group,slot);
         ModelMotionPose pose(placement.matrix);set_player_turn_rates(pose);synchronize_model_heading(pose);
@@ -205,7 +255,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();post_input_transitions();malformed_records();
+    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();muteki_fields_and_shared_timer();post_input_transitions();malformed_records();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_control_tests [EXTRACTED_ROOT]");
         std::cout<<"Model control tests passed: "<<checks<<" checks\n";return 0;
     }catch(const std::exception& error){std::cerr<<"Model control failure after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

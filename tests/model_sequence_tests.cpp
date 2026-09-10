@@ -19,12 +19,12 @@ void check(bool value,const char* message) {++checks;if(!value)throw std::runtim
 template<class F> void rejects(F action) {++checks;try{action();}catch(const std::exception&){return;}throw std::runtime_error("Invalid sequence accepted.");}
 ModelControlState model() {ModelMotionPose pose(identity);set_player_turn_rates(pose);return ModelControlState(pose);}
 struct Fixture : fixture::ScriptFixture {
-    struct Command {std::uint32_t ref;std::string type;std::optional<std::uint32_t> values,scope;};
+    struct Command {std::uint32_t ref;std::string type;std::optional<std::uint32_t> values,scope,hitbox_values;};
     std::vector<Command> commands;
     std::vector<std::uint32_t> sequences;
     std::uint32_t seq{},list_ref{},sequence_storage{};
     std::uint32_t command(std::string type,std::string name) {
-        const auto ref=add(fixture::named_object);text(ref,2,name);commands.push_back({ref,std::move(type),{}, {}});return ref;
+        const auto ref=add(fixture::named_object);text(ref,2,name);commands.push_back({ref,std::move(type),{}, {},{}});return ref;
     }
     std::uint32_t wait(std::optional<std::string> name) {
         const auto ref=command("beModelCtrlWCHECK",name.value_or(""));
@@ -41,6 +41,22 @@ struct Fixture : fixture::ScriptFixture {
         else fixture::push32(bytes,0);
         commands.back().scope=memory(std::move(bytes));return ref;
     }
+    std::uint32_t muteki(std::optional<std::string> name,float frames) {
+        const auto ref=command("beModelCtrlMUTEKI",name.value_or(""));
+        if(!name)records.at(ref).values.at(2)=fixture::words({0});
+        commands.back().values=memory(fixture::words({std::bit_cast<std::uint32_t>(frames)}));return ref;
+    }
+    std::uint32_t lua(std::optional<std::string> prefix,std::optional<std::string> mode) {
+        const auto ref=label_control(prefix.value_or(""),std::move(mode));commands.back().type="beModelCtrlLUACALL";
+        if(!prefix)records.at(ref).values.at(2)=fixture::words({0});return ref;
+    }
+    std::uint32_t hitbox(std::optional<std::string> name,const ModelHitboxSubcommand& value) {
+        const auto ref=command("beModelCtrlHITBOX",name.value_or(""));
+        if(!name)records.at(ref).values.at(2)=fixture::words({0});
+        auto bytes=fixture::words({std::bit_cast<std::uint32_t>(value.kind),std::bit_cast<std::uint32_t>(value.delay),std::bit_cast<std::uint32_t>(value.length)});
+        for(const auto vector:{value.offset,value.box_size})for(const auto component:vector)fixture::push32(bytes,std::bit_cast<std::uint32_t>(component));
+        commands.back().hitbox_values=memory(std::move(bytes));return ref;
+    }
     std::uint32_t sequence(std::string name,const std::vector<std::uint32_t>& contents) {
         const auto ref=add(fixture::lua_data);text(ref,2,name);scalar(ref,3,list(fixture::named_list,contents));
         sequences.push_back(ref);return ref;
@@ -51,6 +67,8 @@ struct Fixture : fixture::ScriptFixture {
         doc.metadata.object_types[fixture::lua_data].name="beModelCtrlData";
         doc.metadata.object_types[fixture::derived_data].name="beModelCtrlInfoDataSeq";
         doc.metadata.field_types[8].name="igFloatMetaField";
+        auto vector_type=doc.metadata.field_types[8];vector_type.name="igVec3fMetaField";
+        const auto vector_index=static_cast<std::uint16_t>(doc.metadata.field_types.size());doc.metadata.field_types.push_back(std::move(vector_type));
         auto& root=doc.objects.at(doc.references.at(seq).value_index);
         root.fields.back().slot=4;
         root.fields.push_back({3,1,doc.memories.at(doc.references.at(sequence_storage).value_index).offset,4});
@@ -61,11 +79,17 @@ struct Fixture : fixture::ScriptFixture {
             obj.type_index=static_cast<std::uint32_t>(doc.metadata.object_types.size());doc.metadata.object_types.push_back(std::move(descriptor));
             if(command.values) {
                 const auto& memory=doc.memories.at(doc.references.at(*command.values).value_index);
-                obj.fields.push_back({3,8,memory.offset,4});obj.fields.push_back({4,8,memory.offset+4,4});
+                obj.fields.push_back({3,8,memory.offset,4});
+                if(command.type!="beModelCtrlMUTEKI")obj.fields.push_back({4,8,memory.offset+4,4});
             }
             if(command.scope) {
                 const auto& memory=doc.memories.at(doc.references.at(*command.scope).value_index);
                 obj.fields.push_back({3,0,memory.offset,memory.size});
+            }
+            if(command.hitbox_values) {
+                const auto offset=doc.memories.at(doc.references.at(*command.hitbox_values).value_index).offset;
+                obj.fields.push_back({3,1,offset,4});obj.fields.push_back({4,8,offset+4,4});obj.fields.push_back({5,8,offset+8,4});
+                obj.fields.push_back({6,vector_index,offset+12,12});obj.fields.push_back({7,vector_index,offset+24,12});
             }
         }
         return doc;
@@ -334,6 +358,179 @@ void resumable_actions() {
     check(result.stop==ModelSequenceStop::end && result.commands_executed==1 && runtime.command_index()==4,
         "Resolved wait failed to consume its next resumable ACTION.");
 }
+void entry_fields_and_lua_setters() {
+    Fixture f;
+    f.sequence("SQ_A",{f.lua("bullet","BHit"),f.lua(std::nullopt,"WHit"),f.lua("floor","FHit"),
+        f.muteki("OFFWALL",999),f.muteki("OFFFLOOR",777),f.muteki("ON",-1),f.wait("Action")});
+    f.sequence("SQ_B",{f.lua("new","BHit"),f.command("beModelCtrlACTION","b")});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",2);runtime.select("SQ_A");
+    auto result=runtime.run(123);
+    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==7 && runtime.model().bullet_hit_script=="bullet" &&
+        runtime.model().wall_hit_script==std::optional<std::string>{""} && runtime.model().floor_hit_script=="floor" &&
+        runtime.model().wall_check==0 && runtime.model().floor_check==0 && runtime.model().invulnerability_frames==-1,
+        "Exact LUACALL/MUTEKI setters failed to populate owned entry fields.");
+    const auto timer=runtime.model().elapsed_timer;
+    check(timer && timer->saved_world_time==123 && !runtime.model().channels.allocated(),"MUTEKI did not share one lazily initialized KEIKATIMER.");
+    auto copy=runtime;copy.model().bullet_hit_script="other";
+    check(runtime.model().bullet_hit_script=="bullet","Sequence copies share mutable callback prefixes.");
+    runtime.model().check_fall=false;runtime.model().mode=4;runtime.model().phase=7;
+    runtime.wait_state().attack_state=5;runtime.wait_state().attack_mode=-8;
+    runtime.begin_select("SQ_B");const auto& during=std::as_const(runtime).model();
+    check(runtime.current_sequence()=="SQ_B" && runtime.command_index()==0 && during.mode==0 && during.phase==0 &&
+        !std::as_const(runtime).wait_state().name && during.bullet_hit_script=="bullet" && during.wall_hit_script=="" &&
+        during.floor_hit_script=="floor" && during.wall_check==0 && during.floor_check==0 && !during.check_fall && during.invulnerability_frames==-1,
+        "Pre-cleanup selection cleared callback/check/counter fields before their original phase.");
+    runtime.finish_select();
+    check(!runtime.model().bullet_hit_script && !runtime.model().wall_hit_script && !runtime.model().floor_hit_script &&
+        runtime.model().wall_check==1 && runtime.model().floor_check==1 && runtime.model().check_fall &&
+        std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames)==0 && runtime.model().elapsed_timer==timer &&
+        runtime.wait_state().attack_state==5 && runtime.wait_state().attack_mode==-8,
+        "Post-cleanup selection failed to clear callbacks, enable checks or clamp only negative invulnerability.");
+    result=runtime.run(456);
+    check(result.stop==ModelSequenceStop::action_required && result.commands_executed==1 && runtime.model().bullet_hit_script=="new" &&
+        !runtime.model().wall_hit_script,"Destination commands ran before entry cleanup or their new callbacks were cleared afterward.");
+    for(const float frames:{23.f,0.f,-0.0f}) {
+        runtime.model().invulnerability_frames=frames;runtime.select("SQ_B");
+        check(std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames)==std::bit_cast<std::uint32_t>(frames),
+            "Sequence entry reset positive invulnerability or normalized negative zero.");
+    }
+    runtime.model().bullet_hit_script="retained";runtime.model().invulnerability_frames=std::numeric_limits<float>::quiet_NaN();
+    rejects([&]{runtime.begin_select("SQ_A");});
+    check(!runtime.selection_pending() && runtime.current_sequence()=="SQ_B" && runtime.model().bullet_hit_script=="retained",
+        "Invalid prepared entry fields partially published a new sequence.");
+    auto invalid=model();invalid.floor_hit_script=std::string("bad\0script",10);
+    rejects([&]{ModelSequenceRuntime bad(f.program(),invalid,"actor",0);});
+}
+void hitbox_and_immediate_lua_boundaries() {
+    Fixture f;const ModelHitboxSubcommand parameters{-12345,1.25f,-1,{2,-3,4},{5,6,7}};
+    const auto set=f.hitbox("Set",parameters),clear=f.hitbox("AllClear",parameters);
+    const auto immediate=f.lua("prefix","bhit"),null_mode=f.lua(std::nullopt,std::nullopt),empty_mode=f.lua("",std::string{});
+    f.sequence("SQ_A",{f.muteki("ON",21),f.hitbox(std::nullopt,parameters),set,immediate,clear,null_mode,empty_mode,
+        f.hitbox("set",parameters),f.command("beModelCtrlACTION","tail")});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",3);runtime.select("SQ_A");
+    auto result=runtime.run(123);
+    check(result.stop==ModelSequenceStop::hitbox_required && result.command_reference==set && result.commands_executed==2 &&
+        runtime.command_index()==2 && runtime.model().invulnerability_frames==21,"HITBOX Set failed to stop at its actual queue ownership boundary.");
+    const auto timer=runtime.model().elapsed_timer;unsigned hitbox_calls{},lua_calls{},actions{};bool ready=false;
+    std::vector<std::uint32_t> accepted;std::vector<ModelLuaRequest> requests;
+    const ModelHitboxDispatch dispatch_hitbox=[&](const ModelHitboxCommand& command) {
+        ++hitbox_calls;check(command.parameters.kind==-12345 && command.parameters.delay==1.25f && command.parameters.length==-1 &&
+            command.parameters.offset==std::array<float,3>{2,-3,4} && command.parameters.box_size==std::array<float,3>{5,6,7},
+            "HITBOX lost signed kind, frame units or complete vector payloads.");
+        rejects([&]{runtime.model();});
+        if(!ready)return false;accepted.push_back(command.reference_index);return true;
+    };
+    result=runtime.run(999,{},{},{},dispatch_hitbox);
+    check(result.stop==ModelSequenceStop::hitbox_required && result.commands_executed==0 && runtime.command_index()==2 &&
+        runtime.model().elapsed_timer==timer && accepted.empty(),"Incomplete HITBOX replayed the sequence prefix or consumed its command.");
+    ready=true;result=runtime.run(1000,{},{},{},dispatch_hitbox);
+    check(result.stop==ModelSequenceStop::lua_required && result.command_reference==immediate && result.commands_executed==1 &&
+        runtime.command_index()==3 && accepted==std::vector<std::uint32_t>{set} && !runtime.model().bullet_hit_script,
+        "Nonexact LUACALL mode silently assigned a callback or ran without its real Lua owner.");
+    const ModelLuaDispatch dispatch_lua=[&](const ModelLuaRequest& request) {
+        ++lua_calls;check(request.source=="synthetic/player.igb" && request.info_name=="actor" && request.ram_no==3,
+            "Immediate LUACALL lost qualified source/model/RAM context.");
+        rejects([&]{runtime.run(1000);});
+        if(lua_calls==1)return false;requests.push_back(request);return true;
+    };
+    result=runtime.run(1001,{},{},{},dispatch_hitbox,dispatch_lua);
+    check(result.stop==ModelSequenceStop::lua_required && result.commands_executed==0 && runtime.command_index()==3 && hitbox_calls==2,
+        "Incomplete Lua invocation consumed its command or replayed the accepted hitbox.");
+    result=runtime.run(1002,[&](const auto&){++actions;},{},{},dispatch_hitbox,dispatch_lua);
+    check(result.stop==ModelSequenceStop::end && result.commands_executed==6 && actions==1 &&
+        accepted==std::vector<std::uint32_t>({set,clear}) && hitbox_calls==3 && requests.size()==3,
+        "Command resume skipped AllClear, replayed a committed prefix or dispatched unknown HITBOX names.");
+    check(requests[0].command_reference==immediate && requests[0].script_prefix=="prefix" && requests[0].event=="bhit" &&
+        requests[1].command_reference==null_mode && requests[1].script_prefix.empty() && !requests[1].event &&
+        requests[2].command_reference==empty_mode && requests[2].script_prefix.empty() && requests[2].event==std::optional<std::string>{""},
+        "Immediate LUACALL conflated null/empty modes or changed the original prefix fallback.");
+}
+void uncertain_lua_is_not_replayed() {
+    Fixture f;const auto lua=f.lua("prefix","event");
+    f.sequence("SQ_A",{f.muteki("ON",7),lua,f.command("beModelCtrlACTION","tail")});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0);
+    rejects([&]{runtime.select("SQ_MISSING");});
+    runtime.select("SQ_A");
+    check(runtime.run(123).stop==ModelSequenceStop::lua_required && runtime.command_index()==1,
+        "A validation failure or missing Lua service incorrectly faulted the sequence owner.");
+    unsigned calls{},external_effects{};
+    const ModelLuaDispatch callback=[&](const ModelLuaRequest&)->bool {
+        ++calls;if(calls==1)return false;
+        ++external_effects;throw std::runtime_error("Lua failed after a possible external effect.");
+    };
+    check(runtime.run(456,{},{},{},{},callback).stop==ModelSequenceStop::lua_required && calls==1 && external_effects==0,
+        "A false Lua callback was treated as an uncertain exception.");
+    const auto timer=std::as_const(runtime).model().elapsed_timer;
+    rejects([&]{runtime.run(789,{},{},{},{},callback);});
+    check(calls==2 && external_effects==1 && runtime.command_index()==1 &&
+        std::as_const(runtime).model().elapsed_timer==timer && std::as_const(runtime).model().invulnerability_frames==7,
+        "Throwing Lua lost its committed sequence prefix or consumed the uncertain command.");
+    rejects([&]{runtime.run(999,{},{},{},{},callback);});
+    rejects([&]{runtime.run(999);});
+    rejects([&]{runtime.select("SQ_A");});
+    rejects([&]{runtime.begin_select("SQ_A");});
+    rejects([&]{runtime.finish_select();});
+    rejects([&]{runtime.set_label("SQ_A","new");});
+    rejects([&]{runtime.model();});
+    rejects([&]{runtime.wait_state();});
+    auto copy=runtime;rejects([&]{copy.run(999,{},{},{},{},callback);});
+    check(calls==2 && external_effects==1 && runtime.command_index()==1 && !runtime.selection_pending(),
+        "A faulted Lua command was replayed or made mutable through a sequence copy.");
+}
+void incomplete_lua_retains_ownership() {
+    Fixture f;const auto lua=f.lua("prefix","event");
+    f.sequence("SQ_A",{f.muteki("ON",7),lua,f.wait("Action")});
+    f.sequence("SQ_B",{f.muteki("ON",9)});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0);runtime.select("SQ_A");
+    check(runtime.run(123).stop==ModelSequenceStop::lua_required && !runtime.lua_pending(),
+        "A missing, never-invoked Lua callback acquired external continuation ownership.");
+    runtime.select("SQ_B");runtime.run(124);runtime.select("SQ_A");
+    unsigned calls{},prefixes{};bool ready{};
+    const ModelLuaDispatch callback=[&](const ModelLuaRequest& request) {
+        check(request.command_reference==lua,"Lua retry changed its retained command identity.");
+        if(calls++==0)++prefixes;
+        return ready;
+    };
+    check(runtime.run(125,{},{},{},{},callback).stop==ModelSequenceStop::lua_required && runtime.lua_pending() &&
+        calls==1 && prefixes==1 && runtime.command_index()==1,"Incomplete Lua lost its externally committed prefix or command cursor.");
+    const auto timer=std::as_const(runtime).model().elapsed_timer;
+    rejects([&]{runtime.select("SQ_B");});rejects([&]{runtime.begin_select("SQ_B");});rejects([&]{runtime.finish_select();});
+    rejects([&]{runtime.model();});rejects([&]{runtime.wait_state();});rejects([&]{runtime.set_label("SQ_A","changed");});
+    check(runtime.run(456).stop==ModelSequenceStop::lua_required && runtime.lua_pending() && calls==1 &&
+        runtime.command_index()==1 && std::as_const(runtime).model().elapsed_timer==timer,
+        "Omitting Lua on retry abandoned its pending prefix or restarted preceding MUTEKI timing.");
+    ready=true;const auto result=runtime.run(789,{},{},{},{},callback);
+    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==2 && !runtime.lua_pending() &&
+        calls==2 && prefixes==1 && runtime.command_index()==3 && runtime.wait_state().name=="Action",
+        "Successful Lua retry duplicated its prefix or failed to release ownership before the next WCHECK.");
+    runtime.select("SQ_B");
+    check(runtime.run(999).stop==ModelSequenceStop::end && runtime.model().invulnerability_frames==9,
+        "Completed Lua permanently blocked later ordinary sequence selection.");
+}
+void malformed_hitbox_and_lua() {
+    Fixture f;const auto hitbox=f.hitbox("AllClear",{10000,1,2,{3,4,5},{6,7,8}}),lua=f.lua("prefix","BHit");
+    f.sequence("SQ_A",{hitbox,lua});f.finish();
+    const auto decode=[&](const IgbDocument& doc){return decode_model_sequences(doc,f.seq,"source");};
+    for(std::uint16_t slot=3;slot<=7;++slot) {
+        auto doc=f.document();auto& object=doc.objects.at(doc.references.at(hitbox).value_index);
+        const_cast<IgbFieldValue*>(doc.field(object,slot))->type_index=0;rejects([&]{decode(doc);});
+        doc=f.document();auto& malformed=doc.objects.at(doc.references.at(hitbox).value_index);
+        --const_cast<IgbFieldValue*>(doc.field(malformed,slot))->size;rejects([&]{decode(doc);});
+    }
+    auto doc=f.document();auto& object=doc.objects.at(doc.references.at(lua).value_index);
+    const_cast<IgbFieldValue*>(doc.field(object,3))->type_index=1;rejects([&]{decode(doc);});
+    doc=f.document();doc.objects.at(doc.references.at(lua).value_index).fields.pop_back();rejects([&]{decode(doc);});
+    for(const std::size_t word:{1u,2u,3u,8u}) {
+        auto bad=f;fixture::word(bad.records.at(*bad.commands[0].hitbox_values).data,word*4,0x7f800000u);
+        rejects([&]{bad.program();});
+    }
+    Fixture long_mode;long_mode.sequence("SQ_A",{long_mode.lua("prefix",std::string(4097,'x'))});long_mode.finish();rejects([&]{long_mode.program();});
+    for(const auto type:{"DerivedHITBOX","beModelCtrlHitBox","beModelCtrlLuaCall"}) {
+        auto bad=f;bad.commands[0].type=type;
+        ModelSequenceRuntime runtime(bad.program(),model(),"actor",0);runtime.select("SQ_A");
+        check(runtime.run(0).stop==ModelSequenceStop::unsupported_command,"Command decoding accepted a derived or case variant type.");
+    }
+}
 void malformed() {
     auto f=branches();
     fixture::word(f.records.at(f.sequence_storage).data,0,0xffffffffu);
@@ -375,6 +572,42 @@ void original_data(const std::filesystem::path& root) {
     }
     check(total_waits==259,"Original Agumon WCHECK occurrence count changed.");
     for(const auto& [reference,expected]:expected_waits)check(wait_counts[reference]==expected.second,"Original shared WCHECK counts changed.");
+    std::map<std::uint32_t,std::uint32_t> hitbox_counts,muteki_counts;std::uint32_t set_count{},clear_count{},muteki_total{};
+    const std::map<std::uint32_t,std::pair<float,std::uint32_t>> expected_muteki{{78,{-1.f,32u}},{1183,{30.f,13u}},{1905,{18.f,4u}},{86,{120.f,9u}},{1710,{180.f,4u}}};
+    for(const auto& sequence:program.sequences())for(const auto& command:sequence.commands) {
+        if(command.type=="beModelCtrlHITBOX") {
+            const auto& raw=player.object(command.reference_index);
+            check(command.opcode==ModelSequenceOpcode::hitbox && command.hitbox_command &&
+                command.hitbox_command->reference_index==command.reference_index && command.hitbox_command->name==command.name &&
+                command.hitbox_command->parameters.kind==player.field_i32(raw,3) &&
+                std::bit_cast<std::uint32_t>(command.hitbox_command->parameters.delay)==std::bit_cast<std::uint32_t>(player.field_f32(raw,4)) &&
+                std::bit_cast<std::uint32_t>(command.hitbox_command->parameters.length)==std::bit_cast<std::uint32_t>(player.field_f32(raw,5)),
+                "Original HITBOX occurrence lost its exact identity, signed kind or frame words.");
+            ++hitbox_counts[command.reference_index];
+            if(command.name=="Set")++set_count;else if(command.name=="AllClear")++clear_count;
+        } else if(command.type=="beModelCtrlMUTEKI") {
+            const auto found=expected_muteki.find(command.reference_index);
+            check(command.opcode==ModelSequenceOpcode::model && command.model_command && std::holds_alternative<ModelMutekiCommand>(*command.model_command) &&
+                found!=expected_muteki.end() && std::get<ModelMutekiCommand>(*command.model_command).frames==found->second.first,
+                "Original MUTEKI occurrence was lost or interpreted from its name instead of float payload.");
+            ++muteki_counts[command.reference_index];++muteki_total;
+        }
+    }
+    check(set_count==344 && clear_count==8 && hitbox_counts.size()==236,"Original HITBOX Set/AllClear occurrences or unique references changed.");
+    check(muteki_total==62 && muteki_counts.size()==5,"Original MUTEKI occurrence count changed.");
+    for(const auto& [reference,expected]:expected_muteki)check(muteki_counts[reference]==expected.second,"Original shared MUTEKI counts changed.");
+    ModelSequenceRuntime attack(program,model(),"p_agumon",0);attack.select("SQ_ATCK1");
+    auto boundary=attack.run(42);
+    check(boundary.stop==ModelSequenceStop::hitbox_required && boundary.command_reference==129u && attack.command_index()==1,
+        "Original SQ_ATCK1 failed to retain its first actual Set hitbox boundary.");
+    boundary=attack.run(42,{},{},{},[&](const ModelHitboxCommand& command) {
+        check(command.reference_index==129 && command.name=="Set" && command.parameters.kind==60000 && command.parameters.delay==1 &&
+            command.parameters.length==1 && command.parameters.offset==std::array<float,3>{0,4,7} && command.parameters.box_size==std::array<float,3>{3,3,3},
+            "Original first attack hitbox lost its authored talk category, offset or extents.");
+        return true; // Explicit test service records the request; no collision claim.
+    });
+    check(boundary.stop==ModelSequenceStop::action_required && boundary.name=="TALKWF" && attack.command_index()==2,
+        "Accepted first hitbox failed to continue at the actual TALKWF ACTION boundary.");
     const auto map=read_igb_document(assets::AfsArchive::open(root/"files/ndmw.afs").read(179));
     const std::array<const char*,4> labels{"dual","slash","arm","gun"};
     const std::array<const char*,4> waits{"WAITD1","WAITS1","WAITA1","WAITG1"},runs{"RUNND1","RUNNS1","RUNNA1","RUNNG1"};
@@ -403,7 +636,8 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {command_prefix_and_branches();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();malformed();
+    try {command_prefix_and_branches();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
+        entry_fields_and_lua_setters();hitbox_and_immediate_lua_boundaries();uncertain_lua_is_not_replayed();incomplete_lua_retains_ownership();malformed_hitbox_and_lua();malformed();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_sequence_tests [EXTRACTED_ROOT]");
         std::cout<<"Model sequence tests passed: "<<checks<<" checks\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Model sequence failure after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}

@@ -2,6 +2,7 @@
 #include "dw4/action_queries.hpp"
 
 #include <limits>
+#include <cmath>
 #include <map>
 #include <set>
 #include <utility>
@@ -18,11 +19,26 @@ bool same(const ModelActionRequest& a,const ModelActionRequest& b) {
     return a.source==b.source && a.command_reference==b.command_reference &&
         a.info_name==b.info_name && a.ram_no==b.ram_no && a.action==b.action;
 }
+struct OperationScope {
+    std::optional<Key>& current;
+    std::optional<Key> previous;
+    OperationScope(std::optional<Key>& target,Key value):current(target),previous(target) { current=value; }
+    ~OperationScope() { current=previous; }
+};
 }
 struct ActionEventRuntime::Impl {
     struct PendingBroadcast {
         ActionBroadcast event;
         MessengerDispatch dispatch;
+    };
+    struct PendingHitbox {
+        enum class Phase { geometry, debug, select, send, script };
+        ModelHitboxCheckRequest request;
+        Phase phase = Phase::geometry;
+        MessengerBox box;
+        std::optional<MessengerDispatch> dispatch;
+        std::optional<ModelLuaRequest> script;
+        explicit PendingHitbox(ModelHitboxCheckRequest value):request(std::move(value)) {}
     };
     struct Model {
         PlayerRuntimeBinding binding;
@@ -46,6 +62,9 @@ struct ActionEventRuntime::Impl {
         bool running_action_sequence{};
         ModelWaitRuntime wait;
         ModelWaitState* pending_wait_state{};
+        bool debug_hitbox{};
+        std::optional<PendingHitbox> hitbox;
+        ModelHitboxResult hitbox_result;
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
@@ -72,17 +91,21 @@ struct ActionEventRuntime::Impl {
     std::optional<std::uint64_t> suspended_send;
     std::optional<Key> suspended_send_wait;
     std::optional<Key> suspended_wait;
+    std::optional<Key> suspended_hitbox;
+    std::optional<Key> suspended_send_sequence, suspended_send_subcommands;
+    std::optional<Key> processing_sequence, processing_subcommands;
     bool processing_wait{};
     std::size_t delivery_depth{};
     void require_top_level_idle() const {
-        if(suspended_wait && !processing_wait)
-            fail("Resume the suspended player wait before another top-level operation.");
+        require_wait_idle();
         if(suspended_send && delivery_depth==0)
             fail("Resume the suspended synchronous messenger delivery before another top-level operation.");
     }
     void require_wait_idle() const {
         if(suspended_wait && !processing_wait)
             fail("Resume the suspended player wait before another top-level operation.");
+        if(suspended_hitbox && processing_subcommands!=suspended_hitbox)
+            fail("Resume the suspended model HITBOX operation before another top-level operation.");
     }
     void require_source(std::uint32_t occurrence,const std::string& source) {
         const auto found=sources.find(occurrence);
@@ -198,6 +221,7 @@ struct ActionEventRuntime::Impl {
     }
     ModelWaitResult process_wait(ActionEventRuntime& runtime,ControllerObjectId id,const PlayerWaitServices& supplied,bool retry) {
         if(processing_wait) fail("Recursive prepared player wait processing is unsupported.");
+        if(processing_subcommands) fail("Complete the model subcommand callback before processing a player wait.");
         if(suspended_wait && *suspended_wait!=key(id)) fail("Another player's suspended wait must finish first.");
         auto& owner=model(id);
         if(!retry) {
@@ -218,6 +242,104 @@ struct ActionEventRuntime::Impl {
             owner.wait.update(*owner.pending_wait_state,std::as_const(owner.sequence).model().channels,services);
         if(result.complete()) { suspended_wait.reset(); owner.pending_wait_state=nullptr; }
         return result;
+    }
+    bool check_hitbox(ActionEventRuntime& runtime,ControllerObjectId id,const ModelHitboxCheckRequest& request,
+        const ModelHitboxServices& services) {
+        auto& owner=model(id);
+        if(request.context.source!=owner.context.source)
+            fail("HITBOX source does not belong to the prepared model RAM.");
+        if(owner.hitbox && owner.hitbox->request.entry_id!=request.entry_id)
+            fail("Complete this model's pending HITBOX check before another entry.");
+        if(!owner.hitbox) owner.hitbox.emplace(request);
+        auto& state=*owner.hitbox;
+        const auto needs=[&](ModelHitboxStop stop,std::string diagnostic) {
+            owner.hitbox_result={stop,request.entry_id,std::move(diagnostic)}; return false;
+        };
+        for(;;) {
+            switch(state.phase) {
+            case PendingHitbox::Phase::geometry:
+                state.box=std::make_shared<const CollisionBox>(original_hitbox_box(std::as_const(owner.sequence).model().pose.matrix,
+                    state.request.command.offset,state.request.command.box_size));
+                state.phase=owner.debug_hitbox ? PendingHitbox::Phase::debug : PendingHitbox::Phase::select;
+                break;
+            case PendingHitbox::Phase::debug:
+                if(!services.debug_box || !services.debug_box(id,state.request,*state.box))
+                    return needs(ModelHitboxStop::debug_required,"Original HITBOX debug display requires its real service.");
+                state.phase=PendingHitbox::Phase::select;
+                break;
+            case PendingHitbox::Phase::select: {
+                const auto mode=state.request.bullet_mode;
+                const std::string category=mode==0 ? "HITPLAYERBULLET" : mode==1 ? "HITPLAYERTALK" : "HITENEMYBULLET";
+                // A prepared source alone does not establish an empty original
+                // collision scene. Require a represented recipient category.
+                // Registered inactive targets can still produce an empty result.
+                if(!messenger.has_category(category))
+                    return needs(ModelHitboxStop::collision_registration_required,"Register the original collision target category before HITBOX delivery.");
+                require_top_level_idle();
+                messenger.select(category,std::nullopt,-1);
+                auto& buffer=messenger.buffer();
+                buffer.add_int(state.request.command.kind); buffer.add_box(state.box);
+                // Original copies the live matrix and attachment after debug,
+                // while the temporary box retains its earlier geometry result.
+                buffer.add_matrix(std::as_const(owner.sequence).model().pose.matrix);
+                const auto source=owner.context.attachment.value_or(owner.context.source);
+                buffer.add_string(source.model_name); buffer.add_int(source.ram_no);
+                buffer.set_enabled_only(1);
+                state.dispatch.emplace(messenger.begin_send("CHKBULLET"));
+                state.phase=PendingHitbox::Phase::send;
+                break;
+            }
+            case PendingHitbox::Phase::send: {
+                const auto result=runtime.resume(*state.dispatch);
+                if(result.stop==MessengerStop::faulted) throw MessengerError(result.diagnostic);
+                if(result.stop!=MessengerStop::completed)
+                    return needs(ModelHitboxStop::collision_delivery_required,result.diagnostic);
+                state.dispatch.reset();
+                // 8030690C returns list COUNT, not boolean[0] truth. A false
+                // appended result can still require the live source BHit script.
+                const auto& prefix=std::as_const(owner.sequence).model().bullet_hit_script;
+                if(!messenger.buffer().booleans().empty() && prefix)
+                    state.script=ModelLuaRequest{owner.binding.source(),std::nullopt,owner.binding.model_name(),
+                        static_cast<std::int32_t>(owner.binding.instance_index()),*prefix,"BHit"};
+                state.phase=PendingHitbox::Phase::script;
+                break;
+            }
+            case PendingHitbox::Phase::script:
+                if(state.script && (!services.lua || !services.lua(*state.script)))
+                    return needs(ModelHitboxStop::lua_required,"Original source BHit requires its Lua and shared-context service.");
+                owner.hitbox_result={ModelHitboxStop::complete,request.entry_id,{}};
+                owner.hitbox.reset();
+                return true;
+            }
+        }
+    }
+    ModelSubcommandResult process_subcommands(ActionEventRuntime& runtime,ControllerObjectId id,std::optional<float> frames,
+        const ModelSubcommandServices& supplied,const ModelHitboxServices& hitbox_services) {
+        if(suspended_wait && !processing_wait) fail("Resume the suspended player wait before model subcommand processing.");
+        if(suspended_hitbox && *suspended_hitbox!=key(id)) fail("Another model's suspended HITBOX must finish first.");
+        if(processing_subcommands) fail("Nested model subcommand processing is unsupported.");
+        if(processing_sequence) fail("Complete sequence execution before processing model subcommands.");
+        auto& owner=model(id);
+        const bool own_delivery=!frames && suspended_send_subcommands==key(id);
+        if(owner.sequence.selection_pending() || owner.sequence.lua_pending() || owner.sequence.lua_faulted() ||
+           owner.sequence_time || owner.jump_cleanup ||
+           ((owner.broadcast || owner.query) && !own_delivery))
+            fail("Model delivery and sequence execution must finish before subcommand processing.");
+        if(frames && (owner.queue.pending() || owner.hitbox)) fail("Resume the pending model subcommand pass before updating.");
+        if(suspended_send && (frames || suspended_send_subcommands!=key(id)))
+            fail("Another synchronous delivery must complete before subcommand processing.");
+        OperationScope operation(processing_subcommands,key(id));
+        auto services=supplied;
+        services.check_hitbox=[&](const ModelHitboxCheckRequest& request) { return check_hitbox(runtime,id,request,hitbox_services); };
+        try {
+            const auto result=frames ? owner.queue.update(*frames,owner.context,services) : owner.queue.resume(services);
+            if(owner.hitbox) suspended_hitbox=key(id);
+            else if(suspended_hitbox==key(id)) suspended_hitbox.reset();
+            return result;
+        } catch(...) {
+            if(owner.hitbox) suspended_hitbox=key(id);
+            throw;
+        }
     }
 };
 ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>()) {}
@@ -291,13 +413,36 @@ const ModelSubcommandQueue& ActionEventRuntime::subcommands(ControllerObjectId i
 void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.selecting || owner.jump_cleanup || owner.sequence_time) fail("Cannot change a label while sequence execution is suspended.");
+    if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.hitbox || impl_->processing_subcommands==key(id))
+        fail("Cannot change a label while sequence or subcommand execution owns this model.");
     owner.sequence.set_label(std::move(sequence),std::move(label));
 }
+void ActionEventRuntime::prepare_model_state(ControllerObjectId id,ModelControlState state) {
+    // A live callback may change original work before the later packet/script
+    // reads. Outside that callback, a suspended check owns the work until retry.
+    const bool in_check=impl_->processing_subcommands==key(id);
+    if(!in_check) impl_->require_top_level_idle();
+    auto& owner=impl_->model(id);
+    if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.wait.pending() ||
+       (!in_check && (owner.hitbox || owner.broadcast || owner.query)))
+        fail("Cannot replace prepared model work during a suspended operation.");
+    for(const auto value:state.pose.matrix) if(!std::isfinite(value)) fail("Prepared model matrix must be finite.");
+    for(const auto* script:{&state.bullet_hit_script,&state.wall_hit_script,&state.floor_hit_script})
+        if(*script && ((*script)->size()>4096 || (*script)->find('\0')!=std::string::npos))
+            fail("Prepared model script names exceed the bounded sequence string profile.");
+    if(!std::isfinite(state.invulnerability_frames)) fail("Prepared invulnerability frames must be finite.");
+    owner.sequence.model()=std::move(state);
+}
+void ActionEventRuntime::set_hitbox_debug(ControllerObjectId id,bool enabled) {
+    impl_->require_top_level_idle();
+    impl_->model(id).debug_hitbox=enabled;
+}
+ModelHitboxResult ActionEventRuntime::hitbox_result(ControllerObjectId id) const { return impl_->model(id).hitbox_result; }
 ModelSubcommandResult ActionEventRuntime::select_sequence(ControllerObjectId id,std::string_view name,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.selecting || owner.jump_cleanup || owner.broadcast || owner.sequence_time || owner.query)
+    if(owner.selecting || owner.jump_cleanup || owner.broadcast || owner.sequence_time || owner.query ||
+       owner.hitbox || impl_->processing_subcommands==key(id))
         fail("Resume pending model delivery or sequence cleanup first.");
     owner.sequence.begin_select(name); // Publish the original pre-cleanup fields.
     owner.selecting=true;
@@ -314,30 +459,41 @@ ModelSubcommandResult ActionEventRuntime::resume_sequence(ControllerObjectId id,
     return result;
 }
 ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::uint64_t time,const ModelActionDispatch& action,
-    const ModelSubcommandServices& services,const ModelActionTryDispatch& try_action) {
+    const ModelSubcommandServices& services,const ModelActionTryDispatch& try_action,const ModelLuaDispatch& lua) {
+    if(impl_->processing_sequence) fail("Nested prepared sequence execution is unsupported.");
     impl_->require_wait_idle();
     auto& owner=impl_->model(id);
+    if(owner.hitbox || impl_->processing_subcommands==key(id))
+        fail("Complete this model's subcommand callback before executing its sequence.");
     if(owner.sequence_time && !owner.running_action_sequence)
         fail("Resume the registered ACTION sequence through its owning operation.");
     if(owner.selecting) fail("Sequence cleanup must complete before executing commands.");
-    if(impl_->suspended_send && impl_->delivery_depth==0 &&
+    if(impl_->suspended_send && impl_->delivery_depth==0 && impl_->suspended_send_sequence!=key(id) &&
        (!owner.broadcast || owner.broadcast->dispatch.id()!=*impl_->suspended_send))
         fail("Another model's suspended synchronous delivery must finish before sequence execution.");
+    OperationScope operation(impl_->processing_sequence,key(id));
     return owner.sequence.run(time,action,[&](std::string_view) {
         const auto result=owner.jump_cleanup ? owner.queue.resume(services) : owner.queue.cleanup(services);
         owner.jump_cleanup=!result.complete();
         return result.complete();
-    },try_action);
+    },try_action,[&](const ModelHitboxCommand& command) {
+        if(command.name=="Set") owner.queue.append_hitbox(command.parameters);
+        else if(command.name=="AllClear") owner.queue.clear_hitboxes();
+        return true;
+    },lua);
 }
 ModelSequenceResult ActionEventRuntime::run_action_sequence(ControllerObjectId id,AnimationSourceRuntime& sources,
-    std::uint64_t time,ActionServices& action,const ModelSubcommandServices& services) {
+    std::uint64_t time,ActionServices& action,const ModelSubcommandServices& services,const ModelLuaDispatch& lua) {
+    if(impl_->processing_sequence) fail("Nested prepared ACTION sequence execution is unsupported.");
     impl_->require_wait_idle();
     auto& owner=impl_->model(id);
+    if(owner.hitbox || impl_->processing_subcommands==key(id))
+        fail("Complete this model's subcommand callback before executing its ACTION sequence.");
     if(owner.action_faulted) fail("Prepared ACTION service has an uncertain outcome; automatic replay is forbidden.");
     if(owner.running_action_sequence) fail("Recursive prepared ACTION sequence execution is unsupported.");
     if(!owner.sequence.selected()) fail("Select the prepared model sequence before executing its ACTION commands.");
     if(owner.selecting || owner.query) fail("Complete sequence cleanup and pending queries before prepared ACTION execution.");
-    if(impl_->suspended_send && impl_->delivery_depth==0 &&
+    if(impl_->suspended_send && impl_->delivery_depth==0 && impl_->suspended_send_sequence!=key(id) &&
        (!owner.broadcast || owner.broadcast->dispatch.id()!=*impl_->suspended_send))
         fail("Another model's suspended delivery must finish before prepared ACTION execution.");
     const auto found=impl_->actions.find({id.file_index,owner.binding.action_ram_reference()});
@@ -378,7 +534,7 @@ ModelSequenceResult ActionEventRuntime::run_action_sequence(ControllerObjectId i
         const auto stop=owner.action_result->stop;
         if(stop!=ActionStop::end && stop!=ActionStop::waiting) return false;
         owner.action_request.reset(); owner.action_sources=nullptr; owner.action_state.reset(); return true;
-    });
+    },lua);
     if(result.stop==ModelSequenceStop::end || result.stop==ModelSequenceStop::label_boundary || result.stop==ModelSequenceStop::waiting) {
         owner.sequence_time.reset(); owner.sequence_sources=nullptr; owner.sequence_services=nullptr;
     }
@@ -421,20 +577,18 @@ std::optional<bool> ActionEventRuntime::query_action_complete(ControllerObjectId
     if(values.empty()) fail("Original ACTION ISCOMEND completed without its required boolean result.");
     return values.front()!=0;
 }
-ModelSubcommandResult ActionEventRuntime::update_subcommands(ControllerObjectId id,float frames,const ModelSubcommandServices& services) {
-    impl_->require_top_level_idle();
-    auto& owner=impl_->model(id);
-    if(owner.sequence.selection_pending() || owner.broadcast || owner.sequence_time || owner.query)
-        fail("Model delivery and sequence execution must finish before frame processing.");
-    return owner.queue.update(frames,owner.context,services);
+ModelSubcommandResult ActionEventRuntime::update_subcommands(ControllerObjectId id,float frames,const ModelSubcommandServices& services,
+    const ModelHitboxServices& hitbox) {
+    return impl_->process_subcommands(*this,id,frames,services,hitbox);
 }
-ModelSubcommandResult ActionEventRuntime::resume_subcommands(ControllerObjectId id,const ModelSubcommandServices& services) {
-    impl_->require_top_level_idle();
-    auto& owner=impl_->model(id);
-    if(owner.selecting || owner.jump_cleanup) fail("Resume the owning sequence operation to complete cleanup.");
-    return owner.queue.resume(services);
+ModelSubcommandResult ActionEventRuntime::resume_subcommands(ControllerObjectId id,const ModelSubcommandServices& services,
+    const ModelHitboxServices& hitbox) {
+    return impl_->process_subcommands(*this,id,std::nullopt,services,hitbox);
 }
 NativeMessenger& ActionEventRuntime::messenger() { impl_->require_top_level_idle(); return impl_->messenger; }
+void ActionEventRuntime::register_recipient(ControllerObjectId id,std::string category,std::optional<std::string> name,std::int32_t index) {
+    impl_->messenger.register_recipient(id,std::move(category),std::move(name),index);
+}
 void ActionEventRuntime::set_external_services(MessengerServices services) { impl_->external=std::move(services); }
 MessengerResult ActionEventRuntime::resume(MessengerDispatch& dispatch) {
     impl_->require_wait_idle();
@@ -450,9 +604,12 @@ MessengerResult ActionEventRuntime::resume(MessengerDispatch& dispatch) {
     if(outer) {
         if(result.stop==MessengerStop::completed) {
             impl_->suspended_send.reset(); impl_->suspended_send_wait.reset();
+            impl_->suspended_send_sequence.reset(); impl_->suspended_send_subcommands.reset();
         } else {
             impl_->suspended_send=dispatch.id();
             impl_->suspended_send_wait=impl_->processing_wait ? impl_->suspended_wait : std::nullopt;
+            impl_->suspended_send_sequence=impl_->processing_sequence;
+            impl_->suspended_send_subcommands=impl_->processing_subcommands;
         }
     }
     return result;

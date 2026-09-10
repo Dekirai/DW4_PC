@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <type_traits>
+#include <utility>
 
 namespace dw4 {
 namespace {
@@ -27,7 +28,7 @@ ModelCommand decode_model_command(const IgbDocument& doc,std::uint32_t reference
     const auto& object=doc.object(reference);
     const auto& type=doc.metadata.object_types.at(object.type_index).name;
     if (type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX") return decode_motion_command(doc,reference);
-    if (type!="beModelCtrlCTRL" && type!="beModelCtrlPDMOVE")
+    if (type!="beModelCtrlCTRL" && type!="beModelCtrlPDMOVE" && type!="beModelCtrlMUTEKI")
         throw MotionError("Unsupported model command type.");
     if (doc.metadata.header.byte_order!=IgbByteOrder::little)
         throw MotionError("Big-endian model command objects are unverified.");
@@ -35,6 +36,7 @@ ModelCommand decode_model_command(const IgbDocument& doc,std::uint32_t reference
     if (doc.field(object,2)->size>4104) throw MotionError("Serialized model command name exceeds its byte budget.");
     const auto text=doc.field_string(object,2); name(text);
     if (type=="beModelCtrlCTRL") return ModelCtrlCommand{reference,std::string(text)};
+    if (type=="beModelCtrlMUTEKI") return ModelMutekiCommand{reference,std::string(text),number(doc,object,3)};
     return PadMotionCommand{reference,std::string(text),number(doc,object,3),number(doc,object,4)};
 }
 
@@ -60,15 +62,27 @@ void apply_model_command(ModelControlState& state,const ModelCommand& command,st
             else if (value.name=="isLive") {candidate.mode=4;candidate.phase=0;}
             else if (value.name=="onFall") candidate.check_fall=true;
             else if (value.name=="noFall") candidate.check_fall=false;
-        } else {
+        } else if constexpr (std::is_same_v<Command,PadMotionCommand>) {
             finite(value.value);finite(value.frames);
             if (!candidate.pad_motion) candidate.pad_motion=std::array<float,4>{};
             const auto index=value.name=="Move" ? 2u : 0u;
             (*candidate.pad_motion)[index]=value.value;
             (*candidate.pad_motion)[index+1]=value.frames;
+        } else {
+            finite(value.frames);
+            // 8030C1F0 ensures KEIKATIMER even for the four flag-only names.
+            if (!candidate.elapsed_timer) {
+                candidate.elapsed_timer.emplace();
+                start_motion_timer(*candidate.elapsed_timer,world_time);
+            }
+            if (value.name=="OFFWALL") candidate.wall_check=0;
+            else if (value.name=="ONWALL") candidate.wall_check=1;
+            else if (value.name=="OFFFLOOR") candidate.floor_check=0;
+            else if (value.name=="ONFLOOR") candidate.floor_check=1;
+            else candidate.invulnerability_frames=value.frames;
         }
     },command);
-    state=candidate;
+    state=std::move(candidate);
 }
 
 ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t key_input,
@@ -101,7 +115,7 @@ ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t 
         else if (candidate.mode==3 && key_input==0) decision.requested_sequence="SQ_WAIT";
     }
     decision.dispatch_sequence=decision.requested_sequence!="SQ_NONE" && decision.requested_sequence!=current_sequence;
-    state=candidate;
+    state=std::move(candidate);
     return decision;
 }
 

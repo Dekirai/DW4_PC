@@ -1,11 +1,12 @@
-# Original model sound and effect subcommands
+# Original model subcommands
 
-`model_subcommands` owns the ordinary MODELCTRL sound/effect queue, including
+`model_subcommands` owns the ordinary MODELCTRL sound/effect/HITBOX queue, including
 delayed execution and sequence interruption. It requires real sound and model
 manager callbacks to perform external effects. Queue ownership and successful
 event delivery do not themselves produce audible sound or create effect actors.
-Player construction, the outer scheduler and bullet/collision subcommands remain
-outside this module.
+HITBOX timing and selective clearing are described in [MODEL_HITBOX.md](MODEL_HITBOX.md).
+Player construction, the outer scheduler and actual collision target responses
+remain outside this module.
 
 ## Original boundary
 
@@ -25,7 +26,7 @@ not native pointers or executable code shipped with the port.
 
 MODELCTRL work owns its subcommand owner at `+e4`; that object owns the list at
 `+08`. Each append creates another occurrence, including repeated names. Sound
-and effect entries share this ordered list. The native queue copies its payloads
+and effect entries share this ordered list with HITBOX entries. The native queue copies its payloads
 and nullable strings; it does not borrow an IGB document's storage.
 
 Base metadata `802C5D70` names byte `+08` `_isOneSet`, float `+0c` `_runFrame`

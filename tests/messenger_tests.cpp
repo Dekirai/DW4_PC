@@ -13,6 +13,7 @@ template<class F> void rejects(F&& function) {
     throw std::runtime_error("Invalid messenger operation was accepted");
 }
 using Id=dw4::ControllerObjectId;
+using dw4::MessengerObject;
 constexpr Id a{0,7},b{1,7},c{0,8};
 constexpr auto done=dw4::MessengerStop::completed;
 struct Fixture {
@@ -94,7 +95,7 @@ void activity_and_queries() {
         && f.messenger.buffer().booleans()==std::vector<std::uint8_t>{0},"SEARCH miss result was not false/zero");
     f.messenger.select("ACTION",{},123); f.messenger.buffer().set_enabled_only(1);
     auto space=f.messenger.begin_send("FIND_SPACE"); f.messenger.resume(space,f.services);
-    check(f.messenger.buffer().objects()==std::vector<std::optional<Id>>{b},"FIND_SPACE used index/gate instead of the first inactive row");
+    check(f.messenger.buffer().objects()==std::vector<MessengerObject>{b},"FIND_SPACE used index/gate instead of the first inactive row");
     f.ram(b).active=1; f.send("ACTION",{},-1,"FIND_SPACE");
     check(f.messenger.buffer().objects().empty(),"FIND_SPACE miss appended a null result");
     dw4::MessengerServices unavailable=f.services;
@@ -108,7 +109,7 @@ void activity_and_queries() {
     auto finding=f.messenger.begin_send_to("ACTION",{},0,"FIND_SPACE");
     check(f.messenger.resume(finding,unavailable).stop==dw4::MessengerStop::service_required,"FIND_SPACE ignored missing live activity");
     f.ram(b).active=0;check(f.messenger.resume(finding,f.services).stop==done
-        && f.messenger.buffer().objects()==std::vector<std::optional<Id>>{b},"FIND_SPACE did not resume its original live row scan");
+        && f.messenger.buffer().objects()==std::vector<MessengerObject>{b},"FIND_SPACE did not resume its original live row scan");
 }
 void cache() {
     Fixture f; f.add(a,"Hero",0); f.add(b,"Hero",1); f.send("ACTION","Hero",0);
@@ -270,7 +271,7 @@ void storage_and_bounds() {
     check(std::bit_cast<std::uint32_t>(buffer.matrices()[0][0])==0
         && std::bit_cast<std::uint32_t>(buffer.matrices()[0][1])==0x80000000u,"PSQ matrix copy did not flush tiny words with signed zero");
     check(buffer.strings()==std::vector<std::optional<std::string>>{"owned",{},""}
-        && buffer.objects()==std::vector<std::optional<Id>>{a,{}},"Argument/result strings or nullable object IDs lost ownership/null distinctions");
+        && buffer.objects()==std::vector<MessengerObject>{a,std::monostate{}},"Argument/result strings or nullable object IDs lost ownership/null distinctions");
     const auto invalid=std::numeric_limits<float>::infinity();
     rejects([&]{buffer.add_float(invalid);});rejects([&]{buffer.add_vector({0,invalid,0});});
     matrix[15]=invalid;rejects([&]{buffer.add_matrix(matrix);});
@@ -325,10 +326,30 @@ void registration_and_stack_bounds() {
     check(cleanup.messenger.resume(invalid,cleanup.services).stop==dw4::MessengerStop::faulted
         && cleanup.messenger.registration_count()==1,"Active cleanup invalidated retained guest-equivalent ownership");
 }
+void retained_box_objects() {
+    dw4::NativeMessenger messenger;
+    messenger.select("HITPLAYERBULLET",{},-1);
+    auto box=std::make_shared<const dw4::CollisionBox>(dw4::CollisionBox{{1,-0.0f,3},{-1,4,5}});
+    const std::weak_ptr<const dw4::CollisionBox> lifetime=box;
+    auto& buffer=messenger.buffer();
+    buffer.add_object(a);buffer.add_box(box);buffer.add_object({});
+    check(buffer.objects().size()==3 && std::get<Id>(buffer.objects()[0])==a &&
+        std::get<dw4::MessengerBox>(buffer.objects()[1])==box && std::holds_alternative<std::monostate>(buffer.objects()[2]),
+        "Retained geometric and controller objects lost their shared list order or actual type");
+    check(std::bit_cast<std::uint32_t>(std::get<dw4::MessengerBox>(buffer.objects()[1])->minimum[1])==0x80000000u,
+        "AABox transport changed finite signed-zero coordinates");
+    box.reset();check(!lifetime.expired(),"Shared message did not retain its temporary AABox owner");
+    rejects([&]{buffer.add_box({});});
+    auto invalid=std::make_shared<const dw4::CollisionBox>(dw4::CollisionBox{{0,0,0},{0,std::numeric_limits<float>::infinity(),0}});
+    rejects([&]{buffer.add_box(invalid);});
+    check(buffer.objects().size()==3,"Invalid geometric payload changed the original object list prefix");
+    messenger.select("NEXT",{},-1);
+    check(lifetime.expired() && buffer.objects().empty(),"Selection did not release the temporary geometric owner");
+}
 }
 int main() {
     try {
-        matching();activity_and_queries();cache();nested();continuation();nested_eviction();storage_and_bounds();registration_and_stack_bounds();
+        matching();activity_and_queries();cache();nested();continuation();nested_eviction();storage_and_bounds();registration_and_stack_bounds();retained_box_objects();
         std::cout<<"Messenger tests passed: "<<checks<<" checks\n";return 0;
     } catch(const std::exception& error) { std::cerr<<"Messenger test failure: "<<error.what()<<'\n';return 1; }
 }
