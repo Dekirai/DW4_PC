@@ -1,4 +1,49 @@
-# Native deferred player-start validation
+# Native weapon attachment validation
+
+Version 0.33.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
+weapon GENERATE/REMOVE now uses actual loaded node, appearance-list and skeleton
+owners through PLAYER, ACTION and MODELCTRL messages. Four original Agumon
+player-start prefixes deliver their deferred common05 requests, replace weapons
+across twelve appearance branches and exercise the common bone-selector visitor.
+Generic child rendering, later player construction and complete gameplay remain
+required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 76/76 CTest suites passed; local MSVC build without compiler warnings |
+| Loaded weapon resources | 61 synthetic / 150 original-inclusive checks; three infos, twelve RAM occurrences, five node/bone pairs and 63 sequence rows |
+| Prepared weapon runtime | 105 synthetic checks; canonical RAM aliases, manager-wide tracking, old list retention, nullable labels, live ordinals, nested generation, interrupted sends and faults |
+| Loaded scene owners | 43 synthetic / 63 original-inclusive checks; exact appearance order, canonical aliases, lifetime, cached DAG depth and aggregate storage bounds |
+| ACTION scene queries | 75 synthetic / 91 original-inclusive checks; actual typed owners, active gate, missing-owner resume, bound delayed preparation and runtime replacement rejection |
+| PLAYER and MODELCTRL queries | 54 synthetic / 70 original-inclusive checks; raw live activity, shared parent names, nullable labels, valid nesting and conflicting-work rejection |
+| Original connected starts | 95 synthetic / 577 original-inclusive checks; four deferred generations, eight two-hand replacements, twelve appearance branches, 24 common selector visits and cross-info removal |
+| Common bone-selector native tests | 123 synthetic checks; matrix source capture, pool/stack order, retained child services, nested continuations and reset/fault ownership |
+| Original common-selector instructions | 144 cases / 8,480 scalar plus 3,584 matrix instructions / 1,024 computed matrix words; zero differences against the final core |
+| Original animation regression | 1,122 model-sequence checks; 6,034,137 ACTION checks including four-instance animation execution |
+| Original data/script regression | Game data 8,269; GAMERAM 421; skills 499; database 275; database runtime 182; GAMESTART 217; items 157; stats 143; names 461; RECALCPLAYER 283; scripts 104; registry 51; HIT bodies 109; collision 80; events 108; waits 107 |
+| Fresh final-core instruction regressions | 39 magic gates, 43 wrappers plus four checked prefixes, 101 stack cases, 84 ordinary deliveries and 61 deferred cases; 5,580,272 original instructions, zero differences; twelve retained-packet guard checks |
+| Python and packaged app | 6 verifier tests; 16 app, 10 walking and 9 boot argument tests; GPU renderer suite; actor and walking previews each rendered 120 frames with visually inspected captures |
+
+The original-data integration prepares actual MODELCTRL/PLAYER/ACTION owners;
+it does not execute the complete player constructor. The first deferred request
+pauses until its actual ACTION scene is prepared, then all four requests finish
+through the real weapon manager. Common05, common04 and common03 replacements
+retain their original node graphs and sequence overrides. The common visitor
+receives each actor's chosen bone array and reaches an inspection child callback;
+that callback is not evidence of completed original geometry rendering.
+
+The independent selector comparison executes bounded original callback and
+matrix instructions with explicit pool/attribute/child services. It compares
+return values, pool cursor, callback count, stack depth and matrix words. The
+generic node dispatcher and compiled-transform path remain separate. The full
+weapon handler was reviewed against original instructions, but was not subjected
+to an independent end-to-end instruction oracle.
+
+Original bytes, probes, logs and captures remain ignored under `work/`. See
+[WEAPON_RUNTIME.md](WEAPON_RUNTIME.md), [ACTOR_SCENE.md](ACTOR_SCENE.md),
+[BONE_SELECT.md](BONE_SELECT.md) and [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md).
+
+## Previous version 0.32 validation
 
 Version 0.32.0 was validated locally on 2026-09-10 with MSVC 19.51. Original
 deferred message packets now retain their owners, signed deadlines, pause shifts

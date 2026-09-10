@@ -22,12 +22,21 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.33 connects original weapon registration, GENERATE/REMOVE, live PLAYER
+name queries, ACTION appearance/skeleton results and nullable MODELCTRL labels.
+Four prepared original Agumon starts deliver their real deferred common05
+requests, replace weapons across all twelve appearances and exercise the common
+bone-selector calculation. Generic child rendering, the compiled selector path,
+subsequent NUMBERCTRL/METERCTRL calls, full player construction and original
+outer scheduling remain required. See [WEAPON_RUNTIME.md](WEAPON_RUNTIME.md),
+[ACTOR_SCENE.md](ACTOR_SCENE.md) and [BONE_SELECT.md](BONE_SELECT.md).
+
 Version 0.32 connects the prepared post-GETPLAYER MODELCTRL prefix through exact
 modifier-array resets, GAMESTART, BASE_ISUSE, deferred PLAYERARMS GENERATE and
 RECALCPLAYER. The messenger owns the original deferred queue and explicit manager
-update continuation. Actual weapon attachment, subsequent NUMBERCTRL/METERCTRL
-calls, the rest of player construction and original outer scheduling remain
-required before gameplay. See [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md) and
+update continuation. Its prepared weapon-delivery boundary is extended in 0.33;
+the later player UI and construction effects remain required before gameplay.
+See [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md) and
 [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md).
 
 Version 0.31 connects original GAMESTART selection, base-array copying, initial

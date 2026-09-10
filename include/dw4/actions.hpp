@@ -35,6 +35,7 @@ public:
     const std::vector<ActionDefinition>& actions() const noexcept { return actions_; }
     const std::vector<ActionRamDefinition>& rams() const noexcept { return rams_; }
     const std::vector<std::pair<std::uint32_t,std::string>>& animations() const noexcept { return animations_; }
+    bool same_definition(const ActionProgram& other) const noexcept { return definition_identity_==other.definition_identity_; }
 private:
     friend ActionProgram decode_action_program(const IgbDocument&,std::uint32_t,std::string);
     std::string source_, name_;
@@ -42,6 +43,7 @@ private:
     std::vector<ActionDefinition> actions_;
     std::vector<ActionRamDefinition> rams_;
     std::vector<std::pair<std::uint32_t,std::string>> animations_;
+    std::shared_ptr<const std::uint8_t> definition_identity_=std::make_shared<const std::uint8_t>(std::uint8_t{0});
 };
 // Own the selected ACTION2 info's ordered commands and prepared node references.
 // The animation profile requires its explicit database and one combiner per RAM.

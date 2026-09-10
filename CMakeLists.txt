@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(DW4_PC VERSION 0.32.0 LANGUAGES C CXX)
+project(DW4_PC VERSION 0.33.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +17,7 @@ target_sources(dw4_core PRIVATE src/controller_identity.cpp src/game_data.cpp sr
 target_sources(dw4_core PRIVATE src/database.cpp src/database_runtime.cpp)
 target_sources(dw4_core PRIVATE src/game_database.cpp src/game_items.cpp src/game_stats.cpp src/game_name.cpp src/game_start.cpp)
 target_sources(dw4_core PRIVATE src/model_player_start.cpp)
+target_sources(dw4_core PRIVATE src/actor_scene.cpp src/weapon_resource.cpp src/bone_select.cpp src/weapon_runtime.cpp)
 # Recovered scalar operations round separately; explicit std::fma in local
 # translation remains fused. Preserve IEEE zero-frame infinity/NaN behavior.
 if(MSVC)
@@ -44,7 +45,7 @@ if(BUILD_TESTING)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
   endforeach()
-  foreach(suite model_script_messenger game_data game_ram model_game_data database database_runtime game_ram_skill game_items game_stats game_name game_start game_ram_recalc messenger_deferred messenger_deferred_runtime model_player_start)
+  foreach(suite model_script_messenger game_data game_ram model_game_data database database_runtime game_ram_skill game_items game_stats game_name game_start game_ram_recalc messenger_deferred messenger_deferred_runtime model_player_start weapon_resource bone_select model_player_queries actor_scene weapon_runtime)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

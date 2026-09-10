@@ -106,8 +106,8 @@ game-data rule: a wrong-type first matching name is an error.
 
 ## Validation scope
 
-The current Release suite passes95 synthetic checks and127 with the supplied
-original extraction (32 additional integration checks across four player slots).
+The version 0.33 suite passes95 synthetic checks and577 with the supplied
+original extraction, including connected weapon generation and replacements.
 
 The synthetic suite checks old-row retention across a reset, live routing fields,
 captured names, exact short-array tails, null/empty weapon names, raw ISUSE bytes,
@@ -118,8 +118,12 @@ uncertain faults, moves, and malformed DOL/list/string inputs.
 The optional original-data suite prepares four actual Agumon MODELCTRL works,
 consumes actual native GETPLAYER results, then uses original database exports,
 DOL default names and an explicitly prepared original font converter. It checks
-shared HP, all BASE_ISUSE entries, four independently routed deferred common05
-requests, and the real missing beWeapon manager boundary at delivery. It does
-not fabricate a GENERATE result or claim complete player initialization. Name
+shared HP, all BASE_ISUSE entries and four independently routed deferred common05
+requests. Delivery now reaches the actual weapon manager, pauses at one missing
+ACTION scene owner, then resumes through real PLAYER/ACTION/MODELCTRL endpoints.
+Eight weapon replacements preserve both hands across all twelve appearances;
+twenty-four common bone-selector visits use the actual selected actor caches.
+Removal through another weapon info exercises shared manager-ordinal tracking.
+Child rendering and complete player initialization remain required. Name
 output uses the already validated conversion helper as an integration check;
 this is not an independent instruction execution of the full constructor.

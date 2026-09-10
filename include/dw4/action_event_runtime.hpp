@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/action_event_tables.hpp"
+#include "dw4/actor_scene.hpp"
 #include "dw4/messenger.hpp"
 #include "dw4/model_collision.hpp"
 #include "dw4/model_script_context.hpp"
@@ -17,6 +18,18 @@ struct PreparedControllerRegistration {
     NativeControllerServices services;
     // Required for a serialized RAM; a native allocation has no source file.
     std::optional<std::string> source;
+};
+// Explicit actual fields of a prepared KIND_PLAYER MODELCTRL RAM. Parent info
+// is fixed to the binding's verified info owner; its nullable name, RAM ordinal,
+// raw active byte and work-presence field remain live. This does not execute
+// the omitted PC status-allocation or virtual+C4 prelude.
+struct ModelQueryOwner {
+    ControllerObjectId parent_info;
+    std::string source;
+    std::shared_ptr<std::optional<std::string>> parent_name;
+    std::shared_ptr<std::int32_t> ram_no;
+    std::shared_ptr<std::uint8_t> active;
+    std::shared_ptr<bool> work_available;
 };
 struct PlayerWaitServices {
     // Four already processed original pad slots. Null preserves the missing
@@ -54,9 +67,19 @@ public:
 
     ControllerObjectId register_model(PlayerRuntimeBinding binding,ModelControlState model,
         bool active,std::optional<ModelSubcommandOwner> attachment = {});
+    // Attach these exact live fields once to an existing checked model binding.
+    // The initial RAM number must match the binding's selected occurrence.
+    void prepare_model_queries(ControllerObjectId model,ModelQueryOwner owner);
+    // Explicit original PLAYER registration on an already prepared KIND_PLAYER
+    // owner. Each call appends an occurrence using the then-current name/RAM;
+    // cached recipient rows retain their existing original snapshot semantics.
+    void register_player(ControllerObjectId model);
     // Retain this exact live ACTION owner under its actual qualified RAM.
     // One runtime cannot belong to multiple RAMs or repeated source loads.
     ControllerObjectId register_action(ControllerObjectId model,std::shared_ptr<ActionRuntime> action);
+    // Initial checked scene attachment can satisfy a suspended ACTION query.
+    // The actual loaded owner cannot be replaced after publication.
+    void prepare_action_scene(ControllerObjectId action,ActorSceneAction scene);
     // Register every RAM occurrence, including aliases, in the supplied order.
     // active is caller-prepared RAM state, not inferred from a loaded export.
     void register_consumer(ActionEventTableProgram program,bool active);
@@ -76,7 +99,7 @@ public:
     const PlayerRuntimeBinding& binding(ControllerObjectId id) const;
     const ModelSequenceRuntime& sequence(ControllerObjectId id) const;
     const ModelSubcommandQueue& subcommands(ControllerObjectId id) const;
-    void set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label);
+    void set_label(ControllerObjectId id,std::optional<std::string> sequence,std::optional<std::string> label);
     // Explicit live ONE work replacement; preserves sequence/wait cursors.
     // Callers prepare this state; it does not create original player work.
     void prepare_model_state(ControllerObjectId id,ModelControlState state);

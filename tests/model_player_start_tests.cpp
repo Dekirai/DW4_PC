@@ -4,6 +4,8 @@
 #include "dw4/game_name.hpp"
 #include "dw4/game_ram.hpp"
 #include "dw4/resources.hpp"
+#include "dw4/weapon_runtime.hpp"
+#include "dw4/bone_select.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -227,12 +229,31 @@ void original(const std::filesystem::path& root) {
     databases.register_source(decode_database_managers(database,"dng101b1/separate/usa_pack.igb",8));
     const auto converter=std::make_shared<GameNameConverter>(read_game_name_table(root/"sys"/"main.dol"),std::make_shared<std::vector<std::uint8_t>>());
     std::vector<ModelPlayerStartOwner> owners;
+    const auto parent_name=std::make_shared<std::optional<std::string>>("p_agumon");
+    auto player_scene=std::make_shared<ActorSceneResource>(doc,"_common/p_agumon.igb",17);
+    std::vector<ActorSceneAction> scenes;
+    std::vector<ControllerObjectId> model_ids,action_ids;
+    std::vector<std::shared_ptr<ActionRuntime>> actions;
+    const auto skin=decode_igb_skinning(doc,5665);std::vector<AnimationClip> clips;
+    for(const auto& animation:list_igb_animations(doc,skin)) clips.push_back(decode_igb_animation(doc,skin,animation.reference_index));
+    AnimationSourceRuntime sources("_common/p_agumon.igb",std::move(clips));sources.initialize_action_offset();
     for(std::uint32_t index=0;index<4;++index) {
         const auto binding=decode_player_runtime_binding(doc,{1386,546,index,0},"_common/p_agumon.igb",17);
         const auto id=events.register_model(binding,ModelControlState(ModelMotionPose(matrix())),true);
         events.prepare_collision_target(id,decode_model_hit_body(doc,1386,"_common/p_agumon.igb",17),false);
-        owners.push_back({events.prepare_target_script_work(id),{17,1386},"_common/p_agumon.igb",
-            std::make_shared<std::optional<std::string>>(binding.model_name()),std::make_shared<std::int32_t>(static_cast<std::int32_t>(index))});
+        const auto live_ram=std::make_shared<std::int32_t>(static_cast<std::int32_t>(index));
+        owners.push_back({events.prepare_target_script_work(id),{17,1386},"_common/p_agumon.igb",parent_name,live_ram});
+        events.prepare_model_queries(id,{{17,1386},binding.source(),parent_name,live_ram,
+            std::make_shared<std::uint8_t>(std::uint8_t{1}),std::make_shared<bool>(true)});
+        events.register_player(id);model_ids.push_back(id);
+        auto action=std::make_shared<ActionRuntime>(decode_action_actor_runtime(doc,binding.action_program(),sources,static_cast<std::int32_t>(index)));
+        action_ids.push_back(events.register_action(id,action));actions.push_back(action);
+        scenes.push_back(player_scene->action(546,binding.action_ram_reference()));
+        if(index) events.prepare_action_scene(action_ids.back(),scenes.back());
+        auto services=events.action_services(id);
+        const auto activated=action->dispatch(sources,services,"WAITD1",0);
+        check(activated.stop!=ActionStop::broadcast_required && action->active(),
+            "Prepared original ACTION failed to activate through its actual event owner.");
     }
     std::uint64_t clock=1000;const ModelPlayerClock live_clock=[&]{return clock;};
     for(std::int32_t index=0;index<4;++index) {
@@ -267,16 +288,87 @@ void original(const std::filesystem::path& root) {
     }
     auto& messenger=events.messenger();
     check(game.state().common()->require<GameDataInt>("NINZU")->data==4 && active(messenger).size()==4,"Four original caller rows interfered or delivered weapons early.");
-    // The real source-qualified weapon RAMs are registered as required external
-    // recipients, without pretending that the unimplemented beWeapon manager ran.
-    const auto rams=weapon.object_list(*weapon.field_reference(weapon.object(36),6));
-    for(std::size_t i=0;i<rams.size();++i)events.register_recipient({20,*rams[i]},"PLAYERARMS","w_common05",static_cast<std::int32_t>(i));
+    WeaponRuntime weapons(events);
+    weapons.register_source(decode_weapons(std::make_shared<ActorSceneResource>(weapon,"_common/w_common05.igb",20)));
     auto early=events.begin_deferred_update(clock+16666666-1);
     check(events.resume(early).stop==MessengerStop::completed && active(messenger).size()==4,"Original caller queue delivered before its deadline.");
     auto due=events.begin_deferred_update(clock+16666666);
     check(events.resume(due).stop==MessengerStop::service_required && !due.completed() && active(messenger).size()==4,
-        "Unimplemented actual beWeapon recipient was replaced by fabricated generation success.");
-    std::cout<<"Original MODELCTRL post-GETPLAYER prefixes=4, queued common05 requests=4; real beWeapon service remains required\n";
+        "Missing first ACTION scene preparation did not retain the original deferred invocation.");
+    events.prepare_action_scene(action_ids[0],scenes[0]);
+    const auto generated=events.resume(due);
+    if(generated.stop!=MessengerStop::completed)throw std::runtime_error("Original deferred weapon generation: "+generated.diagnostic);
+    check(due.completed() && due.messages_completed()==4 && active(messenger).empty() && !weapons.faulted(),
+        "Four original deferred weapon requests did not complete exactly once.");
+    const auto inspect=[&](std::size_t player,std::size_t count) {
+        const auto& tracking=weapons.attachments(player);
+        check(tracking.size()==count,"Original manager ordinal has a different attachment count.");
+        for(const auto& appearance:scenes[player].appearances()->values()) {
+            check(appearance->bone_selectors()->values().size()==count,"Not every original appearance owns the weapon nodes.");
+            for(std::size_t node=0;node<count;++node)
+                check(appearance->bone_selectors()->values()[node]==tracking[node].selector &&
+                    tracking[node].appearances==scenes[player].appearances(),
+                    "Original attachment tracking lost the exact selector or appearance-list owner.");
+        }
+    };
+    for(std::size_t player=0;player<4;++player) {
+        inspect(player,1);
+        check(weapons.attachments(player)[0].selector->matrix_index()==15 &&
+            weapons.attachments(player)[0].selector->children()[0]==weapons.sources()[0].infos()[0].nodes[0].node,
+            "Common05 was not attached through its actual node and RArm04 helper bone.");
+        const auto& labels=events.sequence(model_ids[player]).labels();
+        check(labels.size()==21,"Common05 did not publish all original ordered sequence overrides.");
+        for(std::size_t i=0;i<labels.size();++i)
+            check(labels[i].sequence==weapons.sources()[0].infos()[0].sequences[i].name &&
+                labels[i].label==weapons.sources()[0].infos()[0].sequences[i].label,
+                "Actual MODELCTRL SETLABEL does not match the original weapon row.");
+    }
+    for(std::size_t resource_index=0;resource_index<2;++resource_index) {
+        const std::string name=resource_index==0?"w_common04":"w_common03";
+        const auto path="_common/"+name+".igb";
+        weapons.register_source(decode_weapons(std::make_shared<ActorSceneResource>(
+            read_igb_document(resources.read(path)),path,21+static_cast<std::uint32_t>(resource_index))));
+        for(std::int32_t player=0;player<4;++player) {
+            auto old=weapons.attachments(static_cast<std::size_t>(player));
+            messenger.select("PLAYERARMS",name,player);auto replacement=messenger.begin_send("GENERATE");
+            const auto result=events.resume(replacement);
+            if(result.stop!=MessengerStop::completed)throw std::runtime_error("Original weapon replacement: "+result.diagnostic);
+            inspect(static_cast<std::size_t>(player),2);
+            const auto& current=weapons.attachments(static_cast<std::size_t>(player));
+            check(current[0].selector!=old[0].selector && current[0].selector->matrix_index()==15 && current[1].selector->matrix_index()==11 &&
+                current[1].selector->children()[0]->flags()==2,"Original two-hand replacement reused an old selector or lost left-node flags.");
+            const auto expected=resource_index==0?"gun":"arm";
+            for(const auto& label:events.sequence(model_ids[static_cast<std::size_t>(player)]).labels())
+                check(label.label==expected && label.cached_offset==-1,"Weapon replacement did not invalidate all actual MODELCTRL label caches.");
+        }
+    }
+    std::size_t traversed{};
+    for(std::size_t player=0;player<4;++player) {
+        auto& action=*actions[player];
+        for(std::size_t actor_index=0;actor_index<action.actors()->states().size();++actor_index) {
+            action.traverse_actor(sources,actor_index,matrix(),matrix(),1000000000);
+            const auto& actor=action.actors()->states()[actor_index];
+            const auto& bones=actor.cache_used?actor.bone_matrices:action.combiner().bone_matrices();
+            const auto appearance=player_scene->appearance(actor.appearance_reference);
+            for(const auto& selector:appearance->bone_selectors()->values()) {
+                BoneSelectContext context;auto traversal=context.begin(selector,std::span<const AnimationMatrix>(bones));
+                const auto expected=original_matrix_multiply(bones[0],bones[static_cast<std::size_t>(selector->matrix_index())]);
+                const auto result=context.resume(traversal,[&](auto& live,const auto& retained)->std::optional<std::int32_t> {
+                    check(live.model_view()->matrix()==expected && retained==selector && retained->children().size()==1 &&
+                        retained->children()[0]->source()=="_common/w_common03.igb",
+                        "Actual weapon common visitor lost actor-selected bone matrices or original node owner.");
+                    ++traversed;return 0;
+                });
+                check(result.stop==BoneSelectStop::completed && result.value==0 && !context.stack_depth(),
+                    "Actual common weapon traversal did not restore its model-view scope.");
+            }
+        }
+        // REMOVE through another info on the same manager must use its shared ordinal tracking.
+        messenger.select("PLAYERARMS","w_common05",static_cast<std::int32_t>(player));auto removal=messenger.begin_send("REMOVE");
+        check(events.resume(removal).stop==MessengerStop::completed,"Cross-info original weapon removal failed.");inspect(player,0);
+    }
+    check(traversed==24,"Original four players/three actor branches/two hands did not all reach the common visitor.");
+    std::cout<<"Original prepared starts=4, deferred common05 generations=4, replacements=8, appearance branches=12, common selector visits=24; later UI/render services remain required\n";
 }
 }
 int main(int argc,char** argv) {

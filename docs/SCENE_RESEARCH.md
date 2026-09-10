@@ -125,13 +125,21 @@ plain scene inspector. Reject dynamic and unknown flags. Invisible flags on
 unverified node types must not be generalized into an inherited visibility
 rule.
 
-`igAttrSet` handler `0x801dd7c0` pushes each attribute onto its type/unit state
-stack, then tests `_trigger` at `0x801dd898`. A true trigger dispatches state;
-either value proceeds to children at `0x801dd8cc`, then pops attributes in
+The normal `igAttrSet` handler `0x801dd9bc` pushes each attribute onto its
+type/unit state stack, then tests `_trigger` at `0x801dda80`. A true trigger
+dispatches state; either value proceeds to children at `0x801ddab4`, then pops attributes in
 reverse order. Thus a lower texture binding can coexist with a higher texture
 state. A material reader must still validate every applicable path scope and
 honor intervening overrides; this evidence does not justify choosing an image
 by name or skipping unsupported texture state.
+
+Type registration `0x801c8c48` associates `igAttrSet` with global `r13+0x478`;
+common registration `0x801db310` maps that type to callback record `0x80415260`,
+whose function is `0x801dd9bc`. The separate `igOverrideAttrSet` type is registered
+at `0x801b6a20` in `r13-0x36c` and maps to record `0x80415258`, function
+`0x801dd7c0`. That override handler additionally sets and restores an explicit
+attribute-stack selection index. Its behavior is outside the normal AttrSet
+inspection profile.
 
 The geometry handler at `0x801ddb84` returns immediately when its trigger is
 false (`0x801ddb98`) or its invisible flag is set (`0x801ddbb4`). Otherwise it

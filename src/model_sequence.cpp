@@ -165,11 +165,11 @@ ModelWaitState& ModelSequenceRuntime::wait_state() {
     if(running_ || selection_pending_ || lua_pending_)throw MotionError("Wait mutation is unavailable during sequence execution or pending selection/Lua.");
     return wait_;
 }
-void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::string label) {
+void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::optional<std::string> label) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
     if(sequence)checked_name(*sequence);
-    checked_name(label);
+    if(label)checked_name(*label);
     auto candidate=labels_;
     const auto found=std::find_if(candidate.begin(),candidate.end(),[&](const auto& value){return value.sequence==sequence;});
     if(found!=candidate.end()) {*found={std::move(sequence),std::move(label),-1};}
@@ -178,7 +178,10 @@ void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::st
         candidate.push_back({std::move(sequence),std::move(label),-1});
     }
     std::size_t budget=0;
-    for(const auto& item:candidate) {charge(item.label.size(),budget,max_text);if(item.sequence)charge(item.sequence->size(),budget,max_text);}
+    for(const auto& item:candidate) {
+        if(item.label)charge(item.label->size(),budget,max_text);
+        if(item.sequence)charge(item.sequence->size(),budget,max_text);
+    }
     labels_=std::move(candidate);
 }
 void ModelSequenceRuntime::select(std::string_view sequence) {
@@ -201,8 +204,11 @@ void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     if(selected!=labels.end()) {
         start=selected->cached_offset;
         if(start==-1) {
+            // 8030D1F8 passes this stored pointer directly to strcmp. Preserve
+            // null on SETLABEL, but reject the later unsafe string lookup.
+            if(!selected->label)throw MotionError("Selected sequence label requires a non-null string for the original lookup.");
             const auto label=std::find_if(found->commands.begin(),found->commands.end(),[&](const auto& command){
-                return command.opcode==ModelSequenceOpcode::label && command.name==selected->label;
+                return command.opcode==ModelSequenceOpcode::label && command.name==*selected->label;
             });
             if(label!=found->commands.end())start=static_cast<std::int32_t>(label-found->commands.begin());
             selected->cached_offset=start;

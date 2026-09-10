@@ -45,7 +45,8 @@ struct ActionEventRuntime::Impl {
         ModelSequenceRuntime sequence;
         ModelSubcommandQueue queue;
         ModelSubcommandContext context;
-        bool active;
+        std::shared_ptr<std::uint8_t> active;
+        std::optional<ModelQueryOwner> query_owner;
         bool jump_cleanup{};
         bool selecting{};
         std::optional<PendingBroadcast> broadcast;
@@ -75,10 +76,15 @@ struct ActionEventRuntime::Impl {
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
               binding.model_name(),static_cast<std::int32_t>(binding.instance_index())),
               context{{binding.model_name(),static_cast<std::int32_t>(binding.instance_index())},std::move(attachment)},
-              active(enabled) {}
+              active(std::make_shared<std::uint8_t>(enabled ? std::uint8_t{1} : std::uint8_t{0})) {}
     };
     struct Consumer { std::shared_ptr<const ActionEventTableProgram> program; bool active; };
-    struct Action { std::shared_ptr<ActionRuntime> runtime; MessengerManager manager; };
+    struct Action {
+        std::shared_ptr<ActionRuntime> runtime;
+        MessengerManager manager;
+        std::shared_ptr<ActionSceneQueryOwner> scene;
+        ControllerObjectId model;
+    };
     struct PendingConsumer {
         std::string model;
         std::int32_t ram_no;
@@ -143,6 +149,26 @@ struct ActionEventRuntime::Impl {
     }
     MessengerCallResult model_message(ControllerObjectId id,Model& owner,const MessengerDelivery& delivery) {
         const auto& command=delivery.message.command;
+        if(command=="GETINFONAME" || command=="GETINFONAME_RUN") {
+            if(command=="GETINFONAME_RUN" && *owner.active==0)return {true,1,{}};
+            if(!owner.query_owner)return {false,0,"MODELCTRL name query requires its actual prepared parent-name owner."};
+            // Base8030DEFC/DF20 use the captured info's live name, independent
+            // of registered routing keys. Null becomes a non-null empty string.
+            messenger.buffer().add_string(owner.query_owner->parent_name->value_or(std::string{}));
+            return {true,1,{}};
+        }
+        if(command=="SETLABEL") {
+            if(*owner.active==0)return {true,1,{}};
+            if(!owner.query_owner)return {false,0,"MODELCTRL SETLABEL requires its actual prepared work-presence field."};
+            if(!*owner.query_owner->work_available)return {true,1,{}};
+            if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.hitbox || processing_subcommands==key(id) ||
+                owner.sequence.selection_pending() || owner.sequence.lua_pending() || owner.sequence.lua_faulted())
+                fail("MODELCTRL SETLABEL conflicts with this model's in-flight sequence or subcommand work.");
+            const auto& strings=messenger.buffer().strings();
+            if(strings.size()<2)fail("Active MODELCTRL SETLABEL requires its two nullable string arguments.");
+            owner.sequence.set_label(strings[0],strings[1]);
+            return {true,1,{}};
+        }
         const auto script_work=owner.script_work.lock();
         if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" || command=="GETRECNO" ||
            (owner.collision && owner.collision->owns_delivery(delivery))))
@@ -182,7 +208,7 @@ struct ActionEventRuntime::Impl {
         }
         if(!command || (*command!="SETSOUND" && *command!="SETEFFECT"))
             return {false,0,"This MODELCTRL command requires its original outer controller service."};
-        if(!owner.active) return {true,1,{}};
+        if(*owner.active==0) return {true,1,{}};
         if(owner.sequence.selection_pending()) return {false,0,"MODELCTRL sequence cleanup must finish before appending new work."};
         const auto& buffer=messenger.buffer();
         if(*command=="SETSOUND") {
@@ -240,7 +266,7 @@ struct ActionEventRuntime::Impl {
     MessengerServices services() {
         return {
             [this](ControllerObjectId id)->std::optional<std::uint8_t> {
-                if(const auto found=models.find(key(id));found!=models.end()) return found->second->active;
+                if(const auto found=models.find(key(id));found!=models.end()) return *found->second->active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
                 if(const auto found=prepared_controllers.find(key(id));found!=prepared_controllers.end()) return found->second.active();
@@ -412,6 +438,40 @@ ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding bindi
     impl_->messenger.register_recipient(id,"MODELCTRL",value.model_name(),static_cast<std::int32_t>(value.instance_index()));
     return id;
 }
+void ActionEventRuntime::prepare_model_queries(ControllerObjectId id,ModelQueryOwner fields) {
+    // Like installing a missing recipient provider, first preparation can
+    // resolve a suspended query. It cannot replace any existing live owner.
+    auto& owner=impl_->model(id);
+    const auto& bound=owner.binding;
+    if(owner.query_owner)fail("This MODELCTRL already retains its prepared query fields.");
+    if(fields.parent_info.is_native() || fields.parent_info!=ControllerObjectId{id.file_index,bound.model_reference()} ||
+        fields.source!=bound.source() || !fields.parent_name || !fields.ram_no || !fields.active || !fields.work_available)
+        fail("MODELCTRL query fields must belong to the exact bound source, parent info and live RAM.");
+    if(*fields.ram_no<0 || *fields.ram_no>=4 || *fields.ram_no!=static_cast<std::int32_t>(bound.instance_index()))
+        fail("Initial prepared PLAYER RAM number must match the bound selected occurrence.");
+    if(*fields.parent_name && ((*fields.parent_name)->size()>65535 || (*fields.parent_name)->find('\0')!=std::string::npos))
+        fail("Prepared MODELCTRL parent name exceeds the original bounded string profile.");
+    for(const auto& [other_id,other]:impl_->models) {
+        if(other_id==id || !other->query_owner)continue;
+        const auto& previous=*other->query_owner;
+        if(previous.ram_no==fields.ram_no || previous.active==fields.active || previous.work_available==fields.work_available)
+            fail("Distinct MODELCTRL RAMs cannot share their physical RAM field owners.");
+        if((previous.parent_info==fields.parent_info)!=(previous.parent_name==fields.parent_name))
+            fail("Prepared parent-name field aliases must agree with their physical info owner.");
+    }
+    owner.query_owner.emplace(std::move(fields));
+    owner.active=owner.query_owner->active;
+}
+void ActionEventRuntime::register_player(ControllerObjectId id) {
+    impl_->require_top_level_idle();
+    const auto& owner=impl_->model(id);
+    if(!owner.query_owner)fail("PLAYER registration requires explicit actual MODELCTRL query field preparation.");
+    const auto& fields=*owner.query_owner;
+    if(*fields.ram_no<0 || *fields.ram_no>=4)fail("Prepared PLAYER registration requires live RAM zero through three.");
+    // Binding construction independently requires KIND_PLAYER. This explicit
+    // registration represents8034C39C, not the omitted PC preparation prelude.
+    impl_->messenger.register_recipient(id,"PLAYER",fields.parent_name->value_or(std::string{}),*fields.ram_no);
+}
 ControllerObjectId ActionEventRuntime::register_action(ControllerObjectId id,std::shared_ptr<ActionRuntime> action) {
     impl_->require_top_level_idle();
     const auto& bound=impl_->model(id).binding;
@@ -421,11 +481,19 @@ ControllerObjectId ActionEventRuntime::register_action(ControllerObjectId id,std
         (void)owned;
         if(value.runtime==action) fail("A live ACTION runtime already belongs to another qualified RAM.");
     }
-    auto manager=make_action_query_manager(bound,action);
+    auto scene=std::make_shared<ActionSceneQueryOwner>();
+    auto manager=make_action_query_manager(bound,action,scene);
     impl_->require_registration_capacity(1,std::string_view("ACTION").size()+bound.model_name().size());
-    impl_->actions.emplace(key(recipient),Impl::Action{std::move(action),std::move(manager)});
+    impl_->actions.emplace(key(recipient),Impl::Action{std::move(action),std::move(manager),std::move(scene),id});
     impl_->messenger.register_recipient(recipient,"ACTION",bound.model_name(),static_cast<std::int32_t>(bound.instance_index()));
     return recipient;
+}
+void ActionEventRuntime::prepare_action_scene(ControllerObjectId id,ActorSceneAction scene) {
+    // This is initial provider preparation, including while its retained
+    // delivery awaits the scene. The scene owner validates and rejects replacement.
+    const auto found=impl_->actions.find(key(id));
+    if(found==impl_->actions.end())fail("No prepared ACTION owns this source-qualified RAM.");
+    found->second.scene->prepare(impl_->model(found->second.model).binding,std::move(scene));
 }
 void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool active) {
     impl_->require_top_level_idle();
@@ -500,14 +568,14 @@ void ActionEventRuntime::register_controllers(std::span<const PreparedController
     impl_->sources.merge(sources);impl_->prepared_controllers.merge(providers);
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
-    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active=active;
+    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) *found->second->active=active ? std::uint8_t{1} : std::uint8_t{0};
     else if(const auto consumer=impl_->consumers.find(key(id));consumer!=impl_->consumers.end()) consumer->second.active=active;
     else fail("Cannot change activity of an unowned event RAM.");
 }
 const PlayerRuntimeBinding& ActionEventRuntime::binding(ControllerObjectId id) const { return impl_->model(id).binding; }
 const ModelSequenceRuntime& ActionEventRuntime::sequence(ControllerObjectId id) const { return impl_->model(id).sequence; }
 const ModelSubcommandQueue& ActionEventRuntime::subcommands(ControllerObjectId id) const { return impl_->model(id).queue; }
-void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label) {
+void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::string> sequence,std::optional<std::string> label) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
     if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.hitbox || impl_->processing_subcommands==key(id))

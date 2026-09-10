@@ -2,6 +2,22 @@
 
 ## Implemented boundary
 
+Version 0.33 adds `actor_scene`, `weapon_resource`, `weapon_runtime` and
+`bone_select`. Loaded source occurrences own canonical node, appearance-list
+and skeleton objects. ACTION returns its actual ordered appearance list and
+first database skeleton through typed messenger objects. Prepared PLAYER name
+queries and MODELCTRL SETLABEL use retained live RAM fields; labels preserve
+null independently from an empty string. The weapon manager shares four tracking
+slots across all registered weapon infos, retains nested delivery prefixes and
+removes old selectors by identity. The common selector callback retains its
+computed model-view attribute through child-service suspension. Four prepared
+original starts now deliver common05 and replace it with original two-hand
+weapons across twelve appearances. Generic child rendering, the compiled selector
+path, later player UI/constructor effects and the original frame scheduler remain
+required. See [WEAPON_RUNTIME.md](WEAPON_RUNTIME.md),
+[MODEL_PLAYER_QUERIES.md](MODEL_PLAYER_QUERIES.md), [ACTOR_SCENE.md](ACTOR_SCENE.md)
+and [BONE_SELECT.md](BONE_SELECT.md).
+
 Version 0.32 adds original deferred packet ownership and explicit manager-update
 continuations to `messenger` and `action_event_runtime`. The queue retains live
 head ordering, integer deadlines, pause shifts and the original initial pool
@@ -9,8 +25,8 @@ budget across service suspension. GAMERAM owns RECALCPLAYER through the existing
 stat runtime. `model_player_start` connects a supplied post-GETPLAYER caller state
 to HP binding, exact modifier resets, GAMESTART, BASE_ISUSE, a delayed PLAYERARMS
 request and RECALCPLAYER. It stops before later UI and constructor services.
-Actual weapon attachment, full player creation and original outer scheduling
-remain required. See [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md) and
+Full player creation and original outer scheduling remain required. Prepared
+weapon attachment is connected in version 0.33. See [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md) and
 [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md).
 
 Version 0.31 adds `game_database`, `game_items`, `game_stats`, `game_name` and

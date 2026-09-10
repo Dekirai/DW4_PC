@@ -48,7 +48,7 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& document,
 
 struct ModelSequenceLabel {
     std::optional<std::string> sequence; // Null and empty interned strings differ.
-    std::string label;
+    std::optional<std::string> label; // SETLABEL preserves null; LABELCTRL supplies non-null names.
     std::int32_t cached_offset = -1;
     bool operator==(const ModelSequenceLabel&) const = default;
 };
@@ -111,7 +111,7 @@ public:
     bool lua_pending() const noexcept { return lua_pending_; }
     bool lua_faulted() const noexcept { return lua_faulted_; }
     // 8030B014: replace the first sequence-key entry or append; invalidate offset.
-    void set_label(std::optional<std::string> sequence,std::string label);
+    void set_label(std::optional<std::string> sequence,std::optional<std::string> label);
     // Owned selection/control/motion effects of ordinary sequence entry only.
     // Required outer subcommand, collision, wait resolution and virtual effects
     // must be implemented by the caller; this does not mark those as complete.

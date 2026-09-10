@@ -150,6 +150,34 @@ void command_prefix_and_branches() {
         "Missing label partially selected or silently fell back to the first section.");
     rejects([&]{runtime.select("SQ_ABSENT");});rejects([&]{runtime.select("SQ_ERAS");});
 }
+void nullable_label_storage_and_lookup() {
+    Fixture f;
+    const auto empty=f.command("beModelCtrlLABEL",""),chosen=f.command("beModelCtrlLABEL","chosen");
+    f.sequence("SQ_A",{empty,chosen});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0);
+    runtime.select("SQ_A");
+    runtime.set_label(std::nullopt,std::nullopt);
+    runtime.set_label(std::string{},std::string{});
+    runtime.set_label("SQ_A",std::nullopt);
+    check(runtime.labels().size()==3 && !runtime.labels()[0].sequence && !runtime.labels()[0].label &&
+        runtime.labels()[1].sequence==std::optional<std::string>{""} && runtime.labels()[1].label==std::optional<std::string>{""},
+        "SETLABEL merged null and empty sequence/name fields.");
+    check(!runtime.labels()[2].label && runtime.labels()[2].cached_offset==-1,"SETLABEL did not store a null label with an invalidated cache.");
+    const auto before=runtime.model().channels.states();
+    rejects([&]{runtime.select("SQ_A");});
+    check(runtime.current_sequence()=="SQ_A" && runtime.command_index()==0 && !runtime.selection_pending() &&
+        runtime.model().channels.states()==before && !runtime.labels()[2].label,
+        "Unsafe null-label lookup changed the prepared selection or normalized its stored label.");
+    runtime.set_label("SQ_A",std::string{});runtime.select("SQ_A");
+    check(runtime.command_index()==0 && runtime.labels()[2].cached_offset==0,"Non-null empty label failed to match the actual empty LABEL.");
+    runtime.set_label("SQ_A","chosen");runtime.select("SQ_A");
+    check(runtime.command_index()==1 && runtime.labels()[2].cached_offset==1,"Replacing a null/empty label lost original first-key/cache semantics.");
+    auto copy=runtime;copy.set_label("SQ_A",std::nullopt);
+    check(runtime.labels()[2].label=="chosen" && !copy.labels()[2].label && copy.labels()[2].cached_offset==-1,
+        "Copied sequence work shared mutable nullable label state.");
+    runtime.set_label(std::nullopt,"replacement");
+    check(runtime.labels().size()==3 && runtime.labels()[0].label=="replacement","Null sequence-key replacement appended an unrelated row.");
+}
 void motion_sequence_stop() {
     MotionChannels channels;channels.on_sequence_change();check(!channels.allocated(),"Sequence change allocated unused channels.");
     for(std::uint32_t i=0;i<4;++i) {
@@ -636,7 +664,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {command_prefix_and_branches();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
+    try {command_prefix_and_branches();nullable_label_storage_and_lookup();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
         entry_fields_and_lua_setters();hitbox_and_immediate_lua_boundaries();uncertain_lua_is_not_replayed();incomplete_lua_retains_ownership();malformed_hitbox_and_lua();malformed();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_sequence_tests [EXTRACTED_ROOT]");
         std::cout<<"Model sequence tests passed: "<<checks<<" checks\n";return 0;

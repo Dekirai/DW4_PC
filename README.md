@@ -1,8 +1,9 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.32 connects the prepared MODELCTRL player-start prefix to original
-GAMESTART, deferred weapon-generation requests and RECALCPLAYER stat updates.
+Version 0.33 connects deferred weapon generation to actual loaded player
+appearances, skeletons and MODELCTRL sequence labels. Prepared original Agumon
+slots support weapon replacement/removal and common bone-selector traversal.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
@@ -20,11 +21,20 @@ not contain game files.
 
 ## Current capabilities
 
+- Decode original weapon node/bone/sequence graphs, preserve shared loaded scene
+  owners, and execute prepared PLAYERARMS GENERATE/REMOVE through real PLAYER,
+  ACTION and MODELCTRL endpoints. Four original Agumon slots pass deferred
+  generation and two-hand weapon changes across all twelve appearance branches.
+  The common bone-selector calculation is independently compared against original
+  instructions. Child rendering, full player initialization and gameplay remain
+  required. See [WEAPON_RUNTIME.md](docs/WEAPON_RUNTIME.md),
+  [ACTOR_SCENE.md](docs/ACTOR_SCENE.md) and [BONE_SELECT.md](docs/BONE_SELECT.md).
+
 - Retain original deferred message packets, signed deadlines, pause shifts and
   callback order through missing-service interruptions. The prepared player
   caller resets its modifier prefixes, starts unused data, queues PLAYERARMS
   and recalculates stats before an explicit later-UI boundary. Complete player
-  construction, weapon attachment and the original outer loop remain required.
+  construction and the original outer loop remain required.
   See [DEFERRED_MESSENGER.md](docs/DEFERRED_MESSENGER.md) and
   [MODEL_PLAYER_START.md](docs/MODEL_PLAYER_START.md).
 

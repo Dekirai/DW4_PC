@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 namespace {
 using namespace dw4;
@@ -100,6 +101,56 @@ struct Services : ActionServices {
     unsigned broadcasts{};
     Services() { broadcast=[this](const auto&) { ++broadcasts; }; }
 };
+void appearance_owner_query() {
+    static_assert(!std::is_copy_constructible_v<ActionSceneQueryOwner> && !std::is_move_constructible_v<ActionSceneQueryOwner>);
+    static_assert(!std::is_copy_assignable_v<ActionSceneQueryOwner> && !std::is_move_assignable_v<ActionSceneQueryOwner>);
+    Fixture fixture;const auto binding=fixture.binding();auto sources=fixture.library(binding);
+    auto runtime=fixture.runtime(binding,sources);
+    auto prepared=std::make_shared<ActionSceneQueryOwner>();
+    auto manager=make_action_query_manager(binding,runtime,prepared);NativeMessenger messenger;
+    messenger.select("ACTION",binding.model_name(),0);messenger.buffer().add_int(19);
+    const auto empty=query(manager,messenger,id(binding),"GETAPPEARANCELIST");
+    check(empty.completed && empty.value==1 && messenger.buffer().objects().empty(),
+        "Inactive ACTION handles appearance query without requiring a loaded scene.");
+    Services services;runtime->dispatch(sources,services,"empty",100);
+    check(!query(manager,messenger,id(binding),"GETAPPEARANCELIST").completed && messenger.buffer().objects().empty(),
+        "Active ACTION must suspend until its actual scene is supplied.");
+    ActorSceneResource resource(fixture.document(),binding.source(),static_cast<std::uint32_t>(binding.source_occurrence()));
+    const auto scene=resource.action(fixture.action,fixture.action_rams[0]);
+    const auto other_binding=fixture.binding(1);
+    const auto other_scene=resource.action(fixture.action,fixture.action_rams[1]);
+    rejects([&]{prepared->prepare(other_binding,other_scene);},
+        "A pending scene owner must reject preparation for a different manager binding.");
+    check(!prepared->scene() && !query(manager,messenger,id(binding),"GETAPPEARANCELIST").completed,
+        "Rejected foreign preparation must preserve the original pending query.");
+    rejects([&]{make_action_query_manager(other_binding,fixture.runtime(other_binding,sources),prepared);},
+        "An unprepared scene owner cannot be shared by differently bound managers.");
+    prepared->prepare(binding,scene);
+    check(query(manager,messenger,id(binding),"GETAPPEARANCELIST").completed && messenger.buffer().objects().size()==2 &&
+        std::get<std::shared_ptr<ActorSceneAppearanceList>>(messenger.buffer().objects()[0])==scene.appearances() &&
+        std::get<std::shared_ptr<const ActorSceneSkeleton>>(messenger.buffer().objects()[1])==scene.skeleton() &&
+        messenger.buffer().integers()==std::vector<std::int32_t>{19},
+        "Retained fallback must return exact ordered typed owners after preparation, preserving other packet groups.");
+    rejects([&]{prepared->prepare(binding,scene);},"Published ACTION scene owner must not be replaced.");
+    auto already_prepared=std::make_shared<ActionSceneQueryOwner>();already_prepared->prepare(other_binding,other_scene);
+    rejects([&]{make_action_query_manager(binding,runtime,already_prepared);},
+        "Manager creation must reject a scene owner already prepared for another binding.");
+    auto equal_graph=fixture.binding();auto fresh_owner=std::make_shared<ActionSceneQueryOwner>();
+    auto retained=make_action_query_manager(binding,runtime,fresh_owner);
+    rejects([&]{fresh_owner->prepare(equal_graph,scene);},
+        "An equal-looking redecoded ACTION definition cannot replace a bound scene prerequisite.");
+    fresh_owner->prepare(binding,scene);
+    check(query(retained,messenger,id(binding),"GETAPPEARANCELIST").completed,
+        "Correct delayed scene preparation must remain available after rejected replacements.");
+    ActionSceneQueryOwner wrong;
+    rejects([&]{wrong.prepare(binding,resource.action(fixture.action,fixture.action_rams[1]));},"Different RAM scene must reject.");
+    ActorSceneResource other(fixture.document(),binding.source(),4);
+    rejects([&]{wrong.prepare(binding,other.action(fixture.action,fixture.action_rams[0]));},"Different loaded source occurrence must reject.");
+    const auto redecoded=fixture.binding();auto replacement=fixture.runtime(redecoded,sources);
+    *runtime=*replacement;
+    rejects([&]{query(manager,messenger,id(binding),"GETAPPEARANCELIST");},
+        "Equal-looking replacement runtime definitions must not silently redirect a retained scene query.");
+}
 void live_query_and_boundaries() {
     Fixture fixture; const auto binding=fixture.binding(); auto sources=fixture.library(binding);
     auto runtime=fixture.runtime(binding,sources); auto manager=make_action_query_manager(binding,runtime);
@@ -317,7 +368,7 @@ void original(const std::filesystem::path& root) {
 int run(const std::vector<std::filesystem::path>& args) {
     try {
         if (args.size()==2 && args[1]=="--oracle") { oracle_rows(); return 0; }
-        live_query_and_boundaries(); identity_and_lifetime(); state_tokens(); messenger_suspension();
+        live_query_and_boundaries(); identity_and_lifetime(); state_tokens(); messenger_suspension(); appearance_owner_query();
         if (args.size()==2) original(args[1]);
         else if (args.size()!=1) throw std::runtime_error("Usage: dw4_action_queries_tests [EXTRACTED_ROOT]");
         std::cout<<checks<<" action query checks passed\n"; return 0;

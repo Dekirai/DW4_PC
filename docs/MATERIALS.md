@@ -96,14 +96,21 @@ runs from the owner through the farther of the two selected scopes, and
 resolver both scopes remain identical, preserving its conservative same-scope
 behavior.
 
-The original USA `igAttrSet` handler at guest address `0x801DD7C0` supplies the
-execution evidence. Instructions from `0x801DD7FC` through `0x801DD888` push
+The original USA normal `igAttrSet` handler at guest address `0x801DD9BC` supplies
+the execution evidence. Instructions from `0x801DD9F8` through `0x801DDA70` push
 attributes to independent stacks selected by attribute type and unit/index.
-The trigger test at `0x801DD898` occurs afterward. A false trigger skips the
-dispatch block, but both branches traverse children at `0x801DD8CC` and restore
+The trigger test at `0x801DDA80` occurs afterward. A false trigger skips the
+dispatch block, but both branches traverse children at `0x801DDAB4` and restore
 the pushed stacks afterward. These relationships justify independently
 inherited binding and enable state without implementing the full material
 pipeline. Original instruction bytes and generated disassembly remain local.
+
+The descriptor association is explicit: registration `0x801C8C48` names
+`igAttrSet` and publishes type global `r13+0x478`; common registration
+`0x801DB310` maps it to record `0x80415260`, callback `0x801DD9BC`.
+The distinct `igOverrideAttrSet` uses global `r13-0x36c`, record `0x80415258`
+and callback `0x801DD7C0`. That handler locks an explicit stack selection index;
+the normal path resolver does not claim its override semantics.
 
 For the original BG02 sample in `ndmw.afs` entry 179, scene descriptor 3372,
 explicit inspection of root child 0 produces 235 static geometry instances.
