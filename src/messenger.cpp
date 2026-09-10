@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <numeric>
+#include <type_traits>
 #include <utility>
 
 namespace dw4 {
@@ -88,6 +89,21 @@ void MessengerBuffer::add_database(MessengerDatabase value) {
     if(!value) throw MessengerError("A retained database must not be null; append a null object explicitly.");
     constexpr auto size=sizeof(MessengerObject);
     check_append(size);objects_.emplace_back(std::move(value));++entries_;bytes_+=size;
+}
+void MessengerBuffer::add_game_object(GameDataObject value) {
+    std::visit([&](const auto& object) {
+        using T=std::decay_t<decltype(object)>;
+        if constexpr(std::is_same_v<T,std::monostate>)add_object({});
+        else if constexpr(std::is_same_v<T,ControllerObjectId>)add_object(object);
+        else if constexpr(std::is_same_v<T,MessengerBox>)add_box(object);
+        else if constexpr(std::is_same_v<T,MessengerDataList>)add_data_list(object);
+        else if constexpr(std::is_same_v<T,MessengerDatabase>)add_database(object);
+        else {
+            if(!object)throw MessengerError("A retained typed game object must not be null.");
+            constexpr auto size=sizeof(MessengerObject);
+            check_append(size);objects_.emplace_back(object);++entries_;bytes_+=size;
+        }
+    },value);
 }
 void MessengerBuffer::add_string(std::optional<std::string> value) {
     text_check(value);

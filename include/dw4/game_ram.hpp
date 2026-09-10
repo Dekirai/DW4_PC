@@ -2,6 +2,7 @@
 
 #include "dw4/controllers.hpp"
 #include "dw4/game_data.hpp"
+#include "dw4/game_start.hpp"
 
 #include <memory>
 
@@ -11,7 +12,8 @@ class ActionEventRuntime;
 // Explicit generated beNDMWGameRam ownership on an already prepared action-
 // event messenger. Native factory data are not selected-player/save state.
 // Skill selection retains actual row/database owners through nested delivery;
-// full skill growth and selected-player stat/equipment preparation are required.
+// GAMESTART initializes selected data through prepared database/font services;
+// full player construction and skill growth remain required.
 class GameRamRuntime {
 public:
     explicit GameRamRuntime(ActionEventRuntime& runtime);
@@ -28,6 +30,7 @@ public:
     const GameDataState& state() const noexcept;
     std::size_t pending_count() const noexcept;
     bool faulted() const noexcept;
+    void set_name_services(GameNameServices services);
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;

@@ -8,6 +8,14 @@ do not perform save loading, player selection, stat/equipment calculation or
 the remainder of player construction. Factory HP is zero; it is not an
 invented starting HP for a ready player.
 
+The separate [GAME_START.md](GAME_START.md) path now performs selected data
+initialization on these owners. `GameDataWeapon` adds the original unnamed
+weapon fields, including signed revision/pocket values. `GameDataUnicode`
+inherits a nullable name and owns a separately allocated 16-bit buffer; its
+fresh buffer is null. Both retain their exact type through messenger/object-list
+transfers. Opaque PLAYERNAME payloads can also retain the represented controller,
+box, data-list or database owner. The eight generated schema kinds are unchanged.
+
 ## Original provenance
 
 The reference is the supplied USA `sys/main.dol`, SHA-1

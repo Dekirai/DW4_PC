@@ -52,6 +52,7 @@ struct GameRamRuntime::Impl {
         std::shared_ptr<GameDataList> player;
         std::int32_t ceiling{},technique_row{},skill_index{};
         std::optional<MessengerDispatch> query;
+        std::optional<GameStartRuntime> start;
         std::string diagnostic;
     };
     GameDataState data;
@@ -59,7 +60,8 @@ struct GameRamRuntime::Impl {
     ControllerObjectId info=ControllerObjectId::allocate_native();
     ControllerObjectId ram=ControllerObjectId::allocate_native();
     std::map<std::pair<std::uint64_t,std::size_t>,Pending> pending;
-    MessengerDatabase pc_tech;
+    GameDatabaseCache databases;
+    GameNameServices names;
     bool fault{};
 
     void prepare_skill(Pending& state,const NativeMessenger& messenger) {
@@ -79,8 +81,8 @@ struct GameRamRuntime::Impl {
             if(!item || !*item) fail("Original P2ESKILLUP WAZALIST contains an absent or different item type.");
             if((*item)->base_no==state.arguments[1]%10000) {
                 state.technique_row=(*item)->record_no;
-                if(pc_tech) {
-                    state.skill_index=pc_tech->integer(state.technique_row,"SKILL");
+                if(databases.pc_tech) {
+                    state.skill_index=databases.pc_tech->integer(state.technique_row,"SKILL");
                     state.phase=Pending::Phase::selected_skill;
                 } else state.phase=Pending::Phase::pc_tech;
                 return;
@@ -92,6 +94,7 @@ struct GameRamRuntime::Impl {
     }
 
     MessengerCallResult advance(Pending& state,NativeMessenger& messenger,ActionEventRuntime& runtime) {
+        if(state.start)return state.start->resume(data,databases,messenger,runtime,names);
         if(state.phase==Pending::Phase::pc_tech) {
             if(!state.query) {
                 messenger.select("DATABASE","pcTech",0);
@@ -104,9 +107,9 @@ struct GameRamRuntime::Impl {
             const auto& objects=messenger.buffer().objects();
             const auto* database=objects.empty() ? nullptr : std::get_if<MessengerDatabase>(&objects[0]);
             if(!database || !*database) fail("Original P2ESKILLUP pcTech query requires a non-null database at current object zero.");
-            pc_tech=*database;
+            databases.pc_tech=*database;
             state.query.reset();
-            state.skill_index=pc_tech->integer(state.technique_row,"SKILL");
+            state.skill_index=databases.pc_tech->integer(state.technique_row,"SKILL");
             state.phase=Pending::Phase::selected_skill;
         }
         if(state.phase==Pending::Phase::selected_skill) {
@@ -146,7 +149,17 @@ struct GameRamRuntime::Impl {
             }
             Pending required;
             required.command=command;
-            if(command=="FIGHTCALC") {
+            if(command=="GAMESTART") {
+                // Both reads precede cardinality and player-row bounds checks.
+                const auto source=integer(messenger,0);
+                const auto& strings=messenger.buffer().strings();
+                if(strings.empty())fail("Original GAMESTART requires its selected-model string slot.");
+                const auto model=strings[0];
+                const auto& objects=messenger.buffer().objects();
+                if(objects.size()==1)required.start.emplace(source,model,GameStartName{objects[0]});
+                else if(strings.size()==2)required.start.emplace(source,model,GameStartName{strings[1]});
+                else return {true,1,{}};
+            } else if(command=="FIGHTCALC") {
                 const auto& strings=messenger.buffer().strings();
                 if(strings.empty() || !strings.front()) fail("Original GAMERAM FIGHTCALC requires its subcommand string.");
                 required.subcommand=strings.front();
@@ -191,4 +204,5 @@ ControllerObjectId GameRamRuntime::ram_id() const noexcept {return impl_->ram;}
 const GameDataState& GameRamRuntime::state() const noexcept {return impl_->data;}
 std::size_t GameRamRuntime::pending_count() const noexcept {return impl_->pending.size();}
 bool GameRamRuntime::faulted() const noexcept {return impl_->fault;}
+void GameRamRuntime::set_name_services(GameNameServices services) {impl_->names=std::move(services);}
 } // namespace dw4

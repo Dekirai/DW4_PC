@@ -147,11 +147,11 @@ void explicit_effect_and_bad_input_boundaries() {
         const auto retry=runtime.resume(send);check(retry.stop==MessengerStop::service_required && retry.diagnostic==first.diagnostic &&
             game.pending_count()==1,"Unchanged effect retry reparsed/replaced its retained request.");
     }
-    for(const auto command:{"GAMESTART","FIGHTCALC"}) {
+    for(const auto command:{"GAMEREMOVE","FIGHTCALC"}) {
         ActionEventRuntime runtime;GameRamRuntime game(runtime);auto send=prepare(runtime,command);
         if(std::string(command)=="FIGHTCALC")runtime.messenger().buffer().add_string("UNIMPLEMENTED_SUBCOMMAND");
         check(runtime.resume(send).stop==MessengerStop::service_required && game.pending_count()==1,
-            "Unknown GAMESTART/skill growth service was substituted with successful empty behavior.");
+            "An unimplemented removal/combat service was substituted with successful empty behavior.");
     }
     for(const auto index:{-1,4}) {
         ActionEventRuntime runtime;GameRamRuntime game(runtime);auto send=prepare(runtime,"GETPLAYER",index);

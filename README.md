@@ -1,8 +1,9 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.30 adds original typed databases, native DATABASE message delivery and
-retained skill-selection/ceiling checks in GAMERAM. The full original game, including local
+Version 0.31 connects original selected-player initialization: species, base
+values, weapons, stats, techniques and names through native GAMESTART delivery.
+The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -19,11 +20,19 @@ not contain game files.
 
 ## Current capabilities
 
+- Initialize selected player data through the original ordered GAMESTART path,
+  retaining database calls and shared objects across interruptions. Four Agumon
+  player slots complete local integration with the supplied original databases
+  and an explicitly prepared font. Full player construction and gameplay
+  scheduling remain required. See [GAME_START.md](docs/GAME_START.md),
+  [GAME_ITEMS.md](docs/GAME_ITEMS.md), [GAME_STATS.md](docs/GAME_STATS.md) and
+  [GAME_NAME.md](docs/GAME_NAME.md).
+
 - Decode the original six database column groups and retain their typed owners
   through DATABASE registration and GETDATABASE. GAMERAM resolves weapon or
   technique skills before the original no-growth gate, including a retained
-  pcTech query. Actual skill growth and selected-player initialization remain
-  required. See [DATABASE.md](docs/DATABASE.md),
+  pcTech query. Actual skill growth and damage effects remain required.
+  See [DATABASE.md](docs/DATABASE.md),
   [DATABASE_RUNTIME.md](docs/DATABASE_RUNTIME.md) and [GAME_RAM.md](docs/GAME_RAM.md).
 
 - Construct the original common-data list and four separate player-data rows,

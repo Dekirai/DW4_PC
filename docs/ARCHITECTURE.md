@@ -2,6 +2,18 @@
 
 ## Implemented boundary
 
+Version 0.31 adds `game_database`, `game_items`, `game_stats`, `game_name` and
+`game_start`. GAMERAM retains the selected GAMESTART route and executes its
+original species/base/equipment/stat/common/name sequence. Shared shinka and
+pcTech caches belong to the manager; each weapon operation uses a fresh retained
+database message. Separate helper entries capture their then-current player rows
+while common and name publications preserve their original earlier owners.
+The shared game-data/messenger object variant carries actual weapon and Unicode
+objects without converting opaque name payloads. Four original Agumon data
+initializations complete against explicitly registered original databases and a
+prepared font. Full MODELCTRL construction, other item providers, skill growth,
+startup and gameplay scheduling remain required. See [GAME_START.md](GAME_START.md).
+
 Version 0.30 adds immutable `database` graphs and `database_runtime` ownership
 for exact exported beDBManagerInfo/RAM occurrences. All six typed column groups
 retain original widths, order and provenance. Shared DATABASE results have

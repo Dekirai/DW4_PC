@@ -1,4 +1,45 @@
-# Native database and selected-skill validation
+# Native selected-player initialization validation
+
+Version 0.31.0 was validated locally on 2026-09-10 with MSVC 19.51. Native
+GAMESTART now connects the original species/base/equipment/stat/common/name
+sequence through retained shared database delivery. All four original Agumon
+data initializations complete with explicitly prepared database/font services.
+Full player construction, other item providers, skill growth and gameplay remain
+required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 67/67 CTest suites passed without compiler warnings; 6 Python verifier tests passed |
+| GAMESTART integration | 183 synthetic / 217 original-inclusive checks; packet precedence, sixteen-row lookup, base-array aliases, nested resets, retained name routes and four actual player starts |
+| Initial weapons and queries | 121 synthetic / 157 original-inclusive checks; fresh queries, post-callback records, distinct folder items, shared sockets and append/name/equipped publication order |
+| Status and techniques | 127 synthetic / 143 original-inclusive checks; signed wrapping, health refill gates, retained modifiers, six technique groups, experience and full represented equipment tail |
+| Name conversion | 35 synthetic / 461 original-inclusive checks; actual 424-pair table, two-pass conversion, shared scratch and distinct nine-unit player name |
+| Original equipment/item instructions | 54 cases / 12,228 instructions, zero differences; explicit prepared typed lookup, allocation, list, string and database hooks |
+| Original numeric stat instructions | 884 cases / 333,378 instructions, zero differences; includes 56 checked stops above the bounded level table |
+| Original outer stat routine | 21 cases / 434,115 instructions / 516 item queries; 31 published fields, ordered techniques, names and query counts match |
+| Original name instructions | 516 cases / 2,519,526 instructions, zero differences; all original mapping inputs and four actual default display-name strings included |
+| Original selection/base instructions | 311 cases / 183,706 instructions, zero differences; 192 base-array cases, 79 species cases and 40 packet-cardinality cases |
+| Existing game/script integration | Game data 8,269 checks, GAMERAM 421, skill selection 499, databases 275, DB runtime 182, target scripts 104, registry 51, HIT bodies 109, collision 80, events 108 and waits 107 |
+| Original ACTION regression | 6,034,137 checks across 183 actions, 369 commands, 4,157 poses and 240 four-instance sequence poses |
+| Original messenger/wrapper regression | 101 stack cases / 7,525 rows, 84 delivery cases / 2,028 rows, 43 wrappers plus 4 checked prefixes and 39 magic gates; zero differences against the refreshed core |
+| Packaged app regression | 16 app, 10 walking and 9 boot argument tests; actor and walking previews each render 120 frames, with both captures visually inspected |
+
+The original-data GAMESTART cases register all twelve DB infos from the actual
+selected source, then initialize four separate player rows. Each obtains weapon
+records 266/275/274, the actual initial technique and a name converted using the
+supplied executable's table. P2ESKILLUP then uses the populated Waza and reaches
+its remaining probability/growth boundary. The separate existing Hit tests retain
+their fresh factory-row setup; no skill increment or combat success is invented.
+
+Instruction comparisons execute bounded original routines with explicitly
+prepared context, allocation, typed-list, string, database and item services.
+The stat comparison executes the represented outer routine; font construction,
+whole MODELCTRL creation, original scheduling and a physical-console playthrough
+are not established. Original bytes, probes, traces and captures remain ignored
+under `work/`. See [GAME_START.md](GAME_START.md), [GAME_ITEMS.md](GAME_ITEMS.md),
+[GAME_STATS.md](GAME_STATS.md) and [GAME_NAME.md](GAME_NAME.md).
+
+## Previous version 0.30 validation
 
 Version 0.30.0 was validated locally on 2026-09-10 with MSVC 19.51. Original
 database graphs now retain typed ownership through actual DATABASE info/RAM

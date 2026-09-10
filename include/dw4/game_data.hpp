@@ -1,5 +1,8 @@
 #pragma once
 
+#include "dw4/controllers.hpp"
+#include "dw4/collision_math.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,6 +16,8 @@
 #include <vector>
 
 namespace dw4 {
+class GameDataList;
+class DatabaseDefinition;
 class GameDataError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -46,13 +51,26 @@ struct GameDataWaza {
     std::uint8_t is_equipped{};
     std::int32_t base_no{};
 };
+struct GameDataWeapon {
+    std::int32_t kind_no{},record_no{};
+    std::uint8_t is_equipped{};
+    std::int32_t revision{},pocket{};
+};
+// beUnicodeObj inherits igNamedObject. A fresh buffer is unallocated; actual
+// conversion/name construction allocates its own array of 16-bit code units.
+struct GameDataUnicode {
+    std::optional<std::string> name;
+    std::shared_ptr<std::vector<std::uint16_t>> buffer;
+};
 struct GameDataObjectList;
 using GameDataObject=std::variant<std::monostate,
     std::shared_ptr<GameDataInt>,std::shared_ptr<GameDataIntList>,
     std::shared_ptr<GameDataBool>,std::shared_ptr<GameDataBoolList>,
     std::shared_ptr<GameDataString>,std::shared_ptr<GameDataStringList>,
     std::shared_ptr<GameDataObjectList>,std::shared_ptr<GameDataFloatList>,
-    std::shared_ptr<GameDataDisk>,std::shared_ptr<GameDataWaza>>;
+    std::shared_ptr<GameDataDisk>,std::shared_ptr<GameDataWaza>,std::shared_ptr<GameDataWeapon>,
+    std::shared_ptr<GameDataUnicode>,ControllerObjectId,std::shared_ptr<const CollisionBox>,
+    std::shared_ptr<GameDataList>,std::shared_ptr<const DatabaseDefinition>>;
 struct GameDataObjectList : GameDataArray<GameDataObject> {};
 
 enum class GameDataKind : std::uint8_t {

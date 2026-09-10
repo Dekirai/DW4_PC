@@ -22,13 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
-Version 0.30 supplies original typed databases and their real DATABASE info/RAM
-ownership. P2ESKILLUP now selects an existing weapon/technique skill and checks
-its original level ceiling, retaining lazy pcTech delivery across nested calls.
-The unchanged original Hit path still requires WAZALIST population from actual
-selected-player initialization. GAMESTART, equipment/stat calculation, skill
-growth, named damage/status effects and gameplay scheduling remain the next
-work. See [DATABASE_RUNTIME.md](DATABASE_RUNTIME.md) and [GAME_RAM.md](GAME_RAM.md).
+Version 0.31 connects original GAMESTART selection, base-array copying, initial
+weapons, full represented status/technique calculation and both name routes.
+All four Agumon data rows complete this command with explicitly prepared original
+database and font services. Existing skill selection can consume their populated
+WAZALIST and reach the remaining growth boundary. Full MODELCTRL player/weapon
+construction, other dynamic item providers, skill growth, named damage/status
+effects, startup and gameplay scheduling remain the next work. See
+[GAME_START.md](GAME_START.md) and [GAME_RAM.md](GAME_RAM.md).
 
 Version 0.28 connects prepared target-Hit work to ordered script registration,
 shared HP/context publication and resumable original Lua chunks. Selected

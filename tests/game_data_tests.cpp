@@ -39,8 +39,7 @@ void defaults() {
                 "Generated field order, exact name or wrapper type changed.");
             std::visit([&](const auto& pointer) {
                 using T=std::decay_t<decltype(pointer)>;
-                if constexpr(!std::is_same_v<T,std::monostate> && !std::is_same_v<T,std::shared_ptr<GameDataDisk>> &&
-                             !std::is_same_v<T,std::shared_ptr<GameDataWaza>>) {
+                if constexpr(requires {pointer->name;pointer->data;}) {
                     check(pointer && pointer->name==field.name && wrappers.insert(pointer.get()).second,
                         "Generated fields share an unintended wrapper identity.");
                     if constexpr(std::is_same_v<T,std::shared_ptr<GameDataInt>> || std::is_same_v<T,std::shared_ptr<GameDataBool>>)

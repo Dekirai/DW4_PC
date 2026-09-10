@@ -2,6 +2,7 @@
 
 #include "dw4/controllers.hpp"
 #include "dw4/collision_math.hpp"
+#include "dw4/game_data.hpp"
 
 #include <functional>
 #include <memory>
@@ -19,7 +20,7 @@ using MessengerDataList = std::shared_ptr<GameDataList>;
 using MessengerDatabase = std::shared_ptr<const DatabaseDefinition>;
 // Native generated data and transient geometry retain their actual owners;
 // neither object is encoded as a serialized controller reference.
-using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox,MessengerDataList,MessengerDatabase>;
+using MessengerObject = GameDataObject;
 
 // One shared argument/result object. Selection clears it; sending does not.
 // Finite scalar/vector values retain their words. Matrix PSQ copies flush tiny
@@ -43,6 +44,9 @@ public:
     void add_box(MessengerBox value);
     void add_data_list(MessengerDataList value);
     void add_database(MessengerDatabase value);
+    // Preserve an already represented object's exact type and shared identity.
+    // This supports original opaque object transfers such as PLAYERNAME.
+    void add_game_object(GameDataObject value);
     void add_string(std::optional<std::string> value);
     const auto& booleans() const noexcept { return booleans_; }
     const auto& integers() const noexcept { return integers_; }

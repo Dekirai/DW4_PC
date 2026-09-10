@@ -4,9 +4,9 @@
 registers one generated `beNDMWGameRam` endpoint on an existing
 `ActionEventRuntime`. It implements existing player-row queries, player-row
 reset, the verified ordinary `P2PKOUKAMAGIC` return paths and the selected-skill
-ceiling gate in `P2ESKILLUP`. Selection,
-equipment/stat calculation, healing, skill growth and the full original game
-startup remain separate prerequisites.
+ceiling gate in `P2ESKILLUP`. It also executes the represented original GAMESTART
+selection/equipment/stat/name sequence. Full player construction, other item
+providers, healing, skill growth and original startup remain required.
 
 ## Native owners and registration
 
@@ -39,6 +39,7 @@ at virtual `+8C` returns zero without effects.
 | `GETPLAYER` | signed integer[0], checked 0 through 3 | append that existing row to the object list |
 | `GETPLAYER1` through `GETPLAYER4` | no required input | append fixed row 0 through 3 |
 | `GAMEDATAINIT` | signed integer[0], checked 0 through 3 | replace the selected player row using the recovered generator |
+| `GAMESTART` | RAM, model string, exactly one object or exactly two strings | initialize selected player data and publish its retained name route; see [GAME_START.md](GAME_START.md) |
 | `FIGHTCALC` / `P2PKOUKAMAGIC` | target RAM, source RAM, kind | the bounded paths below |
 | `FIGHTCALC` / `P2ESKILLUP` | source RAM, kind, first flag, second flag | resolve the actual skill before the original no-growth comparison |
 
@@ -80,7 +81,7 @@ consumer follows the skill-selection phase below.
 The known effect boundary retains its parsed command, arguments and actual
 target-row shared owner, keyed by the same dispatch ID and recipient-row index.
 Retries do not reparse a shared packet that nested calls may have changed.
-Other unimplemented commands, including `GAMESTART` and other `FIGHTCALC`
+Other unimplemented commands, including `GAMEREMOVE` and other `FIGHTCALC`
 subcommands, stop before their effects. There is no generic successful logging
 handler. The runtime bounds unresolved deliveries to 256; an uncertain exception
 faults its manager owner and prevents replay.
@@ -131,9 +132,10 @@ retry does not reread LEVEL, search WAZALIST again or resend completed effects.
 
 A value below the ceiling stops before the still-required probability, random,
 stat/update and MODELCTRL effect operations. It does not increment SKILL alone.
-Full selected-player initialization and the six-group WAZALIST calculation
-remain required. Explicit prepared ItemWaza test inputs only exercise this
-bounded helper path.
+The GAMESTART path now supplies the original six-group WAZALIST calculation.
+Fresh factory rows still have no selected technique. Separate skill tests use
+prepared ItemWaza inputs; the optional GAMESTART integration verifies selection
+after all four original Agumon data initializations.
 
 ## Original evidence
 
