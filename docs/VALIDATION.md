@@ -1,4 +1,37 @@
-# Native actor cache rendering validation
+# Native player event routing validation
+
+Version 0.24 was validated locally on 2026-09-10 with MSVC 19.51. Explicit
+MODELCTRL/ACTION graph bindings now connect native event consumers to owned
+sound/effect queues. This is prepared component integration; complete original
+player construction, audio/effect managers and outer gameplay scheduling remain
+required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 42/42 CTest suites passed, no production compiler warnings; 6 Python verifier tests passed |
+| Prepared event runtime | 227 synthetic checks cover cross-source routing, aliases, repeated parent assignment, ordered queues, nested suspension, protected shared arguments, external/local-jump sequence cleanup, source collisions and atomic registration bounds |
+| Prepared player binding | 57 synthetic checks; 105 with original data, covering all four RAMs and three explicit LOD branches |
+| Consumer tables | 68 synthetic checks; 5,960 with original Se and all 58 map Starter exports: 78 Se model rows/2,173 actions, 958 Starter model occurrences/5,887 actions, 1,338 exact Data2 occurrences |
+| Messenger | 102 synthetic checks; independent original-instruction comparison covers 84 scenarios, 2,722 operations, 2,389,520 instructions and 2,028 exact callback/result rows, with zero mismatches |
+| Subcommand lifetime | 67 synthetic checks; independent original-instruction comparison covers 1,005 lifecycle cases and 2,018,236 instructions, with zero mismatches |
+| Subcommand/system timing | 3,008 scalar-addition cases and 3,171 system-time cases cover signed tiny results, two-stage conversion, timestamp wrap and uncapped frame deltas; 621,329 instructions, zero mismatches, 2 expected finite-input overflow rejections |
+| Four original player instances | 63 actual model/consumer registrations; original weapon RUN/WAIT sequences route four independent footstep queues through delay, retained start and cleanup; 24 actor-cache poses and 32,904 deformed vertices |
+| Original attack event | KATCA3 dispatch reaches its motion wait and emits actual PC_SUBURI02 sound plus x_100armk01/SQ_ATCK01 effect; missing find/generate/erase services resume without repeating completed work |
+| ACTION/sequence regressions | All 182 ordinary Agumon actions plus NDSP, 369 commands, 4,157 poses/5,699,247 vertices and 240 four-instance sequence poses/329,040 vertices pass; original model sequence suite passes 258 checks |
+| CLI and packaged app | 16 app and 10 walking argument suites pass; 120 actor frames/121 pose uploads and the 120-frame walking replay pass |
+| Visual inspection | Version 0.24 actor and walking screenshots inspected; walking retains 198 steps, 101.333 travel, 46 idle/152 run steps, 102 pose uploads, pause/restart/focus-loss replay and its 1236x600 target |
+
+Instruction comparisons run independent models of the inspected original
+instructions with explicitly supplied allocation/list/string/controller service
+boundaries. They do not validate those hooked original helper bodies or physical
+Gekko execution. Original-data integration runs production native decoders and
+owners; test-manager sound/effect handles do not establish audible output or
+rendered effect actors. The screenshots show the existing separate inspection
+and provisional walking paths. Original assets, instruction probes and captures
+remain ignored. See [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md),
+[MESSENGER.md](MESSENGER.md) and [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md).
+
+## Native actor cache rendering validation
 
 Version 0.23 was validated locally on 2026-09-09 with MSVC 19.51 and an NVIDIA
 GeForce RTX 5070 Ti. Original actor cache capture and single-influence CPU

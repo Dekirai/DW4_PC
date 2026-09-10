@@ -771,7 +771,7 @@ public:
                         << " / appearance " << binding.appearance_reference() << " / combiner " << binding.combiner_reference()
                         << " / selector " << binding.selector_reference() << " / palette " << binding.skin().palette_to_joint.size()
                         << " / node time " << mesh_actor_->node_time << " / rendered " << mesh_actor_renderer_.rendered_frames() << '\n'
-                        << "Original cached CPU skin deformation and captured root; host inspection camera. Action events and original camera remain pending.\n";
+                        << "Original cached CPU skin deformation and captured root; host inspection camera. This inspection path does not dispatch ACTION events. Original camera remains pending.\n";
                 }
                 if (!loaded_mesh_resource_.empty()) std::cout << "Logical resource: " << loaded_mesh_resource_ << '\n';
                 if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured && mesh_material_) {
@@ -2455,7 +2455,7 @@ private:
         const float bottom = ImGui::GetWindowHeight() - 146;
         if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
         ImGui::Separator();
-        ImGui::TextColored(teal, "VERSION 0.23");
+        ImGui::TextColored(teal, "VERSION 0.24");
         paragraph("Development workbench");
         paragraph("Walking preview available.");
         ImGui::EndChild();

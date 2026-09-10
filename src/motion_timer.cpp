@@ -27,6 +27,15 @@ std::uint64_t scaled_clock(std::uint64_t world_time, float scale) {
 }
 } // namespace
 
+float original_elapsed_frames(std::int64_t elapsed) {
+    const float converted=static_cast<float>(static_cast<double>(elapsed));
+    // A nonzero signed integer divided by this constant cannot be subnormal;
+    // the original startup NI profile has no tiny-result case at this boundary.
+    return converted/16666667.0f;
+}
+float original_system_frame_delta(std::uint64_t current,std::uint64_t previous) {
+    return original_elapsed_frames(std::bit_cast<std::int64_t>(current-previous));
+}
 void start_motion_timer(MotionTimer& timer, std::uint64_t world_time, std::int64_t end_time) {
     validate(timer);
     const auto clock = scaled_clock(world_time,timer.time_scale);
@@ -45,8 +54,7 @@ float motion_timer_frames(MotionTimer& timer, std::uint64_t world_time) {
     const auto elapsed = std::bit_cast<std::int64_t>(std::bit_cast<std::uint64_t>(current) -
         std::bit_cast<std::uint64_t>(timer.previous_time));
     if (elapsed != 0) {
-        const float converted = static_cast<float>(static_cast<double>(elapsed));
-        timer.cached_frames = std::min(converted / 16666667.0f,3.0f);
+        timer.cached_frames = std::min(original_elapsed_frames(elapsed),3.0f);
         timer.previous_time = current;
     } else timer.cached_frames = 0;
     timer.saved_world_time = world_time;

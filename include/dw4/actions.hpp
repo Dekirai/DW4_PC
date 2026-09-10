@@ -58,6 +58,10 @@ struct ActionServices {
     // Callbacks must implement the owning runtime's random/event service.
     std::function<std::uint32_t()> random_word;
     std::function<void(const ActionBroadcast&)> broadcast;
+    // Optional resumable delivery. When present, takes precedence over broadcast.
+    // False retains the original pending event; the service owns any completed
+    // recipient prefix and must resume it without duplicating side effects.
+    std::function<bool(const ActionBroadcast&)> try_broadcast;
 };
 struct ActionColor {
     std::array<float,4> channels{1,1,1,1};

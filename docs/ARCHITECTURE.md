@@ -2,6 +2,19 @@
 
 ## Implemented boundary
 
+Version 0.24 adds immutable `player_runtime_binding` ownership across actual
+MODELCTRL/ACTION RAMs, ONE nodes and selected actor skins. `messenger` implements
+the original ordered registration/cache/shared-buffer delivery kernel;
+`action_event_tables` decodes loaded Se/ActionStarter graphs. `action_event_runtime`
+owns prepared model sequences, consumers and resumable event delivery, connecting
+ACTION broadcasts to `model_subcommands` queues. External and local-jump sequence
+selection must complete their owned queue cleanup before executing new commands.
+Real audio/effect managers, full player preparation and the original outer game
+loop remain required. This explicit prepared context does not advance the boot
+controller stage or replace the walking preview. See
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md), [MESSENGER.md](MESSENGER.md)
+and [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md).
+
 `dw4_core` is a C++20 library with explicit byte-order decoding and no console or
 graphics dependencies. `assets` reads boot, DOL, AFS and BNR structures. `igb`
 reads version 6 metadata; `igb_document` loads owned object records, memory

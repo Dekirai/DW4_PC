@@ -3,6 +3,14 @@
 #include <cstdint>
 
 namespace dw4 {
+// 800A3FDC then scalar division by 16666667.0f: signed nanoseconds ->
+// nominal-frame units. Preserve the original int64 -> binary64 -> binary32
+// conversion stages; this does not clamp elapsed time or own a timer.
+float original_elapsed_frames(std::int64_t elapsed);
+// beSystem 80316320..8031635C: wrapping world timestamp difference followed
+// by original_elapsed_frames. Uncapped; distinct from a named MotionTimer.
+float original_system_frame_delta(std::uint64_t current,std::uint64_t previous);
+
 // Recovered beBaseInfoRamTimer fields; addresses and arithmetic are in
 // MOTION.md. Time values use guest nanosecond units. This is per-RAM timer
 // state, not an OS clock, pause controller, named dictionary or scheduler.

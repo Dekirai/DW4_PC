@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.24 binds prepared player MODELCTRL/ACTION graphs and routes original
+ACTION broadcasts through loaded Se/ActionStarter tables into owned subcommand
+queues. Native messenger delivery and sequence cleanup preserve completed work
+when an external service is missing. Original audio/effect managers, complete
+player construction, input/collision callbacks and outer frame scheduling remain
+required before these prepared owners become a gameplay session. See
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
 Version 0.23 connects an explicitly selected actor's main skin to the cached
 joint palette, recovered CPU vertex deformation and a native prepared draw.
 The captured root/model-view is applied once before a separate projection.

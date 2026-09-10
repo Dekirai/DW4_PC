@@ -157,7 +157,7 @@ void ModelSequenceRuntime::select(std::string_view sequence) {
     current_=std::size_t(found-data.begin());cursor_=static_cast<std::uint32_t>(start);label_count_=0;
 }
 
-ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action) {
+ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup) {
     if(running_)throw MotionError("Reentrant sequence execution is unsupported.");
     if(!current_)throw MotionError("Model sequence work has not been selected/prepared.");
     ModelSequenceResult result;
@@ -180,10 +180,19 @@ ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const Mod
             try {action({program_->source(),command.reference_index,info_name_,ram_no_,command.name});}
             catch(...) {running_=false;throw;}
             running_=false;break;
-        case ModelSequenceOpcode::jump:
+        case ModelSequenceOpcode::jump: {
             if(!ordinary(command.name) || std::none_of(program_->sequences().begin(),program_->sequences().end(),
                 [&](const auto& item){return item.name==command.name;}))return stopped(ModelSequenceStop::controller_required);
-            select(command.name);++result.commands_executed;continue;
+            auto candidate=*this; candidate.select(command.name);
+            if(cleanup) {
+                running_=true;
+                bool complete;
+                try { complete=cleanup(command.name); } catch(...) { running_=false; throw; }
+                running_=false;
+                if(!complete) return stopped(ModelSequenceStop::sequence_cleanup_required);
+            }
+            *this=std::move(candidate);++result.commands_executed;continue;
+        }
         case ModelSequenceOpcode::unsupported:return stopped(ModelSequenceStop::unsupported_command);
         }
         ++cursor_;++result.commands_executed;

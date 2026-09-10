@@ -1,8 +1,9 @@
 # Original ACTION event consumers
 
-This is original-code research for a pending implementation. Version 0.21
-implements actor buffer lifetime; it still requires an external broadcast
-service. Recording an event does not execute its sound or effect consumers.
+This records original-code research used by the version 0.24 implementation.
+Prepared native routing now executes Se/ActionStarter table consumers and appends
+owned sound/effect work. Actual audio playback and effect generation remain
+external required services. See [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
 
 The reference is USA revision-0 `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Addresses below identify inspected
@@ -34,12 +35,12 @@ fallback at `+0x8C`.
 The messenger owns a 64-entry move-to-front selection cache keyed by category
 and nullable requested name, excluding index. A nonempty hit reuses captured
 recipient rows. Registration does not invalidate that cache in `803050A8`.
-Reset/invalidation and interleaved registration need further integration;
+The native messenger now preserves reset/invalidation and interleaved registration;
 recollecting fresh recipients on every send would change this observed behavior.
 Nested sends also use the shared argument/result buffer and can change its
 enabled-only flag for later recipients of the outer send.
 
-## Real consumers and next implementation
+## Real consumers
 
 | Consumer | Registration / structured hook | Effect |
 | --- | --- | --- |
@@ -60,9 +61,11 @@ handlers return without appending. Effect work retains delay, initial handle
 flags. Sound work retains delay and sound name. Later subcommand processing
 performs creation/playback through additional managers.
 
-The next concrete boundary is decoding actual loaded consumer exports,
-registering their real RAMs, synchronously routing their translated messages,
-and appending typed subcommands to the selected model's owned work. A completed
-append must remain distinguishable from an executed sound/effect. Serialized
-consumer slots need representative original graph validation before a decoder
-is accepted. See [ACTIONS.md](ACTIONS.md) and [CONTROLLERS.md](CONTROLLERS.md).
+The prepared runtime now decodes loaded consumer exports, registers their RAM
+occurrences, synchronously routes translated messages and appends typed work to
+the selected model queue. It also owns delayed start and sequence interruption
+with explicit sound/effect manager boundaries. A completed append remains
+distinct from an executed sound/effect. Full startup registration, player
+construction and actual audio/effect services remain required. See
+[ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md), [ACTIONS.md](ACTIONS.md) and
+[CONTROLLERS.md](CONTROLLERS.md).

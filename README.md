@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.23 connects original actor matrix caches to native CPU skin deformation
-and a prepared mesh draw with separate model-view and projection. The full original game, including local
+Version 0.24 connects prepared player ownership and original ACTION events to
+native messenger delivery and owned sound/effect queues. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -18,6 +18,12 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Bind an original MODELCTRL/ACTION instance through its actual node and actor
+  graph, route loaded Se/ActionStarter consumers across source files, and retain
+  delayed sound/effect work through service suspension and sequence cleanup.
+  Playback/generation managers and full player construction remain pending.
+  See [ACTION_EVENT_RUNTIME.md](docs/ACTION_EVENT_RUNTIME.md).
 
 - Play the original `dng101b1` / `BG02` map with camera-relative movement,
   original floor following, automatic idle/run animation, pause and restart.

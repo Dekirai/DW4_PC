@@ -43,7 +43,7 @@ struct ModelSequenceLabel {
     std::int32_t cached_offset = -1;
     bool operator==(const ModelSequenceLabel&) const = default;
 };
-enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command };
+enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required };
 struct ModelSequenceResult {
     ModelSequenceStop stop{};
     std::uint32_t commands_executed{};
@@ -58,6 +58,9 @@ struct ModelActionRequest {
     std::string action; // Original ACTION category payload, not an animation clip.
 };
 using ModelActionDispatch = std::function<void(const ModelActionRequest&)>;
+// Optional owner hook for ordinary local jumps. False retains the jump cursor;
+// the owner retains cleanup progress. It must not mutate this sequence runtime.
+using ModelSequenceCleanup = std::function<bool(std::string_view)>;
 
 // Recovered base-model command runner on caller-prepared work. Owns its program,
 // label cache, command cursor and supported control state. This is not complete
@@ -85,7 +88,8 @@ public:
     // Ordinary local jumps retain nested state without restoring old cursors.
     // Erase/nonlocal commands stop for the outer controller. No automatic frame
     // resume is implied; original wait checks and per-player callbacks still apply.
-    ModelSequenceResult run(std::uint64_t world_time,const ModelActionDispatch& action = {});
+    ModelSequenceResult run(std::uint64_t world_time,const ModelActionDispatch& action = {},
+        const ModelSequenceCleanup& cleanup = {});
 private:
     std::shared_ptr<const ModelSequenceProgram> program_;
     ModelControlState model_;

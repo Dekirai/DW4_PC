@@ -226,6 +226,11 @@ bool ActionRuntime::command_end() const noexcept {
 }
 ActionResult ActionRuntime::deliver(ActionServices& services,ActionResult result) {
     if (!pending_broadcast_) return result;
+    if (services.try_broadcast) {
+        if (!services.try_broadcast(*pending_broadcast_)) result.stop=ActionStop::broadcast_required;
+        else pending_broadcast_.reset();
+        return result;
+    }
     if (!services.broadcast) { result.stop=ActionStop::broadcast_required; return result; }
     services.broadcast(*pending_broadcast_); pending_broadcast_.reset(); return result;
 }
