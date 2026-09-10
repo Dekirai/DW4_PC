@@ -15,7 +15,7 @@ jobs:
       - name: Configure (no game files required)
         run: cmake -S . -B build -DDW4_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Debug
       - name: Build
-        run: cmake --build build --config Debug --parallel
+        run: cmake --build build --config Debug --parallel 2
       - name: Test synthetic fixtures
         run: ctest --test-dir build -C Debug --output-on-failure
       - name: Test ISO verifier
@@ -45,7 +45,7 @@ jobs:
       - name: Configure native app
         run: cmake -S . -B build -DDW4_BUILD_APP=ON
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 2
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Test native app argument validation without graphics
