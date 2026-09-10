@@ -1,7 +1,9 @@
-# Original ordinary messenger
+# Original messenger
 
 The portable `messenger` module implements original ordered registration,
-cached recipient selection and synchronous ordinary delivery. It supplies the
+cached recipient selection, synchronous ordinary delivery and retained deferred
+messages. See [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md) for queue timing,
+packet ownership and explicit manager updates. It supplies the
 dispatch boundary used by ACTION event consumers. A completed messenger send
 means its required recipient callbacks completed; it does not imply audio
 playback, effect creation or a complete original game frame.
@@ -108,8 +110,9 @@ the pool's first object and appends the cleared child to the pool's tail.
 Both operations leave selected-message records, cache order and registrations
 alone. In particular, pop does not restore a previous category, index or command.
 
-The native implementation owns five stable `MessengerBuffer` objects and
-rotates their indices. A reference to a parked parent still refers to that
+The native implementation owns five stack slots for shared `MessengerBuffer`
+objects and rotates their indices. Deferred scheduling/delivery can swap a
+current slot's owner with a queue record's owner. A parked reference names that
 same object; its lists, nullable values, enabled-only byte and retained box
 owners survive nested selections. Pop releases the child's retained owners
 and clears every represented list before restoring the parent. Push itself
@@ -146,20 +149,21 @@ reference, so an owner deleter cannot alter a partially cleared/rotated buffer.
 
 Cleanup `80304C38 -> 803040C0` releases registrations, cached messages and the
 shared buffer as well as original deferred-message/buffer-stack storage.
-Native `reset()` clears all five buffers, drops all represented state and invalidates outstanding
+Native `reset()` releases buffer and deferred-record owners, drops represented state and invalidates outstanding
 handles. It is not a cache-only invalidation API. Reset inside an executing
 callback rejects. Construction describes a fresh native context with lazy
 selection preparation, not complete original system/manager startup.
 
-Timed-message updating (`80304C58`) remains a separate, unimplemented path.
-The ordinary API does not silently emulate it. The original auxiliary buffer string
+Timed-message updating (`80304C58`) requires an explicit deferred update; ordinary
+send does not advance it. The original auxiliary buffer string
 at +0C is outside this prepared ordinary-path representation.
 
 Explicit native bounds are 65,536 registration rows, 8 MiB copied registration
 text, 64 cache records, 256 live handles, 64 nested resume calls, 32,768 typed
 values and 8 MiB storage per buffer. Strings allow 65,535 bytes and reject
 embedded NULs. Those host bounds are not claimed original engine limits;
-the five-buffer pool and four safe nested levels follow original preparation.
+the five initial stack buffers and four safe nested levels follow original preparation.
+The deferred pool initially has 32 records and may grow to a checked 65,536.
 
 ## Validation
 
@@ -171,7 +175,8 @@ stack tests also cover all typed parent values, stable object identity, nested
 LIFO rotation, nullable/retained owners, mutation through parked references,
 child release, live nested selection, suspended and faulted sends, move/reset,
 overflow/underflow and release-time reentry. The final Release messenger test
-executable passes 161 checks.
+executable passes 166 checks. The deferred kernel and runtime suites add 85
+and 151 checks; see [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md).
 
 An independent local probe executes original registration, selection, sender
 and buffer-reset instructions: 84 scenarios, 2,722 operations, 2,389,520 guest

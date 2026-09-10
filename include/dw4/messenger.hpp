@@ -29,6 +29,12 @@ using MessengerObject = GameDataObject;
 // Their owners must survive registration, cached rows and delivery.
 class MessengerBuffer {
 public:
+    MessengerBuffer()=default;
+    ~MessengerBuffer() { clearing_=true; }
+    MessengerBuffer(const MessengerBuffer&)=default;
+    MessengerBuffer(MessengerBuffer&&)=delete;
+    MessengerBuffer& operator=(const MessengerBuffer&)=delete;
+    MessengerBuffer& operator=(MessengerBuffer&&)=delete;
     std::uint8_t enabled_only() const noexcept { return enabled_only_; }
     void set_enabled_only(std::uint8_t value);
     void clear();
@@ -60,6 +66,9 @@ private:
     friend class NativeMessenger;
     std::uint8_t enabled_only_{};
     bool clearing_{};
+    // A retained mutable reference cannot bypass a deferred invocation's pause.
+    // Detached packet owners outlive this non-owning context guard after reset.
+    std::weak_ptr<const bool> suspended_;
     std::size_t entries_{}, bytes_{};
     std::vector<std::uint8_t> booleans_;
     std::vector<std::int32_t> integers_;
@@ -139,6 +148,32 @@ private:
     explicit MessengerDispatch(std::unique_ptr<Impl> impl);
 };
 
+// Includes inactive reusable records in physical queue order. Packet owners are
+// live, read-only observations, not copies of their current argument lists.
+struct MessengerDeferredRecord {
+    bool active{};
+    std::uint64_t deadline{};
+    MessengerMessage message;
+    std::shared_ptr<const MessengerBuffer> arguments;
+};
+// One original manager-update invocation with a retained native service pause.
+// Its initial clock/count survive retries. Abandoning an unfinished invocation
+// does not replay delivery; the context retains it until reset.
+class MessengerDeferredUpdate {
+public:
+    MessengerDeferredUpdate(MessengerDeferredUpdate&&) noexcept;
+    MessengerDeferredUpdate& operator=(MessengerDeferredUpdate&&) noexcept;
+    ~MessengerDeferredUpdate();
+    std::uint64_t id() const noexcept;
+    std::size_t messages_completed() const noexcept;
+    bool completed() const noexcept;
+private:
+    friend class NativeMessenger;
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
+    explicit MessengerDeferredUpdate(std::shared_ptr<Impl> impl);
+};
+
 class NativeMessenger {
 public:
     // Fresh native context with lazy original selection-buffer preparation.
@@ -154,6 +189,7 @@ public:
     void select(std::string category,std::optional<std::string> name,std::int32_t index);
     MessengerBuffer& buffer();
     const MessengerBuffer& buffer() const;
+    std::shared_ptr<const MessengerBuffer> buffer_owner() const;
     // Explicit original buffer-object rotation. Push preserves the current
     // object's identity and installs a spare without clearing it. Pop clears
     // the child, restores its parent and leaves selection/cache state alone.
@@ -169,18 +205,33 @@ public:
     MessengerDispatch begin_send_to(std::string category,std::optional<std::string> name,
         std::int32_t index,std::string command);
     MessengerResult resume(MessengerDispatch& dispatch,const MessengerServices& services);
+    // Preparation clears CURRENT and writes the inactive tail's keys without
+    // selecting a cache record. Commit reloads the live tail/current packet,
+    // swaps packet owners and uses (time + delay * 16666666) modulo 2^64.
+    void prepare_deferred(std::string category,std::optional<std::string> name,std::int32_t index);
+    void schedule_deferred(std::string command,std::uint64_t delay,std::uint64_t context_time);
+    void defer_to(std::string category,std::optional<std::string> name,std::int32_t index,
+        std::string command,std::uint64_t delay,std::uint64_t context_time);
+    void set_deferred_pause(std::uint32_t raw_value,std::uint64_t context_time);
+    std::uint64_t deferred_pause_anchor() const noexcept;
+    std::vector<MessengerDeferredRecord> deferred_snapshot() const;
+    MessengerDeferredUpdate begin_deferred_update(std::uint64_t context_time);
+    MessengerResult resume(MessengerDeferredUpdate& update,const MessengerServices& services);
     // Original cleanup/reprepare boundary: discard registrations, cached rows
     // and all five buffers. Invalidates outstanding handles. Forbidden in a callback.
     void reset();
 private:
     friend struct MessengerDispatch::Impl;
+    friend struct MessengerDeferredUpdate::Impl;
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };
 // Host bounds: 65,536 registration rows; 8 MiB registration text; 64 cache
 // records; 256 live handles; 64 nested resume calls; 32,768 shared typed values
 // and 8 MiB storage per buffer; 65,535 bytes/string. Embedded NULs reject.
-// Original preparation owns five stable buffers, allowing four nested pushes.
+// Original preparation owns five stack buffers and 32 reusable deferred packet
+// records. Deferred preparation can grow to the explicit host bound of 65,536.
+// Signed deadline order and equal-time FIFO are preserved. Recursive updates
+// and insertion before a currently delivered head reject as unsafe host cases.
 // No source-file filtering, deduplication or automatic nested-buffer restoration.
-// Deferred messages remain a separate service.
 } // namespace dw4

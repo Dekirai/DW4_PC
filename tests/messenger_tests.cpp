@@ -413,15 +413,18 @@ void explicit_buffer_stack() {
             "Nested pop lost a parent list");
     }
     std::array<std::weak_ptr<const dw4::CollisionBox>,5> retained;
+    std::array<std::weak_ptr<const dw4::MessengerBuffer>,5> released_packets;
     for(std::size_t i=0;i<retained.size();++i) {
         if(i) moved.push_buffer();
+        released_packets[i]=moved.buffer_owner();
         auto owned=std::make_shared<const dw4::CollisionBox>(); retained[i]=owned; moved.buffer().add_box(std::move(owned));
     }
     moved.reset();
     for(const auto& owner:retained) check(owner.expired(),"Reset retained an active or parked geometric object");
+    for(const auto& owner:released_packets) check(owner.expired(),"Reset retained an original stack packet owner");
     check(moved.buffer_depth()==0,"Reset retained explicit stack depth");
     rejects([&]{moved.pop_buffer();}); moved.select("NEW",{},0);
-    check(&moved.buffer()==&parent && empty(parent),"Reset did not reprepare the original current buffer");
+    check(empty(moved.buffer()),"Reset did not prepare a fresh empty current buffer");
 }
 void stacked_delivery_continuation() {
     Fixture f; f.add(a); f.add(b); f.add(c,{},-1,"INNER");

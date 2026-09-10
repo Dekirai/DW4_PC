@@ -2,6 +2,17 @@
 
 ## Implemented boundary
 
+Version 0.32 adds original deferred packet ownership and explicit manager-update
+continuations to `messenger` and `action_event_runtime`. The queue retains live
+head ordering, integer deadlines, pause shifts and the original initial pool
+budget across service suspension. GAMERAM owns RECALCPLAYER through the existing
+stat runtime. `model_player_start` connects a supplied post-GETPLAYER caller state
+to HP binding, exact modifier resets, GAMESTART, BASE_ISUSE, a delayed PLAYERARMS
+request and RECALCPLAYER. It stops before later UI and constructor services.
+Actual weapon attachment, full player creation and original outer scheduling
+remain required. See [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md) and
+[MODEL_PLAYER_START.md](MODEL_PLAYER_START.md).
+
 Version 0.31 adds `game_database`, `game_items`, `game_stats`, `game_name` and
 `game_start`. GAMERAM retains the selected GAMESTART route and executes its
 original species/base/equipment/stat/common/name sequence. Shared shinka and

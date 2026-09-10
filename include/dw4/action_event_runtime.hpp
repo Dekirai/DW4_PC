@@ -144,6 +144,10 @@ public:
     // Unowned registered RAMs require explicit real managers and activity.
     void set_external_services(MessengerServices services);
     MessengerResult resume(MessengerDispatch& dispatch);
+    // Explicit original context time and one manager invocation. This does not
+    // choose the original outer manager order or advance any gameplay clock.
+    MessengerDeferredUpdate begin_deferred_update(std::uint64_t context_time);
+    MessengerResult resume(MessengerDeferredUpdate& update);
     // One retained send per bound ACTION RAM. Retrying a different event while
     // delivery is suspended rejects before starting another send.
     MessengerResult broadcast(ControllerObjectId model,const ActionBroadcast& event);

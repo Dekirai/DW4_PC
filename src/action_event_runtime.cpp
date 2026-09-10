@@ -762,6 +762,31 @@ MessengerResult ActionEventRuntime::resume(MessengerDispatch& dispatch) {
     }
     return result;
 }
+MessengerDeferredUpdate ActionEventRuntime::begin_deferred_update(std::uint64_t context_time) {
+    impl_->require_top_level_idle();
+    auto update=impl_->messenger.begin_deferred_update(context_time);
+    if(!update.completed()) impl_->suspended_send=update.id();
+    return update;
+}
+MessengerResult ActionEventRuntime::resume(MessengerDeferredUpdate& update) {
+    impl_->require_wait_idle();
+    if(impl_->delivery_depth || (impl_->suspended_send && *impl_->suspended_send!=update.id()))
+        fail("Only the owning top-level deferred manager update can be resumed.");
+    struct Depth {
+        std::size_t& value;
+        explicit Depth(std::size_t& depth):value(depth) { ++value; }
+        ~Depth() { --value; }
+    } depth(impl_->delivery_depth);
+    const auto result=impl_->messenger.resume(update,impl_->services());
+    if(result.stop==MessengerStop::completed) {
+        impl_->suspended_send.reset(); impl_->suspended_send_wait.reset();
+        impl_->suspended_send_sequence.reset(); impl_->suspended_send_subcommands.reset();
+    } else {
+        impl_->suspended_send=update.id(); impl_->suspended_send_wait.reset();
+        impl_->suspended_send_sequence.reset(); impl_->suspended_send_subcommands.reset();
+    }
+    return result;
+}
 MessengerResult ActionEventRuntime::broadcast(ControllerObjectId id,const ActionBroadcast& event) {
     impl_->require_wait_idle();
     auto& owner=impl_->model(id);

@@ -1,6 +1,7 @@
 #include "dw4/game_ram.hpp"
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/database.hpp"
+#include "dw4/game_stats.hpp"
 
 #include <array>
 #include <bit>
@@ -53,6 +54,7 @@ struct GameRamRuntime::Impl {
         std::int32_t ceiling{},technique_row{},skill_index{};
         std::optional<MessengerDispatch> query;
         std::optional<GameStartRuntime> start;
+        std::optional<GameStatsRuntime> stats;
         std::string diagnostic;
     };
     GameDataState data;
@@ -95,6 +97,7 @@ struct GameRamRuntime::Impl {
 
     MessengerCallResult advance(Pending& state,NativeMessenger& messenger,ActionEventRuntime& runtime) {
         if(state.start)return state.start->resume(data,databases,messenger,runtime,names);
+        if(state.stats)return state.stats->resume(data,databases,messenger,runtime);
         if(state.phase==Pending::Phase::pc_tech) {
             if(!state.query) {
                 messenger.select("DATABASE","pcTech",0);
@@ -159,6 +162,13 @@ struct GameRamRuntime::Impl {
                 if(objects.size()==1)required.start.emplace(source,model,GameStartName{objects[0]});
                 else if(strings.size()==2)required.start.emplace(source,model,GameStartName{strings[1]});
                 else return {true,1,{}};
+            } else if(command=="RECALCPLAYER") {
+                // 803718EC reads source before the optional raw Boolean byte.
+                // Retain both before stat queries can replace the shared packet.
+                const auto source=integer(messenger,0);
+                const auto& booleans=messenger.buffer().booleans();
+                const auto modifiers=booleans.empty()?std::uint8_t{1}:booleans.front();
+                required.stats.emplace(source,modifiers);
             } else if(command=="FIGHTCALC") {
                 const auto& strings=messenger.buffer().strings();
                 if(strings.empty() || !strings.front()) fail("Original GAMERAM FIGHTCALC requires its subcommand string.");

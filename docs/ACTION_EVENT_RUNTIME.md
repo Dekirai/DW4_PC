@@ -1,5 +1,13 @@
 # Prepared player ownership and ACTION events
 
+Version 0.32 adds explicit deferred manager updates through the same registered
+providers and top-level continuation ownership. `begin_deferred_update(time)`
+reserves an invocation immediately; `resume(update)` retains its initial clock,
+pool budget and nested send until completion. Missing providers can be installed
+without replaying earlier recipients. This does not supply the original outer
+manager order or complete PLAYERARMS effects. See
+[DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md).
+
 Version 0.26 connects explicitly prepared MODELCTRL work, live ACTION queries,
 retained waits, loaded Se/ActionStarter tables and owned sound/effect/HITBOX subcommands. It does not
 finish original player construction or startup. The walking preview still uses

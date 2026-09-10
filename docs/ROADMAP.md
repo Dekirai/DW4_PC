@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.32 connects the prepared post-GETPLAYER MODELCTRL prefix through exact
+modifier-array resets, GAMESTART, BASE_ISUSE, deferred PLAYERARMS GENERATE and
+RECALCPLAYER. The messenger owns the original deferred queue and explicit manager
+update continuation. Actual weapon attachment, subsequent NUMBERCTRL/METERCTRL
+calls, the rest of player construction and original outer scheduling remain
+required before gameplay. See [MODEL_PLAYER_START.md](MODEL_PLAYER_START.md) and
+[DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md).
+
 Version 0.31 connects original GAMESTART selection, base-array copying, initial
 weapons, full represented status/technique calculation and both name routes.
 All four Agumon data rows complete this command with explicitly prepared original

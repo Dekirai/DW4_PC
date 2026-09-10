@@ -1,4 +1,46 @@
-# Native selected-player initialization validation
+# Native deferred player-start validation
+
+Version 0.32.0 was validated locally on 2026-09-10 with MSVC 19.51. Original
+deferred message packets now retain their owners, signed deadlines, pause shifts
+and explicit update continuation. The prepared post-GETPLAYER caller connects
+HP binding, exact modifier resets, GAMESTART, BASE_ISUSE, a deferred PLAYERARMS
+request and immediate RECALCPLAYER. Four original Agumon slots reach the explicit
+later-UI boundary. Actual weapon construction and complete gameplay remain open.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 71/71 CTest suites passed; local MSVC build without compiler warnings |
+| Deferred kernel | 85 synthetic checks: packet identity, typed payloads, repeated preparation, signed/wrapped time, FIFO, growth, callback budget, pause, suspended writes, faults and cleanup/destructor reentry |
+| Deferred runtime | 151 synthetic checks: four actual provider identities/indices, missing third provider, nested retained sends, same-ID foreign handles, immediate ownership reservation, frozen clock/count and no replay |
+| Original deferred instructions | 61 cases / 1,388 operations / 2,110 exact state and callback rows / 729,885 original instructions; zero differences against the final core |
+| Additional instruction evidence | 521 reference-only preparation/pause cases / 50,410 instructions, including all initialized and active byte values; 12 native borrowed-packet guard checks |
+| Prepared MODELCTRL caller | 95 synthetic / 127 original-inclusive checks; old rows, exact reset prefixes, live routing/name/clock reads, four original player slots and four queued common05 requests |
+| RECALCPLAYER | 259 synthetic / 283 original-inclusive checks; all four RAMs, missing/default/raw modifier bytes, nested row reset, retained stat prefixes, final packet and fault handling |
+| Original game/data regression | Game data 8,269; GAMERAM 421; skill selection 499; database 275; database runtime 182; GAMESTART 217; items 157; stats 143; name conversion 461 |
+| Original action/script regression | ACTION 6,034,137 checks; target scripts 104; registry 51; HIT bodies 109; collision 80; player events 108; waits 107 |
+| Refreshed instruction regressions | 39 magic gates / 2,952 instructions; 43 wrappers plus 4 checked prefixes / 225,904 instructions; 101 stack cases / 7,525 rows / 2,232,011 instructions; 84 ordinary-delivery cases / 2,028 rows / 2,389,520 instructions; zero differences |
+| Python and packaged app | 6 verifier tests; 16 app, 10 walking and 9 boot argument checks; actor and walking previews each rendered 120 frames and their captures were visually inspected |
+
+The deferred comparison executes bounded original prepare, schedule, update,
+pause, registration, selection, send and buffer-stack instructions. Allocation,
+typed-list/string operations, controller hooks and initial pool preparation are
+explicit services. It compares all eight represented typed lists, packet identity,
+retained object counts, active record order, deadlines and callback traces. It
+does not execute the complete original constructor or outer frame loop.
+
+The four-player caller integration consumes actual GETPLAYER rows and original
+database exports, DOL names and a prepared font converter. The queued common05
+requests use distinct original PLAYERARMS RAM indices. At the exact deadline,
+delivery stops at the real missing weapon-manager service. No weapon attachment,
+full UI/constructor completion or connected multiplayer success is fabricated.
+This caller integration is separate from an independent instruction execution
+of the full MODELCTRL constructor, which has not been performed.
+
+Original bytes, probes, logs and captures remain ignored under `work/`. See
+[DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md),
+[MODEL_PLAYER_START.md](MODEL_PLAYER_START.md) and [GAME_RAM.md](GAME_RAM.md).
+
+## Previous version 0.31 validation
 
 Version 0.31.0 was validated locally on 2026-09-10 with MSVC 19.51. Native
 GAMESTART now connects the original species/base/equipment/stat/common/name

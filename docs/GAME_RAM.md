@@ -3,8 +3,8 @@
 `GameRamRuntime` constructs the recovered initial named game-data graph and
 registers one generated `beNDMWGameRam` endpoint on an existing
 `ActionEventRuntime`. It implements existing player-row queries, player-row
-reset, the verified ordinary `P2PKOUKAMAGIC` return paths and the selected-skill
-ceiling gate in `P2ESKILLUP`. It also executes the represented original GAMESTART
+reset, retained `RECALCPLAYER`, the verified ordinary `P2PKOUKAMAGIC` return paths
+and the selected-skill ceiling gate in `P2ESKILLUP`. It also executes the represented original GAMESTART
 selection/equipment/stat/name sequence. Full player construction, other item
 providers, healing, skill growth and original startup remain required.
 
@@ -40,6 +40,7 @@ at virtual `+8C` returns zero without effects.
 | `GETPLAYER1` through `GETPLAYER4` | no required input | append fixed row 0 through 3 |
 | `GAMEDATAINIT` | signed integer[0], checked 0 through 3 | replace the selected player row using the recovered generator |
 | `GAMESTART` | RAM, model string, exactly one object or exactly two strings | initialize selected player data and publish its retained name route; see [GAME_START.md](GAME_START.md) |
+| `RECALCPLAYER` | signed integer[0], checked 0 through 3; optional raw Boolean[0], default 1 | recalculate that player through the existing stat routine; see [GAME_STATS.md](GAME_STATS.md) |
 | `FIGHTCALC` / `P2PKOUKAMAGIC` | target RAM, source RAM, kind | the bounded paths below |
 | `FIGHTCALC` / `P2ESKILLUP` | source RAM, kind, first flag, second flag | resolve the actual skill before the original no-growth comparison |
 
@@ -55,6 +56,34 @@ MODELCTRL holding an old HP/MHP wrapper still holds it after a reset; only an
 actual later rebind changes that reference. The separate `bind_model_game_data`
 helper consumes the captured completed `GETPLAYER` row and implements the
 recovered HP/MHP preparation prefix.
+
+## Retained player recalculation
+
+`RECALCPLAYER` reads signed integer[0] first, then captures Boolean[0] if that
+list is nonempty. An empty Boolean list supplies byte 1. The byte is not
+normalized: 1, 2, 128 and 255 all enable the original modifier branches, while
+0 still performs base health, attributes, resistances, WAZALIST and NEXTEXP
+calculation. Only the modifiers and enabled tail are skipped for zero.
+Additional arguments in every typed list are ignored by this dispatcher case;
+there is no exact-cardinality branch that can turn it into a successful no-op.
+
+The manager retains the source, raw modifier byte and one `GameStatsRuntime`
+for the dispatch/recipient occurrence. It uses the manager's existing shinka
+and pcTech cache owners and actual weapon database services. Nested callbacks
+can change the live packet, reset another player row or pause after an earlier
+HP publication. Resuming continues that same stat invocation without reparsing
+the message, repeating completed effects or replacing its captured owners.
+The stat helper's own distinction between its retained outer row and later
+helper-entry row reads remains intact; see [GAME_STATS.md](GAME_STATS.md).
+
+This case does not select, clear, save, restore or append to the messenger
+buffer. Its final selection and payload are whatever completed nested stat
+services leave visible. It returns original handled value 1 only after the
+stat routine completes. Missing or invalid source input is a terminal checked
+error; unsupported item providers remain explicit service boundaries. An
+uncertain callback exception retains prior publications and faults the owner
+instead of replaying the command. The caller's separate deferred
+`PLAYERARMS/GENERATE` operation is not part of this immediate dispatch.
 
 ## Bounded magic dispatch
 
@@ -154,6 +183,12 @@ The reference is the supplied USA GameCube executable, SHA-1
 - `GETPLAYER` executes `8037181C..80371850`; its fixed variants start at
   `80371854`, `80371878`, `8037189C` and `803718C0`. Object append is
   `80306E2C`. `GAMEDATAINIT` at `80371A14..80371A2C` calls the row generator.
+- `RECALCPLAYER` name entry `804E4014` has explicit enum value 11; jump-table
+  slot `804EB210` selects `803718E4`. It reads integer zero at `803718EC`,
+  initializes the default byte to 1, reads the Boolean count at `80371900`
+  through `8030690C`, and conditionally reads the raw byte at `80371914`
+  through `80306A1C`. The direct stat call is `80371928` to `8036FDE8`;
+  `8037192C` returns handled 1 after that call.
 - `FIGHTCALC` enum value 18 selects `803729D4`; `P2PKOUKAMAGIC` value 20
   selects `80376EE4`. The target list/row lookup at `80376F14..80376F28`
   precedes the unequal branch at `80376F30`. Default completion at
@@ -213,6 +248,17 @@ resets the live player row. Its original-data mode passes 32 additional checks
 all four player rows. The prepared skill values and Waza items establish helper
 inputs, not completed selected-player creation. The unchanged original Hit
 scenarios above still stop at the empty generated WAZALIST boundary.
+
+The separate RECALCPLAYER suite passes 259 synthetic checks and 24 additional
+checks using the supplied original databases (283 total), using the final
+v0.32 Release executable linked against the same core as the 71-suite CTest
+run. They cover all four RAMs, absent and raw Boolean
+values, unchanged extra arguments, cache reuse, retained row/field/list
+identities, a real nested GAMEDATAINIT during a pause after HP publication,
+completed-call retries and terminal faults. The original-data cases first run
+GAMESTART for each Agumon row and then recalculate changed level/skill values,
+preserving HP and equipment owners. The original stat instruction comparisons
+and their separate scope are recorded in [GAME_STATS.md](GAME_STATS.md).
 
 See [MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md) for Lua wrapper
 packet/continuation semantics and [MESSENGER.md](MESSENGER.md) for message

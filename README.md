@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.31 connects original selected-player initialization: species, base
-values, weapons, stats, techniques and names through native GAMESTART delivery.
+Version 0.32 connects the prepared MODELCTRL player-start prefix to original
+GAMESTART, deferred weapon-generation requests and RECALCPLAYER stat updates.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
@@ -19,6 +19,14 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Retain original deferred message packets, signed deadlines, pause shifts and
+  callback order through missing-service interruptions. The prepared player
+  caller resets its modifier prefixes, starts unused data, queues PLAYERARMS
+  and recalculates stats before an explicit later-UI boundary. Complete player
+  construction, weapon attachment and the original outer loop remain required.
+  See [DEFERRED_MESSENGER.md](docs/DEFERRED_MESSENGER.md) and
+  [MODEL_PLAYER_START.md](docs/MODEL_PLAYER_START.md).
 
 - Initialize selected player data through the original ordered GAMESTART path,
   retaining database calls and shared objects across interruptions. Four Agumon

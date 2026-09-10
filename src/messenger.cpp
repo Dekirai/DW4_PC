@@ -22,6 +22,8 @@ void finite(float value) {
 
 void MessengerBuffer::check_mutation() const {
     if(clearing_) throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
+    if(const auto suspended=suspended_.lock(); suspended && *suspended)
+        throw MessengerError("The suspended deferred update owns this messenger packet.");
 }
 void MessengerBuffer::set_enabled_only(std::uint8_t value) { check_mutation(); enabled_only_=value; }
 void MessengerBuffer::clear() {
@@ -111,6 +113,27 @@ void MessengerBuffer::add_string(std::optional<std::string> value) {
     check_append(size); strings_.push_back(std::move(value)); ++entries_; bytes_+=size;
 }
 
+namespace {
+struct DeferredRecord {
+    bool active{}, keys_prepared{};
+    std::uint64_t deadline{};
+    MessengerMessage message;
+    std::shared_ptr<MessengerBuffer> arguments=std::make_shared<MessengerBuffer>();
+};
+bool deadline_before(std::uint64_t left,std::uint64_t right) {
+    return std::bit_cast<std::int64_t>(left)<std::bit_cast<std::int64_t>(right);
+}
+}
+struct MessengerDeferredUpdate::Impl {
+    std::weak_ptr<NativeMessenger::Impl> owner;
+    std::uint64_t generation{}, id{}, time{};
+    std::size_t budget{}, iterations{}, messages{}, recipients{};
+    std::shared_ptr<DeferredRecord> record;
+    std::optional<MessengerDispatch> dispatch;
+    bool executing{}, done{}, faulted{}, paused{};
+    std::string diagnostic;
+};
+
 struct NativeMessenger::Impl {
     struct Row { ControllerObjectId recipient; std::int32_t index{}; };
     struct Registration { Row row; std::string category; std::optional<std::string> name; };
@@ -119,17 +142,44 @@ struct NativeMessenger::Impl {
     std::size_t registration_text{}, handles{}, depth{};
     std::array<Cache,64> cache;
     std::array<std::size_t,64> order;
-    std::array<MessengerBuffer,5> buffers;
+    std::array<std::shared_ptr<MessengerBuffer>,5> buffers;
+    std::shared_ptr<bool> packets_suspended;
+    std::vector<std::shared_ptr<DeferredRecord>> deferred;
+    std::shared_ptr<MessengerDeferredUpdate::Impl> update;
+    std::uint64_t pause_anchor{};
     std::array<std::size_t,4> buffer_pool{1,2,3,4};
     std::size_t current_buffer{}, buffer_depth{};
     bool changing_buffer{};
     std::uint64_t generation{}, next_dispatch=1;
     bool prepared{};
     Impl() { std::iota(order.begin(),order.end(),std::size_t{}); }
-    MessengerBuffer& buffer() { return buffers[current_buffer]; }
+    MessengerBuffer& buffer() { return *buffers[current_buffer]; }
+    void prepare() {
+        if(prepared) return;
+        auto suspension=std::make_shared<bool>(false);
+        std::array<std::shared_ptr<MessengerBuffer>,5> packets;
+        for(auto& packet:packets) {
+            packet=std::make_shared<MessengerBuffer>(); packet->suspended_=suspension;
+        }
+        std::vector<std::shared_ptr<DeferredRecord>> records;
+        records.reserve(32);
+        for(std::size_t index=0;index<32;++index) {
+            auto record=std::make_shared<DeferredRecord>(); record->arguments->suspended_=suspension;
+            records.push_back(std::move(record));
+        }
+        packets_suspended=std::move(suspension); buffers=std::move(packets); deferred=std::move(records); prepared=true;
+    }
     void check_buffer_change() const {
         if(changing_buffer) throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
-        for(const auto& buffer:buffers) buffer.check_mutation();
+        for(const auto& buffer:buffers) if(buffer && buffer->clearing_)
+            throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
+        for(const auto& record:deferred) if(record->arguments->clearing_)
+            throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
+    }
+    void check_deferred_mutation() const {
+        check_buffer_change();
+        if(update && !update->executing)
+            throw MessengerError("The unfinished deferred update owns the current messenger packet until resume or reset.");
     }
     struct BufferChange {
         Impl& state;
@@ -155,6 +205,13 @@ MessengerDispatch& MessengerDispatch::operator=(MessengerDispatch&&) noexcept=de
 MessengerDispatch::~MessengerDispatch()=default;
 std::uint64_t MessengerDispatch::id() const noexcept { return impl_ ? impl_->id : 0; }
 bool MessengerDispatch::completed() const noexcept { return impl_ && impl_->phase==Impl::Phase::completed; }
+MessengerDeferredUpdate::MessengerDeferredUpdate(std::shared_ptr<Impl> impl):impl_(std::move(impl)) {}
+MessengerDeferredUpdate::MessengerDeferredUpdate(MessengerDeferredUpdate&&) noexcept=default;
+MessengerDeferredUpdate& MessengerDeferredUpdate::operator=(MessengerDeferredUpdate&&) noexcept=default;
+MessengerDeferredUpdate::~MessengerDeferredUpdate()=default;
+std::uint64_t MessengerDeferredUpdate::id() const noexcept { return impl_ ? impl_->id : 0; }
+std::size_t MessengerDeferredUpdate::messages_completed() const noexcept { return impl_ ? impl_->messages : 0; }
+bool MessengerDeferredUpdate::completed() const noexcept { return impl_ && impl_->done; }
 NativeMessenger::NativeMessenger():impl_(std::make_shared<Impl>()) {}
 NativeMessenger::NativeMessenger(NativeMessenger&&) noexcept=default;
 NativeMessenger& NativeMessenger::operator=(NativeMessenger&&) noexcept=default;
@@ -196,11 +253,11 @@ void NativeMessenger::register_recipients(std::span<const MessengerRegistration>
 }
 void NativeMessenger::select(std::string category,std::optional<std::string> name,std::int32_t index) {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
-    impl_->check_buffer_change();
+    impl_->check_deferred_mutation();
     text_check(std::string_view(category)); text_check(name);
     auto& state=*impl_;
+    state.prepare();
     { Impl::BufferChange guard(state); state.buffer().clear(); }
-    state.prepared=true;
     std::size_t position=0;
     for(;position<state.order.size();++position) {
         const auto& record=state.cache[state.order[position]];
@@ -226,13 +283,17 @@ void NativeMessenger::select(std::string category,std::optional<std::string> nam
 }
 MessengerBuffer& NativeMessenger::buffer() {
     if(!impl_ || !impl_->prepared) throw MessengerError("Messenger selection buffer has not been prepared.");
-    impl_->check_buffer_change();
+    impl_->check_deferred_mutation();
     return impl_->buffer();
 }
 const MessengerBuffer& NativeMessenger::buffer() const {
     if(!impl_ || !impl_->prepared) throw MessengerError("Messenger selection buffer has not been prepared.");
     impl_->check_buffer_change();
     return impl_->buffer();
+}
+std::shared_ptr<const MessengerBuffer> NativeMessenger::buffer_owner() const {
+    buffer();
+    return impl_->buffers[impl_->current_buffer];
 }
 void NativeMessenger::push_buffer() {
     buffer();
@@ -270,6 +331,7 @@ bool NativeMessenger::has_category(std::string_view category) const noexcept {
 std::size_t NativeMessenger::registration_text_bytes() const noexcept { return impl_ ? impl_->registration_text : 0; }
 MessengerDispatch NativeMessenger::begin_send(std::string command) {
     selected(); text_check(std::string_view(command));
+    impl_->check_deferred_mutation();
     auto& state=*impl_;
     if(state.handles>=256 || state.next_dispatch==0)
         throw MessengerError("Messenger dispatch handles exceed their host bound.");
@@ -292,7 +354,7 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
     if(!dispatch.impl_ || !impl_ || dispatch.impl_->owner.lock()!=impl_)
         throw MessengerError("Messenger dispatch belongs to another or expired context.");
     auto& frame=*dispatch.impl_;
-    impl_->check_buffer_change();
+    impl_->check_deferred_mutation();
     auto result=[&](MessengerStop stop,std::string diagnostic={}) {
         return MessengerResult{stop,frame.completed_count,frame.recipient,std::move(diagnostic)};
     };
@@ -390,16 +452,165 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
     }
     return result(MessengerStop::faulted,frame.diagnostic);
 }
+void NativeMessenger::prepare_deferred(std::string category,std::optional<std::string> name,std::int32_t index) {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_deferred_mutation();
+    text_check(std::string_view(category)); text_check(name);
+    auto& state=*impl_;
+    state.prepare();
+    { Impl::BufferChange guard(state); state.buffer().clear(); }
+    if(state.deferred.back()->active) {
+        if(state.deferred.size()>=65536)
+            throw MessengerError("Deferred messenger records exceed their 65,536-record host bound.");
+        auto record=std::make_shared<DeferredRecord>(); record->arguments->suspended_=state.packets_suspended;
+        state.deferred.push_back(std::move(record));
+    }
+    auto& tail=*state.deferred.back();
+    tail.message.category=std::move(category); tail.message.name=std::move(name); tail.message.index=index;
+    tail.keys_prepared=true;
+}
+void NativeMessenger::schedule_deferred(std::string command,std::uint64_t delay,std::uint64_t context_time) {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_deferred_mutation(); text_check(std::string_view(command));
+    auto& state=*impl_;
+    if(!state.prepared || state.deferred.empty() || state.deferred.back()->active || !state.deferred.back()->keys_prepared)
+        throw MessengerError("Deferred commit requires a prepared inactive tail record.");
+    const auto deadline=context_time+delay*std::uint64_t{16666666};
+    if(state.update && state.update->record && deadline_before(deadline,state.update->record->deadline))
+        throw MessengerError("Deferred insertion before the currently delivered live head is outside the safe owned profile.");
+    auto tail=state.deferred.back();
+    tail->deadline=deadline;
+    std::swap(state.buffers[state.current_buffer],tail->arguments);
+    tail->message.command=std::move(command); tail->active=true; tail->keys_prepared=false;
+    state.deferred.pop_back();
+    const auto position=std::find_if(state.deferred.begin(),state.deferred.end(),[&](const auto& row) {
+        return !row->active || deadline_before(deadline,row->deadline);
+    });
+    // Removal leaves capacity for this insertion; shared owner moves cannot throw.
+    state.deferred.insert(position,std::move(tail));
+}
+void NativeMessenger::defer_to(std::string category,std::optional<std::string> name,std::int32_t index,
+    std::string command,std::uint64_t delay,std::uint64_t context_time) {
+    text_check(std::string_view(command));
+    prepare_deferred(std::move(category),std::move(name),index);
+    schedule_deferred(std::move(command),delay,context_time);
+}
+void NativeMessenger::set_deferred_pause(std::uint32_t raw_value,std::uint64_t context_time) {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_deferred_mutation();
+    impl_->pause_anchor=(raw_value&255u)!=0 ? context_time : 0;
+}
+std::uint64_t NativeMessenger::deferred_pause_anchor() const noexcept { return impl_ ? impl_->pause_anchor : 0; }
+std::vector<MessengerDeferredRecord> NativeMessenger::deferred_snapshot() const {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_buffer_change();
+    std::vector<MessengerDeferredRecord> result;
+    result.reserve(impl_->deferred.size());
+    for(const auto& record:impl_->deferred)
+        result.push_back({record->active,record->deadline,record->message,record->arguments});
+    return result;
+}
+MessengerDeferredUpdate NativeMessenger::begin_deferred_update(std::uint64_t context_time) {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    auto& state=*impl_;
+    state.check_buffer_change();
+    if(state.update || state.depth)
+        throw MessengerError("A deferred messenger update cannot overlap or recursively enter another delivery.");
+    if(!state.next_dispatch) throw MessengerError("Messenger update identifiers exceed their host bound.");
+    auto frame=std::make_shared<MessengerDeferredUpdate::Impl>();
+    frame->owner=impl_; frame->generation=state.generation; frame->id=state.next_dispatch++;
+    frame->time=context_time; frame->budget=state.deferred.size(); frame->paused=state.pause_anchor!=0;
+    frame->done=!state.prepared || state.deferred.empty();
+    if(!frame->done) { state.update=frame; *state.packets_suspended=true; }
+    return MessengerDeferredUpdate(std::move(frame));
+}
+MessengerResult NativeMessenger::resume(MessengerDeferredUpdate& update,const MessengerServices& services) {
+    if(!update.impl_ || !impl_ || update.impl_->owner.lock()!=impl_)
+        throw MessengerError("Deferred update belongs to another or expired messenger context.");
+    auto frame=update.impl_;
+    auto result=[&](MessengerStop stop,std::string diagnostic={}) {
+        return MessengerResult{stop,frame->recipients,{},std::move(diagnostic)};
+    };
+    impl_->check_buffer_change();
+    if(frame->generation!=impl_->generation) {
+        frame->faulted=true; frame->done=false; frame->diagnostic="Messenger reset invalidated this deferred update.";
+    }
+    if(frame->faulted) return result(MessengerStop::faulted,frame->diagnostic);
+    if(frame->done) return result(MessengerStop::completed);
+    if(frame->executing || impl_->depth || impl_->update!=frame)
+        throw MessengerError("Deferred update requires its exclusive original manager invocation.");
+    auto state=impl_;
+    struct Guard {
+        bool& executing;
+        Impl& state;
+        Guard(bool& value,Impl& owner):executing(value),state(owner) { executing=true; *state.packets_suspended=false; }
+        ~Guard() { executing=false; *state.packets_suspended=state.update!=nullptr; }
+    } guard(frame->executing,*state);
+    try {
+        if(frame->paused) {
+            const auto delta=frame->time-state->pause_anchor;
+            for(auto& row:state->deferred) {
+                if(!row->active) break;
+                row->deadline+=delta;
+            }
+            state->pause_anchor=frame->time;
+        } else {
+            while(frame->iterations<frame->budget) {
+                if(!frame->record) {
+                    const auto& head=state->deferred.front();
+                    if(!head->active || deadline_before(frame->time,head->deadline)) break;
+                    frame->record=head;
+                    select(head->message.category,head->message.name,head->message.index);
+                    std::swap(state->buffers[state->current_buffer],head->arguments);
+                    if(!head->message.command) throw MessengerError("An active deferred record has no command.");
+                    frame->dispatch.emplace(begin_send(*head->message.command));
+                }
+                auto sent=resume(*frame->dispatch,services);
+                if(sent.stop!=MessengerStop::completed) {
+                    sent.recipients_completed+=frame->recipients;
+                    if(sent.stop==MessengerStop::faulted) {
+                        frame->faulted=true; frame->diagnostic=sent.diagnostic;
+                    }
+                    return sent;
+                }
+                frame->recipients+=sent.recipients_completed;
+                if(state->deferred.front()!=frame->record)
+                    throw MessengerError("Nested deferred mutation displaced the original retained live head.");
+                auto record=frame->record;
+                record->active=false; record->keys_prepared=false; record->deadline=0; record->message={};
+                { Impl::BufferChange clearing(*state); record->arguments->clear(); }
+                state->deferred.erase(state->deferred.begin());
+                state->deferred.push_back(std::move(record));
+                frame->dispatch.reset(); frame->record.reset(); ++frame->iterations; ++frame->messages;
+            }
+        }
+        { Impl::BufferChange clearing(*state); state->buffer().clear(); }
+        frame->done=true; state->update.reset();
+        return result(MessengerStop::completed);
+    } catch(const std::exception& error) {
+        frame->faulted=true; frame->diagnostic=error.what();
+    } catch(...) {
+        frame->faulted=true; frame->diagnostic="Deferred messenger service threw an unknown exception.";
+    }
+    return result(MessengerStop::faulted,frame->diagnostic);
+}
 void NativeMessenger::reset() {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
     impl_->check_buffer_change();
-    if(impl_->depth) throw MessengerError("Messenger cleanup during an active callback is outside the owned profile.");
+    if(impl_->depth || (impl_->update && impl_->update->executing))
+        throw MessengerError("Messenger cleanup during an active callback is outside the owned profile.");
+    Impl::BufferChange guard(*impl_);
+    if(impl_->packets_suspended) *impl_->packets_suspended=false;
+    // Release owners in the original cleanup order. A caller-retained packet
+    // survives with its contents; cleanup does not mutate a separately owned one.
+    impl_->buffers[impl_->current_buffer].reset();
     impl_->registrations.clear(); impl_->registration_text=0;
     for(auto& record:impl_->cache) { record.message={}; record.rows.clear(); record.valid=false; }
     std::iota(impl_->order.begin(),impl_->order.end(),std::size_t{});
-    Impl::BufferChange guard(*impl_);
-    for(auto& buffer:impl_->buffers) buffer.clear();
+    impl_->deferred.clear(); impl_->update.reset();
+    for(auto& buffer:impl_->buffers) buffer.reset();
+    impl_->packets_suspended.reset();
     impl_->current_buffer=impl_->buffer_depth=0; impl_->buffer_pool={1,2,3,4};
-    impl_->prepared=false; ++impl_->generation;
+    impl_->pause_anchor=0; impl_->prepared=false; ++impl_->generation;
 }
 } // namespace dw4
