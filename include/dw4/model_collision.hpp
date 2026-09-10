@@ -14,7 +14,7 @@
 namespace dw4 {
 struct ModelCollisionWork {
     // Represented live work+44 and work+0C reference presence. This does not
-    // invent HP values or initialize the original HP/record/script wrappers.
+    // invent HP values or initialize the original HP wrappers or script state.
     std::uint8_t control_enabled{};
     bool hp_reference_present{};
     std::optional<std::string_view> current_sequence;

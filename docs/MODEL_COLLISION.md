@@ -66,8 +66,9 @@ sole value -9 has the same effect: skip target Lua and heading.
 
 `ModelTargetHitRequest` preserves target identity, `hit` prefix, `Hit` event,
 kind, first body ordinal and source name/RAM/record. `hit_script` must own the
-complete original `8030B6EC` operation, including HP/max-HP/record wrappers,
-global context preparation, actual Lua execution and conditional HP publication.
+complete original `8030B6EC` operation, including HP/max-HP wrappers, the target's
+signed record number, global context preparation, actual Lua execution and
+conditional HP publication.
 It returns the live context `+30` byte on completion. Missing service or nullopt
 retains that operation; the service owns already completed internal effects.
 There is no default damage or fabricated successful Lua result.
