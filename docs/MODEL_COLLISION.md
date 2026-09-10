@@ -73,6 +73,11 @@ It returns the live context `+30` byte on completion. Missing service or nullopt
 retains that operation; the service owns already completed internal effects.
 There is no default damage or fabricated successful Lua result.
 
+Version 0.28 supplies this prepared context/embedded-script owner through
+`ModelScriptRuntime`, with shared HP work and resumable Lua calls. Native damage
+and status methods still require actual services. See
+[MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md).
+
 A nonzero completed direction byte forces Y heading toward the captured source
 position using `atan2(sourceX-targetX, sourceZ-targetZ)`. Translation differences
 use original single-operation boundaries. Force applies to the live post-Lua

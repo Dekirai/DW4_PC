@@ -3,6 +3,7 @@
 #include "dw4/action_event_tables.hpp"
 #include "dw4/messenger.hpp"
 #include "dw4/model_collision.hpp"
+#include "dw4/model_script_context.hpp"
 #include "dw4/player_runtime_binding.hpp"
 #include "dw4/pad.hpp"
 
@@ -69,6 +70,10 @@ public:
     // original PC CHKBULLET is verified to take that path.
     void prepare_collision_target(ControllerObjectId id,ModelHitBodyDefinition definition,bool hp_reference_present);
     const ModelCollisionRuntime& collision_target(ControllerObjectId id) const;
+    // Create this validated target's default ONE script work once, backed by
+    // its live matrix. The script runtime must retain the returned owner. HP
+    // wrappers start at original zero defaults, not invented player HP.
+    std::shared_ptr<ModelScriptWork> prepare_target_script_work(ControllerObjectId id);
     // Missing services can be supplied between retries of the same delivery.
     void set_collision_services(ModelCollisionServices services);
 

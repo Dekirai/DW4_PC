@@ -173,8 +173,12 @@ required outer manager instead of being acknowledged as completed.
 Prepared CHKBULLET targets now attach their exact HIT definitions to the bound
 RAM and add authored collision categories. The base target path preserves live
 work gates, timestamp-based body caches and first overlap, then retains nested
-GETRECNO/target-script/heading effects. Required Lua/HP/global-context owners
-remain explicit. See [MODEL_COLLISION.md](MODEL_COLLISION.md).
+GETRECNO/target-script/heading effects. `prepare_target_script_work` binds the
+live matrix and shared HP wrappers for `ModelScriptRuntime`; GETRECNO reads its
+signed record and collision gates read current HP-reference presence. The
+script runtime must retain the returned owner. Full player/GAMERAM preparation
+remains separate. See [MODEL_COLLISION.md](MODEL_COLLISION.md) and
+[MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md).
 
 ## Suspension and sequence interruption
 

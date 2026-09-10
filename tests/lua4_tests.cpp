@@ -7,8 +7,10 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
+#include <type_traits>
 
 namespace {
 using namespace dw4;
@@ -320,6 +322,193 @@ void host_and_limits() {
     limits.max_call_depth = 0; rejects([&] { Lua4Vm bad(limits); }, "limit");
 }
 
+void resumed_frames_and_results() {
+    static_assert(!std::is_copy_constructible_v<Lua4Execution> && std::is_nothrow_move_constructible_v<Lua4Execution>);
+    Function child;child.parameters=2;child.vararg=true;child.strings={"pause"};
+    child.code={u(Pushupvalue),u(Getglobal),u(Getlocal),u(Getlocal,1),u(Getlocal,2),ab(Call,4,3),u(Return,3),End};
+    Function root;root.strings={"counter","prefix"};root.children={child};
+    root.code={u(Getglobal),s(Addi,1),u(Setglobal),u(Getglobal,1),ab(Call,0,0),s(Pushint,7),ab(Closure,0,1),s(Pushint,11),ab(Call,0,255),
+        u(Getglobal),s(Addi,1),u(Setglobal),Return,End};
+    Lua4Vm vm;vm.set_global("counter",Lua4Value::number(0));
+    vm.set_global("prefix",Lua4Value::host_function("prefix"));vm.set_global("pause",Lua4Value::host_function("pause"));
+    unsigned prefix_effects=0,attempts=0;bool ready=false;const Lua4Value* arguments=nullptr;
+    std::uint64_t execution_id=0,call_id=0;
+    vm.set_resumable_host_handler([&](const Lua4HostCall& call) {
+        if(call.name=="prefix") {++prefix_effects;return Lua4HostResult{true,{},{}};}
+        ++attempts;
+        check(call.name=="pause" && call.arguments.size()==3 && call.arguments[0].as_number()==11 && !call.arguments[1].truthy() &&
+            vm.table_get(call.arguments[2],Lua4Value::string("n")).as_number()==0,"Retained Lua parameters/vararg table changed");
+        check(call.site.source=="synthetic" && call.site.prototype=="main/0" && call.site.pc==5,"Retained host call lost its source site");
+        if(!arguments) {arguments=call.arguments.data();execution_id=call.execution_id;call_id=call.call_id;}
+        check(call.arguments.data()==arguments && call.execution_id==execution_id && call.call_id==call_id && call_id!=0,
+            "Host retries did not retain stable argument/call ownership");
+        if(!ready)return Lua4HostResult{false,{},"Awaiting actual result"};
+        return Lua4HostResult{true,{Lua4Value::number(4),Lua4Value::number(5)}, {}};
+    });
+    auto owned=program(root);auto execution=vm.begin_execution(owned);owned={};
+    check(execution.id()!=0 && !execution.completed(),"New invocation has no stable identity or ran during begin");
+    const auto stopped=vm.resume(execution);
+    check(stopped.stop==Lua4RunStop::host_required && !stopped.completed && stopped.host_calls==2 && prefix_effects==1 &&
+        vm.get_global("counter").as_number()==1,"Explicit incomplete host result replayed or rolled back preceding effects");
+    for(int i=0;i<3;++i) {
+        const auto again=vm.resume(execution);
+        check(again.stop==Lua4RunStop::host_required && again.instructions==stopped.instructions && again.host_calls==stopped.host_calls &&
+            prefix_effects==1 && vm.get_global("counter").as_number()==1,"Retry recharged a logical call or replayed instructions");
+    }
+    rejects([&]{vm.set_global("counter",Lua4Value::number(99));},"suspended VM");
+    rejects([&]{vm.set_host_handler({});},"suspended VM");
+    rejects([&]{vm.set_resumable_host_handler({});},"suspended VM");
+    rejects([&]{vm.begin_execution(program(Function{}));},"another root");
+    check(vm.execute(program(Function{})).stop==Lua4RunStop::faulted,"Synchronous execute bypassed a pending invocation");
+    ready=true;const auto completed=vm.resume(execution);
+    check(completed.completed && completed.stop==Lua4RunStop::completed && execution.completed() && completed.returned.size()==4 &&
+        completed.returned[0].as_number()==7 && completed.returned[1].as_number()==4 && completed.returned[2].as_number()==5 &&
+        !completed.returned[3].truthy() && prefix_effects==1 && attempts==5 && vm.get_global("counter").as_number()==2,
+        "Resuming Lua closure/capture/CALL did not apply fixed return padding exactly once");
+    const auto cached=vm.resume(execution);
+    check(cached.instructions==completed.instructions && cached.host_calls==2 && attempts==5,"Completed execution replayed its host call");
+    check(vm.execute(program(Function{})).completed,"Completed retained root prevented a later synchronous chunk");
+}
+void resumed_tailcalls() {
+    for(const unsigned boundary:{0u,1u})for(const unsigned result_count:{0u,1u,3u}) {
+        Function child;child.strings={"pause"};child.code={s(Pushint,111),u(Getglobal),s(Pushint,6),ab(Tailcall,1,boundary),End};
+        Function root;root.children={child};root.code={ab(Closure,0,0),ab(Call,0,255),Return,End};
+        Lua4Vm vm;vm.set_global("pause",Lua4Value::host_function("pause"));bool ready=false;unsigned calls=0;
+        vm.set_resumable_host_handler([&](const Lua4HostCall& call) {
+            ++calls;check(call.arguments.size()==1 && call.arguments[0].as_number()==6,"TAILCALL lost its arguments while paused");
+            if(!ready)return Lua4HostResult{};
+            std::vector<Lua4Value> returned;for(unsigned i=0;i<result_count;++i)returned.push_back(Lua4Value::number(20+i));
+            return Lua4HostResult{true,std::move(returned),{}};
+        });
+        auto execution=vm.begin_execution(program(root));check(vm.resume(execution).stop==Lua4RunStop::host_required,"TAILCALL did not suspend");
+        ready=true;const auto result=vm.resume(execution);std::vector<double> expected;
+        if(boundary==0)expected.push_back(111);for(unsigned i=0;i<result_count;++i)expected.push_back(20+i);
+        numeric_result(result,expected);check(result.host_calls==1 && calls==2,"TAILCALL retried a logical call or lost its result boundary");
+    }
+}
+Function increment_and_call(std::int32_t before,std::int32_t after,const char* function) {
+    Function result;result.strings={"counter",function};
+    result.code={u(Getglobal),s(Addi,before),u(Setglobal),u(Getglobal,1),ab(Call,0,1),u(Getglobal),s(Addi,after),u(Setglobal),Return,End};
+    return result;
+}
+void nested_owned_invocations() {
+    Lua4Vm vm;vm.set_global("counter",Lua4Value::number(0));
+    vm.set_global("outer",Lua4Value::host_function("outer"));vm.set_global("inner",Lua4Value::host_function("inner"));
+    auto child_program=program(increment_and_call(10,100,"inner"));
+    Function sibling;sibling.strings={"counter"};sibling.code={u(Getglobal),s(Addi,1000),u(Setglobal),u(Getglobal),Return,End};
+    auto sibling_program=program(sibling);std::optional<Lua4Execution> child,next;
+    std::uint64_t outer_id=0,inner_id=0,outer_call=0,inner_call=0;unsigned outer_attempts=0,inner_attempts=0,sibling_runs=0;
+    bool ready=false;
+    vm.set_resumable_host_handler([&](const Lua4HostCall& call)->Lua4HostResult {
+        if(call.name=="inner") {
+            ++inner_attempts;
+            if(!inner_id){inner_id=call.execution_id;inner_call=call.call_id;}
+            check(call.execution_id==inner_id && call.call_id==inner_call && inner_id!=outer_id && inner_call!=outer_call,
+                "Nested host invocation lost its distinct stable call identity");
+            return ready ? Lua4HostResult{true,{Lua4Value::number(8)},{}} : Lua4HostResult{false,{},"Nested service unavailable"};
+        }
+        ++outer_attempts;
+        if(!outer_id){outer_id=call.execution_id;outer_call=call.call_id;}
+        check(call.execution_id==outer_id && call.call_id==outer_call,"Parent callback identity changed during child retry");
+        if(!child)child.emplace(vm.begin_nested(child_program));
+        const auto result=vm.resume(*child);
+        if(!result.completed) {
+            rejects([&]{vm.begin_nested(sibling_program);},"existing nested invocation");
+            return {false,{},result.diagnostic};
+        }
+        if(!next){next.emplace(vm.begin_nested(sibling_program));++sibling_runs;}
+        const auto later=vm.resume(*next);check(later.completed,"Sequential child did not complete in the same shared VM");
+        return {true,later.returned,{}};
+    });
+    auto parent=vm.begin_execution(program(increment_and_call(1,1,"outer")));
+    const auto first=vm.resume(parent);
+    check(first.stop==Lua4RunStop::host_required && vm.get_global("counter").as_number()==11 && first.host_calls==2,
+        "Nested invocation did not share the parent VM globals and call budget");
+    rejects([&]{vm.resume(*child);},"original owning host callback");
+    rejects([&]{vm.begin_nested(sibling_program);},"currently invoked");
+    const auto second=vm.resume(parent);
+    check(second.instructions==first.instructions && second.host_calls==first.host_calls && vm.get_global("counter").as_number()==11,
+        "Nested pause reconstructed the child or reset its root invocation budget");
+    ready=true;const auto done=vm.resume(parent);numeric_result(done,{1111});
+    check(vm.get_global("counter").as_number()==1112 && outer_attempts==3 && inner_attempts==3 && sibling_runs==1 && done.host_calls==2 &&
+        child->completed() && next->completed(),"Nested or sibling completion replayed a script prefix or failed to resume its parent");
+}
+void continuation_ownership_and_faults() {
+    Function call;call.strings={"host"};call.code={u(Getglobal),ab(Call,0,1),Return,End};const auto chunk=program(call);
+    Lua4Vm vm;vm.set_global("host",Lua4Value::host_function("host"));
+    auto execution=vm.begin_execution(chunk);const auto missing=vm.resume(execution);
+    check(missing.stop==Lua4RunStop::host_required && missing.instructions==2 && missing.host_calls==1,"Missing opt-in handler was terminal or skipped its call");
+    vm.set_resumable_host_handler([](const Lua4HostCall&){return Lua4HostResult{true,{Lua4Value::number(9)},{}};});
+    auto moved=std::move(vm);auto handle=std::move(execution);
+    check(execution.id()==0 && !execution.completed(),"Moved-from continuation retained another handle's identity");
+    rejects([&]{moved.resume(execution);},"another or expired VM");Lua4Vm other;
+    rejects([&]{other.resume(handle);},"another or expired VM");
+    numeric_result(moved.resume(handle),{9});
+    rejects([&]{vm.resume(handle);},"another or expired VM");
+
+    Lua4Vm strict;strict.set_global("host",Lua4Value::host_function("host"));
+    strict.set_resumable_host_handler([](const Lua4HostCall&){return Lua4HostResult{};});
+    const auto strict_result=strict.execute(chunk);stopped(strict_result,"unbound native host function");
+    check(strict_result.stop==Lua4RunStop::faulted,"Synchronous execution silently opted into host suspension");
+
+    for(const bool throws:{false,true}) {
+        Lua4Vm fault;fault.set_global("host",Lua4Value::host_function("host"));unsigned calls=0;
+        fault.set_resumable_host_handler([&](const Lua4HostCall&)->Lua4HostResult {
+            ++calls;if(throws)throw std::runtime_error("Uncertain host effect");
+            return {false,{Lua4Value::number(1)},"Invalid incomplete result"};
+        });
+        auto run=fault.begin_execution(chunk);const auto first=fault.resume(run);
+        check(first.stop==Lua4RunStop::faulted && !first.completed && calls==1,"Host exception or malformed incomplete result did not fault the VM");
+        check(fault.resume(run).stop==Lua4RunStop::faulted && calls==1,"Faulted invocation replayed an uncertain host effect");
+        rejects([&]{fault.begin_execution(chunk);},"stopped");
+    }
+    Lua4Vm abandoned;abandoned.set_global("host",Lua4Value::host_function("host"));
+    {auto run=abandoned.begin_execution(chunk);check(abandoned.resume(run).stop==Lua4RunStop::host_required,"Abandonment fixture did not pause");}
+    rejects([&]{abandoned.begin_execution(chunk);},"stopped");
+    std::optional<Lua4Execution> expired;
+    {Lua4Vm temporary;expired.emplace(temporary.begin_execution(program(Function{})));}
+    rejects([&]{other.resume(*expired);},"another or expired VM");expired.reset();
+    Lua4Vm dropped;dropped.set_global("host",Lua4Value::host_function("host"));std::optional<Lua4Execution> running;
+    Function after;after.strings={"host","after"};after.code={u(Getglobal),ab(Call,0,0),s(Pushint,99),u(Setglobal,1),End};
+    dropped.set_resumable_host_handler([&](const Lua4HostCall&){running.reset();return Lua4HostResult{true,{},{}};});
+    running.emplace(dropped.begin_execution(program(after)));const auto interrupted=dropped.resume(*running);
+    check(interrupted.stop==Lua4RunStop::faulted && !dropped.get_global("after").truthy(),
+        "Dropping the running handle let instructions commit after ownership was abandoned");
+    rejects([&]{dropped.begin_execution(chunk);},"stopped");
+}
+void nested_faults_and_limits() {
+    Function call;call.strings={"host"};call.code={u(Getglobal),ab(Call,0,0),End};const auto chunk=program(call);
+    for(int mode=0;mode<4;++mode) {
+        Lua4Limits limits;if(mode==2)limits.max_call_depth=1;if(mode==3)limits.max_stack_values=16;
+        Lua4Vm vm(limits);vm.set_global("host",Lua4Value::host_function("host"));std::optional<Lua4Execution> child;
+        vm.set_resumable_host_handler([&](const Lua4HostCall& call)->Lua4HostResult {
+            if(child && call.execution_id==child->id())return {};
+            child.emplace(vm.begin_nested(mode==0 || mode==1 ? chunk : program(Function{})));
+            const auto result=vm.resume(*child);
+            if(mode==1)child.reset(); // Dropping a paused child must fault the whole shared VM.
+            if(mode>=2)check(result.stop==Lua4RunStop::faulted,"Nested entry evaded aggregate call/stack bounds");
+            return {true,{},{}}; // Deliberately invalid completion or swallowed child fault.
+        });
+        auto root=vm.begin_execution(chunk);const auto result=vm.resume(root);
+        check(result.stop==Lua4RunStop::faulted && !result.completed,"Pending/abandoned/faulted child was hidden by parent host completion");
+        check(vm.resume(root).instructions==result.instructions,"Nested fault replayed the parent invocation");
+    }
+    Lua4Limits limits;limits.max_instructions=5;limits.max_host_calls=1;
+    Lua4Vm vm(limits);vm.set_global("host",Lua4Value::host_function("host"));bool ready=false;unsigned attempts=0;
+    vm.set_resumable_host_handler([&](const Lua4HostCall&){++attempts;return Lua4HostResult{ready,{},{}};});
+    Function repeat;repeat.strings={"host"};repeat.code={u(Getglobal),ab(Call,0,0),s(Jmp,-3),End};
+    auto run=vm.begin_execution(program(repeat));const auto first=vm.resume(run);
+    for(int i=0;i<4;++i)check(vm.resume(run).instructions==first.instructions,"Retry consumed an instruction budget without execution");
+    ready=true;const auto limited=vm.resume(run);
+    check(limited.stop==Lua4RunStop::faulted && limited.instructions==5 && limited.host_calls==1 && attempts==6 &&
+        limited.diagnostic.find("host call budget")!=std::string::npos,"A resumed invocation obtained another logical host-call budget");
+    Lua4Vm recursive;recursive.set_global("host",Lua4Value::host_function("host"));std::optional<Lua4Execution> outer;
+    recursive.set_resumable_host_handler([&](const Lua4HostCall&) {
+        rejects([&]{recursive.resume(*outer);},"recursively resume");return Lua4HostResult{true,{},{}};
+    });
+    outer.emplace(recursive.begin_execution(chunk));check(recursive.resume(*outer).completed,"Rejected recursive misuse damaged an otherwise complete invocation");
+}
+
 Bytes file_bytes(const char* path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot read optional original Lua chunk");
@@ -346,6 +535,7 @@ void original(const char* func_path, const char* boot_path) {
 int main(int argc, char** argv) {
     try {
         reader_checks(); values_and_arithmetic(); control_flow(); calls_closures_and_tables(); host_and_limits();
+        resumed_frames_and_results();resumed_tailcalls();nested_owned_invocations();continuation_ownership_and_faults();nested_faults_and_limits();
         if (argc == 3) original(argv[1], argv[2]);
         else if (argc != 1) throw std::runtime_error("Usage: dw4_lua4_tests [func-chunk boot-chunk]");
         std::cout << "Lua 4 tests passed: " << checks << " checks\n"; return 0;

@@ -2,14 +2,24 @@
 
 ## Implemented boundary
 
+Version 0.28 adds `script_registry`, `model_script_context` and
+`model_script_runtime`. Explicit ordered LuaInfo occurrences own their bytes;
+prepared ONE work shares HP objects and a live model matrix. Target-Hit dispatch
+executes the selected chunks in one retained Lua VM, preserving nested context
+overwrites, incomplete native calls and the original conditional HP merge.
+`action_event_runtime` exposes qualified script work and reads live HP presence
+and the signed GETRECNO value. Complete GAMERAM/player preparation, damage,
+status and filesystem services remain required. See
+[MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md).
+
 Version 0.27 adds immutable `model_hit_body` definitions and independent
 timestamp-keyed caches for actual selected RAMs. `model_collision` owns base
 CHKBULLET gates, first body overlap, captured arguments and nested
 GETRECNO/target-script/heading phases. `action_event_runtime` attaches this
 prepared work to bound MODELCTRL endpoints and registers authored collision
 categories. Five stable messenger buffers preserve explicit push/pop behavior
-across service suspension. Actual target Lua, HP/global context, full controller
-preparation and damage remain required. See [MODEL_COLLISION.md](MODEL_COLLISION.md),
+across service suspension. Full controller preparation and damage remain
+required. See [MODEL_COLLISION.md](MODEL_COLLISION.md),
 [MODEL_HIT_BODY.md](MODEL_HIT_BODY.md) and [MESSENGER.md](MESSENGER.md).
 
 Version 0.26 adds exact HITBOX command decoding and a third typed entry in the

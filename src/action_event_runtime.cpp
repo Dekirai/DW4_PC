@@ -68,6 +68,8 @@ struct ActionEventRuntime::Impl {
         std::unique_ptr<ModelCollisionRuntime> collision;
         ModelControlState* collision_model{};
         bool hp_reference_present{};
+        std::weak_ptr<ModelScriptWork> script_work;
+        bool script_work_prepared{};
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
@@ -87,7 +89,7 @@ struct ActionEventRuntime::Impl {
     NativeMessenger messenger;
     MessengerServices external;
     ModelCollisionServices collision_services;
-    std::map<Key,Model> models;
+    std::map<Key,std::shared_ptr<Model>> models;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
     std::map<std::uint32_t,std::string> sources;
@@ -128,7 +130,7 @@ struct ActionEventRuntime::Impl {
     Model& model(ControllerObjectId id) {
         const auto found=models.find(key(id));
         if(found==models.end()) fail("No prepared model work owns this source-qualified RAM.");
-        return found->second;
+        return *found->second;
     }
     void check_new(Key id) const {
         if(models.contains(id) || consumers.contains(id) || actions.contains(id)) fail("RAM already has a prepared event owner.");
@@ -136,6 +138,15 @@ struct ActionEventRuntime::Impl {
     }
     MessengerCallResult model_message(ControllerObjectId id,Model& owner,const MessengerDelivery& delivery) {
         const auto& command=delivery.message.command;
+        const auto script_work=owner.script_work.lock();
+        if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" || command=="GETRECNO" ||
+           (owner.collision && owner.collision->owns_delivery(delivery))))
+            return {false,0,"The target's prepared script work owner is unavailable."};
+        if(command=="GETRECNO" && script_work) {
+            // Base 8030E55C loads the signed work+10 value directly, with no
+            // wrapper dereference, active gate or automatic default on lookup.
+            messenger.buffer().add_int(script_work->record);return {true,1,{}};
+        }
         const bool collision_retry=owner.collision && owner.collision->owns_delivery(delivery);
         if(collision_retry || command=="CHKBULLET") {
             if(!owner.collision) return {false,0,"CHKBULLET requires this target's authored HIT graph and prepared ONE work."};
@@ -147,7 +158,7 @@ struct ActionEventRuntime::Impl {
             // it does not construct PC status or infer another controller type.
             OperationScope operation(processing_collision,key(id));
             const auto& sequence=std::as_const(owner.sequence);
-            ModelCollisionWork work{sequence.wait_state().control_enabled,owner.hp_reference_present,
+            ModelCollisionWork work{sequence.wait_state().control_enabled,script_work ? bool(script_work->hp) : owner.hp_reference_present,
                 sequence.selected() ? std::optional<std::string_view>(sequence.current_sequence()) : std::nullopt};
             // A target script may suspend its own sequence cleanup/Lua prefix.
             // Retain the stable member reference obtained before that prefix;
@@ -224,7 +235,7 @@ struct ActionEventRuntime::Impl {
     MessengerServices services() {
         return {
             [this](ControllerObjectId id)->std::optional<std::uint8_t> {
-                if(const auto found=models.find(key(id));found!=models.end()) return found->second.active;
+                if(const auto found=models.find(key(id));found!=models.end()) return found->second->active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
                 if(external.active) return external.active(id);
@@ -387,9 +398,10 @@ ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding bindi
     impl_->check_new(key(id));
     impl_->require_registration_capacity(1,std::string_view("MODELCTRL").size()+binding.model_name().size());
     impl_->require_source(id.file_index,binding.source());
-    const auto [found,inserted]=impl_->models.try_emplace(key(id),std::move(binding),std::move(model),active,std::move(attachment));
+    const auto [found,inserted]=impl_->models.emplace(key(id),
+        std::make_shared<Impl::Model>(std::move(binding),std::move(model),active,std::move(attachment)));
     (void)inserted;
-    const auto& value=found->second.binding;
+    const auto& value=found->second->binding;
     impl_->messenger.register_recipient(id,"MODELCTRL",value.model_name(),static_cast<std::int32_t>(value.instance_index()));
     return id;
 }
@@ -436,7 +448,7 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
     }
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
-    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second.active=active;
+    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active=active;
     else if(const auto consumer=impl_->consumers.find(key(id));consumer!=impl_->consumers.end()) consumer->second.active=active;
     else fail("Cannot change activity of an unowned event RAM.");
 }
@@ -482,8 +494,8 @@ void ActionEventRuntime::prepare_collision_target(ControllerObjectId id,ModelHit
        (id.reference_index!=body.ram_reference() && id.reference_index!=body.ram_owner_reference()))
         fail("Prepared collision HIT graph does not belong to this model's actual source-qualified RAM.");
     for(const auto& [other_id,other]:impl_->models) {
-        if(other_id.first==id.file_index && other.collision &&
-           other.collision->body().ram_owner_reference()==body.ram_owner_reference())
+        if(other_id.first==id.file_index && other->collision &&
+           other->collision->body().ram_owner_reference()==body.ram_owner_reference())
             fail("The physical model RAM already owns its mutable collision body through another reference.");
     }
     std::vector<std::string> categories;
@@ -503,6 +515,20 @@ const ModelCollisionRuntime& ActionEventRuntime::collision_target(ControllerObje
     const auto& target=impl_->model(id).collision;
     if(!target) fail("This model has no prepared collision target.");
     return *target;
+}
+std::shared_ptr<ModelScriptWork> ActionEventRuntime::prepare_target_script_work(ControllerObjectId id) {
+    impl_->require_top_level_idle();
+    auto& owner=impl_->model(id);
+    if(!owner.collision) fail("Validate the target's authored collision ownership before preparing its script work.");
+    if(owner.script_work_prepared) fail("This target already has its prepared script work owner.");
+    const auto& bound=owner.binding;
+    // The strong matrix alias owns Model; Model keeps only a weak script-work
+    // link. A live external script owner therefore retains the actual matrix
+    // without a Model -> work -> Model ownership cycle.
+    auto matrix=std::shared_ptr<AnimationMatrix>(impl_->models.at(key(id)),&owner.sequence.model().pose.matrix);
+    auto work=std::make_shared<ModelScriptWork>(id,bound.source(),bound.model_name(),
+        static_cast<std::int32_t>(bound.instance_index()),std::move(matrix));
+    owner.script_work=work;owner.script_work_prepared=true;return work;
 }
 void ActionEventRuntime::set_collision_services(ModelCollisionServices services) {
     if(impl_->processing_collision) fail("Complete the collision callback before replacing its service owner.");

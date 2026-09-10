@@ -136,8 +136,10 @@ callbacks must come from their real owners. The external Lua service must
 establish the original shared model/script context and execute the requested
 script. Missing recipients, managers, debug display or Lua execution do not
 become successful checks. Version 0.27 supplies prepared target body lookup,
-overlap and retained response delivery; actual target scripts, HP context and
-damage remain required. See [MODEL_COLLISION.md](MODEL_COLLISION.md).
+overlap and retained response delivery; version 0.28 adds prepared target scripts
+and shared HP context. Native damage/status services remain required.
+See [MODEL_COLLISION.md](MODEL_COLLISION.md) and
+[MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md).
 
 ## Provenance and validation
 

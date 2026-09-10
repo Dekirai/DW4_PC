@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.27 adds original target body caches, first-overlap collision handling
-and nested record/hit-script delivery on prepared player state. The full original game, including local
+Version 0.28 executes selected original target-Hit scripts with shared model/HP
+context and retained Lua continuations on prepared player state. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -19,16 +19,22 @@ not contain game files.
 
 ## Current capabilities
 
+- Execute selected target-Hit chunks in one shared Lua VM, retain incomplete
+  native calls and nested scripts, and apply the original conditional HP merge.
+  Explicit script registration and model work remain prerequisites; damage
+  services and full player construction are still required. See
+  [MODEL_SCRIPT_RUNTIME.md](docs/MODEL_SCRIPT_RUNTIME.md).
+
 - Route original HITBOX queries to source-qualified target bodies, preserve
   timestamp-based box updates and resume nested record/hit-script operations.
-  Original damage, full Lua/HP context and player construction remain required.
+  Original damage services and full player construction remain required.
   See [MODEL_COLLISION.md](docs/MODEL_COLLISION.md) and
   [MODEL_HIT_BODY.md](docs/MODEL_HIT_BODY.md).
 
 - Run original HITBOX Set/AllClear commands in the same ordered queue as sounds
   and effects, and send their checked boxes through the original messenger.
   MUTEKI fields and LUACALL callback assignment retain their original sequence
-  behavior. Complete collision managers and actual hit-script execution remain
+  behavior. Complete collision managers and damage/status script services remain
   required before combat works. See [MODEL_HITBOX.md](docs/MODEL_HITBOX.md) and
   [COLLISION_MATH.md](docs/COLLISION_MATH.md).
 

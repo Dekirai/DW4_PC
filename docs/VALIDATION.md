@@ -1,4 +1,44 @@
-# Native target collision validation
+# Prepared target Lua and HP context validation
+
+Version 0.28.0 was validated locally on 2026-09-10 with MSVC 19.51. Selected
+original target-Hit chunks now execute with shared model/HP context and retained
+Lua continuations. Actual damage/status services, player construction and the
+original game loop remain required before playable combat.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 55/55 CTest suites passed without compiler warnings; 6 Python verifier tests passed |
+| Lua interpreter | 416 synthetic / 426 original-inclusive checks; source-linked MSVC AddressSanitizer also passes; retained CALL/TAILCALL, captured values, nested/sibling frames, shared budgets, abandonment and uncertain effects covered |
+| Original func/boot comparison | Strict and retained engines match official Lua 4.0.1 in all 3 explicit profiles: 188 ordered host calls and 3 final resource-queue rows; retained execution pauses once before each effect, with zero differences |
+| Shared target context | 81 checks cover qualified work, distinct default HP wrappers, direct signed record, live matrix alias, conditional current-wrapper HP merge, nested overwrite and strict continuation ownership |
+| Ordered script registry | 44 synthetic / 51 original-inclusive checks; exact export/registration occurrences, first-name barriers, owned original Hit bytes and aggregate bounds |
+| Target script execution | 88 synthetic / 104 original-inclusive checks; repeated chunks, native status versus Lua returns, signed getters, finite setter conversion, retained native/filesystem services, nested shared VM/context, four actual Agumon RAM early returns and explicit ordinary combat boundary |
+| Original Hit comparison | 28 cases match official Lua 4.0.1: 24 RAM/kind early returns and four kind-80000 boundaries, 64 ordered calls, 92 exact rows and 736 executed instructions; 12 unavailable-service retries preserve the prefix |
+| Collision/script adapter | 45 checks cover live GETRECNO/HP-presence work, owner expiry and matrix lifetime; real CHKBULLET/record/context continuation completes through an explicit synthetic filesystem effect, with no repeated record lookup or committed matrix write |
+| Original collision/events/waits | HIT body 109 checks; collision integration 80; player events 108; waits 107, retaining all four Set129/TALKWF/WCHECK paths and the missing HITPLAYERTALK boundary |
+| Original ACTION regression | 6,034,137 checks across 183 actions, 369 commands, 4,157 poses and 240 four-instance sequence poses |
+| Packaged application | 16 app, 10 walking and 9 boot CLI checks passed; actor inspection renders 120 frames / 121 uploads; walking replay renders 120 frames, 198 steps, 101.333 travel and 102 uploads |
+| Visual inspection | Version 0.28 actor and walking captures inspected; walking retains pause/restart/focus-loss replay and the 1236x600 render target |
+
+The original Hit chunk is loaded unchanged from map AFS entry 179, LuaInfo
+2783/export 237/data index 26. Four canonical original MODELCTRL RAM bindings
+qualify the integration cases. Ordinary kind 80000 executes the verified
+damage-turn clear and stops at `be.BLPcalcKoukaMagic`, PC 58, after 43
+instructions and four logical calls. No magic, damage or status result is
+supplied. The independent reference uses only opcode-count/PC instrumentation;
+its deliberate test error at that unavailable method corresponds to the native
+retained service boundary, not a claimed identical error mechanism.
+
+Explicit fixture HP values and callbacks are not original player construction.
+Lua allocation limits remain cumulative without an original garbage collector.
+These checks establish the prepared component and bounded script paths, not a
+complete combat or connected multiplayer session. Original bytes, reference
+drivers, traces and app captures remain ignored under `work/`. See
+[MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md),
+[MODEL_SCRIPT_CONTEXT.md](MODEL_SCRIPT_CONTEXT.md), [LUA4.md](LUA4.md) and
+[SCRIPT_REGISTRY.md](SCRIPT_REGISTRY.md).
+
+## Native target collision validation
 
 Version 0.27.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
 HITBOX queries now reach target body caches, first overlap and retained nested

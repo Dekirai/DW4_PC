@@ -40,6 +40,7 @@ private:
     std::shared_ptr<const Impl> impl_;
     friend Lua4Program read_lua4_chunk(std::span<const std::uint8_t>, std::string_view, Lua4ReadLimits);
     friend class Lua4Vm;
+    friend class Lua4Execution;
 };
 
 // Reads only the verified Lua 4.0 32-bit-instruction/64-bit-number chunk profile.
@@ -81,20 +82,28 @@ struct Lua4HostCall {
     std::string name; // Exact symbolic name, e.g. "be.CFLclear".
     std::span<const Lua4Value> arguments; // A colon call includes the receiver at index zero.
     Lua4Site site;
+    std::uint64_t execution_id{}, call_id{}; // Stable across explicit incomplete retries.
 };
 using Lua4HostHandler = std::function<std::vector<Lua4Value>(const Lua4HostCall&)>;
+struct Lua4HostResult {
+    bool completed{};
+    std::vector<Lua4Value> returned; // Must be empty while incomplete; imported once on completion.
+    std::string diagnostic; // Incomplete diagnostics are bounded to 4096 bytes.
+};
+using Lua4ResumableHostHandler = std::function<Lua4HostResult(const Lua4HostCall&)>;
 
 struct Lua4Limits {
-    std::size_t max_instructions = 1000000; // Per execute call.
+    std::size_t max_instructions = 1000000; // Per root invocation, including nested chunks.
     std::size_t max_call_depth = 64;
     std::size_t max_stack_values = 16384;
     std::size_t max_heap_bytes = 32u * 1024u * 1024u; // Cumulative allocation/string-work allowance.
     std::size_t max_objects = 65536;
     std::size_t max_table_entries = 262144;
     std::size_t max_globals = 4096;
-    std::size_t max_host_calls = 8192; // Per execute call, including the stopped call.
+    std::size_t max_host_calls = 8192; // Logical calls per root; retry does not charge again.
 };
 
+enum class Lua4RunStop { completed, host_required, faulted };
 struct Lua4RunResult {
     bool completed{};
     std::string diagnostic;
@@ -102,6 +111,23 @@ struct Lua4RunResult {
     std::size_t instructions{};
     std::size_t host_calls{};
     std::vector<Lua4Value> returned;
+    Lua4RunStop stop = Lua4RunStop::faulted;
+};
+
+// One retained invocation, owning program/frame/argument/result state. An
+// incomplete handle must be resumed: abandoning it terminally faults its VM.
+class Lua4Execution {
+public:
+    Lua4Execution(Lua4Execution&&) noexcept;
+    Lua4Execution& operator=(Lua4Execution&&) noexcept;
+    ~Lua4Execution();
+    std::uint64_t id() const noexcept;
+    bool completed() const noexcept;
+private:
+    friend class Lua4Vm;
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
+    explicit Lua4Execution(std::shared_ptr<Impl> impl);
 };
 
 class Lua4Vm {
@@ -113,12 +139,23 @@ public:
     Lua4Vm(Lua4Vm&&) noexcept;
     Lua4Vm& operator=(Lua4Vm&&) noexcept;
     void set_host_handler(Lua4HostHandler handler);
+    // The first missing handler may be installed while paused. Once present,
+    // its identity cannot be replaced until the root invocation completes.
+    void set_resumable_host_handler(Lua4ResumableHostHandler handler);
     void set_global(std::string name, const Lua4Value& value);
     Lua4Value get_global(std::string_view name) const;
     Lua4Value table_get(const Lua4Value& table, const Lua4Value& key) const;
     Lua4RunResult execute(const Lua4Program& program);
+    // Exactly one pending root per VM. Existing execute() stays synchronous
+    // and uses only the ordinary handler; this API explicitly opts into pauses.
+    Lua4Execution begin_execution(const Lua4Program& program);
+    // Only inside a resumable host callback. A pending child can be resumed
+    // only from that same logical callback; completed children allow siblings.
+    Lua4Execution begin_nested(const Lua4Program& program);
+    Lua4RunResult resume(Lua4Execution& execution);
 private:
+    friend struct Lua4Execution::Impl;
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<Impl> impl_;
 };
 } // namespace dw4
