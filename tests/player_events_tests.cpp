@@ -107,12 +107,14 @@ void original(const std::filesystem::path& root) {
         check(events.update_subcommands(ids[i],10,services).complete() && starts==sound_starts,
             "Started type-4 sound remains owned without replay after an uncapped frame delta");
         check(events.select_sequence(ids[i],"SQ_WAIT").stop==ModelSubcommandStop::sound_volume_down_required &&
-            events.sequence(ids[i]).current_sequence()=="SQ_WALK","Sequence interruption requires sound cleanup before new selection");
+            events.sequence(ids[i]).current_sequence()=="SQ_WAIT" && events.sequence(ids[i]).selection_pending(),
+            "Sequence interruption exposes WAIT but requires sound cleanup before its commands");
         services.sound_volume_down=[&](std::uint64_t handle) {
             check(handle==i+1,"Each player's cleanup retains its own 64-bit sound handle"); ++sound_cleans; return true;
         };
         check(events.resume_sequence(ids[i],services).complete() && events.subcommands(ids[i]).entries().empty() &&
-            events.sequence(ids[i]).current_sequence()=="SQ_WAIT","Successful cleanup releases the whole list before publishing WAIT");
+            events.sequence(ids[i]).current_sequence()=="SQ_WAIT" && !events.sequence(ids[i]).selection_pending(),
+            "Successful cleanup releases the whole list before WAIT commands can execute");
         events.run_sequence(ids[i],1200000000,[&](const ModelActionRequest& request) {
             const auto result=actions[i].dispatch(sources,action_services[i],request,1200000000);
             check(result.stop==ActionStop::end || result.stop==ActionStop::waiting,"Original idle ACTION completes its consumer delivery");
@@ -161,7 +163,7 @@ void original(const std::filesystem::path& root) {
         check(name=="x_100armk01" && ram==31,"Effect cleanup retains its selected RAM and exact name"); ++erased; return true;
     };
     check(events.resume_sequence(ids[0],attack_services).complete() && erased==1 && events.subcommands(ids[0]).entries().empty(),
-        "Attack effect cleanup completes before new sequence work is published");
+        "Attack effect cleanup completes before new sequence commands can execute");
     std::cout<<"Original player event integration: registrations="<<registration_count<<" players=4 poses="<<pose_count
         <<" vertices="<<vertex_count<<" sound_service_starts="<<sound_starts<<" sound_service_cleanups="<<sound_cleans
         <<" attack_sounds="<<attack_sounds<<" effects_generated="<<generated<<" effects_erased="<<erased<<"\n";

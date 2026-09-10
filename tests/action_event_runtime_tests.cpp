@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <type_traits>
+#include <utility>
 
 namespace {
 using namespace dw4;
@@ -271,8 +272,9 @@ void sequence_cleanup_before_selection() {
     services.sound_volume_down=[&](std::uint64_t handle) { ++downs; check(handle==101,"Cleanup owns the started sound handle"); return true; };
     const auto pending=runtime.select_sequence(model,"SQ_WALK",services);
     check(pending.stop==ModelSubcommandStop::effect_erase_required && downs==1 && erases==0 &&
-        runtime.sequence(model).current_sequence()=="SQ_WAIT" && runtime.subcommands(model).entries().size()==2,
-        "Selection waits for ordered effect cleanup after the committed sound cleanup prefix");
+        runtime.sequence(model).current_sequence()=="SQ_WALK" && runtime.sequence(model).selection_pending() &&
+        runtime.subcommands(model).entries().size()==2,
+        "New selection is visible while ordered cleanup retains its completed sound prefix");
     rejects([&]{runtime.run_sequence(model,1);},"No new sequence command may run before required cleanup completes");
     rejects([&]{runtime.set_label(model,{},"slash");},"Pending selection cannot receive unrelated label mutations");
     rejects([&]{runtime.broadcast(model,f.event());},"Pending sequence cleanup blocks a new ACTION append");
@@ -281,7 +283,7 @@ void sequence_cleanup_before_selection() {
     services.erase_effect=[&](const auto& name,std::int32_t ram) { ++erases; check(name=="" && ram==23,"Cleanup targets the generated effect RAM"); return true; };
     check(runtime.resume_sequence(model,services).complete() && downs==1 && erases==1 &&
         runtime.subcommands(model).entries().empty() && runtime.sequence(model).current_sequence()=="SQ_WALK",
-        "Sequence and empty queue publish only after every required cleanup effect completes");
+        "Cleanup releases the whole queue and finishes the already visible selection");
     check(runtime.run_sequence(model,2).stop==ModelSequenceStop::end && plays==1 && generates==1,
         "Completed selection does not replay prior playback or generation");
 }
@@ -308,15 +310,73 @@ void local_jump_cleanup() {
     };
     const auto pending=runtime.run_sequence(model,100,execute,services);
     check(pending.stop==ModelSequenceStop::sequence_cleanup_required && pending.command_reference==jump &&
-        runtime.sequence(model).current_sequence()=="SQ_WAIT" && runtime.sequence(model).command_index()==0 && actions==0,
-        "An ordinary local JUMP cannot bypass the owner's pending sound cleanup");
+        runtime.sequence(model).current_sequence()=="SQ_WALK" && runtime.sequence(model).command_index()==0 &&
+        runtime.sequence(model).jump_pending() && actions==0,
+        "An ordinary local JUMP publishes its target but cannot run commands before sound cleanup");
     check(runtime.run_sequence(model,200,execute,services).stop==ModelSequenceStop::sequence_cleanup_required && plays==1 && actions==0,
-        "Retry retains the original jump cursor without replaying playback or entering its destination");
+        "Retry retains pending jump metadata without replaying playback or executing destination commands");
     rejects([&]{runtime.resume_subcommands(model,services);},"Local jump cleanup must resume through its owning sequence operation");
-    services.sound_volume_down=[&](std::uint64_t handle) { ++downs; check(handle==501,"Jump cleanup uses the actual sound handle"); return true; };
+    services.sound_volume_down=[&](std::uint64_t handle) {
+        ++downs; check(handle==501 && runtime.sequence(model).current_sequence()=="SQ_WALK" && runtime.sequence(model).selection_pending(),
+            "Jump cleanup sees the published destination and actual sound handle"); return true;
+    };
     check(runtime.run_sequence(model,300,execute,services).stop==ModelSequenceStop::end && downs==1 && actions==1 &&
         runtime.sequence(model).current_sequence()=="SQ_WALK" && runtime.subcommands(model).entries().empty(),
-        "Completed jump cleanup publishes the destination before executing its commands exactly once");
+        "Completed jump cleanup permits destination commands exactly once");
+}
+void visible_selection_phases() {
+    Fixture f; f.one_sound_and_effect();
+    auto state=prepared_model(); state.mode=7; state.phase=8; state.check_fall=false;
+    state.pad_motion=std::array<float,4>{1,2,3,4};
+    state.channels.apply({1,"beModelCtrlMOVEEX","X",0,MotionSetup{MotionMode::accelerate_positive,4,2,0},MotionStop{true,1,2}});
+    state.channels.apply({2,"beModelCtrlMOVEEX","R",3,MotionSetup{MotionMode::accelerate_positive,3,1,0},{}});
+    state.channels.advance(1);
+    const auto before=state.channels.states(); auto stopped=state.channels; stopped.on_sequence_change();
+    ActionEventRuntime runtime; const auto id=runtime.register_model(f.binding(),state,true);
+    runtime.register_consumer(f.sounds(),true);
+    runtime.broadcast(id,f.event());
+    ModelSubcommandServices services;
+    services.play_sound=[](const auto&) { return ModelSoundPlayResult{true,123,4}; };
+    runtime.update_subcommands(id,0,services);
+    bool ready=false; unsigned cleanup_calls{};
+    services.sound_volume_down=[&](std::uint64_t handle) {
+        ++cleanup_calls; const auto& sequence=runtime.sequence(id); const auto& model=sequence.model();
+        check(handle==123 && sequence.current_sequence()=="SQ_WALK" && sequence.command_index()==0 && sequence.selection_pending(),
+            "External cleanup sees the original pre-cleanup sequence and cursor publication");
+        check(model.mode==0 && model.phase==0 && !model.pad_motion && !model.check_fall && model.channels.states()==before,
+            "CTRL/PDMOVE reset precedes cleanup while fall/channel changes follow it");
+        return ready;
+    };
+    check(runtime.select_sequence(id,"SQ_WALK",services).stop==ModelSubcommandStop::sound_volume_down_required && cleanup_calls==1,
+        "A suspended cleanup retains the visible intermediate selection phase");
+    ready=true;
+    check(runtime.resume_sequence(id,services).complete() && cleanup_calls==2 && !runtime.sequence(id).selection_pending() &&
+        runtime.sequence(id).model().check_fall && runtime.sequence(id).model().channels.states()==stopped.states(),
+        "Only completed cleanup applies the original fall and channel-stop effects");
+
+    ModelSequenceRuntime direct(f.binding().sequence_program(),state,player_name,0);
+    direct.begin_select("SQ_WALK");
+    const auto& visible=std::as_const(direct);
+    check(visible.current_sequence()=="SQ_WALK" && visible.model().channels.states()==before,"Direct phase API preserves the same intermediate state");
+    rejects([&]{direct.model();},"Mutable model access cannot change an unfinished selection");
+    rejects([&]{direct.run(1);},"External selection must finish before direct command execution");
+    rejects([&]{direct.select("SQ_WAIT");},"Another selection cannot replace unfinished cleanup");
+    rejects([&]{direct.set_label({},"dual");},"Label mutation cannot invalidate an unfinished selection");
+    direct.finish_select();
+    check(direct.run(1).stop==ModelSequenceStop::end && !direct.selection_pending(),"Explicit finish permits ordinary commands");
+    rejects([&]{direct.finish_select();},"Finishing an already completed selection is rejected");
+
+    const auto jump=f.command("beModelCtrlJUMP","SQ_WALK");
+    f.player.scalar(f.wait_sequence,3,f.player.list(pf::named_list,{jump}));
+    ModelSequenceRuntime jumping(f.binding().sequence_program(),prepared_model(),player_name,0);
+    jumping.select("SQ_WAIT");
+    check(jumping.run(1,{},[](auto){return false;}).stop==ModelSequenceStop::sequence_cleanup_required &&
+        jumping.current_sequence()=="SQ_WALK" && jumping.jump_pending(),"Local jump retains a required cleanup continuation");
+    check(jumping.run(2).stop==ModelSequenceStop::sequence_cleanup_required && jumping.jump_pending(),
+        "Omitting the callback cannot bypass already required jump cleanup");
+    const auto completed=jumping.run(3,{},[](auto){return true;});
+    check(completed.stop==ModelSequenceStop::end && !jumping.jump_pending() && !jumping.selection_pending(),
+        "Resumed jump finishes its selection before entering destination commands");
 }
 void repeated_consumer_owners() {
     Fixture f; f.events.contents(f.events.starter_first_actions,{f.events.effects[1]});
@@ -358,7 +418,7 @@ void repeated_consumer_owners() {
 int main() {
     try {
         cross_source_and_duplicates(); inactive_targets(); nested_resume_and_snapshot(); sequence_cleanup_before_selection();
-        local_jump_cleanup(); repeated_consumer_owners(); source_occurrence_consistency(); atomic_registration_limit();
+        local_jump_cleanup(); visible_selection_phases(); repeated_consumer_owners(); source_occurrence_consistency(); atomic_registration_limit();
         std::cout<<checks<<" action event runtime checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr<<"Action event runtime failure after "<<checks<<" checks: "<<error.what()<<'\n'; return 1; }
 }

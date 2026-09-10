@@ -73,6 +73,19 @@ parameters; unflagged XYZ channels are unchanged. Rotation is always deactivated
 and its speed cleared, preserving its other fields. Existing timers and position
 lock remain unchanged. Invalid selection leaves the owned state untouched.
 
+Version 0.24.1 exposes the original visible entry phases for a prepared cleanup
+owner. `begin_select` validates selection and stop parameters, publishes the
+new name/data/cursor and label cache, then resets LABEL/CTRL/PDMOVE fields.
+It preserves channels and the fall flag while cleanup runs. `finish_select`
+applies those post-cleanup fall/channel effects and permits command execution.
+Mutable model access and unrelated selection/label changes reject while pending.
+Legacy `select` still performs both phases on a candidate before publication.
+Local JUMP with an owner cleanup hook uses the phased path, retaining original
+jump metadata across a suspended callback while the destination is already
+visible. A retry without that required hook stays suspended. These phases do
+not implement the missing full-work wait/collision strings or player virtual
+entry/status callbacks. See [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
 This is **not complete sequence entry**. The original also resets subcommands,
 wait/callback strings, wall/floor flags and another timer field, and invokes
 controller virtual callbacks. The caller must implement those effects and the

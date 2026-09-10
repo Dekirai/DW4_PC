@@ -8,7 +8,8 @@ the original ordered registration/cache/shared-buffer delivery kernel;
 `action_event_tables` decodes loaded Se/ActionStarter graphs. `action_event_runtime`
 owns prepared model sequences, consumers and resumable event delivery, connecting
 ACTION broadcasts to `model_subcommands` queues. External and local-jump sequence
-selection must complete their owned queue cleanup before executing new commands.
+entry publishes its name/cursor and control reset before cleanup, then applies
+owned fall/motion effects after cleanup and before executing new commands.
 Real audio/effect managers, full player preparation and the original outer game
 loop remain required. This explicit prepared context does not advance the boot
 controller stage or replace the walking preview. See

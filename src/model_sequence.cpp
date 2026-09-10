@@ -115,8 +115,12 @@ ModelSequenceRuntime::ModelSequenceRuntime(ModelSequenceProgram program,ModelCon
 std::string_view ModelSequenceRuntime::current_sequence() const noexcept {
     return current_ ? std::string_view(program_->sequences()[*current_].name) : std::string_view{};
 }
+ModelControlState& ModelSequenceRuntime::model() {
+    if(running_ || selection_pending_)throw MotionError("Model mutation is unavailable during sequence execution or pending selection.");
+    return model_;
+}
 void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::string label) {
-    if(running_)throw MotionError("Reentrant sequence mutation is unsupported.");
+    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
     if(sequence)checked_name(*sequence);
     checked_name(label);
     auto candidate=labels_;
@@ -131,7 +135,13 @@ void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::st
     labels_=std::move(candidate);
 }
 void ModelSequenceRuntime::select(std::string_view sequence) {
-    if(running_)throw MotionError("Reentrant sequence mutation is unsupported.");
+    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
+    auto candidate=*this;
+    candidate.begin_select(sequence); candidate.finish_select();
+    *this=std::move(candidate);
+}
+void ModelSequenceRuntime::begin_select(std::string_view sequence) {
+    if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
     checked_name(sequence);if(!ordinary(sequence))throw MotionError("This command requires the outer model controller.");
     const auto& data=program_->sequences();
     const auto found=std::find_if(data.begin(),data.end(),[&](const auto& item){return item.name==sequence;});
@@ -149,18 +159,53 @@ void ModelSequenceRuntime::select(std::string_view sequence) {
         }
     }
     if(start<0 || std::size_t(start)>found->commands.size())throw MotionError("Selected sequence label has no valid command offset.");
+    // Check post-cleanup motion constraints without stopping the live channels
+    // yet. finish_select uses their then-current state, not this validation copy.
+    auto stopped=model_.channels;stopped.on_sequence_change();
     auto candidate=model_;candidate.mode=0;candidate.phase=0;candidate.pad_motion.reset();
-    candidate.check_fall=true;candidate.channels.on_sequence_change();
     // Other full-work fields and original subcommand/virtual callbacks are
     // outside this owned preparation API, never acknowledged as executed here.
     model_=std::move(candidate);labels_=std::move(labels);
     current_=std::size_t(found-data.begin());cursor_=static_cast<std::uint32_t>(start);label_count_=0;
+    selection_pending_=true;
+}
+void ModelSequenceRuntime::complete_selection() {
+    auto candidate=model_;
+    candidate.check_fall=true;candidate.channels.on_sequence_change();
+    model_=std::move(candidate);selection_pending_=false;
+}
+void ModelSequenceRuntime::finish_select() {
+    if(running_)throw MotionError("Reentrant sequence mutation is unsupported.");
+    if(!selection_pending_)throw MotionError("No sequence selection is pending.");
+    if(pending_jump_)throw MotionError("Resume the pending local jump through its cleanup hook.");
+    complete_selection();
 }
 
 ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup) {
     if(running_)throw MotionError("Reentrant sequence execution is unsupported.");
     if(!current_)throw MotionError("Model sequence work has not been selected/prepared.");
+    if(selection_pending_ && !pending_jump_)throw MotionError("Finish the pending sequence selection before executing commands.");
     ModelSequenceResult result;
+    const auto resume_jump=[&]() {
+        auto& pending=*pending_jump_;
+        if(!pending.cleanup_complete && cleanup) {
+            running_=true;
+            bool complete;
+            try {complete=cleanup(pending.name);} catch(...) {running_=false;throw;}
+            running_=false;
+            pending.cleanup_complete=complete;
+        }
+        if(!pending.cleanup_complete) {
+            result.stop=ModelSequenceStop::sequence_cleanup_required;
+            result.command_reference=pending.reference;result.type=pending.type;result.name=pending.name;
+            return false;
+        }
+        // Keep completed cleanup recorded if a later checked motion boundary
+        // fails, so a retry cannot repeat an external cleanup side effect.
+        complete_selection();pending_jump_.reset();++result.commands_executed;
+        return true;
+    };
+    if(pending_jump_ && !resume_jump())return result;
     for(std::uint32_t visited=0;visited<65536;++visited) {
         const auto& sequence=program_->sequences()[*current_];
         if(cursor_==sequence.commands.size()) {result.stop=ModelSequenceStop::end;return result;}
@@ -183,15 +228,12 @@ ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const Mod
         case ModelSequenceOpcode::jump: {
             if(!ordinary(command.name) || std::none_of(program_->sequences().begin(),program_->sequences().end(),
                 [&](const auto& item){return item.name==command.name;}))return stopped(ModelSequenceStop::controller_required);
-            auto candidate=*this; candidate.select(command.name);
-            if(cleanup) {
-                running_=true;
-                bool complete;
-                try { complete=cleanup(command.name); } catch(...) { running_=false; throw; }
-                running_=false;
-                if(!complete) return stopped(ModelSequenceStop::sequence_cleanup_required);
-            }
-            *this=std::move(candidate);++result.commands_executed;continue;
+            // Own the originating command metadata BEFORE publishing another
+            // sequence. Suspended results must never reference replaced state.
+            PendingJump pending{command.reference_index,command.type,command.name,!cleanup};
+            begin_select(pending.name);pending_jump_.emplace(std::move(pending));
+            if(!resume_jump())return result;
+            continue;
         }
         case ModelSequenceOpcode::unsupported:return stopped(ModelSequenceStop::unsupported_command);
         }

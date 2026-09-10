@@ -82,15 +82,21 @@ as the original does. Callers must not retain a mutable messenger reference
 across a suspended send. Missing manager/activity services can be supplied before
 resuming; an exception indicates an uncertain effect and faults the dispatch.
 
-External sequence selection validates a candidate, then performs the original
-ordered subcommand cleanup. Selection is published only after cleanup succeeds.
-An ordinary local sequence JUMP also enters that cleanup through the sequence
-owner hook; it cannot bypass cleanup by selecting internally. Missing cleanup
-services retain the previous sequence and command cursor. `run_sequence` resumes
-a pending local jump; `resume_sequence` completes an external selection.
+Sequence entry uses two visible phases. After validation, `begin_select`
+publishes the new sequence name, data/cursor, label count and CTRL/PDMOVE reset.
+Cleanup callbacks therefore see the new sequence, as at `8030E980..8030E9D0`.
+The owned fall-check and motion-channel changes follow completed cleanup through
+`finish_select`; no new command runs beforehand. An ordinary local JUMP enters
+the same phases through its owner hook and retains its original command metadata
+across suspension. Omitting a required cleanup hook on retry cannot bypass it.
+`run_sequence` resumes a pending local jump; `resume_sequence` completes an
+external selection. Legacy `ModelSequenceRuntime::select` performs both phases
+atomically for callers without an outer cleanup owner.
 These APIs implement the owned cleanup/selection effects only. Original
 collision, wait, player and virtual entry callbacks are still separate required
-work. See [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md).
+work. In particular, player virtual `+B8` (`8034E1B0`) later appends the original
+`i_pcnumic / SQ_OPENP%d` idle effect and invokes status handling; these effects
+are not represented by prepared selection. See [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md).
 
 ## Reference and validation boundary
 

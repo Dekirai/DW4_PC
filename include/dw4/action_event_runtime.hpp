@@ -31,7 +31,8 @@ public:
 
     // Only the owned sequence-selection and subcommand-cleanup effects. Other
     // original entry callbacks (collision, action waits, player work) remain
-    // required. No new command runs until the complete cleanup pass succeeds.
+    // required. The new name/cursor/control reset is visible during cleanup;
+    // fall/channel effects follow cleanup. No new command runs before it succeeds.
     ModelSubcommandResult select_sequence(ControllerObjectId id,std::string_view name,
         const ModelSubcommandServices& services = {});
     ModelSubcommandResult resume_sequence(ControllerObjectId id,

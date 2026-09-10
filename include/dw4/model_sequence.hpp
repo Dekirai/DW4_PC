@@ -58,8 +58,10 @@ struct ModelActionRequest {
     std::string action; // Original ACTION category payload, not an animation clip.
 };
 using ModelActionDispatch = std::function<void(const ModelActionRequest&)>;
-// Optional owner hook for ordinary local jumps. False retains the jump cursor;
-// the owner retains cleanup progress. It must not mutate this sequence runtime.
+// Optional owner hook for ordinary local jumps. The destination and early
+// control resets are already visible. False retains that pending selection;
+// no destination command runs until this same cleanup completes. The hook
+// must not mutate this sequence runtime.
 using ModelSequenceCleanup = std::function<bool(std::string_view)>;
 
 // Recovered base-model command runner on caller-prepared work. Owns its program,
@@ -69,12 +71,14 @@ class ModelSequenceRuntime {
 public:
     ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
         std::string info_name,std::int32_t ram_no);
-    ModelControlState& model() noexcept { return model_; }
+    ModelControlState& model();
     const ModelControlState& model() const noexcept { return model_; }
     std::string_view current_sequence() const noexcept;
     std::uint32_t command_index() const noexcept { return cursor_; }
     std::uint32_t label_count() const noexcept { return label_count_; }
     const std::vector<ModelSequenceLabel>& labels() const noexcept { return labels_; }
+    bool selection_pending() const noexcept { return selection_pending_; }
+    bool jump_pending() const noexcept { return pending_jump_.has_value(); }
     // 8030B014: replace the first sequence-key entry or append; invalidate offset.
     void set_label(std::optional<std::string> sequence,std::string label);
     // Owned selection/control/motion effects of ordinary sequence entry only.
@@ -82,6 +86,16 @@ public:
     // must be implemented by the caller; this does not mark those as complete.
     // Missing sequences/labels and invalid motion stop parameters are atomic.
     void select(std::string_view sequence);
+    // 8030E978..8030E9C4: validate the complete prepared selection, then
+    // publish destination/cursor/label count and CTRL/PDMOVE resets before
+    // the owner's subcommand cleanup. Channels and check_fall remain live.
+    // Mutable model access, labels and another selection are blocked pending
+    // finish. Other full-work fields and callbacks remain external.
+    void begin_select(std::string_view sequence);
+    // 8030EA08..8030EA74: after cleanup, set check_fall and apply sequence
+    // stops to the current channels. A pending local jump can only finish
+    // through run(), so a missing cleanup hook cannot be bypassed here.
+    void finish_select();
     // 8030C3AC. Successful command effects are retained as an ordered prefix.
     // Missing ACTION dispatch stops BEFORE consuming the action. A supplied
     // dispatcher must perform the real effect or throw; logging is not playback.
@@ -98,6 +112,13 @@ private:
     std::vector<ModelSequenceLabel> labels_;
     std::optional<std::size_t> current_;
     std::uint32_t cursor_{},label_count_{};
-    bool running_{};
+    struct PendingJump {
+        std::uint32_t reference{};
+        std::string type,name;
+        bool cleanup_complete{};
+    };
+    std::optional<PendingJump> pending_jump_;
+    bool running_{},selection_pending_{};
+    void complete_selection();
 };
 } // namespace dw4

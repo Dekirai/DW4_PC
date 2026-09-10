@@ -26,7 +26,7 @@ struct ActionEventRuntime::Impl {
         ModelSubcommandContext context;
         bool active;
         bool jump_cleanup{};
-        std::optional<ModelSequenceRuntime> next_sequence;
+        bool selecting{};
         std::optional<PendingBroadcast> broadcast;
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
@@ -82,7 +82,7 @@ struct ActionEventRuntime::Impl {
         if(!command || (*command!="SETSOUND" && *command!="SETEFFECT"))
             return {false,0,"This MODELCTRL command requires its original outer controller service."};
         if(!owner.active) return {true,1,{}};
-        if(owner.next_sequence || owner.jump_cleanup) return {false,0,"MODELCTRL sequence cleanup must finish before appending new work."};
+        if(owner.sequence.selection_pending()) return {false,0,"MODELCTRL sequence cleanup must finish before appending new work."};
         const auto& buffer=messenger.buffer();
         if(*command=="SETSOUND") {
             if(buffer.floats().empty() || buffer.strings().empty()) fail("SETSOUND requires a delay and nullable sound name.");
@@ -210,31 +210,31 @@ const ModelSubcommandQueue& ActionEventRuntime::subcommands(ControllerObjectId i
 void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.next_sequence || owner.jump_cleanup) fail("Cannot change a label while sequence cleanup is suspended.");
+    if(owner.selecting || owner.jump_cleanup) fail("Cannot change a label while sequence cleanup is suspended.");
     owner.sequence.set_label(std::move(sequence),std::move(label));
 }
 ModelSubcommandResult ActionEventRuntime::select_sequence(ControllerObjectId id,std::string_view name,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.next_sequence || owner.jump_cleanup || owner.broadcast) fail("Resume pending model delivery or sequence cleanup first.");
-    auto candidate=owner.sequence; candidate.select(name); // Validate before external cleanup effects.
-    owner.next_sequence.emplace(std::move(candidate));
+    if(owner.selecting || owner.jump_cleanup || owner.broadcast) fail("Resume pending model delivery or sequence cleanup first.");
+    owner.sequence.begin_select(name); // Publish the original pre-cleanup fields.
+    owner.selecting=true;
     const auto result=owner.queue.cleanup(services);
-    if(result.complete()) { owner.sequence=std::move(*owner.next_sequence); owner.next_sequence.reset(); }
+    if(result.complete()) { owner.sequence.finish_select(); owner.selecting=false; }
     return result;
 }
 ModelSubcommandResult ActionEventRuntime::resume_sequence(ControllerObjectId id,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(!owner.next_sequence) fail("No prepared sequence selection is suspended.");
+    if(!owner.selecting) fail("No prepared sequence selection is suspended.");
     const auto result=owner.queue.resume(services);
-    if(result.complete()) { owner.sequence=std::move(*owner.next_sequence); owner.next_sequence.reset(); }
+    if(result.complete()) { owner.sequence.finish_select(); owner.selecting=false; }
     return result;
 }
 ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::uint64_t time,const ModelActionDispatch& action,
     const ModelSubcommandServices& services) {
     auto& owner=impl_->model(id);
-    if(owner.next_sequence) fail("Sequence cleanup must complete before executing commands.");
+    if(owner.selecting) fail("Sequence cleanup must complete before executing commands.");
     if(impl_->suspended_send && impl_->delivery_depth==0 &&
        (!owner.broadcast || owner.broadcast->dispatch.id()!=*impl_->suspended_send))
         fail("Another model's suspended synchronous delivery must finish before sequence execution.");
@@ -247,13 +247,13 @@ ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::
 ModelSubcommandResult ActionEventRuntime::update_subcommands(ControllerObjectId id,float frames,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.next_sequence || owner.jump_cleanup || owner.broadcast) fail("Model delivery and sequence cleanup must finish before frame processing.");
+    if(owner.sequence.selection_pending() || owner.broadcast) fail("Model delivery and sequence cleanup must finish before frame processing.");
     return owner.queue.update(frames,owner.context,services);
 }
 ModelSubcommandResult ActionEventRuntime::resume_subcommands(ControllerObjectId id,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.next_sequence || owner.jump_cleanup) fail("Resume the owning sequence operation to complete cleanup.");
+    if(owner.selecting || owner.jump_cleanup) fail("Resume the owning sequence operation to complete cleanup.");
     return owner.queue.resume(services);
 }
 NativeMessenger& ActionEventRuntime::messenger() { impl_->require_top_level_idle(); return impl_->messenger; }
@@ -279,7 +279,7 @@ MessengerResult ActionEventRuntime::broadcast(ControllerObjectId id,const Action
     if(event.source!=owner.binding.source() || event.info_name!=owner.binding.model_name() ||
        event.ram_no!=static_cast<std::int32_t>(owner.binding.instance_index()))
         fail("ACTION broadcast does not belong to this prepared model binding.");
-    if(owner.next_sequence || owner.jump_cleanup) fail("Sequence cleanup must finish before a new ACTION broadcast.");
+    if(owner.sequence.selection_pending()) fail("Sequence cleanup must finish before a new ACTION broadcast.");
     if(owner.broadcast && !same(owner.broadcast->event,event)) fail("Resume the pending ACTION event before starting another.");
     if(!owner.broadcast) {
         impl_->require_top_level_idle();
