@@ -170,7 +170,7 @@ The scalar sum oracle uses exact integer binary32 rounding. This is a bounded
 interpreter comparison, not physical-console or complete-collision validation.
 
 Verified executable: `build/Release/dw4_model_hitbox_tests.exe`, SHA-256
-`bec254bfc63c27594254733477e655b7e7d063ffef567c6694fe4ab7d5205ca2`.
+`9bdeb3d1e847af6dd6abe34d1a8a2f418a3020b379ffabc3addec4e172274387`.
 The final linked HITBOX and existing subcommand suites also passed the 65 and
 67 checks reported above. The local rerun command is:
 

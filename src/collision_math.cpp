@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 namespace dw4 {
