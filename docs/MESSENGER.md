@@ -175,7 +175,7 @@ stack tests also cover all typed parent values, stable object identity, nested
 LIFO rotation, nullable/retained owners, mutation through parked references,
 child release, live nested selection, suspended and faulted sends, move/reset,
 overflow/underflow and release-time reentry. The final Release messenger test
-executable passes 166 checks. The deferred kernel and runtime suites add 85
+executable passes 166 checks. The deferred kernel and runtime suites add 87
 and 151 checks; see [DEFERRED_MESSENGER.md](DEFERRED_MESSENGER.md).
 
 An independent local probe executes original registration, selection, sender

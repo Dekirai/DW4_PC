@@ -10,7 +10,7 @@ later-UI boundary. Actual weapon construction and complete gameplay remain open.
 | Check | Evidence |
 | --- | --- |
 | Release build and package | 71/71 CTest suites passed; local MSVC build without compiler warnings |
-| Deferred kernel | 85 synthetic checks: packet identity, typed payloads, repeated preparation, signed/wrapped time, FIFO, growth, callback budget, pause, suspended writes, faults and cleanup/destructor reentry |
+| Deferred kernel | 87 synthetic checks: packet identity, typed payloads, repeated preparation, signed/wrapped time, FIFO, growth, callback budget, pause, suspended writes, stable fault progress and cleanup/destructor reentry |
 | Deferred runtime | 151 synthetic checks: four actual provider identities/indices, missing third provider, nested retained sends, same-ID foreign handles, immediate ownership reservation, frozen clock/count and no replay |
 | Original deferred instructions | 61 cases / 1,388 operations / 2,110 exact state and callback rows / 729,885 original instructions; zero differences against the final core |
 | Additional instruction evidence | 521 reference-only preparation/pause cases / 50,410 instructions, including all initialized and active byte values; 12 native borrowed-packet guard checks |

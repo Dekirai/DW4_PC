@@ -529,7 +529,13 @@ MessengerResult NativeMessenger::resume(MessengerDeferredUpdate& update,const Me
         throw MessengerError("Deferred update belongs to another or expired messenger context.");
     auto frame=update.impl_;
     auto result=[&](MessengerStop stop,std::string diagnostic={}) {
-        return MessengerResult{stop,frame->recipients,{},std::move(diagnostic)};
+        auto completed=frame->recipients;
+        std::optional<ControllerObjectId> recipient;
+        if(frame->dispatch && !frame->dispatch->completed()) {
+            completed+=frame->dispatch->impl_->completed_count;
+            recipient=frame->dispatch->impl_->recipient;
+        }
+        return MessengerResult{stop,completed,recipient,std::move(diagnostic)};
     };
     impl_->check_buffer_change();
     if(frame->generation!=impl_->generation) {

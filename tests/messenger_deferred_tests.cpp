@@ -197,10 +197,35 @@ void continuation_and_cleanup() {
     messenger.reset();
     check(blocked==3,"Packet destruction let a retained reference mutate members during release");
 }
+void faulted_broadcast_progress() {
+    NativeMessenger messenger;
+    std::array<ControllerObjectId,4> ids;
+    std::array<unsigned,4> calls{};
+    for(auto& id:ids) { id=ControllerObjectId::allocate_native(); messenger.register_recipient(id,"Q",{},-1); }
+    MessengerServices services;
+    services.manager=[&](ControllerObjectId id) {
+        const auto index=static_cast<std::size_t>(std::find(ids.begin(),ids.end(),id)-ids.begin());
+        return MessengerManager{[&,index](NativeMessenger&,const MessengerDelivery&)->MessengerCallResult {
+            ++calls[index];
+            if(index==2) throw std::runtime_error("Third recipient failed");
+            return {true,1,{}};
+        },{}};
+    };
+    messenger.defer_to("Q",{},-1,"BROADCAST",0,5);
+    auto update=messenger.begin_deferred_update(5);
+    const auto first=messenger.resume(update,services);
+    check(first.stop==MessengerStop::faulted && first.recipients_completed==2 && first.recipient==ids[2],
+        "Faulted broadcast lost its completed recipient prefix");
+    const auto again=messenger.resume(update,services);
+    check(again.stop==first.stop && again.recipients_completed==first.recipients_completed && again.recipient==first.recipient
+        && again.diagnostic==first.diagnostic && calls==std::array<unsigned,4>{1,1,1,0} && update.messages_completed()==0,
+        "Faulted retry changed progress reporting or replayed broadcast callbacks");
+}
 }
 int main() {
     try {
         preparation_and_packets(); signed_order_and_growth(); pause_arithmetic(); live_callbacks_and_budget(); continuation_and_cleanup();
+        faulted_broadcast_progress();
         std::cout<<"Deferred messenger tests passed: "<<checks<<" checks\n"; return 0;
     } catch(const std::exception& error) { std::cerr<<error.what()<<'\n'; return 1; }
 }
