@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 
@@ -164,6 +165,49 @@ void accumulated_angles() {
     ModelMotionPose pose(identity);pose.turn.desired[1]=std::nextafter(0x1p27f,std::numeric_limits<float>::infinity());pose.turn.rate[1]=1;
     rejects([&]{turn_model(pose,timer,42);});
 }
+void euler_ni_boundaries() {
+    for(const auto sign:{0u,0x80000000u})for(const auto tiny:{1u,0x00400000u,0x007fffffu})for(std::size_t axis=0;axis<3;++axis) {
+        ModelMotionPose pose(identity);pose.turn.desired[axis]=std::bit_cast<float>(sign|tiny);
+        pose.matrix[12]=std::bit_cast<float>(0x80000001u);pose.matrix[13]=std::bit_cast<float>(1u);pose.matrix[14]=-0.f;
+        pose.translated=true;pose.position_locked=true;const auto desired=pose.turn.desired;
+        force_model_turn(pose);
+        const auto component=axis==0 ? 6u : axis==1 ? 2u : 1u;
+        const auto expected=axis==1 ? sign^0x80000000u : sign;
+        check(std::bit_cast<std::uint32_t>(pose.matrix[component])==expected,
+            "Euler trig frsp must flush tiny results with sign before products and sine negation");
+        check(pose.turn.applied==desired && std::bit_cast<std::uint32_t>(pose.turn.applied[axis])==(sign|tiny) &&
+            std::bit_cast<std::uint32_t>(pose.matrix[12])==0x80000001u && std::bit_cast<std::uint32_t>(pose.matrix[13])==1u &&
+            std::bit_cast<std::uint32_t>(pose.matrix[14])==0x80000000u && pose.translated && pose.position_locked,
+            "NI Euler rebuild must preserve raw applied angles, scalar translation words and pose flags");
+    }
+    for(std::size_t axis=0;axis<3;++axis) {
+        ModelMotionPose pose(identity);pose.turn.desired[axis]=std::numeric_limits<float>::min();force_model_turn(pose);
+        const auto component=axis==0 ? 6u : axis==1 ? 2u : 1u;
+        check(std::bit_cast<std::uint32_t>(pose.matrix[component])==(axis==1 ? 0x80800000u : 0x00800000u),
+            "Exactly minimum-normal sine results must survive Euler frsp");
+    }
+    const float almost_one=std::bit_cast<float>(0x3f7fffffu);
+    const float angle=static_cast<float>(std::acos(static_cast<double>(almost_one)));
+    check(std::bit_cast<std::uint32_t>(static_cast<float>(std::cos(static_cast<double>(angle))))==0x3f7fffffu,
+        "Euler boundary fixture requires the immediately smaller float cosine than one");
+    ModelMotionPose pose(identity);pose.turn.desired={std::numeric_limits<float>::min(),angle,0};
+    force_model_turn(pose);
+    check(std::bit_cast<std::uint32_t>(pose.matrix[6])==0,
+        "An exact product below minimum normal must flush even when ordinary float rounding would round up");
+    pose.turn.desired[0]=std::bit_cast<float>(0x00800001u);force_model_turn(pose);
+    check(std::bit_cast<std::uint32_t>(pose.matrix[6])==0x00800000u,
+        "A nearby product above the NI threshold must round normally rather than flush");
+    pose=ModelMotionPose(identity);pose.turn.desired={0x1p-63f,0,0x1p-64f};force_model_turn(pose);
+    check(std::bit_cast<std::uint32_t>(pose.matrix[8])==0,
+        "Tiny intermediate sine products must flush before entering a later fused basis term");
+    const auto forced=pose;auto timer=cached(7);const auto saved_timer=timer;
+    check(turn_model(pose,timer,99,true) && pose==forced && timer==saved_timer,
+        "Standalone force and timer-bearing force must share Euler NI arithmetic without consuming time");
+    pose.turn.desired[0]=std::numeric_limits<float>::infinity();const auto before=pose;
+    rejects([&]{force_model_turn(pose);});
+    check(pose.matrix==before.matrix && pose.turn.applied==before.turn.applied,
+        "Failed standalone force must not publish a partial NI basis or applied angles");
+}
 void original_data(const std::filesystem::path& root) {
     const auto resources=MountedResources::open(root);
     const auto player=read_igb_document(resources.read("_common/p_agumon.igb"));
@@ -190,7 +234,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try { angular_rules();matrix_and_timer_paths();model_order_and_ownership();guarded_failures();accumulated_angles();
+    try { angular_rules();matrix_and_timer_paths();model_order_and_ownership();guarded_failures();accumulated_angles();euler_ni_boundaries();
         if(argc==2)original_data(argv[1]);
         else if(argc!=1)throw std::runtime_error("Usage: dw4_model_motion_tests [EXTRACTED_ROOT]");
         std::cout<<"Model motion tests passed: "<<checks<<" checks\n";return 0;

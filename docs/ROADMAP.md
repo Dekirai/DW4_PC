@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.27 routes HITBOX queries through prepared target body caches, ordered
+overlap gates and retained record/hit-script/heading phases. Four Agumon RAMs
+retain independent bodies and authored collision categories. Target Lua/HP/global
+context, damage, player creation and the outer game loop remain required. The
+first Set129 still needs its separate HITPLAYERTALK recipients. See
+[MODEL_COLLISION.md](MODEL_COLLISION.md).
+
 Version 0.26 runs original HITBOX commands through timed work, exact query-box
 math and resumable CHKBULLET/BHit service dispatch. Original SQ_ATCK1 preparation
 can now reach TALKWF and WCHECK without skipping the first hitbox. Complete

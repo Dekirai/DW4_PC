@@ -5,7 +5,8 @@ sounds and effects. It preserves the original delayed start, repeated checks,
 absolute expiry and exact-type AllClear behavior. Each actual check requires an
 explicit service that owns geometry, debug drawing when applicable, collision
 delivery and the conditional source script. Queue execution alone does not
-implement target collision response, combat or a complete player runtime.
+implement combat or a complete player runtime. Prepared target body and response
+delivery is described in [MODEL_COLLISION.md](MODEL_COLLISION.md).
 
 ## Command and ownership
 
@@ -134,8 +135,9 @@ category is an explicit missing-scene boundary. Target activity and manager
 callbacks must come from their real owners. The external Lua service must
 establish the original shared model/script context and execute the requested
 script. Missing recipients, managers, debug display or Lua execution do not
-become successful checks. Full target body lookup, target hit scripts, damage
-and collision response remain distinct downstream work.
+become successful checks. Version 0.27 supplies prepared target body lookup,
+overlap and retained response delivery; actual target scripts, HP context and
+damage remain required. See [MODEL_COLLISION.md](MODEL_COLLISION.md).
 
 ## Provenance and validation
 

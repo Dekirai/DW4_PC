@@ -24,8 +24,8 @@ using MessengerObject = std::variant<std::monostate,ControllerObjectId,Messenger
 class MessengerBuffer {
 public:
     std::uint8_t enabled_only() const noexcept { return enabled_only_; }
-    void set_enabled_only(std::uint8_t value) noexcept { enabled_only_=value; }
-    void clear() noexcept;
+    void set_enabled_only(std::uint8_t value);
+    void clear();
     void add_bool(std::uint8_t value);
     void add_int(std::int32_t value);
     void add_float(float value);
@@ -44,7 +44,9 @@ public:
     const auto& objects() const noexcept { return objects_; }
     const auto& strings() const noexcept { return strings_; }
 private:
+    friend class NativeMessenger;
     std::uint8_t enabled_only_{};
+    bool clearing_{};
     std::size_t entries_{}, bytes_{};
     std::vector<std::uint8_t> booleans_;
     std::vector<std::int32_t> integers_;
@@ -55,6 +57,7 @@ private:
     std::vector<MessengerObject> objects_;
     std::vector<std::optional<std::string>> strings_;
     void check_append(std::size_t bytes) const;
+    void check_mutation() const;
 };
 
 struct MessengerMessage {
@@ -130,6 +133,13 @@ public:
     void select(std::string category,std::optional<std::string> name,std::int32_t index);
     MessengerBuffer& buffer();
     const MessengerBuffer& buffer() const;
+    // Explicit original buffer-object rotation. Push preserves the current
+    // object's identity and installs a spare without clearing it. Pop clears
+    // the child, restores its parent and leaves selection/cache state alone.
+    // A suspended caller owns the matching pop; exceptions do not restore it.
+    void push_buffer();
+    void pop_buffer();
+    std::size_t buffer_depth() const noexcept;
     const MessengerMessage& selected() const;
     std::size_t registration_count() const noexcept;
     bool has_category(std::string_view category) const noexcept;
@@ -139,7 +149,7 @@ public:
         std::int32_t index,std::string command);
     MessengerResult resume(MessengerDispatch& dispatch,const MessengerServices& services);
     // Original cleanup/reprepare boundary: discard registrations, cached rows
-    // and the buffer. Invalidates outstanding handles. Forbidden in a callback.
+    // and all five buffers. Invalidates outstanding handles. Forbidden in a callback.
     void reset();
 private:
     friend struct MessengerDispatch::Impl;
@@ -148,7 +158,8 @@ private:
 };
 // Host bounds: 65,536 registration rows; 8 MiB registration text; 64 cache
 // records; 256 live handles; 64 nested resume calls; 32,768 shared typed values
-// and 8 MiB buffer storage; 65,535 bytes/string. Embedded NULs reject.
+// and 8 MiB storage per buffer; 65,535 bytes/string. Embedded NULs reject.
+// Original preparation owns five stable buffers, allowing four nested pushes.
 // No source-file filtering, deduplication or automatic nested-buffer restoration.
-// Deferred messages and explicit original buffer push/pop are separate services.
+// Deferred messages remain a separate service.
 } // namespace dw4

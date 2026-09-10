@@ -2,6 +2,7 @@
 
 #include "dw4/action_event_tables.hpp"
 #include "dw4/messenger.hpp"
+#include "dw4/model_collision.hpp"
 #include "dw4/player_runtime_binding.hpp"
 #include "dw4/pad.hpp"
 
@@ -59,6 +60,17 @@ public:
     // Prepared combination of the original controller/debug-node gates.
     void set_hitbox_debug(ControllerObjectId id,bool enabled);
     ModelHitboxResult hitbox_result(ControllerObjectId id) const;
+    // Attach the exact authored HIT graph to this prepared ONE work once. Adds
+    // its enabled collision categories in original order, using the bound name
+    // and RAM ordinal. MODELCTRL registration already belongs to register_model.
+    // This does not implement the original registration tail virtual or create
+    // HP/status/script owners; HP reference presence is explicit prepared work.
+    // The caller prepares the base command path after virtual+C4 declines;
+    // original PC CHKBULLET is verified to take that path.
+    void prepare_collision_target(ControllerObjectId id,ModelHitBodyDefinition definition,bool hp_reference_present);
+    const ModelCollisionRuntime& collision_target(ControllerObjectId id) const;
+    // Missing services can be supplied between retries of the same delivery.
+    void set_collision_services(ModelCollisionServices services);
 
     // Only the owned sequence-selection and subcommand-cleanup effects. Other
     // original entry callbacks (collision, action waits, player work) remain

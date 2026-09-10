@@ -2,6 +2,16 @@
 
 ## Implemented boundary
 
+Version 0.27 adds immutable `model_hit_body` definitions and independent
+timestamp-keyed caches for actual selected RAMs. `model_collision` owns base
+CHKBULLET gates, first body overlap, captured arguments and nested
+GETRECNO/target-script/heading phases. `action_event_runtime` attaches this
+prepared work to bound MODELCTRL endpoints and registers authored collision
+categories. Five stable messenger buffers preserve explicit push/pop behavior
+across service suspension. Actual target Lua, HP/global context, full controller
+preparation and damage remain required. See [MODEL_COLLISION.md](MODEL_COLLISION.md),
+[MODEL_HIT_BODY.md](MODEL_HIT_BODY.md) and [MESSENGER.md](MESSENGER.md).
+
 Version 0.26 adds exact HITBOX command decoding and a third typed entry in the
 ordered model subcommand queue. `collision_math` reconstructs the query AABox
 from the source ONE matrix with recovered float and homogeneous-W arithmetic.

@@ -19,12 +19,19 @@ void finite(float value) {
 }
 }
 
-void MessengerBuffer::clear() noexcept {
+void MessengerBuffer::check_mutation() const {
+    if(clearing_) throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
+}
+void MessengerBuffer::set_enabled_only(std::uint8_t value) { check_mutation(); enabled_only_=value; }
+void MessengerBuffer::clear() {
+    check_mutation();
+    struct Guard { bool& clearing; explicit Guard(bool& value):clearing(value) { clearing=true; } ~Guard() { clearing=false; } } guard(clearing_);
     enabled_only_=0; entries_=bytes_=0;
     booleans_.clear(); integers_.clear(); floats_.clear(); integers64_.clear();
     vectors_.clear(); matrices_.clear(); objects_.clear(); strings_.clear();
 }
 void MessengerBuffer::check_append(std::size_t bytes) const {
+    check_mutation();
     if(entries_>=32768 || bytes>text_limit-bytes_)
         throw MessengerError("Messenger shared argument/result storage exceeds its host bound.");
 }
@@ -80,10 +87,23 @@ struct NativeMessenger::Impl {
     std::size_t registration_text{}, handles{}, depth{};
     std::array<Cache,64> cache;
     std::array<std::size_t,64> order;
-    MessengerBuffer buffer;
+    std::array<MessengerBuffer,5> buffers;
+    std::array<std::size_t,4> buffer_pool{1,2,3,4};
+    std::size_t current_buffer{}, buffer_depth{};
+    bool changing_buffer{};
     std::uint64_t generation{}, next_dispatch=1;
     bool prepared{};
     Impl() { std::iota(order.begin(),order.end(),std::size_t{}); }
+    MessengerBuffer& buffer() { return buffers[current_buffer]; }
+    void check_buffer_change() const {
+        if(changing_buffer) throw MessengerError("Messenger buffer mutation cannot be reentered during object release.");
+        for(const auto& buffer:buffers) buffer.check_mutation();
+    }
+    struct BufferChange {
+        Impl& state;
+        explicit BufferChange(Impl& state):state(state) { state.check_buffer_change(); state.changing_buffer=true; }
+        ~BufferChange() { state.changing_buffer=false; }
+    };
 };
 struct MessengerDispatch::Impl {
     enum class Phase { row, manager, structured, fallback, completed, faulted };
@@ -111,6 +131,7 @@ NativeMessenger::~NativeMessenger()=default;
 void NativeMessenger::register_recipient(ControllerObjectId recipient,std::string category,
     std::optional<std::string> name,std::int32_t index) {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_buffer_change();
     text_check(std::string_view(category)); text_check(name);
     const auto size=category.size()+(name ? name->size() : 0);
     if(impl_->registrations.size()>=65536 || size>text_limit-impl_->registration_text)
@@ -121,9 +142,11 @@ void NativeMessenger::register_recipient(ControllerObjectId recipient,std::strin
 }
 void NativeMessenger::select(std::string category,std::optional<std::string> name,std::int32_t index) {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_buffer_change();
     text_check(std::string_view(category)); text_check(name);
     auto& state=*impl_;
-    state.buffer.clear(); state.prepared=true;
+    { Impl::BufferChange guard(state); state.buffer().clear(); }
+    state.prepared=true;
     std::size_t position=0;
     for(;position<state.order.size();++position) {
         const auto& record=state.cache[state.order[position]];
@@ -149,15 +172,40 @@ void NativeMessenger::select(std::string category,std::optional<std::string> nam
 }
 MessengerBuffer& NativeMessenger::buffer() {
     if(!impl_ || !impl_->prepared) throw MessengerError("Messenger selection buffer has not been prepared.");
-    return impl_->buffer;
+    impl_->check_buffer_change();
+    return impl_->buffer();
 }
 const MessengerBuffer& NativeMessenger::buffer() const {
     if(!impl_ || !impl_->prepared) throw MessengerError("Messenger selection buffer has not been prepared.");
-    return impl_->buffer;
+    impl_->check_buffer_change();
+    return impl_->buffer();
 }
+void NativeMessenger::push_buffer() {
+    buffer();
+    auto& state=*impl_;
+    if(state.buffer_depth==state.buffer_pool.size())
+        throw MessengerError("Messenger buffer stack exceeds four nested pushes.");
+    const auto previous=state.current_buffer;
+    state.current_buffer=state.buffer_pool.back();
+    std::move_backward(state.buffer_pool.begin(),state.buffer_pool.end()-1,state.buffer_pool.end());
+    state.buffer_pool.front()=previous; ++state.buffer_depth;
+}
+void NativeMessenger::pop_buffer() {
+    buffer();
+    auto& state=*impl_;
+    if(!state.buffer_depth) throw MessengerError("Messenger buffer stack cannot pop below zero.");
+    Impl::BufferChange guard(state);
+    state.buffer().clear();
+    const auto previous=state.current_buffer;
+    state.current_buffer=state.buffer_pool.front();
+    std::move(state.buffer_pool.begin()+1,state.buffer_pool.end(),state.buffer_pool.begin());
+    state.buffer_pool.back()=previous; --state.buffer_depth;
+}
+std::size_t NativeMessenger::buffer_depth() const noexcept { return impl_ ? impl_->buffer_depth : 0; }
 const MessengerMessage& NativeMessenger::selected() const {
     if(!impl_ || !impl_->prepared || !impl_->cache[impl_->order.front()].valid)
         throw MessengerError("Messenger has no selected message.");
+    impl_->check_buffer_change();
     return impl_->cache[impl_->order.front()].message;
 }
 std::size_t NativeMessenger::registration_count() const noexcept { return impl_ ? impl_->registrations.size() : 0; }
@@ -190,6 +238,7 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
     if(!dispatch.impl_ || !impl_ || dispatch.impl_->owner.lock()!=impl_)
         throw MessengerError("Messenger dispatch belongs to another or expired context.");
     auto& frame=*dispatch.impl_;
+    impl_->check_buffer_change();
     auto result=[&](MessengerStop stop,std::string diagnostic={}) {
         return MessengerResult{stop,frame.completed_count,frame.recipient,std::move(diagnostic)};
     };
@@ -219,7 +268,7 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
                 const auto key=row(index).index;
                 if(record.message.index==-1 || key==-1 || key==record.message.index) ++count;
             }
-            state->buffer.add_bool(count!=0); state->buffer.add_int(count);
+            state->buffer().add_bool(count!=0); state->buffer().add_int(count);
             frame.phase=Phase::completed;
             return result(MessengerStop::completed);
         }
@@ -229,7 +278,7 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
                 if(!services.active) return result(MessengerStop::service_required,"Live recipient activity service is required.");
                 const auto active=services.active(*frame.recipient);
                 if(!active) return result(MessengerStop::service_required,"Live recipient activity is unavailable.");
-                if(*active==0) { state->buffer.add_object(frame.recipient); break; }
+                if(*active==0) { state->buffer().add_object(frame.recipient); break; }
             }
             frame.recipient.reset(); frame.phase=Phase::completed;
             return result(MessengerStop::completed);
@@ -246,7 +295,7 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
                 if(frame.cursor>=frame.count) { frame.phase=Phase::completed; continue; }
                 const auto current=row(frame.cursor);
                 const auto index=record.message.index;
-                if(index==-2 || state->buffer.enabled_only()==1) {
+                if(index==-2 || state->buffer().enabled_only()==1) {
                     frame.recipient=current.recipient;
                     if(!services.active) return result(MessengerStop::service_required,"Live recipient activity service is required.");
                     const auto live=services.active(current.recipient);
@@ -289,10 +338,14 @@ MessengerResult NativeMessenger::resume(MessengerDispatch& dispatch,const Messen
 }
 void NativeMessenger::reset() {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_buffer_change();
     if(impl_->depth) throw MessengerError("Messenger cleanup during an active callback is outside the owned profile.");
     impl_->registrations.clear(); impl_->registration_text=0;
     for(auto& record:impl_->cache) { record.message={}; record.rows.clear(); record.valid=false; }
     std::iota(impl_->order.begin(),impl_->order.end(),std::size_t{});
-    impl_->buffer.clear(); impl_->prepared=false; ++impl_->generation;
+    Impl::BufferChange guard(*impl_);
+    for(auto& buffer:impl_->buffers) buffer.clear();
+    impl_->current_buffer=impl_->buffer_depth=0; impl_->buffer_pool={1,2,3,4};
+    impl_->prepared=false; ++impl_->generation;
 }
 } // namespace dw4

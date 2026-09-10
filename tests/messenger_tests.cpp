@@ -346,10 +346,157 @@ void retained_box_objects() {
     messenger.select("NEXT",{},-1);
     check(lifetime.expired() && buffer.objects().empty(),"Selection did not release the temporary geometric owner");
 }
+bool empty(const dw4::MessengerBuffer& buffer) {
+    return buffer.enabled_only()==0 && buffer.booleans().empty() && buffer.integers().empty()
+        && buffer.floats().empty() && buffer.integers64().empty() && buffer.vectors().empty()
+        && buffer.matrices().empty() && buffer.objects().empty() && buffer.strings().empty();
+}
+void explicit_buffer_stack() {
+    dw4::NativeMessenger messenger;
+    rejects([&]{messenger.push_buffer();}); rejects([&]{messenger.pop_buffer();});
+    messenger.select("OUTER","",7);
+    auto& parent=messenger.buffer(); const auto* selected=&messenger.selected();
+    parent.set_enabled_only(255); parent.add_bool(2); parent.add_int(-17);
+    parent.add_float(std::bit_cast<float>(0x80000001u)); parent.add_int64(std::numeric_limits<std::int64_t>::min());
+    parent.add_vector({1,-0.0f,3}); std::array<float,16> matrix{}; matrix[3]=-0.0f; matrix[15]=1;
+    parent.add_matrix(matrix); parent.add_object(a); parent.add_object({});
+    parent.add_string({}); parent.add_string(""); parent.add_string("parent");
+    auto box=std::make_shared<const dw4::CollisionBox>(dw4::CollisionBox{{1,2,3},{4,5,6}});
+    const std::weak_ptr<const dw4::CollisionBox> lifetime=box;
+    parent.add_box(box); box.reset();
+    messenger.push_buffer(); auto& child=messenger.buffer();
+    check(&child!=&parent && messenger.buffer_depth()==1 && empty(child),"Push did not install a distinct prepared spare");
+    check(&messenger.selected()==selected && messenger.selected().category=="OUTER","Push changed the selected cache record");
+    parent.add_int(23); // A retained buffer reference still names the parked object.
+    messenger.select("CHILD",{},-2); child.add_bool(1); child.add_int(99); child.add_string("discard");
+    child.set_enabled_only(1); child.add_object(b);
+    messenger.pop_buffer();
+    check(&messenger.buffer()==&parent && messenger.buffer_depth()==0 && empty(child),"Pop did not clear the child and restore parent object identity");
+    check(parent.enabled_only()==255 && parent.booleans()==std::vector<std::uint8_t>{2}
+        && parent.integers()==std::vector<std::int32_t>{-17,23}
+        && std::bit_cast<std::uint32_t>(parent.floats()[0])==0x80000001u
+        && parent.integers64()[0]==std::numeric_limits<std::int64_t>::min()
+        && parent.vectors()[0][0]==1 && std::bit_cast<std::uint32_t>(parent.vectors()[0][1])==0x80000000u
+        && parent.matrices()[0][15]==1 && std::bit_cast<std::uint32_t>(parent.matrices()[0][3])==0x80000000u
+        && parent.objects().size()==3 && std::get<Id>(parent.objects()[0])==a
+        && std::holds_alternative<std::monostate>(parent.objects()[1]) && !lifetime.expired()
+        && parent.strings()==std::vector<std::optional<std::string>>{{},"","parent"},
+        "Buffer rotation copied, cleared or changed a parked typed value or owner");
+    check(messenger.selected().category=="CHILD" && !messenger.selected().name && messenger.selected().index==-2,
+        "Pop incorrectly restored the parent message selection");
+    rejects([&]{messenger.pop_buffer();});
+    check(&messenger.buffer()==&parent && parent.integers().size()==2,"Underflow changed the active buffer before rejection");
+    // Push itself performs no clear, including when a retained reference changed a spare.
+    child.add_int(41); messenger.push_buffer();
+    check(&messenger.buffer()==&child && child.integers()==std::vector<std::int32_t>{41},"Push cleared or replaced the recycled buffer object");
+    messenger.select("CLEAR_CHILD",{},0); check(empty(child),"Selection did not clear the currently installed child");
+    messenger.pop_buffer(); messenger.select("CLEAR_PARENT",{},0);
+    check(lifetime.expired() && empty(parent),"Restored parent did not release its retained object on selection");
+
+    std::array<dw4::MessengerBuffer*,5> identities{&parent};
+    for(std::size_t depth=1;depth<identities.size();++depth) {
+        messenger.push_buffer(); identities[depth]=&messenger.buffer(); messenger.buffer().add_int(static_cast<int>(depth));
+        for(std::size_t earlier=0;earlier<depth;++earlier)
+            check(identities[depth]!=identities[earlier],"Nested push reused a parked ancestor");
+    }
+    rejects([&]{messenger.push_buffer();});
+    check(messenger.buffer_depth()==4 && &messenger.buffer()==identities[4]
+        && messenger.buffer().integers()==std::vector<std::int32_t>{4},"Overflow changed the valid stack prefix");
+    auto moved=std::move(messenger);
+    rejects([&]{messenger.push_buffer();}); rejects([&]{messenger.pop_buffer();});
+    check(messenger.buffer_depth()==0,"Moved-from messenger exposed another owner's stack");
+    for(std::size_t depth=4;depth;--depth) {
+        moved.pop_buffer();
+        check(empty(*identities[depth]) && &moved.buffer()==identities[depth-1] && moved.buffer_depth()==depth-1,
+            "Nested pop or move did not preserve LIFO buffer identity");
+        if(depth>1) check(moved.buffer().integers()==std::vector<std::int32_t>{static_cast<int>(depth-1)},
+            "Nested pop lost a parent list");
+    }
+    std::array<std::weak_ptr<const dw4::CollisionBox>,5> retained;
+    for(std::size_t i=0;i<retained.size();++i) {
+        if(i) moved.push_buffer();
+        auto owned=std::make_shared<const dw4::CollisionBox>(); retained[i]=owned; moved.buffer().add_box(std::move(owned));
+    }
+    moved.reset();
+    for(const auto& owner:retained) check(owner.expired(),"Reset retained an active or parked geometric object");
+    check(moved.buffer_depth()==0,"Reset retained explicit stack depth");
+    rejects([&]{moved.pop_buffer();}); moved.select("NEW",{},0);
+    check(&moved.buffer()==&parent && empty(parent),"Reset did not reprepare the original current buffer");
+}
+void stacked_delivery_continuation() {
+    Fixture f; f.add(a); f.add(b); f.add(c,{},-1,"INNER");
+    unsigned outer_calls=0,inner_calls=0,later_calls=0; bool ready=false,pushed=false;
+    std::optional<dw4::MessengerDispatch> nested;
+    dw4::MessengerBuffer* parent=nullptr; dw4::MessengerBuffer* child=nullptr;
+    f.services.manager=[&](Id id) { return dw4::MessengerManager{[&,id](dw4::NativeMessenger& messenger,const dw4::MessengerDelivery&) {
+        if(id==a) {
+            ++outer_calls;
+            if(!pushed) {
+                parent=&messenger.buffer(); messenger.push_buffer(); pushed=true;
+                nested.emplace(messenger.begin_send_to("INNER",{},-1,"QUERY"));
+                child=&messenger.buffer(); child->add_int(51); child->set_enabled_only(2);
+            }
+            const auto result=messenger.resume(*nested,f.services);
+            if(result.stop!=done) return dw4::MessengerCallResult{false,1,result.diagnostic};
+            check(messenger.buffer().integers()==std::vector<std::int32_t>{51,52},"Nested retry lost its child results");
+            messenger.pop_buffer(); messenger.buffer().add_bool(1);
+        } else if(id==c) {
+            ++inner_calls;
+            if(!ready) return dw4::MessengerCallResult{false,1,"Inner query unavailable"};
+            messenger.buffer().add_int(52);
+        } else {
+            ++later_calls;
+            check(&messenger.buffer()==parent && messenger.buffer().integers()==std::vector<std::int32_t>{7}
+                && messenger.buffer().enabled_only()==0,"Later outer recipient observed the nested child buffer");
+        }
+        return dw4::MessengerCallResult{true,1,{}};
+    },{}};};
+    f.messenger.select("ACTION",{},-1); f.messenger.buffer().add_int(7);
+    auto outer=f.messenger.begin_send("OUTER");
+    check(f.messenger.resume(outer,f.services).stop==dw4::MessengerStop::service_required
+        && f.messenger.buffer_depth()==1 && &f.messenger.buffer()==child && parent->integers()[0]==7,
+        "Suspension automatically restored or discarded a caller-owned pushed buffer");
+    ready=true;
+    check(f.messenger.resume(outer,f.services).stop==done && outer_calls==2 && inner_calls==2 && later_calls==1
+        && f.messenger.buffer_depth()==0 && empty(*child) && parent->booleans()==std::vector<std::uint8_t>{1},
+        "Stacked continuation replayed a completed prefix or failed to restore the buffer");
+    check(f.messenger.selected().category=="INNER" && f.messenger.selected().command=="QUERY",
+        "Successful outer delivery restored an explicitly nested selection");
+    f.messenger.resume(outer,f.services); check(later_calls==1,"Completed stacked dispatch replayed");
+
+    Fixture fault; fault.add(a); unsigned attempts=0;
+    fault.services.manager=[&](Id) { return dw4::MessengerManager{[&](dw4::NativeMessenger& messenger,const dw4::MessengerDelivery&)->dw4::MessengerCallResult {
+        ++attempts; messenger.push_buffer(); messenger.select("FAILED",{},0); messenger.buffer().add_int(9);
+        throw std::runtime_error("Unknown completion");
+    },{}};};
+    auto failed=fault.messenger.begin_send_to("ACTION",{},-1,"GO"); fault.messenger.buffer().add_int(8);
+    check(fault.messenger.resume(failed,fault.services).stop==dw4::MessengerStop::faulted && fault.messenger.buffer_depth()==1,
+        "Throwing callback silently popped its explicit buffer");
+    fault.messenger.resume(failed,fault.services);
+    check(attempts==1 && fault.messenger.buffer().integers()==std::vector<std::int32_t>{9},"Faulted nested effects were retried or cleared");
+    fault.messenger.pop_buffer(); check(fault.messenger.buffer().integers()==std::vector<std::int32_t>{8},"Owner could not explicitly restore a faulted child's parent");
+}
+void buffer_release_reentrancy() {
+    dw4::NativeMessenger messenger; messenger.select("ROOT",{},0); messenger.buffer().add_int(7); messenger.push_buffer();
+    auto& child=messenger.buffer();
+    unsigned blocked=0;
+    auto object=dw4::MessengerBox(new dw4::CollisionBox,[&](const dw4::CollisionBox* value) {
+        auto attempt=[&](auto function) { try { function(); } catch(const dw4::MessengerError&) { ++blocked; } };
+        attempt([&]{messenger.push_buffer();}); attempt([&]{messenger.pop_buffer();});
+        attempt([&]{messenger.select("REENTER",{},0);}); attempt([&]{messenger.reset();});
+        attempt([&]{messenger.buffer().add_int(99);});
+        attempt([&]{child.add_int(99);}); attempt([&]{child.set_enabled_only(1);}); attempt([&]{child.clear();});
+        delete value;
+    });
+    messenger.buffer().add_box(std::move(object)); messenger.pop_buffer();
+    check(blocked==8 && empty(child) && messenger.buffer_depth()==0 && messenger.buffer().integers()==std::vector<std::int32_t>{7}
+        && messenger.selected().category=="ROOT","Object release reentered a partially rotated buffer stack");
+}
 }
 int main() {
     try {
         matching();activity_and_queries();cache();nested();continuation();nested_eviction();storage_and_bounds();registration_and_stack_bounds();retained_box_objects();
+        explicit_buffer_stack();stacked_delivery_continuation();buffer_release_reentrancy();
         std::cout<<"Messenger tests passed: "<<checks<<" checks\n";return 0;
     } catch(const std::exception& error) { std::cerr<<"Messenger test failure: "<<error.what()<<'\n';return 1; }
 }

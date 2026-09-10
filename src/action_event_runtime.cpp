@@ -65,6 +65,9 @@ struct ActionEventRuntime::Impl {
         bool debug_hitbox{};
         std::optional<PendingHitbox> hitbox;
         ModelHitboxResult hitbox_result;
+        std::unique_ptr<ModelCollisionRuntime> collision;
+        ModelControlState* collision_model{};
+        bool hp_reference_present{};
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
@@ -83,6 +86,7 @@ struct ActionEventRuntime::Impl {
     };
     NativeMessenger messenger;
     MessengerServices external;
+    ModelCollisionServices collision_services;
     std::map<Key,Model> models;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
@@ -94,6 +98,7 @@ struct ActionEventRuntime::Impl {
     std::optional<Key> suspended_hitbox;
     std::optional<Key> suspended_send_sequence, suspended_send_subcommands;
     std::optional<Key> processing_sequence, processing_subcommands;
+    std::optional<Key> processing_collision;
     bool processing_wait{};
     std::size_t delivery_depth{};
     void require_top_level_idle() const {
@@ -129,8 +134,36 @@ struct ActionEventRuntime::Impl {
         if(models.contains(id) || consumers.contains(id) || actions.contains(id)) fail("RAM already has a prepared event owner.");
         if(models.size()+consumers.size()+actions.size()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
     }
-    MessengerCallResult model_message(Model& owner,const MessengerDelivery& delivery) {
+    MessengerCallResult model_message(ControllerObjectId id,Model& owner,const MessengerDelivery& delivery) {
         const auto& command=delivery.message.command;
+        const bool collision_retry=owner.collision && owner.collision->owns_delivery(delivery);
+        if(collision_retry || command=="CHKBULLET") {
+            if(!owner.collision) return {false,0,"CHKBULLET requires this target's authored HIT graph and prepared ONE work."};
+            if(!collision_retry && (owner.sequence.selection_pending() || owner.sequence.lua_pending() || owner.sequence.lua_faulted()))
+                return {false,0,"Complete the target's sequence operation before its collision delivery."};
+            // Original PC virtual+C4 (803AEBB4) declines CHKBULLET: the command
+            // is absent from its sixteen-name status dictionary. This adapter
+            // already owns the resolved ONE and explicitly prepared base path;
+            // it does not construct PC status or infer another controller type.
+            OperationScope operation(processing_collision,key(id));
+            const auto& sequence=std::as_const(owner.sequence);
+            ModelCollisionWork work{sequence.wait_state().control_enabled,owner.hp_reference_present,
+                sequence.selected() ? std::optional<std::string_view>(sequence.current_sequence()) : std::nullopt};
+            // A target script may suspend its own sequence cleanup/Lua prefix.
+            // Retain the stable member reference obtained before that prefix;
+            // public mutable access correctly remains blocked while it is pending.
+            if(!collision_retry) owner.collision_model=&owner.sequence.model();
+            auto supplied=collision_services;
+            if(supplied.hit_script) supplied.hit_script=[&](const ModelTargetHitRequest& request) {
+                const auto direction=collision_services.hit_script(request);
+                if(direction && (owner.sequence.selection_pending() || owner.sequence.lua_pending() || owner.sequence.lua_faulted()))
+                    fail("Complete the target hit script's sequence effects before publishing its result.");
+                return direction;
+            };
+            const auto result=owner.collision->handle(messenger,delivery,*owner.collision_model,work,services(),supplied);
+            if(result.complete()) owner.collision_model=nullptr;
+            return result.complete() ? MessengerCallResult{true,1,{}} : MessengerCallResult{false,0,result.diagnostic};
+        }
         if(!command || (*command!="SETSOUND" && *command!="SETEFFECT"))
             return {false,0,"This MODELCTRL command requires its original outer controller service."};
         if(!owner.active) return {true,1,{}};
@@ -199,7 +232,7 @@ struct ActionEventRuntime::Impl {
             },
             [this](ControllerObjectId id)->MessengerManager {
                 if(const auto found=models.find(key(id));found!=models.end())
-                    return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return model_message(model(id),delivery); },{}};
+                    return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return model_message(id,model(id),delivery); },{}};
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
@@ -420,7 +453,7 @@ void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::stri
 void ActionEventRuntime::prepare_model_state(ControllerObjectId id,ModelControlState state) {
     // A live callback may change original work before the later packet/script
     // reads. Outside that callback, a suspended check owns the work until retry.
-    const bool in_check=impl_->processing_subcommands==key(id);
+    const bool in_check=impl_->processing_subcommands==key(id) || impl_->processing_collision==key(id);
     if(!in_check) impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
     if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.wait.pending() ||
@@ -438,6 +471,43 @@ void ActionEventRuntime::set_hitbox_debug(ControllerObjectId id,bool enabled) {
     impl_->model(id).debug_hitbox=enabled;
 }
 ModelHitboxResult ActionEventRuntime::hitbox_result(ControllerObjectId id) const { return impl_->model(id).hitbox_result; }
+void ActionEventRuntime::prepare_collision_target(ControllerObjectId id,ModelHitBodyDefinition definition,bool hp_reference_present) {
+    auto& owner=impl_->model(id);
+    if(owner.collision) fail("This model already owns its prepared collision body.");
+    const auto& binding=owner.binding;
+    ModelHitBodyCache body(std::move(definition),binding.instance_index());
+    const auto& graph=body.definition();
+    if(graph.source()!=binding.source() || graph.source_occurrence()!=binding.source_occurrence() ||
+       graph.model_reference()!=binding.model_reference() || graph.model_name()!=binding.model_name() ||
+       (id.reference_index!=body.ram_reference() && id.reference_index!=body.ram_owner_reference()))
+        fail("Prepared collision HIT graph does not belong to this model's actual source-qualified RAM.");
+    for(const auto& [other_id,other]:impl_->models) {
+        if(other_id.first==id.file_index && other.collision &&
+           other.collision->body().ram_owner_reference()==body.ram_owner_reference())
+            fail("The physical model RAM already owns its mutable collision body through another reference.");
+    }
+    std::vector<std::string> categories;
+    if(graph.hit_player_bullet()!=0) categories.emplace_back("HITPLAYERBULLET");
+    if(graph.hit_player_talk()!=0) categories.emplace_back("HITPLAYERTALK");
+    if(graph.hit_enemy_bullet()!=0) categories.emplace_back("HITENEMYBULLET");
+    std::size_t text{};
+    for(const auto& category:categories) text+=category.size()+binding.model_name().size();
+    impl_->require_registration_capacity(categories.size(),text);
+    auto target=std::make_unique<ModelCollisionRuntime>(std::move(body));
+    for(auto& category:categories) impl_->messenger.register_recipient(id,std::move(category),binding.model_name(),
+        static_cast<std::int32_t>(binding.instance_index()));
+    owner.hp_reference_present=hp_reference_present;
+    owner.collision=std::move(target);
+}
+const ModelCollisionRuntime& ActionEventRuntime::collision_target(ControllerObjectId id) const {
+    const auto& target=impl_->model(id).collision;
+    if(!target) fail("This model has no prepared collision target.");
+    return *target;
+}
+void ActionEventRuntime::set_collision_services(ModelCollisionServices services) {
+    if(impl_->processing_collision) fail("Complete the collision callback before replacing its service owner.");
+    impl_->collision_services=std::move(services);
+}
 ModelSubcommandResult ActionEventRuntime::select_sequence(ControllerObjectId id,std::string_view name,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);

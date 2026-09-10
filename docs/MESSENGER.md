@@ -86,6 +86,28 @@ keeps its initial count but reads the replacement rows. The native runtime
 supports valid replacement accesses and faults explicitly if a retained index
 would exceed the replacement rows, rather than reading an invalid guest pointer.
 
+The explicit `push_buffer()` / `pop_buffer()` path preserves whole buffer
+objects. Original preparation `80303C0C` creates a current buffer at messenger
++10 and four separate spare buffers in the list at +20; depth is at +24.
+`80306604` takes the pool's last object as current and inserts the old current
+at the pool's front. It neither copies arguments nor clears the installed
+object. `803067A0` first clears the current child through `80304618`, restores
+the pool's first object and appends the cleared child to the pool's tail.
+Both operations leave selected-message records, cache order and registrations
+alone. In particular, pop does not restore a previous category, index or command.
+
+The native implementation owns five stable `MessengerBuffer` objects and
+rotates their indices. A reference to a parked parent still refers to that
+same object; its lists, nullable values, enabled-only byte and retained box
+owners survive nested selections. Pop releases the child's retained owners
+and clears every represented list before restoring the parent. Push itself
+does not promise cleared contents; callers select their nested message as
+the original call sites do. `buffer_depth()` reports explicit push depth,
+independently of nested delivery depth. Four nested pushes fit the original
+pool. The native API rejects a fifth push, an unmatched pop and use before
+selection preparation before changing any state; the original has no such
+depth guards.
+
 `begin_send` creates a move-only `MessengerDispatch`; `resume` executes it
 synchronously. A service-required result retains completed recipients and the
 current structured/fallback phase. Consumers that suspend after partial
@@ -101,37 +123,60 @@ later readiness belongs in that stable callback's explicit service result.
 Throwing faults the handle because callback effect completion is uncertain.
 Unrelated top-level work must not overwrite a suspended shared buffer; native
 runtime adapters must preserve synchronous ordering across that service pause.
+An explicitly pushed child remains installed across both service suspension
+and a faulted callback. Its caller retains the matching pop and any expected
+depth check; no dispatch destructor or exception handler automatically restores
+it. Push/pop are valid inside an ordinary recipient callback. Reentry during
+buffer-object release rejects, including mutations through a retained buffer
+reference, so an owner deleter cannot alter a partially cleared/rotated buffer.
 
 ## Cleanup, bounds and scope
 
 Cleanup `80304C38 -> 803040C0` releases registrations, cached messages and the
 shared buffer as well as original deferred-message/buffer-stack storage.
-Native `reset()` drops all represented state and invalidates outstanding
+Native `reset()` clears all five buffers, drops all represented state and invalidates outstanding
 handles. It is not a cache-only invalidation API. Reset inside an executing
 callback rejects. Construction describes a fresh native context with lazy
 selection preparation, not complete original system/manager startup.
 
-Timed-message updating (`80304C58`) and explicit original buffer push/pop
-(`80306604/803067A0`) remain separate, unimplemented paths. The ordinary API
-does not silently emulate their effects. The original auxiliary buffer string
+Timed-message updating (`80304C58`) remains a separate, unimplemented path.
+The ordinary API does not silently emulate it. The original auxiliary buffer string
 at +0C is outside this prepared ordinary-path representation.
 
 Explicit native bounds are 65,536 registration rows, 8 MiB copied registration
 text, 64 cache records, 256 live handles, 64 nested resume calls, 32,768 typed
-values and 8 MiB shared buffer storage. Strings allow 65,535 bytes and reject
-embedded NULs. These resource limits are not claimed original engine limits.
+values and 8 MiB storage per buffer. Strings allow 65,535 bytes and reject
+embedded NULs. Those host bounds are not claimed original engine limits;
+the five-buffer pool and four safe nested levels follow original preparation.
 
 ## Validation
 
 Asset-free tests cover duplicate/null/index/case rules, cross-source identity,
 live activity, byte gating, both queries, low-byte fallback, cache snapshots and
 eviction, nested live mutation, captured fallback command/manager, resumable
-prefixes, faulted exceptions, reset, typed copies and resource bounds.
+prefixes, faulted exceptions, reset, typed copies and resource bounds. Explicit
+stack tests also cover all typed parent values, stable object identity, nested
+LIFO rotation, nullable/retained owners, mutation through parked references,
+child release, live nested selection, suspended and faulted sends, move/reset,
+overflow/underflow and release-time reentry. The final Release messenger test
+executable passes 161 checks.
 
 An independent local probe executes original registration, selection, sender
 and buffer-reset instructions: 84 scenarios, 2,722 operations, 2,389,520 guest
-instructions and 2,028 exact callback/result rows match the native runner.
+instructions and 2,028 exact callback/result rows match the native runner
+linked against the final Release core library without source overrides.
 Allocation, list operations, string interning/category lookup and controller
 callbacks are explicitly prepared services in that probe. Their original
 helper bodies, complete constructor/cleanup execution and physical-console
 execution are not independently validated by these comparisons.
+
+A second independent probe executes original push, pop, clear, selection and
+send instructions across 101 synthetic scenarios. Its 7,525 exact state rows
+match the runner linked against that same final Release core library after
+2,232,011 guest instructions. The comparison includes every represented typed
+list, current and previously seen
+buffer identities, selected message fields, pool size and object reference
+counts. Five initial buffers, typed-list payloads, list/string operations and
+object allocation are explicitly prepared services. This does not independently
+validate their helper bodies, full startup/cleanup, invalid original stack
+depths, guest destruction at reference count zero or physical-console execution.

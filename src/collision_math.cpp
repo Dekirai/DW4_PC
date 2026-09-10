@@ -10,6 +10,17 @@ namespace {
 [[noreturn]] void fail(const char* message) { throw CollisionMathError(message); }
 constexpr float minimum_normal=std::numeric_limits<float>::min();
 
+template<std::size_t N> void require_finite(const std::array<float,N>& values,const char* message) {
+    for (const auto value:values) if (!std::isfinite(value)) fail(message);
+}
+void require_finite(const CollisionBox& box) {
+    require_finite(box.minimum,"Collision box minimum contains a non-finite component.");
+    require_finite(box.maximum,"Collision box maximum contains a non-finite component.");
+}
+float single(float value) {
+    return std::abs(value)<minimum_normal ? std::copysign(0.0f,value) : value;
+}
+
 float product(float a,float b) {
     const float value=a*b;
     const float magnitude=std::abs(value);
@@ -65,6 +76,92 @@ std::array<float,3> transform_offset(const AnimationMatrix& matrix,const std::ar
     for (const auto value:result) if (!std::isfinite(value)) fail("Hitbox offset transform is non-finite.");
     return result;
 }
+}
+
+CollisionBox original_transform_box(const AnimationMatrix& matrix,const CollisionBox& box) {
+    require_finite(matrix,"Collision transform matrix contains a non-finite component.");
+    require_finite(box);
+    // 80122D6C checks only X before all arithmetic, preserving the complete
+    // input box when that axis is inverted.
+    if (box.minimum[0]>box.maximum[0]) return box;
+    std::array<std::array<float,3>,3> edges{};
+    for (std::size_t axis=0;axis<3;++axis) {
+        const float length=sum(box.maximum[axis],-box.minimum[axis]);
+        for (std::size_t row=0;row<3;++row) edges[axis][row]=product(length,matrix[axis*4+row]);
+    }
+    std::array<std::array<float,3>,8> corners{};
+    corners[0]=transform_offset(matrix,box.minimum);
+    for (std::size_t row=0;row<3;++row) {
+        corners[1][row]=sum(corners[0][row],edges[2][row]);
+        corners[2][row]=sum(corners[0][row],edges[1][row]);
+        corners[3][row]=sum(corners[0][row],edges[0][row]);
+        corners[4][row]=sum(corners[2][row],edges[2][row]);
+        corners[5][row]=sum(corners[3][row],edges[1][row]);
+        corners[6][row]=sum(corners[3][row],edges[2][row]);
+        corners[7][row]=sum(corners[5][row],edges[2][row]);
+    }
+    constexpr float largest=std::numeric_limits<float>::max();
+    CollisionBox result{{largest,largest,largest},{-largest,-largest,-largest}};
+    for (const auto& corner:corners) {
+        for (std::size_t axis=0;axis<3;++axis) {
+            // These negated comparisons reproduce the original branch order,
+            // including unordered intermediate values before final validation.
+            if (!(result.minimum[axis]<=corner[axis])) result.minimum[axis]=corner[axis];
+            if (!(result.maximum[axis]>=corner[axis])) result.maximum[axis]=corner[axis];
+        }
+    }
+    require_finite(result);
+    return result;
+}
+
+std::array<float,3> original_box_center(const CollisionBox& box) {
+    require_finite(box);
+    std::array<float,3> result{};
+    for (std::size_t axis=0;axis<3;++axis)
+        result[axis]=fused(0.5f,box.minimum[axis],product(0.5f,box.maximum[axis]));
+    require_finite(result,"Collision box center is non-finite.");
+    return result;
+}
+
+CollisionBoxDistances original_box_distances(const CollisionBox& box) {
+    const auto center=original_box_center(box);
+    CollisionBoxDistances result;
+    for (std::size_t axis=0;axis<3;++axis) {
+        float minimum=sum(center[axis],-box.minimum[axis]);
+        float maximum=sum(box.maximum[axis],-center[axis]);
+        // Original compare/conditional-negate preserves a negative zero.
+        if (minimum<0.0f) minimum=-minimum;
+        if (maximum<0.0f) maximum=-maximum;
+        result.minimum[axis]=minimum;result.maximum[axis]=maximum;
+    }
+    require_finite(result.minimum,"Collision minimum distance is non-finite.");
+    require_finite(result.maximum,"Collision maximum distance is non-finite.");
+    return result;
+}
+
+CollisionBox original_body_box(const AnimationMatrix& matrix,const CollisionBox& box,
+    const CollisionBoxDistances& distances) {
+    require_finite(distances.minimum,"Collision minimum distance contains a non-finite component.");
+    require_finite(distances.maximum,"Collision maximum distance contains a non-finite component.");
+    const auto center=original_box_center(original_transform_box(matrix,box));
+    CollisionBox result;
+    for (std::size_t axis=0;axis<3;++axis) {
+        // 803081D4..8254 explicitly rounds loaded distances with frsp before
+        // subtraction/addition; unlike lfs, this flushes subnormal inputs.
+        result.minimum[axis]=sum(single(center[axis]),-single(distances.minimum[axis]));
+        result.maximum[axis]=sum(single(center[axis]),single(distances.maximum[axis]));
+    }
+    require_finite(result);
+    return result;
+}
+
+bool original_boxes_overlap(const CollisionBox& incoming,const CollisionBox& body) {
+    require_finite(incoming);require_finite(body);
+    for (std::size_t axis=0;axis<3;++axis) {
+        if (!(incoming.minimum[axis]<=body.maximum[axis])) return false;
+        if (!(body.minimum[axis]<=incoming.maximum[axis])) return false;
+    }
+    return true;
 }
 
 CollisionBox original_hitbox_box(const AnimationMatrix& matrix,const std::array<float,3>& offset,

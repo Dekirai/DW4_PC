@@ -1,9 +1,12 @@
 #include "dw4/collision_math.hpp"
 
+#include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string_view>
 
 namespace {
@@ -91,6 +94,105 @@ void invalid_values() {
     matrix=identity(); matrix[12]=std::numeric_limits<float>::max();
     rejects([&]{original_hitbox_box(matrix,{0,0,0},{std::numeric_limits<float>::max(),0,0});},"Overflowing final bounds reject");
 }
+void general_boxes() {
+    const CollisionBox local{{-1,-2,-3},{4,6,8}};
+    AnimationMatrix rotated{0,2,0,0,-3,0,0,0,0,0,-4,0,10,-5,7,1};
+    check(original_transform_box(rotated,local)==CollisionBox{{-8,-7,-25},{16,3,19}},
+        "General box transform preserves rotated/scaled edge arithmetic");
+    const auto distances=original_box_distances(local);
+    check(distances==CollisionBoxDistances{{2.5f,4,5.5f},{2.5f,4,5.5f}},"Local distances are captured independently on each side");
+    check(original_body_box(rotated,local,distances)==CollisionBox{{1.5f,-6,-8.5f},{6.5f,2,2.5f}},
+        "Target body restores original local distances around the transformed box center");
+    auto projective=identity();projective[15]=2;
+    check(original_transform_box(projective,{{2,4,6},{4,8,10}})==CollisionBox{{1,2,3},{3,6,7}},
+        "Only the minimum point receives homogeneous division; matrix edges remain undivided");
+    const CollisionBox inverted_x{{4,-2,-3},{-1,6,8}};
+    check(original_transform_box(rotated,inverted_x)==inverted_x,"Inverted X returns the complete original box before transform arithmetic");
+    check(original_transform_box(identity(),{{-1,6,-3},{4,-2,8}})==local,
+        "Inverted Y alone still executes the eight-corner transform");
+    check(original_transform_box(identity(),{{-1,-2,8},{4,6,-3}})==local,
+        "Inverted Z alone still executes the eight-corner transform");
+    const CollisionBox adjacent{{1,1,1},{value(0x3f800001),value(0x3f800001),value(0x3f800001)}};
+    check(original_box_center(adjacent)==std::array<float,3>{1,1,1},"Center uses rounded maximum half followed by fused minimum half");
+    check(original_box_distances(adjacent)==CollisionBoxDistances{{0,0,0},{0x1p-23f,0x1p-23f,0x1p-23f}},
+        "Rounded center can yield unequal minimum and maximum distances");
+    const float tiny=value(0x007fffff);
+    check(original_box_center({{tiny,tiny,tiny},{tiny,tiny,tiny}})==std::array<float,3>{0,0,0},
+        "Center preserves startup NI half-operation flushing");
+    auto shifted=identity();shifted[12]=value(0x00800000);
+    check(word(original_body_box(shifted,{{0,0,0},{0,0,0}},{{tiny,0,0},{tiny,0,0}}).maximum[0])==0,
+        "Body restoration preserves center flushing and explicitly rounds loaded distance inputs");
+    shifted[12]=value(0x01000000);
+    check(word(original_body_box(shifted,{{0,0,0},{0,0,0}},{{tiny,0,0},{tiny,0,0}}).maximum[0])==0x01000000,
+        "Body frsp flushes a subnormal stored distance before adding it to a normal center");
+    const auto signed_distances=original_box_distances({{0,0,0},{value(0x80000000),value(0x80000000),value(0x80000000)}});
+    for(const auto component:signed_distances.maximum)check(word(component)==0x80000000,
+        "Conditional absolute-distance negation retains negative zero");
+    const float largest=std::numeric_limits<float>::max();
+    const CollisionBox factory{{largest,largest,largest},{-largest,-largest,-largest}};
+    check(original_transform_box(rotated,factory)==factory,"Factory inverted bounds survive the exact X early return");
+    check(original_boxes_overlap({{-largest,-largest,-largest},{largest,largest,largest}},factory),
+        "Inclusive overlap has no inferred inverted-box rejection");
+    check(!original_boxes_overlap(local,factory),"Ordinary finite input misses the unrefreshed factory box");
+    check(original_boxes_overlap(local,local),"A box overlaps itself");
+    for(std::size_t axis=0;axis<3;++axis) {
+        auto touching=local;touching.minimum[axis]=local.maximum[axis];touching.maximum[axis]+=10;
+        check(original_boxes_overlap(local,touching) && original_boxes_overlap(touching,local),"Face contact is inclusive in both argument orders");
+        touching.minimum[axis]+=1;
+        check(!original_boxes_overlap(local,touching) && !original_boxes_overlap(touching,local),"Each pair of overlap comparisons can reject independently");
+    }
+    check(original_boxes_overlap(local,{{4,6,8},{9,10,11}}),"A shared corner counts as overlap");
+    check(original_boxes_overlap({{0,0,0},{0,0,0}},{{value(0x80000000),0,0},{0,0,0}}),"Signed zero equality remains inclusive");
+}
+void invalid_general_boxes() {
+    const CollisionBox box{{-1,-2,-3},{4,6,8}};
+    for(const auto invalid:{std::numeric_limits<float>::infinity(),-std::numeric_limits<float>::infinity(),
+        std::numeric_limits<float>::quiet_NaN()}) {
+        for(std::size_t at=0;at<6;++at) {
+            auto bad=box;(at<3 ? bad.minimum[at] : bad.maximum[at-3])=invalid;
+            rejects([&]{original_transform_box(identity(),bad);},"Transform requires finite input box words");
+            rejects([&]{original_box_center(bad);},"Center requires finite input box words");
+            rejects([&]{original_box_distances(bad);},"Distances require finite input box words");
+            rejects([&]{original_boxes_overlap(bad,box);},"Overlap requires finite incoming box words");
+            rejects([&]{original_boxes_overlap(box,bad);},"Overlap requires finite body box words");
+            CollisionBoxDistances distances{};(at<3 ? distances.minimum[at] : distances.maximum[at-3])=invalid;
+            rejects([&]{original_body_box(identity(),box,distances);},"Body restoration requires finite distance words");
+        }
+    }
+    auto bad_matrix=identity();bad_matrix[15]=std::numeric_limits<float>::infinity();
+    rejects([&]{original_transform_box(bad_matrix,{{1,0,0},{0,0,0}});},"Checked matrix validation applies even before inverted-X return");
+    bad_matrix=identity();bad_matrix[0]=std::numeric_limits<float>::max();
+    rejects([&]{original_transform_box(bad_matrix,{{0,0,0},{2,1,1}});},"Nonfinite transformed corner bounds reject");
+    const float largest=std::numeric_limits<float>::max();
+    check(original_box_distances({{largest,0,0},{-largest,0,0}})==CollisionBoxDistances{{largest,0,0},{largest,0,0}},
+        "Extreme finite distances avoid an overflowing full endpoint subtraction");
+    rejects([&]{original_body_box(identity(),{{largest,0,0},{largest,0,0}},{{0,0,0},{largest,0,0}});},
+        "Unrepresentable reconstructed body bounds reject");
+}
+void box_oracle() {
+    char operation{};
+    while(std::cin>>operation) {
+        const std::size_t count=operation=='T' ? 22 : operation=='B' ? 28 : operation=='O' ? 12 : 6;
+        std::array<float,28> input{};
+        for(std::size_t i=0;i<count;++i) {std::uint32_t bits{};if(!(std::cin>>bits))throw std::runtime_error("Incomplete box oracle input");input[i]=value(bits);}
+        const auto box_at=[&](std::size_t at) {return CollisionBox{{input[at],input[at+1],input[at+2]},
+            {input[at+3],input[at+4],input[at+5]}};};
+        const auto print=[](const auto& values) {for(const auto component:values)std::cout<<word(component)<<' ';};
+        try {
+            if(operation=='O')std::cout<<(original_boxes_overlap(box_at(0),box_at(6)) ? 1 : 0);
+            else if(operation=='C')print(original_box_center(box_at(0)));
+            else if(operation=='D') {const auto result=original_box_distances(box_at(0));print(result.minimum);print(result.maximum);}
+            else if(operation=='T' || operation=='B') {
+                AnimationMatrix matrix{};for(std::size_t i=0;i<16;++i)matrix[i]=input[i];
+                const auto distances=box_at(22);
+                const auto result=operation=='T' ? original_transform_box(matrix,box_at(16)) :
+                    original_body_box(matrix,box_at(16),{distances.minimum,distances.maximum});
+                print(result.minimum);print(result.maximum);
+            } else throw std::runtime_error("Unknown box oracle operation");
+            std::cout<<'\n';
+        }catch(const CollisionMathError&) {std::cout<<"ERROR\n";}
+    }
+}
 void oracle() {
     std::uint32_t first{};
     while (std::cin>>first) {
@@ -110,7 +212,8 @@ void oracle() {
 int main(int argc,char** argv) {
     try {
         if (argc==2 && std::string_view(argv[1])=="--oracle") { oracle(); return 0; }
-        ordinary(); arithmetic_edges(); invalid_values();
+        if (argc==2 && std::string_view(argv[1])=="--box-oracle") { box_oracle(); return 0; }
+        ordinary(); arithmetic_edges(); invalid_values();general_boxes();invalid_general_boxes();
         std::cout<<checks<<" collision math checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr<<"Collision math failure after "<<checks<<" checks: "<<error.what()<<'\n'; return 1; }
 }

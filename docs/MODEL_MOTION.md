@@ -63,6 +63,8 @@ The matrix path saves XYZ position, rebuilds the Euler basis, resets bottom-row
 components, restores XYZ and stores the applied angles. It replaces prior
 scale/shear; it does not multiply a new rotation into the previous basis.
 The translated flag is separate and is not changed by standalone turning.
+`force_model_turn` exposes that force path without creating a timer. It also
+preserves the live position-lock flag and raw desired-angle words.
 
 ### Exact accumulated-angle wrapping
 
@@ -103,9 +105,32 @@ Host double libm currently supplies sine/cosine. The original uses its MSL math
 functions at `800A2AE4 / 800A257C`; bitwise agreement with those functions is not
 established. The local instruction oracle supplies the same host trig boundary
 to both implementations, so its exact matches prove the surrounding arithmetic
-and control flow, not original libm parity. IEEE round-to-nearest is the numeric
-profile; FPSCR exception flags, NaN payloads and guest subnormal modes remain out
-of scope as in [MOTION.md](MOTION.md).
+and control flow, not original libm parity.
+
+Version 0.27 corrects the Euler basis to the recovered startup NI=1/RN=00
+profile. The `frsp` instructions at `8012933C/34C/374/384/3B4/3C0` flush a
+tiny double trig result before rounding it to single. The products and fused
+operations at `80129388..8012942C` likewise flush exact results below `2^-126`
+to signed zero before rounding. Exact-zero angle branches still choose the
+original positive zero/one constants; a negative tiny nonzero angle takes the
+trig branch and retains its zero sign through conversion and later negation.
+Applied angles and scalar translation save/restore retain their input words.
+
+The implementation keeps ordinary single-precision products and `std::fma`
+rounding. A widened exact binary32 product resolves a product at the minimum
+normal boundary. Fused boundary checks use a TwoSum residual so a tiny deficit
+is not lost by an ordinary double sum. These are the same verified NI rules as
+the [collision box helpers](COLLISION_MATH.md), grounded in the primary
+[FP interpreter helpers](https://github.com/dolphin-emu/dolphin/blob/a2efdf1197be8132674b90fe9cf4761df39752ed/Source/Core/Core/PowerPC/Interpreter/Interpreter_FPUtils.h)
+and [NI hardware-test source](https://github.com/dolphin-emu/hwtests/blob/f28077b139eec18967f60db6ce1e15b182dfeac0/cputest/ni.cpp).
+No physical-console execution or FPSCR exception-flag emulation is claimed here.
+
+This correction is bounded to Euler reconstruction. Angle interpolation,
+channel integration, local translation and `synchronize_model_heading` retain
+their existing IEEE edge profile; their subnormal-mode fidelity remains outside
+the implemented scope as in [MOTION.md](MOTION.md). The source uses strict
+floating-point compilation and requires host nearest rounding with subnormal
+inputs enabled.
 
 ## Combined model tick
 
@@ -136,10 +161,20 @@ attachment branches and subsequent collision/controller work remain pending.
 
 ## Validation
 
-- **65 asset-free checks** cover wrap/arc boundaries, signed steps, raw force
+- **111 asset-free checks** cover wrap/arc boundaries, signed steps, raw force
   angles, ignored dependencies, timer side effects, matrix reset and source
   position, negative zero, combined update order, independent model ownership,
   non-finite failure atomicity and exact batching of long accumulated angles.
+  Euler cases add signed tiny trig results, exact minimum-normal survival,
+  product flushing before rounding, intermediate-product flushing, unchanged
+  scalar translation words and shared timer-free/timer-bearing force behavior.
+- **4,932 local raw Euler comparisons** run `80129134/801292D4` and translation
+  restoration `80128D90` with exact integer NI arithmetic. All 4,914 accepted
+  matrices match in 78,624 output words; 18 nonfinite used-input cases reject.
+  The reference executes 647,129 guest instructions with 29,004 explicit host
+  trig calls. It rounds the returned host binary64 values with integer logic
+  at their immediately following original `frsp` boundaries. This validates
+  surrounding instruction arithmetic, not the original MSL trig bodies or ABI.
 - **9,000 local instruction comparisons** cover 6,000 standalone turns and
   3,000 combined ticks. All 8,434 published outputs match the interpreted
   original state/matrices by bits; 566 original non-finite poses are rejected
@@ -149,6 +184,15 @@ attachment branches and subsequent collision/controller work remain pending.
   After 18 Move and six Stop updates at an explicitly cached delta 1, each
   model travels approximately 8.275 local units along its source basis and
   stops. This exercises four source placements, not connected multiplayer.
+
+Both local oracle runners were relinked against the final Release
+`dw4_core.lib` after the NI correction. The Euler and older normal-domain
+turn/tick comparisons both passed with zero mismatches; their local logs are
+`work/v27-euler-final-core.log` and `work/v27-model-normal-final-core.log`.
+The final linked test executable passes 133 checks when the 22 original-data
+checks are included. The ignored Euler reference/report are
+`work/v27-euler-ni-oracle.py` and `work/v27-euler-ni-oracle.json`; the old
+regression is invoked through `work/v27-model-normal-regression.py`.
 
 To repeat the data checks after building, provide your own extracted files:
 

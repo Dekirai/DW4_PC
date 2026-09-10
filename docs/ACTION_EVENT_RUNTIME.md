@@ -167,8 +167,14 @@ The underlying messenger preserves cross-file matching, repeated registrations,
 the original 64-entry selection cache, live activity and the single shared
 argument/result buffer. See [MESSENGER.md](MESSENGER.md). Original raw getters do
 not provide defaults for missing required arguments; native handlers reject an
-incomplete SETSOUND/SETEFFECT message. Unknown MODELCTRL commands stop for their
+incomplete SETSOUND/SETEFFECT message. Other unknown MODELCTRL commands stop for their
 required outer manager instead of being acknowledged as completed.
+
+Prepared CHKBULLET targets now attach their exact HIT definitions to the bound
+RAM and add authored collision categories. The base target path preserves live
+work gates, timestamp-based body caches and first overlap, then retains nested
+GETRECNO/target-script/heading effects. Required Lua/HP/global-context owners
+remain explicit. See [MODEL_COLLISION.md](MODEL_COLLISION.md).
 
 ## Suspension and sequence interruption
 

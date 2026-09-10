@@ -2455,7 +2455,7 @@ private:
         const float bottom = ImGui::GetWindowHeight() - 146;
         if (ImGui::GetCursorPosY() < bottom) ImGui::SetCursorPosY(bottom);
         ImGui::Separator();
-        ImGui::TextColored(teal, "VERSION 0.26.0");
+        ImGui::TextColored(teal, "VERSION 0.27.0");
         paragraph("Development workbench");
         paragraph("Walking preview available.");
         ImGui::EndChild();

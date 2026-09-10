@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstddef>
 #include <bit>
+#include <cstdint>
+#include <limits>
 
 namespace dw4 {
 namespace {
@@ -10,6 +12,36 @@ constexpr float tau = 0x1.921fb6p+2f; // GDJEB2 804268DC.
 constexpr float radians_per_degree = 0x1.1df46ap-6f; // 80426804.
 void finite(float value) {
     if (!std::isfinite(value)) throw MotionError("Model motion cannot publish a non-finite pose.");
+}
+float euler_single(double value) {
+    // Original frsp checks tininess before rounding the returned double trig
+    // value. Trig itself remains the explicitly shared host-libm boundary.
+    return std::abs(value)<std::numeric_limits<float>::min() ?
+        std::copysign(0.0f,static_cast<float>(value)) : static_cast<float>(value);
+}
+float euler_product(float a,float b) {
+    const float rounded=a*b;
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum || (magnitude==minimum &&
+        std::abs(static_cast<double>(a)*static_cast<double>(b))<minimum))
+        return std::copysign(0.0f,rounded);
+    return rounded;
+}
+float euler_fused(float a,float b,float addend) {
+    const float rounded=std::fma(a,b,addend);
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum) return std::copysign(0.0f,rounded);
+    if (magnitude!=minimum) return rounded;
+    // A binary32 product is exact in double. TwoSum preserves a deficit that
+    // a double-only sum would lose at the pre-round min-normal boundary.
+    const double product=static_cast<double>(a)*static_cast<double>(b);
+    const double sum=product+static_cast<double>(addend);
+    const double virtual_addend=sum-product;
+    const double error=(product-(sum-virtual_addend))+(static_cast<double>(addend)-virtual_addend);
+    if (std::abs(sum)<minimum || (std::abs(sum)==minimum &&
+        ((sum>0 && error<0) || (sum<0 && error>0))))
+        return std::copysign(0.0f,rounded);
+    return rounded;
 }
 float wrap(float angle, std::size_t& remaining) {
     finite(angle);
@@ -60,20 +92,20 @@ void euler_basis(std::array<float,16>& matrix, const std::array<float,3>& angles
     for (std::size_t i=12;i<15;++i) finite(matrix[i]);
     // 801292D4 special-cases exact zero before calling double sin/cos. Keep
     // those branches, their positive-zero products and the original FMA order.
-    const float sx = angles[0] == 0 ? 0 : static_cast<float>(std::sin(static_cast<double>(angles[0])));
-    const float cx = angles[0] == 0 ? 1 : static_cast<float>(std::cos(static_cast<double>(angles[0])));
-    const float sy = angles[1] == 0 ? 0 : static_cast<float>(std::sin(static_cast<double>(angles[1])));
-    const float cy = angles[1] == 0 ? 1 : static_cast<float>(std::cos(static_cast<double>(angles[1])));
-    const float sxsy = angles[1] == 0 ? 0 : sx * sy;
-    const float sz = angles[2] == 0 ? 0 : static_cast<float>(std::sin(static_cast<double>(angles[2])));
-    const float cz = angles[2] == 0 ? 1 : static_cast<float>(std::cos(static_cast<double>(angles[2])));
-    const float cxsz = angles[2] == 0 ? 0 : cx * sz;
-    const float cxcz = cx * cz, sxsz = sx * sz, sxcz = sx * cz;
-    matrix[0] = cy * cz; matrix[1] = cy * sz; matrix[2] = -sy;
-    matrix[4] = std::fma(sxsy,cz,-cxsz);
-    matrix[5] = std::fma(sxsy,sz,cxcz); matrix[6] = sx * cy;
-    matrix[8] = std::fma(cxcz,sy,sxsz);
-    matrix[9] = std::fma(cxsz,sy,-sxcz); matrix[10] = cx * cy;
+    const float sx = angles[0] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[0])));
+    const float cx = angles[0] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[0])));
+    const float sy = angles[1] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[1])));
+    const float cy = angles[1] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[1])));
+    const float sxsy = angles[1] == 0 ? 0 : euler_product(sx,sy);
+    const float sz = angles[2] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[2])));
+    const float cz = angles[2] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[2])));
+    const float cxsz = angles[2] == 0 ? 0 : euler_product(cx,sz);
+    const float cxcz=euler_product(cx,cz),sxsz=euler_product(sx,sz),sxcz=euler_product(sx,cz);
+    matrix[0]=euler_product(cy,cz);matrix[1]=euler_product(cy,sz);matrix[2]=-sy;
+    matrix[4]=euler_fused(sxsy,cz,-cxsz);
+    matrix[5]=euler_fused(sxsy,sz,cxcz);matrix[6]=euler_product(sx,cy);
+    matrix[8]=euler_fused(cxcz,sy,sxsz);
+    matrix[9]=euler_fused(cxsz,sy,-sxcz);matrix[10]=euler_product(cx,cy);
     // 80129134 resets these components from globals initialized at 8012F57C;
     // 8030C85C then restores only translation XYZ with 80128D90.
     matrix[3] = 0; matrix[7] = 0; matrix[11] = 0; matrix[15] = 1;
@@ -121,6 +153,12 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
     auto matrix = pose.matrix; euler_basis(matrix,angles);
     pose.matrix = matrix; pose.turn.applied = angles; timer = candidate_timer;
     return true;
+}
+
+void force_model_turn(ModelMotionPose& pose) {
+    auto matrix=pose.matrix;
+    euler_basis(matrix,pose.turn.desired);
+    pose.matrix=matrix;pose.turn.applied=pose.turn.desired;
 }
 
 ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time) {

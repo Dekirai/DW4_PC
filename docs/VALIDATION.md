@@ -1,4 +1,35 @@
-# Native HITBOX and collision dispatch validation
+# Native target collision validation
+
+Version 0.27.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
+HITBOX queries now reach target body caches, first overlap and retained nested
+record/hit-script operations. Actual target Lua/HP/global context, damage and
+original player construction remain required before playable combat.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 51/51 CTest suites passed without compiler warnings; 6 Python verifier tests passed |
+| Authored HIT body/cache | 88 synthetic / 109 original-inclusive checks; four Agumon RAMs, ordered boxes/aliases, raw category bytes, zero-time factory bounds, timestamp reuse and independent mutable caches |
+| Target collision kernel | 162 checks cover lazy gates, first/equality overlap, deferred argument reads, qualified endpoints, record counts, nested buffer/script suspension, captured positions, live pose changes and uncertain effects |
+| Prepared collision integration | 67 synthetic / 80 original-inclusive checks; source HITBOX to target to BHit, nested target cleanup/LUACALL retry, canonical RAM rejection and retained GETRECNO; four original Agumon HITENEMYBULLET recipients produce four checked misses |
+| Target box arithmetic | 231 public math checks; 10,048 original-instruction cases, 44,137 exact output words and 2,544,172 instructions, zero mismatches against the final production core |
+| Source box regression | 4,599 original-instruction cases, 22,728 exact finite output words and 2,222,379 instructions, zero mismatches; includes 693 original-authored vector cases |
+| Euler numeric correction | 111 synthetic / 133 original-inclusive motion checks; forced hit heading uses NI flushing for trig conversion and Euler arithmetic while preserving live scalar position words |
+| Euler instruction comparison | Final-core runner matches 4,932 cases, 78,624 exact output words and 647,129 instructions with a shared host-trig boundary; the existing 9,000 turn/tick cases also retain zero mismatches |
+| Messenger stack | 161 checks; final-core comparison matches 101 scenarios, 7,525 exact buffer/selection/owner rows and 2,232,011 instructions |
+| Messenger delivery regression | Final-core comparison matches 84 scenarios, 2,028 callback/result rows and 2,389,520 instructions |
+| Original ACTION/events/waits | 6,034,137 ACTION checks across 183 actions and 4,157 poses; player events 108 checks; player waits 107 checks, preserving all four Set129/TALKWF/WCHECK paths and the missing HITPLAYERTALK boundary |
+| Packaged application | 16 app and 10 walking CLI suites pass; actor inspection renders 120 frames / 121 uploads; walking replay renders 120 frames, 198 steps, 101.333 travel and 102 uploads |
+| Visual inspection | Version 0.27 actor and walking captures inspected; walking retains pause/restart/focus-loss replay and the 1236x600 render target |
+
+The original-data checks prepare explicit live owners and matrices; they do not
+initialize a complete game session or connected multiplayer. Synthetic scripts
+exercise continuation contracts, not original damage behavior. Instruction
+comparisons have bounded prepared helper/trig profiles and do not establish
+physical-console execution. Original assets, probes and captures stay ignored.
+See [MODEL_COLLISION.md](MODEL_COLLISION.md), [MODEL_HIT_BODY.md](MODEL_HIT_BODY.md),
+[COLLISION_MATH.md](COLLISION_MATH.md) and [MESSENGER.md](MESSENGER.md).
+
+## Native HITBOX and collision dispatch validation
 
 Version 0.26.0 was validated locally on 2026-09-10 with MSVC 19.51. Timed
 HITBOX work now reaches real collision/script service boundaries through the

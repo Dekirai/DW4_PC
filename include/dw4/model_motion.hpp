@@ -36,6 +36,9 @@ struct ModelMotionStep {
 // stagnant original loops or exhausted work stop with pose/timer unchanged.
 // sin/cos use double host libm rounded to float; see MODEL_MOTION.md for limits.
 bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time, bool force = false);
+// The force=1 path without an invented KEIKATIMER. Rebuild from desired angles
+// and synchronize applied angles while preserving translation and pose flags.
+void force_model_turn(ModelMotionPose& pose);
 // Player preparation stores (0,7,0) at 8034D788..8034D790. This only initializes
 // the turn rates; it does not allocate an original player or prepare its model.
 void set_player_turn_rates(ModelMotionPose& pose) noexcept;

@@ -1,4 +1,4 @@
-# Original HITBOX box arithmetic
+# Original collision box arithmetic
 
 `original_hitbox_box(matrix, offset, box_size)` returns an owned `CollisionBox`
 with three-component `minimum` and `maximum` arrays. It prepares the numeric
@@ -10,6 +10,16 @@ is transformed first; `box_size` then supplies full extents on the world axes.
 Neither actor skinning caches nor a preview camera matrix belong in this call.
 Negative extents deliberately produce inverted bounds; no min/max sorting or
 positivity requirement is added.
+
+The target-body helpers use the same scalar arithmetic profile:
+
+| API | Original operation |
+| --- | --- |
+| `original_transform_box(matrix, box)` | `80122D04`, general AABox transform. |
+| `original_box_center(box)` | `801238A4`, rounded maximum half followed by fused minimum half. |
+| `original_box_distances(box)` | `80307F3C..7FE8`, separate absolute center-to-minimum and maximum-to-center distances. |
+| `original_body_box(matrix, box, distances)` | `80308144..8278`, transform then restore captured local distances. |
+| `original_boxes_overlap(incoming, body)` | `8012305C`, six ordered inclusive comparisons. |
 
 ## Recovered operations
 
@@ -43,6 +53,49 @@ still executes all eight corners and their ordered comparisons independently.
 The subsequent center arithmetic is retained. Replacing it with the transformed
 point would change NI behavior: a min-normal point becomes zero when both half
 operations flush, while a point twice min-normal survives.
+
+## General transform and target bodies
+
+The general transform first compares only minimum X with maximum X at
+`80122D6C`. When minimum X is larger, it returns all six input words unchanged.
+An inverted Y or Z does not take that branch. All inputs still pass the native
+finite-input validation before the original branch.
+
+For other boxes, each edge length is a rounded `maximum - minimum`. The routine
+multiplies those lengths by the corresponding matrix columns separately. It
+transforms the minimum point once through `8012D498`, including homogeneous W,
+then constructs eight candidates in this reduction order: minimum, minimum+Z,
+minimum+Y, minimum+X, (minimum+Y)+Z, (minimum+X)+Y, (minimum+X)+Z,
+((minimum+X)+Y)+Z. Each addition rounds independently. The edges receive no
+homogeneous division. This deliberately differs from projecting all eight
+original corner positions or replacing the arithmetic with a center/radius
+formula.
+
+Reduction starts with finite `FLT_MAX` minima and `-FLT_MAX` maxima. It follows
+the original strict replacement branches, retaining earlier words on equality.
+Finite inverted inputs are accepted; nonfinite transformed point or final
+bounds remain explicit checked failures.
+
+Local distances use the rounded center, then two independently rounded
+subtractions per axis. A compare with zero and conditional negation implements
+the absolute value, retaining negative zero. For adjacent endpoints `1` and
+`0x3F800001`, the center rounds to `1`: the minimum distance is zero and the
+maximum distance is `2^-23`. The two distance vectors cannot be collapsed into
+one half-size.
+
+Target-body reconstruction computes the transformed box center, then subtracts
+the captured local minimum distance and adds the captured local maximum
+distance. The original `frsp` instructions explicitly flush subnormal loaded
+distances before these final sums. Rotation and scale affect the transformed
+box center; they do not rotate or scale the restored local distances. This
+helper performs no timestamp comparison, list allocation or target service.
+
+Overlap compares incoming minimum X with body maximum X, then body minimum X
+with incoming maximum X, followed by the corresponding Y and Z pairs. Every
+comparison is inclusive; touching points, edges and faces overlap. No separate
+empty-box predicate is added. In particular, the original factory bounds
+`minimum=FLT_MAX, maximum=-FLT_MAX` can overlap an incoming box spanning the
+entire finite range, while ordinary world boxes miss them.
 
 ## Numerical scope and primary evidence
 
@@ -84,19 +137,39 @@ or downstream collision fidelity is claimed.
 
 ## Validation
 
-The strict Release test suite passes 92 asset-free checks. Tests cover
+The final Release test suite passes 231 asset-free checks. Tests cover
 matrix order, world-axis extents, inverted/zero sizes, homogeneous division,
 epsilon boundaries and sign loss, reciprocal rounding/underflow, signed zeros,
 subnormal loads, fused cancellation, center flushing and every invalid input word.
+The target cases additionally cover the X-only early return, projective edge
+construction, asymmetric distances, explicit distance rounding, finite factory
+bounds and touching/separated overlap on all axes.
+
+The new ignored `work/v27-collision-math-oracle.py` runs the raw general
+transform, center, local-distance, body-restoration and overlap instruction
+ranges against the standalone native test executable:
+
+- 10,048 cases; 44,137 exact output words; zero mismatches.
+- 1,101 finite centers, 1,101 finite distance pairs, 2,744 finite transformed
+  boxes, 2,744 finite reconstructed bodies and 1,300 overlap results.
+- 222 nonfinite-input rejections and 836 unusable-result rejections.
+- 2,544,172 executed guest instructions.
+
+Its numeric reference uses exact integer/rational arithmetic with the same
+explicit startup NI/RN scope. It prepares the numeric call boundaries directly;
+factory, list, cache lifecycle, allocator, recipient and Lua bodies are not
+substituted or claimed. The supplied DOL is read locally; the bounded report
+is retained in ignored `work/v27-collision-math-oracle.json`.
 
 The ignored raw oracle runs the actual producer instructions, AABox wrapper,
 complete corner reduction and homogeneous point body. Reference arithmetic uses
 exact integers and rational quotient rounding, independently of C++ float/FMA
 results. It executes no collision, allocator or script service hooks.
 
-The final comparison used `build/Release/dw4_collision_math_tests.exe` linked
-against the current `dw4_core` Release library. The successful linked-core
-report is retained locally in `work/v26-math-final-core-oracle.log`:
+The source-HITBOX comparison below was repeated successfully against the new
+standalone numeric build. Its previous linked-core comparison used
+`build/Release/dw4_collision_math_tests.exe`; that report remains locally in
+`work/v26-math-final-core-oracle.log`:
 
 - 4,599 cases; 3,788 finite boxes and 22,728 exact output words.
 - 66 nonfinite-input and 745 unusable-box rejections.
@@ -109,6 +182,7 @@ Local reproduction after a parent-owned build:
 ```powershell
 & .\build\Release\dw4_collision_math_tests.exe
 & '<PYTHON>' work/v26-hitbox-math-oracle.py --native build/Release/dw4_collision_math_tests.exe
+& '<PYTHON>' work/v27-collision-math-oracle.py --native build/Release/dw4_collision_math_tests.exe
 ```
 
 The `--oracle` test mode reads 22 decimal binary32 words per row (16 matrix
@@ -116,3 +190,8 @@ components, 3 offset components, 3 full extents), returning six words (minimum
 XYZ, maximum XYZ) or `ERROR`.
 The probe reads the local DOL and saves its bounded report in ignored
 `work/v26-hitbox-math-oracle.json`.
+
+The additive `--box-oracle` mode accepts an operation letter and decimal binary32
+words: `T` (16 matrix + 6 box), `C`/`D` (6 box), `B` (16 matrix + 6 box + 6
+distance), or `O` (6 incoming box + 6 body box). It returns exact component
+words, the overlap integer 0/1, or `ERROR` for the checked finite boundary.
