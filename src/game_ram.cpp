@@ -1,7 +1,9 @@
 #include "dw4/game_ram.hpp"
 #include "dw4/action_event_runtime.hpp"
+#include "dw4/database.hpp"
 
 #include <array>
+#include <bit>
 #include <map>
 #include <optional>
 #include <string>
@@ -26,13 +28,30 @@ bool magic_effect(std::int32_t remainder) {
     default:return false;
     }
 }
+std::int32_t skill_ceiling(std::int32_t level) {
+    const auto word=std::bit_cast<std::uint32_t>(level);
+    // Every guest multiply/add wraps independently; signed host overflow is
+    // never used to approximate the PowerPC result.
+    const auto value=level<=36 ? word*30u : level<=107 ? word*20u+360u :
+        level<=227 ? word*10u+1430u : word*8u+1884u;
+    return std::bit_cast<std::int32_t>(value);
+}
+std::int32_t skill_value(const GameDataList& row,std::int32_t index) {
+    const auto values=row.require<GameDataIntList>("SKILL")->data;
+    if(!values || index<0 || static_cast<std::size_t>(index)>=values->size())
+        fail("Original P2ESKILLUP requires an existing selected SKILL array element.");
+    return values->at(static_cast<std::size_t>(index));
+}
 }
 
 struct GameRamRuntime::Impl {
     struct Pending {
+        enum class Phase { required, pc_tech, selected_skill } phase=Phase::required;
         std::optional<std::string> command,subcommand;
-        std::array<std::int32_t,3> arguments{};
+        std::array<std::int32_t,4> arguments{};
         std::shared_ptr<GameDataList> player;
+        std::int32_t ceiling{},technique_row{},skill_index{};
+        std::optional<MessengerDispatch> query;
         std::string diagnostic;
     };
     GameDataState data;
@@ -40,19 +59,79 @@ struct GameRamRuntime::Impl {
     ControllerObjectId info=ControllerObjectId::allocate_native();
     ControllerObjectId ram=ControllerObjectId::allocate_native();
     std::map<std::pair<std::uint64_t,std::size_t>,Pending> pending;
+    MessengerDatabase pc_tech;
     bool fault{};
 
-    MessengerCallResult call(NativeMessenger& messenger,const MessengerDelivery& delivery) {
+    void prepare_skill(Pending& state,const NativeMessenger& messenger) {
+        state.arguments={integer(messenger,0),integer(messenger,1),integer(messenger,2),integer(messenger,3)};
+        state.player=data.player(player_index(state.arguments[0]));
+        state.ceiling=skill_ceiling(state.player->require<GameDataInt>("LEVEL")->data);
+        const auto category=state.arguments[1]/10000;
+        if(category!=4 && category!=8 && category!=9) {
+            state.skill_index=state.player->require<GameDataInt>("WEAPONSKILLNO")->data;
+            state.phase=Pending::Phase::selected_skill;
+            return;
+        }
+        const auto items=state.player->require<GameDataObjectList>("WAZALIST")->data;
+        if(!items || items->size()>65536) fail("Original P2ESKILLUP requires a bounded, owned WAZALIST.");
+        for(const auto& object:*items) {
+            const auto* item=std::get_if<std::shared_ptr<GameDataWaza>>(&object);
+            if(!item || !*item) fail("Original P2ESKILLUP WAZALIST contains an absent or different item type.");
+            if((*item)->base_no==state.arguments[1]%10000) {
+                state.technique_row=(*item)->record_no;
+                if(pc_tech) {
+                    state.skill_index=pc_tech->integer(state.technique_row,"SKILL");
+                    state.phase=Pending::Phase::selected_skill;
+                } else state.phase=Pending::Phase::pc_tech;
+                return;
+            }
+        }
+        // 80371524 leaves its output untouched if no item matches. A fresh
+        // empty factory row does not authorize an invented technique zero.
+        state.diagnostic="Original P2ESKILLUP requires the selected player's matching WAZALIST technique; no row was produced.";
+    }
+
+    MessengerCallResult advance(Pending& state,NativeMessenger& messenger,ActionEventRuntime& runtime) {
+        if(state.phase==Pending::Phase::pc_tech) {
+            if(!state.query) {
+                messenger.select("DATABASE","pcTech",0);
+                state.query.emplace(messenger.begin_send("GETDATABASE"));
+            }
+            const auto result=runtime.resume(*state.query);
+            if(result.stop==MessengerStop::faulted) fail("Original P2ESKILLUP pcTech database delivery faulted.");
+            if(result.stop!=MessengerStop::completed)
+                return {false,0,"Original P2ESKILLUP pcTech database query requires its retained service: "+result.diagnostic};
+            const auto& objects=messenger.buffer().objects();
+            const auto* database=objects.empty() ? nullptr : std::get_if<MessengerDatabase>(&objects[0]);
+            if(!database || !*database) fail("Original P2ESKILLUP pcTech query requires a non-null database at current object zero.");
+            pc_tech=*database;
+            state.query.reset();
+            state.skill_index=pc_tech->integer(state.technique_row,"SKILL");
+            state.phase=Pending::Phase::selected_skill;
+        }
+        if(state.phase==Pending::Phase::selected_skill) {
+            // This read follows the database callback and uses the retained
+            // source row, even if a nested GAMEDATAINIT replaced the live row.
+            const auto value=skill_value(*state.player,state.skill_index);
+            if(value>=state.ceiling) return {true,1,{}};
+            state.phase=Pending::Phase::required;
+            state.diagnostic="Original P2ESKILLUP probability, random, stat and effect services are required after selecting skill "+
+                std::to_string(state.skill_index)+" (value "+std::to_string(value)+", ceiling "+std::to_string(state.ceiling)+").";
+        }
+        return {false,0,state.diagnostic};
+    }
+
+    MessengerCallResult call(NativeMessenger& messenger,const MessengerDelivery& delivery,ActionEventRuntime& runtime) {
         if(fault) fail("GAMERAM has an uncertain outcome; replay is forbidden.");
         if(delivery.recipient!=ram || !delivery.dispatch_id)
             fail("GAMERAM delivery does not belong to its generated RAM and retained send.");
         const auto key=std::pair{delivery.dispatch_id,delivery.row_index};
-        if(const auto found=pending.find(key);found!=pending.end()) {
-            // Original command/arguments/target-row reads already happened.
-            // A nested call may subsequently change the live message/buffer.
-            return {false,0,found->second.diagnostic};
-        }
         try {
+            if(const auto found=pending.find(key);found!=pending.end()) {
+                const auto result=advance(found->second,messenger,runtime);
+                if(result.completed)pending.erase(found);
+                return result;
+            }
             const auto command=delivery.message.command;
             if(command=="GETPLAYER" || command=="GETPLAYER1" || command=="GETPLAYER2" ||
                 command=="GETPLAYER3" || command=="GETPLAYER4") {
@@ -83,11 +162,14 @@ struct GameRamRuntime::Impl {
                         return {true,1,{}};
                     }
                     required.diagnostic="Original GAMERAM P2PKOUKAMAGIC effect service is required for remainder "+std::to_string(remainder)+".";
-                } else required.diagnostic="Original GAMERAM FIGHTCALC service is required: "+*required.subcommand;
+                } else if(required.subcommand=="P2ESKILLUP") prepare_skill(required,messenger);
+                else required.diagnostic="Original GAMERAM FIGHTCALC service is required: "+*required.subcommand;
             } else required.diagnostic="Original GAMERAM command service is required: "+command.value_or("<null>");
             if(pending.size()>=256) fail("GAMERAM pending native services exceed 256 retained deliveries.");
             const auto entry=pending.emplace(key,std::move(required)).first;
-            return {false,0,entry->second.diagnostic};
+            const auto result=advance(entry->second,messenger,runtime);
+            if(result.completed)pending.erase(entry);
+            return result;
         } catch(...) {fault=true;throw;}
     }
 };
@@ -96,9 +178,9 @@ GameRamRuntime::GameRamRuntime(ActionEventRuntime& runtime):impl_(std::make_shar
     const auto owner=impl_;
     runtime.register_native_controller(owner->ram,{
         [owner]()->std::optional<std::uint8_t> {return std::uint8_t{1};},
-        [owner] {
+        [owner,&runtime] {
             return MessengerManager{
-                [owner](NativeMessenger& messenger,const MessengerDelivery& delivery) {return owner->call(messenger,delivery);},
+                [owner,&runtime](NativeMessenger& messenger,const MessengerDelivery& delivery) {return owner->call(messenger,delivery,runtime);},
                 [](NativeMessenger&,const MessengerDelivery&,std::string_view) {return MessengerCallResult{true,0,{}};}};
         }},"GAMERAM","gameram",0);
 }

@@ -149,7 +149,7 @@ void explicit_effect_and_bad_input_boundaries() {
     }
     for(const auto command:{"GAMESTART","FIGHTCALC"}) {
         ActionEventRuntime runtime;GameRamRuntime game(runtime);auto send=prepare(runtime,command);
-        if(std::string(command)=="FIGHTCALC")runtime.messenger().buffer().add_string("P2ESKILLUP");
+        if(std::string(command)=="FIGHTCALC")runtime.messenger().buffer().add_string("UNIMPLEMENTED_SUBCOMMAND");
         check(runtime.resume(send).stop==MessengerStop::service_required && game.pending_count()==1,
             "Unknown GAMESTART/skill growth service was substituted with successful empty behavior.");
     }

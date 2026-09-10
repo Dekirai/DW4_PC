@@ -39,7 +39,8 @@ void defaults() {
                 "Generated field order, exact name or wrapper type changed.");
             std::visit([&](const auto& pointer) {
                 using T=std::decay_t<decltype(pointer)>;
-                if constexpr(!std::is_same_v<T,std::monostate> && !std::is_same_v<T,std::shared_ptr<GameDataDisk>>) {
+                if constexpr(!std::is_same_v<T,std::monostate> && !std::is_same_v<T,std::shared_ptr<GameDataDisk>> &&
+                             !std::is_same_v<T,std::shared_ptr<GameDataWaza>>) {
                     check(pointer && pointer->name==field.name && wrappers.insert(pointer.get()).second,
                         "Generated fields share an unintended wrapper identity.");
                     if constexpr(std::is_same_v<T,std::shared_ptr<GameDataInt>> || std::is_same_v<T,std::shared_ptr<GameDataBool>>)
@@ -144,6 +145,7 @@ void malformed_rows() {
     rejects([]{GameDataList row({std::monostate{}});});
     rejects([]{GameDataList row({std::shared_ptr<GameDataInt>{}});});
     rejects([]{GameDataList row({std::make_shared<GameDataDisk>()});});
+    rejects([]{GameDataList row({std::make_shared<GameDataWaza>()});});
     auto missing=named<GameDataIntList>("SKILL");missing->data.reset();rejects([&]{GameDataList row({missing});});
     auto wrong_name=named<GameDataInt>(std::string("HP\0alien",8));rejects([&]{GameDataList row({wrong_name});});
     wrong_name->name=std::string(4097,'x');rejects([&]{GameDataList row({wrong_name});});
@@ -157,6 +159,12 @@ void malformed_rows() {
     scalar->name=std::string(4096,'x');rejects([&]{GameDataList row(std::vector<GameDataObject>(257,scalar));});
     auto objects=named<GameDataObjectList>("OBJECTS");objects->data->push_back(std::shared_ptr<GameDataDisk>{});
     rejects([&]{GameDataList row({objects});});
+    objects->data->clear();objects->data->push_back(std::shared_ptr<GameDataWaza>{});
+    rejects([&]{GameDataList row({objects});});
+    const auto waza=std::make_shared<GameDataWaza>(GameDataWaza{9,42,255,40});
+    objects->data->clear();objects->data->push_back(waza);GameDataList valid_items({objects});
+    check(std::get<std::shared_ptr<GameDataWaza>>(valid_items.require<GameDataObjectList>("OBJECTS")->data->front())==waza &&
+        waza->record_no==42 && waza->base_no==40 && waza->is_equipped==255,"Nested Waza ownership changed its separate record/base/byte fields.");
     objects->data->clear();objects->data->push_back(objects);rejects([&]{GameDataList row({objects});});objects->data->clear();
     scalar->name="HP";GameDataList row({scalar});
     rejects([&]{row.find(std::string("HP\0",3));});

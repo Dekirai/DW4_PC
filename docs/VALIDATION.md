@@ -1,4 +1,44 @@
-# Native player data and combat-script messenger validation
+# Native database and selected-skill validation
+
+Version 0.30.0 was validated locally on 2026-09-10 with MSVC 19.51. Original
+database graphs now retain typed ownership through actual DATABASE info/RAM
+registration. GAMERAM selects a weapon or technique skill before its original
+ceiling comparison, retaining pcTech delivery through nested callbacks. Full
+selected-player initialization, growth and gameplay remain required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 63/63 CTest suites passed without compiler warnings; 6 Python verifier tests passed |
+| Database decoding | 157 synthetic / 275 original-inclusive checks; six groups, signed widths, first names, physical aliases, row bounds and actual pcTech/shinka data |
+| DATABASE runtime | 126 synthetic / 182 original-inclusive checks; all 12 original DB infos/RAMs, final alias parents, null-to-empty registration names, captured fallback, raw activity and atomic failure |
+| GAMERAM skill phase | 467 synthetic / 499 original-inclusive checks; signed ceilings, four source rows, first Waza record, actual pcTech SKILL lookup, retained cache/query and nested player reset |
+| Shared ownership regression | 4,151 identity/provider checks; 8,181 synthetic / 8,269 original-inclusive game-data checks; unnamed Waza items remain distinct from disks and named wrappers |
+| Original database helpers | 107 native comparisons, including 49 checked host stops, plus 15 guest-only raw-index cases; 8,529 original instructions, zero differences |
+| Original database registration/delivery | 48 cases, 787,966 original instructions; final alias parents, ordinal rows, null/empty names, gates and captured GETDATABASE result identity match |
+| Original skill selector/ceiling | 63 cases, including 3 explicit missing-Waza boundaries, match across 6,406 original instructions |
+| Existing game/script integration | GAMERAM 421 checks, target scripts 104, registry 51, HIT bodies 109, collision 80, player events 108 and player waits 107 |
+| Original ACTION regression | 6,034,137 checks across 183 actions, 369 commands, 4,157 poses and 240 four-instance sequence poses |
+| Original messenger/wrapper regression | 101 stack cases / 7,525 rows, 84 delivery cases / 2,028 rows, 43 wrapper cases plus 4 checked prefixes and 39 magic-gate cases; zero differences |
+| Packaged app regression | App, walking and boot argument checks passed; actor and walking previews each rendered 120 frames and their captures were visually inspected |
+
+The original-data skill cases explicitly prepare Waza items and skill values
+to exercise recovered helpers against pcTech reference 1592. They do not
+execute GAMESTART or its equipment/stat calculation. The unchanged original
+Hit integration still reaches PC 63 after 48 instructions and five logical
+calls; its fresh generated WAZALIST is empty, so technique selection remains
+an explicit prerequisite. No starting HP or growth effect is fabricated.
+
+Instruction probes execute bounded original routines with explicit prepared
+allocation, list, type, context and recipient services. Checked schema/index
+stops and missing native services are reported separately from original
+unchecked memory behavior. No complete console execution, player constructor
+or playable combat claim follows from these comparisons. Original bytes,
+probes, traces and screenshots remain ignored under `work/`.
+
+See [DATABASE.md](DATABASE.md), [DATABASE_RUNTIME.md](DATABASE_RUNTIME.md) and
+[GAME_RAM.md](GAME_RAM.md) for implemented behavior and remaining prerequisites.
+
+## Previous version 0.29 validation
 
 Version 0.29.0 was validated locally on 2026-09-10 with MSVC 19.51. Generated
 GAMERAM player rows now retain their shared HP objects through actual GETPLAYER

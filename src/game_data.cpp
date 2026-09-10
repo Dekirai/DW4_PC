@@ -59,8 +59,9 @@ void check_text(std::string_view value) {
 const std::optional<std::string>& object_name(const GameDataObject& object) {
     return std::visit([](const auto& pointer)->const std::optional<std::string>& {
         using T=std::decay_t<decltype(pointer)>;
-        if constexpr(std::is_same_v<T,std::monostate> || std::is_same_v<T,std::shared_ptr<GameDataDisk>>)
-            throw GameDataError("A named game-data row cannot contain a null or an unnamed disk object.");
+        if constexpr(std::is_same_v<T,std::monostate> || std::is_same_v<T,std::shared_ptr<GameDataDisk>> ||
+                     std::is_same_v<T,std::shared_ptr<GameDataWaza>>)
+            throw GameDataError("A named game-data row cannot contain a null or an unnamed item object.");
         else {
             if(!pointer)throw GameDataError("A named game-data row contains an absent wrapper.");
             if(pointer->name)check_text(*pointer->name);
@@ -86,7 +87,7 @@ void validate_object(const GameDataObject& object,ValidationBudget& budget,std::
         using T=std::decay_t<decltype(pointer)>;
         if constexpr(!std::is_same_v<T,std::monostate>) {
             if(!pointer)throw GameDataError("Use a null object slot, not an absent typed game-data wrapper.");
-            if constexpr(!std::is_same_v<T,std::shared_ptr<GameDataDisk>>) {
+            if constexpr(!std::is_same_v<T,std::shared_ptr<GameDataDisk>> && !std::is_same_v<T,std::shared_ptr<GameDataWaza>>) {
                 text(pointer->name);
                 if constexpr(std::is_same_v<T,std::shared_ptr<GameDataString>>)text(pointer->data);
                 else if constexpr(!std::is_same_v<T,std::shared_ptr<GameDataInt>> &&

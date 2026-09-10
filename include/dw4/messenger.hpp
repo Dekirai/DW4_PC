@@ -5,18 +5,21 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <variant>
 
 namespace dw4 {
 class GameDataList;
+class DatabaseDefinition;
 class MessengerError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 using MessengerBox = std::shared_ptr<const CollisionBox>;
 using MessengerDataList = std::shared_ptr<GameDataList>;
+using MessengerDatabase = std::shared_ptr<const DatabaseDefinition>;
 // Native generated data and transient geometry retain their actual owners;
 // neither object is encoded as a serialized controller reference.
-using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox,MessengerDataList>;
+using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox,MessengerDataList,MessengerDatabase>;
 
 // One shared argument/result object. Selection clears it; sending does not.
 // Finite scalar/vector values retain their words. Matrix PSQ copies flush tiny
@@ -39,6 +42,7 @@ public:
     void add_object(std::optional<ControllerObjectId> value);
     void add_box(MessengerBox value);
     void add_data_list(MessengerDataList value);
+    void add_database(MessengerDatabase value);
     void add_string(std::optional<std::string> value);
     const auto& booleans() const noexcept { return booleans_; }
     const auto& integers() const noexcept { return integers_; }
@@ -70,6 +74,12 @@ struct MessengerMessage {
     std::optional<std::string> name;
     std::int32_t index{};
     std::optional<std::string> command;
+};
+struct MessengerRegistration {
+    ControllerObjectId recipient;
+    std::string category;
+    std::optional<std::string> name;
+    std::int32_t index{};
 };
 struct MessengerDelivery {
     std::uint64_t dispatch_id{};
@@ -135,6 +145,8 @@ public:
     ~NativeMessenger();
     void register_recipient(ControllerObjectId recipient,std::string category,
         std::optional<std::string> name,std::int32_t index);
+    // Preserve all ordered occurrences. Rejection leaves registrations unchanged.
+    void register_recipients(std::span<const MessengerRegistration> registrations);
     void select(std::string category,std::optional<std::string> name,std::int32_t index);
     MessengerBuffer& buffer();
     const MessengerBuffer& buffer() const;

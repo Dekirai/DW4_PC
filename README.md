@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.29 adds original generated player data, shared HP bindings and retained
-combat-script messages to the native GAMERAM owner. The full original game, including local
+Version 0.30 adds original typed databases, native DATABASE message delivery and
+retained skill-selection/ceiling checks in GAMERAM. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -18,6 +18,13 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Decode the original six database column groups and retain their typed owners
+  through DATABASE registration and GETDATABASE. GAMERAM resolves weapon or
+  technique skills before the original no-growth gate, including a retained
+  pcTech query. Actual skill growth and selected-player initialization remain
+  required. See [DATABASE.md](docs/DATABASE.md),
+  [DATABASE_RUNTIME.md](docs/DATABASE_RUNTIME.md) and [GAME_RAM.md](docs/GAME_RAM.md).
 
 - Construct the original common-data list and four separate player-data rows,
   preserve shared objects across resets, and route GETPLAYER/GAMEDATAINIT through

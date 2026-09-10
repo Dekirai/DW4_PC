@@ -12,6 +12,12 @@ struct NativeControllerServices {
     std::function<std::optional<std::uint8_t>()> active;
     std::function<MessengerManager()> manager;
 };
+struct PreparedControllerRegistration {
+    ControllerObjectId id;
+    NativeControllerServices services;
+    // Required for a serialized RAM; a native allocation has no source file.
+    std::optional<std::string> source;
+};
 struct PlayerWaitServices {
     // Four already processed original pad slots. Null preserves the missing
     // input service boundary; disconnected slots carry the original zero input.
@@ -61,6 +67,11 @@ public:
     // Register a newly generated provider and its category row atomically.
     void register_native_controller(ControllerObjectId id,NativeControllerServices services,
         std::string category,std::optional<std::string> name,std::int32_t index);
+    // Atomic installation of new prepared providers and ordered category rows.
+    // Existing provider owners are never replaced; additional rows may refer
+    // to existing owners. This does not select or change the shared buffer.
+    void register_controllers(std::span<const PreparedControllerRegistration> controllers,
+        std::span<const MessengerRegistration> rows);
     void set_active(ControllerObjectId id,bool active);
     const PlayerRuntimeBinding& binding(ControllerObjectId id) const;
     const ModelSequenceRuntime& sequence(ControllerObjectId id) const;

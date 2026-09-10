@@ -92,7 +92,7 @@ struct ActionEventRuntime::Impl {
     std::map<Key,std::shared_ptr<Model>> models;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
-    std::map<Key,NativeControllerServices> native_controllers;
+    std::map<Key,NativeControllerServices> prepared_controllers;
     std::map<std::uint32_t,std::string> sources;
     std::map<std::pair<std::uint64_t,std::size_t>,PendingConsumer> pending;
     std::optional<std::uint64_t> suspended_send;
@@ -134,10 +134,10 @@ struct ActionEventRuntime::Impl {
         return *found->second;
     }
     std::size_t owner_count() const noexcept {
-        return models.size()+consumers.size()+actions.size()+native_controllers.size();
+        return models.size()+consumers.size()+actions.size()+prepared_controllers.size();
     }
     void check_new(Key id) const {
-        if(models.contains(id) || consumers.contains(id) || actions.contains(id) || native_controllers.contains(id))
+        if(models.contains(id) || consumers.contains(id) || actions.contains(id) || prepared_controllers.contains(id))
             fail("RAM already has a prepared event owner.");
         if(owner_count()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
     }
@@ -243,7 +243,7 @@ struct ActionEventRuntime::Impl {
                 if(const auto found=models.find(key(id));found!=models.end()) return found->second->active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
-                if(const auto found=native_controllers.find(key(id));found!=native_controllers.end()) return found->second.active();
+                if(const auto found=prepared_controllers.find(key(id));found!=prepared_controllers.end()) return found->second.active();
                 if(external.active) return external.active(id);
                 return std::nullopt;
             },
@@ -253,7 +253,7 @@ struct ActionEventRuntime::Impl {
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
-                if(const auto found=native_controllers.find(key(id));found!=native_controllers.end()) return found->second.manager();
+                if(const auto found=prepared_controllers.find(key(id));found!=prepared_controllers.end()) return found->second.manager();
                 return external.manager ? external.manager(id) : MessengerManager{};
             }
         };
@@ -435,7 +435,8 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
     // one RAM. Conflicting existing owners must be rejected before registration.
     for(const auto ram:owned->ram_owners()) {
         const Key id{owned->source_occurrence(),ram};
-        if(impl_->models.contains(id) || impl_->actions.contains(id)) fail("Consumer RAM conflicts with prepared MODELCTRL/ACTION work.");
+        if(impl_->models.contains(id) || impl_->actions.contains(id) || impl_->prepared_controllers.contains(id))
+            fail("Consumer RAM conflicts with existing prepared controller work.");
         const auto found=impl_->consumers.find(id);
         if(found!=impl_->consumers.end() && found->second.program->kind()!=owned->kind())
             fail("Changing an owned consumer RAM's manager class is outside the prepared profile.");
@@ -458,14 +459,45 @@ void ActionEventRuntime::register_native_controller(ControllerObjectId id,Native
     if(!id.is_native() || !id.valid()) fail("Generated controller work requires a valid native identity.");
     if(!services.active || !services.manager) fail("Generated controller work requires its actual live providers.");
     impl_->check_new(id);
-    impl_->native_controllers.emplace(id,std::move(services));
+    impl_->prepared_controllers.emplace(id,std::move(services));
 }
 void ActionEventRuntime::register_native_controller(ControllerObjectId id,NativeControllerServices services,
     std::string category,std::optional<std::string> name,std::int32_t index) {
     impl_->require_registration_capacity(1,category.size()+(name ? name->size() : 0));
     register_native_controller(id,std::move(services));
     try {impl_->messenger.register_recipient(id,std::move(category),std::move(name),index);}
-    catch(...) {impl_->native_controllers.erase(id);throw;}
+    catch(...) {impl_->prepared_controllers.erase(id);throw;}
+}
+void ActionEventRuntime::register_controllers(std::span<const PreparedControllerRegistration> controllers,
+    std::span<const MessengerRegistration> rows) {
+    if(controllers.size()>4096-impl_->owner_count()) fail("Prepared event RAM ownership exceeds 4096 objects.");
+    std::map<Key,NativeControllerServices> providers;
+    std::map<std::uint32_t,std::string> sources;
+    for(const auto& entry:controllers) {
+        if(!entry.id.valid() || !entry.services.active || !entry.services.manager)
+            fail("Prepared controller registration requires valid identity and live providers.");
+        impl_->check_new(entry.id);
+        if(!providers.emplace(entry.id,entry.services).second) fail("Prepared controller batch repeats a provider owner.");
+        if(entry.id.is_native()) {
+            if(entry.source) fail("A generated native RAM cannot claim a serialized source occurrence.");
+        } else {
+            if(!entry.source || entry.source->empty() || entry.source->size()>65535 ||
+               entry.source->find('\0')!=std::string::npos || entry.id.reference_index==std::numeric_limits<std::uint32_t>::max())
+                fail("A serialized prepared controller requires its actual source and non-null RAM reference.");
+            const auto existing=impl_->sources.find(entry.id.file_index);
+            if(existing!=impl_->sources.end()) {
+                if(existing->second!=*entry.source) fail("Loaded source occurrence belongs to another source path.");
+            } else {
+                const auto [source,inserted]=sources.emplace(entry.id.file_index,*entry.source);
+                if(!inserted && source->second!=*entry.source) fail("Prepared controller batch mixes source paths in one occurrence.");
+            }
+        }
+    }
+    if(sources.size()>4096-impl_->sources.size()) fail("Prepared event sources exceed 4096 loaded occurrences.");
+    impl_->messenger.register_recipients(rows);
+    // Preallocated map nodes are merged without replacing any executing
+    // provider function. All rejecting validation/allocation happened above.
+    impl_->sources.merge(sources);impl_->prepared_controllers.merge(providers);
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
     if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active=active;

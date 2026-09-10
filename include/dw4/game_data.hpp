@@ -38,13 +38,21 @@ struct GameDataDisk {
     std::uint8_t is_equipped{};
     std::int32_t count{};
 };
+// beNDMWItemWaza also inherits the unnamed ItemBase. Its final field is a
+// technique base number, not the ItemDisk count. Population belongs to the
+// original selected-player stat calculation, not the generated row defaults.
+struct GameDataWaza {
+    std::int32_t kind_no{},record_no{};
+    std::uint8_t is_equipped{};
+    std::int32_t base_no{};
+};
 struct GameDataObjectList;
 using GameDataObject=std::variant<std::monostate,
     std::shared_ptr<GameDataInt>,std::shared_ptr<GameDataIntList>,
     std::shared_ptr<GameDataBool>,std::shared_ptr<GameDataBoolList>,
     std::shared_ptr<GameDataString>,std::shared_ptr<GameDataStringList>,
     std::shared_ptr<GameDataObjectList>,std::shared_ptr<GameDataFloatList>,
-    std::shared_ptr<GameDataDisk>>;
+    std::shared_ptr<GameDataDisk>,std::shared_ptr<GameDataWaza>>;
 struct GameDataObjectList : GameDataArray<GameDataObject> {};
 
 enum class GameDataKind : std::uint8_t {

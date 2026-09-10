@@ -2,6 +2,18 @@
 
 ## Implemented boundary
 
+Version 0.30 adds immutable `database` graphs and `database_runtime` ownership
+for exact exported beDBManagerInfo/RAM occurrences. All six typed column groups
+retain original widths, order and provenance. Shared DATABASE results have
+their own messenger object type. Atomic provider/registration batches preserve
+physical RAM aliases and executing callback owners. GAMERAM now retains the
+P2ESKILLUP source row, wrapped ceiling, first matching technique record and
+actual pcTech query before the no-growth comparison. A nested row reset does
+not retarget the captured row. The native ItemWaza type represents prepared
+techniques; full selected-player population, growth and stat effects remain
+required. See [DATABASE.md](DATABASE.md),
+[DATABASE_RUNTIME.md](DATABASE_RUNTIME.md) and [GAME_RAM.md](GAME_RAM.md).
+
 Version 0.29 adds `game_data`, `game_ram`, `model_game_data` and
 `model_script_messenger`. Generated common/player lists retain their original
 named wrapper and row identities. The GAMERAM endpoint uses a separate native

@@ -84,6 +84,11 @@ void MessengerBuffer::add_data_list(MessengerDataList value) {
     constexpr auto size=sizeof(MessengerObject);
     check_append(size);objects_.emplace_back(std::move(value));++entries_;bytes_+=size;
 }
+void MessengerBuffer::add_database(MessengerDatabase value) {
+    if(!value) throw MessengerError("A retained database must not be null; append a null object explicitly.");
+    constexpr auto size=sizeof(MessengerObject);
+    check_append(size);objects_.emplace_back(std::move(value));++entries_;bytes_+=size;
+}
 void MessengerBuffer::add_string(std::optional<std::string> value) {
     text_check(value);
     const auto size=sizeof(value)+(value ? value->size() : 0);
@@ -151,6 +156,27 @@ void NativeMessenger::register_recipient(ControllerObjectId recipient,std::strin
     impl_->registrations.push_back({{recipient,index},std::move(category),std::move(name)});
     impl_->registration_text+=size;
     // 803050A8 appends rows without invalidating any existing selected-message cache.
+}
+void NativeMessenger::register_recipients(std::span<const MessengerRegistration> registrations) {
+    if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    impl_->check_buffer_change();
+    if(registrations.size()>65536-impl_->registrations.size())
+        throw MessengerError("Messenger registration rows exceed their host bound.");
+    std::size_t added_text{};
+    std::vector<Impl::Registration> pending;pending.reserve(registrations.size());
+    for(const auto& row:registrations) {
+        if(!row.recipient.valid()) throw MessengerError("Controller recipient mixes native and serialized identity fields.");
+        text_check(std::string_view(row.category));text_check(row.name);
+        const auto size=row.category.size()+(row.name ? row.name->size() : 0);
+        if(size>text_limit-impl_->registration_text-added_text)
+            throw MessengerError("Messenger registration text exceeds its host bound.");
+        pending.push_back({{row.recipient,row.index},row.category,row.name});added_text+=size;
+    }
+    // All validation and allocation precede publication. Moving these owned
+    // rows cannot invoke user callbacks or invalidate existing live cache rows.
+    impl_->registrations.reserve(impl_->registrations.size()+pending.size());
+    for(auto& row:pending)impl_->registrations.push_back(std::move(row));
+    impl_->registration_text+=added_text;
 }
 void NativeMessenger::select(std::string category,std::optional<std::string> name,std::int32_t index) {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");

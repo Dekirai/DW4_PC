@@ -3,7 +3,8 @@
 `GameRamRuntime` constructs the recovered initial named game-data graph and
 registers one generated `beNDMWGameRam` endpoint on an existing
 `ActionEventRuntime`. It implements existing player-row queries, player-row
-reset and the verified ordinary `P2PKOUKAMAGIC` return paths. Selection,
+reset, the verified ordinary `P2PKOUKAMAGIC` return paths and the selected-skill
+ceiling gate in `P2ESKILLUP`. Selection,
 equipment/stat calculation, healing, skill growth and the full original game
 startup remain separate prerequisites.
 
@@ -39,6 +40,7 @@ at virtual `+8C` returns zero without effects.
 | `GETPLAYER1` through `GETPLAYER4` | no required input | append fixed row 0 through 3 |
 | `GAMEDATAINIT` | signed integer[0], checked 0 through 3 | replace the selected player row using the recovered generator |
 | `FIGHTCALC` / `P2PKOUKAMAGIC` | target RAM, source RAM, kind | the bounded paths below |
+| `FIGHTCALC` / `P2ESKILLUP` | source RAM, kind, first flag, second flag | resolve the actual skill before the original no-growth comparison |
 
 Queries append the actual `MessengerDataList` object without clearing other
 lists. A row query is not a controller-address result or a copy of its values.
@@ -73,7 +75,7 @@ or player value. For equal RAM values, it computes signed `kind % 10000`:
 These paths do not modify HP. The Lua BLP wrapper subsequently reads current
 integer[0]: an unequal-RAM call can therefore return its original target RAM,
 while an equal-RAM default branch returns 1. BLT's separate `P2ESKILLUP`
-consumer remains an explicit skill-growth boundary.
+consumer follows the skill-selection phase below.
 
 The known effect boundary retains its parsed command, arguments and actual
 target-row shared owner, keyed by the same dispatch ID and recipient-row index.
@@ -87,6 +89,51 @@ These incomplete results are native service boundaries used to preserve the
 original synchronous call. They do not claim the original manager scheduled
 those effects asynchronously. The enclosing action-event delivery owns the
 shared packet while suspended; unrelated top-level mutation is rejected.
+
+## Selected-skill ceiling and pcTech ownership
+
+`P2ESKILLUP` reads all four signed integers, captures the actual source player
+row and reads its `LEVEL`. Neither input flag skips this prefix. The ceiling
+uses signed level comparisons and wrapped 32-bit guest operations:
+
+| Level L | Ceiling |
+| --- | --- |
+| L <= 36 | 30 * L |
+| L <= 107 | 20 * L + 360 |
+| L <= 227 | 10 * L + 1430 |
+| Higher | 8 * L + 1884 |
+
+The handler divides signed kind by 10000, truncating toward zero. Categories
+other than 4, 8 and 9 read `WEAPONSKILLNO`, then that element of the actual
+`SKILL` array. The magic categories find the first WAZALIST ItemWaza whose
+`base_no` equals signed kind % 10000. Its independent `record_no` selects the
+`SKILL` column in pcTech; that result indexes the player's SKILL array.
+
+Only after those accesses does current skill >= ceiling complete without a
+growth effect. In particular, LEVEL 0 does not bypass missing technique data.
+The original Waza helper leaves its output unchanged on no match. A fresh
+empty WAZALIST therefore stops at an explicit missing selected-player technique
+boundary, never a guessed row zero. Invalid row/array access and absent or wrong
+item types are terminal checked host errors before the original unsafe read.
+
+The generated manager retains one lazy pcTech database owner. The first access
+selects `DATABASE/pcTech/0`, sends `GETDATABASE` and consumes **current object[0]
+after that same send completes**. There is no private buffer or push/pop.
+Nested selection can clear or replace the shared arguments and results. Missing
+recipient providers retain the exact nested dispatch. A completed empty, null
+or wrongly typed result faults rather than inventing a database. Subsequent
+accesses use the retained owner without refreshing the registration or buffer.
+
+Pending skill work retains the original row, arguments, computed ceiling and
+first technique record. A nested GAMEDATAINIT can replace the live row, but the
+continuation still reads SKILL from its captured old row after the query. A
+retry does not reread LEVEL, search WAZALIST again or resend completed effects.
+
+A value below the ceiling stops before the still-required probability, random,
+stat/update and MODELCTRL effect operations. It does not increment SKILL alone.
+Full selected-player initialization and the six-group WAZALIST calculation
+remain required. Explicit prepared ItemWaza test inputs only exercise this
+bounded helper path.
 
 ## Original evidence
 
@@ -110,6 +157,14 @@ The reference is the supplied USA GameCube executable, SHA-1
   precedes the unequal branch at `80376F30`. Default completion at
   `80377F48..80377F58` clears integers through `80306AB8` and appends 1
   through `80306A40`.
+- `P2ESKILLUP` begins at `803736C8`. Its row/LEVEL reads precede wrapped ceiling
+  arithmetic at `80373738..8037376C`. Category selection leads to ordinary
+  WEAPONSKILLNO access at `803737A8` or WAZALIST helper `80371524` at
+  `8037380C`. The pcTech helper `80378424` caches current object zero in manager
+  `+24`; database integer lookup is `8031F608`. Skill comparison at
+  `80373848..8037384C` is the first no-growth exit. Probability work starts at
+  `80373850`; actual random delivery, stat routines `8036FDE8`/`8036DF70` and
+  following effect messages are outside this implemented prefix.
 
 Original data and disassembly remain ignored. The public implementation uses
 native owned objects and checked C++ state, not guest pointers.
@@ -147,6 +202,15 @@ BLP, change the instruction/call counters or modify any player's HP owner.
 These checks invoke the prepared original Hit-script path; they do not execute
 full player creation or assert that combat is complete. They remain separate
 from asset-free CI.
+
+The separate skill suite passes 467 synthetic checks covering all ceiling
+boundaries, signed wrapping, four source rows, first Waza match, typed database
+delivery/cache, missing prerequisites and a suspended database callback that
+resets the live player row. Its original-data mode passes 32 additional checks
+(499 total), using actual pcTech reference 1592 and rows 0, 40, 65 and 80 across
+all four player rows. The prepared skill values and Waza items establish helper
+inputs, not completed selected-player creation. The unchanged original Hit
+scenarios above still stop at the empty generated WAZALIST boundary.
 
 See [MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md) for Lua wrapper
 packet/continuation semantics and [MESSENGER.md](MESSENGER.md) for message

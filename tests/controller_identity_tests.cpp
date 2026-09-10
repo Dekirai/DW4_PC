@@ -176,8 +176,61 @@ void aggregate_capacity_and_atomic_registration() {
     rejects_owner([&]{reverse.register_native_controller(ControllerObjectId::allocate_native(),provider);});
     check(reverse.messenger().registration_count()==1,"Native owner capacity depends on model/native registration order.");
 }
+void batched_provider_registration() {
+    ActionEventRuntime runtime;std::vector<ControllerObjectId> calls;
+    const NativeControllerServices provider{
+        []()->std::optional<std::uint8_t>{return std::uint8_t{1};},
+        [&] {return MessengerManager{[&](NativeMessenger&,const MessengerDelivery& delivery) {
+            calls.push_back(delivery.recipient);return MessengerCallResult{true,1,{}};
+        },{}};}};
+    const ControllerObjectId first{100,1},second{100,2},third{100,3};
+    const auto generated=ControllerObjectId::allocate_native();
+    const std::array providers{PreparedControllerRegistration{first,provider,"synthetic/batch.igb"},
+        PreparedControllerRegistration{second,provider,"synthetic/batch.igb"},PreparedControllerRegistration{generated,provider,{}}};
+    auto rows=std::array{MessengerRegistration{second,"BATCH",{},0},MessengerRegistration{first,"BATCH",{},0},
+        MessengerRegistration{second,"BATCH",{},1},MessengerRegistration{generated,"BATCH",{},0}};
+    rows[3].category=std::string("BAD\0ROW",7);
+    rejects_owner([&]{runtime.register_controllers(providers,rows);});
+    check(runtime.messenger().registration_count()==0,"Invalid last row published a partial provider batch.");
+    rows[3].category="BATCH";runtime.register_controllers(providers,rows);
+    auto send=runtime.messenger().begin_send_to("BATCH",{},-1,"RUN");
+    check(runtime.resume(send).stop==MessengerStop::completed && calls==std::vector<ControllerObjectId>{second,first,second,generated},
+        "Batch publication reordered or deduplicated category occurrences.");
+    const std::array conflict{PreparedControllerRegistration{third,provider,"different/source.igb"}};
+    rejects_owner([&]{runtime.register_controllers(conflict,{});});
+    const std::array valid{PreparedControllerRegistration{third,provider,"synthetic/batch.igb"}};
+    const std::array duplicate{valid[0],valid[0]};rejects_owner([&]{runtime.register_controllers(duplicate,{});});
+    runtime.register_controllers(valid,{});
+    rejects_owner([&]{runtime.register_controllers(valid,{});});
+    check(runtime.messenger().registration_count()==4,"Rejected source or repeated provider changed registered rows.");
+
+    // Registration may supply a missing owner from inside an executing live
+    // provider. It must not swap/destroy that provider's containing map.
+    ActionEventRuntime nested;const auto parent=ControllerObjectId::allocate_native(),child=ControllerObjectId::allocate_native();
+    nested.register_recipient(parent,"PARENT",{},0);unsigned active_calls{},child_calls{};
+    nested.register_native_controller(parent,{
+        [&]()->std::optional<std::uint8_t> {
+            if(++active_calls==1) {
+                const std::array install{PreparedControllerRegistration{child,{
+                    []()->std::optional<std::uint8_t>{return std::uint8_t{1};},
+                    [&] {return MessengerManager{[&](NativeMessenger&,const MessengerDelivery&) {
+                        ++child_calls;return MessengerCallResult{true,1,{}};
+                    },{}};}},{}}};
+                const std::array registration{MessengerRegistration{child,"CHILD",{},0}};
+                nested.register_controllers(install,registration);
+            }
+            return std::uint8_t{1};
+        },
+        [&] {return MessengerManager{[&](NativeMessenger& messenger,const MessengerDelivery&) {
+            auto call=messenger.begin_send_to("CHILD",{},0,"RUN");
+            return MessengerCallResult{nested.resume(call).stop==MessengerStop::completed,1,{}};
+        },{}};}});
+    auto outer=nested.messenger().begin_send_to("PARENT",{},0,"RUN");nested.messenger().buffer().set_enabled_only(1);
+    check(nested.resume(outer).stop==MessengerStop::completed && active_calls==1 && child_calls==1,
+        "Registering inside an active provider invalidated the executing owner or nested delivery.");
+}
 }
 int main() {
-    try {identity_domains();retained_delivery();native_provider_ownership();data_objects_and_integer_reset();aggregate_capacity_and_atomic_registration();std::cout<<"Controller identity checks: "<<checks<<'\n';return 0;}
+    try {identity_domains();retained_delivery();native_provider_ownership();data_objects_and_integer_reset();aggregate_capacity_and_atomic_registration();batched_provider_registration();std::cout<<"Controller identity checks: "<<checks<<'\n';return 0;}
     catch(const std::exception& error){std::cerr<<"Controller identity after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

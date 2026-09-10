@@ -44,6 +44,15 @@ its nullable name from `igNamedObject`; its payload is separate.
 the exact original order. The tables below group fields with identical types
 and counts for readability. A scalar has no list count.
 
+`GameDataWaza` represents the separate unnamed `beNDMWItemWaza` item type:
+signed `kind_no`, signed `record_no`, raw `is_equipped` byte and signed
+`base_no`. It is valid inside an object-list wrapper, never as a named row
+entry. The original initializer `803B17B0` uses kind 9, record `base + rank`,
+equipped byte 0 and the independent base number. The native generated player
+rows still have empty WAZALIST lists. Their six-group population belongs to
+selected-player stat calculation; constructing a prepared test item does not
+execute that calculation.
+
 | Common fields | Type | Count |
 | --- | --- | --- |
 | `NINZU`, `DIFFICULTY`, `CAMERAMODE`, `LIGHTMODE`, `GATESTAGENO` | Int | — |

@@ -10,6 +10,8 @@ class ActionEventRuntime;
 
 // Explicit generated beNDMWGameRam ownership on an already prepared action-
 // event messenger. Native factory data are not selected-player/save state.
+// Skill selection retains actual row/database owners through nested delivery;
+// full skill growth and selected-player stat/equipment preparation are required.
 class GameRamRuntime {
 public:
     explicit GameRamRuntime(ActionEventRuntime& runtime);
