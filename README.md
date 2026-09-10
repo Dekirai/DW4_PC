@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.28 executes selected original target-Hit scripts with shared model/HP
-context and retained Lua continuations on prepared player state. The full original game, including local
+Version 0.29 adds original generated player data, shared HP bindings and retained
+combat-script messages to the native GAMERAM owner. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -18,6 +18,13 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Construct the original common-data list and four separate player-data rows,
+  preserve shared objects across resets, and route GETPLAYER/GAMEDATAINIT through
+  the native GAMERAM. Selected original Hit scripts reach its verified magic
+  dispatch gates; skill growth and actual damage/status effects remain required.
+  See [GAME_DATA.md](docs/GAME_DATA.md), [GAME_RAM.md](docs/GAME_RAM.md) and
+  [MODEL_SCRIPT_MESSENGER.md](docs/MODEL_SCRIPT_MESSENGER.md).
 
 - Execute selected target-Hit chunks in one shared Lua VM, retain incomplete
   native calls and nested scripts, and apply the original conditional HP merge.

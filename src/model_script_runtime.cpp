@@ -8,9 +8,7 @@
 namespace dw4 {
 namespace {
 [[noreturn]] void fail(const std::string& message) { throw ModelScriptError(message); }
-std::uint64_t key(ControllerObjectId id) {
-    return (static_cast<std::uint64_t>(id.file_index)<<32)|id.reference_index;
-}
+ControllerObjectId key(ControllerObjectId id) { return id; }
 bool same_request(const ModelTargetHitRequest& a,const ModelTargetHitRequest& b) {
     return a.target==b.target && a.target_source==b.target_source &&
         a.target_name==b.target_name && a.target_ram==b.target_ram &&
@@ -38,7 +36,7 @@ struct ModelScriptRuntime::Impl {
     ScriptRegistry registry;
     std::shared_ptr<Lua4Vm> vm;
     ModelScriptContextRuntime context;
-    std::map<std::uint64_t,std::shared_ptr<ModelScriptWork>> works;
+    std::map<ControllerObjectId,std::shared_ptr<ModelScriptWork>> works;
     std::map<std::pair<std::uint32_t,std::uint32_t>,Lua4Program> programs;
     std::vector<std::unique_ptr<Invocation>> invocations;
     ModelScriptHostService host_service;

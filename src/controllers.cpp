@@ -50,7 +50,7 @@ std::string name(const IgbDocument& doc, const IgbObject& object, std::size_t& t
     charge(result.size(), text, max_text, "Copied name");
     return std::string(result);
 }
-std::uint64_t key(ControllerObjectId object) { return (std::uint64_t(object.file_index) << 32) | object.reference_index; }
+ControllerObjectId key(ControllerObjectId object) { return object; }
 const char* manager_name(ControllerKind kind) { return kind == ControllerKind::static_info ? "beStaticInfoCtl" : "beSwitchCtrl"; }
 const char* category_name(ControllerKind kind) { return kind == ControllerKind::static_info ? "STATICINFO" : "SWITCHCTRL"; }
 
@@ -59,7 +59,7 @@ ControllerInitialization initialize(std::span<const StartupSource> sources,
     ControllerPrerequisites prerequisites, bool prefix) {
     ControllerInitialization result; result.ordered_prefix = prefix; result.next_barrier = later_barrier;
     std::size_t text = 0, visits = 0, exports = 0;
-    std::map<std::uint64_t, std::uint32_t> ram_indices;
+    std::map<ControllerObjectId, std::uint32_t> ram_indices;
     std::vector<std::optional<std::vector<std::optional<std::uint32_t>>>> source_exports;
     try {
         if (sources.size() > max_sources || deferred.size() > max_rows || (!prefix && selected.size() > max_selected))
@@ -110,7 +110,7 @@ ControllerInitialization initialize(std::span<const StartupSource> sources,
                 auto& manager = result.managers[kind == ControllerKind::static_info ? 0 : 1];
                 std::vector<ControllerRamState> pending_rams;
                 std::vector<ControllerRecipient> pending_recipients;
-                std::map<std::uint64_t, std::uint32_t> additions;
+                std::map<ControllerObjectId, std::uint32_t> additions;
                 pending_rams.reserve(rows.size()); pending_recipients.reserve(rows.size()); step.ram_indices.reserve(rows.size());
                 const std::string category = category_name(kind);
                 for (std::uint32_t r = 0; r < rows.size(); ++r) {

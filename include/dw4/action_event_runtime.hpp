@@ -8,6 +8,10 @@
 #include "dw4/pad.hpp"
 
 namespace dw4 {
+struct NativeControllerServices {
+    std::function<std::optional<std::uint8_t>()> active;
+    std::function<MessengerManager()> manager;
+};
 struct PlayerWaitServices {
     // Four already processed original pad slots. Null preserves the missing
     // input service boundary; disconnected slots carry the original zero input.
@@ -50,6 +54,13 @@ public:
     // Register every RAM occurrence, including aliases, in the supplied order.
     // active is caller-prepared RAM state, not inferred from a loaded export.
     void register_consumer(ActionEventTableProgram program,bool active);
+    // Attach the real providers of a generated native RAM. This does not select
+    // or change the shared buffer; category rows are registered separately.
+    // Existing providers cannot be replaced through another registration.
+    void register_native_controller(ControllerObjectId id,NativeControllerServices services);
+    // Register a newly generated provider and its category row atomically.
+    void register_native_controller(ControllerObjectId id,NativeControllerServices services,
+        std::string category,std::optional<std::string> name,std::int32_t index);
     void set_active(ControllerObjectId id,bool active);
     const PlayerRuntimeBinding& binding(ControllerObjectId id) const;
     const ModelSequenceRuntime& sequence(ControllerObjectId id) const;

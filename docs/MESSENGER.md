@@ -22,6 +22,14 @@ same-file restriction: qualified native IDs identify ownership, not routing.
 Adapters canonicalize serialized references that alias one RAM object before
 assigning IDs; every original registration occurrence still remains a row.
 
+`ControllerObjectId` preserves serialized source/reference fields and adds a
+separate process-allocated native identity for generated owners such as GAMERAM.
+Native identities never alias serialized addresses; copied IDs retain the same
+owner. Mixed native/serialized fields reject before registration or append.
+`ActionEventRuntime::register_native_controller` retains live activity and
+manager providers independently of category rows. Attaching a missing provider
+does not select, clear or replay an already prepared send.
+
 `80305344` selects through 64 stable cache records in move-to-front order. Its
 key is category plus nullable requested name, excluding index. Null and empty
 are distinct cache keys. A hit changes the request index and moves the record
@@ -35,8 +43,10 @@ cache hit cannot. Captured indices remain independent of later RAM aliases.
 
 ## Delivery and shared values
 
-Object-list entries explicitly distinguish null, a source-qualified controller
-RAM and a retained immutable `CollisionBox`. HITBOX uses the latter; a temporary
+Object-list entries explicitly distinguish null, a controller RAM, a retained
+`GameDataList` and an immutable `CollisionBox`. GETPLAYER appends the existing
+data row; resetting the player's current slot cannot retarget that old object.
+HITBOX uses the retained box; a temporary
 AABox never receives a fabricated RAM identity. The box survives paused sends
 and remains valid until its native owners and shared buffer release it. Box
 payloads require finite coordinates but preserve signed/inverted extents.
@@ -57,7 +67,9 @@ and immediately sends; it does not enqueue a deferred event.
 The single shared argument/result buffer has byte booleans, int32, float,
 int64, float3, matrix4x4, object IDs and nullable strings. Arguments and results
 use the same typed lists. Selection clears all lists and enabled-only; send
-does not. Strings and values are copied into owned native storage. RAM owners
+does not. The original integer-only reset (`clear_integers`, `80306AB8`)
+preserves the other seven lists and enabled-only flag, while releasing its host
+entry/storage accounting. Strings and values are copied into owned native storage. RAM owners
 must outlive their registered/cached IDs and delivery.
 
 Finite scalar/vector copies retain their words. Original matrix append/get

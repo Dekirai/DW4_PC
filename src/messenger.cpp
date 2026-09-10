@@ -35,6 +35,11 @@ void MessengerBuffer::check_append(std::size_t bytes) const {
     if(entries_>=32768 || bytes>text_limit-bytes_)
         throw MessengerError("Messenger shared argument/result storage exceeds its host bound.");
 }
+void MessengerBuffer::clear_integers() {
+    check_mutation();
+    entries_-=integers_.size(); bytes_-=integers_.size()*4;
+    integers_.clear();
+}
 void MessengerBuffer::add_bool(std::uint8_t value) {
     check_append(1); booleans_.push_back(value); ++entries_; ++bytes_;
 }
@@ -61,6 +66,7 @@ void MessengerBuffer::add_matrix(std::array<float,16> value) {
     check_append(64); matrices_.push_back(value); ++entries_; bytes_+=64;
 }
 void MessengerBuffer::add_object(std::optional<ControllerObjectId> value) {
+    if(value && !value->valid()) throw MessengerError("Controller object mixes native and serialized identity fields.");
     constexpr auto size=sizeof(MessengerObject);
     check_append(size);
     if(value) objects_.emplace_back(*value); else objects_.emplace_back(std::monostate{});
@@ -72,6 +78,11 @@ void MessengerBuffer::add_box(MessengerBox value) {
     for(const auto number:value->maximum) finite(number);
     constexpr auto size=sizeof(MessengerObject)+sizeof(CollisionBox);
     check_append(size); objects_.emplace_back(std::move(value)); ++entries_; bytes_+=size;
+}
+void MessengerBuffer::add_data_list(MessengerDataList value) {
+    if(!value) throw MessengerError("A retained game-data list must not be null; append a null object explicitly.");
+    constexpr auto size=sizeof(MessengerObject);
+    check_append(size);objects_.emplace_back(std::move(value));++entries_;bytes_+=size;
 }
 void MessengerBuffer::add_string(std::optional<std::string> value) {
     text_check(value);
@@ -131,6 +142,7 @@ NativeMessenger::~NativeMessenger()=default;
 void NativeMessenger::register_recipient(ControllerObjectId recipient,std::string category,
     std::optional<std::string> name,std::int32_t index) {
     if(!impl_) throw MessengerError("Moved-from messenger has no context.");
+    if(!recipient.valid()) throw MessengerError("Controller recipient mixes native and serialized identity fields.");
     impl_->check_buffer_change();
     text_check(std::string_view(category)); text_check(name);
     const auto size=category.size()+(name ? name->size() : 0);

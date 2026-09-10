@@ -9,8 +9,8 @@
 
 namespace dw4 {
 namespace {
-using Key=std::pair<std::uint32_t,std::uint32_t>;
-Key key(ControllerObjectId id) { return {id.file_index,id.reference_index}; }
+using Key=ControllerObjectId;
+Key key(ControllerObjectId id) { return id; }
 [[noreturn]] void fail(const char* message) { throw MessengerError(message); }
 bool same(const ActionBroadcast& a,const ActionBroadcast& b) {
     return a.source==b.source && a.info_name==b.info_name && a.ram_no==b.ram_no && a.action==b.action;
@@ -92,6 +92,7 @@ struct ActionEventRuntime::Impl {
     std::map<Key,std::shared_ptr<Model>> models;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
+    std::map<Key,NativeControllerServices> native_controllers;
     std::map<std::uint32_t,std::string> sources;
     std::map<std::pair<std::uint64_t,std::size_t>,PendingConsumer> pending;
     std::optional<std::uint64_t> suspended_send;
@@ -132,9 +133,13 @@ struct ActionEventRuntime::Impl {
         if(found==models.end()) fail("No prepared model work owns this source-qualified RAM.");
         return *found->second;
     }
+    std::size_t owner_count() const noexcept {
+        return models.size()+consumers.size()+actions.size()+native_controllers.size();
+    }
     void check_new(Key id) const {
-        if(models.contains(id) || consumers.contains(id) || actions.contains(id)) fail("RAM already has a prepared event owner.");
-        if(models.size()+consumers.size()+actions.size()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
+        if(models.contains(id) || consumers.contains(id) || actions.contains(id) || native_controllers.contains(id))
+            fail("RAM already has a prepared event owner.");
+        if(owner_count()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
     }
     MessengerCallResult model_message(ControllerObjectId id,Model& owner,const MessengerDelivery& delivery) {
         const auto& command=delivery.message.command;
@@ -238,6 +243,7 @@ struct ActionEventRuntime::Impl {
                 if(const auto found=models.find(key(id));found!=models.end()) return found->second->active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
+                if(const auto found=native_controllers.find(key(id));found!=native_controllers.end()) return found->second.active();
                 if(external.active) return external.active(id);
                 return std::nullopt;
             },
@@ -247,6 +253,7 @@ struct ActionEventRuntime::Impl {
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
+                if(const auto found=native_controllers.find(key(id));found!=native_controllers.end()) return found->second.manager();
                 return external.manager ? external.manager(id) : MessengerManager{};
             }
         };
@@ -434,7 +441,7 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
             fail("Changing an owned consumer RAM's manager class is outside the prepared profile.");
         if(found==impl_->consumers.end()) new_owners.insert(id);
     }
-    if(new_owners.size()>4096-impl_->models.size()-impl_->consumers.size()-impl_->actions.size())
+    if(new_owners.size()>4096-impl_->owner_count())
         fail("Prepared event RAM ownership exceeds 4096 objects.");
     impl_->require_registration_capacity(owned->ram_owners().size(),
         owned->ram_owners().size()*std::string_view("ACTION_BROADCAST").size());
@@ -446,6 +453,19 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
         } else impl_->consumers.at(key(id))=Impl::Consumer{owned,active};
         impl_->messenger.register_recipient(id,"ACTION_BROADCAST",std::nullopt,-1);
     }
+}
+void ActionEventRuntime::register_native_controller(ControllerObjectId id,NativeControllerServices services) {
+    if(!id.is_native() || !id.valid()) fail("Generated controller work requires a valid native identity.");
+    if(!services.active || !services.manager) fail("Generated controller work requires its actual live providers.");
+    impl_->check_new(id);
+    impl_->native_controllers.emplace(id,std::move(services));
+}
+void ActionEventRuntime::register_native_controller(ControllerObjectId id,NativeControllerServices services,
+    std::string category,std::optional<std::string> name,std::int32_t index) {
+    impl_->require_registration_capacity(1,category.size()+(name ? name->size() : 0));
+    register_native_controller(id,std::move(services));
+    try {impl_->messenger.register_recipient(id,std::move(category),std::move(name),index);}
+    catch(...) {impl_->native_controllers.erase(id);throw;}
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
     if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active=active;
@@ -494,7 +514,7 @@ void ActionEventRuntime::prepare_collision_target(ControllerObjectId id,ModelHit
        (id.reference_index!=body.ram_reference() && id.reference_index!=body.ram_owner_reference()))
         fail("Prepared collision HIT graph does not belong to this model's actual source-qualified RAM.");
     for(const auto& [other_id,other]:impl_->models) {
-        if(other_id.first==id.file_index && other->collision &&
+        if(other_id.file_index==id.file_index && other->collision &&
            other->collision->body().ram_owner_reference()==body.ram_owner_reference())
             fail("The physical model RAM already owns its mutable collision body through another reference.");
     }

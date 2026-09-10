@@ -85,7 +85,7 @@ ModelCollisionResult ModelCollisionRuntime::handle(NativeMessenger& messenger,co
         fail("Resume the same target collision delivery with its original live owners.");
     if(!owner.pending) {
         if(delivery.message.command!="CHKBULLET") fail("The prepared collision target handles CHKBULLET only.");
-        if(delivery.recipient.file_index!=owner.body.definition().source_occurrence() ||
+        if(delivery.recipient.is_native() || delivery.recipient.file_index!=owner.body.definition().source_occurrence() ||
            (delivery.recipient.reference_index!=owner.body.ram_reference() &&
             delivery.recipient.reference_index!=owner.body.ram_owner_reference()))
             fail("Collision delivery does not belong to this source-qualified target RAM.");

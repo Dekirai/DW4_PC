@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.29 adds the original generated GAMERAM data graph, retained GETPLAYER
+row results and shared MODELCTRL HP bindings. Original magic-script wrappers
+now send through the same messenger; the recovered unequal-RAM and default
+P2PKOUKAMAGIC paths execute. Skill growth, named magic/status effects, selected
+player initialization and original gameplay scheduling remain the next work.
+See [GAME_RAM.md](GAME_RAM.md) and [MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md).
+
 Version 0.28 connects prepared target-Hit work to ordered script registration,
 shared HP/context publication and resumable original Lua chunks. Selected
 Agumon early-return paths can execute; ordinary damage paths require their

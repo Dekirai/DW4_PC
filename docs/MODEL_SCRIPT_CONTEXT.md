@@ -14,7 +14,7 @@ Evidence comes from the owner's USA GDJEB2 revision-0 DOL, SHA-1
 `794294e17fef0b3ab5eeb15fda9bd57b0dc98a2b`; behavior follows the original
 instructions and registered metadata. Original bytes remain local.
 
-`ModelScriptInt` represents `beDataObjInt`: an optional inherited name at guest
+`ModelScriptInt` aliases `GameDataInt`, representing `beDataObjInt`: an optional inherited name at guest
 offset08 and signed int32 `_data` at0C. Registration `802DD720` defines size10;
 factory `802DD57C` uses type80535478. Field setup `802DD7B4` supplies an ordinary
 integer field without a default override, so its initial data is exactly zero.
@@ -32,8 +32,10 @@ Actual player preparation obtains existing `HP` and `MHP` objects from the
 through model work also affect their GAMERAM owner. The module allows explicit
 replacement of `work.hp` and `work.max_hp`; it never copies their data into
 detached replacement objects implicitly. The original zero-HP preparation
-branch also copies MMP into MP. That wider preparation remains outside this
-module; zero factory data is not evidence of playable initial HP.
+branch also copies MMP into MP. `bind_model_game_data` now implements that
+post-GETPLAYER prefix against the actual captured row, including retained old
+rows after reset. See [GAME_DATA.md](GAME_DATA.md). Complete player preparation
+remains outside this module; zero factory data is not evidence of playable initial HP.
 
 `ModelScriptWork` has immutable qualified target identity, source path, model
 name, RAM number and matrix attachment. The matrix is a

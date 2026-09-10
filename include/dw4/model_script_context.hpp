@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/model_collision.hpp"
+#include "dw4/game_data.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -18,10 +19,7 @@ public:
 
 // beDataObjInt: nullable inherited name and signed _data at guest+0C.
 // Shared identity matters when GAMERAM and model work refer to the same object.
-struct ModelScriptInt {
-    std::optional<std::string> name;
-    std::int32_t data{};
-};
+using ModelScriptInt=GameDataInt;
 
 // Explicit prepared ONE work. The matrix may be an aliasing shared_ptr backed
 // by the actual model owner; it is a live reference, never an implicit identity.

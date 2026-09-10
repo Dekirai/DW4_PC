@@ -2,6 +2,18 @@
 
 ## Implemented boundary
 
+Version 0.29 adds `game_data`, `game_ram`, `model_game_data` and
+`model_script_messenger`. Generated common/player lists retain their original
+named wrapper and row identities. The GAMERAM endpoint uses a separate native
+controller identity domain and the existing shared messenger; GETPLAYER returns
+the actual retained row. Prepared MODELCTRL work binds its HP/MHP objects and
+applies the verified zero-HP refill prefix. The two combat-script wrappers retain
+their real sends and current-context arguments. P2PKOUKAMAGIC implements the
+unequal-RAM exit and default no-effect branch; named effects and P2ESKILLUP
+remain explicit services. Complete player selection, startup and gameplay
+scheduling are still required. See [GAME_DATA.md](GAME_DATA.md),
+[GAME_RAM.md](GAME_RAM.md) and [MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md).
+
 Version 0.28 adds `script_registry`, `model_script_context` and
 `model_script_runtime`. Explicit ordered LuaInfo occurrences own their bytes;
 prepared ONE work shares HP objects and a live model matrix. Target-Hit dispatch

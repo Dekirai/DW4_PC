@@ -8,6 +8,14 @@ actors, target collision managers, script context and the outer player scheduler
 
 ## Graph ownership
 
+Generated native RAMs use `ControllerObjectId::allocate_native()` and retained
+activity/manager providers registered through `register_native_controller`.
+They share the same 4,096-owner bound as serialized MODELCTRL, ACTION and event
+consumers. The overload accepting category/name/index installs provider and row
+atomically; invalid or exhausted registration leaves no hidden provider behind.
+The provider-only overload can supply an unresolved RAM during a paused send
+without changing the shared buffer. See [GAME_RAM.md](GAME_RAM.md).
+
 `decode_player_runtime_binding` requires explicit MODELCTRL and ACTION info
 exports, a RAM ordinal, a LOD branch and a loaded source occurrence. It follows
 the actual MODELCTRL RAM's ONE/node graph and requires the corresponding ACTION

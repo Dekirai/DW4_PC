@@ -3,6 +3,7 @@
 #include "dw4/startup_loading.hpp"
 
 #include <array>
+#include <compare>
 #include <optional>
 
 namespace dw4 {
@@ -12,8 +13,20 @@ struct ControllerPrerequisites {
     bool messenger_prepared{};
 };
 struct ControllerObjectId {
+    constexpr ControllerObjectId() = default;
+    constexpr ControllerObjectId(std::uint32_t source,std::uint32_t reference)
+        :file_index(source),reference_index(reference) {}
+    // Serialized references retain their source occurrence. Native allocations
+    // have a separate, never-reused host identity, not an invented IGB address.
     std::uint32_t file_index{}, reference_index{};
+    static ControllerObjectId allocate_native();
+    constexpr bool is_native() const noexcept { return native_identity_!=0; }
+    constexpr std::uint64_t native_identity() const noexcept { return native_identity_; }
+    constexpr bool valid() const noexcept { return !is_native() || (file_index==0 && reference_index==0); }
     bool operator==(const ControllerObjectId&) const = default;
+    auto operator<=>(const ControllerObjectId&) const = default;
+private:
+    std::uint64_t native_identity_{};
 };
 struct ControllerRamState {
     ControllerObjectId object;

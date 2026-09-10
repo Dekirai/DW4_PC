@@ -29,7 +29,8 @@ ModelScriptWork::ModelScriptWork(ControllerObjectId target,std::string source,st
     std::int32_t ram,std::shared_ptr<AnimationMatrix> live_matrix)
     :max_hp(std::make_shared<ModelScriptInt>()),hp(std::make_shared<ModelScriptInt>()),
      target_(target),source_(std::move(source)),name_(std::move(name)),ram_no_(ram),matrix_(std::move(live_matrix)) {
-    if(target.reference_index==std::numeric_limits<std::uint32_t>::max()) fail("Model script target RAM is null.");
+    if(target.is_native() || target.reference_index==std::numeric_limits<std::uint32_t>::max())
+        fail("Model script target requires its actual serialized MODELCTRL RAM.");
     text(source_,false);text(name_);validate_matrix(matrix_);
 }
 

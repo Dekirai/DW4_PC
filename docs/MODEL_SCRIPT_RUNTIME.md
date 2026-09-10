@@ -85,7 +85,14 @@ numbers whose truncated values fit int32. Other argument layouts, native type
 diagnostics and out-of-range/invalid floating-point behavior remain explicit
 boundaries. In particular it does not substitute general Lua truthiness.
 
-All other methods require actual native services. The unchanged original
+`ModelScriptMessenger` supplies the BLP/BLT message wrappers as an optional
+host service, backed by the same action-event messenger. With `GameRamRuntime`,
+the recovered unequal-RAM and default P2PKOUKAMAGIC branches can complete and
+continue into the actual P2ESKILLUP boundary. Named effects and skill growth
+remain required. See [MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md)
+and [GAME_RAM.md](GAME_RAM.md).
+
+Without that service, the unchanged original
 `hit_p_agumon.lua` can exercise its RAM/kind early returns; the ordinary magic
 path additionally clears damage turning and then requires
 `be.BLPcalcKoukaMagic`. No damage or status result is fabricated.
@@ -100,7 +107,7 @@ independent comparison with official Lua 4.0.1 additionally matches 24
 mismatched RAM/kind early returns and four kind-80000 native boundaries: 64
 ordered calls, 92 exact rows and 736 instructions, with zero differences.
 Twelve deliberate unavailable-service retries preserve the committed prefix.
-Kind 80000 stops at PC 58 after 43 instructions and four calls with direction
+In this deliberately unbound regression, kind 80000 stops at PC 58 after 43 instructions and four calls with direction
 zero. The reference deliberately errors at its missing BLP service while the
 native interpreter retains that CALL; neither supplies a damage result.
 
@@ -111,6 +118,6 @@ is bounded at 32, and the registry/VM enforce their own byte, frame, instruction
 and allocation limits. Lua heap budgets remain cumulative and no original
 garbage collector is implemented; a retained Hit invocation does not establish
 indefinitely running gameplay. Native damage, status, source BHit, sequence
-entry, GAMERAM construction and outer controller scheduling remain required.
+entry, selected-player construction and outer controller scheduling remain required.
 See [MODEL_SCRIPT_CONTEXT.md](MODEL_SCRIPT_CONTEXT.md),
 [SCRIPT_REGISTRY.md](SCRIPT_REGISTRY.md) and [LUA4.md](LUA4.md).

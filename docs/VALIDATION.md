@@ -1,4 +1,45 @@
-# Prepared target Lua and HP context validation
+# Native player data and combat-script messenger validation
+
+Version 0.29.0 was validated locally on 2026-09-10 with MSVC 19.51. Generated
+GAMERAM player rows now retain their shared HP objects through actual GETPLAYER
+delivery and prepared model binding. Original Hit scripts can advance through
+the recovered magic return gates into the actual skill-growth service boundary.
+Selected-player initialization, damage/status effects and gameplay remain required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 60/60 CTest suites passed without compiler warnings; 6 Python verifier tests passed |
+| Native identities/providers | 4,143 checks cover separate native/serialized domains, retained callbacks, aggregate owner bounds, atomic registration failure, typed data-list lifetime and integer-only buffer reset |
+| Generated game data | 8,178 synthetic / 8,266 original-inclusive checks; all 77 schema records, eight kinds, four rows, 48 distinct disks, exact defaults and retained row/wrapper identities |
+| Model data binding | 59 checks cover shared HP/MHP, exact-zero HP and MP refill, negative values, captured pre-reset rows, typed failures and live script HP merge |
+| Lua messenger wrappers | 156 checks cover actual packet order, current-context fields, signed results, Number-to-byte conversion, captured send ownership, nested pauses and terminal missing-result handling |
+| GAMERAM integration | 188 synthetic / 421 original-inclusive checks; exact generated registration, GETPLAYER variants, resets, retained owners, signed magic gates and eight original Hit scenarios |
+| Original wrapper comparison | 43 scenarios plus four separately labeled checked service prefixes match 47 native rows across 225,904 guest instructions |
+| Original magic gate comparison | 39 cases match across 2,952 kernel instructions, covering lookup-before-unequal, signed remainder branches and integer-only return clearing |
+| Messenger regression comparisons | 101 stack scenarios / 7,525 exact rows / 2,232,011 instructions and 84 delivery scenarios / 2,028 rows / 2,389,520 instructions; zero mismatches against the refreshed core |
+| Original script/collision/event regressions | Target scripts 104 checks; registry 51; HIT bodies 109; collision integration 80; player events 108; player waits 107 |
+| Original ACTION regression | 6,034,137 checks across 183 actions, 369 commands, 4,157 poses and 240 four-instance sequence poses |
+| Packaged application | 16 app, 10 walking and 9 boot CLI checks passed; actor inspection renders 120 frames / 121 uploads; walking renders 120 frames, 198 steps, 101.333 travel and 102 uploads |
+| Visual inspection | Version 0.29 actor and walking captures inspected; pause/restart/focus replay and the walking 1236x600 render target remain intact |
+
+The unchanged entry179 `hit_p_agumon.lua` now reaches BLT at PC 63 after 48
+instructions and five logical calls when supplied with the owned GAMERAM and
+bridge. Eight cases exercise every actual Agumon RAM with equal and unequal
+source RAMs. The pending packet is `P2ESKILLUP`; retries preserve the completed
+BLP call and damage-turn clear. Initial generated HP remains zero throughout.
+This does not establish healing, skill growth or a playable character.
+
+Instruction comparisons execute bounded original kernels with explicit prepared
+list/allocation/controller hooks. Missing native services are checked host stops,
+not claims of original asynchronous behavior. The empty BLP result fault stops
+before an original unchecked read. Schema tests compare actual records/defaults;
+they do not execute the entire original constructor. All original bytes, probes,
+traces and captures remain ignored under `work/`.
+
+See [GAME_DATA.md](GAME_DATA.md), [GAME_RAM.md](GAME_RAM.md) and
+[MODEL_SCRIPT_MESSENGER.md](MODEL_SCRIPT_MESSENGER.md).
+
+## Prepared target Lua and HP context validation
 
 Version 0.28.0 was validated locally on 2026-09-10 with MSVC 19.51. Selected
 original target-Hit chunks now execute with shared model/HP context and retained

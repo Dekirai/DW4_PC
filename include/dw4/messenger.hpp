@@ -10,22 +10,26 @@
 #include <variant>
 
 namespace dw4 {
+class GameDataList;
 class MessengerError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 using MessengerBox = std::shared_ptr<const CollisionBox>;
-// A null object, an owned controller identity, or a retained temporary AABox.
-// A transient geometric object never masquerades as a source-qualified RAM.
-using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox>;
+using MessengerDataList = std::shared_ptr<GameDataList>;
+// Native generated data and transient geometry retain their actual owners;
+// neither object is encoded as a serialized controller reference.
+using MessengerObject = std::variant<std::monostate,ControllerObjectId,MessengerBox,MessengerDataList>;
 
 // One shared argument/result object. Selection clears it; sending does not.
 // Finite scalar/vector values retain their words. Matrix PSQ copies flush tiny
 // values to signed zero. Non-finite payloads are an explicit host rejection.
-// Object IDs identify externally owned RAMs by loaded source occurrence and local
-// reference. Their owners must survive registration, cached rows and delivery.
+// Object IDs identify serialized RAMs or separately allocated native owners.
+// Their owners must survive registration, cached rows and delivery.
 class MessengerBuffer {
 public:
     std::uint8_t enabled_only() const noexcept { return enabled_only_; }
     void set_enabled_only(std::uint8_t value);
     void clear();
+    // Original integer-list reset; preserve the other seven typed lists and gate.
+    void clear_integers();
     void add_bool(std::uint8_t value);
     void add_int(std::int32_t value);
     void add_float(float value);
@@ -34,6 +38,7 @@ public:
     void add_matrix(std::array<float,16> value);
     void add_object(std::optional<ControllerObjectId> value);
     void add_box(MessengerBox value);
+    void add_data_list(MessengerDataList value);
     void add_string(std::optional<std::string> value);
     const auto& booleans() const noexcept { return booleans_; }
     const auto& integers() const noexcept { return integers_; }
