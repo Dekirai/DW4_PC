@@ -1,7 +1,7 @@
 # Prepared player ownership and ACTION events
 
-Version 0.24 connects explicitly prepared MODELCTRL work, ACTION broadcasts,
-loaded Se/ActionStarter tables and owned sound/effect subcommands. It does not
+Version 0.25 connects explicitly prepared MODELCTRL work, live ACTION queries,
+retained waits, loaded Se/ActionStarter tables and owned sound/effect subcommands. It does not
 finish original player construction or startup. The walking preview still uses
 its provisional input, movement and camera. Audio playback, generated effect
 actors, collision callbacks and the outer player scheduler remain required.
@@ -28,8 +28,61 @@ repeated loads of the same logical path.
 explicitly prepared `ModelControlState`. It owns a sequence runtime and a
 move-only subcommand queue for that MODELCTRL RAM. The supplied activity and
 attachment state are caller preparation, not effects of original GENERATE.
-The bound ACTION runtime and its animation library remain explicit owners
-outside this event module; `action_services` connects its retained broadcasts.
+`register_action` retains a shared live ACTION runtime under the binding's actual
+ACTION RAM, separately from MODELCTRL RAM. Its node, combiner and ordered actor
+ownership are validated, including after external reassignment. The same runtime
+cannot be registered under another RAM or repeated source occurrence. Activity
+queries read that runtime's live state; explicit model activity does not replace
+it. The animation library remains caller-owned.
+
+## Live completion and prepared wait processing
+
+`query_action_complete` sends `ACTION / model name / RAM ordinal / ISCOMEND`.
+The original structured hook returns zero; the fallback appends a boolean
+without advancing animation or applying an activity gate. Selected work with a
+nonzero ACTION wait returns false; otherwise cursor equality with the selected
+command count supplies the result. Missing selected work suspends before append.
+An authored empty action name remains distinguishable from missing work.
+
+Message matching retains all original name/index matches across sources. The
+caller consumes the current shared buffer's **first** boolean after the entire
+send completes. It never combines results or substitutes false for a missing
+result. A pending query retains its dispatch and completed recipient prefix;
+other top-level operations cannot overwrite its shared arguments.
+
+`prepare_wait_state` explicitly supplies represented control/attack fields.
+`update_wait` and `resume_wait` own the [model wait kernel](MODEL_WAIT.md), bind
+the completion service above and read the binding's RAM ordinal from four
+already processed `OriginalPads` slots. A null pad owner preserves the required
+input boundary. The callback is reached only when the original branch reads
+input; disconnected slots retain the original processed zero/release behavior.
+
+Wait services supply actual command resume and full outer sequence dispatch.
+An unfinished pass retains the same state address, completed pad/query phases
+and live callback changes, including a nested Atck02 sequence selection. It
+blocks unrelated top-level work until resumed; synchronous callbacks may still
+perform their original nested operations. A complete pass can retain a wait
+whose condition is still false.
+
+`run_action_sequence` sends sequence ACTION requests to the registered live
+runtime, using dispatch once and `ActionRuntime::resume` after a service pause.
+It preserves the initial world time and animation source owner across retries.
+The caller supplies `ActionServices` by reference so original shared random
+lower-bound changes survive; only its broadcast hook is temporarily replaced
+and restored. The same source and service objects must survive a suspended call.
+An opaque state identity detects external ACTION progress or reassignment during
+that continuation, including replacement by another state for the same RAM.
+Read-only queries leave the identity intact. An older unrelated ACTION broadcast
+must finish before a fresh sequence invocation; it cannot be mistaken for
+acceptance of the new command. Invalid initial selection/ownership is checked
+before retaining an invocation. Missing random/broadcast services retain the command prefix and
+return `action_required`; `last_action_result` exposes the underlying reason.
+An exception during ACTION execution marks uncertain work as non-replayable.
+These methods do not update ACTION animation clocks automatically.
+
+The outer `dispatch_sequence` hook still requires player entry/status effects.
+An explicit test callback may select and run a prepared sequence to exercise
+continuation ordering, but it does not establish the complete original dispatch.
 
 ## Loaded consumers and message delivery
 
@@ -83,7 +136,7 @@ across a suspended send. Missing manager/activity services can be supplied befor
 resuming; an exception indicates an uncertain effect and faults the dispatch.
 
 Sequence entry uses two visible phases. After validation, `begin_select`
-publishes the new sequence name, data/cursor, label count and CTRL/PDMOVE reset.
+publishes the new sequence name, data/cursor, label count and CTRL/PDMOVE/wait-name reset.
 Cleanup callbacks therefore see the new sequence, as at `8030E980..8030E9D0`.
 The owned fall-check and motion-channel changes follow completed cleanup through
 `finish_select`; no new command runs beforehand. An ordinary local JUMP enters
@@ -93,7 +146,7 @@ across suspension. Omitting a required cleanup hook on retry cannot bypass it.
 external selection. Legacy `ModelSequenceRuntime::select` performs both phases
 atomically for callers without an outer cleanup owner.
 These APIs implement the owned cleanup/selection effects only. Original
-collision, wait, player and virtual entry callbacks are still separate required
+collision, player and virtual entry callbacks are still separate required
 work. In particular, player virtual `+B8` (`8034E1B0`) later appends the original
 `i_pcnumic / SQ_OPENP%d` idle effect and invokes status handling; these effects
 are not represented by prepared selection. See [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md).
@@ -112,6 +165,8 @@ Reference: USA revision-0 DOL SHA-1
 | MODELCTRL SETEFFECT / SETSOUND | `8030DD34` / `8030DE1C` |
 | Ordinary sequence selection and cleanup | `8030E944..8030EAA0`, `803108A0` |
 | Local JUMP re-enters controller virtual dispatch | `8030C814`, `8030BCB8..8030BCE4` |
+| ACTION structured fallback / ISCOMEND | `802F2238`, `802F1828..802F186C` |
+| Common wait / player attack fallback | `8030BDB8`, `8034D214` |
 
 Synthetic tests cover table selection, aliases, owned bindings, routing,
 interleaved typed queues, missing services and sequence interruption. Optional

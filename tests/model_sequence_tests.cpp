@@ -7,6 +7,8 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <map>
+#include <utility>
 
 namespace {
 using namespace dw4;
@@ -23,6 +25,11 @@ struct Fixture : fixture::ScriptFixture {
     std::uint32_t seq{},list_ref{},sequence_storage{};
     std::uint32_t command(std::string type,std::string name) {
         const auto ref=add(fixture::named_object);text(ref,2,name);commands.push_back({ref,std::move(type),{}, {}});return ref;
+    }
+    std::uint32_t wait(std::optional<std::string> name) {
+        const auto ref=command("beModelCtrlWCHECK",name.value_or(""));
+        if(!name)records.at(ref).values.at(2)=fixture::words({0});
+        return ref;
     }
     std::uint32_t move(std::string name,float value,float frames) {
         const auto ref=command("beModelCtrlMOVE",std::move(name));
@@ -183,6 +190,150 @@ void labels_jumps_and_guards() {
     ModelSequenceRuntime cyclic(loop.program(),model(),"actor",0);cyclic.select("SQ_LOOP");
     rejects([&]{cyclic.run(42);});check(cyclic.current_sequence()=="SQ_LOOP" && cyclic.command_index()==0,"Budget failure lost the committed nested selection.");
 }
+void wait_assignment_and_resume() {
+    for(const auto& name:std::array<std::optional<std::string>,5>{"Action","action","unknown",std::string{},std::nullopt}) {
+        Fixture f;const auto wait=f.wait(name),action=f.command("beModelCtrlACTION","after_wait");
+        f.sequence("SQ_WAIT",{wait,wait,action});f.finish();
+        auto program=f.program();
+        check(program.sequences()[0].commands[0].opcode==ModelSequenceOpcode::wait_check &&
+            program.sequences()[0].commands[0].name==name.value_or("") &&
+            program.sequences()[0].commands[1].reference_index==wait,"WCHECK changed exact bytes, null normalization or shared command occurrences.");
+        ModelSequenceRuntime runtime(std::move(program),model(),"actor",0);runtime.select("SQ_WAIT");
+        runtime.wait_state().control_enabled=0x7f;runtime.wait_state().attack_state=-4;runtime.wait_state().attack_mode=19;
+        runtime.model().mode=4;runtime.model().phase=3;runtime.model().check_fall=false;
+        runtime.model().pad_motion=std::array<float,4>{1,2,3,4};
+        start_motion_timer(runtime.model().elapsed_timer.emplace(),17);
+        const auto channels=runtime.model().channels.states();const auto timer=runtime.model().elapsed_timer;
+        const auto pad_motion=runtime.model().pad_motion;
+        std::uint32_t actions{};
+        const ModelActionDispatch dispatch=[&](const auto&){++actions;};
+        auto result=runtime.run(42,dispatch);
+        check(result.stop==ModelSequenceStop::waiting && result.commands_executed==1 && result.command_reference==wait &&
+            result.type=="beModelCtrlWCHECK" && result.name==name.value_or("") && runtime.command_index()==1 && actions==0,
+            "WCHECK did not consume exactly once and yield before the next command.");
+        check(runtime.wait_state()==ModelWaitState{name.value_or(""),0x7f,-4,19},
+            "WCHECK cleared an empty wait or changed player control/attack fields.");
+        check(runtime.model().channels.states()==channels && runtime.model().elapsed_timer==timer &&
+            runtime.model().pad_motion==pad_motion && runtime.model().mode==4 && runtime.model().phase==3 && !runtime.model().check_fall,
+            "WCHECK invented motion, timer or control effects.");
+        result=runtime.run(99,dispatch);
+        check(result.stop==ModelSequenceStop::waiting && result.commands_executed==0 && !result.command_reference &&
+            result.name==name.value_or("") && runtime.command_index()==1 && actions==0,
+            "Another run implicitly resolved or replayed an engaged wait.");
+        auto copy=runtime;copy.wait_state().name="copy";
+        check(runtime.wait_state().name==std::optional<std::string>{name.value_or("")},"Runtime copies share mutable wait names.");
+        runtime.wait_state().name.reset();result=runtime.run(100,dispatch);
+        check(result.stop==ModelSequenceStop::waiting && result.commands_executed==1 && runtime.command_index()==2 && actions==0 &&
+            runtime.wait_state().name==std::optional<std::string>{name.value_or("")},"Shared WCHECK was skipped or resumed beyond its own wait.");
+        runtime.wait_state().name.reset();result=runtime.run(101,dispatch);
+        check(result.stop==ModelSequenceStop::end && result.commands_executed==1 && runtime.command_index()==3 && actions==1 &&
+            runtime.wait_state()==ModelWaitState{std::nullopt,0x7f,-4,19},"Explicit wait release failed to resume the retained next command.");
+        runtime.wait_state().name="external";result=runtime.run(102,dispatch);
+        check(result.stop==ModelSequenceStop::waiting && result.commands_executed==0 && actions==1,
+            "An externally owned wait was ignored merely because the sequence cursor reached its end.");
+    }
+}
+void wait_selection_and_guards() {
+    Fixture f;const auto wait=f.wait("Action");
+    f.sequence("SQ_A",{wait});f.sequence("SQ_B",{f.command("beModelCtrlACTION","b")});
+    const auto jump=f.command("beModelCtrlJUMP","SQ_B");f.sequence("SQ_JUMP",{jump});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0);runtime.select("SQ_A");runtime.run(42);
+    runtime.wait_state().control_enabled=255;runtime.wait_state().attack_state=7;runtime.wait_state().attack_mode=-9;
+    const auto before=runtime.wait_state();
+    rejects([&]{runtime.begin_select("SQ_MISSING");});
+    check(runtime.wait_state()==before && runtime.current_sequence()=="SQ_A" && runtime.command_index()==1,
+        "Invalid sequence selection cleared the retained wait or changed its cursor.");
+    runtime.set_label("SQ_B","missing");rejects([&]{runtime.select("SQ_B");});
+    check(runtime.wait_state()==before && !runtime.selection_pending(),"Invalid selected label cleared the wait.");
+    runtime.model().mode=4;runtime.model().phase=5;runtime.model().check_fall=false;
+    runtime.model().pad_motion=std::array<float,4>{1,2,3,4};
+    runtime.begin_select("SQ_A");const auto& view=std::as_const(runtime);
+    check(view.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && view.model().mode==0 && view.model().phase==0 &&
+        !view.model().pad_motion && !view.model().check_fall && runtime.selection_pending() && runtime.command_index()==0,
+        "Sequence begin failed to clear only wait name before external cleanup.");
+    rejects([&]{runtime.wait_state();});rejects([&]{runtime.run(42);});rejects([&]{runtime.begin_select("SQ_A");});
+    runtime.finish_select();check(runtime.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && runtime.model().check_fall,
+        "Sequence finish reset player wait fields.");
+    runtime.run(42);runtime.select("SQ_JUMP");
+    std::uint32_t cleanups{},actions{};
+    // Remove the deliberately invalid target label through a separate owned
+    // runtime so this path tests the actual pending local jump boundary.
+    ModelSequenceRuntime local(f.program(),model(),"actor",0);local.wait_state()=runtime.wait_state();local.select("SQ_JUMP");
+    auto result=local.run(42,[&](const auto&){++actions;},[&](std::string_view destination) {
+        ++cleanups;
+        check(destination=="SQ_B" && std::as_const(local).wait_state()==ModelWaitState{std::nullopt,255,7,-9},
+            "Local jump cleanup observed a retained old wait or reset attack fields.");
+        rejects([&]{local.wait_state();});return false;
+    });
+    check(result.stop==ModelSequenceStop::sequence_cleanup_required && result.command_reference==jump && local.command_index()==0 &&
+        cleanups==1 && actions==0,"Pending jump failed to preserve its cleanup boundary.");
+    rejects([&]{local.wait_state();});
+    result=local.run(43,[&](const auto&){rejects([&]{local.wait_state();});++actions;},[](auto){return true;});
+    check(result.stop==ModelSequenceStop::end && actions==1 && local.wait_state()==ModelWaitState{std::nullopt,255,7,-9},
+        "Completed local jump cleanup changed the retained player wait fields.");
+}
+void malformed_waits() {
+    Fixture f;const auto wait=f.wait("Action");f.sequence("SQ_A",{wait});f.finish();
+    const auto decode=[&](const IgbDocument& doc){return decode_model_sequences(doc,f.seq,"source");};
+    auto doc=f.document();auto& object=doc.objects.at(doc.references.at(wait).value_index);
+    object.fields[0].type_index=1;rejects([&]{decode(doc);});
+    doc=f.document();doc.objects.at(doc.references.at(wait).value_index).fields.clear();rejects([&]{decode(doc);});
+    doc=f.document();doc.objects.at(doc.references.at(wait).value_index).fields[0].size=3;rejects([&]{decode(doc);});
+    doc=f.document();doc.objects.at(doc.references.at(wait).value_index).fields[0].offset=doc.bytes().size();rejects([&]{decode(doc);});
+    doc=f.document();doc.objects.at(doc.references.at(wait).value_index).fields[0].size=8;rejects([&]{decode(doc);});
+    f.text(wait,2,std::string(4097,'x'));rejects([&]{f.program();});
+    for(const auto type:{"beModelCtrlWAITCHECK","beAction2WAITCHECK","bemodelCtrlWCHECK","beModelCtrlWCheck","DerivedWCHECK"}) {
+        Fixture wrong;const auto ref=wrong.command(type,"Action");wrong.sequence("SQ_A",{ref});wrong.finish();
+        auto graph=wrong.document();
+        if(std::string_view(type)=="DerivedWCHECK") {
+            auto base=graph.metadata.object_types[fixture::named_object];base.name="beModelCtrlWCHECK";
+            const auto base_index=static_cast<std::uint32_t>(graph.metadata.object_types.size());
+            graph.metadata.object_types.push_back(std::move(base));
+            graph.metadata.object_types.at(graph.object(ref).type_index).parent_index=base_index;
+        }
+        ModelSequenceRuntime runtime(decode_model_sequences(graph,wrong.seq,"source"),model(),"actor",0);runtime.select("SQ_A");
+        const auto result=runtime.run(42);
+        check(result.stop==ModelSequenceStop::unsupported_command && result.type==type && runtime.command_index()==0 && !runtime.wait_state().name,
+            "WCHECK decoding accepted a case variant, different subsystem or derived type.");
+    }
+}
+void resumable_actions() {
+    Fixture f;const auto move=f.move("Move",0.7f,6),action=f.command("beModelCtrlACTION","first");
+    const auto wait=f.wait("Action"),last=f.command("beModelCtrlACTION","last");
+    f.sequence("SQ_A",{move,action,wait,last});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",3);runtime.select("SQ_A");
+    std::uint32_t tries{},committed_prefixes{},legacy_calls{};bool external_pending{};
+    const ModelActionDispatch legacy=[&](const auto&){++legacy_calls;};
+    const ModelActionTryDispatch dispatch=[&](const ModelActionRequest& request) {
+        check(request.command_reference==action && request.source=="synthetic/player.igb" && request.info_name=="actor" &&
+            request.ram_no==3 && request.action=="first","Resumable ACTION lost its request identity on retry.");
+        rejects([&]{runtime.wait_state();});
+        if(!external_pending) {external_pending=true;++committed_prefixes;}
+        return ++tries==3;
+    };
+    auto result=runtime.run(42,legacy,{},dispatch);
+    check(result.stop==ModelSequenceStop::action_required && result.commands_executed==1 && result.command_reference==action &&
+        runtime.command_index()==1 && tries==1 && committed_prefixes==1 && legacy_calls==0,
+        "Incomplete ACTION consumed its cursor or invoked the lower-precedence void callback.");
+    const auto timer=runtime.model().elapsed_timer;const auto channels=runtime.model().channels.states();
+    result=runtime.run(99,legacy,{},dispatch);
+    check(result.stop==ModelSequenceStop::action_required && result.commands_executed==0 && runtime.command_index()==1 &&
+        runtime.model().elapsed_timer==timer && runtime.model().channels.states()==channels && committed_prefixes==1 && tries==2,
+        "Incomplete ACTION retry replayed movement or discarded the service continuation.");
+    rejects([&]{runtime.run(100,{},{},[](const auto&)->bool{throw std::runtime_error("Temporary test failure.");});});
+    check(runtime.command_index()==1 && runtime.model().elapsed_timer==timer,"Throwing resumable ACTION consumed its command or prefix.");
+    result=runtime.run(101,legacy,{},dispatch);
+    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==2 && runtime.command_index()==3 &&
+        runtime.wait_state().name==std::optional<std::string>{"Action"} && tries==3 && committed_prefixes==1 && legacy_calls==0,
+        "Completed ACTION did not continue once to the following WCHECK.");
+    result=runtime.run(102,legacy,{},dispatch);
+    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==0 && tries==3,
+        "Retained wait invoked a resumable ACTION service before resolution.");
+    runtime.wait_state().name.reset();
+    result=runtime.run(103,{},{},[&](const auto& request){check(request.command_reference==last,"Wait resumed the previous ACTION.");return true;});
+    check(result.stop==ModelSequenceStop::end && result.commands_executed==1 && runtime.command_index()==4,
+        "Resolved wait failed to consume its next resumable ACTION.");
+}
 void malformed() {
     auto f=branches();
     fixture::word(f.records.at(f.sequence_storage).data,0,0xffffffffu);
@@ -211,6 +362,19 @@ void original_data(const std::filesystem::path& root) {
     const auto player=read_igb_document(resources.read("_common/p_agumon.igb"));
     const auto program=decode_model_sequences(player,14,"_common/p_agumon.igb");
     check(program.sequences().size()==28,"Original Agumon sequence count changed.");
+    const std::map<std::uint32_t,std::pair<std::string,std::uint32_t>> expected_waits{
+        {516,{"Action",157}},{625,{"TurnY",32}},{160,{"Landing",36}},{76,{"Moving",10}},
+        {1199,{"Atck01",8}},{2810,{"Atck02",8}},{665,{"Atck03",8}}};
+    std::map<std::uint32_t,std::uint32_t> wait_counts;std::uint32_t total_waits{};
+    for(const auto& sequence:program.sequences())for(const auto& command:sequence.commands) {
+        if(command.type!="beModelCtrlWCHECK")continue;
+        const auto found=expected_waits.find(command.reference_index);
+        check(command.opcode==ModelSequenceOpcode::wait_check && found!=expected_waits.end() && command.name==found->second.first,
+            "An original WCHECK occurrence lost its exact type, reference or wait name.");
+        ++wait_counts[command.reference_index];++total_waits;
+    }
+    check(total_waits==259,"Original Agumon WCHECK occurrence count changed.");
+    for(const auto& [reference,expected]:expected_waits)check(wait_counts[reference]==expected.second,"Original shared WCHECK counts changed.");
     const auto map=read_igb_document(assets::AfsArchive::open(root/"files/ndmw.afs").read(179));
     const std::array<const char*,4> labels{"dual","slash","arm","gun"};
     const std::array<const char*,4> waits{"WAITD1","WAITS1","WAITA1","WAITG1"},runs{"RUNND1","RUNNS1","RUNNA1","RUNNG1"};
@@ -239,7 +403,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {command_prefix_and_branches();motion_sequence_stop();labels_jumps_and_guards();malformed();
+    try {command_prefix_and_branches();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();malformed();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_sequence_tests [EXTRACTED_ROOT]");
         std::cout<<"Model sequence tests passed: "<<checks<<" checks\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Model sequence failure after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}

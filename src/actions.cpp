@@ -224,6 +224,16 @@ std::string_view ActionRuntime::current_action() const noexcept { return current
 bool ActionRuntime::command_end() const noexcept {
     return current_ && work_.wait_state==0 && cursor_==program_->actions()[*current_].commands.size();
 }
+std::optional<bool> ActionRuntime::query_command_end() const noexcept {
+    if (!current_) return std::nullopt;
+    if (work_.wait_state!=0) return false;
+    const auto& action=program_->actions()[*current_];
+    if (!action.command_list_present) return std::nullopt;
+    return cursor_==action.commands.size();
+}
+void ActionRuntime::begin_state_change() {
+    state_identity_=std::make_shared<const std::uint8_t>(std::uint8_t{0});
+}
 ActionResult ActionRuntime::deliver(ActionServices& services,ActionResult result) {
     if (!pending_broadcast_) return result;
     if (services.try_broadcast) {
@@ -252,6 +262,7 @@ ActionResult ActionRuntime::dispatch(AnimationSourceRuntime& sources,ActionServi
     if (reserved(name)) fail("This ACTION query requires the outer messenger/traversal service.");
     if (name=="NDSP" && !actors_) fail("NDSP requires an owned prepared actor group.");
     Running guard(running_);
+    begin_state_change();
     if (pending_broadcast_) {
         const auto result=deliver(services,{}); if (result.stop==ActionStop::broadcast_required) return result;
     }
@@ -413,6 +424,7 @@ bool ActionRuntime::wait_ready(AnimationSourceRuntime& sources,std::uint64_t tim
 ActionResult ActionRuntime::update(AnimationSourceRuntime& sources,ActionServices& services,std::uint64_t time) {
     Running guard(running_);
     combiner_.require_sources(sources);
+    begin_state_change();
     auto result=deliver(services,{}); if (result.stop==ActionStop::broadcast_required) return result;
     if (!active_ || work_.frozen || suspended_) return status();
     auto candidate=*this; auto candidate_sources=sources;
@@ -427,23 +439,27 @@ ActionResult ActionRuntime::update(AnimationSourceRuntime& sources,ActionService
 }
 ActionResult ActionRuntime::resume(AnimationSourceRuntime& sources,ActionServices& services,std::uint64_t time) {
     Running guard(running_); combiner_.require_sources(sources);
+    begin_state_change();
     const auto delivered=deliver(services,status());
     if (delivered.stop==ActionStop::broadcast_required || !suspended_ || work_.frozen) return delivered;
     return finish_dispatch(services,run(sources,services,time));
 }
 void ActionRuntime::freeze(bool frozen,std::uint64_t time) {
-    Running guard(running_); if (!active_) return;
+    Running guard(running_); begin_state_change(); if (!active_) return;
     auto candidate=*this; const float speed=frozen ? 0.0f : 1.0f;
     for (auto& [name,timer]:candidate.timers_) { (void)name; change_motion_timer_speed(timer,time,speed); }
     change_animation_speed(candidate.node_,time,speed); candidate.work_.frozen=frozen; *this=std::move(candidate);
 }
 SkinPose ActionRuntime::pose(AnimationSourceRuntime& sources,const SkinningData& skin,std::uint64_t time) {
-    Running guard(running_); return combiner_.pose(sources,skin,node_time(time));
+    Running guard(running_); combiner_.require_sources(sources);
+    const auto local_time=node_time(time); begin_state_change();
+    return combiner_.pose(sources,skin,local_time);
 }
 void ActionRuntime::traverse_actor(AnimationSourceRuntime& sources,std::size_t actor_index,
     const AnimationMatrix& model_view,const AnimationMatrix& inverse_view,std::uint64_t parent_time) {
     Running guard(running_); combiner_.require_sources(sources);
     if (!active_ || !actors_) fail("Actor traversal requires an active owned ACTION actor group.");
+    begin_state_change();
     auto candidate=*this; auto candidate_sources=sources;
     const auto time=candidate.node_time(parent_time); candidate.node_.local_time=signed_bits(time);
     candidate.actors_->traverse(candidate.combiner_,candidate_sources,actor_index,model_view,inverse_view,time);

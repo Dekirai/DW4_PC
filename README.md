@@ -1,8 +1,8 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.24 connects prepared player ownership and original ACTION events to
-native messenger delivery and owned sound/effect queues. The full original game, including local
+Version 0.25 adds retained original model waits, live ACTION completion queries
+and resumable prepared attack commands with separate original pad slots. The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
@@ -18,6 +18,12 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Decode original WCHECK occurrences, retain each player's attack wait/latch,
+  and resume the live sequence cursor through qualified ACTION queries.
+  Missing outer sequence-entry services remain explicit; complete player
+  construction and connected multiplayer remain pending. See
+  [MODEL_WAIT.md](docs/MODEL_WAIT.md).
 
 - Bind an original MODELCTRL/ACTION instance through its actual node and actor
   graph, route loaded Se/ActionStarter consumers across source files, and retain

@@ -61,6 +61,9 @@ public:
         AnimationHierarchyDefinition hierarchy, std::vector<AnimationMatrix> bone_matrices,
         std::vector<AnimationMatrix> joint_matrices, std::optional<std::uint32_t> reference = std::nullopt);
     const std::string& source() const noexcept { return library_->source; }
+    // Read-only ownership preflight before an outer controller commits work.
+    // Equal source paths do not imply the same decoded animation library.
+    void require_sources(const AnimationSourceRuntime& sources) const;
     // Decoded ownership, or an explicit native prepared identity. Unqualified
     // arithmetic-only combiners cannot be selected as an actor's render cache.
     std::optional<std::uint32_t> reference() const noexcept { return reference_; }
@@ -112,7 +115,6 @@ private:
     std::uint64_t clock_override_ = std::numeric_limits<std::uint64_t>::max();
     bool cache_valid_{};
     bool hierarchy_valid_{};
-    void require_sources(const AnimationSourceRuntime& sources) const;
     std::vector<std::size_t> order() const;
     void add(const AnimationSourceRuntime& sources, std::uint32_t clip_reference,
         std::uint64_t requested_time, bool blend);

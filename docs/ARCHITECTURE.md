@@ -2,6 +2,15 @@
 
 ## Implemented boundary
 
+Version 0.25 adds `model_wait` for common model waits and the original player
+attack fallback. `model_sequence` owns WCHECK assignment and entry-time clearing;
+`action_queries` exposes a live, checked ISCOMEND messenger endpoint.
+`action_event_runtime` retains registered ACTION owners, pending queries and
+prepared command dispatches, and reads the bound RAM's separate `OriginalPads`
+slot. Retrying missing services preserves the original invocation time, shared
+random state, command cursor and completed delivery prefix. Full outer sequence
+entry remains a required service. See [MODEL_WAIT.md](MODEL_WAIT.md).
+
 Version 0.24 adds immutable `player_runtime_binding` ownership across actual
 MODELCTRL/ACTION RAMs, ONE nodes and selected actor skins. `messenger` implements
 the original ordered registration/cache/shared-buffer delivery kernel;

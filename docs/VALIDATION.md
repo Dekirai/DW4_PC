@@ -1,4 +1,34 @@
-# Native player event routing validation
+# Native model wait and live ACTION query validation
+
+Version 0.25.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
+model waits now use registered live ACTION work and separately selected original
+pad slots. Full original player creation, HITBOX/collision dispatch and outer
+sequence-entry/status effects remain required for gameplay.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 45/45 CTest suites passed; no compiler warnings; 6 Python verifier tests passed |
+| Model wait kernel | 73 synthetic checks cover common channels, null/empty names, per-pass suspension, live callback mutations, signed attack latches, reentrancy and uncertain effects |
+| Original wait comparison | 1,835 cases match the original instruction model: 165,190 instructions at 416 unique addresses; prepared ONE/pad/messenger/string/command/sequence helper boundaries are explicit |
+| WCHECK decoder and runner | 150 synthetic checks; 610 with original data, including all 259 occurrences and seven shared records; null-to-empty assignment, retained cursor, scalar preservation and resumable ACTION dispatch covered |
+| Live ACTION query and state identity | 62 synthetic checks; 78 with original data across four actual RAMs; live results, missing selected work, ownership rejection, pending events, all mutation stamps and stable read-only getters covered |
+| Original query comparison | 56 scenarios, 2,336 instructions, zero mismatches; 48 defined results and 8 explicit missing-work boundaries; actual boolean append and retained-work decrement execute with prepared capacity/reference ownership |
+| Prepared player integration | 79 synthetic checks; 99 original-inclusive; separate pad slots, first-result query semantics, retained time/shared random state, same-owner retry, callback-owned message suspension, stale runtime rejection and Atck02 live destination/cursor covered |
+| Original attack boundary | All four weapon-selected SQ_ATCK1 instances stop at the required unsupported HITBOX command; four explicitly prepared real KATCA3 actions then reach their own motion waits and return live incomplete ACTION results |
+| ACTION/event regressions | 6,034,137 ACTION checks pass across 183 actions, 369 commands, 4,157 poses and 240 sequence poses; original four-player event integration passes 108 checks |
+| Packaged app | 16 app and 10 walking argument suites pass; actor inspection renders 120 frames/121 pose uploads; walking replay renders 120 frames with 198 steps, 101.333 travel and 102 pose uploads |
+| Visual inspection | Version 0.25.0 actor and walking captures inspected on an RTX 5070 Ti; walking retains pause/restart/focus-loss replay and its 1236x600 target |
+
+The original-data test deliberately retains the HITBOX boundary instead of
+skipping it to claim a complete attack sequence. Its separate KATCA3 setup does
+not initialize original player work or collision services. Synthetic outer
+sequence callbacks exercise continuation ordering only. Instruction comparisons
+do not establish physical Gekko execution or complete external-manager behavior;
+the app captures show the existing prepared viewer and provisional walking path.
+Original assets, probes and captures remain ignored. See
+[MODEL_WAIT.md](MODEL_WAIT.md) and [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
+## Native player event routing validation
 
 Version 0.24.1 was validated locally on 2026-09-10 with MSVC 19.51. Explicit
 MODELCTRL/ACTION graph bindings now connect native event consumers to owned

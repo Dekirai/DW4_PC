@@ -34,7 +34,7 @@ name field 2 and a command-list reference at field 3. Ordered list occurrences,
 aliases and duplicate names are preserved; lookup uses the first match.
 
 Supported command payloads are MOVE/MOVEEX/CTRL/PDMOVE from the existing decoders,
-LABEL, LABELCTRL, ACTION and JUMP. LABELCTRL adds a sequence-key string at field 3.
+LABEL, LABELCTRL, ACTION, JUMP and exact WCHECK. LABELCTRL adds a sequence-key string at field 3.
 Unknown command types retain their type and source reference without interpreting
 their payload. They stop execution when reached. Successful corpus decoding does
 not mean that unsupported commands execute.
@@ -83,17 +83,25 @@ Legacy `select` still performs both phases on a candidate before publication.
 Local JUMP with an owner cleanup hook uses the phased path, retaining original
 jump metadata across a suspended callback while the destination is already
 visible. A retry without that required hook stays suspended. These phases do
-not implement the missing full-work wait/collision strings or player virtual
+not implement the missing full-work callback/collision strings or player virtual
 entry/status callbacks. See [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
 
 This is **not complete sequence entry**. The original also resets subcommands,
-wait/callback strings, wall/floor flags and another timer field, and invokes
+callback strings, wall/floor flags and another timer field, and invokes
 controller virtual callbacks. The caller must implement those effects and the
 surrounding player preparation; this API does not acknowledge them as executed.
 `SQ_ERAS` and `SQ_ERAS2` have different original lifecycle paths and are excluded
 from ordinary selection.
 
 ## Command execution and required services
+
+Version 0.25 decodes exact `beModelCtrlWCHECK` inherited name field 2. Serialized
+null becomes an owned empty string. Execution assigns the wait name, consumes
+the command and returns `waiting` without a condition query. Subsequent `run`
+calls retain the cursor while any wait name is engaged, including empty. The
+separate [model wait runtime](MODEL_WAIT.md) clears it before resuming commands.
+Ordinary `begin_select` clears only the name before cleanup; control and attack
+state/mode fields survive selection and WCHECK assignment.
 
 `run` resumes the retained command cursor. Supported model commands apply to
 the same owned `ModelControlState` used by turning and motion. The first LABEL
@@ -116,12 +124,18 @@ remain. A recording callback is useful for testing the boundary but is not
 animation playback. Reentrant sequence mutation/execution during the external
 callback fails explicitly.
 
+The optional fourth `run` argument, `ModelActionTryDispatch`, takes precedence
+over the void callback. False returns `action_required` at the same unconsumed
+ACTION. Its owner must retain any partially completed ACTION/messenger work.
+`ActionEventRuntime::run_action_sequence` supplies that continuation for a
+registered live ACTION runtime and preserves caller-owned shared random state.
+
 Unknown command types similarly stop at the exact unconsumed occurrence.
 Neither an unsupported action nor a work-budget failure rolls back already
 executed external effects or earlier commands. This is an ordered runtime prefix,
 not a transaction over the whole game. It is also not a frame scheduler:
-original wait conditions (`8030BDB8`, player-specific `8034D214`) and outer update
-callbacks still decide when execution resumes.
+the separate original wait kernel (`8030BDB8`, player-specific `8034D214`) and
+required outer update callbacks decide when execution resumes.
 
 ## Original Agumon action boundary
 

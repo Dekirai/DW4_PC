@@ -90,11 +90,12 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& doc,std::uint32_t
                 command.name=text(doc,object,2,bytes);command.opcode=ModelSequenceOpcode::model;
                 command.model_command=decode_model_command(doc,*entry);charge(command.name.size(),bytes,max_text);
                 if(type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX")charge(type.size(),bytes,max_text);
-            } else if(type=="beModelCtrlLABEL" || type=="beModelCtrlLABELCTRL" || type=="beModelCtrlACTION" || type=="beModelCtrlJUMP") {
+            } else if(type=="beModelCtrlLABEL" || type=="beModelCtrlLABELCTRL" || type=="beModelCtrlACTION" || type=="beModelCtrlJUMP" || type=="beModelCtrlWCHECK") {
                 command.name=text(doc,object,2,bytes);
                 command.opcode=type=="beModelCtrlLABEL" ? ModelSequenceOpcode::label :
                     type=="beModelCtrlLABELCTRL" ? ModelSequenceOpcode::label_control :
-                    type=="beModelCtrlACTION" ? ModelSequenceOpcode::action : ModelSequenceOpcode::jump;
+                    type=="beModelCtrlACTION" ? ModelSequenceOpcode::action :
+                    type=="beModelCtrlJUMP" ? ModelSequenceOpcode::jump : ModelSequenceOpcode::wait_check;
                 if(command.opcode==ModelSequenceOpcode::label_control) {
                     auto scope=text(doc,object,3,bytes);
                     if(doc.field(object,3)->size!=4)command.label_sequence=std::move(scope);
@@ -118,6 +119,10 @@ std::string_view ModelSequenceRuntime::current_sequence() const noexcept {
 ModelControlState& ModelSequenceRuntime::model() {
     if(running_ || selection_pending_)throw MotionError("Model mutation is unavailable during sequence execution or pending selection.");
     return model_;
+}
+ModelWaitState& ModelSequenceRuntime::wait_state() {
+    if(running_ || selection_pending_)throw MotionError("Wait mutation is unavailable during sequence execution or pending selection.");
+    return wait_;
 }
 void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::string label) {
     if(running_ || selection_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection.");
@@ -167,6 +172,7 @@ void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     // outside this owned preparation API, never acknowledged as executed here.
     model_=std::move(candidate);labels_=std::move(labels);
     current_=std::size_t(found-data.begin());cursor_=static_cast<std::uint32_t>(start);label_count_=0;
+    wait_.name.reset();
     selection_pending_=true;
 }
 void ModelSequenceRuntime::complete_selection() {
@@ -181,11 +187,16 @@ void ModelSequenceRuntime::finish_select() {
     complete_selection();
 }
 
-ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup) {
+ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup,
+    const ModelActionTryDispatch& try_action) {
     if(running_)throw MotionError("Reentrant sequence execution is unsupported.");
     if(!current_)throw MotionError("Model sequence work has not been selected/prepared.");
     if(selection_pending_ && !pending_jump_)throw MotionError("Finish the pending sequence selection before executing commands.");
     ModelSequenceResult result;
+    if(wait_.name) {
+        result.stop=ModelSequenceStop::waiting;result.name=*wait_.name;
+        return result;
+    }
     const auto resume_jump=[&]() {
         auto& pending=*pending_jump_;
         if(!pending.cleanup_complete && cleanup) {
@@ -219,12 +230,19 @@ ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const Mod
             if(label_count_!=0)return stopped(ModelSequenceStop::label_boundary);
             label_count_=1;break;
         case ModelSequenceOpcode::label_control:set_label(command.label_sequence,command.name);break;
-        case ModelSequenceOpcode::action:
-            if(!action)return stopped(ModelSequenceStop::action_required);
+        case ModelSequenceOpcode::action: {
+            if(!action && !try_action)return stopped(ModelSequenceStop::action_required);
             running_=true;
-            try {action({program_->source(),command.reference_index,info_name_,ram_no_,command.name});}
+            bool complete=true;
+            try {
+                const ModelActionRequest request{program_->source(),command.reference_index,info_name_,ram_no_,command.name};
+                if(try_action)complete=try_action(request);else action(request);
+            }
             catch(...) {running_=false;throw;}
-            running_=false;break;
+            running_=false;
+            if(!complete)return stopped(ModelSequenceStop::action_required);
+            break;
+        }
         case ModelSequenceOpcode::jump: {
             if(!ordinary(command.name) || std::none_of(program_->sequences().begin(),program_->sequences().end(),
                 [&](const auto& item){return item.name==command.name;}))return stopped(ModelSequenceStop::controller_required);
@@ -234,6 +252,15 @@ ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const Mod
             begin_select(pending.name);pending_jump_.emplace(std::move(pending));
             if(!resume_jump())return result;
             continue;
+        }
+        case ModelSequenceOpcode::wait_check: {
+            // 8030BCFC acquires the replacement before releasing the old name.
+            // Serialized null was decoded as empty: the assigned wait remains
+            // non-null. 8030C5D4 advances the cursor before yielding, without
+            // invoking the outer common/player wait resolver.
+            std::string name=command.name;wait_.name=std::move(name);
+            ++cursor_;++result.commands_executed;
+            return stopped(ModelSequenceStop::waiting);
         }
         case ModelSequenceOpcode::unsupported:return stopped(ModelSequenceStop::unsupported_command);
         }

@@ -105,6 +105,17 @@ public:
     bool active() const noexcept { return active_; }
     bool visible() const noexcept { return visible_; }
     bool command_end() const noexcept;
+    // 802F1828..802F1868: checked messenger query without an activity gate.
+    // Nullopt means selected command work/list is not represented, not false.
+    // This does not advance work, clocks, animation or pending broadcasts.
+    std::optional<bool> query_command_end() const noexcept;
+    // A dispatch can stop while delivering an older event before accepting a
+    // new action. Owners must distinguish that phase from an accepted dispatch.
+    bool broadcast_pending() const noexcept { return pending_broadcast_.has_value(); }
+    // Opaque host continuation stamp, not an original game field. Copies retain
+    // the same exact state token; mutating entry points replace it before effects.
+    // Retaining the shared token makes comparisons immune to address reuse.
+    std::shared_ptr<const void> state_identity() const noexcept { return state_identity_; }
     std::string_view current_action() const noexcept;
     std::uint32_t command_index() const noexcept { return cursor_; }
     std::uint64_t node_time(std::uint64_t system_time) const;
@@ -127,6 +138,7 @@ public:
     std::optional<AnimationMatrix> bone_matrix(std::string_view name) const;
     void freeze(bool frozen,std::uint64_t system_time);
 private:
+    std::shared_ptr<const void> state_identity_=std::make_shared<const std::uint8_t>(std::uint8_t{0});
     std::shared_ptr<const ActionProgram> program_;
     std::int32_t ram_no_{};
     AnimationCombiner combiner_;
@@ -140,6 +152,7 @@ private:
     std::optional<ActionStop> suspended_;
     std::uint32_t cursor_{};
     bool active_{}, visible_{}, running_{}, dispatch_pending_{};
+    void begin_state_change();
     ActionResult run(AnimationSourceRuntime& sources,ActionServices& services,std::uint64_t time);
     ActionResult deliver(ActionServices& services,ActionResult result);
     ActionResult finish_dispatch(ActionServices& services,ActionResult result);

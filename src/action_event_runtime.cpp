@@ -1,4 +1,5 @@
 #include "dw4/action_event_runtime.hpp"
+#include "dw4/action_queries.hpp"
 
 #include <limits>
 #include <map>
@@ -12,6 +13,10 @@ Key key(ControllerObjectId id) { return {id.file_index,id.reference_index}; }
 [[noreturn]] void fail(const char* message) { throw MessengerError(message); }
 bool same(const ActionBroadcast& a,const ActionBroadcast& b) {
     return a.source==b.source && a.info_name==b.info_name && a.ram_no==b.ram_no && a.action==b.action;
+}
+bool same(const ModelActionRequest& a,const ModelActionRequest& b) {
+    return a.source==b.source && a.command_reference==b.command_reference &&
+        a.info_name==b.info_name && a.ram_no==b.ram_no && a.action==b.action;
 }
 }
 struct ActionEventRuntime::Impl {
@@ -28,6 +33,19 @@ struct ActionEventRuntime::Impl {
         bool jump_cleanup{};
         bool selecting{};
         std::optional<PendingBroadcast> broadcast;
+        std::optional<MessengerDispatch> query;
+        std::optional<ModelActionRequest> action_request;
+        std::optional<ActionResult> action_result;
+        std::uint64_t action_time{};
+        AnimationSourceRuntime* action_sources{};
+        std::shared_ptr<const void> action_state;
+        bool action_faulted{};
+        std::optional<std::uint64_t> sequence_time;
+        AnimationSourceRuntime* sequence_sources{};
+        ActionServices* sequence_services{};
+        bool running_action_sequence{};
+        ModelWaitRuntime wait;
+        ModelWaitState* pending_wait_state{};
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
@@ -36,6 +54,7 @@ struct ActionEventRuntime::Impl {
               active(enabled) {}
     };
     struct Consumer { std::shared_ptr<const ActionEventTableProgram> program; bool active; };
+    struct Action { std::shared_ptr<ActionRuntime> runtime; MessengerManager manager; };
     struct PendingConsumer {
         std::string model;
         std::int32_t ram_no;
@@ -47,13 +66,23 @@ struct ActionEventRuntime::Impl {
     MessengerServices external;
     std::map<Key,Model> models;
     std::map<Key,Consumer> consumers;
+    std::map<Key,Action> actions;
     std::map<std::uint32_t,std::string> sources;
     std::map<std::pair<std::uint64_t,std::size_t>,PendingConsumer> pending;
     std::optional<std::uint64_t> suspended_send;
+    std::optional<Key> suspended_send_wait;
+    std::optional<Key> suspended_wait;
+    bool processing_wait{};
     std::size_t delivery_depth{};
     void require_top_level_idle() const {
+        if(suspended_wait && !processing_wait)
+            fail("Resume the suspended player wait before another top-level operation.");
         if(suspended_send && delivery_depth==0)
             fail("Resume the suspended synchronous messenger delivery before another top-level operation.");
+    }
+    void require_wait_idle() const {
+        if(suspended_wait && !processing_wait)
+            fail("Resume the suspended player wait before another top-level operation.");
     }
     void require_source(std::uint32_t occurrence,const std::string& source) {
         const auto found=sources.find(occurrence);
@@ -74,8 +103,8 @@ struct ActionEventRuntime::Impl {
         return found->second;
     }
     void check_new(Key id) const {
-        if(models.contains(id) || consumers.contains(id)) fail("RAM already has a prepared event owner.");
-        if(models.size()+consumers.size()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
+        if(models.contains(id) || consumers.contains(id) || actions.contains(id)) fail("RAM already has a prepared event owner.");
+        if(models.size()+consumers.size()+actions.size()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
     }
     MessengerCallResult model_message(Model& owner,const MessengerDelivery& delivery) {
         const auto& command=delivery.message.command;
@@ -141,6 +170,7 @@ struct ActionEventRuntime::Impl {
             [this](ControllerObjectId id)->std::optional<std::uint8_t> {
                 if(const auto found=models.find(key(id));found!=models.end()) return found->second.active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
+                if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
                 if(external.active) return external.active(id);
                 return std::nullopt;
             },
@@ -149,9 +179,45 @@ struct ActionEventRuntime::Impl {
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return model_message(model(id),delivery); },{}};
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
+                if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
                 return external.manager ? external.manager(id) : MessengerManager{};
             }
         };
+    }
+    ModelWaitServices wait_services(ActionEventRuntime& runtime,ControllerObjectId id,const PlayerWaitServices& supplied) {
+        ModelWaitServices result;
+        if(supplied.pads) result.held_buttons=[this,id,pads=supplied.pads]()->std::optional<std::uint32_t> {
+            const auto slot=model(id).binding.instance_index();
+            if(slot>=OriginalPads::slot_count) fail("Prepared player RAM does not identify one of the four original pad slots.");
+            return pads->states()[slot].buttons.held;
+        };
+        result.action_complete=[&runtime,id] { return runtime.query_action_complete(id); };
+        result.resume_commands=supplied.resume_commands;
+        result.dispatch_sequence=supplied.dispatch_sequence;
+        return result;
+    }
+    ModelWaitResult process_wait(ActionEventRuntime& runtime,ControllerObjectId id,const PlayerWaitServices& supplied,bool retry) {
+        if(processing_wait) fail("Recursive prepared player wait processing is unsupported.");
+        if(suspended_wait && *suspended_wait!=key(id)) fail("Another player's suspended wait must finish first.");
+        auto& owner=model(id);
+        if(!retry) {
+            require_top_level_idle();
+            if(owner.sequence_time || owner.broadcast || owner.query)
+                fail("Complete prepared sequence execution and delivery before a new player wait pass.");
+            owner.pending_wait_state=&owner.sequence.wait_state();
+        } else if(!owner.wait.pending() || !owner.pending_wait_state) {
+            fail("No prepared player wait is suspended.");
+        }
+        if(suspended_send && suspended_send_wait!=key(id) && (!owner.query || owner.query->id()!=*suspended_send) &&
+           (!owner.broadcast || owner.broadcast->dispatch.id()!=*suspended_send))
+            fail("Another synchronous delivery must complete before player wait processing.");
+        struct Guard { bool& value; explicit Guard(bool& flag):value(flag) { value=true; } ~Guard() { value=false; } } guard(processing_wait);
+        suspended_wait=key(id);
+        const auto services=wait_services(runtime,id,supplied);
+        const auto result=retry ? owner.wait.resume(*owner.pending_wait_state,services) :
+            owner.wait.update(*owner.pending_wait_state,std::as_const(owner.sequence).model().channels,services);
+        if(result.complete()) { suspended_wait.reset(); owner.pending_wait_state=nullptr; }
+        return result;
     }
 };
 ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>()) {}
@@ -172,6 +238,21 @@ ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding bindi
     impl_->messenger.register_recipient(id,"MODELCTRL",value.model_name(),static_cast<std::int32_t>(value.instance_index()));
     return id;
 }
+ControllerObjectId ActionEventRuntime::register_action(ControllerObjectId id,std::shared_ptr<ActionRuntime> action) {
+    impl_->require_top_level_idle();
+    const auto& bound=impl_->model(id).binding;
+    const ControllerObjectId recipient{id.file_index,bound.action_ram_reference()};
+    impl_->check_new(key(recipient));
+    for(const auto& [owned,value]:impl_->actions) {
+        (void)owned;
+        if(value.runtime==action) fail("A live ACTION runtime already belongs to another qualified RAM.");
+    }
+    auto manager=make_action_query_manager(bound,action);
+    impl_->require_registration_capacity(1,std::string_view("ACTION").size()+bound.model_name().size());
+    impl_->actions.emplace(key(recipient),Impl::Action{std::move(action),std::move(manager)});
+    impl_->messenger.register_recipient(recipient,"ACTION",bound.model_name(),static_cast<std::int32_t>(bound.instance_index()));
+    return recipient;
+}
 void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool active) {
     impl_->require_top_level_idle();
     auto owned=std::make_shared<const ActionEventTableProgram>(std::move(program));
@@ -180,13 +261,13 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
     // one RAM. Conflicting existing owners must be rejected before registration.
     for(const auto ram:owned->ram_owners()) {
         const Key id{owned->source_occurrence(),ram};
-        if(impl_->models.contains(id)) fail("Consumer RAM conflicts with prepared MODELCTRL work.");
+        if(impl_->models.contains(id) || impl_->actions.contains(id)) fail("Consumer RAM conflicts with prepared MODELCTRL/ACTION work.");
         const auto found=impl_->consumers.find(id);
         if(found!=impl_->consumers.end() && found->second.program->kind()!=owned->kind())
             fail("Changing an owned consumer RAM's manager class is outside the prepared profile.");
         if(found==impl_->consumers.end()) new_owners.insert(id);
     }
-    if(new_owners.size()>4096-impl_->models.size()-impl_->consumers.size())
+    if(new_owners.size()>4096-impl_->models.size()-impl_->consumers.size()-impl_->actions.size())
         fail("Prepared event RAM ownership exceeds 4096 objects.");
     impl_->require_registration_capacity(owned->ram_owners().size(),
         owned->ram_owners().size()*std::string_view("ACTION_BROADCAST").size());
@@ -210,13 +291,14 @@ const ModelSubcommandQueue& ActionEventRuntime::subcommands(ControllerObjectId i
 void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::string> sequence,std::string label) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.selecting || owner.jump_cleanup) fail("Cannot change a label while sequence cleanup is suspended.");
+    if(owner.selecting || owner.jump_cleanup || owner.sequence_time) fail("Cannot change a label while sequence execution is suspended.");
     owner.sequence.set_label(std::move(sequence),std::move(label));
 }
 ModelSubcommandResult ActionEventRuntime::select_sequence(ControllerObjectId id,std::string_view name,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.selecting || owner.jump_cleanup || owner.broadcast) fail("Resume pending model delivery or sequence cleanup first.");
+    if(owner.selecting || owner.jump_cleanup || owner.broadcast || owner.sequence_time || owner.query)
+        fail("Resume pending model delivery or sequence cleanup first.");
     owner.sequence.begin_select(name); // Publish the original pre-cleanup fields.
     owner.selecting=true;
     const auto result=owner.queue.cleanup(services);
@@ -232,8 +314,11 @@ ModelSubcommandResult ActionEventRuntime::resume_sequence(ControllerObjectId id,
     return result;
 }
 ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::uint64_t time,const ModelActionDispatch& action,
-    const ModelSubcommandServices& services) {
+    const ModelSubcommandServices& services,const ModelActionTryDispatch& try_action) {
+    impl_->require_wait_idle();
     auto& owner=impl_->model(id);
+    if(owner.sequence_time && !owner.running_action_sequence)
+        fail("Resume the registered ACTION sequence through its owning operation.");
     if(owner.selecting) fail("Sequence cleanup must complete before executing commands.");
     if(impl_->suspended_send && impl_->delivery_depth==0 &&
        (!owner.broadcast || owner.broadcast->dispatch.id()!=*impl_->suspended_send))
@@ -242,12 +327,105 @@ ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::
         const auto result=owner.jump_cleanup ? owner.queue.resume(services) : owner.queue.cleanup(services);
         owner.jump_cleanup=!result.complete();
         return result.complete();
+    },try_action);
+}
+ModelSequenceResult ActionEventRuntime::run_action_sequence(ControllerObjectId id,AnimationSourceRuntime& sources,
+    std::uint64_t time,ActionServices& action,const ModelSubcommandServices& services) {
+    impl_->require_wait_idle();
+    auto& owner=impl_->model(id);
+    if(owner.action_faulted) fail("Prepared ACTION service has an uncertain outcome; automatic replay is forbidden.");
+    if(owner.running_action_sequence) fail("Recursive prepared ACTION sequence execution is unsupported.");
+    if(!owner.sequence.selected()) fail("Select the prepared model sequence before executing its ACTION commands.");
+    if(owner.selecting || owner.query) fail("Complete sequence cleanup and pending queries before prepared ACTION execution.");
+    if(impl_->suspended_send && impl_->delivery_depth==0 &&
+       (!owner.broadcast || owner.broadcast->dispatch.id()!=*impl_->suspended_send))
+        fail("Another model's suspended delivery must finish before prepared ACTION execution.");
+    const auto found=impl_->actions.find({id.file_index,owner.binding.action_ram_reference()});
+    if(found==impl_->actions.end()) fail("Sequence execution requires this model's registered live ACTION runtime.");
+    if(!owner.action_request && found->second.runtime->broadcast_pending())
+        fail("Complete the ACTION runtime's earlier broadcast before starting a prepared sequence dispatch.");
+    (void)make_action_query_manager(owner.binding,found->second.runtime);
+    found->second.runtime->combiner().require_sources(sources);
+    if(owner.sequence_time && owner.sequence_sources!=&sources)
+        fail("Resume prepared sequence execution with the same live animation source owner.");
+    if(owner.sequence_time && owner.sequence_services!=&action)
+        fail("Resume prepared sequence execution with the same shared ACTION service owner.");
+    if(owner.action_request && owner.action_state!=found->second.runtime->state_identity())
+        fail("The suspended ACTION runtime changed outside its owning sequence continuation.");
+    if(!owner.sequence_time) { owner.sequence_time=time; owner.sequence_sources=&sources; owner.sequence_services=&action; }
+    const auto invocation_time=*owner.sequence_time;
+    auto delivery=action_services(id).try_broadcast;
+    struct BroadcastScope {
+        ActionServices& services;
+        std::function<bool(const ActionBroadcast&)> previous;
+        ~BroadcastScope() { services.try_broadcast=std::move(previous); }
+    } broadcast_scope{action,std::move(action.try_broadcast)};
+    action.try_broadcast=std::move(delivery);
+    struct Guard { bool& value; explicit Guard(bool& flag):value(flag) { value=true; } ~Guard() { value=false; } } guard(owner.running_action_sequence);
+    const auto result=run_sequence(id,invocation_time,{},services,[&](const ModelActionRequest& request) {
+        if(owner.action_request && !same(*owner.action_request,request))
+            fail("Pending ACTION request differs from the retained model command.");
+        const bool retry=owner.action_request.has_value();
+        if(!retry) {
+            owner.action_request=request; owner.action_time=invocation_time; owner.action_sources=&sources;
+        }
+        if(owner.action_sources!=&sources) fail("Pending ACTION request requires its original animation source owner.");
+        try {
+            owner.action_result=retry ? found->second.runtime->resume(sources,action,owner.action_time) :
+                found->second.runtime->dispatch(sources,action,request,owner.action_time);
+            owner.action_state=found->second.runtime->state_identity();
+        } catch(...) { owner.action_faulted=true; throw; }
+        const auto stop=owner.action_result->stop;
+        if(stop!=ActionStop::end && stop!=ActionStop::waiting) return false;
+        owner.action_request.reset(); owner.action_sources=nullptr; owner.action_state.reset(); return true;
     });
+    if(result.stop==ModelSequenceStop::end || result.stop==ModelSequenceStop::label_boundary || result.stop==ModelSequenceStop::waiting) {
+        owner.sequence_time.reset(); owner.sequence_sources=nullptr; owner.sequence_services=nullptr;
+    }
+    return result;
+}
+std::optional<ActionResult> ActionEventRuntime::last_action_result(ControllerObjectId id) const {
+    return impl_->model(id).action_result;
+}
+void ActionEventRuntime::prepare_wait_state(ControllerObjectId id,ModelWaitState state) {
+    impl_->require_top_level_idle();
+    auto& owner=impl_->model(id);
+    if(owner.wait.pending() || owner.sequence_time || owner.broadcast || owner.query)
+        fail("Cannot replace prepared wait work during a suspended operation.");
+    if(state.name && (state.name->size()>65535 || state.name->find('\0')!=std::string::npos))
+        fail("Prepared wait name exceeds the original bounded string profile.");
+    owner.sequence.wait_state()=std::move(state);
+}
+ModelWaitResult ActionEventRuntime::update_wait(ControllerObjectId id,const PlayerWaitServices& services) {
+    return impl_->process_wait(*this,id,services,false);
+}
+ModelWaitResult ActionEventRuntime::resume_wait(ControllerObjectId id,const PlayerWaitServices& services) {
+    return impl_->process_wait(*this,id,services,true);
+}
+bool ActionEventRuntime::wait_pending(ControllerObjectId id) const { return impl_->model(id).wait.pending(); }
+std::optional<bool> ActionEventRuntime::query_action_complete(ControllerObjectId id) {
+    impl_->require_wait_idle();
+    auto& owner=impl_->model(id);
+    if(owner.sequence.selection_pending() || owner.action_request)
+        fail("Complete sequence cleanup and ACTION dispatch before querying its command work.");
+    if(!owner.query) {
+        impl_->require_top_level_idle();
+        owner.query.emplace(impl_->messenger.begin_send_to("ACTION",owner.binding.model_name(),
+            static_cast<std::int32_t>(owner.binding.instance_index()),"ISCOMEND"));
+    }
+    const auto result=resume(*owner.query);
+    if(result.stop==MessengerStop::faulted) throw MessengerError(result.diagnostic);
+    if(result.stop!=MessengerStop::completed) return std::nullopt;
+    owner.query.reset();
+    const auto& values=impl_->messenger.buffer().booleans();
+    if(values.empty()) fail("Original ACTION ISCOMEND completed without its required boolean result.");
+    return values.front()!=0;
 }
 ModelSubcommandResult ActionEventRuntime::update_subcommands(ControllerObjectId id,float frames,const ModelSubcommandServices& services) {
     impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
-    if(owner.sequence.selection_pending() || owner.broadcast) fail("Model delivery and sequence cleanup must finish before frame processing.");
+    if(owner.sequence.selection_pending() || owner.broadcast || owner.sequence_time || owner.query)
+        fail("Model delivery and sequence execution must finish before frame processing.");
     return owner.queue.update(frames,owner.context,services);
 }
 ModelSubcommandResult ActionEventRuntime::resume_subcommands(ControllerObjectId id,const ModelSubcommandServices& services) {
@@ -259,6 +437,7 @@ ModelSubcommandResult ActionEventRuntime::resume_subcommands(ControllerObjectId 
 NativeMessenger& ActionEventRuntime::messenger() { impl_->require_top_level_idle(); return impl_->messenger; }
 void ActionEventRuntime::set_external_services(MessengerServices services) { impl_->external=std::move(services); }
 MessengerResult ActionEventRuntime::resume(MessengerDispatch& dispatch) {
+    impl_->require_wait_idle();
     const bool outer=impl_->delivery_depth==0;
     if(outer && impl_->suspended_send && *impl_->suspended_send!=dispatch.id())
         fail("Only the suspended top-level messenger delivery can be resumed.");
@@ -269,12 +448,17 @@ MessengerResult ActionEventRuntime::resume(MessengerDispatch& dispatch) {
     } depth(impl_->delivery_depth);
     const auto result=impl_->messenger.resume(dispatch,impl_->services());
     if(outer) {
-        if(result.stop==MessengerStop::completed) impl_->suspended_send.reset();
-        else impl_->suspended_send=dispatch.id();
+        if(result.stop==MessengerStop::completed) {
+            impl_->suspended_send.reset(); impl_->suspended_send_wait.reset();
+        } else {
+            impl_->suspended_send=dispatch.id();
+            impl_->suspended_send_wait=impl_->processing_wait ? impl_->suspended_wait : std::nullopt;
+        }
     }
     return result;
 }
 MessengerResult ActionEventRuntime::broadcast(ControllerObjectId id,const ActionBroadcast& event) {
+    impl_->require_wait_idle();
     auto& owner=impl_->model(id);
     if(event.source!=owner.binding.source() || event.info_name!=owner.binding.model_name() ||
        event.ram_no!=static_cast<std::int32_t>(owner.binding.instance_index()))

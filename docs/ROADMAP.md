@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.25 resolves original common/player waits against registered live
+ACTION work and separate original pad slots. WCHECK advances and retains its
+cursor; unavailable services suspend without replaying completed commands or
+nested dispatches. Complete original player creation, sequence-entry/status
+callbacks and device assignment are still required. This prepared integration
+does not establish combat or connected multiplayer. See [MODEL_WAIT.md](MODEL_WAIT.md).
+
 Version 0.24 binds prepared player MODELCTRL/ACTION graphs and routes original
 ACTION broadcasts through loaded Se/ActionStarter tables into owned subcommand
 queues. Native messenger delivery and sequence cleanup preserve completed work
