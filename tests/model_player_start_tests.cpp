@@ -6,6 +6,10 @@
 #include "dw4/resources.hpp"
 #include "dw4/weapon_runtime.hpp"
 #include "dw4/bone_select.hpp"
+#include "dw4/model_player_startup.hpp"
+#include "dw4/model_status.hpp"
+#include "dw4/meter_control.hpp"
+#include "dw4/number_control.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -225,10 +229,16 @@ void original(const std::filesystem::path& root) {
     const auto database=read_igb_document(resources.read("dng101b1/separate/usa_pack.igb"));
     const auto weapon=read_igb_document(resources.read("_common/w_common05.igb"));
     const auto names=read_model_player_start_defaults(root/"sys"/"main.dol");
+    const auto map_rules=read_model_player_map_rules(root/"sys"/"main.dol");
     ActionEventRuntime events;GameRamRuntime game(events);DatabaseRuntime databases(events);
+    const auto hud=read_igb_document(resources.archives().at(0).read(179));
+    NumberControlRuntime numbers(events);MeterRuntime meters(events);
+    numbers.register_source(decode_number_controls(hud,"ndmw.afs/179",30));
+    meters.register_source(decode_meter_controls(std::make_shared<ActorSceneResource>(hud,"ndmw.afs/179",30)));
     databases.register_source(decode_database_managers(database,"dng101b1/separate/usa_pack.igb",8));
     const auto converter=std::make_shared<GameNameConverter>(read_game_name_table(root/"sys"/"main.dol"),std::make_shared<std::vector<std::uint8_t>>());
     std::vector<ModelPlayerStartOwner> owners;
+    std::vector<std::shared_ptr<ModelStatusWork>> status;
     const auto parent_name=std::make_shared<std::optional<std::string>>("p_agumon");
     auto player_scene=std::make_shared<ActorSceneResource>(doc,"_common/p_agumon.igb",17);
     std::vector<ActorSceneAction> scenes;
@@ -245,6 +255,9 @@ void original(const std::filesystem::path& root) {
         owners.push_back({events.prepare_target_script_work(id),{17,1386},"_common/p_agumon.igb",parent_name,live_ram});
         events.prepare_model_queries(id,{{17,1386},binding.source(),parent_name,live_ram,
             std::make_shared<std::uint8_t>(std::uint8_t{1}),std::make_shared<bool>(true)});
+        // The prepared entry is after original8034D780 (_isPlayer=1).
+        status.push_back(std::make_shared<ModelStatusWork>(owners.back().work,1));
+        events.prepare_model_status(id,status.back());
         events.register_player(id);model_ids.push_back(id);
         auto action=std::make_shared<ActionRuntime>(decode_action_actor_runtime(doc,binding.action_program(),sources,static_cast<std::int32_t>(index)));
         action_ids.push_back(events.register_action(id,action));actions.push_back(action);
@@ -262,15 +275,52 @@ void original(const std::filesystem::path& root) {
         const auto captured=std::get<MessengerDataList>(messenger.buffer().objects().at(0));
         check(captured==game.state().player(static_cast<std::size_t>(index)),"GETPLAYER did not return its actual retained row.");
         integers(captured,"UPDATA")->at(7)=17;integers(captured,"DOWNDATA")->at(6)=19;
-        ModelPlayerStart start(owners[static_cast<std::size_t>(index)],captured,names);
+        ModelPlayerStartup startup(owners[static_cast<std::size_t>(index)],captured,names,map_rules);
+        const auto& start=startup.prefix();
+        const auto map=std::make_shared<const std::string>(index==0 ? map_rules.metal()[0]:index==1 ?
+            map_rules.main_lobby()[0]:index==3 ? map_rules.metal()[1]:"dng101b1");
+        const ModelPlayerMapReader map_reader=[map]{return map;};
         if(index==0) {
-            check(start.resume(messenger,events,live_clock).stop==ModelPlayerStartStop::service_required &&
+            check(startup.resume(messenger,events,live_clock,map_reader).stop==ModelPlayerStartupStop::service_required &&
                 start.phase()==ModelPlayerStartPhase::game_start && active(messenger).empty(),"Missing original font did not retain GAMESTART before weapon enqueue.");
             game.set_name_services({[converter]{return converter;}});clock=2000;
         }
-        const auto result=start.resume(messenger,events,live_clock);
-        if(result.stop!=ModelPlayerStartStop::later_ui_required)throw std::runtime_error("Original player caller: "+result.diagnostic);
-        check(start.prefix_completed() && !start.faulted() && !game.faulted() && !game.pending_count(),"Original prepared prefix did not reach only its later-UI checkpoint.");
+        const auto result=startup.resume(messenger,events,live_clock,map_reader);
+        if(result.stop!=ModelPlayerStartupStop::completed)throw std::runtime_error("Original player caller: "+result.diagnostic);
+        check(startup.completed() && start.prefix_completed() && !startup.faulted() && !game.faulted() && !game.pending_count(),
+            "Original prepared caller did not complete its actual UI/map tail.");
+        const auto player=static_cast<std::size_t>(index);
+        const bool metal=index==0 || index==3;
+        check(metal ? status[player]->down_data==integers(captured,"DOWNDATA") && status[player]->timers->at(7)==1 &&
+            status[player]->first_flags->at(7)==1 : !status[player]->display_ram_numbers && !status[player]->down_data,
+            "Actual player status dispatch lost the metal DOWNDATA owner or allocated for an unknown status command.");
+        check(owners[player].work->original_is_main_lobby==(index==1 ? std::optional<std::uint8_t>{1}:std::nullopt),
+            "Original map table did not update only the matching captured ONE lobby field.");
+        for(const auto& info:numbers.sources()[0].infos()) {
+            const char* field=info.name=="lvnm" ? "LEVEL":info.name=="hpnm" ? "HP":info.name=="mpnm" ? "MP":nullptr;
+            if(!field)continue;
+            const auto& displayed=numbers.ram({30,info.rams.at(player).reference});
+            check(displayed.work && displayed.work->current==captured->require<GameDataInt>(field)->data &&
+                displayed.work->target==displayed.work->current && displayed.uv && displayed.uv->revision>0,
+                "Original player-start number send did not mutate its real number work/UV owner.");
+        }
+        for(const auto& info:meters.sources()[0].infos()) {
+            const ControllerObjectId meter{30,info.rams.at(player).reference};
+            const auto& displayed=meters.selected_one(meter);
+            check(displayed.target==100,"Original player-start meter did not receive its full initial HP/MP percent.");
+            if(info.name=="hpmt") {
+                messenger.select("METERCTRL",info.name,index);messenger.buffer().add_string("p_agumon");messenger.buffer().add_int(index);
+                auto bind=messenger.begin_send("SETMODELHP");
+                check(events.resume(bind).stop==MessengerStop::completed && displayed.bound_value==owners[player].work->hp &&
+                    displayed.bound_maximum==owners[player].work->max_hp && messenger.buffer_depth()==0,
+                    "Real MODELCTRL GETHP failed to bind the meter to its exact player HP/MHP wrappers.");
+                const auto saved=displayed.bound_value->data;displayed.bound_value->data=saved/2;
+                meters.update(meter);
+                check(displayed.target==static_cast<float>((saved/2*100)/displayed.bound_maximum->data) &&
+                    displayed.node->times->size()==1,"Original meter update did not observe the live shared HP or publish node sample time.");
+                displayed.bound_value->data=saved;
+            }
+        }
         check(start.binding().hp()==owners[static_cast<std::size_t>(index)].work->hp && start.binding().hp()->data>0 &&
             start.binding().hp()->data==captured->require<GameDataInt>("MHP")->data,"Original caller lost shared positive HP after GAMESTART/recalculation.");
         check(std::all_of(booleans(captured,"BASE_ISUSE")->begin(),booleans(captured,"BASE_ISUSE")->end(),[](auto value){return value==1;}) &&
@@ -368,7 +418,7 @@ void original(const std::filesystem::path& root) {
         check(events.resume(removal).stop==MessengerStop::completed,"Cross-info original weapon removal failed.");inspect(player,0);
     }
     check(traversed==24,"Original four players/three actor branches/two hands did not all reach the common visitor.");
-    std::cout<<"Original prepared starts=4, deferred common05 generations=4, replacements=8, appearance branches=12, common selector visits=24; later UI/render services remain required\n";
+    std::cout<<"Original prepared starts=4 with number/meter/status tail, deferred common05 generations=4, replacements=8, appearance branches=12, common selector visits=24; full construction, HUD drawing and original frame scheduling remain required\n";
 }
 }
 int main(int argc,char** argv) {

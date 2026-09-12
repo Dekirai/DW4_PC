@@ -9,6 +9,7 @@
 #include "dw4/pad.hpp"
 
 namespace dw4 {
+class ModelStatusWork;
 struct NativeControllerServices {
     std::function<std::optional<std::uint8_t>()> active;
     std::function<MessengerManager()> manager;
@@ -70,6 +71,11 @@ public:
     // Attach these exact live fields once to an existing checked model binding.
     // The initial RAM number must match the binding's selected occurrence.
     void prepare_model_queries(ControllerObjectId model,ModelQueryOwner owner);
+    // Attach the actual PC virtual+C4 status fields to the same prepared ONE.
+    // The caller retains this owner; the model holds a weak reference to avoid
+    // a cycle through the live script-work matrix. First preparation may
+    // supply a missing status service, but cannot replace published work.
+    void prepare_model_status(ControllerObjectId model,std::shared_ptr<ModelStatusWork> work);
     // Explicit original PLAYER registration on an already prepared KIND_PLAYER
     // owner. Each call appends an occurrence using the then-current name/RAM;
     // cached recipient rows retain their existing original snapshot semantics.

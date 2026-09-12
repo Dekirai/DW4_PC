@@ -40,6 +40,9 @@ public:
     // replaces these references with its existing GAMERAM HP/MHP objects.
     std::shared_ptr<ModelScriptInt> max_hp,hp;
     std::int32_t record=-1;
+    // Exact original ONE+125 (_isMainLobby). Unknown until actual prepared
+    // initialization supplies it or the original player-start tail writes it.
+    std::optional<std::uint8_t> original_is_main_lobby;
 private:
     ControllerObjectId target_;
     std::string source_,name_;

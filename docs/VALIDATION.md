@@ -1,4 +1,53 @@
-# Native ACTION and weapon rendering validation
+# Native original player-start validation
+
+Version 0.35.0 was validated locally on 2026-09-12 with MSVC 19.51. The prepared
+post-GETPLAYER caller now reaches its real number/meter/status recipients and
+returns through the original map tail. Four original Agumon slots share the
+actual HP wrappers with their meters while retaining separate work, number UVs
+and deferred weapon requests. This does not establish complete player creation
+or connected multiplayer.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 82/82 CTest suites passed; no compiler warnings |
+| Prepared startup caller | 126 synthetic checks; ordered paused sends, live RAM/scalars, old-row/map/ONE retention, numeric and malformed-DOL boundaries |
+| Original four-player integration | 95 synthetic prefix / 613 original-inclusive checks; actual GAMESTART, twelve number slots, eight meter values, four shared HP bindings, metal/main-lobby branches, four deferred weapon generations and eight replacements |
+| MODELCTRL work/status integration | 71 synthetic checks; GETHP append order and exact wrappers, null/expired owners, original virtual ordering, nested same-model SETMETAL, packet restoration and abandoned-continuation lifetime |
+| NUMBERCTRL | 116 synthetic / 1,472 original-inclusive checks; all seven original infos and 43 RAM occurrences, actual digit and shared UV mutations |
+| METERCTRL | 46 synthetic / 73 original-inclusive checks; eight commands, exact HP wrappers, partial-result faults, smoothing and actual node sample-list updates |
+| Status handler | 77 synthetic checks; classification, ordered list initialization, SETMETAL slot writes, live nested GETPLAYER and nullable DOWNDATA payload |
+| Original caller instructions | 469 cases / 128,563 instructions / 2,389 packets / 24 checked boundaries; zero differences, also with each native recipient paused after its effects |
+| Original HP/MP arithmetic | 2,290 cases / 30,838 instructions; zero differences, including classified exceptional division and nonfinite results |
+| Original NUMBERCTRL instructions | 1,457 cases / 266,733 instructions; zero differences in work, digit/UV words and publication order |
+| Original meter instructions | 2,326 cases / 797,659 instructions, including 256 original-owner cases; zero differences; 41 checked numeric boundaries |
+| Original status instructions | 594 cases / 90,899 instructions / 312 GETPLAYER requests; zero differences, also with paused native recipients |
+| Existing ACTION and weapon regression | 6,034,137 original ACTION checks and 413 original-inclusive weapon-preview checks passed |
+| Packaged walking preview | 240 frames, 8x MSAA; 438 steps, 101.333 source units, 286 idle / 152 run steps, 240 attached-weapon frames; pause/restart/focus checks passed; actual frame visually inspected |
+| Python and CLI | Six verifier tests; 18 app, ten play and nine boot argument checks passed |
+
+The instruction comparisons execute bounded original routines with documented
+prepared services and compare them to the production core. Each component's
+document identifies those service boundaries. A caller packet comparison is
+not a recipient implementation test; the separate number/meter/status oracles
+provide that additional evidence for their represented branches. These checks
+do not establish whole-game behavior or physical-console frame parity.
+
+The earlier player construction, base GENERATE continuation after the player
+virtual returns, original outer scheduling, HUD drawing, input/locomotion,
+camera, combat, progression, audio, saves and connected local multiplayer remain
+required. The walking preview retains its existing host movement/camera profile.
+
+The previous version 0.34 commit `dafa903c21dcf94ab069b5b43f4de0d8722e364a`
+passed all three GitHub jobs in run `34684932520`. Windows artifact `10295611121`
+has digest `b62093cd0c00be61d3330e23fb940c7976d41fa48698e4994ba2ec41e4d3442d`.
+That is evidence for the previous commit; current local verification is listed
+above. Original data, executable probes and captures remain ignored under `work/`.
+
+See [MODEL_PLAYER_STARTUP.md](MODEL_PLAYER_STARTUP.md),
+[NUMBER_CONTROL.md](NUMBER_CONTROL.md), [METER_CONTROL.md](METER_CONTROL.md)
+and [MODEL_STATUS.md](MODEL_STATUS.md).
+
+## Previous version 0.34 validation
 
 Version 0.34.0 was validated locally on 2026-09-12 with MSVC 19.51 and an
 NVIDIA GeForce RTX 5070 Ti. The same prepared ACTION runtime now supplies body

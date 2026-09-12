@@ -1,12 +1,24 @@
 # Prepared MODELCTRL player queries
 
 `ActionEventRuntime` implements the original base MODELCTRL `GETINFONAME`,
-`GETINFONAME_RUN` and `SETLABEL` bodies on explicitly prepared player field
+`GETINFONAME_RUN`, `GETHP` and `SETLABEL` bodies on explicitly prepared player field
 owners. A separate `register_player` call adds the actual PLAYER category row.
 These endpoints allow existing messenger consumers to obtain a live player
 name and change the real sequence label cache. They do not execute original
-player construction, PC status allocation or the complete virtual dispatch
-prelude.
+player construction. Explicitly attaching `ModelStatusWork` also routes the
+original PC virtual+C4 status prelude before the generic switch; see
+[MODEL_STATUS.md](MODEL_STATUS.md). Other subclass virtuals remain unsupported.
+
+## Shared HP results
+
+`GETHP` (`8030E49C..8030E4FC`) appends integer zero only when the actual active
+byte is zero or the explicitly prepared base-work pointer is null. Active work
+appends current signed HP, the same HP wrapper and then the same MHP wrapper.
+It does not clear existing arguments or change enabled-only filtering. A null
+MHP becomes a nullable object result; a null HP reaches a checked error before
+its unsafe scalar load. Missing or expired native work is an explicit service
+boundary, not an invented original null pointer. `METERCTRL SETMODELHP` retains
+the returned shared wrappers, so later HP writes reach its update directly.
 
 ## Field ownership and registration
 

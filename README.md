@@ -1,9 +1,10 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.34 connects original ACTION animation and generated weapons to a shared
-native render pass. The walking preview now carries the original common05 weapon;
-separate inspection also supports the original two-hand common03/common04 graphs.
+Version 0.35 connects the prepared original player-start caller to its real
+number, meter and metal-status recipients. Four original Agumon slots initialize
+their number geometry, meter values and shared HP bindings, alongside deferred
+weapon generation. HUD drawing and full player construction remain in progress.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
@@ -21,6 +22,17 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Complete the prepared post-GETPLAYER startup through all five original
+  number/meter messages and the map-dependent metal/main-lobby tail. NUMBERCTRL
+  mutates actual digit UV owners, METERCTRL preserves shared HP/MHP bindings and
+  node animation times, and PLAYER SETMETAL retains the real status lists and
+  nested GAMERAM row. Independent original-instruction comparisons cover the
+  caller and recipients. The walking preview remains the existing original-asset
+  walking profile; these changes do not yet draw its HUD or create a complete
+  gameplay session. See [MODEL_PLAYER_STARTUP.md](docs/MODEL_PLAYER_STARTUP.md),
+  [NUMBER_CONTROL.md](docs/NUMBER_CONTROL.md), [METER_CONTROL.md](docs/METER_CONTROL.md)
+  and [MODEL_STATUS.md](docs/MODEL_STATUS.md).
 
 - Traverse common weapon children through their actual ordered attribute scopes,
   shared geometry owners and stored transforms. Render body and weapons with
@@ -44,8 +56,9 @@ not contain game files.
 - Retain original deferred message packets, signed deadlines, pause shifts and
   callback order through missing-service interruptions. The prepared player
   caller resets its modifier prefixes, starts unused data, queues PLAYERARMS
-  and recalculates stats before an explicit later-UI boundary. Complete player
-  construction and the original outer loop remain required.
+  and recalculates stats. Its original UI and map tail now continues through
+  the recipient owners described above. Complete player construction and the
+  original outer loop remain required.
   See [DEFERRED_MESSENGER.md](docs/DEFERRED_MESSENGER.md) and
   [MODEL_PLAYER_START.md](docs/MODEL_PLAYER_START.md).
 

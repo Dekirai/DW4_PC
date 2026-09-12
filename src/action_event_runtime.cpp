@@ -1,5 +1,6 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/action_queries.hpp"
+#include "dw4/model_status.hpp"
 
 #include <limits>
 #include <cmath>
@@ -27,6 +28,8 @@ struct OperationScope {
 };
 }
 struct ActionEventRuntime::Impl {
+    ActionEventRuntime& events_runtime;
+    explicit Impl(ActionEventRuntime& owner):events_runtime(owner) {}
     struct PendingBroadcast {
         ActionBroadcast event;
         MessengerDispatch dispatch;
@@ -71,6 +74,8 @@ struct ActionEventRuntime::Impl {
         bool hp_reference_present{};
         std::weak_ptr<ModelScriptWork> script_work;
         bool script_work_prepared{};
+        std::weak_ptr<ModelStatusWork> status_work;
+        bool status_work_prepared{};
         Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
             std::optional<ModelSubcommandOwner> attachment)
             : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
@@ -170,6 +175,21 @@ struct ActionEventRuntime::Impl {
             return {true,1,{}};
         }
         const auto script_work=owner.script_work.lock();
+        if(command=="GETHP") {
+            // Base8030E49C first gates the actual active byte and captured
+            // base-work pointer. Missing native preparation is not a null
+            // original pointer. Append to the existing packet in original order.
+            if(*owner.active==0 || (owner.query_owner && !*owner.query_owner->work_available)) {
+                messenger.buffer().add_int(0);return {true,1,{}};
+            }
+            if(!script_work)return {false,0,"MODELCTRL GETHP requires its actual prepared HP work owner."};
+            if(!script_work->hp)fail("Active MODELCTRL GETHP reached a null current-HP wrapper.");
+            messenger.buffer().add_int(script_work->hp->data);
+            messenger.buffer().add_game_object(script_work->hp);
+            if(script_work->max_hp)messenger.buffer().add_game_object(script_work->max_hp);
+            else messenger.buffer().add_object({});
+            return {true,1,{}};
+        }
         if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" || command=="GETRECNO" ||
            (owner.collision && owner.collision->owns_delivery(delivery))))
             return {false,0,"The target's prepared script work owner is unavailable."};
@@ -275,7 +295,34 @@ struct ActionEventRuntime::Impl {
             },
             [this](ControllerObjectId id)->MessengerManager {
                 if(const auto found=models.find(key(id));found!=models.end())
-                    return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return model_message(id,model(id),delivery); },{}};
+                    return {[this,id,status=std::shared_ptr<ModelStatusInvocation>{},status_result=std::optional<std::uint32_t>{}]
+                        (NativeMessenger&,const MessengerDelivery& delivery) mutable {
+                        auto& owner=model(id);
+                        if(owner.status_work_prepared) {
+                            if(!status_result) {
+                                if(!status) {
+                                    std::shared_ptr<ModelStatusWork> work;
+                                    if(*owner.query_owner->work_available) {
+                                        work=owner.status_work.lock();
+                                        if(!work)return MessengerCallResult{false,0,"The model's prepared status work owner is unavailable."};
+                                    }
+                                    status=std::make_shared<ModelStatusInvocation>(ModelStatusOwner{std::move(work),owner.query_owner->ram_no},
+                                        delivery.message.command);
+                                }
+                                // Player virtual+C4 runs before the generic switch,
+                                // including when RAM activity is zero. Its invocation
+                                // belongs to this exact recipient callback.
+                                const auto result=status->resume(messenger,events_runtime);
+                                if(!result.completed)return result;
+                                status_result=result.value;
+                                // Preserve the returned value, not a finished work
+                                // capture that could keep a self-recipient alive.
+                                status.reset();
+                            }
+                            if((*status_result&0xffu)!=0)return MessengerCallResult{true,*status_result,{}};
+                        }
+                        return model_message(id,owner,delivery);
+                    },{}};
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
@@ -419,8 +466,17 @@ struct ActionEventRuntime::Impl {
         }
     }
 };
-ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>()) {}
-ActionEventRuntime::~ActionEventRuntime() = default;
+ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>(*this)) {}
+ActionEventRuntime::~ActionEventRuntime() {
+    // A paused self-recipient can retain status -> script work -> the live
+    // Model matrix. Break model-owned continuation edges while the model map
+    // still owns every target; captured work must stay strong during execution.
+    for(auto& entry:impl_->models) {
+        entry.second->query.reset();
+        entry.second->broadcast.reset();
+        entry.second->hitbox.reset();
+    }
+}
 ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding binding,ModelControlState model,
     bool active,std::optional<ModelSubcommandOwner> attachment) {
     impl_->require_top_level_idle();
@@ -461,6 +517,14 @@ void ActionEventRuntime::prepare_model_queries(ControllerObjectId id,ModelQueryO
     }
     owner.query_owner.emplace(std::move(fields));
     owner.active=owner.query_owner->active;
+}
+void ActionEventRuntime::prepare_model_status(ControllerObjectId id,std::shared_ptr<ModelStatusWork> work) {
+    auto& owner=impl_->model(id);
+    if(owner.status_work_prepared)fail("This MODELCTRL already retains its prepared status fields.");
+    const auto actual=owner.script_work.lock();
+    if(!owner.query_owner || !actual || !work || work->actual_work()!=actual || actual->target()!=id)
+        fail("MODELCTRL status fields require the same actual prepared ONE and live query owners.");
+    owner.status_work=std::move(work);owner.status_work_prepared=true;
 }
 void ActionEventRuntime::register_player(ControllerObjectId id) {
     impl_->require_top_level_idle();

@@ -22,6 +22,13 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.35 connects the original post-GETPLAYER caller to actual number,
+meter and status recipients across four Agumon slots. Digit UV mutations,
+shared HP/MHP bindings, meter sample times and map-dependent SETMETAL/main-lobby
+effects retain original ownership and command order. Full earlier player
+construction, HUD traversal, original input/sequence/camera scheduling and
+combat remain required. See [MODEL_PLAYER_STARTUP.md](MODEL_PLAYER_STARTUP.md).
+
 Version 0.34 connects common weapon child traversal and shared prepared GPU
 rendering to the original ACTION owner. A refreshed walking preview displays
 the original common05 weapon while host movement selects its stand/run actions.

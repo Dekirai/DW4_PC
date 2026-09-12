@@ -5,8 +5,11 @@ after an already completed GETPLAYER delivery. It retains that returned data
 row, binds its HP/MHP wrappers to prepared model work, performs the original
 short modifier resets and GAMESTART branch, queues PLAYERARMS GENERATE, then
 sends RECALCPLAYER. Its terminal result is `later_ui_required`: the subsequent
-NUMBERCTRL/METERCTRL work and remaining constructor have not run. This is not
-full player creation, original controller registration or a player-ready flag.
+NUMBERCTRL/METERCTRL work has not run within this prefix API. Version 0.35's
+`ModelPlayerStartup` owns this prefix and continues its UI/map tail through
+actual recipients; see [MODEL_PLAYER_STARTUP.md](MODEL_PLAYER_STARTUP.md).
+Neither API establishes full player creation, original controller registration
+or a player-ready flag.
 
 The reference is the supplied USA GameCube `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, routine `8034D61C`, specifically
@@ -106,8 +109,9 @@ game-data rule: a wrong-type first matching name is an error.
 
 ## Validation scope
 
-The version 0.33 suite passes95 synthetic checks and577 with the supplied
-original extraction, including connected weapon generation and replacements.
+The version 0.35 suite passes95 synthetic prefix checks and613 with the supplied
+original extraction, now including the complete prepared UI/map tail, actual
+HP meter binding, connected weapon generation and replacements.
 
 The synthetic suite checks old-row retention across a reset, live routing fields,
 captured names, exact short-array tails, null/empty weapon names, raw ISUSE bytes,
@@ -124,6 +128,8 @@ ACTION scene owner, then resumes through real PLAYER/ACTION/MODELCTRL endpoints.
 Eight weapon replacements preserve both hands across all twelve appearances;
 twenty-four common bone-selector visits use the actual selected actor caches.
 Removal through another weapon info exercises shared manager-ordinal tracking.
-Child rendering and complete player initialization remain required. Name
+The integration also registers the original HUD's NUMBERCTRL/METERCTRL RAMs,
+checks digit UV updates and live HP binding, and executes real metal/main-lobby
+map branches. Complete player initialization and HUD drawing remain required. Name
 output uses the already validated conversion helper as an integration check;
 this is not an independent instruction execution of the full constructor.

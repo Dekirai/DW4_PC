@@ -1,5 +1,6 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/model_script_runtime.hpp"
+#include "dw4/model_status.hpp"
 #include "player_runtime_binding_fixture.hpp"
 
 #include <bit>
@@ -118,6 +119,119 @@ MessengerDispatch collision_send(ActionEventRuntime& runtime) {
     messenger.buffer().add_string("p_source");
     return messenger.begin_send("CHKBULLET");
 }
+void original_hp_query() {
+    Fixture fixture;ActionEventRuntime runtime;
+    const auto target=runtime.register_model(fixture.binding(),state(),true);
+    runtime.prepare_collision_target(target,fixture.definition(),true);
+    auto work=runtime.prepare_target_script_work(target);
+    auto hp=work->hp,maximum=work->max_hp;hp->data=-17;maximum->data=900;
+    const auto active=std::make_shared<std::uint8_t>(255);
+    const auto available=std::make_shared<bool>(true);
+    runtime.prepare_model_queries(target,{{3,fixture.model},source,
+        std::make_shared<std::optional<std::string>>(name),std::make_shared<std::int32_t>(0),active,available});
+    auto& messenger=runtime.messenger();messenger.select("MODELCTRL",name,0);
+    messenger.buffer().add_int(77);messenger.buffer().add_object({});messenger.buffer().add_string("keep");
+    messenger.buffer().set_enabled_only(1);auto call=messenger.begin_send("GETHP");
+    check(runtime.resume(call).stop==MessengerStop::completed &&
+        messenger.buffer().integers()==std::vector<std::int32_t>{77,-17} &&
+        messenger.buffer().objects().size()==3 && std::holds_alternative<std::monostate>(messenger.buffer().objects()[0]) &&
+        std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[1])==hp &&
+        std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[2])==maximum &&
+        messenger.buffer().strings()==std::vector<std::optional<std::string>>{"keep"} && messenger.buffer().enabled_only()==1,
+        "GETHP copied wrappers, normalized signed HP or replaced the caller packet.");
+    work->hp=std::make_shared<GameDataInt>(GameDataInt{"HP",42});work->max_hp.reset();
+    call=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
+    check(runtime.resume(call).stop==MessengerStop::completed && messenger.buffer().integers()==std::vector<std::int32_t>{42} &&
+        std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[0])==work->hp &&
+        std::holds_alternative<std::monostate>(messenger.buffer().objects()[1]),
+        "GETHP cached replaced HP or refused the original nullable maximum pointer.");
+    work->hp.reset();
+    for(const bool missing_work:{false,true}) {
+        *active=missing_work ? std::uint8_t{255}:std::uint8_t{0};*available=!missing_work;
+        call=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
+        check(runtime.resume(call).stop==MessengerStop::completed && messenger.buffer().integers()==std::vector<std::int32_t>{0} &&
+            messenger.buffer().objects().empty(),"GETHP read null HP before its inactive/null-base-work gate.");
+    }
+    *available=true;call=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
+    check(runtime.resume(call).stop==MessengerStop::faulted && messenger.buffer().integers().empty() &&
+        messenger.buffer().objects().empty(),"Active GETHP fabricated a value for a null HP pointer.");
+
+    ActionEventRuntime unprepared;const auto unknown=unprepared.register_model(fixture.binding(),state(),true);
+    auto& pending_buffer=unprepared.messenger();auto pending=pending_buffer.begin_send_to("MODELCTRL",name,0,"GETHP");
+    check(unprepared.resume(pending).stop==MessengerStop::service_required && pending_buffer.buffer().integers().empty(),
+        "GETHP inferred a null base pointer from unknown native preparation.");
+    unprepared.set_active(unknown,false);
+    check(unprepared.resume(pending).stop==MessengerStop::completed && pending_buffer.buffer().integers()==std::vector<std::int32_t>{0},
+        "Retained GETHP did not re-evaluate its actual live active gate.");
+}
+
+void original_status_dispatch() {
+    Fixture fixture;ActionEventRuntime runtime;GameDataState data;
+    const auto target=runtime.register_model(fixture.binding(),state(),false);
+    runtime.prepare_collision_target(target,fixture.definition(),true);
+    const auto work=runtime.prepare_target_script_work(target);
+    const auto active=std::make_shared<std::uint8_t>(0);
+    const auto available=std::make_shared<bool>(true);
+    runtime.prepare_model_queries(target,{{3,fixture.model},source,std::make_shared<std::optional<std::string>>(name),
+        std::make_shared<std::int32_t>(0),active,available});
+    runtime.register_player(target);
+    const auto status=std::make_shared<ModelStatusWork>(work,1);
+    runtime.prepare_model_status(target,status);
+    rejects([&]{runtime.prepare_model_status(target,status);},"Published status work was replaced.");
+    auto& messenger=runtime.messenger();auto hp=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
+    check(runtime.resume(hp).stop==MessengerStop::completed && !status->display_ram_numbers &&
+        messenger.buffer().integers()==std::vector<std::int32_t>{0},"Unknown status command allocated lists or bypassed the generic active gate.");
+    unsigned requests{};
+    const auto outer_row=data.player(0),inner_row=data.player(1);
+    const auto provider=ControllerObjectId::allocate_native();
+    runtime.register_native_controller(provider,{[]{return std::optional<std::uint8_t>{1};},[&] {
+        return MessengerManager{[&,nested=std::shared_ptr<MessengerDispatch>{}](NativeMessenger& native,const MessengerDelivery& delivery) mutable {
+            check(delivery.message.command=="GETPLAYER" && native.buffer().integers()==std::vector<std::int32_t>{0},
+                "SETMETAL used the routing key instead of the actual live player RAM field.");
+            ++requests;
+            if(requests==1) {
+                native.push_buffer();native.select("PLAYER",name,0);nested=std::make_shared<MessengerDispatch>(native.begin_send("SETMETAL"));
+                check(runtime.resume(*nested).stop==MessengerStop::completed && status->down_data==inner_row->require<GameDataIntList>("DOWNDATA")->data,
+                    "Nested same-model status invocation reused its parent's continuation.");
+                native.pop_buffer();native.buffer().add_data_list(outer_row);
+            } else native.buffer().add_data_list(inner_row);
+            return MessengerCallResult{true,1,{}};
+        },{}};
+    }},"GAMERAM","game",0);
+    messenger.select("PLAYER",name,0);messenger.buffer().add_string("parent");const auto packet=messenger.buffer_owner();
+    auto metal=messenger.begin_send("SETMETAL");
+    check(runtime.resume(metal).stop==MessengerStop::completed && requests==2 && status->timers->at(7)==1 && status->first_flags->at(7)==1 &&
+        status->down_data==outer_row->require<GameDataIntList>("DOWNDATA")->data && messenger.buffer_owner()==packet &&
+        messenger.buffer_depth()==0 && messenger.buffer().strings()==std::vector<std::optional<std::string>>{"parent"},
+        "Status virtual applied an inactive gate or lost the outer fresh-row publication/packet after nesting.");
+    *available=false;status->timers->at(7)=99;
+    metal=messenger.begin_send_to("MODELCTRL",name,0,"SETMETAL");
+    check(runtime.resume(metal).stop==MessengerStop::completed && status->timers->at(7)==99 && requests==2,
+        "Null actual base work mutated a retained status allocation.");
+}
+
+void abandoned_status_continuations() {
+    for(const bool broadcast:{false,true})for(const bool prepared:{false,true}) {
+        std::weak_ptr<ModelScriptWork> weak;
+        {
+            Fixture fixture;ActionEventRuntime runtime;
+            const auto target=runtime.register_model(fixture.binding(),state(),true);
+            runtime.prepare_collision_target(target,fixture.definition(),true);
+            auto work=runtime.prepare_target_script_work(target);weak=work;
+            runtime.prepare_model_queries(target,{{3,fixture.model},source,std::make_shared<std::optional<std::string>>(name),
+                std::make_shared<std::int32_t>(0),std::make_shared<std::uint8_t>(1),std::make_shared<bool>(true)});
+            auto status=std::make_shared<ModelStatusWork>(work,1);
+            if(prepared)runtime.prepare_model_status(target,status);
+            // Explicit synthetic self-recipient routing exercises ownership;
+            // this is not an assertion about the original asset registrations.
+            runtime.register_recipient(target,broadcast ? "ACTION_BROADCAST":"ACTION",name,0);
+            check(broadcast ? runtime.broadcast(target,{source,name,"SETMETAL",0}).stop!=MessengerStop::completed :
+                !runtime.query_action_complete(target).has_value(),"Lifetime case failed to retain an actual model-owned dispatch.");
+        }
+        check(weak.expired(),"Abandoned model-owned status dispatch retained a cycle through its live matrix owner.");
+    }
+}
+
 void live_hp_presence_gate() {
     Fixture fixture;ActionEventRuntime runtime;
     const auto target=runtime.register_model(fixture.binding(),state(),true);
@@ -146,7 +260,7 @@ void live_hp_presence_gate() {
 
 void expiration_and_lifetime() {
     Fixture fixture;
-    for(const auto* command:{"GETRECNO","CHKBULLET"}) {
+    for(const auto* command:{"GETRECNO","CHKBULLET","GETHP"}) {
         ActionEventRuntime runtime;const auto target=runtime.register_model(fixture.binding(),state(),true);
         runtime.prepare_collision_target(target,fixture.definition(),true);
         auto work=runtime.prepare_target_script_work(target);std::weak_ptr<ModelScriptWork> weak=work;work.reset();
@@ -227,7 +341,8 @@ void retained_collision_script_glue() {
 } // namespace
 int main() {
     try {
-        preparation_and_live_aliases();live_signed_record();live_hp_presence_gate();expiration_and_lifetime();retained_collision_script_glue();
+        preparation_and_live_aliases();live_signed_record();original_hp_query();original_status_dispatch();abandoned_status_continuations();
+        live_hp_presence_gate();expiration_and_lifetime();retained_collision_script_glue();
         std::cout<<"action_event_script_work: "<<checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {
         std::cerr<<"action_event_script_work failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;

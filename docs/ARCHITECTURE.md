@@ -2,6 +2,21 @@
 
 ## Implemented boundary
 
+Version 0.35 adds `model_player_startup`, `number_control`, `meter_control` and
+`model_status`. The startup continuation owns the existing prefix, five ordered
+UI sends and one captured map-name owner. Actual NUMBERCTRL RAM/digit/UV owners
+and METERCTRL ONE/node/time-list owners receive these messages. MODELCTRL GETHP
+appends the shared HP/MHP wrappers. An explicitly attached status work owner
+shares the same prepared ONE; a separate virtual+C4 invocation belongs to each
+recipient callback and retains nested GETPLAYER delivery. The model keeps a weak
+status link to avoid a cycle through its script work's live matrix. Unknown
+status commands decline before allocation; known unsupported effects retain a
+service boundary. This completes the represented post-GETPLAYER caller, not
+the preceding constructor or original gameplay scheduler. HUD drawing remains
+required. See [MODEL_PLAYER_STARTUP.md](MODEL_PLAYER_STARTUP.md),
+[NUMBER_CONTROL.md](NUMBER_CONTROL.md), [METER_CONTROL.md](METER_CONTROL.md)
+and [MODEL_STATUS.md](MODEL_STATUS.md).
+
 Version 0.34 adds retained `scene_traversal` common callbacks and a shared
 prepared renderer pass. Ordered normal attribute scopes, geometry trigger and
 invisibility gates, common transforms and actual selector children preserve
