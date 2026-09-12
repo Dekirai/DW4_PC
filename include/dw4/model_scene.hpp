@@ -113,6 +113,17 @@ public:
     std::uint8_t active=1;
     std::shared_ptr<ModelSceneList> data,rams;
 };
+// Distinct HITLANDMODEL geometry category, not a HITLANDDELIVER recipient.
+// These are decoded authored fields, not a complete reflected fresh factory.
+class ModelHitLandGeometryInfo final : public ModelSceneObject {
+public:
+    ModelHitLandGeometryInfo():ModelSceneObject("beHitLandModelInfo") {}
+    std::uint8_t active=1;
+    std::shared_ptr<ModelSceneList> data,rams;
+    std::shared_ptr<ActorSceneNode> switch_graph,check_switch; // +20/+24.
+    std::shared_ptr<ModelSceneList> names; // +1C _nameList.
+    std::int32_t kind{}; // +28 _kind; retain every raw bit.
+};
 struct ModelPadManager;
 struct ModelSceneContext { std::uint64_t world_time{}; };
 struct ModelSceneSystem {float frame_time_f{};};
@@ -161,6 +172,7 @@ public:
     std::shared_ptr<ModelSceneRam> ram(std::uint32_t reference);
     std::shared_ptr<ModelHitLandInfo> hit_land_info(std::uint32_t reference);
     std::shared_ptr<ModelHitLandRam> hit_land_ram(std::uint32_t reference);
+    std::shared_ptr<ModelHitLandGeometryInfo> hit_land_geometry_info(std::uint32_t reference);
     std::shared_ptr<ModelSceneData> data(std::uint32_t reference);
     std::shared_ptr<ModelSceneList> list(std::uint32_t reference);
 private:

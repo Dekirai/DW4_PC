@@ -22,11 +22,12 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
-Version 0.43 connects that actual player frame through its outer wall/floor
-consumer and shared-node HITLANDDELIVER recipient. The first original Agumon
-frame reaches a real HITLANDMODEL query, using the authored previous-position
-state. Native direction and broad-phase arithmetic have instruction comparisons;
-the complete query graph, traversal and result selection remain required.
+Version 0.44 adds the actual HITLANDMODEL geometry graph, retained segment and
+candidate pools, common traversal and intersection primitives. The actual player
+frame remains connected through its outer wall/floor consumer and shared-node
+HITLANDDELIVER recipient, reaching the required HITLANDMODEL query. Completing
+typed visitor dispatch and its geometry/attribute cursors, CHECKLAND reduction
+and CHECKWALL's multiple passes is the next collision integration requirement.
 Four original Agumon GENERATE calls and this first frame prefix form the local
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).

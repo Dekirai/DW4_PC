@@ -72,6 +72,8 @@ struct ActorSceneResource::Impl {
     std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeList>> node_lists;
     std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeStorage>> node_memories;
     std::map<std::uint32_t,std::shared_ptr<CollisionBox>> boxes;
+    std::map<std::uint32_t,std::shared_ptr<ActorSceneBitMask>> masks;
+    std::map<std::uint32_t,std::shared_ptr<ActorSceneBitMask::Storage>> mask_memories;
     std::unique_ptr<ModelSceneObjects> models;
     std::map<std::uint32_t,std::shared_ptr<const ActorSceneSkeleton>> skeletons;
     std::map<std::uint32_t,std::shared_ptr<ActorSceneAppearance>> appearances;
@@ -79,7 +81,7 @@ struct ActorSceneResource::Impl {
     std::map<std::uint32_t,std::shared_ptr<ActorBoneSelectorList>> selector_lists;
     std::size_t links{},text{};
     std::size_t owners() const noexcept {
-        return nodes.size()+node_lists.size()+node_memories.size()+boxes.size()+skeletons.size()+appearances.size()+lists.size()+selector_lists.size();
+        return nodes.size()+node_lists.size()+node_memories.size()+boxes.size()+masks.size()+mask_memories.size()+skeletons.size()+appearances.size()+lists.size()+selector_lists.size();
     }
     void require(std::size_t objects,std::size_t entries=0,std::size_t bytes=0) const {
         if(objects>max_objects-owners())fail("Actor scene exceeds its aggregate owner budget.");
@@ -88,6 +90,13 @@ struct ActorSceneResource::Impl {
     }
 };
 const IgbDocument& ActorSceneNode::document() const noexcept { return source_->document; }
+std::shared_ptr<const IgbDocument> ActorSceneBitMask::document_owner() const noexcept {
+    return source_ ? std::shared_ptr<const IgbDocument>(source_,&source_->document) : nullptr;
+}
+std::uint32_t ActorSceneBitMask::backing_word(std::size_t index) const {
+    if(!backing || index>=backing->size())fail("Switch mask requires its reached physical word.");
+    return (*backing)[index];
+}
 const std::string& ActorSceneNode::source() const noexcept { return source_->source; }
 std::uint32_t ActorSceneNode::source_occurrence() const noexcept { return source_->occurrence; }
 std::span<const std::shared_ptr<const ActorSceneNode>> ActorSceneNode::children() const {
@@ -108,6 +117,35 @@ std::shared_ptr<const CollisionBox> ActorSceneNode::box_owner() const {
 void ActorSceneNode::set_box_owner(std::shared_ptr<CollisionBox> value) {
     if(!bound_available_)fail("This actor scene node has no represented bound field.");box_=std::move(value);
 }
+std::shared_ptr<ActorSceneBitMask> ActorSceneNode::switch_mask_owner() {
+    if(!mask_available_)fail("This actor scene node has no represented switch mask field.");return mask_;
+}
+std::shared_ptr<const ActorSceneBitMask> ActorSceneNode::switch_mask_owner() const {
+    if(!mask_available_)fail("This actor scene node has no represented switch mask field.");return mask_;
+}
+void ActorSceneNode::set_switch_mask_owner(std::shared_ptr<ActorSceneBitMask> value) {
+    if(!mask_available_)fail("This actor scene node has no represented switch mask field.");mask_=std::move(value);
+}
+std::shared_ptr<ActorSceneNode> ActorSceneNode::source_transform_owner() {
+    if(!source_transform_available_)fail("This actor scene node has no represented source-transform field.");return source_transform_;
+}
+std::shared_ptr<const ActorSceneNode> ActorSceneNode::source_transform_owner() const {
+    if(!source_transform_available_)fail("This actor scene node has no represented source-transform field.");return source_transform_;
+}
+void ActorSceneNode::set_source_transform_owner(std::shared_ptr<ActorSceneNode> value) {
+    if(!source_transform_available_)fail("This actor scene node has no represented source-transform field.");
+    if(value==source_transform_)return;
+    const auto self=shared_from_this();
+    ActorSceneNodeList::validate(nullptr,nullptr,nullptr,{}, {self},this,value);
+    if(value) {
+        std::erase_if(value->incoming_sources_,[](const auto& owner){return owner.expired();});
+        if(value->incoming_sources_.size()>=max_objects)fail("Actor scene source exceeds its incoming-link budget.");
+        value->incoming_sources_.push_back(self);
+    }
+    if(source_transform_)std::erase_if(source_transform_->incoming_sources_,
+        [&](const auto& owner){const auto node=owner.lock();return !node || node.get()==this;});
+    source_transform_=std::move(value);
+}
 std::shared_ptr<ActorSceneNodeList> ActorSceneNode::child_list_owner() {
     if(!children_available_)fail("This actor scene node has no represented child-list field.");return children_;
 }
@@ -126,9 +164,14 @@ std::shared_ptr<const ActorSceneNode> ActorSceneNodeList::first_backing_node() c
     if(!storage_ || storage_->values_.empty())fail("Actor scene child list requires its addressable first backing slot.");
     return storage_->values_.front();
 }
+std::shared_ptr<ActorSceneNode> ActorSceneNodeList::backing_node(std::size_t index) const {
+    if(!storage_ || index>=storage_->values_.size())fail("Actor scene child list requires its reached physical backing slot.");
+    return std::const_pointer_cast<ActorSceneNode>(storage_->values_[index]);
+}
 void ActorSceneNodeList::validate(const ActorSceneNode* changed_node,const ActorSceneNodeList* changed_list,
     const ActorSceneNodeStorage* changed_storage,const Values& candidate,
-    const std::vector<std::shared_ptr<const ActorSceneNode>>& initial_roots) {
+    const std::vector<std::shared_ptr<const ActorSceneNode>>& initial_roots,
+    const ActorSceneNode* changed_source,const std::shared_ptr<ActorSceneNode>& source_value) {
     if(candidate.size()>max_objects)fail("Actor scene child backing exceeds its allocation budget.");
     auto roots=initial_roots;
     std::set<const ActorSceneNode*> ancestors;
@@ -136,6 +179,10 @@ void ActorSceneNodeList::validate(const ActorSceneNode* changed_node,const Actor
     for(std::size_t index=0;index<roots.size();++index) {
         const auto node=roots[index];if(!ancestors.insert(node.get()).second)continue;
         if(ancestors.size()>max_objects)fail("Actor scene mutation exceeds its ancestor budget.");
+        for(const auto& weak_source:node->incoming_sources_)if(auto parent=weak_source.lock()) {
+            if(++incoming_edges>max_links || roots.size()>=max_links)fail("Actor scene mutation exceeds its source-parent budget.");
+            roots.push_back(std::move(parent));
+        }
         for(const auto& weak_storage:node->incoming_)if(const auto storage=weak_storage.lock()) {
             if(++incoming_edges>max_links)fail("Actor scene mutation exceeds its parent-link budget.");
             for(const auto& weak_list:storage->lists_)if(const auto list=weak_list.lock())
@@ -163,6 +210,11 @@ void ActorSceneNodeList::validate(const ActorSceneNode* changed_node,const Actor
             list && list->storage_ ? list->storage_->values_ : empty;
         if(values.size()>max_links-edges)fail("Actor scene mutation exceeds its reachable-edge budget.");edges+=values.size();
         for(const auto& child:values)if(child)height=std::max(height,visit(child.get(),depth+1)+1);
+        const auto& source=node==changed_source ? source_value : node->source_transform_;
+        if(source) {
+            if(++edges>max_links)fail("Actor scene source graph exceeds its reachable-edge budget.");
+            height=std::max(height,visit(source.get(),depth+1)+1);
+        }
         visiting.erase(node);heights.emplace(node,height);return height;
     };
     for(const auto& root:roots)visit(root.get(),0);
@@ -334,6 +386,48 @@ std::shared_ptr<CollisionBox> ActorSceneResource::box(std::uint32_t reference) {
     } catch(const ActorSceneError&) {throw;}
       catch(const std::exception& error) {throw ActorSceneError(error.what());}
 }
+std::shared_ptr<ActorSceneBitMask> ActorSceneResource::bit_mask(std::uint32_t reference) {
+    try {
+        reference=canonical_reference(reference);
+        if(const auto found=impl_->masks.find(reference);found!=impl_->masks.end())return found->second;
+        impl_->require(1);Reader read{document()};const auto& object=read.object(reference,"igBitMask");
+        read.field(object,2,"igIntMetaField");read.field(object,3,"igIntMetaField");
+        read.field(object,4,"igMemoryRefMetaField");read.field(object,5,"igUnsignedIntMetaField");
+        auto owner=std::make_shared<ActorSceneBitMask>();owner->source_=impl_->source;owner->reference_=reference;
+        owner->count=document().field_i32(object,2);owner->capacity=document().field_i32(object,3);
+        owner->bit_count=document().field_u32(object,5);
+        std::optional<std::uint32_t> added_memory;
+        if(const auto ref=document().field_reference(object,4)) {
+            if(*ref>=document().references.size() || document().references[*ref].kind!=IgbReferenceKind::memory)
+                fail("Switch mask backing is not a memory reference.");
+            const auto& record=document().memories.at(document().references[*ref].value_index);
+            const auto canonical=record.reference_index;
+            if(canonical>=document().references.size() || document().references[canonical].kind!=IgbReferenceKind::memory ||
+                document().references[canonical].value_index!=document().references[*ref].value_index)
+                fail("Switch mask canonical memory does not identify its physical allocation.");
+            if(const auto found=impl_->mask_memories.find(canonical);found!=impl_->mask_memories.end())owner->backing=found->second;
+            else {
+                const auto bytes=document().memory(*ref);
+                if(bytes.size()%4 || bytes.size()/4>max_objects)fail("Switch mask backing exceeds its word allocation profile.");
+                impl_->require(2,bytes.size()/4);
+                owner->backing=std::make_shared<ActorSceneBitMask::Storage>();owner->backing->reserve(bytes.size()/4);
+                for(std::size_t offset=0;offset<bytes.size();offset+=4) {
+                    std::uint32_t word{};for(unsigned byte=0;byte<4;++byte)word|=std::uint32_t(bytes[offset+byte])<<(byte*8);
+                    owner->backing->push_back(word);
+                }
+                added_memory=canonical;
+            }
+        }
+        // Logical mask fields do not validate or truncate the physical words.
+        // 80300CA0/DC4 reads backing[index/32] directly at the reached child.
+        impl_->require(added_memory ? 2 : 1,added_memory ? owner->backing->size() : 0);
+        if(added_memory) {
+            impl_->mask_memories.emplace(*added_memory,owner->backing);impl_->links+=owner->backing->size();
+        }
+        impl_->masks.emplace(reference,owner);return owner;
+    } catch(const ActorSceneError&) {throw;}
+      catch(const std::exception& error) {throw ActorSceneError(error.what());}
+}
 std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t reference) {
     try {
         Reader read{document()};std::set<std::uint32_t> visiting,visiting_lists,visiting_memory;
@@ -426,9 +520,26 @@ std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t r
                     result->children_=child_list(*ref_list,depth+1);result->children_->attach(result);
                 }
             }
+            if(type=="igSwitch") {
+                read.field(value,8,"igObjectRefMetaField");result->mask_available_=true;
+                if(const auto mask=document().field_reference(value,8))result->mask_=bit_mask(*mask);
+            }
+            if(type=="beCopyTransform") {
+                read.field(value,12,"igObjectRefMetaField");result->source_transform_available_=true;
+                if(const auto source=document().field_reference(value,12)) {
+                    result->source_transform_=visit(*source,depth+1);
+                    auto& incoming=result->source_transform_->incoming_sources_;
+                    std::erase_if(incoming,[](const auto& owner){return owner.expired();});
+                    if(incoming.size()>=max_objects)fail("Actor scene source exceeds its incoming-link budget.");
+                    incoming.push_back(result);
+                }
+            }
             visiting.erase(ref);added.emplace(ref,result);return result;
         };
         auto result=visit(reference,0);
+        // Mask owners are loaded through the shared resource registry during
+        // this node transaction. Include them before publishing pending nodes.
+        require();
         ActorSceneNodeList::validate(nullptr,nullptr,nullptr,{}, {result});
         impl_->nodes.merge(added);impl_->node_lists.merge(added_lists);impl_->node_memories.merge(added_memory);impl_->boxes.merge(added_boxes);
         impl_->links+=links;impl_->text+=copied_text;return result;

@@ -18,6 +18,24 @@ class ActorSceneNodeList;
 class ActorSceneNodeStorage;
 struct ActorSceneSource;
 
+// Actual igBitMask fields. Logical size is independent of its physical word
+// allocation; collision traversal reads a reached word without checking either
+// the signed list count/capacity or the declared number of bits.
+class ActorSceneBitMask {
+public:
+    using Storage=std::vector<std::uint32_t>;
+    std::int32_t count{},capacity{};
+    std::uint32_t bit_count{};
+    std::shared_ptr<Storage> backing;
+    std::uint32_t backing_word(std::size_t index) const;
+    std::shared_ptr<const IgbDocument> document_owner() const noexcept;
+    std::optional<std::uint32_t> reference() const noexcept { return reference_; }
+private:
+    friend class ActorSceneResource;
+    std::shared_ptr<const ActorSceneSource> source_;
+    std::optional<std::uint32_t> reference_;
+};
+
 // Canonical loaded node identity and mutable original node fields. Geometry/material fields stay
 // in the owned original document; this is not a baked world-space mesh or actor.
 class ActorSceneNode : public std::enable_shared_from_this<ActorSceneNode> {
@@ -43,6 +61,14 @@ public:
     std::shared_ptr<ActorSceneNodeList> child_list_owner();
     std::shared_ptr<const ActorSceneNodeList> child_list_owner() const;
     void set_child_list_owner(std::shared_ptr<ActorSceneNodeList> children);
+    bool switch_mask_field_available() const noexcept { return mask_available_; }
+    std::shared_ptr<ActorSceneBitMask> switch_mask_owner();
+    std::shared_ptr<const ActorSceneBitMask> switch_mask_owner() const;
+    void set_switch_mask_owner(std::shared_ptr<ActorSceneBitMask>);
+    bool source_transform_field_available() const noexcept { return source_transform_available_; }
+    std::shared_ptr<ActorSceneNode> source_transform_owner();
+    std::shared_ptr<const ActorSceneNode> source_transform_owner() const;
+    void set_source_transform_owner(std::shared_ptr<ActorSceneNode>);
     std::shared_ptr<ModelPlacementNode> placement_node();
 private:
     friend class ActorSceneResource;
@@ -56,7 +82,11 @@ private:
     bool bound_available_{},children_available_{};
     std::shared_ptr<CollisionBox> box_;
     std::shared_ptr<ActorSceneNodeList> children_;
+    bool mask_available_{},source_transform_available_{};
+    std::shared_ptr<ActorSceneBitMask> mask_;
+    std::shared_ptr<ActorSceneNode> source_transform_;
     mutable std::vector<std::weak_ptr<ActorSceneNodeStorage>> incoming_;
+    mutable std::vector<std::weak_ptr<ActorSceneNode>> incoming_sources_;
 };
 
 // One physical nullable pointer backing allocation, independently shared by
@@ -85,6 +115,7 @@ public:
     std::int32_t capacity() const noexcept { return capacity_; }
     void clear() noexcept { count_=0; }
     std::shared_ptr<const ActorSceneNode> first_backing_node() const;
+    std::shared_ptr<ActorSceneNode> backing_node(std::size_t index) const;
     std::shared_ptr<const ActorSceneNodeStorage> storage_owner() const noexcept { return storage_; }
     void replace(std::vector<std::shared_ptr<const ActorSceneNode>> values);
     void append(std::shared_ptr<const ActorSceneNode> value);
@@ -94,7 +125,9 @@ private:
     static void validate(const ActorSceneNode* changed_node,const ActorSceneNodeList* changed_list,
         const ActorSceneNodeStorage* changed_storage,
         const std::vector<std::shared_ptr<const ActorSceneNode>>& candidate,
-        const std::vector<std::shared_ptr<const ActorSceneNode>>& roots);
+        const std::vector<std::shared_ptr<const ActorSceneNode>>& roots,
+        const ActorSceneNode* changed_source=nullptr,
+        const std::shared_ptr<ActorSceneNode>& source_value={});
     void attach(const std::shared_ptr<ActorSceneNode>& node);
     void detach(const ActorSceneNode* node);
     void bind_storage(std::shared_ptr<ActorSceneNodeStorage> storage);
@@ -220,6 +253,7 @@ public:
     std::shared_ptr<const ActorSceneNode> node(std::uint32_t reference);
     std::shared_ptr<ActorSceneNode> mutable_node(std::uint32_t reference);
     std::shared_ptr<CollisionBox> box(std::uint32_t reference);
+    std::shared_ptr<ActorSceneBitMask> bit_mask(std::uint32_t reference);
     ModelSceneObjects& models();
     std::shared_ptr<const ActorSceneSkeleton> skeleton(std::uint32_t reference);
     std::shared_ptr<ActorSceneAppearance> appearance(std::uint32_t reference);

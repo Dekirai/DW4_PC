@@ -157,6 +157,7 @@ struct ModelSceneObjects::Impl {
         else if(type=="beBaseInfoRam")result=std::make_shared<ModelSceneRam>();
         else if(type=="beHitLandDelivInfo")result=std::make_shared<ModelHitLandInfo>();
         else if(type=="beHitLandDelivInfoRam")result=std::make_shared<ModelHitLandRam>();
+        else if(type=="beHitLandModelInfo")result=std::make_shared<ModelHitLandGeometryInfo>();
         else if(type=="beModelCtrlInfoRamData")result=std::make_shared<ModelSceneOne>();
         else if(type=="beBaseInfoRamTimer")result=std::make_shared<ModelSceneTimer>();
         else if(type=="beModelCtrlInfoDataSeq")result=std::make_shared<ModelSceneSeq>();
@@ -195,7 +196,7 @@ struct ModelSceneObjects::Impl {
             // Named lookup and the sequence runner ignore capacity and check
             // only reached backing slots. Retain even a malformed named-list
             // shape until its actual consumer, without allocating by count.
-            if(type!="igNamedObjectList")list->values();
+            if(type!="igNamedObjectList" && type!="igStringObjList")list->values();
         } else if(auto sequence=std::dynamic_pointer_cast<ModelSceneSequence>(result)) {
             sequence->commands=child_list(3,"igNamedObjectList");
         } else if(auto command=std::dynamic_pointer_cast<ModelSceneCommand>(result)) {
@@ -219,6 +220,15 @@ struct ModelSceneObjects::Impl {
         } else if(auto land_info=std::dynamic_pointer_cast<ModelHitLandInfo>(result)) {
             land_info->name=read.text(authored,2);land_info->active=read.boolean(authored,4);
             land_info->data=child_list(5,"beBaseInfoDataList");land_info->rams=child_list(6,"beBaseInfoRamList");
+        } else if(auto geometry=std::dynamic_pointer_cast<ModelHitLandGeometryInfo>(result)) {
+            geometry->active=read.boolean(authored,4);
+            geometry->data=child_list(5,"beBaseInfoDataList");geometry->rams=child_list(6,"beBaseInfoRamList");
+            if(const auto graph=read.ref(authored,7))geometry->switch_graph=resource.mutable_node(*graph);
+            if(const auto check=read.ref(authored,8))geometry->check_switch=resource.mutable_node(*check);
+            // Original static categories use igNamedObjectList; the dynamic
+            // g_box category authors an empty igStringObjList in this field.
+            geometry->names=required_type<ModelSceneList>(child(9),"HITLANDMODEL names reference is not an actual list.");
+            geometry->kind=read.integer(authored,10);
         } else if(auto land=std::dynamic_pointer_cast<ModelHitLandRam>(result)) {
             land->number=read.integer(authored,2);
             if((document->field(authored,3) && read.ref(authored,3)) ||
@@ -303,6 +313,9 @@ std::shared_ptr<ModelHitLandInfo> ModelSceneObjects::hit_land_info(std::uint32_t
 }
 std::shared_ptr<ModelHitLandRam> ModelSceneObjects::hit_land_ram(std::uint32_t ref) {
     return required_type<ModelHitLandRam>(object(ref),"Requested HITLANDDELIVER RAM has a different concrete type.");
+}
+std::shared_ptr<ModelHitLandGeometryInfo> ModelSceneObjects::hit_land_geometry_info(std::uint32_t ref) {
+    return required_type<ModelHitLandGeometryInfo>(object(ref),"Requested HITLANDMODEL geometry info has a different concrete type.");
 }
 std::shared_ptr<ModelSceneData> ModelSceneObjects::data(std::uint32_t ref) {
     return required_type<ModelSceneData>(object(ref),"Requested model data is not a base-data owner.");

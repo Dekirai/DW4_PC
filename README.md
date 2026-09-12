@@ -1,14 +1,15 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.43 connects the player frame's original wall/floor consumer to actual
-HITLANDDELIVER recipients sharing the player's exact scene nodes. Wall, floor,
-landing and fall-transition branches preserve original work captures and
-native message order. The receiver issues real HITLANDMODEL requests; its
-complete geometry-query backend remains required. See
-[MODEL_MOVEMENT_COLLISION.md](docs/MODEL_MOVEMENT_COLLISION.md),
-[MODEL_HIT_LAND_SCENE.md](docs/MODEL_HIT_LAND_SCENE.md) and
-[HITLAND_DELIVER.md](docs/HITLAND_DELIVER.md).
+Version 0.44 adds the original HITLANDMODEL query owners and common geometry
+traversal. Queries retain reusable segment/result allocations, current inner
+switch masks and shared static/dynamic scene nodes. Native segment, normal and
+triangle arithmetic have separate original-instruction comparisons. The typed
+geometry visitor and wall/floor query handlers still need integration before
+these operations can return a complete original collision response. See
+[HITLAND_QUERY.md](docs/HITLAND_QUERY.md),
+[HITLAND_TRAVERSAL.md](docs/HITLAND_TRAVERSAL.md) and
+[HITLAND_INTERSECTION.md](docs/HITLAND_INTERSECTION.md).
 
 This is a core execution milestone. Original four-slot GENERATE acceptance
 and its prepared service prerequisites are tracked in
@@ -33,6 +34,13 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Select original collision geometry through canonical `beHitLandModelInfo`
+  owners, physical switch masks and retained query/visitor/scratch state.
+  Dynamic source matrices update the actual child before broad-phase rejection.
+  Original triangle intersection is a recovered leaf; complete typed geometry
+  dispatch, query result selection and HITLANDMODEL delivery remain required.
+  See [HITLAND_TRAVERSAL.md](docs/HITLAND_TRAVERSAL.md).
 
 - Route original player wall/floor checks through canonical HITLANDDELIVER
   info/RAM records with a distinct manager and shared model nodes. The five

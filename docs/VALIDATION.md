@@ -1,4 +1,64 @@
-# Actual movement-collision validation
+# HITLAND query infrastructure validation
+
+Version 0.44.0 was validated locally on 2026-09-12 and 2026-09-13. Canonical HITLANDMODEL
+geometry, reusable query pools, common switch traversal, retained visitor
+entry and bounded segment/triangle arithmetic now have native implementations.
+The actual player frame still reaches the HITLANDMODEL service boundary:
+complete node/attribute dispatch, candidate production and wall/land response
+handlers remain required. This checkpoint does not complete that backend.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 111/111 CTest suites passed; no compiler warnings |
+| Canonical geometry owners | 37 synthetic / 56 original-inclusive checks; shared masks/backing, nullable physical slots, raw kind bits, dynamic source links and canonical bounds |
+| Common HITLAND traversal | 54 synthetic / 85 original-inclusive checks; live lists/masks, captured loop state, name-before-kind publication, dynamic matrix prefixes and retained visitor calls |
+| Query storage and publication | 60 checks; independent query/list counts, reusable segments/candidates, physical backing, aliases and committed failure prefixes |
+| Intersection primitives | 43 checks; visitor reset, allocation prefixes, retained dispatch and bounded triangle effects |
+| Loaded actor regression | 94 synthetic / 198 original-inclusive checks passed |
+| Original model and recipient graphs | 75 synthetic / 1,643 original-inclusive model checks; 43 original-inclusive HITLANDDELIVER checks |
+| Original player construction/frame | 62 synthetic / 156 original-inclusive checks; four complete GENERATE returns and the first actual player frame reaching the unchanged HITLANDMODEL boundary |
+| Existing original integration | 160 motion, 202 control, 554 control/timer, 1,324 prepared sequence, 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Segment/normal instruction comparison | 10,826 cases, 359,388 original instructions, 2,840 square-root comparisons and 4,850 checked numeric-boundary cases; zero differences |
+| Triangle instruction comparison | 2,902 cases, 605,246 original instructions, 240 output-alias cases and 89 checked numeric-boundary cases; zero mismatches |
+| Python and command-line tools | Six verifier, eight inspect and five catalog tests passed; boot suite ran nine tests with one skipped because no application argument was supplied |
+
+Original geometry validation loads `ndmw.afs` entry 179, including floor info
+1768, wall infos 192/1953 and dynamic info 24723. Its 56 dynamic children retain
+actual source-transform links; loading does not copy their matrices. The common
+traversal acceptance uses an explicitly prepared info order and a test-only node
+observer. It visits 12 canonical floor and 15 wall nodes through their inner
+masks while leaving candidate count zero. These visits establish owner and
+traversal behavior, not original triangle production or hit/miss responses.
+
+The numerical comparisons execute original segment setup `801251D0`, normal
+transform `8012D434`, triangle leaf `801238E8` and its cross-product helper
+`8012CB74` with independently rounded instruction models. They compare published
+outputs and reached failure prefixes, including aliases. Explicit numeric
+boundaries do not claim the original nonfinite fallback or FPSCR exception
+behavior. They do not execute complete node dispatch, attribute/vertex mapping,
+CHECKWALL/CHECKLAND handlers, physical Gekko hardware or the full game loop.
+
+Both numerical comparison drivers were freshly compiled with current headers
+and linked only against the final production core, with no replacement module
+objects; both builds were clean at `/W4`. Original geometry and actor regressions
+used the final unified Release executables. The core was unchanged before and
+after both numerical replays; the geometry and actor executables also retained
+their hashes across their original-data runs. Frozen core SHA-256:
+`21335E3DC72823505D68DB9DA4256642BCB9E3CEAB47529DE83F274B920D710D`.
+
+No v0.44 application build, launch or package was produced. The manual preview
+remains v0.42 with unchanged provisional walking and camera behavior. Original
+startup/scheduling, the remaining script-helper and ride providers, full
+collision responses and the rest of the original gameplay remain outstanding.
+
+All validation for this checkpoint was local. GitHub Actions was disabled at
+the user's request, the workflow was removed, and no jobs were active when it
+was disabled. The hosted CI entries below are preserved historical results;
+they do not describe v0.44 validation.
+
+## Previous v0.43 checkpoint
+
+### Actual movement-collision validation
 
 Version 0.43.0 was validated locally on 2026-09-12. The actual player frame now
 sends movement-collision requests through registered HITLANDDELIVER owners and

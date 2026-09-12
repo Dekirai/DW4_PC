@@ -2,6 +2,20 @@
 
 ## Implemented boundary
 
+Version 0.44 represents actual `beHitLandModelInfo` owners separately from
+HITLANDDELIVER. The canonical graph retains live masks, child lists, bounds and
+dynamic source-transform links. `HitLandQuery` owns reusable segment/candidate
+pools with query counts independent of list counts. Common traversal preserves
+the original scratch preparation, name-before-kind publication, captured low
+mask/bounds/counts and fresh physical child/mask reads. Visitor reset and the
+retained concrete `+64` wrapper are implemented; typed node dispatch, attribute
+traversal, complete CHECKLAND reduction and CHECKWALL passes remain required.
+Independent segment/normal/triangle arithmetic checks do not establish that
+missing complete backend. The existing original player frame still stops at
+HITLANDMODEL. See [HITLAND_QUERY.md](HITLAND_QUERY.md),
+[HITLAND_TRAVERSAL.md](HITLAND_TRAVERSAL.md) and
+[HITLAND_INTERSECTION.md](HITLAND_INTERSECTION.md).
+
 Version 0.43 adds the actual movement-collision consumer and a separately owned
 HITLANDDELIVER manager. Its decoded info/RAM records share canonical scene
 nodes with MODELCTRL ONEs; registration preserves authored previous-position
