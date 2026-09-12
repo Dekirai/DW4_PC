@@ -155,6 +155,8 @@ struct ModelSceneObjects::Impl {
         std::shared_ptr<ModelSceneObject> result;
         if(type=="beModelCtrlInfo")result=std::make_shared<ModelSceneInfo>();
         else if(type=="beBaseInfoRam")result=std::make_shared<ModelSceneRam>();
+        else if(type=="beHitLandDelivInfo")result=std::make_shared<ModelHitLandInfo>();
+        else if(type=="beHitLandDelivInfoRam")result=std::make_shared<ModelHitLandRam>();
         else if(type=="beModelCtrlInfoRamData")result=std::make_shared<ModelSceneOne>();
         else if(type=="beBaseInfoRamTimer")result=std::make_shared<ModelSceneTimer>();
         else if(type=="beModelCtrlInfoDataSeq")result=std::make_shared<ModelSceneSeq>();
@@ -214,6 +216,23 @@ struct ModelSceneObjects::Impl {
             info->name=read.text(authored,2);info->active=read.boolean(authored,4);
             info->data=child_list(5,"beBaseInfoDataList");info->rams=child_list(6,"beBaseInfoRamList");
             info->kind=read.text(authored,7);
+        } else if(auto land_info=std::dynamic_pointer_cast<ModelHitLandInfo>(result)) {
+            land_info->name=read.text(authored,2);land_info->active=read.boolean(authored,4);
+            land_info->data=child_list(5,"beBaseInfoDataList");land_info->rams=child_list(6,"beBaseInfoRamList");
+        } else if(auto land=std::dynamic_pointer_cast<ModelHitLandRam>(result)) {
+            land->number=read.integer(authored,2);
+            if((document->field(authored,3) && read.ref(authored,3)) ||
+                (document->field(authored,4) && read.ref(authored,4)))
+                fail("Serialized non-null HITLANDDELIVER backlinks require original registration services.");
+            land->active=read.boolean(authored,5);
+            for(std::size_t i=0;i<land->words.size();++i)
+                land->words[i]=std::bit_cast<std::uint32_t>(read.integer(authored,static_cast<std::uint16_t>(6+i)));
+            land->data=child_list(10,"beBaseInfoDataList");
+            if(const auto node=read.ref(authored,11))land->node=resource.mutable_node(*node);
+            land->check_flags=read.integer(authored,12);
+            land->half_width=read.number(authored,13);land->up_range=read.number(authored,14);land->down_range=read.number(authored,15);
+            land->position=read.vector(authored,16);land->previous_position=read.vector(authored,17);
+            land->land_position=read.vector(authored,18);land->land_position_ok=read.boolean(authored,19);
         } else if(auto ram=std::dynamic_pointer_cast<ModelSceneRam>(result)) {
             ram->number=read.integer(authored,2);
             // Parent/manager are runtime-only in the supplied serialization.
@@ -278,6 +297,12 @@ std::shared_ptr<ModelSceneInfo> ModelSceneObjects::info(std::uint32_t ref) {
 }
 std::shared_ptr<ModelSceneRam> ModelSceneObjects::ram(std::uint32_t ref) {
     return required_type<ModelSceneRam>(object(ref),"Requested model RAM has a different concrete type.");
+}
+std::shared_ptr<ModelHitLandInfo> ModelSceneObjects::hit_land_info(std::uint32_t ref) {
+    return required_type<ModelHitLandInfo>(object(ref),"Requested HITLANDDELIVER info has a different concrete type.");
+}
+std::shared_ptr<ModelHitLandRam> ModelSceneObjects::hit_land_ram(std::uint32_t ref) {
+    return required_type<ModelHitLandRam>(object(ref),"Requested HITLANDDELIVER RAM has a different concrete type.");
 }
 std::shared_ptr<ModelSceneData> ModelSceneObjects::data(std::uint32_t ref) {
     return required_type<ModelSceneData>(object(ref),"Requested model data is not a base-data owner.");

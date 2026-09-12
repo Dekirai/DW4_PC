@@ -1,4 +1,58 @@
-# Actual player frame validation
+# Actual movement-collision validation
+
+Version 0.43.0 was validated locally on 2026-09-12. The actual player frame now
+sends movement-collision requests through registered HITLANDDELIVER owners and
+the retained native recipient. The first original-data player frame reaches a
+real HITLANDMODEL query. The query backend, remaining script-helper and ride
+providers, and the full original game loop are still required.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 107/107 CTest suites passed; no compiler warnings |
+| Actual movement-collision caller | 51 checks; native delivery, reply gates, retained continuations and explicit remaining service boundaries |
+| Actual HITLANDDELIVER recipient | 49 checks; five command branches, real nested queries, captured manager ownership and committed prefixes |
+| HITLAND arithmetic | 44 native checks; bounded horizontal normalization and X/Z overlap helpers |
+| Canonical HITLANDDELIVER graph | 28 synthetic / 43 original-inclusive checks; authored physical order, shared MODELCTRL nodes, nullable fields and real registration |
+| Native messenger | 173 checks passed |
+| Original player construction/frame | 62 synthetic / 156 original-inclusive checks; four complete registered GENERATE returns, actual HITLANDDELIVER registration and the first player frame reaching HITLANDMODEL |
+| Canonical model graph / actual sequence | 75 synthetic / 1,643 original-inclusive graph checks; 68 original-inclusive actual sequence checks |
+| Existing original integration | 160 motion, 202 control, 554 control/timer, 1,324 prepared sequence, 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Arithmetic instruction comparison | 8,080 cases, 201,953 original instructions, zero native comparison mismatches |
+| Python and command-line tools | Six verifier, eight inspect and five catalog tests passed; boot suite ran nine tests with one skipped because no application argument was supplied |
+
+The original-data acceptance retains explicitly prepared startup databases,
+font, map-name, clock and ACTION services. HITLANDDELIVER shares the exact
+canonical node allocations used by MODELCTRL ONE. Registration preserves the
+authored zero previous positions; it does not replace them with current node
+positions. The first changed-position request therefore reaches the real
+HITLANDMODEL query boundary. A wall/land query result is not fabricated to
+complete the frame. This remains a bounded startup and first-frame acceptance,
+not boot-to-game or four-player gameplay validation.
+
+The arithmetic comparison executes the represented instruction ranges at
+`802FDAF0..802FDC0C` and the complete `80300974` X/Z overlap helper. Its 7,072
+normalization cases include 3,906 supported finite positive-length cases and
+3,166 explicit checked numeric boundaries; the latter do not claim equivalence
+to the original nonfinite fallback. The remaining 1,008 cases cover overlap.
+This is bounded arithmetic coverage, not a full HITLANDDELIVER handler,
+CHECKWALL/CHECKLAND traversal, response or physical Gekko/FPSCR oracle.
+
+The final arithmetic driver was rebuilt with current headers and linked only
+against the frozen production core. The core SHA-256 was unchanged before and
+after replay:
+`96BB4E9B53DF7F631B9B9C93076B1F5CBE7D80E3DDF5332AE70C225F8D5C135A`.
+
+No v0.43 application build, launch or package was produced. The manual preview
+remains v0.42 with the same provisional walking and camera implementation.
+The tool checks above do not claim new application or visual acceptance.
+
+Hosted CI for v0.42, run `34718661426`, was verified during this checkpoint:
+all three jobs succeeded (Windows app, Ubuntu core and Windows core). This is
+separate from local v0.43 validation and does not report v0.43 hosted CI.
+
+## Previous v0.42 checkpoint
+
+### Actual player frame validation
 
 Version 0.42.0 was validated locally on 2026-09-12. One actual player frame
 now connects input/control, status, movement, wait, invulnerability and delayed

@@ -2,12 +2,30 @@
 
 ## Implemented boundary
 
+Version 0.43 adds the actual movement-collision consumer and a separately owned
+HITLANDDELIVER manager. Its decoded info/RAM records share canonical scene
+nodes with MODELCTRL ONEs; registration preserves authored previous-position
+fields instead of initializing them from an already moved player. Captured
+manager references and per-delivery receiver invocations survive nested native
+query suspension without creating a manager/work ownership cycle.
+
+The outer wall/floor consumer retains its original parent/work, resolves only
+reached physical response fields and performs real SQ_FALL entry. Landing
+updates the freshly selected vertical motion owner with the original mode-5
+stores. The five HITLANDDELIVER commands construct real HITLANDMODEL requests,
+consume original reply gates and update the shared node/position fields.
+Complete HITLANDMODEL graph traversal and query results remain required;
+the preview's host collision solver supplies no substitute results. The
+remaining WHit/FHit script/context and ride operations are explicit native
+service boundaries. See [MODEL_MOVEMENT_COLLISION.md](MODEL_MOVEMENT_COLLISION.md),
+[MODEL_HIT_LAND_SCENE.md](MODEL_HIT_LAND_SCENE.md) and [HITLAND_DELIVER.md](HITLAND_DELIVER.md).
+
 Version 0.42 connects `ModelFrameInvocation` to actual player input, raw
 post-input control, status update, motion, common/player wait, invulnerability
 and delayed subcommand advancement. Each callback captures its own original
 owners; a replacement ONE/work does not retarget the outer frame. Direct wait
 completion resumes the real command loop without an extra ordinary-entry
-reset or player callback. Required position-lock, ride and movement collision
+reset or player callback. Required position-lock, ride and remaining collision
 operations suspend at their reached phases. See [MODEL_FRAME.md](MODEL_FRAME.md).
 
 The manager owns distinct nullable context, system and pad objects. Named
@@ -73,7 +91,7 @@ recursive ACTION mutation is rejected. Unsupported controller effects, missing
 services and unsafe consumed fields cannot become successful no-ops.
 
 These core paths do not replace the preview's provisional input, movement or
-camera. Original outer scheduling, remaining movement collision/ride helpers,
+camera. Original outer scheduling, remaining collision-query/ride helpers,
 complete startup, HUD rendering, combat, transitions, audio, saves and local
 multiplayer still require integration. See [MODEL_SCENE.md](MODEL_SCENE.md),
 [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md),
@@ -82,7 +100,7 @@ multiplayer still require integration. See [MODEL_SCENE.md](MODEL_SCENE.md),
 ## Earlier implementation milestones
 
 The versioned descriptions below record each earlier milestone and its limits
-at that time. Requirements subsequently connected through version 0.42 are described
+at that time. Requirements subsequently connected through version 0.43 are described
 above; historical mentions of missing ordinary entry, player callbacks or
 execution bundles are not the current implementation boundary.
 

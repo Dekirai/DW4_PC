@@ -4,6 +4,7 @@
 #include "dw4/model_wait_actual.hpp"
 #include "dw4/model_motion_actual.hpp"
 #include "dw4/model_subcommand_update.hpp"
+#include "dw4/model_movement_collision.hpp"
 
 namespace dw4 {
 namespace {
@@ -47,6 +48,7 @@ struct ModelFrameInvocation::Impl {
     std::unique_ptr<ModelCommonWait> wait;
     std::shared_ptr<ModelRideData> ride;
     std::unique_ptr<ModelSubcommandUpdateInvocation> subcommands;
+    std::unique_ptr<ModelMovementCollisionInvocation> collision;
     std::shared_ptr<ModelRamTimerAccess> timer;
     std::shared_ptr<ModelFrameExecutionLease> lease=std::make_shared<ModelFrameExecutionLease>();
     Phase phase=Phase::capture;
@@ -64,6 +66,7 @@ const ModelPlayerInputInvocation* ModelFrameInvocation::input() const noexcept {
 const ModelStatusUpdateInvocation* ModelFrameInvocation::status() const noexcept {return impl_->status.get();}
 const ModelMotionInvocation* ModelFrameInvocation::motion() const noexcept {return impl_->motion.get();}
 const ModelSubcommandUpdateInvocation* ModelFrameInvocation::subcommands() const noexcept {return impl_->subcommands.get();}
+const ModelMovementCollisionInvocation* ModelFrameInvocation::collision() const noexcept {return impl_->collision.get();}
 const ModelCommonWait* ModelFrameInvocation::wait() const noexcept {return impl_->wait.get();}
 MessengerCallResult ModelFrameInvocation::resume(NativeMessenger& messenger,ActionEventRuntime& events,
     std::shared_ptr<ModelFrameServices> supplied) {
@@ -191,8 +194,10 @@ MessengerCallResult ModelFrameInvocation::resume(NativeMessenger& messenger,Acti
         case Impl::Phase::collision_gate:
             state.phase=scope.work->motion.translated!=0 ? Impl::Phase::collision:Impl::Phase::ride_tail_gate;break;
         case Impl::Phase::collision: {
-            const auto current=services();if(!current || !current->collision)return missing("actual movement collision/hit processing");
-            const auto result=current->collision(scope);check();if(!result.completed)return result;
+            const auto current=services();
+            if(!state.collision)state.collision=std::make_unique<ModelMovementCollisionInvocation>(scope.ram,scope.parent,scope.work);
+            const auto result=state.collision->resume(messenger,events,current ? current->collision:nullptr);
+            check();if(!result.completed)return result;
             state.phase=Impl::Phase::ride_tail_gate;break;
         }
         case Impl::Phase::ride_tail_gate:

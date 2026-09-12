@@ -4,6 +4,7 @@
 #include "dw4/model_sequence_entry.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/model_frame.hpp"
+#include "dw4/model_hit_land_handler.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -143,6 +144,18 @@ struct ActionEventRuntime::Impl : ModelSceneManager, std::enable_shared_from_thi
         std::uint8_t& active() {return ram ? ram->active : *prepared->active;}
     };
     std::map<Key,std::shared_ptr<ModelOwner>> models;
+    // Distinct beHitLandDeliv allocation; its real +14 messenger is shared
+    // with the runtime, while RAM backlinks never alias the player manager.
+    struct HitLandManager : ModelSceneManager {
+        NativeMessenger* messenger{};
+        std::weak_ptr<Impl> runtime;
+    };
+    struct HitLandOwner {
+        std::shared_ptr<ActorSceneResource> scene;
+        std::shared_ptr<ModelHitLandRam> ram;
+    };
+    std::shared_ptr<HitLandManager> hit_land_manager;
+    std::map<Key,HitLandOwner> hit_lands;
     ModelPlayerCreateServices player_creation;
     std::shared_ptr<ModelSequenceEntryServices> sequence_services;
     std::shared_ptr<ModelFrameServices> frame_services;
@@ -198,10 +211,10 @@ struct ActionEventRuntime::Impl : ModelSceneManager, std::enable_shared_from_thi
         return *found->second->prepared;
     }
     std::size_t owner_count() const noexcept {
-        return models.size()+consumers.size()+actions.size()+prepared_controllers.size();
+        return models.size()+hit_lands.size()+consumers.size()+actions.size()+prepared_controllers.size();
     }
     void check_new(Key id) const {
-        if(models.contains(id) || consumers.contains(id) || actions.contains(id) || prepared_controllers.contains(id))
+        if(models.contains(id) || hit_lands.contains(id) || consumers.contains(id) || actions.contains(id) || prepared_controllers.contains(id))
             fail("RAM already has a prepared event owner.");
         if(owner_count()>=4096) fail("Prepared event RAM ownership exceeds 4096 objects.");
     }
@@ -344,6 +357,7 @@ struct ActionEventRuntime::Impl : ModelSceneManager, std::enable_shared_from_thi
         return {
             [this](ControllerObjectId id)->std::optional<std::uint8_t> {
                 if(const auto found=models.find(key(id));found!=models.end()) return found->second->active();
+                if(const auto found=hit_lands.find(key(id));found!=hit_lands.end()) return found->second.ram->active;
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
                 if(const auto found=prepared_controllers.find(key(id));found!=prepared_controllers.end()) return found->second.active();
@@ -351,6 +365,25 @@ struct ActionEventRuntime::Impl : ModelSceneManager, std::enable_shared_from_thi
                 return std::nullopt;
             },
             [this](ControllerObjectId id)->MessengerManager {
+                if(const auto found=hit_lands.find(key(id));found!=hit_lands.end()) {
+                    const auto manager=found->second.ram->manager.lock();
+                    if(!manager || manager!=hit_land_manager)return {};
+                    return {[captured=std::weak_ptr<HitLandManager>(hit_land_manager),ram=found->second.ram,
+                        call=std::shared_ptr<ModelHitLandInvocation>{}]
+                        (NativeMessenger& messenger,const MessengerDelivery& delivery) mutable {
+                        const auto manager=captured.lock();
+                        const auto runtime=manager ? manager->runtime.lock() : nullptr;
+                        if(!runtime || !runtime->facade_attached || !manager->messenger)
+                            return MessengerCallResult{false,0,"The captured HITLANDDELIVER manager no longer has its live event runtime."};
+                        if(manager->messenger!=&messenger)
+                            fail("HITLANDDELIVER delivery changed its captured manager's actual messenger.");
+                        if(!call)call=std::make_shared<ModelHitLandInvocation>(ram,delivery.message.command,manager);
+                        return call->resume(*manager->messenger,runtime->events_runtime);
+                    },[](NativeMessenger&,const MessengerDelivery&,std::string_view) {
+                        // Distinct manager vtable +90 is base 802F2238.
+                        return MessengerCallResult{true,0,{}};
+                    }};
+                }
                 if(const auto found=models.find(key(id));found!=models.end()) {
                     if(found->second->ram) {
                         const auto manager=found->second->ram->manager.lock();
@@ -597,6 +630,9 @@ ControllerObjectId ActionEventRuntime::register_model_scene_ram(std::shared_ptr<
         for(const auto& [other_id,owner]:impl_->models)
             if(other_id.file_index==id.file_index && owner->scene && owner->scene!=scene)
                 fail("One source occurrence cannot represent two separately loaded model scenes.");
+        for(const auto& [other_id,owner]:impl_->hit_lands)
+            if(other_id.file_index==id.file_index && owner.scene!=scene)
+                fail("One source occurrence cannot represent distinct MODELCTRL and HITLANDDELIVER scene owners.");
         impl_->require_source(id.file_index,ram->source());
         impl_->models.emplace(key(id),std::make_shared<Impl::ModelOwner>(scene,ram));
     }
@@ -617,6 +653,48 @@ ControllerObjectId ActionEventRuntime::register_model_scene_ram(std::shared_ptr<
     // prerequisite; this appends its recovered player-category tail.
     impl_->messenger.register_recipient(id,"PLAYER",info->name.value_or(std::string{}),ram->number);
     return id;
+}
+ControllerObjectId ActionEventRuntime::register_hit_land_scene_ram(std::shared_ptr<ActorSceneResource> scene,
+    std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number) {
+    if(!scene)fail("HITLANDDELIVER registration requires its actual loaded scene owner.");
+    const auto info=scene->models().hit_land_info(info_reference);
+    const auto ram=scene->models().hit_land_ram(ram_reference);
+    if(!info || !ram || !ram->reference())fail("HITLANDDELIVER registration requires physical info and RAM owners.");
+    const ControllerObjectId id{ram->source_occurrence(),*ram->reference()};
+    const auto found=impl_->hit_lands.find(id);
+    if(found!=impl_->hit_lands.end()) {
+        if(found->second.scene!=scene || found->second.ram!=ram)
+            fail("The HITLANDDELIVER identity already belongs to a different actual loaded owner.");
+    } else {
+        impl_->check_new(id);
+        for(const auto& [other_id,owner]:impl_->models)
+            if(other_id.file_index==id.file_index && owner->scene && owner->scene!=scene)
+                fail("One source occurrence cannot represent distinct MODELCTRL and HITLANDDELIVER scene owners.");
+        for(const auto& [other_id,owner]:impl_->hit_lands)
+            if(other_id.file_index==id.file_index && owner.scene!=scene)
+                fail("One source occurrence cannot represent separately loaded HITLANDDELIVER scenes.");
+        impl_->require_source(id.file_index,ram->source());
+        impl_->hit_lands.emplace(id,Impl::HitLandOwner{scene,ram});
+    }
+    if(!impl_->hit_land_manager) {
+        auto manager=std::make_shared<Impl::HitLandManager>();
+        manager->context=impl_->context;manager->system=impl_->system;
+        manager->messenger=&impl_->messenger;manager->runtime=impl_;
+        impl_->hit_land_manager=std::move(manager);
+    }
+    // 802F25B4..CC, followed by distinct +7C 802FD9DC -> 80305308.
+    // No collision state, node translation or activity is initialized here.
+    ram->words[0]=0;ram->words[3]=0;ram->words[2]=0;ram->words[1]=0;
+    ram->manager=impl_->hit_land_manager;ram->parent=info;ram->number=number;
+    const auto parent=ram->parent.lock();const auto current_number=ram->number;
+    if(!parent)fail("HITLANDDELIVER registration reached a null current parent info.");
+    impl_->messenger.register_recipient(id,"HITLANDDELIVER",parent->name.value_or(std::string{}),current_number);
+    return id;
+}
+std::shared_ptr<ModelHitLandRam> ActionEventRuntime::hit_land_ram(ControllerObjectId id) const {
+    const auto found=impl_->hit_lands.find(id);
+    if(found==impl_->hit_lands.end())fail("No HITLANDDELIVER registration owns this source-qualified RAM.");
+    return found->second.ram;
 }
 std::shared_ptr<ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) {
     if(const auto ram=model_ram(id)) {
@@ -716,7 +794,7 @@ void ActionEventRuntime::register_consumer(ActionEventTableProgram program,bool 
     // one RAM. Conflicting existing owners must be rejected before registration.
     for(const auto ram:owned->ram_owners()) {
         const Key id{owned->source_occurrence(),ram};
-        if(impl_->models.contains(id) || impl_->actions.contains(id) || impl_->prepared_controllers.contains(id))
+        if(impl_->models.contains(id) || impl_->hit_lands.contains(id) || impl_->actions.contains(id) || impl_->prepared_controllers.contains(id))
             fail("Consumer RAM conflicts with existing prepared controller work.");
         const auto found=impl_->consumers.find(id);
         if(found!=impl_->consumers.end() && found->second.program->kind()!=owned->kind())
@@ -782,6 +860,7 @@ void ActionEventRuntime::register_controllers(std::span<const PreparedController
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
     if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active()=active ? std::uint8_t{1} : std::uint8_t{0};
+    else if(const auto land=impl_->hit_lands.find(key(id));land!=impl_->hit_lands.end()) land->second.ram->active=active ? std::uint8_t{1} : std::uint8_t{0};
     else if(const auto consumer=impl_->consumers.find(key(id));consumer!=impl_->consumers.end()) consumer->second.active=active;
     else fail("Cannot change activity of an unowned event RAM.");
 }

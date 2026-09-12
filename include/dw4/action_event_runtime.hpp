@@ -88,6 +88,12 @@ public:
     ControllerObjectId register_model_scene_ram(std::shared_ptr<ActorSceneResource>,
         std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number);
     std::shared_ptr<ModelSceneRam> model_ram(ControllerObjectId id) const;
+    // One actual HITLANDDELIVER registration occurrence after the manager's
+    // generic info/context preparation. Preserves authored collision vectors;
+    // registration does not derive previous position from the shared node.
+    ControllerObjectId register_hit_land_scene_ram(std::shared_ptr<ActorSceneResource>,
+        std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number);
+    std::shared_ptr<ModelHitLandRam> hit_land_ram(ControllerObjectId id) const;
     // Actual current manager+0C context. Attaching/replacing this reference is
     // explicit preparation; this method does not run the original scheduler.
     void set_model_context(std::shared_ptr<ModelSceneContext>);

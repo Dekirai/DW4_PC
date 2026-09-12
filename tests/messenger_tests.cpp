@@ -495,11 +495,37 @@ void buffer_release_reentrancy() {
     check(blocked==8 && empty(child) && messenger.buffer_depth()==0 && messenger.buffer().integers()==std::vector<std::int32_t>{7}
         && messenger.selected().category=="ROOT","Object release reentered a partially rotated buffer stack");
 }
+void known_boolean_publication() {
+    dw4::MessengerBuffer packet;packet.set_enabled_only(255);
+    packet.add_bool(9);packet.add_bool(8);packet.add_bool(7);packet.add_int(12);packet.add_float(1.5f);
+    packet.add_int64(35);packet.add_string("owner");packet.add_vector({1,2,3});
+    const dw4::AnimationMatrix matrix{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    packet.add_matrix(matrix);packet.add_object(a);
+    const std::array<std::uint8_t,2> reply{255,2};packet.replace_booleans(reply);
+    check(packet.booleans()==std::vector<std::uint8_t>({255,2}) && packet.enabled_only()==255 &&
+        packet.integers()==std::vector<std::int32_t>{12} && packet.floats()==std::vector<float>{1.5f} &&
+        packet.integers64()==std::vector<std::int64_t>{35} && packet.strings()[0]=="owner" &&
+        packet.vectors()[0]==std::array<float,3>{1,2,3} && packet.matrices()[0]==matrix &&
+        std::get<Id>(packet.objects()[0])==a,"Known boolean publication modified another list or normalized response bytes");
+    packet.replace_booleans(std::span(packet.booleans()).subspan(1));
+    check(packet.booleans()==std::vector<std::uint8_t>{2},"Aliased boolean publication invalidated its own supplied values");
+    packet.replace_booleans({});check(packet.booleans().empty() && packet.integers().size()==1,
+        "Empty boolean publication cleared another typed list");
+    dw4::MessengerBuffer full;
+    for(std::size_t i=0;i<32768;++i)full.add_int(0);
+    rejects([&]{full.replace_booleans(reply);});
+    check(full.booleans().empty() && full.integers().size()==32768,"Failed boolean publication changed the prior bounded packet");
+    full.clear_integers();full.replace_booleans(reply);
+    for(std::size_t i=0;i<32766;++i)full.add_int(0);
+    full.replace_booleans({});full.add_bool(4);full.add_bool(5);
+    rejects([&]{full.add_bool(6);});
+    check(full.booleans()==std::vector<std::uint8_t>({4,5}),"Boolean replacement broke aggregate entry accounting");
+}
 }
 int main() {
     try {
         matching();activity_and_queries();cache();nested();continuation();nested_eviction();storage_and_bounds();registration_and_stack_bounds();retained_box_objects();
-        explicit_buffer_stack();stacked_delivery_continuation();buffer_release_reentrancy();
+        explicit_buffer_stack();stacked_delivery_continuation();buffer_release_reentrancy();known_boolean_publication();
         std::cout<<"Messenger tests passed: "<<checks<<" checks\n";return 0;
     } catch(const std::exception& error) { std::cerr<<"Messenger test failure: "<<error.what()<<'\n';return 1; }
 }

@@ -43,6 +43,17 @@ void MessengerBuffer::clear_integers() {
     entries_-=integers_.size(); bytes_-=integers_.size()*4;
     integers_.clear();
 }
+void MessengerBuffer::replace_booleans(std::span<const std::uint8_t> values) {
+    check_mutation();
+    const auto other_entries=entries_-booleans_.size();
+    const auto other_bytes=bytes_-booleans_.size();
+    if(values.size()>32768-other_entries || values.size()>text_limit-other_bytes)
+        throw MessengerError("Messenger boolean response exceeds its host bound.");
+    // Capture before publication, including when values aliases the old list.
+    std::vector<std::uint8_t> replacement(values.begin(),values.end());
+    booleans_=std::move(replacement);
+    entries_=other_entries+booleans_.size();bytes_=other_bytes+booleans_.size();
+}
 void MessengerBuffer::add_bool(std::uint8_t value) {
     check_append(1); booleans_.push_back(value); ++entries_; ++bytes_;
 }

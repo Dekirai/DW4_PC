@@ -3,6 +3,7 @@
 #include "dw4/action_dispatch.hpp"
 #include "dw4/model_frame.hpp"
 #include "dw4/model_subcommand_update.hpp"
+#include "dw4/model_movement_collision.hpp"
 #include "dw4/model_motion_actual.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
@@ -281,6 +282,19 @@ void original(const std::filesystem::path& root) {
         check(one && !one->work && one->node==player->mutable_node(node_references[index]),
             "Original player creation did not receive the actual serialized-null work and canonical node owner.");
     }
+    const auto land_info=player->models().hit_land_info(1712);
+    const auto land_rams=land_info->rams->values();
+    check(land_rams.size()==4,"Original HITLANDDELIVER must retain its authored physical four-RAM list.");
+    for(std::size_t index=0;index<land_rams.size();++index) {
+        const auto original=std::dynamic_pointer_cast<ModelHitLandRam>(land_rams[index]);
+        if(!original || !original->reference())throw std::runtime_error("Original HITLANDDELIVER list contains no concrete source RAM.");
+        const auto id=events.register_hit_land_scene_ram(player,1712,*original->reference(),static_cast<std::int32_t>(index));
+        const auto actual=events.hit_land_ram(id);
+        check(actual==original && actual->node==find_model_one(*rams[index])->node &&
+            actual->parent.lock()==land_info && actual->manager.lock()!=events.model_manager() &&
+            actual->previous_position==std::array<float,3>{},
+            "Original HITLANDDELIVER registration detached its shared node or invented previous position/manager identity.");
+    }
     auto& messenger=events.messenger();
     for(std::int32_t group=0;group<2;++group) {
         messenger.select("PLAYERPOINT",{},-1);messenger.buffer().add_int(group);
@@ -415,11 +429,12 @@ void original(const std::filesystem::path& root) {
     events.model_manager()->pads=pads;
     events.model_manager()->system=std::make_shared<ModelSceneSystem>(ModelSceneSystem{1});
     auto frame=events.begin_model_frame(ids[0]);const auto frame_result=events.resume(*frame);
-    if(frame_result.completed || frame_result.diagnostic.find("collision")==std::string::npos)
+    if(frame_result.completed || frame_result.diagnostic.find("HITLANDMODEL")==std::string::npos)
         throw std::runtime_error("Original first model frame boundary: "+frame_result.diagnostic);
     check(frame->captured().work==created && frame->input() && frame->input()->completed() &&
         frame->status() && frame->status()->completed() && frame->motion() && frame->motion()->completed() &&
         frame->subcommands() && frame->subcommands()->completed() &&
+        frame->collision() && !frame->collision()->completed() &&
         created->key_input==0 && created->key_event_name=="SQ_NONE" && created->sequence.name=="SQ_WAIT",
         "Original first frame did not preserve generated work through input, control, status, motion and subcommands.");
     check(created->subcommands->list_owner()->size()==1 &&
@@ -428,7 +443,8 @@ void original(const std::filesystem::path& root) {
         "Original delayed player number effect did not consume the actual system delta exactly once.");
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
-        "first neutral actual frame reaches its retained movement-collision boundary; original scheduling and full gameplay remain required\n";
+        "first neutral actual frame enters its shared-node HITLANDDELIVER and reaches the actual HITLANDMODEL query boundary; "
+        "original query geometry, scheduling and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

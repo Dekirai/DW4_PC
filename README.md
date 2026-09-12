@@ -1,19 +1,19 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.42 connects one actual player frame to original input, control,
-status, motion, wait and delayed subcommand updates. Each helper consumes its
-own original RAM/ONE/work and time owners. Retained invocations preserve
-completed effects across missing services and work replacement. Ordinary
-sequence entry, native ACTION and player generation remain connected beneath
-that frame. See [MODEL_FRAME.md](docs/MODEL_FRAME.md),
-[PLAYER_INPUT.md](docs/PLAYER_INPUT.md) and
-[MODEL_STATUS_UPDATE.md](docs/MODEL_STATUS_UPDATE.md).
+Version 0.43 connects the player frame's original wall/floor consumer to actual
+HITLANDDELIVER recipients sharing the player's exact scene nodes. Wall, floor,
+landing and fall-transition branches preserve original work captures and
+native message order. The receiver issues real HITLANDMODEL requests; its
+complete geometry-query backend remains required. See
+[MODEL_MOVEMENT_COLLISION.md](docs/MODEL_MOVEMENT_COLLISION.md),
+[MODEL_HIT_LAND_SCENE.md](docs/MODEL_HIT_LAND_SCENE.md) and
+[HITLAND_DELIVER.md](docs/HITLAND_DELIVER.md).
 
 This is a core execution milestone. Original four-slot GENERATE acceptance
 and its prepared service prerequisites are tracked in
 [VALIDATION.md](docs/VALIDATION.md). The original frame scheduler, device-to-player
-assignment, gameplay camera, movement collision response, combat and complete
+assignment, gameplay camera, complete collision queries, combat and complete
 game remain unfinished. The visible
 walking preview is unchanged. The full original game, including local
 one-to-four-player play, remains the target. See
@@ -34,10 +34,21 @@ not contain game files.
 
 ## Current capabilities
 
+- Route original player wall/floor checks through canonical HITLANDDELIVER
+  info/RAM records with a distinct manager and shared model nodes. The five
+  recipient commands preserve their original query/response and matrix-update
+  order. Original-data integration reaches the actual HITLANDMODEL query
+  boundary; complete triangle traversal and wall/land result selection remain
+  required. Original direction normalization and XZ broad-phase arithmetic
+  have separate instruction comparisons. See
+  [MODEL_MOVEMENT_COLLISION.md](docs/MODEL_MOVEMENT_COLLISION.md),
+  [HITLAND_DELIVER.md](docs/HITLAND_DELIVER.md) and
+  [HITLAND_MATH.md](docs/HITLAND_MATH.md).
+
 - Execute one actual player-manager frame with independently captured input,
   status, motion and wait invocations. Direct wait completion resumes the live
   command loop; delayed subcommands read the current system delta per entry.
-  Required camera, sound/effect, position-lock, ride and collision operations
+  Required camera, sound/effect, position-lock, ride and collision-query operations
   retain explicit boundaries. This is core integration, not a complete game
   loop or connected multiplayer. See [MODEL_FRAME.md](docs/MODEL_FRAME.md),
   [MODEL_MOTION_ACTUAL.md](docs/MODEL_MOTION_ACTUAL.md),

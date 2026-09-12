@@ -107,6 +107,12 @@ public:
     std::shared_ptr<ModelSceneList> data,rams;
     std::optional<std::string> kind;
 };
+class ModelHitLandInfo final : public ModelSceneObject {
+public:
+    ModelHitLandInfo():ModelSceneObject("beHitLandDelivInfo") {}
+    std::uint8_t active=1;
+    std::shared_ptr<ModelSceneList> data,rams;
+};
 struct ModelPadManager;
 struct ModelSceneContext { std::uint64_t world_time{}; };
 struct ModelSceneSystem {float frame_time_f{};};
@@ -127,6 +133,21 @@ public:
     std::weak_ptr<ModelSceneInfo> parent;
     std::weak_ptr<const ModelSceneManager> manager;
 };
+class ModelHitLandRam final : public ModelSceneObject {
+public:
+    ModelHitLandRam():ModelSceneObject("beHitLandDelivInfoRam") {}
+    std::int32_t number{};
+    std::uint8_t active=1;
+    std::array<std::uint32_t,4> words{};
+    std::shared_ptr<ModelSceneList> data;
+    std::weak_ptr<ModelHitLandInfo> parent;
+    std::weak_ptr<const ModelSceneManager> manager;
+    std::shared_ptr<ActorSceneNode> node; // +2C _transform, shared with MODELCTRL ONE.
+    std::int32_t check_flags{}; // +30 _checkFlag.
+    float half_width=3.0f,up_range=4.0f,down_range=4.0f;
+    std::array<float,3> position{},previous_position{},land_position{}; // +40/+4C/+58.
+    std::uint8_t land_position_ok{}; // +64 _landPosOK.
+};
 
 // One registry, owned lazily by ActorSceneResource. The nonowning resource
 // reference is used only while loading; captured graph owners outlive it.
@@ -138,6 +159,8 @@ public:
     std::shared_ptr<ModelSceneObject> object(std::uint32_t reference);
     std::shared_ptr<ModelSceneInfo> info(std::uint32_t reference);
     std::shared_ptr<ModelSceneRam> ram(std::uint32_t reference);
+    std::shared_ptr<ModelHitLandInfo> hit_land_info(std::uint32_t reference);
+    std::shared_ptr<ModelHitLandRam> hit_land_ram(std::uint32_t reference);
     std::shared_ptr<ModelSceneData> data(std::uint32_t reference);
     std::shared_ptr<ModelSceneList> list(std::uint32_t reference);
 private:

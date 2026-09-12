@@ -40,6 +40,10 @@ public:
     void clear();
     // Original integer-list reset; preserve the other seven typed lists and gate.
     void clear_integers();
+    // Combined 8030691C resize + known 803069EC stores with no intervening
+    // callbacks. Every published byte is supplied; preserve other lists/gate.
+    // This does not expose original uninitialized slots or spare capacity.
+    void replace_booleans(std::span<const std::uint8_t> values);
     void add_bool(std::uint8_t value);
     void add_int(std::int32_t value);
     void add_float(float value);

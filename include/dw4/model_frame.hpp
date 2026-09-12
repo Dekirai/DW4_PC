@@ -10,6 +10,8 @@ class ModelRideData;
 class ModelMotionInvocation;
 class ModelSubcommandUpdateInvocation;
 struct ModelSubcommandUpdateServices;
+class ModelMovementCollisionInvocation;
+struct ModelMovementCollisionServices;
 // Host continuation lease only; no guest work field or owning back-reference.
 struct ModelFrameExecutionLease {bool completed{},faulted{},executing{};};
 
@@ -28,7 +30,7 @@ struct ModelFrameServices {
     std::function<MessengerCallResult(const ModelFrameContext&)> position_lock;
     std::function<MessengerCallResult(const ModelFrameContext&,const std::shared_ptr<ModelRideData>&)> ride;
     std::shared_ptr<ModelSubcommandUpdateServices> subcommands;
-    std::function<MessengerCallResult(const ModelFrameContext&)> collision;
+    std::shared_ptr<ModelMovementCollisionServices> collision;
     std::function<MessengerCallResult(const ModelFrameContext&,const std::shared_ptr<ModelRideData>&)> ride_tail;
 };
 
@@ -50,6 +52,7 @@ public:
     const ModelStatusUpdateInvocation* status() const noexcept;
     const ModelMotionInvocation* motion() const noexcept;
     const ModelSubcommandUpdateInvocation* subcommands() const noexcept;
+    const ModelMovementCollisionInvocation* collision() const noexcept;
     const ModelCommonWait* wait() const noexcept;
 private:
     friend class ActionEventRuntime;

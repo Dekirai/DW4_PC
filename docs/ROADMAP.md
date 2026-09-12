@@ -22,17 +22,18 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
-Version 0.42 connects one actual player frame to input/control, status, motion,
-wait, invulnerability and delayed subcommand advancement. It uses actual
-owners and separate original time reads, retaining incomplete effects and
-old/new work generations through nested sequence entries. Four original
-Agumon GENERATE calls and a first neutral frame prefix form the local
+Version 0.43 connects that actual player frame through its outer wall/floor
+consumer and shared-node HITLANDDELIVER recipient. The first original Agumon
+frame reaches a real HITLANDMODEL query, using the authored previous-position
+state. Native direction and broad-phase arithmetic have instruction comparisons;
+the complete query graph, traversal and result selection remain required.
+Four original Agumon GENERATE calls and this first frame prefix form the local
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).
 
 The next gate is to connect that core lifecycle to the original startup and
 per-frame execution order: assigned device input, remaining position-lock/ride
-and movement collision responses, camera and rendering. Complete original manager
+and HITLANDMODEL wall/land query responses, camera and rendering. Complete original manager
 attachment, audio/effect services, HUD traversal, enemies and verified combat
 remain part of that work. The visible walking demo is unchanged and still uses
 its provisional controller and follow camera. Completing GENERATE does not

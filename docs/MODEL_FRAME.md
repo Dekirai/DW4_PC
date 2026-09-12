@@ -37,9 +37,10 @@ The ordinary active path retains that outer work across these phases:
    actual RAM timer endpoint.
 8. Capture that work's then-current `+E4` subcommand wrapper and update it
    through the actual per-entry system-time adapter.
-9. Require original movement collision/hit processing when the outer work's
-   translated flag is nonzero. Finally reload ride data for its type-dependent
-   position tail.
+9. Execute the actual wall/floor collision consumer when the outer work's
+   translated flag is nonzero. Its HITLANDDELIVER recipients share the original
+   node and issue real HITLANDMODEL queries. Finally reload ride data for its
+   type-dependent position tail.
 
 Input and status can act on different work generations after an intervening
 ONE replacement. The original outer control, motion and wait captures do not
@@ -56,11 +57,12 @@ Subcommand advancement reads current RAM.manager/system separately for each
 reached entry. These are distinct original reads, not a frame-wide time
 snapshot. An empty subcommand wrapper needs no system or effect provider.
 
-`ModelFrameServices` supplies remaining position-lock, ride, movement-collision
-and ride-tail operations. It also retains the input camera services, status
-recipient resolution and actual subcommand sound/effect/hitbox services. A
+`ModelFrameServices` supplies remaining position-lock, ride and ride-tail
+operations. Its collision service owner supplies remaining WHit/FHit and ride
+effects beneath the actual wall/floor consumer. It also retains input camera
+services, status recipient resolution and subcommand sound/effect/hitbox services. A
 missing reached service suspends its exact phase; it cannot count as a
-successful no-op. The actual motion and wait implementations run directly.
+successful no-op. Actual motion, wait and movement-collision consumers run directly.
 
 The wrapper's delayed entries can advance and return without generating an
 effect before its deadline. This is a real original gate, not a substitute
@@ -90,7 +92,7 @@ owners and follows the first player frame to its actual remaining boundary.
 Exact results belong in [VALIDATION.md](VALIDATION.md).
 
 The checked player-controller profile does not yet dispatch different NPC or
-enemy virtual implementations, position-lock/ride/collision helpers, the
+enemy virtual implementations, position-lock/ride and HITLANDMODEL query helpers, the
 original camera inverse, full manager scheduling or connected multiplayer.
 The status and movement modules also document their bounded list/numeric
 representations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),
@@ -98,6 +100,8 @@ representations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),
 [MODEL_MOTION_ACTUAL.md](MODEL_MOTION_ACTUAL.md),
 [MODEL_WAIT_ACTUAL.md](MODEL_WAIT_ACTUAL.md) and
 [MODEL_SUBCOMMAND_UPDATE.md](MODEL_SUBCOMMAND_UPDATE.md).
+The wall/floor extension is documented in
+[MODEL_MOVEMENT_COLLISION.md](MODEL_MOVEMENT_COLLISION.md).
 
 Evidence uses the supplied USA revision-0 DOL, SHA1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. The recovered frame body,
