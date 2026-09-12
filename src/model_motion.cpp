@@ -218,26 +218,37 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
     return true;
 }
 
-bool turn_model(ModelMotionPose& pose, ModelRamTimerAccess& timer, bool force) {
-    auto angles=pose.turn().desired;
+std::optional<std::array<float,3>> prepare_model_turn_angles(
+    ModelMotionFields& fields,ModelRamTimerAccess* timer,bool force) {
+    auto& turn=fields.turn;
+    auto angles=turn.desired;
     if(!force) {
         std::size_t remaining=4096;
         for(std::size_t i=0;i<3;++i) {
-            if(pose.turn().applied[i]==pose.turn().desired[i])continue;
-            if(pose.turn().rate[i]==0)angles[i]=pose.turn().applied[i];
+            if(turn.applied[i]==turn.desired[i])continue;
+            if(turn.rate[i]==0)angles[i]=turn.applied[i];
             else {
                 // C8E0 precedes the re-read rate/current/desired fields. Do not
                 // roll back this helper's timer writes if later checks fail.
-                const float delta=timer.frames("KEIKATIMER");
-                finite(delta);finite(pose.turn().rate[i]);
-                const float step=pose.turn().rate[i]*delta;
-                angles[i]=interpolate(pose.turn().applied[i],pose.turn().desired[i],step,remaining);
+                if(!timer)throw MotionError("Actual turning requires its reached RAM timer endpoint.");
+                const float delta=timer->frames("KEIKATIMER");
+                finite(delta);finite(turn.rate[i]);
+                const float step=turn.rate[i]*delta;
+                angles[i]=interpolate(turn.applied[i],turn.desired[i],step,remaining);
             }
         }
-        if(angles==pose.turn().applied)return false;
+        if(angles==turn.applied)return {};
     }
-    auto matrix=pose.matrix();euler_basis(matrix,angles);
-    pose.matrix()=matrix;pose.turn().applied=angles;
+    return angles;
+}
+void original_model_turn_basis(ModelMotionPose::Matrix& matrix,const std::array<float,3>& angles) {
+    euler_basis(matrix,angles);
+}
+bool turn_model(ModelMotionPose& pose, ModelRamTimerAccess& timer, bool force) {
+    const auto angles=prepare_model_turn_angles(*pose.fields_owner(),&timer,force);
+    if(!angles)return false;
+    auto matrix=pose.matrix();euler_basis(matrix,*angles);
+    pose.matrix()=matrix;pose.turn().applied=*angles;
     return true;
 }
 

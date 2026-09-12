@@ -147,11 +147,46 @@ void raw_work_only_commands() {
     check(partial.state.pad_motion.size()==4 && partial.state.pad_motion.values()==std::optional{std::array<float,4>{0,0,8,0}} &&
         partial.clocks==0,"Raw PDMOVE prevalidated frames before initialization/value store or touched time.");
 }
+void actual_post_input_reads_and_publication() {
+    auto work=make_model_player_work();work->control.movement.reset();work->control.pad_motion.reset();
+    work->key_event_name="SQ_NONE";work->control.mode=4;
+    check(!update_model_control(*work),"Idle actual control consumed unused current-name or movement fields.");
+    work->control.mode=2;work->key_input=2;
+    check(!update_model_control(*work) && work->key_event_name=="SQ_NONE",
+        "Actual toWalk lost its exact key-input==1 gate.");
+    work->key_input=1;
+    rejects([&]{update_model_control(*work);},"Actual dispatch accepted a reached null current-sequence name.");
+    check(work->key_event_name=="SQ_WALK","A later dispatch comparison rolled back the original request publication.");
+    work->sequence.name="SQ_WALK";work->control.mode=1;
+    check(!update_model_control(*work),"A preexisting request read unused onWalk fields or dispatched the current sequence.");
+    work->sequence.name="SQ_WAIT";
+    check(update_model_control(*work)=="SQ_WALK","Actual direct dispatch lost the current requested name.");
+    work->key_event_name="SQ_NONE";work->sequence.name.reset();work->control.phase=99;
+    work->control.movement=std::make_shared<MotionChannelList>();
+    work->control.movement->mutable_entries().resize(3);
+    check(!update_model_control(*work),"An unused null channel was dereferenced after an inactive onWalk phase.");
+    work->control.movement->mutable_entries().resize(2);
+    rejects([&]{update_model_control(*work);},"Actual onWalk skipped its physical channel-2 pointer read before the phase gate.");
+    auto channel=std::make_shared<MotionState>();channel->speed=3;
+    work->control.movement->mutable_entries()={channel,{},channel};
+    work->control.pad_motion=std::make_shared<ModelPadMotionList>();
+    PadMotionParameters parameters(work->control.pad_motion);parameters.set_values({2,4,8,6});parameters.clear();
+    work->control.phase=0;work->key_input=255;
+    check(!update_model_control(*work) && work->control.phase==1 && channel->active && channel->value==8 &&
+        channel->acceleration==8.0f/18.0f && channel->speed==3 && work->control.pad_motion->size()==0,
+        "Actual onWalk failed aliased channel identity, nonzero-key gate or count-independent PDMOVE backing.");
+    work->control.phase=2;work->key_input=255;work->control.pad_motion.reset();
+    check(!update_model_control(*work) && work->control.phase==2,
+        "Actual phase-2 control consumed parameters without exact key-input one.");
+    work->key_event_name.reset();
+    rejects([&]{update_model_control(*work);},"A null actual request was substituted with an empty or idle name.");
+}
 }
 int main() {
     try {
         mutable_code_and_parameters_after_clock();invalid_codes_preserve_move_prefix();clock_and_heading_failure_prefixes();
         muteki_live_flags_and_ignored_fields();ignored_move_numbers_and_shared_variant_prefix();raw_work_only_commands();
+        actual_post_input_reads_and_publication();
         std::cout<<"Actual model control tests passed: "<<checks<<" checks.\n";return 0;
     }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

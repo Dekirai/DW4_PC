@@ -58,6 +58,14 @@ bool ModelRamTimerAccess::exists(std::string_view name) {
     Operation operation(*this);
     return bool(find_model_named(ensure_model_data(*ram_),name));
 }
+bool ModelRamTimerAccess::expired(std::string_view name) {
+    Operation operation(*this);
+    const auto record=find_model_named(ensure_model_data(*ram_),name);
+    if(!record)return true;
+    // E320/E328 capture end before E330 independently resolves the named time.
+    const auto end=timer_fields(record)->timer.end_time;
+    return end<time_impl(name);
+}
 std::shared_ptr<ModelSceneTimer> ModelRamTimerAccess::start(std::string_view name,std::int64_t end_time) {
     Operation operation(*this);
     auto record=find_model_named(ensure_model_data(*ram_),name);

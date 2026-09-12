@@ -11,6 +11,7 @@
 namespace dw4 {
 class ModelRamTimerAccess;
 class ModelSceneCommand;
+class ModelPlayerWork;
 struct ModelCtrlCommand {
     std::uint32_t reference_index{};
     std::string name;
@@ -198,6 +199,10 @@ struct ModelControlDecision {
 // callback; this function never pretends to execute its animation/actions.
 ModelControlDecision update_model_control(ModelControlState& state, std::uint8_t key_input,
     std::string_view current_sequence, std::string_view requested_sequence);
+// Actual 80309168 tail after player +A0. Consume captured work's live fields,
+// publish its request/phase directly, then return the reached direct +8C name.
+// Unused lists, channels and current-sequence names are not inspected.
+std::optional<std::string> update_model_control(ModelPlayerWork&);
 // Motion part only, after control/sequence dispatch. Does not execute the outer
 // attachment/position-lock, action wait, collision or player update callbacks.
 ModelMotionStep advance_model_motion(ModelControlState& state, std::uint64_t world_time);

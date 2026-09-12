@@ -107,10 +107,14 @@ public:
     std::shared_ptr<ModelSceneList> data,rams;
     std::optional<std::string> kind;
 };
+struct ModelPadManager;
 struct ModelSceneContext { std::uint64_t world_time{}; };
+struct ModelSceneSystem {float frame_time_f{};};
 struct ModelSceneManager {
     virtual ~ModelSceneManager()=default;
     std::shared_ptr<ModelSceneContext> context;
+    std::shared_ptr<ModelSceneSystem> system; // Manager +10, system +28 cached uncapped frame delta.
+    std::shared_ptr<ModelPadManager> pads; // Player manager +30, read at each reached pad lookup.
 };
 class ModelSceneRam final : public ModelSceneObject {
 public:

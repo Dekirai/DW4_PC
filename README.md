@@ -1,19 +1,20 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.41 connects actual MODELCTRL sequence entry to canonical mutable
-SEQ records, retained work executors, native ACTION messages and the player
-`+B8` callback. The GENERATE continuation includes ordinary entry, player
-effect/panel/status work and the final box write. Named timers read the actual
-RAM's current manager context; work and command owners survive replacement and paused
-services. See [MODEL_SCENE.md](docs/MODEL_SCENE.md),
-[MODEL_DISPATCH.md](docs/MODEL_DISPATCH.md) and
-[ACTION_DISPATCH.md](docs/ACTION_DISPATCH.md).
+Version 0.42 connects one actual player frame to original input, control,
+status, motion, wait and delayed subcommand updates. Each helper consumes its
+own original RAM/ONE/work and time owners. Retained invocations preserve
+completed effects across missing services and work replacement. Ordinary
+sequence entry, native ACTION and player generation remain connected beneath
+that frame. See [MODEL_FRAME.md](docs/MODEL_FRAME.md),
+[PLAYER_INPUT.md](docs/PLAYER_INPUT.md) and
+[MODEL_STATUS_UPDATE.md](docs/MODEL_STATUS_UPDATE.md).
 
 This is a core execution milestone. Original four-slot GENERATE acceptance
 and its prepared service prerequisites are tracked in
 [VALIDATION.md](docs/VALIDATION.md). The original frame scheduler, device-to-player
-input, gameplay camera, combat and complete game remain unfinished. The visible
+assignment, gameplay camera, movement collision response, combat and complete
+game remain unfinished. The visible
 walking preview is unchanged. The full original game, including local
 one-to-four-player play, remains the target. See
 [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
@@ -32,6 +33,16 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Execute one actual player-manager frame with independently captured input,
+  status, motion and wait invocations. Direct wait completion resumes the live
+  command loop; delayed subcommands read the current system delta per entry.
+  Required camera, sound/effect, position-lock, ride and collision operations
+  retain explicit boundaries. This is core integration, not a complete game
+  loop or connected multiplayer. See [MODEL_FRAME.md](docs/MODEL_FRAME.md),
+  [MODEL_MOTION_ACTUAL.md](docs/MODEL_MOTION_ACTUAL.md),
+  [MODEL_WAIT_ACTUAL.md](docs/MODEL_WAIT_ACTUAL.md) and
+  [MODEL_SUBCOMMAND_UPDATE.md](docs/MODEL_SUBCOMMAND_UPDATE.md).
 
 - Execute ordinary MODELCTRL entries against actual mutable sequence and command
   owners, preserving first-name lookup, list aliases, selected data and the
@@ -136,9 +147,10 @@ not contain game files.
 
 - Decode original WCHECK occurrences, retain each player's attack wait/latch,
   and resume the live sequence cursor through qualified ACTION queries.
-  The original per-frame wait/input caller and connected multiplayer remain
-  pending; direct ordinary entry is connected separately. See
-  [MODEL_WAIT.md](docs/MODEL_WAIT.md).
+  The actual player-frame input/wait caller and direct ordinary entry are
+  connected in the core; device assignment and connected multiplayer remain
+  pending. See [MODEL_WAIT.md](docs/MODEL_WAIT.md) and
+  [MODEL_WAIT_ACTUAL.md](docs/MODEL_WAIT_ACTUAL.md).
 
 - Bind an original MODELCTRL/ACTION instance through its actual node and actor
   graph, route loaded Se/ActionStarter consumers across source files, and retain

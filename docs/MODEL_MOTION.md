@@ -5,6 +5,8 @@ and local translation in an owned native pose. The portable core now performs
 the ordering of `8030A448`: rotation channel, Euler turning, then translation
 along the resulting model basis. It consumes explicitly prepared model work
 and a timer. It does not construct a player or replace the provisional preview.
+The separate [actual movement invocation](MODEL_MOTION_ACTUAL.md) now resolves
+canonical RAM/work/list/node owners at the original movement and turn sites.
 
 ## Source and ownership
 

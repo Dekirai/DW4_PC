@@ -32,6 +32,9 @@ public:
 
     // 8031E138: untyped first-name presence; no clock or timer-field access.
     bool exists(std::string_view name);
+    // 8031E238: absent means expired without a clock. A present record's end
+    // is captured before a fresh complete time lookup; equality is not expired.
+    bool expired(std::string_view name);
     // 8031DE44: append a missing named record before reading context time;
     // explicit start restarts an existing timer, preserving scale/previous time.
     std::shared_ptr<ModelSceneTimer> start(std::string_view name,std::int64_t end_time=0);

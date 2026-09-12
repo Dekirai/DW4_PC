@@ -1,6 +1,9 @@
 #include "dw4/model_player_create.hpp"
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/action_dispatch.hpp"
+#include "dw4/model_frame.hpp"
+#include "dw4/model_subcommand_update.hpp"
+#include "dw4/model_motion_actual.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
 #include "dw4/game_name.hpp"
@@ -404,9 +407,28 @@ void original(const std::filesystem::path& root) {
         check(work && work!=retained[slot],"An original player slot failed its fresh-work GENERATE return.");
         check_generated(slot,work);
     }
+    // Explicit neutral original pad data for the first per-RAM update. Device
+    // polling and manager scheduling are not supplied by this integration test.
+    const auto pads=std::make_shared<ModelPadManager>();pads->data=std::make_shared<ModelPadList>();
+    pads->data->backing=std::make_shared<ModelPadList::Storage>(5);
+    for(auto& pad:*pads->data->backing)pad=std::make_shared<ModelPadState>();
+    events.model_manager()->pads=pads;
+    events.model_manager()->system=std::make_shared<ModelSceneSystem>(ModelSceneSystem{1});
+    auto frame=events.begin_model_frame(ids[0]);const auto frame_result=events.resume(*frame);
+    if(frame_result.completed || frame_result.diagnostic.find("collision")==std::string::npos)
+        throw std::runtime_error("Original first model frame boundary: "+frame_result.diagnostic);
+    check(frame->captured().work==created && frame->input() && frame->input()->completed() &&
+        frame->status() && frame->status()->completed() && frame->motion() && frame->motion()->completed() &&
+        frame->subcommands() && frame->subcommands()->completed() &&
+        created->key_input==0 && created->key_event_name=="SQ_NONE" && created->sequence.name=="SQ_WAIT",
+        "Original first frame did not preserve generated work through input, control, status, motion and subcommands.");
+    check(created->subcommands->list_owner()->size()==1 &&
+        created->subcommands->list_owner()->front().elapsed==1 &&
+        !created->subcommands->list_owner()->front().started,
+        "Original delayed player number effect did not consume the actual system delta exactly once.");
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
-        "original scheduling and full gameplay remain required\n";
+        "first neutral actual frame reaches its retained movement-collision boundary; original scheduling and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

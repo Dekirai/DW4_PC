@@ -69,6 +69,7 @@ const std::shared_ptr<GameDataList>& ModelStatusInvocation::captured_row() const
     if(!impl_)fail("A moved model status invocation has no captured row.");return impl_->row;
 }
 MessengerCallResult ModelStatusInvocation::resume(NativeMessenger& messenger,ActionEventRuntime& events) {
+    events.require_model_execution_access();
     if(!impl_ || impl_->fault)fail("An uncertain model status invocation cannot be replayed.");
     auto& state=*impl_;
     if(state.executing || (state.messenger && (state.messenger!=&messenger || state.events!=&events)))

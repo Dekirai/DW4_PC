@@ -71,6 +71,7 @@ const ModelSequenceEntry* ModelBaseInvocation::sequence_entry() const noexcept {
 const ModelPlayerSequenceInvocation* ModelBaseInvocation::player_sequence() const noexcept {return impl_->player_sequence.get();}
 MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,ActionEventRuntime& events,
     const ModelPlayerCreateServices& supplied) {
+    events.require_model_execution_access();
     auto& state=*impl_;
     if(state.fault || state.executing || (state.messenger && (state.messenger!=&messenger || state.events!=&events))) {
         state.fault=true;

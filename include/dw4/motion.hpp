@@ -60,6 +60,11 @@ struct MotionStop {
 void configure_motion(MotionState& state, MotionSetup setup);
 void stop_motion(MotionState& state);
 float advance_motion(MotionState& state, float delta_frames);
+// Actual A2D8 reached reads/publications. Inactive records ignore all payloads;
+// an active record retains its expiry/stop prefix if later used fields fail.
+// Unrecognized mode follows the original unchanged-speed branch. Numerical
+// output is checked at the eventual matrix boundary, not on unrelated fields.
+float advance_motion_actual(MotionState& state,float delta_frames);
 
 struct MotionCommand {
     std::uint32_t reference_index{};
@@ -83,8 +88,10 @@ struct MotionStep {
 
 // Actual beModelCtrlMoveObjectList ownership. Fresh work owns an allocated empty
 // list; its first MOVE creates four distinct beModelCtrlMoveObject allocations.
-// Mutable bindings can supply original owners; consumers reject unsupported
-// counts, null entries or repeated entry identities instead of repairing them.
+// Mutable bindings can supply original owners. Prepared whole-list consumers
+// validate shape; actual reached-field consumers allow repeated owners and
+// check only the represented slots they consume. Count and backing currently
+// share one representation, without spare physical slots beyond size.
 class MotionChannelList {
 public:
     using Entries = std::vector<std::shared_ptr<MotionState>>;

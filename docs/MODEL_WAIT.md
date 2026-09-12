@@ -9,6 +9,8 @@ This is a prepared runtime boundary. It does not construct an original player,
 implement sequence-entry callbacks, resolve collision/status ownership or supply
 the full original frame scheduler. Its callbacks must perform the real qualified
 ACTION query, selected-player pad read, command resume and outer sequence dispatch.
+The separate [actual wait invocations](MODEL_WAIT_ACTUAL.md) consume canonical
+RAM/work, pad and messenger owners at the original capture sites.
 
 ## State and common waits
 

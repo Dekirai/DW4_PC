@@ -514,6 +514,43 @@ ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t 
     return decision;
 }
 
+std::optional<std::string> update_model_control(ModelPlayerWork& work) {
+    const auto request=[&]() -> const std::string& {
+        if(!work.key_event_name)throw MotionError("Actual post-input control reached a null request name.");
+        return *work.key_event_name;
+    };
+    if(request()=="SQ_NONE") {
+        if(work.control.mode==1) {
+            // 91E8..91F8 loads the physical channel-2 pointer before the
+            // phase/key branch, but does not dereference a null pointer yet.
+            const auto movement=work.control.movement;
+            if(!movement || movement->size()<3)throw MotionError("Actual onWalk control reached missing channel-2 backing.");
+            const auto channel=movement->entry_owner(2);
+            std::optional<bool> moving;
+            if(work.control.phase==0)moving=work.key_input!=0;
+            else if(work.control.phase==1 && work.key_input==0)moving=false;
+            else if(work.control.phase==2 && work.key_input==1)moving=true;
+            if(moving) {
+                const auto pad=work.control.pad_motion;
+                if(!pad)throw MotionError("Actual onWalk transition reached a null PDMOVE list.");
+                const auto backing=pad->backing_owner();
+                const std::size_t first=*moving ? 2 : 0;
+                if(!backing || backing->size()<first+2)throw MotionError("Actual onWalk transition reached missing PDMOVE backing.");
+                const MotionSetup setup{*moving ? MotionMode::accelerate_positive : MotionMode::stop_positive,
+                    (*backing)[first],(*backing)[first+1],0};
+                if(!channel)throw MotionError("Actual onWalk transition dereferences a null captured channel.");
+                configure_motion(*channel,setup);
+                work.control.phase=*moving ? 1 : 2;
+            }
+        } else if(work.control.mode==2 && work.key_input==1)work.key_event_name="SQ_WALK";
+        else if(work.control.mode==3 && work.key_input==0)work.key_event_name="SQ_WAIT";
+    }
+    if(request()=="SQ_NONE")return {};
+    if(!work.sequence.name)throw MotionError("Actual post-input dispatch compares a null current sequence name.");
+    if(request()==*work.sequence.name)return {};
+    return request();
+}
+
 ModelMotionStep advance_model_motion(ModelControlState& state,std::uint64_t world_time) {
     if(state.timer_access_owner())return advance_model_motion(state);
     if (!state.channels.allocated()) {state.pose.translated()=false;return {};}

@@ -92,6 +92,16 @@ struct ModelSubcommandEntry {
     bool started{};
     std::variant<ModelSoundSubcommandState,ModelEffectSubcommandState,ModelHitboxSubcommandState> value;
 };
+
+// Internal binding points for the distinct actual wrapper-update profile.
+// The invocation owns this access object; the wrapper retains it weakly so
+// captured RAM/ONE/work cannot create a work -> wrapper -> work cycle.
+struct ModelSubcommandActualAccess {
+    struct Frames {float elapsed{},delta{};};
+    std::function<Frames(const ModelSubcommandEntry&)> read_frames;
+    std::function<void(const ModelSubcommandEntry&)> begin_virtual;
+    std::function<ModelSubcommandContext()> effect_context;
+};
 enum class ModelSubcommandStop {
     complete, sound_play_required, sound_volume_down_required,
     effect_space_required, effect_generate_required, effect_erase_required,
@@ -201,6 +211,13 @@ public:
     ModelSubcommandResult update(float cached_frames,ModelSubcommandContext context,
         const ModelSubcommandServices& services = {});
     ModelSubcommandResult resume(const ModelSubcommandServices& services = {});
+    // Actual 803107E0 binding: read the current system delta for each reached
+    // entry and capture each virtual helper independently. No eager pass-wide
+    // numeric/name validation or prepared source/attachment snapshot.
+    ModelSubcommandResult update_actual(const std::shared_ptr<ModelSubcommandActualAccess>&,
+        const ModelSubcommandServices& services = {});
+    ModelSubcommandResult resume_actual(const std::shared_ptr<ModelSubcommandActualAccess>&,
+        const ModelSubcommandServices& services = {});
     // Read-only host preflight before publishing an enclosing sequence prefix.
     // Checks the current slot and retained pass without starting/canceling work.
     void require_cleanup_startable() const;

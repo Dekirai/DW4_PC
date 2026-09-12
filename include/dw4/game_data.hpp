@@ -65,6 +65,7 @@ struct GameDataUnicode {
 struct GameDataObjectList;
 class ActorSceneAppearanceList;
 class ActorSceneSkeleton;
+class ModelPlayerWork;
 using GameDataObject=std::variant<std::monostate,
     std::shared_ptr<GameDataInt>,std::shared_ptr<GameDataIntList>,
     std::shared_ptr<GameDataBool>,std::shared_ptr<GameDataBoolList>,
@@ -73,7 +74,8 @@ using GameDataObject=std::variant<std::monostate,
     std::shared_ptr<GameDataDisk>,std::shared_ptr<GameDataWaza>,std::shared_ptr<GameDataWeapon>,
     std::shared_ptr<GameDataUnicode>,ControllerObjectId,std::shared_ptr<const CollisionBox>,
     std::shared_ptr<GameDataList>,std::shared_ptr<const DatabaseDefinition>,
-    std::shared_ptr<ActorSceneAppearanceList>,std::shared_ptr<const ActorSceneSkeleton>>;
+    std::shared_ptr<ActorSceneAppearanceList>,std::shared_ptr<const ActorSceneSkeleton>,
+    std::shared_ptr<ModelPlayerWork>>;
 struct GameDataObjectList : GameDataArray<GameDataObject> {};
 
 enum class GameDataKind : std::uint8_t {

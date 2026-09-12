@@ -14,9 +14,9 @@ struct ModelSequenceEntryServices {
     ModelLuaDispatch lua;
 };
 
-// The ordinary base-controller entry through its actual command-loop return.
-// The caller still owes player +B8 afterward, including after a WCHECK return.
-// The entry retains its exact work/executor generation through host suspension.
+// Retained actual command-loop transport. Ordinary entry additionally performs
+// selection/cleanup before C3AC; its caller owes player +B8. Direct wait resume
+// enters C3AC alone and owes no +B8. Both retain their exact work generation.
 class ModelSequenceEntry {
 public:
     ~ModelSequenceEntry();
@@ -32,4 +32,5 @@ private:
     explicit ModelSequenceEntry(std::unique_ptr<Impl>);
     std::unique_ptr<Impl> impl_;
 };
+using ModelSequenceResume=ModelSequenceEntry;
 } // namespace dw4

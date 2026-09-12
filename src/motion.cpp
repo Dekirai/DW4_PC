@@ -218,6 +218,11 @@ float advance_motion(MotionState& state, float delta_frames) {
     validate(state); finite(delta_frames);
     auto candidate = state; const auto distance = advance(candidate,delta_frames); state = candidate; return distance;
 }
+float advance_motion_actual(MotionState& state,float delta_frames) {
+    if(!state.active)return 0;
+    finite(delta_frames);
+    return advance(state,delta_frames);
+}
 
 MotionCommand decode_motion_command(const IgbDocument& doc, std::uint32_t reference) {
     if (doc.metadata.header.byte_order != IgbByteOrder::little) fail("Big-endian motion records are unverified.");

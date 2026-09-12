@@ -2,6 +2,29 @@
 
 ## Implemented boundary
 
+Version 0.42 connects `ModelFrameInvocation` to actual player input, raw
+post-input control, status update, motion, common/player wait, invulnerability
+and delayed subcommand advancement. Each callback captures its own original
+owners; a replacement ONE/work does not retarget the outer frame. Direct wait
+completion resumes the real command loop without an extra ordinary-entry
+reset or player callback. Required position-lock, ride and movement collision
+operations suspend at their reached phases. See [MODEL_FRAME.md](MODEL_FRAME.md).
+
+The manager owns distinct nullable context, system and pad objects. Named
+timer helpers use current RAM.manager/context; player input retains the
+invoking controller and reads its current system only when reached; delayed
+subcommands read current RAM.manager/system separately per entry. These
+consumers do not implement device polling, the fifth pad's producer, manager
+scheduling or original time advancement. Effect providers cannot report
+completion without performing their required operation.
+
+An actual frame has an exclusive continuation lease within its runtime.
+Host suspension retains its work, helper state and exact subcommand wrapper.
+Recursive/competing frames or abandonment fault unfinished execution instead
+of replaying prefixes. Unrelated runtime guest execution rejects while the
+owning frame is paused; its own nested calls and later service configuration
+remain available. The runtime lease has no frame or work back-reference.
+
 Version 0.41 connects the actual MODELCTRL lifecycle through ordinary sequence
 execution, player `+B8` and the outer GENERATE box tail. `ModelSceneObjects`
 owns canonical mutable SEQ, sequence-data, command and list allocations.
@@ -50,16 +73,16 @@ recursive ACTION mutation is rejected. Unsupported controller effects, missing
 services and unsafe consumed fields cannot become successful no-ops.
 
 These core paths do not replace the preview's provisional input, movement or
-camera. The original per-frame input/control/wait/collision order, complete
-startup, HUD rendering, combat, transitions, audio, saves and local multiplayer
-session still require integration. See [MODEL_SCENE.md](MODEL_SCENE.md),
+camera. Original outer scheduling, remaining movement collision/ride helpers,
+complete startup, HUD rendering, combat, transitions, audio, saves and local
+multiplayer still require integration. See [MODEL_SCENE.md](MODEL_SCENE.md),
 [MODEL_SEQUENCE.md](MODEL_SEQUENCE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md),
 [MODEL_TIMER.md](MODEL_TIMER.md) and [ACTION_DISPATCH.md](ACTION_DISPATCH.md).
 
 ## Earlier implementation milestones
 
 The versioned descriptions below record each earlier milestone and its limits
-at that time. Requirements subsequently connected in version 0.41 are described
+at that time. Requirements subsequently connected through version 0.42 are described
 above; historical mentions of missing ordinary entry, player callbacks or
 execution bundles are not the current implementation boundary.
 

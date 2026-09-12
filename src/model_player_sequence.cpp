@@ -98,6 +98,7 @@ const ModelBaseInvocation* ModelPlayerSequenceInvocation::direct_entry() const n
 
 MessengerCallResult ModelPlayerSequenceInvocation::resume(NativeMessenger& messenger,ActionEventRuntime& events,
     const ModelPlayerCreateServices& services) {
+    events.require_model_execution_access();
     auto& state=*impl_;
     if(state.fault)fail("A faulted player sequence callback cannot replay its published prefix.");
     if(state.executing || (state.messenger && (state.messenger!=&messenger || state.events!=&events))) {

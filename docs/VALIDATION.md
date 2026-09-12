@@ -1,4 +1,73 @@
-# Actual sequence entry and player generation validation
+# Actual player frame validation
+
+Version 0.42.0 was validated locally on 2026-09-12. One actual player frame
+now connects input/control, status, movement, wait, invulnerability and delayed
+subcommands through retained original owners. The visible walking preview is
+unchanged; the package is refreshed for manual launch. Original outer
+scheduling, camera and movement collision response remain required.
+
+| Check | Evidence |
+| --- | --- |
+| Release build/package | 103/103 CTest suites passed; no compiler warnings |
+| Actual input | 83 checks; original pad selection, captured stick/later buttons, panel messages, attack requests, live system reads and unused-owner gates |
+| Actual status update | 80 checks; poison, timed resets, METAL, icon ownership, real messenger delivery and retained nested SLEEP/STUN entry |
+| Actual common/player wait | 72 checks; narrow movement activity reads, qualified ACTION queries, captured old/new work and real direct command-loop continuation |
+| Actual movement | 59 checks; independent captured/current channel lists, per-axis timer sites, fresh ONE/node matrix writes, aliases and committed failure prefixes |
+| Actual frame integration | 35 checks; early-gate read order, empty subcommands, effect suspension, replaced work/wrapper, direct wait return, exclusivity, abandonment and rejection of unrelated guest execution while paused |
+| Actual subcommand update | 66 checks; per-entry system reads, independent helper captures, retained effects, cleanup with absent versus invoked HITBOX providers and cycle-free abandonment |
+| Direct command continuation | 32 entry checks; actual C3AC resume keeps captured work and skips ordinary resets/extra player callback |
+| Raw actual control and timer expiry | 64 control / 62 timer checks; reached physical fields, ordered publications, live expiry lookups and signed end comparison |
+| Original player construction/frame | 62 synthetic / 151 original-inclusive checks; eight `+98` returns, four complete registered GENERATE returns, then the first neutral actual frame reaches the movement-collision boundary |
+| Actual movement instruction comparison | 216 cases across 18 scenarios, 49,596 original instructions, zero differences including 84 reached null-read failures and their committed prefixes |
+| Timer-expiry instruction comparison | 12,144 cases, 1,767,498 original instructions, 18,868 lookups, 6,724 clock reads and 4,000 mutation cases, zero differences |
+| Existing original integration | 160 motion, 202 control, 554 control/timer, 1,324 prepared sequence, 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Application/verifier | 18 app CLI, 10 play CLI and six Python verifier checks passed |
+
+The original-data test retains v0.41's explicitly prepared databases, font,
+map-name, clock and actor-aware ACTION source, including 58 original exported
+event tables. Four Agumon GENERATE calls complete. It then supplies neutral
+physical pad owners and a system delta of one for the first player only.
+That frame completes real input, raw control, status and movement callbacks,
+preserves SQ_WAIT and advances the delayed player-number effect to elapsed one
+without starting it before its delay of 480. The translated gate then reaches
+the required original movement-collision operation. No collision success is
+invented to make the test return a complete frame. Other players' frames,
+device polling and the original scheduler are not supplied by this acceptance.
+
+The movement comparison executes actual `8030A448`, `8030C85C`, `8030A2D8`,
+reached scalar setup/stop, Euler/copy/local-translation helpers and the concrete
+node2 setter. It compares both node matrices, old/new channel allocations,
+angle fields, translated flag and current list identity. Deterministic timer
+results with per-call mutation, named ONE lookup and host trig/FMA remain
+explicit supplied services. Saved-box transformation has source/regression
+coverage rather than this instruction comparison. The corpus does not claim
+arbitrary FPSCR, nonfinite math, malformed spare capacity or full game parity.
+
+The expiry comparison executes original `8031E238` and its fresh nested
+`8031E36C`/`800695CC` helpers, with allocator/name/string/clock service boundaries.
+It compares strict signed expiry, independently captured outer end fields,
+fresh nested lookup/clock and committed failures. It does not establish the
+whole status callback, guest allocator ABI or a complete frame by instruction
+comparison. Other new input/status/wait/frame/subcommand paths have focused
+native tests and source review; older prepared instruction suites do not
+stand for new original-instruction coverage of those actual paths.
+
+No interactive preview or new visual replay was launched for this core-only
+integration. The previous v0.41 hidden replay remains historical graphics
+evidence below. The current package uses the same provisional walking and
+camera implementation.
+
+Both new comparison drivers were freshly linked with current headers against
+only the frozen production core, SHA-256
+`679043B7FA06BE66795E43B8BCDBF4D16D4DCA0B8442ECCC8386DA42D8FD75E3`.
+The packaged application SHA-256 is
+`3A293E924A058BEF4D2F5B3C294922EF41C594E44F089050D1580405C228C36B`.
+
+Hosted CI for v0.41 commit `095c0c9`, run `34716079313`, completed successfully
+in all three jobs: Windows app, Ubuntu core and Windows core. This is separate
+from local v0.42 validation; v0.42 hosted CI follows publication.
+
+## Previous v0.41 checkpoint
 
 Version 0.41.0 was validated locally on 2026-09-12. Ordinary MODELCTRL entry now
 consumes the canonical mutable SEQ graph, executes through native ACTION

@@ -147,10 +147,42 @@ void actual_clock_and_fault_prefixes() {
     check(missing.work->sequence.name=="ABSENT" && !missing.work->sequence.command_data && call.faulted() && !call.player_sequence(),
         "Missing sequence failure discarded original name/data publication or ran player +B8.");
 }
+void direct_resume_keeps_generation_and_skips_entry_callbacks() {
+    Fixture f;find_model_seq(*f.info)->sequences=std::make_shared<ModelSceneList>("igNamedObjectList");
+    const auto data=f.sequence("SQ_WAIT",{{"beModelCtrlWCHECK","Moving"},
+        {"beModelCtrlCTRL","isLive"},{"beModelCtrlWCHECK","Action"}});
+    ModelBaseInvocation entry(f.ram,"SQ_WAIT");
+    check(entry.resume(f.events.messenger(),f.events).completed && f.work->sequence.command_index==1,
+        "Direct-resume fixture did not first complete a real ordinary WCHECK entry.");
+    f.work->control.bullet_hit_script="retained";f.work->sequence.label_count=7;
+    f.work->sequence.wait.name.reset();
+    const auto old_wrapper=f.work->subcommands;
+    const auto initial_effect=old_wrapper->list_owner()->entry_owner(0);
+    auto resume=f.events.begin_model_sequence_resume(f.ram,{},f.work);
+    // The wait caller already captured work. A replacement ONE.work must not
+    // move its command resume or cleanup the old generation's queued effect.
+    const auto replacement=make_model_player_work();f.one->work=replacement;
+    check(resume->resume(f.events).completed && resume->completed() && resume->captured_work()==f.work &&
+        f.work->sequence.command_index==3 && f.work->sequence.command_data.actual_owner()==data &&
+        f.work->sequence.wait.name=="Action" && f.work->control.mode==4,
+        "Direct C3AC resume did not use its captured work/cursor with an unused null parent.");
+    check(f.work->sequence.label_count==7 && f.work->control.bullet_hit_script=="retained" &&
+        f.work->subcommands==old_wrapper && old_wrapper->list_owner()->size()==1 &&
+        old_wrapper->list_owner()->entry_owner(0)==initial_effect && replacement->subcommands->list_owner()->empty(),
+        "Direct C3AC resume repeated ordinary resets, cleanup or player +B8.");
+    check(resume->resume(f.events).completed && old_wrapper->list_owner()->size()==1,
+        "A completed direct command resume repeated its effects.");
+    Fixture missing;const auto action=missing.sequence("RAW",{{"beModelCtrlACTION","IDLE"}});
+    missing.work->sequence.command_data=action;
+    auto invalid=missing.events.begin_model_sequence_resume(missing.ram,{},missing.work);
+    rejects([&]{invalid->resume(missing.events);},"A reached null ACTION parent was dereferenced without a checked boundary.");
+    check(invalid->faulted(),"A null-parent ACTION command did not fault its direct resume.");
+}
 }
 int main() {
     try {work_only_entry_and_idle_callback();retained_action_and_new_callback_work();nested_jump_runs_both_player_callbacks();
         cleanup_retains_its_captured_wrapper();actual_clock_and_fault_prefixes();retained_manager_after_facade_destruction();
+        direct_resume_keeps_generation_and_skips_entry_callbacks();
         std::cout<<"Actual model sequence entry checks: "<<checks<<'\n';return 0;
     }catch(const std::exception& error){std::cerr<<"Actual sequence entry after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

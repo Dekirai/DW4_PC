@@ -76,6 +76,20 @@ the failed endpoint never resumes automatically.
 
 ## Verification and scope
 
+The actual `expired(name)` helper adds original `8031E238`. It ensures and
+searches the current named list; absence returns true without a clock. A
+present record must expose its timer end fields before any clock read. It
+captures that signed end value, then calls the complete fresh named-time
+helper and compares `end < time`. Equality is false. A clock callback may
+replace the list or change the original timer end without changing the
+captured comparison operand. The normal permanent-fault/reentry rules apply.
+
+This endpoint is consumed by the [actual player status update](MODEL_STATUS_UPDATE.md).
+Its focused expiry tests cover signed extrema/equality, missing/wrong-type
+records and mutation after capture. A separate local original-instruction
+comparison passed 12,144 cases, including 4,000 mutation cases, with zero
+differences over 1,767,498 instructions and 6,724 clock reads.
+
 Evidence is the owner's USA GameCube `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Lookup, allocation and timer field
 ordering were inspected at the original entries above. No original bytes or

@@ -151,6 +151,37 @@ void exact_failure_prefixes() {
     check(bad_scale_clocks==1 && arithmetic.faulted() && same(bad_scale->timer,bad_before),
         "Bad scale must be read after context time but before restart field publication.");
 }
+void actual_expiry() {
+    auto ram=std::make_shared<ModelSceneRam>();unsigned clocks{};
+    ModelRamTimerAccess access(ram,[&](const ModelSceneRam&){++clocks;return std::uint64_t{0};});
+    check(access.expired("END") && ram->data && clocks==0,"Absent expiry must ensure data and return true without clock.");
+    const auto timer=append_timer(ram,"END");
+    for(const auto end:std::array<std::int64_t,5>{std::numeric_limits<std::int64_t>::min(),-1,0,1,
+        std::numeric_limits<std::int64_t>::max()}) {
+        timer->timer.end_time=end;timer->timer.time_bias=end;
+        check(!access.expired("END"),"End/time equality must not expire, including signed extrema.");
+        timer->timer.time_bias=end==std::numeric_limits<std::int64_t>::max() ?
+            std::numeric_limits<std::int64_t>::min():end+1;
+        check(access.expired("END")== (end!=std::numeric_limits<std::int64_t>::max()),
+            "Expiry must compare original signed 64-bit values strictly.");
+    }
+    const auto original=timer->timer;timer->timer.end_time=4;timer->timer.time_bias=5;
+    ModelRamTimerAccess mutation(ram,[&](const ModelSceneRam&) {
+        timer->timer.end_time=100;timer->timer.time_bias=6;
+        auto replacement=std::make_shared<ModelSceneList>();ram->data=replacement;
+        const auto other=append_timer(ram,"END");other->timer.time_bias=-100;
+        return std::uint64_t{0};
+    });
+    check(mutation.expired("END") && timer->timer.end_time==100 && timer->timer.time_bias==6,
+        "Expiry captures outer end, while nested time retains its own lookup before the clock mutation.");
+    check(find_model_timer(*ram,"END")!=timer,"Expiry must not restore the replaced live data list.");
+    auto wrong_ram=std::make_shared<ModelSceneRam>();auto wrong=std::make_shared<ModelSceneData>();wrong->name="END";
+    ensure_model_data(*wrong_ram)->append(wrong);append_timer(wrong_ram,"END");clocks=0;
+    ModelRamTimerAccess bad(wrong_ram,[&](const ModelSceneRam&){++clocks;return std::uint64_t{0};});
+    rejects([&]{bad.expired("END");},"Wrong first expiry record must fail before a later timer or clock.");
+    check(bad.faulted() && clocks==0,"Expiry end field is consumed before the inner time clock.");
+    (void)original;
+}
 void caught_reentry_and_second_clock_failure() {
     auto ram=std::make_shared<ModelSceneRam>();std::shared_ptr<ModelRamTimerAccess> access;unsigned clocks{};
     access=std::make_shared<ModelRamTimerAccess>(ram,[&](const ModelSceneRam&)->std::uint64_t {
@@ -173,7 +204,7 @@ void caught_reentry_and_second_clock_failure() {
 int main() {
     try {
         binding_and_existence();actual_start_and_time();helper_clock_scopes();current_named_owner_and_lifetime();
-        exact_failure_prefixes();caught_reentry_and_second_clock_failure();
+        exact_failure_prefixes();caught_reentry_and_second_clock_failure();actual_expiry();
         std::cout<<"Model timer checks: "<<checks<<'\n';return 0;
     }catch(const std::exception& error){std::cerr<<"Model timer after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

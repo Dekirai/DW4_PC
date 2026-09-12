@@ -8,7 +8,7 @@ estimated before the missing engine and game logic have been measured.
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
 | 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
-| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview available; actual construction/sequence/player-callback path connected in the core; original per-frame input/camera/collision, enemies and combat pending |
+| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview available; actual construction/sequence and player-frame input/status/motion/wait connected in the core; original scheduling, camera/collision response, enemies and combat pending |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
 | 5 | Content modding | Stable asset IDs, validated manifests, texture replacements and documented data schemas | Not implemented |
@@ -22,18 +22,17 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
-Version 0.41 connects ordinary entry to canonical mutable SEQ/command owners and
-an executor retained for the captured work generation. Actual context time,
-native ACTION dispatch, direct JUMP and player `+B8` now connect to the retained
-GENERATE path through its final box write. The player callback includes its
-SQ_WAIT effect, panel and status-reconciliation phases; unavailable recipients
-or command services remain explicit boundaries. Four original Agumon slots are
-the original-data acceptance scope for this lifecycle, with results and prepared
-prerequisites tracked in [VALIDATION.md](VALIDATION.md).
+Version 0.42 connects one actual player frame to input/control, status, motion,
+wait, invulnerability and delayed subcommand advancement. It uses actual
+owners and separate original time reads, retaining incomplete effects and
+old/new work generations through nested sequence entries. Four original
+Agumon GENERATE calls and a first neutral frame prefix form the local
+original-data acceptance scope. Results and explicitly prepared prerequisites
+are tracked in [VALIDATION.md](VALIDATION.md).
 
 The next gate is to connect that core lifecycle to the original startup and
-per-frame execution order: assigned device input, control and wait updates,
-movement/collision response, camera and rendering. Complete original manager
+per-frame execution order: assigned device input, remaining position-lock/ride
+and movement collision responses, camera and rendering. Complete original manager
 attachment, audio/effect services, HUD traversal, enemies and verified combat
 remain part of that work. The visible walking demo is unchanged and still uses
 its provisional controller and follow camera. Completing GENERATE does not

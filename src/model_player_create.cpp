@@ -68,6 +68,7 @@ const ModelPlayerStartup* ModelPlayerCreate::startup() const noexcept {return im
 
 ModelPlayerCreateResult ModelPlayerCreate::resume(NativeMessenger& messenger,ActionEventRuntime& events,
     const ModelPlayerClock& clock,const ModelPlayerMapReader& map_reader) {
+    events.require_model_execution_access();
     if(!impl_ || impl_->failed)fail("An uncertain player construction cannot be replayed.");
     auto& state=*impl_;
     if(state.executing) {

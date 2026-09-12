@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace dw4 {
 // Caller-prepared beModelCtrl work fields at 80/8C/98: desired Euler angles,
@@ -74,6 +75,13 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
 // Completed timer writes survive subsequent checked motion/matrix failures.
 // Force, equal-angle and zero-rate gates do not access the timer endpoint.
 bool turn_model(ModelMotionPose& pose, ModelRamTimerAccess& timer, bool force = false);
+// Shared C85C arithmetic without binding/reading a node. Desired values are
+// captured before the per-axis live field/timer reads. Nullopt is the original
+// unchanged-angle return. A null endpoint is consumed only by an eligible axis.
+std::optional<std::array<float,3>> prepare_model_turn_angles(
+    ModelMotionFields&,ModelRamTimerAccess*,bool force=false);
+// Shared 80129134/801292D4 basis path, preserving translation XYZ.
+void original_model_turn_basis(ModelMotionPose::Matrix&,const std::array<float,3>&);
 // The force=1 path without an invented KEIKATIMER. Rebuild from desired angles
 // and synchronize applied angles while preserving translation and pose flags.
 void force_model_turn(ModelMotionPose& pose);

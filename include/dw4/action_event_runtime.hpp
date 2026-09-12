@@ -13,6 +13,9 @@
 
 namespace dw4 {
 class ModelStatusWork;
+class ModelFrameInvocation;
+struct ModelFrameServices;
+struct ModelFrameExecutionLease;
 struct NativeControllerServices {
     std::function<std::optional<std::uint8_t>()> active;
     std::function<MessengerManager()> manager;
@@ -89,13 +92,22 @@ public:
     // explicit preparation; this method does not run the original scheduler.
     void set_model_context(std::shared_ptr<ModelSceneContext>);
     std::shared_ptr<ModelSceneContext> model_context() const;
+    std::shared_ptr<ModelSceneManager> model_manager() const;
     // Missing services may be installed before a suspended operation reaches
     // them. An entry retains the first non-null service owner across retries.
     void set_model_sequence_services(std::shared_ptr<ModelSequenceEntryServices>);
     std::shared_ptr<ModelSequenceEntry> begin_model_sequence_entry(
         std::shared_ptr<ModelSceneRam>,std::shared_ptr<ModelSceneInfo>,
         std::shared_ptr<ModelPlayerWork>,std::optional<std::string> command);
+    // Direct C3AC call on the supplied captured work. No ordinary entry resets
+    // or player +B8; the caller already resolved its own wait and owner scopes.
+    std::shared_ptr<ModelSequenceEntry> begin_model_sequence_resume(
+        std::shared_ptr<ModelSceneRam>,std::shared_ptr<ModelSceneInfo>,std::shared_ptr<ModelPlayerWork>);
     void set_player_creation_services(ModelPlayerCreateServices);
+    const ModelPlayerCreateServices& player_creation_services() const;
+    void set_model_frame_services(std::shared_ptr<ModelFrameServices>);
+    std::shared_ptr<ModelFrameInvocation> begin_model_frame(ControllerObjectId);
+    MessengerCallResult resume(ModelFrameInvocation&);
     std::shared_ptr<ModelPlayerWork> model_work(ControllerObjectId id);
     std::shared_ptr<const ModelPlayerWork> model_work(ControllerObjectId id) const;
     // Attach these exact live fields once to an existing checked model binding.
@@ -204,6 +216,10 @@ public:
     // Unowned registered RAMs require explicit real managers and activity.
     void set_external_services(MessengerServices services);
     MessengerResult resume(MessengerDispatch& dispatch);
+    // Native helper entry gate: an unfinished actual frame permits guest
+    // execution only while that owning frame is on the stack. Supplying
+    // missing host services or recipients remains available during a pause.
+    void require_model_execution_access() const;
     // Explicit original context time and one manager invocation. This does not
     // choose the original outer manager order or advance any gameplay clock.
     MessengerDeferredUpdate begin_deferred_update(std::uint64_t context_time);
@@ -217,6 +233,8 @@ public:
     ActionServices action_services(const PlayerRuntimeBinding& action);
 private:
     friend class ModelSequenceEntry;
+    friend class ModelFrameInvocation;
+    void retain_model_frame(const std::shared_ptr<ModelFrameExecutionLease>&);
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };

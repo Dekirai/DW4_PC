@@ -36,8 +36,11 @@ struct ModelSubcommandWrapper::State {
     std::size_t cursor_{},remaining_{};
     float frame_delta_{};
     ModelSubcommandContext context_;
+    std::weak_ptr<ModelSubcommandActualAccess> actual_access_;
     std::optional<ModelEffectGenerateRequest> current_effect_request_;
-    bool current_advanced_{},current_start_{},processing_{},faulted_{},hitbox_check_pending_{};
+    bool current_advanced_{},current_start_{},processing_{},hitbox_check_pending_{};
+    bool actual_profile_{},current_virtual_{};
+    mutable bool faulted_{};
     bool pending() const noexcept {return operation_!=Operation::none;}
     void require_usable() const;
     void require_cleanup_startable() const;
@@ -47,12 +50,15 @@ struct ModelSubcommandWrapper::State {
     std::uint64_t append_hitbox(ModelHitboxSubcommand);
     void clear_hitboxes();
     ModelSubcommandResult update(float,ModelSubcommandContext,const ModelSubcommandServices&);
+    ModelSubcommandResult update_actual(const std::shared_ptr<ModelSubcommandActualAccess>&,const ModelSubcommandServices&);
     ModelSubcommandResult resume(const ModelSubcommandServices&);
     ModelSubcommandResult cleanup(const ModelSubcommandServices&);
     ModelSubcommandResult process(const ModelSubcommandServices&);
     ModelSubcommandResult start(ModelSubcommandEntry&,const ModelSubcommandServices&,bool&);
     ModelSubcommandResult check_hitbox(ModelSubcommandEntry&,const ModelSubcommandServices&);
     ModelSubcommandResult clean(ModelSubcommandEntry&,const ModelSubcommandServices&);
+    std::shared_ptr<ModelSubcommandActualAccess> actual_access() const;
+    void begin_virtual(const ModelSubcommandEntry&);
 };
 ModelSubcommandWrapper::ModelSubcommandWrapper():state_(std::make_unique<State>()) {}
 ModelSubcommandWrapper::~ModelSubcommandWrapper()=default;
@@ -142,6 +148,25 @@ ModelSubcommandResult ModelSubcommandQueue::resume(const ModelSubcommandServices
     try {const auto result=captured_->state_->resume(services);release_completed_capture();return result;}
     catch(...) {release_completed_capture();throw;}
 }
+ModelSubcommandResult ModelSubcommandQueue::update_actual(const std::shared_ptr<ModelSubcommandActualAccess>& access,
+    const ModelSubcommandServices& services) {
+    if(const auto retained=retained_wrapper()) {
+        retained->state_->require_usable();
+        throw std::logic_error("Resume the retained model subcommand pass before actual updating.");
+    }
+    captured_=require_live_wrapper();
+    try {const auto result=captured_->state_->update_actual(access,services);release_completed_capture();return result;}
+    catch(...) {release_completed_capture();throw;}
+}
+ModelSubcommandResult ModelSubcommandQueue::resume_actual(const std::shared_ptr<ModelSubcommandActualAccess>& access,
+    const ModelSubcommandServices& services) {
+    const auto owner=retained_wrapper() ? captured_ : require_live_wrapper();
+    owner->state_->require_usable();
+    if(!owner->state_->actual_profile_ || owner->state_->operation_!=ModelSubcommandWrapper::State::Operation::update ||
+       owner->state_->actual_access_.lock()!=access)
+        throw std::logic_error("The captured actual subcommand update was replaced or interrupted.");
+    return resume(services);
+}
 void ModelSubcommandQueue::require_cleanup_startable() const {
     const auto owner=require_live_wrapper();
     if(const auto retained=retained_wrapper();retained && retained!=owner)
@@ -157,7 +182,10 @@ ModelSubcommandResult ModelSubcommandQueue::cleanup(const ModelSubcommandService
 }
 
 void ModelSubcommandWrapper::State::require_usable() const {
-    if(processing_) throw std::logic_error("Recursive model subcommand operation is unsupported.");
+    if(processing_) {
+        if(actual_profile_)faulted_=true;
+        throw std::logic_error("Recursive model subcommand operation is unsupported.");
+    }
     if(faulted_) throw std::logic_error("Model subcommand owner has an uncertain service outcome; automatic replay is forbidden.");
 }
 void ModelSubcommandWrapper::State::require_appendable() const {
@@ -210,7 +238,7 @@ void ModelSubcommandWrapper::State::clear_hitboxes() {
             if(index<cursor_) --cursor_;
             else if(index-cursor_<remaining_) {
                 --remaining_;
-                if(index==cursor_) {current_advanced_=current_start_=false;current_effect_request_.reset();}
+                if(index==cursor_) {current_advanced_=current_start_=current_virtual_=false;current_effect_request_.reset();}
             }
         }
         entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(index));
@@ -227,14 +255,39 @@ ModelSubcommandResult ModelSubcommandWrapper::State::update(float frames,ModelSu
     if(context.source.model_name.size()>max_name_bytes ||
        (!context.resolve_attachment && context.attachment && context.attachment->model_name.size()>max_name_bytes))
         throw std::invalid_argument("Model subcommand owner name exceeds the size limit.");
-    context_=std::move(context); frame_delta_=frames;
+    context_=std::move(context); frame_delta_=frames;actual_profile_=false;actual_access_.reset();current_virtual_=false;
     cursor_=0; remaining_=list->size(); current_advanced_=current_start_=false;
     current_effect_request_.reset();
     operation_=Operation::update;
     return process(services);
 }
+std::shared_ptr<ModelSubcommandActualAccess> ModelSubcommandWrapper::State::actual_access() const {
+    auto access=actual_access_.lock();
+    if(!access)throw std::logic_error("The actual subcommand invocation no longer owns its live access binding.");
+    return access;
+}
+void ModelSubcommandWrapper::State::begin_virtual(const ModelSubcommandEntry& entry) {
+    if(actual_profile_ && !current_virtual_) {
+        context_={};
+        actual_access()->begin_virtual(entry);current_virtual_=true;
+    }
+}
+ModelSubcommandResult ModelSubcommandWrapper::State::update_actual(
+    const std::shared_ptr<ModelSubcommandActualAccess>& access,const ModelSubcommandServices& services) {
+    require_usable();
+    if(pending())throw std::logic_error("Resume or clean up the pending model subcommand pass before actual updating.");
+    if(!access || !access->read_frames || !access->begin_virtual || !access->effect_context)
+        throw std::invalid_argument("Actual subcommand updating requires all original access bindings.");
+    actual_access_=access;actual_profile_=true;context_={};
+    cursor_=0;remaining_=list->size();current_advanced_=current_start_=current_virtual_=false;
+    current_effect_request_.reset();operation_=Operation::update;return process(services);
+}
 ModelSubcommandResult ModelSubcommandWrapper::State::resume(const ModelSubcommandServices& services) {
-    require_usable(); return process(services);
+    require_usable();
+    if(actual_profile_ && operation_==Operation::update && actual_access_.expired()) {
+        faulted_=true;throw std::logic_error("The actual subcommand continuation lost its invocation owner.");
+    }
+    return process(services);
 }
 void ModelSubcommandWrapper::State::require_cleanup_startable() const {
     require_usable();
@@ -245,13 +298,14 @@ ModelSubcommandResult ModelSubcommandWrapper::State::cleanup(const ModelSubcomma
     require_cleanup_startable();
     if(operation_!=Operation::cleanup) {
         operation_=Operation::cleanup; cursor_=0; remaining_=list->size();
-        current_advanced_=current_start_=false;
+        current_advanced_=current_start_=current_virtual_=false;
         current_effect_request_.reset();
     }
     return process(services);
 }
 ModelSubcommandResult ModelSubcommandWrapper::State::start(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services,bool& keep) {
+    begin_virtual(entry);
     if(auto* sound=std::get_if<ModelSoundSubcommandState>(&entry.value)) {
         if(!services.play_sound) return needs(ModelSubcommandStop::sound_play_required,entry);
         const auto result=services.play_sound(sound->name);
@@ -273,6 +327,7 @@ ModelSubcommandResult ModelSubcommandWrapper::State::start(ModelSubcommandEntry&
         // 8031037C completes FIND_SPACE before 803104A8/AC/F0 reads the
         // current ONE work's attachment. Retain the built packet, not a
         // resolver that would observe a later mutation on GENERATE retry.
+        if(actual_profile_)context_=actual_access()->effect_context();
         const auto attachment=context_.resolve_attachment ? context_.resolve_attachment() : context_.attachment;
         if(attachment && attachment->model_name.size()>max_name_bytes)
             throw std::invalid_argument("Model effect attachment name exceeds the size limit.");
@@ -286,6 +341,7 @@ ModelSubcommandResult ModelSubcommandWrapper::State::start(ModelSubcommandEntry&
 }
 ModelSubcommandResult ModelSubcommandWrapper::State::check_hitbox(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services) {
+    begin_virtual(entry);
     if(!services.check_hitbox) return needs(ModelSubcommandStop::hitbox_check_required,entry);
     const auto& hitbox=std::get<ModelHitboxSubcommandState>(entry.value);
     const ModelHitboxCheckRequest request{entry.id,hitbox.command,hitbox.bullet_mode,context_};
@@ -320,7 +376,12 @@ ModelSubcommandResult ModelSubcommandWrapper::State::process(const ModelSubcomma
             else {
                 keep=true;
                 if(!current_advanced_) {
-                    entry.elapsed=elapsed_sum(entry.elapsed,frame_delta_);
+                    if(actual_profile_) {
+                        const auto frames=actual_access()->read_frames(entry);
+                        finite(frames.elapsed);finite(frames.delta);
+                        const auto elapsed=elapsed_sum(frames.elapsed,frames.delta);finite(elapsed);
+                        entry.elapsed=elapsed;
+                    } else entry.elapsed=elapsed_sum(entry.elapsed,frame_delta_);
                     current_start_=!entry.started && entry.elapsed>=entry.delay;
                     if(current_start_) entry.started=true; // Original publishes before virtual start.
                     current_advanced_=true;
@@ -334,13 +395,14 @@ ModelSubcommandResult ModelSubcommandWrapper::State::process(const ModelSubcomma
                     // Sound/effect retained types have the always-true update virtual.
                 }
             }
+            if(faulted_)throw std::logic_error("Caught recursive actual subcommand execution invalidated this pass.");
             if(!result.complete()) {processing_=false;return result;}
             if(operation_==Operation::cleanup || keep) ++cursor_;
             else entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(cursor_));
-            --remaining_; current_advanced_=current_start_=false;current_effect_request_.reset();
+            --remaining_; current_advanced_=current_start_=current_virtual_=false;current_effect_request_.reset();
         }
         if(operation_==Operation::cleanup) list->entries_.clear();
-        operation_=Operation::none; processing_=false; return {};
+        operation_=Operation::none; processing_=false; actual_access_.reset();actual_profile_=false;return {};
     } catch(...) {
         // The callback may have committed an effect before throwing. Retain its
         // owner for diagnosis but prohibit both automatic replay and guessed cleanup.
