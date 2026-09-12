@@ -188,7 +188,7 @@ void canonical_sequence_fields_and_command_owners() {
     fields->wait={"old",0x80,-7,9};runtime.set_label("SQ_WALK","gun");runtime.select("SQ_WALK");
     const auto data=fields->command_data;const auto label_fields=fields->labels;const auto offsets=label_fields->offsets;
     check(fields->name=="SQ_WALK" && data.get()==&program->sequences()[1] &&
-        !data.owner_before(program) && !program.owner_before(data) && fields->command_index==12 &&
+        !data.owner_before(program) && !program.owner_before(data.prepared_owner()) && fields->command_index==12 &&
         fields->label_count==0 && fields->wait==ModelWaitState{std::nullopt,0x80,-7,9},
         "Selection did not publish the exact source-owned data and live sequence/wait fields.");
     fields->name="independent name";fields->command_index=3;fields->label_count=-17;

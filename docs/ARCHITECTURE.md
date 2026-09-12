@@ -2,6 +2,67 @@
 
 ## Implemented boundary
 
+Version 0.41 connects the actual MODELCTRL lifecycle through ordinary sequence
+execution, player `+B8` and the outer GENERATE box tail. `ModelSceneObjects`
+owns canonical mutable SEQ, sequence-data, command and list allocations.
+First-name lookup precedes concrete type checks; nullable slots, repeated
+references, independent counts/capacities and shared physical backing survive
+loading. Captured selected data remains alive when the parent's current SEQ or
+another reference changes.
+
+`ActionEventRuntime` retains an execution bundle for each captured player-work
+generation. One canonical executor owns that work's command state; individual
+ordinary calls retain separate invocation frames. Name and selected-data
+publication precede later label reads, subcommand cleanup retains its captured
+wrapper, and the loop captures selected data and a local cursor. Host service
+suspension preserves those captures and completed effects. Direct JUMP completes
+its nested entry and player callback before returning without overwriting the
+nested cursor. End, LABEL and WCHECK returns still reach player `+B8`.
+
+The player callback freshly captures its own parent/ONE/work, performs the
+SQ_WAIT effect send and panel handling, and then resolves work again for status
+reconciliation. Sleep/stun timer removal, status-icon cleanup and direct stun
+entry retain their own phases and required providers. The GENERATE caller
+continues to its final box write only after this callback actually returns.
+Original four-slot acceptance and the explicitly prepared startup services are
+recorded in [VALIDATION.md](VALIDATION.md).
+
+`ModelSceneManager` owns a nullable current `ModelSceneContext`; RAM manager
+backlinks stay weak. Actual named timer helpers resolve the RAM's current
+manager and that manager's current timestamp at each original helper site.
+This supplies context time without a host clock or a timer copied into work.
+Attaching the context is explicit preparation; the original attachment and
+outer scheduler are still missing.
+
+`action_dispatch` connects defined ACTION programs and the existing actor-aware
+runtime to real messenger rows. It retains source/service owners and pending
+delivery, keeps native query priority, and resumes incomplete commands or
+broadcasts. Its existing ACTION execution profile samples current context when
+accepting a call and retains that timestamp across host retries. It does not
+yet reproduce every original ACTION helper's separate clock read or replace
+the prepared ACTION program/work representation with a mutable loaded graph.
+
+Checked boundaries remain explicit. One work allocation cannot currently acquire
+independent executors through two different RAM owners. Verified direct JUMP
+permits nested ordinary frames; ACTION- or Lua-triggered reentry into an active
+sequence is rejected. Synchronous read-only ACTION queries are supported, while
+recursive ACTION mutation is rejected. Unsupported controller effects, missing
+services and unsafe consumed fields cannot become successful no-ops.
+
+These core paths do not replace the preview's provisional input, movement or
+camera. The original per-frame input/control/wait/collision order, complete
+startup, HUD rendering, combat, transitions, audio, saves and local multiplayer
+session still require integration. See [MODEL_SCENE.md](MODEL_SCENE.md),
+[MODEL_SEQUENCE.md](MODEL_SEQUENCE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md),
+[MODEL_TIMER.md](MODEL_TIMER.md) and [ACTION_DISPATCH.md](ACTION_DISPATCH.md).
+
+## Earlier implementation milestones
+
+The versioned descriptions below record each earlier milestone and its limits
+at that time. Requirements subsequently connected in version 0.41 are described
+above; historical mentions of missing ordinary entry, player callbacks or
+execution bundles are not the current implementation boundary.
+
 Version 0.40 adds `ModelRamTimerAccess`, retaining one actual RAM and a required
 context-clock reader outside player work. Commands, movement and individual
 turning axes perform their own original named helper calls. Changed-time frame
@@ -10,8 +71,8 @@ own clock. Missing timer creation and completed movement prefixes survive later
 checked failures. Work-only sequence/control snapshots have no timer authority;
 full copies of an actual timer binding are rejected. A recovered positive
 invulnerability countdown uses the same endpoint, including the original
-unordered comparison branches. The actual manager/context resolver, complete
-per-work execution bundle and original scheduling are still separate work.
+unordered comparison branches. At that milestone the actual manager/context
+resolver, per-work execution bundle and original scheduling were separate work.
 See [MODEL_TIMER.md](MODEL_TIMER.md) and [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
 Version 0.39 adds one canonical mutable model graph per loaded scene resource.
@@ -20,8 +81,8 @@ retained `ModelBaseInvocation` captures. Player `+98` performs fresh work
 installation, point query, placement, GETPLAYER and the existing startup. The
 outer branch reloads its original ONE's work and performs HP fallback, box and
 heading preparation, and optional AI allocation before a fresh direct controller
-entry. Full ordinary entry and player `+B8` remain required. Prepared sequence
-adapters remain explicit and cannot stand in for that missing execution bundle.
+entry. Full ordinary entry and player `+B8` were still missing at that milestone;
+the existing sequence adapters provided the explicit prepared profile.
 See [MODEL_SCENE.md](MODEL_SCENE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md),
 and [PLAYER_CONSTRUCTION.md](PLAYER_CONSTRUCTION.md).
 
@@ -444,12 +505,14 @@ filesystem file against its ISO extent.
    available for a verified profile. Original Enbaya clips are decoded and
    evaluated with checked full-bone transforms. Static export traversal and
    original instance transforms are available for a verified profile. Full material
-   state, actor/combiner behavior and comparison with the original renderer remain.
+   state, additional actor/combiner profiles and comparison with the original renderer remain.
    See [SKINNING.md](SKINNING.md), [TEXTURES.md](TEXTURES.md),
    [MATERIALS.md](MATERIALS.md), [MESHES.md](MESHES.md) and the evidence in
    [MESH_RESEARCH.md](MESH_RESEARCH.md).
-4. Extend static traversal into gameplay scene activation, animation and actor state. Replace OS/DVD/PAD/GX
-   boundaries with native services using explicit interfaces.
+4. Connect the implemented actor construction and sequence/ACTION state to
+   original startup, gameplay scene activation and per-frame input/collision
+   order. Replace OS/DVD/PAD/GX boundaries with native services using explicit
+   interfaces.
 5. Recover game loop, combat, inventory, scene transitions and persistence in
    narrow, behavior-tested increments. Retain a trace from each adapted function
    to reference addresses and evidence.
@@ -501,7 +564,9 @@ Quaternion conversion preserves the original signs and norm. Helpers participate
 in the full bone hierarchy. Only the verified single-clip, no-modifier skeleton
 profile is accepted. Original timing and ordered layer arithmetic are available
 in the core, alongside the prepared full-binding combiner and snapshot path.
-Full actor/ACTION integration and additional combiner profiles remain pending.
+The verified actor-aware ACTION and preview paths consume these primitives.
+Additional original combiner/material profiles and complete frame integration
+remain pending.
 See [ANIMATIONS.md](ANIMATIONS.md), [ANIMATION_POSE.md](ANIMATION_POSE.md) and
 [ANIMATION_COMBINER.md](ANIMATION_COMBINER.md).
 

@@ -8,7 +8,7 @@ estimated before the missing engine and game logic have been measured.
 | --- | --- | --- | --- |
 | 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
 | 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
-| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview with original floor geometry, animations and host follow camera available; original actor lifecycle, complete collision, enemies and combat pending |
+| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview available; actual construction/sequence/player-callback path connected in the core; original per-frame input/camera/collision, enemies and combat pending |
 | 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
 | 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
 | 5 | Content modding | Stable asset IDs, validated manifests, texture replacements and documented data schemas | Not implemented |
@@ -22,22 +22,52 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.41 connects ordinary entry to canonical mutable SEQ/command owners and
+an executor retained for the captured work generation. Actual context time,
+native ACTION dispatch, direct JUMP and player `+B8` now connect to the retained
+GENERATE path through its final box write. The player callback includes its
+SQ_WAIT effect, panel and status-reconciliation phases; unavailable recipients
+or command services remain explicit boundaries. Four original Agumon slots are
+the original-data acceptance scope for this lifecycle, with results and prepared
+prerequisites tracked in [VALIDATION.md](VALIDATION.md).
+
+The next gate is to connect that core lifecycle to the original startup and
+per-frame execution order: assigned device input, control and wait updates,
+movement/collision response, camera and rendering. Complete original manager
+attachment, audio/effect services, HUD traversal, enemies and verified combat
+remain part of that work. The visible walking demo is unchanged and still uses
+its provisional controller and follow camera. Completing GENERATE does not
+complete a gameplay frame or establish local multiplayer.
+
+The integration also needs broader original evidence for shared-work execution
+across distinct RAMs and ACTION/Lua-triggered nested sequence entry; those paths
+currently stop at checked execution boundaries. The retained ACTION call
+timestamp remains an explicit execution profile, separate from MODELCTRL's
+per-helper live context reads. See
+[ARCHITECTURE.md](ARCHITECTURE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md) and
+[ACTION_DISPATCH.md](ACTION_DISPATCH.md).
+
+## Earlier milestone acceptance notes
+
+The following versioned notes describe the implemented scope and outstanding
+work at each earlier milestone. Their historical next steps are superseded by
+the current gate above where those paths have since been connected.
+
 Version 0.40 connects actual named RAM timers to movement, turning, MOVE/MUTEKI
 and positive invulnerability countdown. Sequence/control staging publishes work
 without reading or writing timers. Original four-slot Agumon WAIT/WALK branches
-exercise that binding with explicit ACTION request boundaries. The next lifecycle
-requirement remains complete direct sequence entry, player `+B8`, a retained
-execution bundle per actual work owner and original manager/context scheduling.
+exercise that binding with explicit ACTION request boundaries. At that milestone
+the next requirements were complete direct sequence entry, player `+B8`, a
+retained execution bundle per work owner and original manager/context scheduling.
 This timer integration does not change the visible walking demo or complete
 the original gameplay loop. See [MODEL_TIMER.md](MODEL_TIMER.md).
 
 Version 0.39 connects actual loaded RAM/ONE owners to native player construction
 and the retained outer GENERATE branch. Four original Agumon owners can reach
 the post-startup ordinary sequence boundary through original point and game-data
-providers. The next lifecycle requirement is the full direct sequence entry,
-its player `+B8` callback, and a retained execution bundle per actual work owner.
-Named RAM timers must remain authoritative when those consumers are connected.
-Manager/context attachment and original scheduling remain separate requirements.
+providers. Full direct sequence entry, player `+B8` and a retained execution
+bundle per actual work owner were the next lifecycle requirements at that time.
+Named RAM timers supplied a separate prerequisite for those consumers.
 
 Version 0.38 supplies one canonical 68-field player-work allocation and routes
 the existing checked MODELCTRL, motion/control, sequence/wait, script and status

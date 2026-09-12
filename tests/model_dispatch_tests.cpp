@@ -34,6 +34,7 @@ struct Fixture {
     std::shared_ptr<ModelSceneRam> ram=scene->models().ram(source.model_rams[0]);
     std::shared_ptr<ModelSceneOne> one=find_model_one(*ram);
     ControllerObjectId id=events.register_model_scene_ram(scene,source.model,source.model_rams[0],0);
+    Fixture() {events.set_model_context(std::make_shared<ModelSceneContext>(ModelSceneContext{42}));}
 };
 using Hook=std::function<MessengerCallResult(NativeMessenger&,const MessengerDelivery&)>;
 void provider(ActionEventRuntime& events,const char* category,std::optional<std::string> name,int number,Hook hook) {
@@ -130,6 +131,10 @@ void captured_queue_and_recursive_fault() {
 }
 void generate_prefix_and_outer_tail() {
     Fixture f;auto& messenger=f.events.messenger();f.ram->active=0;f.ram->words={4,3,2,1};
+    auto custom=std::make_shared<ModelSceneSequence>();custom->name="SQ_CUSTOM";
+    custom->commands=std::make_shared<ModelSceneList>("igNamedObjectList");
+    auto action=std::make_shared<ModelSceneCommand>("beModelCtrlACTION");action->name="CUSTOM";custom->commands->append(action);
+    find_model_seq(*f.info)->sequences->append(custom);
     const auto old=make_model_player_work();f.one->work=old;
     messenger.select("MODELCTRL",f.info->name,0);messenger.buffer().add_vector({3,4,5});
     messenger.buffer().add_string("first");messenger.buffer().add_string("SQ_CUSTOM");

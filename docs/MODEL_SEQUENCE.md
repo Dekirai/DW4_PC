@@ -3,8 +3,71 @@
 Version 0.17 adds retained native sequence state on explicitly prepared model
 work. It reads the original SEQ graph, selects weapon labels, runs supported
 control/motion commands and exposes ACTION execution as a required service.
-The outer player/controller lifecycle and complete animation actions are still
-missing. The walking preview continues to use its provisional host controller.
+Version 0.41 adds the actual graph profile below and connects ordinary entry,
+native ACTION dispatch and player `+B8` through
+[MODEL_SEQUENCE_ENTRY.md](MODEL_SEQUENCE_ENTRY.md). The outer original frame
+remains incomplete. The walking preview uses its provisional host controller.
+
+## Actual graph invocation profile
+
+The actual `ModelSequenceRuntime` constructor binds canonical work fields and
+the real RAM timer endpoint without a prepared program or a node-matrix read.
+`ModelSequenceDataOwner` is one discriminated work+18 reference: either an
+immutable prepared record or the exact mutable `ModelSceneSequence` owner.
+`actual_owner()` never substitutes a copied command vector. Existing prepared
+construction, selection validation and `run` remain a separate checked profile.
+
+Each ordinary invocation retains a `ModelSequenceActualFrame`. Selection lookup
+belongs to the outer controller: it reads the captured parent's current data,
+first named SEQ record, current named sequence list and requested sequence.
+`begin_actual_select` then publishes the nullable name and nullable selected data
+before resolving labels. A failure at the later label read preserves those
+stores. Missing label offsets remain -1 until the original cursor consumer;
+missing data with no selected label reaches the later command-list read.
+Mode/phase, PDMOVE count and wait-name resets precede external subcommand cleanup.
+`finish_actual_select` clears hit scripts, enables wall/floor/fall checks,
+clamps only ordered-negative invulnerability and stops movement entries in order.
+Earlier fields and channel stops survive a later invalid entry. Movement cleanup
+captures the initial count and reloads the actual list for each consumed entry.
+
+`run_actual` captures work.command_data and the local cursor at command-loop
+entry. Each subsequent command reads that retained data owner's current list
+and backing. The original count test is equality with the local cursor, not a
+logical-prefix range check; an unequal cursor requires an addressable physical
+slot. The reached command and request identity are retained while an external
+service is suspended. A callback may replace work.command_data or command_index;
+those stores do not retarget the running loop. A real end, LABEL boundary or
+WCHECK return publishes the local cursor; a native service suspension does not.
+`frame.completed()` distinguishes those cases for the outer +B8 caller.
+
+Model commands retain the actual reached `ModelSceneCommand`. Their raw control
+overload reads name and parameters at the original consuming sites after timer,
+unlock and heading prefixes. In particular, malformed MOVEEX data does not
+prevent earlier original timer/channel allocation, and real clock callbacks can
+change command parameters before those later reads.
+
+JUMP uses a resumable direct controller callback. A child invocation may use the
+same executor with a separate frame, and completed JUMP suppresses old-cursor
+writeback. The current checked boundary permits same-work nested ordinary entry
+through this verified JUMP path only; ACTION/Lua-triggered reentry is not yet
+implemented. A caught invalid reentry faults its frame instead of allowing the
+outer callback to consume the command. Callback exceptions likewise retain the
+completed prefix and permanently fault the invocation.
+
+`make_actual_resume_frame()` captures a later C3AC invocation without repeating
+ordinary-entry resets, for the original wait-resume caller. Frames retain their
+selected data and executor lease, but no strong back-reference to the runtime
+or work. Canonical fields retain only a weak executor lease. Abandoning unfinished
+work prevents replay by a replacement executor; retaining a completed frame
+does not prevent a later healthy binding. The outer owner must retain cleanup,
+wait, messenger, Lua and virtual-callback continuations and must complete +B8
+separately. These helpers do not mark those services complete.
+
+The asset-free actual suite checks nullable publication, label failure prefixes,
+NaN invulnerability, partial movement cleanup, fields-only CTRL, physical backing
+reads, changed work/data/list owners during suspension, ACTION/HITBOX/Lua request
+retention, nested JUMP, cursor suppression, exception/reentry faults and owner
+lifetime. Original local disassembly remains ignored; no game data is included.
 
 ## Source and serialized graph
 
@@ -13,8 +76,8 @@ binding. `select`, `begin_select` and cleanup use `snapshot_work()` and
 `publish_work()`, preserving control/node/list publication without copying,
 reading or writing a timer. Reached MOVE/MUTEKI commands use their own live
 RAM timer helper calls. Full runtime copying remains a prepared operation and
-rejects an actual timer binding. Original manager/context resolution and the
-complete per-work execution bundle remain separate integration requirements.
+rejects an actual timer binding. Version 0.41 adds actual manager/context
+resolution and the retained per-work execution bundle described above.
 See [MODEL_TIMER.md](MODEL_TIMER.md) and [MODEL_CONTROL.md](MODEL_CONTROL.md).
 
 Evidence uses the owner's USA `GDJEB2` revision-0 DOL, SHA-1

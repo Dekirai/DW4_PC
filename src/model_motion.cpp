@@ -8,6 +8,13 @@
 #include <limits>
 
 namespace dw4 {
+ModelMotionPose::ModelMotionPose(std::shared_ptr<ModelMotionFields> fields,std::nullptr_t)
+    :fields_(std::move(fields)) {
+    if(!fields_)throw MotionError("A fields-only model pose requires its captured work fields.");
+}
+ModelMotionPose ModelMotionPose::fields_only(std::shared_ptr<ModelMotionFields> fields) {
+    return ModelMotionPose(std::move(fields),nullptr);
+}
 ModelMotionPose::ModelMotionPose(Matrix value):ModelMotionPose(std::make_shared<Matrix>(value)) {}
 ModelMotionPose::ModelMotionPose(std::shared_ptr<Matrix> node)
     :ModelMotionPose(std::move(node),std::make_shared<ModelMotionFields>()) {}
@@ -33,11 +40,11 @@ ModelMotionPose& ModelMotionPose::operator=(ModelMotionPose&& other) {
     return operator=(static_cast<const ModelMotionPose&>(other));
 }
 ModelMotionPose::Matrix& ModelMotionPose::matrix() {
-    if(!matrix_)throw MotionError("This model pose has transferred its matrix owner.");
+    if(!matrix_)throw MotionError("This model pose has no bound node matrix owner.");
     return *matrix_;
 }
 const ModelMotionPose::Matrix& ModelMotionPose::matrix() const {
-    if(!matrix_)throw MotionError("This model pose has transferred its matrix owner.");
+    if(!matrix_)throw MotionError("This model pose has no bound node matrix owner.");
     return *matrix_;
 }
 std::shared_ptr<ModelMotionPose::Matrix> ModelMotionPose::matrix_owner() {

@@ -8,6 +8,13 @@ and a timer. It does not construct a player or replace the provisional preview.
 
 ## Source and ownership
 
+`ModelMotionPose::fields_only` binds captured work fields without acquiring a
+node or fabricating a matrix. Actual ordinary sequence entry and field-only
+CTRL/PDMOVE consumers use this view. Matrix access remains checked and requires
+a real node at its original consuming site; the actual MOVE heading helper
+performs its own fresh ONE lookup when position lock requires it. This does not
+change the explicit matrix requirement of turning or movement integration.
+
 Evidence uses the owner's USA `GDJEB2` revision-0 DOL, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Guest addresses are mapped through
 DOL sections. Function boundaries and SDK names were cross-checked against

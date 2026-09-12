@@ -1,4 +1,5 @@
 #include "dw4/model_sequence.hpp"
+#include "dw4/model_scene.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -6,7 +7,23 @@
 #include <utility>
 
 namespace dw4 {
-struct ModelSequenceExecutorLease {};
+struct ModelSequenceExecutorLease {std::size_t actual_frames{},actual_started_frames{};};
+std::shared_ptr<const ModelSequenceData> ModelSequenceDataOwner::prepared_owner() const {
+    if(const auto* owner=std::get_if<std::shared_ptr<const ModelSequenceData>>(&value_))return *owner;
+    throw MotionError("Actual sequence data cannot be read as a prepared command vector.");
+}
+std::shared_ptr<ModelSceneSequence> ModelSequenceDataOwner::actual_owner() const {
+    if(const auto* owner=std::get_if<std::shared_ptr<ModelSceneSequence>>(&value_))return *owner;
+    if(!std::get<std::shared_ptr<const ModelSequenceData>>(value_))return {};
+    throw MotionError("Prepared sequence data cannot substitute for a mutable graph owner.");
+}
+ModelSequenceDataOwner::operator bool() const noexcept {
+    return std::visit([](const auto& owner){return bool(owner);},value_);
+}
+ModelSequenceActualFrame::~ModelSequenceActualFrame() {
+    if(lease_ && !completed_) {--lease_->actual_frames;if(began_)--lease_->actual_started_frames;}
+    if(began_ && !completed_)if(const auto fields=fields_.lock())fields->executor_unavailable_=true;
+}
 namespace {
 constexpr std::size_t max_sequences=4096,max_commands=65536,max_text=8u*1024u*1024u;
 void checked_name(std::string_view value) {
@@ -273,6 +290,11 @@ ModelSequenceRuntime::ModelSequenceRuntime(std::shared_ptr<const ModelSequencePr
     checked_name(info_name_);checked_entry_fields(model_);
     acquire_executor();
 }
+ModelSequenceRuntime::ModelSequenceRuntime(ModelControlState model,std::shared_ptr<ModelSequenceFields> fields)
+    :model_(std::move(model)),fields_(std::move(fields)),actual_profile_(true) {
+    if(!model_.timer_access_owner())throw MotionError("Actual sequence execution requires its real RAM timer endpoint.");
+    require_fields();acquire_executor();
+}
 ModelSequenceRuntime::ModelSequenceRuntime(const ModelSequenceRuntime& other)
     :program_(other.program_),model_(other.model_),fields_(std::make_shared<ModelSequenceFields>()),
     info_name_(other.info_name_),ram_no_(other.ram_no_) {
@@ -297,9 +319,10 @@ ModelSequenceRuntime::ModelSequenceRuntime(ModelSequenceRuntime&& other)
     :program_(transfer_program(other)),model_(std::move(other.model_)),fields_(std::move(other.fields_)),
     executor_lease_(std::move(other.executor_lease_)),info_name_(std::move(other.info_name_)),ram_no_(other.ram_no_),
     pending_jump_(std::move(other.pending_jump_)),running_(other.running_),selection_pending_(other.selection_pending_),
-    lua_faulted_(other.lua_faulted_),lua_pending_(other.lua_pending_),action_pending_(other.action_pending_),hitbox_pending_(other.hitbox_pending_) {}
+    lua_faulted_(other.lua_faulted_),lua_pending_(other.lua_pending_),action_pending_(other.action_pending_),hitbox_pending_(other.hitbox_pending_),
+    actual_profile_(other.actual_profile_),actual_jump_window_(other.actual_jump_window_),actual_leaf_(std::move(other.actual_leaf_)) {}
 ModelSequenceRuntime::~ModelSequenceRuntime() {
-    if(fields_ && executor_lease_ && (running_ || selection_pending_ || pending_jump_ || lua_faulted_ || external_pending()))
+    if(fields_ && executor_lease_ && (running_ || selection_pending_ || pending_jump_ || lua_faulted_ || external_pending() || executor_lease_->actual_started_frames))
         fields_->executor_unavailable_=true;
 }
 void ModelSequenceRuntime::acquire_executor() {
@@ -312,7 +335,7 @@ ModelSequenceRuntime& ModelSequenceRuntime::operator=(const ModelSequenceRuntime
     if(this==&other)return *this;
     if(fields_) {
         require_no_lua_fault();
-        if(running_ || selection_pending_ || external_pending())
+        if(running_ || selection_pending() || external_pending())
             throw MotionError("Cannot replace a sequence snapshot during execution or a pending external operation.");
     }
     // Stage detached values before changing a published generation. Immutable
@@ -344,7 +367,7 @@ void ModelSequenceRuntime::require_fields() const {
 }
 const ModelSequenceData& ModelSequenceRuntime::current_data() const {
     require_fields();
-    const auto& data=fields_->command_data;
+    const auto data=fields_->command_data.prepared_owner();
     if(!data)throw MotionError("Model sequence work has not been selected/prepared.");
     if(!program_ || data.owner_before(program_) || program_.owner_before(data) ||
        std::none_of(program_->sequences().begin(),program_->sequences().end(),
@@ -356,7 +379,7 @@ const ModelSequenceData& ModelSequenceRuntime::current_data() const {
 }
 std::shared_ptr<ModelSequenceFields> ModelSequenceRuntime::fields() {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence fields are unavailable during execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Sequence fields are unavailable during execution or a pending external operation.");
     return fields_;
 }
 const ModelWaitState& ModelSequenceRuntime::wait_state() const {require_fields();return fields_->wait;}
@@ -379,27 +402,27 @@ void ModelSequenceRuntime::require_no_lua_fault() const {
 }
 ModelControlState& ModelSequenceRuntime::model() {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Model mutation is unavailable during sequence execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Model mutation is unavailable during sequence execution or a pending external operation.");
     return model_;
 }
 ModelWaitState& ModelSequenceRuntime::wait_state() {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Wait mutation is unavailable during sequence execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Wait mutation is unavailable during sequence execution or a pending external operation.");
     return fields_->wait;
 }
 void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::optional<std::string> label) {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
     ModelSequenceLabels(fields_->labels).set(std::move(sequence),std::move(label));
 }
 std::shared_ptr<ModelSequenceLabelFields> ModelSequenceRuntime::label_fields() {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Label fields are unavailable during execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Label fields are unavailable during execution or a pending external operation.");
     return fields_->labels;
 }
 void ModelSequenceRuntime::select(std::string_view sequence) {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
     auto plan=prepare_selection(sequence);
     auto candidate=model_.snapshot_work();candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
     finish_entry_fields(candidate);
@@ -407,12 +430,13 @@ void ModelSequenceRuntime::select(std::string_view sequence) {
 }
 void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     require_no_lua_fault();
-    if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
+    if(running_ || selection_pending() || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
     auto plan=prepare_selection(sequence);
     auto candidate=model_.snapshot_work();candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
     publish_selection(std::move(plan),std::move(candidate),true);
 }
 ModelSequenceRuntime::SelectionPlan ModelSequenceRuntime::prepare_selection(std::string_view sequence) const {
+    if(actual_profile_)throw MotionError("Actual sequence entry requires its selected mutable graph owner and invocation frame.");
     checked_name(sequence);if(!ordinary(sequence))throw MotionError("This command requires the outer model controller.");
     checked_entry_fields(model_);
     const auto& data=program_->sequences();
@@ -463,10 +487,218 @@ void ModelSequenceRuntime::finish_select() {
     complete_selection();
 }
 
+std::shared_ptr<ModelSequenceActualFrame> ModelSequenceRuntime::make_actual_frame() {
+    require_no_lua_fault();
+    if(!actual_profile_)throw MotionError("Actual invocation frames require the actual sequence profile.");
+    const auto parent=actual_leaf_.lock();
+    if(parent && !parent->completed_ && !(running_ && actual_jump_window_)) {
+        if(running_)parent->faulted_=true;
+        throw MotionError("Resume the retained actual sequence invocation before another ordinary entry.");
+    }
+    if(executor_lease_->actual_frames>=64)throw MotionError("Actual sequence invocation depth exceeds 64 frames.");
+    auto result=std::shared_ptr<ModelSequenceActualFrame>(new ModelSequenceActualFrame());
+    result->lease_=executor_lease_;result->fields_=fields_;
+    if(parent && !parent->completed_)result->parent_=parent;
+    ++executor_lease_->actual_frames;actual_leaf_=result;return result;
+}
+std::shared_ptr<ModelSequenceActualFrame> ModelSequenceRuntime::make_actual_resume_frame() {
+    auto frame=make_actual_frame();frame->began_=true;++executor_lease_->actual_started_frames;return frame;
+}
+void ModelSequenceRuntime::require_actual_frame(const std::shared_ptr<ModelSequenceActualFrame>& frame,bool nested) const {
+    require_no_lua_fault();
+    if(!actual_profile_ || !frame || frame->lease_!=executor_lease_)
+        throw MotionError("Actual sequence frame does not belong to this exact executor.");
+    if(frame->faulted_ || frame->completed_)throw MotionError("A completed or faulted actual sequence frame cannot resume.");
+    if(running_ && !actual_jump_window_) {
+        if(const auto leaf=actual_leaf_.lock())leaf->faulted_=true;
+        throw MotionError("Only original direct JUMP dispatch permits nested sequence entry.");
+    }
+    auto leaf=actual_leaf_.lock();
+    if(nested && frame->command_ && frame->command_->opcode==ModelSequenceOpcode::jump)
+        while(leaf && leaf!=frame)leaf=leaf->parent_.lock();
+    if(leaf!=frame)throw MotionError("Resume the captured child sequence invocation first.");
+}
+namespace {
+std::shared_ptr<ModelSceneObject> actual_command_slot(const std::shared_ptr<ModelSceneSequence>& data,std::int32_t index) {
+    if(!data || !data->commands)throw MotionError("Actual sequence command data/list is null at its original read.");
+    const auto backing=data->commands->backing;
+    if(index<0 || !backing || static_cast<std::size_t>(index)>=backing->size() || index>=65536)
+        throw MotionError("Actual sequence cursor has no addressable physical command slot.");
+    const auto command=(*backing)[static_cast<std::size_t>(index)];
+    if(!command)throw MotionError("Actual sequence reached a null physical command slot.");
+    return command;
+}
+}
+std::int32_t ModelSequenceRuntime::actual_label_offset() const {
+    const auto labels=fields_->labels;
+    if(!labels->sequences)return 0;
+    if(labels->sequences->size()>4096)throw MotionError("Actual sequence label lookup exceeds its entry budget.");
+    const auto found=std::find(labels->sequences->begin(),labels->sequences->end(),fields_->name);
+    if(found==labels->sequences->end())return 0;
+    const auto index=static_cast<std::size_t>(found-labels->sequences->begin());
+    if(!labels->offsets || index>=labels->offsets->size())throw MotionError("Actual sequence label offset has no physical slot.");
+    const auto cached=(*labels->offsets)[index];if(cached!=-1)return cached;
+    if(!labels->names || index>=labels->names->size())throw MotionError("Actual sequence label name has no physical slot.");
+    const auto wanted=(*labels->names)[index];
+    const auto data=fields_->command_data.actual_owner();
+    if(!data || !data->commands)throw MotionError("Actual sequence label scan reached null command data/list.");
+    const auto count=data->commands->count;
+    if(count>65536)throw MotionError("Actual sequence label scan exceeds its command budget.");
+    for(std::int32_t i=0;i<count;++i) {
+        const auto command=actual_command_slot(data,i);
+        if(command->type()!="beModelCtrlLABEL")continue;
+        if(!wanted)throw MotionError("Actual LABEL comparison reached a null stored label name.");
+        if(command->name.value_or("")!=*wanted)continue;
+        // The original result is independent of its guarded cache write.
+        if(labels->offsets && index<labels->offsets->size())(*labels->offsets)[index]=i;
+        return i;
+    }
+    return -1;
+}
+void ModelSequenceRuntime::begin_actual_select(const std::shared_ptr<ModelSequenceActualFrame>& frame,
+    std::optional<std::string> name,std::shared_ptr<ModelSceneSequence> selected) {
+    require_actual_frame(frame);
+    if(frame->began_)throw MotionError("Actual selection cannot repeat its published entry prefix.");
+    if(name) {
+        checked_name(*name);if(!ordinary(*name))throw MotionError("This name requires its original special controller branch.");
+    }
+    frame->began_=true;++executor_lease_->actual_started_frames;
+    try {
+        fields_->name=std::move(name);fields_->command_data=std::move(selected);
+        fields_->command_index=actual_label_offset();
+        fields_->label_count=0;model_.mode()=0;model_.phase()=0;
+        model_.pad_motion.clear();fields_->wait.name.reset();
+        frame->selection_pending_=true;
+    } catch(...) {frame->faulted_=true;throw;}
+}
+void ModelSequenceRuntime::finish_actual_select(const std::shared_ptr<ModelSequenceActualFrame>& frame) {
+    require_actual_frame(frame);
+    if(!frame->selection_pending_)throw MotionError("No actual selection cleanup is pending.");
+    try {
+        model_.bullet_hit_script().reset();model_.wall_hit_script().reset();model_.floor_hit_script().reset();
+        model_.wall_check()=1;model_.floor_check()=1;model_.check_fall()=1;
+        if(model_.invulnerability_frames()<0)model_.invulnerability_frames()=0;
+        model_.channels.on_sequence_change_actual();frame->selection_pending_=false;
+    } catch(...) {frame->faulted_=true;throw;}
+}
+ModelSequenceResult ModelSequenceRuntime::run_actual(const std::shared_ptr<ModelSequenceActualFrame>& frame,
+    const ModelSequenceActualServices& services) {
+    require_actual_frame(frame,true);
+    if(!frame->began_ || frame->selection_pending_)throw MotionError("Complete actual entry cleanup before its command loop.");
+    if(!frame->loop_started_) {
+        frame->cursor_=fields_->command_index;frame->data_=fields_->command_data.actual_owner();frame->loop_started_=true;
+    }
+    ModelSequenceResult result;
+    const auto finish=[&](ModelSequenceStop stop,bool publish=true) {
+        if(publish)fields_->command_index=frame->cursor_;
+        result.stop=stop;frame->completed_=true;--executor_lease_->actual_frames;
+        --executor_lease_->actual_started_frames;frame->lease_.reset();
+        actual_leaf_=frame->parent_;return result;
+    };
+    const bool previous_running=running_,previous_jump=actual_jump_window_;
+    running_=true;actual_jump_window_=false;
+    struct Restore {bool& running;bool& jump;bool old_running,old_jump;
+        ~Restore(){running=old_running;jump=old_jump;}} restore{running_,actual_jump_window_,previous_running,previous_jump};
+    try {
+        for(std::uint32_t visited=0;visited<65536;++visited) {
+            if(!frame->command_) {
+                if(!frame->data_ || !frame->data_->commands)throw MotionError("Actual command loop reached null command data/list.");
+                // 8030C82C uses !=, not <. A slot beyond count remains a physical
+                // read if the local cursor differs; backing checks guard host memory.
+                if(frame->cursor_==frame->data_->commands->count)return finish(ModelSequenceStop::end);
+                const auto owner=actual_command_slot(frame->data_,frame->cursor_);
+                const auto command=std::dynamic_pointer_cast<ModelSceneCommand>(owner);
+                if(!command)throw MotionError("Actual command dispatch reached an unsupported object layout.");
+                frame->raw_command_=command;
+                const auto& type=command->type();
+                if(type=="beModelCtrlMOVE" || type=="beModelCtrlMOVEEX" || type=="beModelCtrlCTRL" ||
+                    type=="beModelCtrlPDMOVE" || type=="beModelCtrlMUTEKI") {
+                    // These helpers consume raw name/parameter fields after
+                    // their own timer/heading prefixes. Type dispatch alone
+                    // must not decode or reject those later reads in advance.
+                    ModelSequenceCommand metadata;metadata.reference_index=command->reference().value_or(0xffffffffu);
+                    metadata.type=type;metadata.opcode=ModelSequenceOpcode::model;frame->command_=std::move(metadata);
+                } else frame->command_=model_scene_command(*command);
+            }
+            const auto& command=*frame->command_;
+            const auto stopped=[&](ModelSequenceStop stop) {
+                result.stop=stop;result.command_reference=command.reference_index;result.type=command.type;result.name=command.name;
+                return result;
+            };
+            const auto identity=[&]() -> const ModelSequenceIdentity& {
+                if(!frame->identity_) {
+                    if(!services.identity)throw MotionError("Actual command dispatch requires its original source/parent/RAM reader.");
+                    frame->identity_=services.identity();
+                    if(frame->faulted_)throw MotionError("An invalid recursive identity read faulted the actual invocation.");
+                }
+                return *frame->identity_;
+            };
+            switch(command.opcode) {
+            case ModelSequenceOpcode::model:
+                apply_model_command(model_,*frame->raw_command_);break;
+            case ModelSequenceOpcode::label:
+                if(fields_->label_count!=0) {stopped(ModelSequenceStop::label_boundary);return finish(ModelSequenceStop::label_boundary);}
+                fields_->label_count=1;break;
+            case ModelSequenceOpcode::label_control:
+                ModelSequenceLabels(fields_->labels).set(command.label_sequence,command.name);break;
+            case ModelSequenceOpcode::action: {
+                if(!services.action)return stopped(ModelSequenceStop::action_required);
+                const auto& source=identity();
+                const bool complete=services.action({source.source,command.reference_index,source.info_name,source.ram_no,command.name});
+                if(frame->faulted_)throw MotionError("An invalid recursive ACTION faulted the actual invocation.");
+                if(!complete)return stopped(ModelSequenceStop::action_required);
+                break;
+            }
+            case ModelSequenceOpcode::jump: {
+                if(!services.jump)return stopped(ModelSequenceStop::controller_required);
+                actual_jump_window_=true;const bool complete=services.jump(command.name);actual_jump_window_=false;
+                if(frame->faulted_)throw MotionError("An invalid recursive callback faulted the actual command invocation.");
+                if(!complete)return stopped(ModelSequenceStop::controller_required);
+                const auto leaf=actual_leaf_.lock();
+                if(leaf && leaf!=frame && !leaf->completed_)throw MotionError("Direct JUMP returned before its child invocation completed.");
+                ++result.commands_executed;stopped(ModelSequenceStop::jump_completed);
+                return finish(ModelSequenceStop::jump_completed,false);
+            }
+            case ModelSequenceOpcode::wait_check:
+                fields_->wait.name=command.name;
+                frame->cursor_=std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(frame->cursor_)+1u);
+                ++result.commands_executed;stopped(ModelSequenceStop::waiting);return finish(ModelSequenceStop::waiting);
+            case ModelSequenceOpcode::hitbox: {
+                if(command.name!="Set" && command.name!="AllClear")break;
+                if(!services.hitbox)return stopped(ModelSequenceStop::hitbox_required);
+                const bool complete=services.hitbox(*command.hitbox_command);
+                if(frame->faulted_)throw MotionError("An invalid recursive HITBOX faulted the actual invocation.");
+                if(!complete)return stopped(ModelSequenceStop::hitbox_required);
+                break;
+            }
+            case ModelSequenceOpcode::lua_call: {
+                std::optional<std::string>* target=nullptr;
+                if(command.lua_mode=="BHit")target=&model_.bullet_hit_script();
+                else if(command.lua_mode=="WHit")target=&model_.wall_hit_script();
+                else if(command.lua_mode=="FHit")target=&model_.floor_hit_script();
+                if(target) {*target=command.name;break;}
+                if(!services.lua)return stopped(ModelSequenceStop::lua_required);
+                const auto& source=identity();
+                const bool complete=services.lua({source.source,command.reference_index,source.info_name,source.ram_no,command.name,command.lua_mode});
+                if(frame->faulted_)throw MotionError("An invalid recursive Lua callback faulted the actual invocation.");
+                if(!complete)return stopped(ModelSequenceStop::lua_required);
+                break;
+            }
+            case ModelSequenceOpcode::unsupported:return stopped(ModelSequenceStop::unsupported_command);
+            }
+            if(frame->faulted_)throw MotionError("An invalid recursive callback faulted the actual command invocation.");
+            frame->cursor_=std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(frame->cursor_)+1u);
+            frame->command_.reset();frame->raw_command_.reset();frame->identity_.reset();++result.commands_executed;
+        }
+        throw MotionError("Actual command loop exhausted its native operation budget; completed effects remain published.");
+    } catch(...) {frame->faulted_=true;throw;}
+}
+
 ModelSequenceResult ModelSequenceRuntime::run(std::uint64_t world_time,const ModelActionDispatch& action,const ModelSequenceCleanup& cleanup,
     const ModelActionTryDispatch& try_action,const ModelHitboxDispatch& hitbox,const ModelLuaDispatch& lua,
     const std::function<void()>& cleanup_preflight) {
     require_no_lua_fault();
+    if(actual_profile_)throw MotionError("Actual command execution requires its retained invocation frame.");
     if(running_)throw MotionError("Reentrant sequence execution is unsupported.");
     if(!selected())throw MotionError("Model sequence work has not been selected/prepared.");
     if(selection_pending_ && !pending_jump_)throw MotionError("Finish the pending sequence selection before executing commands.");

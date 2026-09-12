@@ -1,46 +1,22 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.40 connects movement, turning, MOVE/MUTEKI and invulnerability
-countdown to the current named timer in each actual MODELCTRL RAM. Timer
-lookups and context-clock reads occur at the recovered helper sites; sequence
-and control staging no longer copies or republishes timer state. Original
-Agumon WAIT/WALK branches pass through this binding for all four player slots
-and four weapon labels. This is core integration with explicit external service
-boundaries; full player sequence entry, its callback and original frame
-scheduling remain required. The visible walking preview is unchanged.
-See [MODEL_TIMER.md](docs/MODEL_TIMER.md).
+Version 0.41 connects actual MODELCTRL sequence entry to canonical mutable
+SEQ records, retained work executors, native ACTION messages and the player
+`+B8` callback. The GENERATE continuation includes ordinary entry, player
+effect/panel/status work and the final box write. Named timers read the actual
+RAM's current manager context; work and command owners survive replacement and paused
+services. See [MODEL_SCENE.md](docs/MODEL_SCENE.md),
+[MODEL_DISPATCH.md](docs/MODEL_DISPATCH.md) and
+[ACTION_DISPATCH.md](docs/ACTION_DISPATCH.md).
 
-Version 0.39 connects canonical loaded MODELCTRL RAMs to actual player creation.
-The native callback installs fresh work, queries original spawn points, places
-the real scene node and initializes player values and number/meter controllers.
-Separate base, status and startup captures survive work replacement and paused
-messages. The outer GENERATE continuation now reaches its required ordinary
-sequence entry; that entry, its player callback and the original frame loop are
-still incomplete. The visible walking preview remains the existing demo.
-See [PLAYER_CONSTRUCTION.md](docs/PLAYER_CONSTRUCTION.md) and
-[MODEL_DISPATCH.md](docs/MODEL_DISPATCH.md).
-
-Version 0.38 connects movement, control, sequence, script and status consumers
-to one shared player-work allocation with all 68 recovered field defaults.
-The checked model runtime consumes this allocation directly; node matrices and
-RAM timers keep their separate lifetimes. Retained views keep captured work
-alive, and detached validation values publish through existing owners. Full
-GENERATE and original gameplay remain in progress.
-Version 0.37 makes the existing movement, PDMOVE, subcommand and sequence-label
-consumers operate on actual retained list owners. Sequence entry preserves
-allocated lists and PDMOVE backing storage, and paused subcommands retain their
-original entries when another facade takes over. This prepares the storage
-needed for original player-work replacement.
-Version 0.36 adds original PLAYERPOINT queries and message-driven model placement.
-The actual node matrix now has its own lifetime, separate from a model's turn
-and control state. Prepared spawn integration connects the original point
-provider to all four Agumon nodes. Full player construction, HUD drawing and
-the original gameplay loop remain in progress.
-Patch 0.36.1 also restores the original active/work gates for GETRECNO, so an
-inactive hit source cannot supply a record that triggers the target hit script.
-The full original game, including local
-multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
+This is a core execution milestone. Original four-slot GENERATE acceptance
+and its prepared service prerequisites are tracked in
+[VALIDATION.md](docs/VALIDATION.md). The original frame scheduler, device-to-player
+input, gameplay camera, combat and complete game remain unfinished. The visible
+walking preview is unchanged. The full original game, including local
+one-to-four-player play, remains the target. See
+[ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
 map with keyboard or an SDL-mapped gamepad.** It uses original map, model,
@@ -57,11 +33,25 @@ not contain game files.
 
 ## Current capabilities
 
+- Execute ordinary MODELCTRL entries against actual mutable sequence and command
+  owners, preserving first-name lookup, list aliases, selected data and the
+  captured work generation. Cleanup, direct JUMP, command-loop return and player
+  `+B8` run in their original order. Required external services retain explicit
+  boundaries. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md) and
+  [MODEL_DISPATCH.md](docs/MODEL_DISPATCH.md).
+
+- Dispatch defined ACTION programs through the native messenger, retaining
+  animation/service owners, waits and incomplete broadcasts. Existing ACTION
+  queries keep their own behavior. MODELCTRL timers resolve current manager
+  context at each helper; the existing ACTION runtime retains the timestamp of
+  each accepted call across host retries. See [MODEL_TIMER.md](docs/MODEL_TIMER.md) and
+  [ACTION_DISPATCH.md](docs/ACTION_DISPATCH.md).
+
 - Query original PLAYERPOINT groups through the native messenger and apply the
   original vector/matrix placement rules to the actual model node. Shared node
   matrices survive retained work owners, while candidate motion updates remain
-  independent until publication. Full fresh-work allocation and the GENERATE
-  caller are still required. See [PLAYER_POINT.md](docs/PLAYER_POINT.md),
+  independent until publication. These helpers are connected to fresh player-work
+  allocation and the retained GENERATE caller. See [PLAYER_POINT.md](docs/PLAYER_POINT.md),
   [MODEL_PLACEMENT.md](docs/MODEL_PLACEMENT.md) and [PLAYER_SPAWN.md](docs/PLAYER_SPAWN.md).
 
 - Complete the prepared post-GETPLAYER startup through all five original
@@ -90,7 +80,7 @@ not contain game files.
   ACTION and MODELCTRL endpoints. Four original Agumon slots pass deferred
   generation and two-hand weapon changes across all twelve appearance branches.
   The common bone-selector calculation is independently compared against original
-  instructions. Full player initialization and gameplay remain
+  instructions. Original frame scheduling and gameplay remain
   required. See [WEAPON_RUNTIME.md](docs/WEAPON_RUNTIME.md),
   [ACTOR_SCENE.md](docs/ACTOR_SCENE.md) and [BONE_SELECT.md](docs/BONE_SELECT.md).
 
@@ -98,15 +88,15 @@ not contain game files.
   callback order through missing-service interruptions. The prepared player
   caller resets its modifier prefixes, starts unused data, queues PLAYERARMS
   and recalculates stats. Its original UI and map tail now continues through
-  the recipient owners described above. Complete player construction and the
-  original outer loop remain required.
+  the recipient owners described above and the actual player constructor.
+  The original outer loop remains required.
   See [DEFERRED_MESSENGER.md](docs/DEFERRED_MESSENGER.md) and
   [MODEL_PLAYER_START.md](docs/MODEL_PLAYER_START.md).
 
 - Initialize selected player data through the original ordered GAMESTART path,
   retaining database calls and shared objects across interruptions. Four Agumon
   player slots complete local integration with the supplied original databases
-  and an explicitly prepared font. Full player construction and gameplay
+  and an explicitly prepared font. Complete startup and gameplay
   scheduling remain required. See [GAME_START.md](docs/GAME_START.md),
   [GAME_ITEMS.md](docs/GAME_ITEMS.md), [GAME_STATS.md](docs/GAME_STATS.md) and
   [GAME_NAME.md](docs/GAME_NAME.md).
@@ -128,12 +118,12 @@ not contain game files.
 - Execute selected target-Hit chunks in one shared Lua VM, retain incomplete
   native calls and nested scripts, and apply the original conditional HP merge.
   Explicit script registration and model work remain prerequisites; damage
-  services and full player construction are still required. See
+  services and original per-frame collision/script integration are still required. See
   [MODEL_SCRIPT_RUNTIME.md](docs/MODEL_SCRIPT_RUNTIME.md).
 
 - Route original HITBOX queries to source-qualified target bodies, preserve
   timestamp-based box updates and resume nested record/hit-script operations.
-  Original damage services and full player construction remain required.
+  Original damage services and per-frame collision integration remain required.
   See [MODEL_COLLISION.md](docs/MODEL_COLLISION.md) and
   [MODEL_HIT_BODY.md](docs/MODEL_HIT_BODY.md).
 
@@ -146,14 +136,14 @@ not contain game files.
 
 - Decode original WCHECK occurrences, retain each player's attack wait/latch,
   and resume the live sequence cursor through qualified ACTION queries.
-  Missing outer sequence-entry services remain explicit; complete player
-  construction and connected multiplayer remain pending. See
+  The original per-frame wait/input caller and connected multiplayer remain
+  pending; direct ordinary entry is connected separately. See
   [MODEL_WAIT.md](docs/MODEL_WAIT.md).
 
 - Bind an original MODELCTRL/ACTION instance through its actual node and actor
   graph, route loaded Se/ActionStarter consumers across source files, and retain
   delayed sound/effect work through service suspension and sequence cleanup.
-  Playback/generation managers and full player construction remain pending.
+  Original audio/effect generation managers and the full game frame remain pending.
   See [ACTION_EVENT_RUNTIME.md](docs/ACTION_EVENT_RUNTIME.md).
 
 - Play the original `dng101b1` / `BG02` map with camera-relative movement,
@@ -186,17 +176,18 @@ not contain game files.
   zero-frame arithmetic and a shared original elapsed timer. Decode MOVE/MOVEEX
   records and apply local model-basis translation. See [MOTION.md](docs/MOTION.md).
 - Apply recovered Euler turning before local movement, preserving arc/timer
-  rules, matrix arithmetic and independently owned model state. Original player
-  preparation, actions and collision integration remain pending; the preview
+  rules, matrix arithmetic and independently owned model state. Original
+  per-frame input, movement and collision integration remain pending; the preview
   still uses its provisional controller. See [MODEL_MOTION.md](docs/MODEL_MOTION.md).
 - Decode CTRL/PDMOVE commands, prepare movement timers and heading, and apply
   the original post-input WAIT/WALK request rules. Player turn rates are recovered;
-  full player creation and sequence/action execution remain pending. These core
+  the original post-input frame caller remains pending. These core
   effects do not change the preview. See [MODEL_CONTROL.md](docs/MODEL_CONTROL.md).
 - Run supported original sequence commands with retained cursors and label caches.
   Preserve weapon-section boundaries, nested local jumps and sequence-stop motion.
-  ACTION requests can route to their prepared action runtime; complete actor
-  construction and outer player callbacks remain pending. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md).
+  Actual entries send ACTION messages to retained action runtimes and complete
+  the player callback after a real loop return. Original frame scheduling remains
+  pending. See [MODEL_SEQUENCE.md](docs/MODEL_SEQUENCE.md).
 - Decode original indexed8/RGBA8 and BC1 textures into native RGBA pixels.
 - Browse textures with zoom, pan, filtering and an alpha checkerboard.
 - Decode original triangle lists and indexed triangle strips from IGB geometry.
@@ -213,7 +204,8 @@ not contain game files.
 - Read prepared original animation combiners, retain independent state clocks,
   retire completed transitions and resume interrupted blends from the last cached
   pose. Apply explicit MOTIONSET and motion-update effects to a resolved clip.
-  Full actor construction and preview integration remain pending.
+  Actor-aware execution and the prepared preview use these owners; additional
+  original combiner and material profiles remain pending.
   See [ANIMATION_COMBINER.md](docs/ANIMATION_COMBINER.md).
 - Execute prepared ACTION2 programs with original motion, joint, fade, wait and
   flash commands, same-action suppression, named timers and freeze behavior.
@@ -221,8 +213,10 @@ not contain game files.
   integration tests. Prepared actor groups now allocate all ordered actor buffers
   and release them through the original NDSP path, preserving node clocks for
   reactivation. Ordinary actor traversal and cached bone queries now use the
-  original shared hierarchy; full appearance traversal and event consumers remain
-  pending. See [ACTIONS.md](docs/ACTIONS.md) and [ACTION_ACTORS.md](docs/ACTION_ACTORS.md).
+  original shared hierarchy. Loaded event consumers and ordinary appearance
+  traversal are connected for verified profiles; complete original rendering
+  and frame scheduling remain pending. See [ACTIONS.md](docs/ACTIONS.md) and
+  [ACTION_ACTORS.md](docs/ACTION_ACTORS.md).
 - Evaluate the original no-modifier bone/joint hierarchy with ordered float
   matrix operations, helper bones, retained cache validity and node-adjusted
   traversal time. See [ANIMATION_HIERARCHY.md](docs/ANIMATION_HIERARCHY.md).
@@ -512,9 +506,11 @@ available, including verified base-texture bindings, original clip decoding and
 static map inspection through named packages and original switch commands, plus
 explicitly placed animated player visuals. Original `func.lua` and `boot.lua`
 execute natively in the inspection path. Preliminary loading and the first
-controller callbacks now have separate native implementations. The next steps
-are original audio services and manager preparation, layer/text state and player
-generation in `start.lua`, alongside movement/collision and camera recovery.
+controller callbacks now have separate native implementations. Actual player
+construction, ordinary sequence execution and its player callback are connected
+in the core. The next steps are original audio services and manager preparation,
+layer/text state and connecting that lifecycle to `start.lua` and the original
+per-frame input, movement, waits, collision and camera paths.
 Original-reference comparisons and independent controller slots are required
 throughout. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.

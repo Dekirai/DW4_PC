@@ -2,7 +2,7 @@
 
 `ActorSceneResource::models()` owns one lazily created `ModelSceneObjects`
 registry for that actual loaded source. The registry decodes mutable model info,
-RAM, named data, ONE, HIT, timer and object-list owners. It uses the resource's
+RAM, named data, ONE, HIT, SEQ, sequence data, commands, timer and object-list owners. It uses the resource's
 canonical physical references; repeated references and distinct reference-table
 aliases resolve to the same allocation. Two separate loads remain separate even
 when their path, source occurrence and numeric references are equal.
@@ -23,6 +23,9 @@ serialization does not contain those registration links.
 | `beModelCtrlInfoRamData` | Nullable actual node and canonical player-work references |
 | `beModelCtrlInfoDataHit` | Raw player-bullet, enemy-bullet and player-talk bytes; nullable `igAABoxList` reference |
 | `beBaseInfoRamTimer` | Its actual `MotionTimer` payload, inherited name and integer |
+| `beModelCtrlInfoDataSeq` | Actual nullable ordered sequence-list reference |
+| `beModelCtrlData` | Nullable name and actual ordered command-list reference |
+| Named MODELCTRL commands | Nullable name and raw mutable supported numeric/string/HITBOX parameter fields |
 | Object lists | Independent signed count/capacity and a shared backing allocation, including null/repeated object slots |
 
 ONE nodes come from `ActorSceneResource::mutable_node()`. HIT box entries use
@@ -35,6 +38,23 @@ into player work.
 parent/manager backlinks. Registration order, manager lists, activation,
 context queries and collision categories belong to its original caller. Merely
 loading a four-entry RAM list does not assign numbers zero through three.
+The manager backlink has the explicit `ModelSceneManager` type. Its nullable
+`ModelSceneContext` owns the current world timestamp, permitting the original
+RAM-to-manager-to-context clock read without capturing a stale timestamp.
+These owners do not themselves implement the original context attachment or
+outer scheduler.
+
+SEQ lookup reads the captured information owner's current data list, selects
+the first name match, and then checks the concrete SEQ type. Requested sequence
+lookup follows the same order. Its `ModelSceneSequence` owns the actual nullable
+command-list reference; commands and list backing are canonical graph owners,
+including repeated references and memory aliases. Replacing the parent's SEQ
+or sequence list leaves a suspended call's retained selected data alive.
+`model_scene_command` forms a detached request from one reached mutable command;
+it is not an immutable whole-program cache. LABEL lookup can inspect the raw
+owner's type/name without decoding unrelated numeric fields. Null names and raw
+nonfinite parameters remain representable; their command-specific consumers
+determine which values are safe to consume.
 
 ## Ordered lookup and allocation
 
@@ -94,6 +114,10 @@ wrong-type lookup, actual timer reuse, raw HIT flags, shared boxes, original
 list-growth ownership, and malformed counts, capacities, field slots and owning
 cycles. Optional local-data coverage loads all four original Agumon RAM/ONE/node
 owners and verifies timer survival across work replacement.
+It also checks mutable SEQ selection and command fields, independent named-list
+count/capacity/backing, and every command occurrence in all 28 original Agumon
+sequences. Serialized named-list counts are retained without eagerly validating
+unreached backing; concrete lookup/runner consumers enforce their own checks.
 
 Loading is bounded to 65,536 model objects/backing owners, 262,144 represented
 backing entries, 16 MiB of copied text and 128 object/memory reference edges.

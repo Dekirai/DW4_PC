@@ -30,6 +30,10 @@ float number(const IgbDocument& doc,const IgbObject& object,std::uint16_t slot) 
     field(doc,object,slot,"igFloatMetaField");
     const auto value=doc.field_f32(object,slot); finite(value); return value;
 }
+std::string_view raw_name(const ModelSceneCommand& command) {
+    const auto value=command.name ? std::string_view(*command.name):std::string_view{};
+    name(value);return value;
+}
 } // namespace
 
 ModelPadMotionList::ModelPadMotionList(Storage values) {
@@ -134,6 +138,27 @@ void PadMotionParameters::apply(const PadMotionCommand& command) {
         if(write_value)(*list->backing_)[static_cast<std::size_t>(index)]=command.value;
         if(write_frames)(*list->backing_)[static_cast<std::size_t>(index+1)]=command.frames;
     }
+}
+void PadMotionParameters::apply(const ModelSceneCommand& command) {
+    const auto index=raw_name(command)=="Move" ? 2:0;
+    require_owner();
+    if(list_owner()->count_==0) {
+        prepare_storage(4);const auto owner=list_owner();
+        std::fill_n(owner->backing_->begin(),4,0.0f);owner->count_=4;
+    }
+    // AF94..AFC0 loads value after initialization and before its count guard.
+    const auto store=[&](std::int32_t target,float value) {
+        finite(value);require_owner();const auto owner=list_owner();
+        if(target>=0 && target<owner->count_) {
+            if(!owner->backing_ || static_cast<std::size_t>(target)>=owner->backing_->size())
+                throw MotionError("PDMOVE guarded store has no addressable backing float.");
+            pad_storage_size(owner->backing_->size());(*owner->backing_)[static_cast<std::size_t>(target)]=value;
+        }
+    };
+    store(index,command.value);
+    // AFC4..AFF8 independently reloads the owner, then reads frames. A later
+    // checked failure does not undo the first store or initial four zeros.
+    store(index+1,command.frames);
 }
 std::array<float,2> PadMotionParameters::backing_pair(bool moving) const {
     require_owner();
@@ -291,6 +316,52 @@ ModelCommand decode_model_command(const IgbDocument& doc,std::uint32_t reference
 }
 
 namespace {
+void actual_timer_prefix(ModelControlState& state) {
+    const auto access=state.timer_access_owner();
+    if(!access)throw MotionError("This command overload requires the actual RAM timer binding.");
+    if(!access->exists("KEIKATIMER"))access->start("KEIKATIMER");
+}
+void actual_move_prefix(ModelControlState& state) {
+    actual_timer_prefix(state);
+    if(state.pose.position_locked()) {
+        state.pose.position_locked()=0;
+        const auto one=find_model_one(*state.timer_access_owner()->ram_owner());
+        if(!one || !one->node)throw MotionError("Original MOVE heading requires its freshly looked-up ONE node.");
+        ModelMotionPose pose(one->node->matrix_owner(),state.pose.fields_owner());
+        synchronize_model_heading(pose);
+    }
+    const auto list=state.channels.list_owner();
+    if(!list)throw MotionError("Original MOVE requires its actual movement-list owner.");
+    if(list->size()==0) {
+        // A81C..AA1C publishes all four allocations before the command type,
+        // name or control code is consumed. Keep each append if allocation fails.
+        for(unsigned index=0;index<4;++index) {
+            auto entry=std::make_shared<MotionState>();
+            const auto live=state.channels.list_owner();
+            if(!live)throw MotionError("Original MOVE lost its actual movement-list owner.");
+            live->mutable_entries().push_back(std::move(entry));
+        }
+    }
+}
+bool apply_control_name(ModelControlState& state,std::string_view value) {
+    name(value);
+    if(value=="onWalk") {state.mode()=1;state.phase()=0;}
+    else if(value=="toWalk") {state.mode()=2;state.phase()=0;}
+    else if(value=="toWait") {state.mode()=3;state.phase()=0;}
+    else if(value=="isLive") {state.mode()=4;state.phase()=0;}
+    else if(value=="onFall")state.check_fall()=1;
+    else if(value=="noFall")state.check_fall()=0;
+    return true;
+}
+bool apply_muteki_flag(ModelControlState& state,std::string_view value) {
+    name(value);
+    if(value=="OFFWALL")state.wall_check()=0;
+    else if(value=="ONWALL")state.wall_check()=1;
+    else if(value=="OFFFLOOR")state.floor_check()=0;
+    else if(value=="ONFLOOR")state.floor_check()=1;
+    else return false;
+    return true;
+}
 bool apply_work_command(ModelControlState& state,const ModelCommand& command) {
     // CTRL/PDMOVE do not inspect or republish even a prepared timer slot.
     if(std::holds_alternative<ModelCtrlCommand>(command) || std::holds_alternative<PadMotionCommand>(command)) {
@@ -346,28 +417,68 @@ void apply_model_command(ModelControlState& state,const ModelCommand& command,st
 void apply_model_command(ModelControlState& state,const ModelCommand& command) {
     const auto access=state.timer_access_owner();
     if(!access)throw MotionError("This command overload requires the actual RAM timer binding.");
-    if(apply_work_command(state,command))return;
+    // Actual CTRL/PDMOVE consume only their work fields. In particular they
+    // must not copy or inspect an unrelated ONE node just to stage a command.
+    if(const auto* control=std::get_if<ModelCtrlCommand>(&command)) {
+        apply_control_name(state,control->name);
+        return;
+    }
+    if(const auto* pad=std::get_if<PadMotionCommand>(&command)) {
+        name(pad->name);state.pad_motion.apply(*pad);return;
+    }
     if(const auto* move=std::get_if<MotionCommand>(&command)) {
-        if(!access->exists("KEIKATIMER"))access->start("KEIKATIMER");
-        if(state.pose.position_locked()) {
-            state.pose.position_locked()=0;
-            const auto one=find_model_one(*access->ram_owner());
-            if(!one || !one->node)throw MotionError("Original MOVE heading requires its freshly looked-up ONE node.");
-            ModelMotionPose pose(one->node->matrix_owner(),state.pose.fields_owner());
-            synchronize_model_heading(pose);
-        }
+        actual_move_prefix(state);
         name(move->name);state.channels.apply(*move);return;
     }
     if(const auto* muteki=std::get_if<ModelMutekiCommand>(&command)) {
-        if(!access->exists("KEIKATIMER"))access->start("KEIKATIMER");
-        name(muteki->name);
-        if(muteki->name=="OFFWALL")state.wall_check()=0;
-        else if(muteki->name=="ONWALL")state.wall_check()=1;
-        else if(muteki->name=="OFFFLOOR")state.floor_check()=0;
-        else if(muteki->name=="ONFLOOR")state.floor_check()=1;
-        else {finite(muteki->frames);state.invulnerability_frames()=muteki->frames;}
+        actual_timer_prefix(state);
+        if(!apply_muteki_flag(state,muteki->name)) {finite(muteki->frames);state.invulnerability_frames()=muteki->frames;}
         return;
     }
+}
+
+void apply_model_command(ModelControlState& state,const ModelSceneCommand& command) {
+    if(!state.timer_access_owner())throw MotionError("Raw model commands require their actual RAM binding.");
+    const auto& type=command.type();
+    if(type=="beModelCtrlCTRL") {apply_control_name(state,raw_name(command));return;}
+    if(type=="beModelCtrlPDMOVE") {state.pad_motion.apply(command);return;}
+    if(type=="beModelCtrlMUTEKI") {
+        actual_timer_prefix(state);
+        if(!apply_muteki_flag(state,raw_name(command))) {
+            finite(command.frames);state.invulnerability_frames()=command.frames;
+        }
+        return;
+    }
+    if(type!="beModelCtrlMOVE" && type!="beModelCtrlMOVEEX")throw MotionError("Unsupported actual model command type.");
+    actual_move_prefix(state);
+    // Decode only after the complete original prefix. The raw owner's fields
+    // can have changed during the actual timer clock read or node resolution.
+    const auto text=raw_name(command);
+    MotionCommand motion;motion.type=type;motion.name=text;
+    motion.reference_index=command.reference().value_or(0);
+    if(type=="beModelCtrlMOVE") {
+        motion.setup.value=command.value;motion.setup.frames=command.frames;
+        if(text=="Move") {motion.channel=2;motion.setup.mode=MotionMode::accelerate_positive;}
+        else if(text=="Stop") {motion.channel=2;motion.setup.mode=MotionMode::stop_positive;}
+        else if(text=="Push") {motion.channel=2;motion.setup.mode=MotionMode::impulse_positive;}
+        else if(text=="Back") {motion.channel=2;motion.setup.mode=MotionMode::impulse_negative;}
+        else if(text=="Jump") {motion.channel=1;motion.setup.mode=MotionMode::impulse_positive;}
+        else if(text=="Fall") {motion.channel=1;motion.setup.mode=MotionMode::accelerate_negative;}
+    } else {
+        if(text.size()<4)throw MotionError("MOVEEX control code needs four bytes.");
+        const int channel=static_cast<unsigned char>(text[1])-'X'+(text[0]=='T' ? 0:2);
+        if(channel<0 || channel>3)throw MotionError("MOVEEX control code selects an invalid channel.");
+        int mode;
+        if(text[3]=='A')mode=0;else if(text[3]=='D')mode=2;else if(text[3]=='T')mode=4;
+        else throw MotionError("MOVEEX control code has an unverified mode.");
+        if(text[2]=='M')++mode;
+        motion.channel=static_cast<std::uint32_t>(channel);motion.setup.mode=static_cast<MotionMode>(mode);
+        motion.setup.value=command.value;motion.setup.frames=command.frames;motion.setup.end_time=command.end_time;
+        motion.stop=MotionStop{command.stop_on_sequence!=0,command.stop_value,command.stop_frames};
+    }
+    // Keep the existing scalar checked profile. Unknown MOVE names never
+    // configure a scalar and therefore do not validate unused numeric payloads.
+    state.channels.apply(motion);
 }
 
 ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t key_input,

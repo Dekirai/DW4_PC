@@ -6,9 +6,12 @@
 
 #include <functional>
 #include <memory>
+#include <variant>
 #include <vector>
 
 namespace dw4 {
+class ModelSceneSequence;
+class ModelSceneCommand;
 struct ModelHitboxCommand {
     std::uint32_t reference_index{};
     std::string name; // Serialized null becomes the original non-null empty name.
@@ -28,6 +31,30 @@ struct ModelSequenceData {
     std::uint32_t reference_index{};
     std::string name;
     std::vector<ModelSequenceCommand> commands; // Ordered occurrences, including aliases.
+};
+// One work+18 reference. Prepared records and mutable loaded graph records are
+// different profiles; assigning either replaces the other, including null.
+class ModelSequenceDataOwner {
+public:
+    ModelSequenceDataOwner()=default;
+    ModelSequenceDataOwner(std::shared_ptr<const ModelSequenceData> value):value_(std::move(value)) {}
+    ModelSequenceDataOwner(std::shared_ptr<ModelSceneSequence> value):value_(std::move(value)) {}
+    std::shared_ptr<const ModelSequenceData> prepared_owner() const;
+    std::shared_ptr<ModelSceneSequence> actual_owner() const;
+    explicit operator bool() const noexcept;
+    void reset() noexcept {value_=std::shared_ptr<const ModelSequenceData>{};}
+    // Compatibility for explicitly prepared callers. An actual owner is never
+    // projected into a detached prepared command vector.
+    operator std::shared_ptr<const ModelSequenceData>() const {return prepared_owner();}
+    const ModelSequenceData* get() const {return prepared_owner().get();}
+    const ModelSequenceData* operator->() const {return get();}
+    const ModelSequenceData& operator*() const {return *prepared_owner();}
+    template<class T> bool owner_before(const std::shared_ptr<T>& other) const {
+        return std::visit([&](const auto& owner){return owner.owner_before(other);},value_);
+    }
+    bool operator==(const ModelSequenceDataOwner&) const=default;
+private:
+    std::variant<std::shared_ptr<const ModelSequenceData>,std::shared_ptr<ModelSceneSequence>> value_;
 };
 class ModelSequenceProgram {
 public:
@@ -80,9 +107,9 @@ private:
 };
 // Canonical work+14..2C and wait/player fields. The host label-field grouping
 // owns the three actual nullable guest list references; it is not a guest list.
-// command_data aliases an actual immutable ModelSequenceData in its qualified
-// program allocation. Neither a numeric program index nor a copied command
-// record substitutes for that owner. Null name and null data are independent.
+// command_data retains either a qualified immutable prepared record or the
+// exact mutable loaded graph owner. A program index or copied command record
+// never substitutes for that owner. Null name and null data are independent.
 struct ModelSequenceExecutorLease;
 struct ModelSequenceFields {
     ModelSequenceFields()=default;
@@ -91,18 +118,19 @@ struct ModelSequenceFields {
     ModelSequenceFields(ModelSequenceFields&&)=delete;
     ModelSequenceFields& operator=(ModelSequenceFields&&)=delete;
     std::optional<std::string> name;
-    std::shared_ptr<const ModelSequenceData> command_data;
+    ModelSequenceDataOwner command_data;
     std::int32_t command_index{},label_count{};
     std::shared_ptr<ModelSequenceLabelFields> labels=std::make_shared<ModelSequenceLabelFields>();
     ModelWaitState wait;
 private:
     friend class ModelSequenceRuntime;
+    friend class ModelSequenceActualFrame;
     // Host lifetime metadata only: never another guest field or a strong
     // back-reference to the facade/work. One executor owns service continuation.
     std::weak_ptr<ModelSequenceExecutorLease> executor_;
     bool executor_unavailable_{};
 };
-enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting, hitbox_required, lua_required };
+enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting, hitbox_required, lua_required, jump_completed };
 struct ModelSequenceResult {
     ModelSequenceStop stop{};
     std::uint32_t commands_executed{};
@@ -140,6 +168,41 @@ using ModelLuaDispatch = std::function<bool(const ModelLuaRequest&)>;
 // must not mutate this sequence runtime.
 using ModelSequenceCleanup = std::function<bool(std::string_view)>;
 
+struct ModelSequenceIdentity {std::string source,info_name;std::int32_t ram_no{};};
+struct ModelSequenceActualServices {
+    // Read the captured parent and actual RAM at the command's original site.
+    // The resulting request is retained across a suspended service invocation.
+    std::function<ModelSequenceIdentity()> identity;
+    ModelActionTryDispatch action;
+    ModelHitboxDispatch hitbox;
+    ModelLuaDispatch lua;
+    std::function<bool(std::string_view)> jump;
+};
+// One original +8C ordinary-entry/command-loop invocation, not another work
+// executor. Root invocations retain these across cleanup and service suspension.
+// A direct JUMP may enter another frame on the same canonical executor.
+class ModelSequenceActualFrame {
+public:
+    ~ModelSequenceActualFrame();
+    ModelSequenceActualFrame(const ModelSequenceActualFrame&)=delete;
+    ModelSequenceActualFrame& operator=(const ModelSequenceActualFrame&)=delete;
+    bool selection_pending() const noexcept {return selection_pending_;}
+    bool completed() const noexcept {return completed_;}
+    bool faulted() const noexcept {return faulted_;}
+private:
+    friend class ModelSequenceRuntime;
+    ModelSequenceActualFrame()=default;
+    std::shared_ptr<ModelSequenceExecutorLease> lease_;
+    std::weak_ptr<ModelSequenceFields> fields_;
+    std::weak_ptr<ModelSequenceActualFrame> parent_;
+    std::shared_ptr<ModelSceneSequence> data_;
+    std::shared_ptr<ModelSceneCommand> raw_command_;
+    std::optional<ModelSequenceCommand> command_;
+    std::optional<ModelSequenceIdentity> identity_;
+    std::int32_t cursor_{};
+    bool began_{},selection_pending_{},loop_started_{},completed_{},faulted_{};
+};
+
 // Recovered base-model command runner on caller-prepared work. Owns its program,
 // label cache, command cursor and supported control state. This is not complete
 // player construction or the outer controller's virtual dispatch/frame loop.
@@ -154,6 +217,17 @@ public:
     // while its external services (including its separate wait pass) are pending.
     ModelSequenceRuntime(std::shared_ptr<const ModelSequenceProgram> program,ModelControlState model,
         std::string info_name,std::int32_t ram_no,std::shared_ptr<ModelSequenceFields> fields);
+    // Actual profile: the selected mutable graph owner is supplied at each
+    // ordinary entry. No fixed whole-program lookup or prepared timer is used.
+    ModelSequenceRuntime(ModelControlState actual_model,std::shared_ptr<ModelSequenceFields> fields);
+    std::shared_ptr<ModelSequenceActualFrame> make_actual_frame();
+    // A later original wait-resume invokes C3AC without ordinary-entry resets.
+    std::shared_ptr<ModelSequenceActualFrame> make_actual_resume_frame();
+    void begin_actual_select(const std::shared_ptr<ModelSequenceActualFrame>&,
+        std::optional<std::string> name,std::shared_ptr<ModelSceneSequence> selected);
+    void finish_actual_select(const std::shared_ptr<ModelSequenceActualFrame>&);
+    ModelSequenceResult run_actual(const std::shared_ptr<ModelSequenceActualFrame>&,
+        const ModelSequenceActualServices& services={});
     // Healthy prepared copies detach mutable values. A pending/executing/faulted
     // copy is inspection-only; it cannot resume another external continuation.
     // Assignment publishes through the
@@ -178,11 +252,16 @@ public:
     std::vector<ModelSequenceLabel> labels() const;
     std::shared_ptr<ModelSequenceLabelFields> label_fields();
     std::shared_ptr<const ModelSequenceLabelFields> label_fields() const;
-    bool selection_pending() const noexcept { return selection_pending_; }
+    bool selection_pending() const noexcept {
+        const auto frame=actual_leaf_.lock();return selection_pending_ || (frame && frame->selection_pending_);
+    }
     bool jump_pending() const noexcept { return pending_jump_.has_value(); }
     bool lua_pending() const noexcept { return lua_pending_; }
     bool lua_faulted() const noexcept { return lua_faulted_; }
-    bool external_pending() const noexcept {return action_pending_ || hitbox_pending_ || lua_pending_;}
+    bool external_pending() const noexcept {
+        const auto frame=actual_leaf_.lock();
+        return action_pending_ || hitbox_pending_ || lua_pending_ || (frame && frame->loop_started_ && !frame->completed_);
+    }
     // 8030B014: replace the first sequence-key entry or append; invalidate offset.
     void set_label(std::optional<std::string> sequence,std::optional<std::string> label);
     // Owned selection/control/motion effects of ordinary sequence entry only.
@@ -241,6 +320,8 @@ private:
     };
     std::optional<PendingJump> pending_jump_;
     bool running_{},selection_pending_{},lua_faulted_{},lua_pending_{},action_pending_{},hitbox_pending_{};
+    bool actual_profile_{},actual_jump_window_{};
+    std::weak_ptr<ModelSequenceActualFrame> actual_leaf_;
     struct SelectionPlan {
         std::string name;
         std::shared_ptr<const ModelSequenceData> data;
@@ -256,5 +337,7 @@ private:
     SelectionPlan prepare_selection(std::string_view sequence) const;
     void publish_selection(SelectionPlan&&,ModelControlState&&,bool pending);
     void complete_selection();
+    void require_actual_frame(const std::shared_ptr<ModelSequenceActualFrame>&,bool nested=false) const;
+    std::int32_t actual_label_offset() const;
 };
 } // namespace dw4

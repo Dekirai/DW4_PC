@@ -13,8 +13,8 @@ choose a scheduler order. Live manager resolution checks the real backlink.
 The same runtime registry owns both these live registrations and the explicit
 prepared sequence adapters. A live RAM may have null ONE.work before GENERATE.
 `model_work()` freshly resolves that RAM's current ONE. Existing prepared
-sequence APIs reject a live registration until its actual execution bundle is
-implemented; they never silently substitute a detached prepared work object.
+sequence APIs reject a live registration; ordinary delivery uses its canonical
+actual execution bundle and never substitutes a detached prepared work object.
 
 ## Retained original capture scopes
 
@@ -51,14 +51,14 @@ count. Nullable boxes remain null; no bounds or AI program are invented.
 
 Direct virtual `+8C` creates another base/status invocation with the saved
 override, or SQ_WAIT only for a null override. It uses the current messenger
-packet without selecting or pushing a replacement. The ordinary sequence
-implementation and player `+B8` callback are still required, so normal GENERATE
-currently remains suspended at that explicit boundary. Returning from `+98`
-does not report full generation complete. The final node-box publication is
-implemented behind the direct-entry completion gate and has not yet been
-validated through a complete ordinary GENERATE invocation.
-The synthetic direct GETHP override does complete and tests that final tail,
-including shared source-box retention and separate transformed destination.
+packet without selecting or pushing a replacement. Ordinary sequence entry now
+runs the actual graph and then the player `+B8` callback before returning through
+the final box tail. [MODEL_SEQUENCE_ENTRY.md](MODEL_SEQUENCE_ENTRY.md) describes
+their distinct work captures and retained external-service continuations.
+Returning from `+98` alone still does not report full generation complete.
+The final tail copies and transforms a non-null saved box into the live root;
+a null source leaves the cleared root box null. The synthetic direct GETHP
+override separately checks source-box retention and transformed destination.
 Native direct-entry nesting is bounded to 64 levels; this guard does not model
 guest stack exhaustion or roll back an already executed generation prefix.
 
@@ -68,5 +68,5 @@ status lookup `803AEBD8..803AEC94`, outer generation `8030D9D8..8030DBFC`,
 registration `802F251C`, `803083CC`, and player hook `8034C39C`. Original
 disassembly stays in ignored local work files. Synthetic tests exercise owner
 replacement, paused status/creation, live routing fields, committed prefixes and
-the explicit sequence boundary. This is native recovered behavior, not guest
+the retained sequence and callback boundaries. This is native recovered behavior, not guest
 allocator execution or proof of a complete original game frame.

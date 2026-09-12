@@ -12,12 +12,16 @@ class ModelSceneTimer;
 // Read the actual registered RAM manager/context clock at the caller's current
 // original helper site. No OS clock or timestamp captured at sequence entry.
 using ModelWorldClockReader=std::function<std::uint64_t(const ModelSceneRam&)>;
+// Original RAM.manager -> manager.context -> context world-time fields.
+// Resolve both current references at the reached helper site.
+std::uint64_t model_world_time(const ModelSceneRam&);
 
 // Actual named timer operations on one retained RAM. Each helper looks up the
 // current RAM.data; only its own captured timer survives its clock/read phases.
 // The facade never owns a copied optional timer or caches a named record.
 class ModelRamTimerAccess {
 public:
+    explicit ModelRamTimerAccess(std::shared_ptr<ModelSceneRam>);
     ModelRamTimerAccess(std::shared_ptr<ModelSceneRam>,ModelWorldClockReader);
     ModelRamTimerAccess(const ModelRamTimerAccess&)=delete;
     ModelRamTimerAccess& operator=(const ModelRamTimerAccess&)=delete;

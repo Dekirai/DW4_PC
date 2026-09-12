@@ -1,5 +1,8 @@
 #include "dw4/model_dispatch.hpp"
 #include "dw4/action_event_runtime.hpp"
+#include "dw4/model_player_sequence.hpp"
+
+#include <algorithm>
 
 namespace dw4 {
 namespace {
@@ -13,10 +16,23 @@ ActorSceneNode& node(const std::shared_ptr<ModelSceneOne>& captured) {
     if(!captured->node)fail("Original GENERATE dereferences a null captured ONE node.");
     return *captured->node;
 }
+bool controller_command(const std::optional<std::string>& command) {
+    // 802CCD64: the exact base dictionary precedes ordinary named sequences.
+    // An unimplemented controller command must not fall through as a sequence.
+    constexpr std::array<std::string_view,35> names{
+        "GENERATE","GENERATE_NDSP","REMOVE","GETINFONAME","GETINFONAME_RUN",
+        "SETMATRIX","CHKBULLET","SETLABEL","SETEFFECT","SETSOUND","GETMATRIX",
+        "GETMATRIX_ALL","GETMATRIX_ACTIVE","GETTRCDATA","GETHP","SETHP","GETRECNO",
+        "ACTION1","ONCTRL","OFCTRL","ONFREEZE","OFFREEZE","SETLODHIGH","RESETLODHIGH",
+        "MOVETRANS","SETCONVEYOR","SETQUICKSAND","SETSLIPPEDFLOOR","ISRUN","ISSEQNAME",
+        "ONHITBULLETBOX","OFHITBULLETBOX","GETSEQNAMELIST","SQ_ERAS","SQ_ERAS2"};
+    return command && std::find(names.begin(),names.end(),*command)!=names.end();
+}
+thread_local std::size_t active_base_calls{};
 }
 struct ModelBaseInvocation::Impl {
     enum class Phase { status,command,generate_begin,player,outer_capture,hp,save_box,
-        clear_box,heading,ai,direct_entry,final_box,completed };
+        clear_box,heading,ai,direct_entry,final_box,sequence,player_sequence,completed };
     std::shared_ptr<ModelSceneRam> ram;
     std::shared_ptr<ModelSceneInfo> parent;
     std::shared_ptr<ModelSceneOne> one;
@@ -25,6 +41,8 @@ struct ModelBaseInvocation::Impl {
     std::unique_ptr<ModelStatusInvocation> status;
     std::unique_ptr<ModelPlayerCreate> player;
     std::unique_ptr<ModelBaseInvocation> direct;
+    std::shared_ptr<ModelSequenceEntry> sequence;
+    std::unique_ptr<ModelPlayerSequenceInvocation> player_sequence;
     NativeMessenger* messenger{};
     ActionEventRuntime* events{};
     Phase phase=Phase::status;
@@ -49,6 +67,8 @@ const std::shared_ptr<ModelPlayerWork>& ModelBaseInvocation::status_work() const
 const std::shared_ptr<ModelPlayerWork>& ModelBaseInvocation::outer_work() const {return impl_->outer_work;}
 const ModelPlayerCreate* ModelBaseInvocation::player_create() const noexcept {return impl_->player.get();}
 const ModelBaseInvocation* ModelBaseInvocation::direct_entry() const noexcept {return impl_->direct.get();}
+const ModelSequenceEntry* ModelBaseInvocation::sequence_entry() const noexcept {return impl_->sequence.get();}
+const ModelPlayerSequenceInvocation* ModelBaseInvocation::player_sequence() const noexcept {return impl_->player_sequence.get();}
 MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,ActionEventRuntime& events,
     const ModelPlayerCreateServices& supplied) {
     auto& state=*impl_;
@@ -57,8 +77,12 @@ MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,Actio
         fail("A MODELCTRL invocation requires its original nonrecursive messenger owners and an unfaulted prefix.");
     }
     if(completed())return {true,state.returned,{}};
+    if(active_base_calls>=64) {state.fault=true;fail("Nested original MODELCTRL invocations exceed the bounded native call depth.");}
     state.messenger=&messenger;state.events=&events;
-    struct Guard {bool& value;explicit Guard(bool& v):value(v){value=true;}~Guard(){value=false;}} guard(state.executing);
+    struct Guard {
+        bool& value;explicit Guard(bool& v):value(v){value=true;++active_base_calls;}
+        ~Guard(){--active_base_calls;value=false;}
+    } guard(state.executing);
     const auto complete=[&](std::uint32_t value) {
         state.returned=value;state.phase=Impl::Phase::completed;return MessengerCallResult{true,value,{}};
     };
@@ -102,6 +126,13 @@ MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,Actio
                 if(state.ram->active!=0 && state.work)messenger.buffer().add_int(state.work->script.record);
                 return complete(1);
             }
+            if(command=="SETLABEL") {
+                if(state.ram->active==0 || !state.work)return complete(1);
+                const auto& strings=messenger.buffer().strings();
+                if(strings.size()<2)fail("Active MODELCTRL SETLABEL requires its two original nullable string slots.");
+                ModelSequenceLabels(state.work->sequence.labels).set(strings[0],strings[1]);
+                return complete(1);
+            }
             if(command=="SETSOUND" || command=="SETEFFECT") {
                 if(state.ram->active==0)return complete(1);
                 if(!state.work)fail("Active MODELCTRL subcommand append dereferences captured null work.");
@@ -121,7 +152,12 @@ MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,Actio
                 }
                 return complete(1);
             }
-            return {false,0,"This live MODELCTRL command requires its connected native sequence/controller implementation."};
+            if(controller_command(command)) {
+                if((command=="SQ_ERAS" || command=="SQ_ERAS2") && state.ram->active==0)return complete(1);
+                return {false,0,"This live MODELCTRL command requires its connected native controller implementation."};
+            }
+            if(state.ram->active==0)return complete(1);
+            state.phase=Impl::Phase::sequence;break;
         }
         case Impl::Phase::generate_begin: {
             state.ram->active=1;
@@ -199,6 +235,20 @@ MessengerCallResult ModelBaseInvocation::resume(NativeMessenger& messenger,Actio
                 *destination=*source;
                 *destination=original_transform_box(*target.matrix_owner(),*destination);
             }
+            return complete(1);
+        }
+        case Impl::Phase::sequence: {
+            if(!state.sequence)state.sequence=events.begin_model_sequence_entry(state.ram,state.parent,state.work,state.command);
+            const auto result=state.sequence->resume(events);
+            if(state.fault)fail("A recursive callback invalidated this MODELCTRL sequence invocation.");
+            if(!result.completed)return result;
+            state.phase=Impl::Phase::player_sequence;break;
+        }
+        case Impl::Phase::player_sequence: {
+            if(!state.player_sequence)state.player_sequence=std::make_unique<ModelPlayerSequenceInvocation>(state.ram);
+            const auto result=state.player_sequence->resume(messenger,events,supplied);
+            if(state.fault)fail("A recursive callback invalidated the MODELCTRL player sequence callback.");
+            if(!result.completed)return result;
             return complete(1);
         }
         case Impl::Phase::completed:return {true,state.returned,{}};

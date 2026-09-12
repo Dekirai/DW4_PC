@@ -133,6 +133,9 @@ public:
     // 8030EA1C..8030EA74: stop flagged XYZ channels using their stored stop
     // parameters; always deactivate rotation and clear only its speed.
     void on_sequence_change();
+    // Actual entry captures the count, then consumes each current list entry.
+    // Completed stops survive a later invalid/null entry; no four-axis precheck.
+    void on_sequence_change_actual();
     // Detached values for inspection/validation, never authoritative storage.
     // An empty list returns zero values without allocating entry objects.
     States states() const;

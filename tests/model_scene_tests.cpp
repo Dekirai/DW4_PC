@@ -2,6 +2,7 @@
 #include "dw4/resources.hpp"
 #include "player_runtime_binding_fixture.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -136,10 +137,16 @@ void live_lists_and_lookup() {
     raw->count=std::numeric_limits<std::int32_t>::max();
     check(find_model_named(raw,"ONE")==right,"An early name match must not validate unreached backing slots.");
     rejects([&]{find_model_named(raw,"MISSING");},"Lookup must check the first actually reached unavailable slot.");
+    raw->count=-1;raw->backing.reset();
+    check(!find_model_named_nullable(raw,std::nullopt),"Nonpositive lookup count must not consume a null requested name.");
+    raw->count=1;raw->backing=std::make_shared<ModelSceneList::Storage>(ModelSceneList::Storage{null_name});
+    check(!find_model_named_nullable(raw,std::nullopt),"A null entry name must skip strcmp without consuming the requested name.");
+    (*raw->backing)[0]=empty_name;
+    rejects([&]{find_model_named_nullable(raw,std::nullopt);},"Reached non-null entry name must fault when the requested name is null.");
 }
 void timer_records_and_registration() {
     auto info=std::make_shared<ModelSceneInfo>();auto ram=std::make_shared<ModelSceneRam>();
-    auto actual_manager=std::make_shared<int>(5);
+    auto actual_manager=std::make_shared<ModelSceneManager>();
     register_model_ram(info,ram,-7,actual_manager);
     check(ram->parent.lock()==info && ram->manager.lock()==actual_manager && ram->number==-7 && !ram->active && !info->rams,
         "Explicit registration must bind supplied owners/index without adding activation or list effects.");
@@ -166,6 +173,79 @@ void timer_records_and_registration() {
     ram->data->append(wrong);const auto before=ram->data->count;
     rejects([&]{start_model_timer(*ram,"BAD",8);},"Wrong-type named timer must reject without appending a replacement.");
     check(ram->data->count==before,"Failed timer type check must preserve the actual named list.");
+}
+void sequence_owners_and_live_fields() {
+    pf::RuntimeFixture fixture;
+    const auto move=fixture.add(pf::base_data_type);fixture.text(move,2,"Move");
+    const auto label=fixture.add(pf::base_data_type);fixture.text(label,2,"dual");
+    const auto commands=fixture.list(pf::named_list,{label,move,move,pf::null_ref});
+    const auto alias_list=fixture.add(pf::named_list);
+    fixture.records[alias_list].values=fixture.records[commands].values;
+    fixture.scalar(alias_list,2,2);
+    const auto selected=fixture.add(pf::sequence_data_type);fixture.text(selected,2,"SQ_LIVE");
+    fixture.scalar(selected,3,commands);
+    const auto sequences=fixture.list(pf::named_list,{selected,pf::null_ref,selected});
+    fixture.scalar(fixture.sequence,4,sequences);
+    const auto scalar_storage=fixture.memory(pf::floats({0.75f,6.0f}));
+    auto doc=document(fixture);
+    for(const auto entry:{std::pair{move,"beModelCtrlMOVE"},std::pair{label,"beModelCtrlLABEL"}}) {
+        auto& object=doc.objects[doc.references[entry.first].value_index];
+        object.type_index=static_cast<std::uint32_t>(doc.metadata.object_types.size());
+        doc.metadata.object_types.push_back({entry.second,1,0,pf::object,5,{}});
+        object.fields.erase(std::remove_if(object.fields.begin(),object.fields.end(),[](const auto& field){return field.slot==3;}),object.fields.end());
+    }
+    auto& move_record=doc.objects[doc.references[move].value_index];
+    const auto offset=doc.memories[doc.references[scalar_storage].value_index].offset;
+    move_record.fields.push_back({3,8,offset,4});move_record.fields.push_back({4,8,offset+4,4});
+    const auto alias=static_cast<std::uint32_t>(doc.references.size());doc.references.push_back(doc.references[move]);
+    auto scene=std::make_unique<ActorSceneResource>(doc,"synthetic/sequence.igb",19);
+    const auto info=scene->models().info(fixture.model);const auto seq=find_model_seq(*info);
+    const auto data=find_model_sequence(*seq,"SQ_LIVE");
+    check(seq && seq->reference()==fixture.sequence && data && data->reference()==selected,
+        "Named SEQ and selected data must be canonical actual graph owners.");
+    check(data->commands->count==4 && !(*data->commands->backing)[3] &&
+        (*seq->sequences->backing)[0]==(*seq->sequences->backing)[2],
+        "Sequence and command lists must retain nullable/repeated physical entries.");
+    const auto command=std::dynamic_pointer_cast<ModelSceneCommand>((*data->commands->backing)[1]);
+    check(command && scene->models().object(alias)==command && (*data->commands->backing)[2]==command,
+        "Repeated and aliased command references must share one mutable command allocation.");
+    const auto other=scene->models().list(alias_list);
+    check(other!=data->commands && other->backing==data->commands->backing && other->count==2,
+        "Distinct command lists must retain one shared physical backing and independent counts.");
+    auto consumed=model_scene_command(*command);const auto motion=std::get<MotionCommand>(*consumed.model_command);
+    check(motion.name=="Move" && motion.channel==2u && motion.setup.value==0.75f && motion.setup.frames==6,
+        "Reached MOVE request must derive from its raw authored fields.");
+    command->name="Jump";command->value=2;command->frames=-3;
+    consumed=model_scene_command(*std::dynamic_pointer_cast<ModelSceneCommand>((*other->backing)[1]));
+    const auto changed=std::get<MotionCommand>(*consumed.model_command);
+    check(changed.channel==1u && changed.setup.mode==MotionMode::impulse_positive && changed.setup.value==2 && changed.setup.frames==-3,
+        "Command name and numeric mutation must be observed through all command aliases.");
+    command->name.reset();command->value=std::numeric_limits<float>::quiet_NaN();
+    consumed=model_scene_command(*command);
+    check(!command->name && consumed.name.empty() && std::isnan(std::get<MotionCommand>(*consumed.model_command).setup.value),
+        "Owner null name and raw nonfinite numeric fields must survive until the actual consumer.");
+    const auto wrong=std::make_shared<ModelSceneData>();wrong->name="SQ_LIVE";
+    (*seq->sequences->backing)[0]=wrong;
+    rejects([&]{find_model_sequence(*seq,"SQ_LIVE");},"First wrong-type sequence name must shadow the later correct allocation.");
+    (*seq->sequences->backing)[0]=data;seq->sequences->count=1;
+    auto replacement=std::make_shared<ModelSceneSeq>();replacement->name="SEQ";
+    replacement->sequences=std::make_shared<ModelSceneList>("igNamedObjectList");
+    info->data=std::make_shared<ModelSceneList>();info->data->append(replacement);
+    check(find_model_seq(*info)==replacement && !find_model_sequence(*replacement,"SQ_LIVE") && data->commands->backing==other->backing,
+        "Fresh parent SEQ selection must observe replacement while captured data/commands remain alive.");
+    const auto retained=command->document_owner();scene.reset();
+    check(command->source_occurrence()==19 && retained && data->reference()==selected && model_scene_command(*command).name.empty(),
+        "Captured selected data and command owners must outlive the source facade.");
+
+    fixture.scalar(sequences,2,0xffffffffu);fixture.scalar(sequences,3,0x80000000u);
+    auto raw_doc=document(fixture);
+    // Only load the named list; the command records are ordinary named base
+    // data here, sufficient to check untouched independent list scalars.
+    ActorSceneResource raw(std::move(raw_doc),"synthetic/raw-list.igb",20);
+    const auto raw_list=raw.models().list(sequences);
+    check(raw_list->count==-1 && raw_list->capacity==std::numeric_limits<std::int32_t>::min() &&
+        raw_list->backing->size()==3 && !find_model_named(raw_list,"anything"),
+        "Serialized named-list count/capacity must not be normalized or eagerly used as an allocation size.");
 }
 void serialized_timer_and_hit() {
     pf::RuntimeFixture fixture;
@@ -261,6 +341,24 @@ void original(const std::filesystem::path& root) {
     const auto info=scene.models().info(1386);
     check(info->name=="p_agumon" && info->kind=="KIND_PLAYER" && info->active==1 && info->rams->count==4,
         "Original Agumon model info fields differ.");
+    const auto seq=find_model_seq(*info);const auto selected=find_model_sequence(*seq,"SQ_WAIT");
+    check(seq->reference()==14u && seq->sequences->count==28 && selected && selected->commands,
+        "Original Agumon SEQ and SQ_WAIT must be actual named list/data owners.");
+    const auto decoded=decode_model_sequences(*scene.document_owner(),14,"_common/p_agumon.igb");
+    std::size_t occurrences{};
+    for(const auto& expected:decoded.sequences()) {
+        const auto actual=find_model_sequence(*seq,expected.name);
+        check(actual && actual->reference()==expected.reference_index && actual->commands->count==static_cast<std::int32_t>(expected.commands.size()),
+            "Original sequence identity/order/count differs from independently decoded prepared evidence.");
+        for(std::size_t i=0;i<expected.commands.size();++i) {
+            const auto owner=std::dynamic_pointer_cast<ModelSceneCommand>((*actual->commands->backing)[i]);
+            check(owner && scene.models().object(expected.commands[i].reference_index)==owner &&
+                owner->type()==expected.commands[i].type && owner->name.value_or("")==expected.commands[i].name,
+                "Original ordered command occurrence must resolve its one actual physical owner.");
+            ++occurrences;
+        }
+    }
+    check(occurrences>100,"Original sequence owner validation must cover the complete authored command occurrence set.");
     const std::array<std::uint32_t,4> rams{1725,6417,6420,6622},data{6435,51,52,53},
         ones{1724,121,1594,4783},nodes{6390,6457,6524,6590};
     std::array<std::shared_ptr<ModelSceneRam>,4> owners;
@@ -275,7 +373,7 @@ void original(const std::filesystem::path& root) {
         check(std::fabs(x-(-26.5f+13.25f*static_cast<float>(i)))<0.03f,
             "Original authored node placement was replaced by an invented identity matrix.");
     }
-    auto manager=std::make_shared<int>(1);
+    auto manager=std::make_shared<ModelSceneManager>();
     for(std::size_t i=0;i<4;++i)register_model_ram(info,owners[i],static_cast<std::int32_t>(i),manager);
     const auto timer=start_model_timer(*owners[0],"KEIKATIMER",1234);
     const auto one=find_model_one(*owners[0]);one->work=make_model_player_work();const auto old=one->work;
@@ -286,7 +384,7 @@ void original(const std::filesystem::path& root) {
 }
 int main(int argc,char** argv) {
     try {
-        ordered_identity_and_retention();live_lists_and_lookup();timer_records_and_registration();serialized_timer_and_hit();malformed();
+        ordered_identity_and_retention();live_lists_and_lookup();timer_records_and_registration();sequence_owners_and_live_fields();serialized_timer_and_hit();malformed();
         const auto synthetic=checks;
         if(argc==2)original(argv[1]);else if(argc!=1)return 2;
         std::cout<<"Model scene checks: "<<checks<<" (synthetic "<<synthetic<<")\n";return 0;

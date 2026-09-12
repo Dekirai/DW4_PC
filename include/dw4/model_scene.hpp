@@ -68,6 +68,26 @@ public:
     ModelSceneTimer():ModelSceneData("beBaseInfoRamTimer") {}
     MotionTimer timer;
 };
+class ModelSceneSeq final : public ModelSceneData {
+public:
+    ModelSceneSeq():ModelSceneData("beModelCtrlInfoDataSeq") {}
+    std::shared_ptr<ModelSceneList> sequences;
+};
+class ModelSceneSequence final : public ModelSceneObject {
+public:
+    ModelSceneSequence():ModelSceneObject("beModelCtrlData") {}
+    std::shared_ptr<ModelSceneList> commands;
+};
+// One physical command allocation. The inherited nullable name and these raw
+// fields remain authoritative; dispatch snapshots only the reached command.
+class ModelSceneCommand final : public ModelSceneObject {
+public:
+    explicit ModelSceneCommand(std::string type):ModelSceneObject(std::move(type)) {}
+    float value{},frames{},end_time{},stop_value{},stop_frames{};
+    std::uint8_t stop_on_sequence{};
+    std::optional<std::string> scope; // LABELCTRL/LUACALL field 3.
+    ModelHitboxSubcommand hitbox;
+};
 class ModelSceneHit final : public ModelSceneData {
 public:
     ModelSceneHit():ModelSceneData("beModelCtrlInfoDataHit") {}
@@ -87,6 +107,11 @@ public:
     std::shared_ptr<ModelSceneList> data,rams;
     std::optional<std::string> kind;
 };
+struct ModelSceneContext { std::uint64_t world_time{}; };
+struct ModelSceneManager {
+    virtual ~ModelSceneManager()=default;
+    std::shared_ptr<ModelSceneContext> context;
+};
 class ModelSceneRam final : public ModelSceneObject {
 public:
     ModelSceneRam():ModelSceneObject("beBaseInfoRam") {}
@@ -96,7 +121,7 @@ public:
     std::shared_ptr<ModelSceneList> data;
     // Original registration establishes these links; serialization does not.
     std::weak_ptr<ModelSceneInfo> parent;
-    std::weak_ptr<const void> manager;
+    std::weak_ptr<const ModelSceneManager> manager;
 };
 
 // One registry, owned lazily by ActorSceneResource. The nonowning resource
@@ -122,9 +147,21 @@ private:
 // A wrong-type match shadows later records. Reached null entries and a null
 // list are unsafe original dereferences; count<=0 does not inspect backing.
 std::shared_ptr<ModelSceneObject> find_model_named(const std::shared_ptr<ModelSceneList>&,std::string_view name);
+// A null requested name faults only when strcmp is reached for a non-null
+// entry name. Empty/nonpositive lists and null names do not consume it.
+std::shared_ptr<ModelSceneObject> find_model_named_nullable(const std::shared_ptr<ModelSceneList>&,
+    std::optional<std::string_view> name);
 std::shared_ptr<ModelSceneData> find_model_data(const std::shared_ptr<ModelSceneList>&,std::string_view name);
 std::shared_ptr<ModelSceneList> ensure_model_data(ModelSceneRam&);
 std::shared_ptr<ModelSceneOne> find_model_one(ModelSceneRam&);
+std::shared_ptr<ModelSceneSeq> find_model_seq(const ModelSceneInfo&);
+std::shared_ptr<ModelSceneSequence> find_model_sequence(const ModelSceneSeq&,std::string_view name);
+std::shared_ptr<ModelSceneSequence> find_model_sequence_nullable(const ModelSceneSeq&,
+    std::optional<std::string_view> name);
+// Consumed-command adapter, not an immutable whole-program cache. Null name
+// remains distinct in the owner; existing command handlers receive their
+// established non-null empty-name fallback in this detached request.
+ModelSequenceCommand model_scene_command(const ModelSceneCommand&);
 std::shared_ptr<ModelSceneTimer> find_model_timer(ModelSceneRam&,std::string_view name);
 // 8031DE44: ensure the data list; reuse the first matching timer, or allocate,
 // name and append one; then restart its existing fields at the supplied clock.
@@ -137,5 +174,5 @@ float model_timer_frames(ModelSceneRam&,std::string_view name,std::uint64_t worl
 // This does not append, sort, deduplicate, activate or invent a GETROOT result.
 void register_model_ram(const std::shared_ptr<ModelSceneInfo>&,
     const std::shared_ptr<ModelSceneRam>&,std::int32_t number,
-    const std::shared_ptr<const void>& actual_manager);
+    const std::shared_ptr<const ModelSceneManager>& actual_manager);
 } // namespace dw4

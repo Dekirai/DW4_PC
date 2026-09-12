@@ -10,7 +10,12 @@ The clock reader receives the actual RAM so the connected caller can read its
 current registered manager/context. A timestamp captured when constructing a
 sequence or starting a frame is not the same service. Construction requires a
 nonnull RAM and a nonempty reader, but performs no lookup, list allocation or
-clock read itself.
+clock read itself. The one-argument constructor uses `model_world_time`, which
+resolves the current typed RAM manager backlink and that manager's current
+`ModelSceneContext::world_time`. Missing manager/context faults at the reached
+clock read, preserving any earlier named-record allocation. Replacing the
+context or manager affects the next helper call. The explicit-reader overload
+remains available for controlled integration and mutation checks.
 
 ## Helper order
 
@@ -82,7 +87,8 @@ typed-check/clock ordering, W1/W2 read counts, cached and zero/negative frame
 paths, unrelated nonfinite fields, permanent fault state and caught reentry.
 Separate motion/control/sequence integration tests exercise the recovered
 per-command and per-axis call sites. The endpoint itself does not implement
-the original frame scheduler, complete GENERATE, combat or game progression.
+the original frame scheduler, combat or game progression. Actual GENERATE now
+uses this endpoint through [MODEL_SEQUENCE_ENTRY.md](MODEL_SEQUENCE_ENTRY.md).
 
 The final v0.40 core also passed 12,576 cases against 1,313,041 original
 instructions, with zero differences. This includes 13,422 named lookups,

@@ -1,5 +1,7 @@
 #include "dw4/model_player_create.hpp"
 #include "dw4/action_event_runtime.hpp"
+#include "dw4/action_dispatch.hpp"
+#include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
 #include "dw4/game_name.hpp"
 #include "dw4/game_ram.hpp"
@@ -37,7 +39,7 @@ struct Fixture {
     std::shared_ptr<ModelSceneInfo> info=std::make_shared<ModelSceneInfo>();
     std::shared_ptr<ModelSceneRam> ram=std::make_shared<ModelSceneRam>();
     std::shared_ptr<ModelSceneOne> one=std::make_shared<ModelSceneOne>();
-    std::shared_ptr<const void> manager=std::make_shared<int>(0);
+    std::shared_ptr<const ModelSceneManager> manager=std::make_shared<ModelSceneManager>();
     GameDataState data;
     ActionEventRuntime events;
     std::shared_ptr<GameDataList> row=data.player(0);
@@ -318,11 +320,23 @@ void original(const std::filesystem::path& root) {
     check(points.saved_group()==1,"Original player creation changed the retained point manager group.");
     auto definitions=std::make_shared<ModelPlayerCreateDefinitions>(ModelPlayerCreateDefinitions{names,rules});
     events.set_player_creation_services({std::move(definitions),clock,reader});
+    events.set_model_context(std::make_shared<ModelSceneContext>(ModelSceneContext{1000000000}));
+    std::size_t table_count{};
+    for(const auto& source:{player,stage}) {
+        for(const auto reference:source->document().object_list(*source->document().info_list_reference)) {
+            if(!reference)continue;
+            const auto& object=source->document().object(*reference);
+            const auto& type=source->document().metadata.object_types.at(object.type_index).name;
+            if(type!="beSeInfo" && type!="beActionStarterInfo")continue;
+            events.register_consumer(decode_action_event_tables(source->document(),*reference,source->source(),source->source_occurrence()),true);
+            ++table_count;
+        }
+    }
     const auto old_work=find_model_one(*rams[0])->work;
     messenger.select("MODELCTRL",info->name,0);auto generate=messenger.begin_send("GENERATE");
     const auto boundary=events.resume(generate);
-    check(boundary.stop==MessengerStop::service_required && boundary.diagnostic.find("sequence/controller")!=std::string::npos,
-        "Registered original GENERATE did not retain its real unfinished ordinary sequence entry.");
+    check(boundary.stop==MessengerStop::service_required && boundary.diagnostic.find("ACTION")!=std::string::npos,
+        "Registered original GENERATE did not retain its reached native ACTION service boundary.");
     const auto created=events.model_work(ids[0]);const auto generated_one=find_model_one(*rams[0]);
     check(created && created!=old_work && rams[0]->active==1 && rams[0]->words==std::array<std::uint32_t,4>{} &&
         created->status.is_player==1 && created->script.hp==game.state().player(0)->require<GameDataInt>("HP") &&
@@ -334,9 +348,65 @@ void original(const std::filesystem::path& root) {
     const auto retry=events.resume(generate);
     check(retry.stop==MessengerStop::service_required && events.model_work(ids[0])==created &&
         retry.diagnostic==boundary.diagnostic,"Retrying unfinished original GENERATE repeated its factory or lost the direct-entry boundary.");
+
+    // Install actual actor-aware ACTION execution and the original exported
+    // broadcast tables, then resume the already-entered original GENERATE.
+    const auto skin=decode_igb_skinning(player->document(),5665);
+    std::vector<AnimationClip> clips;
+    for(const auto& animation:list_igb_animations(player->document(),skin))
+        clips.push_back(decode_igb_animation(player->document(),skin,animation.reference_index));
+    auto sources=std::make_shared<AnimationSourceRuntime>(player->source(),std::move(clips));sources->initialize_action_offset();
+    std::vector<std::shared_ptr<ActionRuntime>> actions;
+    auto action_manager=std::make_shared<ModelSceneManager>();action_manager->context=events.model_context();
+    for(std::uint32_t slot=0;slot<4;++slot) {
+        const auto binding=decode_player_runtime_binding(player->document(),{1386,546,slot,1},player->source(),player->source_occurrence());
+        auto action=std::make_shared<ActionRuntime>(decode_action_actor_runtime(player->document(),binding.action_program(),*sources,static_cast<std::int32_t>(slot)));
+        auto services=std::make_shared<ActionServices>(events.action_services(binding));
+        auto scene_queries=std::make_shared<ActionSceneQueryOwner>();scene_queries->prepare(binding,player->action(binding.action_reference(),binding.action_ram_reference()));
+        auto manager=make_action_dispatch_manager(binding,action,sources,services,action_manager,scene_queries);
+        const ControllerObjectId recipient{player->source_occurrence(),binding.action_ram_reference()};
+        const PreparedControllerRegistration controller{recipient,
+            {[action]{return std::optional<std::uint8_t>{action->active()?std::uint8_t{1}:std::uint8_t{0}};},[manager]{return manager;}},player->source()};
+        const MessengerRegistration row{recipient,"ACTION",binding.model_name(),static_cast<std::int32_t>(slot)};
+        events.register_controllers(std::span(&controller,1),std::span(&row,1));
+        actions.push_back(std::move(action));
+    }
+    const auto finished=events.resume(generate);
+    if(finished.stop!=MessengerStop::completed)throw std::runtime_error("Original GENERATE after ACTION connection: "+finished.diagnostic);
+    const auto check_generated=[&](std::size_t slot,const std::shared_ptr<ModelPlayerWork>& work) {
+        const auto one=find_model_one(*rams[slot]);
+        // Original SQ_WAIT's dual branch is LABEL, CTRL, MOVE, ACTION WAITD1.
+        // C3AC returns at the next LABEL (index 4), without installing a wait.
+        check(work->sequence.name=="SQ_WAIT" && work->sequence.command_data.actual_owner()==player->models().object(1534) &&
+            work->sequence.command_index==4 && work->sequence.label_count==1 && !work->sequence.wait.name &&
+            actions[slot]->current_action()=="WAITD1" && find_model_timer(*rams[slot],"KEIKATIMER"),
+            "Connected original GENERATE did not return at SQ_WAIT's next LABEL after actual ACTION execution.");
+        check(!one->node->child_list_owner()->first_backing_node()->box_owner() && !work->base_box && !one->node->box_owner(),
+            "Original GENERATE invented a box despite the physical first child's null source box.");
+        std::size_t number_effects{};
+        for(const auto& entry:*work->subcommands->list_owner()) {
+            const auto effect=std::get_if<ModelEffectSubcommandState>(&entry.value);
+            if(!effect || effect->command.model_name!="i_pcnumic")continue;
+            ++number_effects;
+            check(!entry.started && entry.delay==480 && effect->command.sequence_name=="SQ_OPENP"+std::to_string(slot) &&
+                effect->command.offset==std::array<float,3>{0,10,0} && effect->command.sequence_dead && effect->command.position_lock,
+                "Original GENERATE lost the real player +B8 number-effect payload or started it without the frame scheduler.");
+        }
+        check(number_effects==1,"Original GENERATE skipped or repeated its player +B8 number effect.");
+    };
+    check(events.model_work(ids[0])==created,"Resuming original GENERATE replaced its already-created player work.");
+    check_generated(0,created);
+    for(std::size_t slot=1;slot<4;++slot) {
+        messenger.select("MODELCTRL",info->name,static_cast<std::int32_t>(slot));auto next=messenger.begin_send("GENERATE");
+        const auto result=events.resume(next);
+        if(result.stop!=MessengerStop::completed)throw std::runtime_error("Original GENERATE player "+std::to_string(slot)+": "+result.diagnostic);
+        const auto work=events.model_work(ids[slot]);
+        check(work && work!=retained[slot],"An original player slot failed its fresh-work GENERATE return.");
+        check_generated(slot,work);
+    }
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
-        "real GETPLAYER, GAMESTART, RECALC and number/meter startup executed; registered GENERATE retained at ordinary SQ_WAIT entry; "
-        "complete GENERATE and original frame remain required\n";
+        "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
+        "original scheduling and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

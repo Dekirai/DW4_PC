@@ -97,7 +97,9 @@ and performs status reconciliation, including possible SQ_STUN recursion.
 Finally, a non-null saved box is copied into the live root box and transformed
 through the actual node matrix. Existing original box math is reusable.
 
-Complete integration must retain each already-started nested invocation and
-its old work at a stable address. New generation replaces an owner; assigning
-pose values is not replacement. Original input, camera, collision, combat,
+Version 0.41 connects this direct entry and callback through retained actual
+invocations; see [MODEL_SEQUENCE_ENTRY.md](MODEL_SEQUENCE_ENTRY.md). Each
+already-started nested call keeps its captured work at a stable address. New
+generation replaces an owner; assigning pose values is not replacement.
+Original input, camera, collision, combat,
 frame scheduling and connected local multiplayer remain separate requirements.

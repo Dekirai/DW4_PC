@@ -34,6 +34,15 @@ private:
     ModelRamTimerAccess& owner_;
     int exceptions_;
 };
+std::uint64_t model_world_time(const ModelSceneRam& ram) {
+    const auto manager=ram.manager.lock();
+    if(!manager)fail("Original world-time access dereferences the RAM's missing current manager.");
+    const auto context=manager->context;
+    if(!context)fail("Original world-time access dereferences the manager's null current context.");
+    return context->world_time;
+}
+ModelRamTimerAccess::ModelRamTimerAccess(std::shared_ptr<ModelSceneRam> ram)
+    :ModelRamTimerAccess(std::move(ram),model_world_time) {}
 ModelRamTimerAccess::ModelRamTimerAccess(std::shared_ptr<ModelSceneRam> ram,ModelWorldClockReader clock)
     :ram_(std::move(ram)),clock_(std::move(clock)) {
     if(!ram_ || !clock_)fail("Actual RAM timer binding requires retained RAM and a real context-clock reader.");

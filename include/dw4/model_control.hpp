@@ -10,6 +10,7 @@
 
 namespace dw4 {
 class ModelRamTimerAccess;
+class ModelSceneCommand;
 struct ModelCtrlCommand {
     std::uint32_t reference_index{};
     std::string name;
@@ -82,6 +83,9 @@ public:
     // Exact PDMOVE: initialize four zeros only when count==0, then independently
     // guard the selected value and frame stores by the actual logical count.
     void apply(const PadMotionCommand&);
+    // Live command fields: name before initialization, then independent value
+    // and frame reads/stores. Retain the original prefix on checked failure.
+    void apply(const ModelSceneCommand&);
     // 80309168 reads the chosen backing pair without consulting logical count.
     // A cleared list with retained storage therefore remains readable here.
     std::array<float,2> backing_pair(bool moving) const;
@@ -179,6 +183,9 @@ public:
 void apply_model_command(ModelControlState& state, const ModelCommand& command, std::uint64_t world_time);
 // Actual binding only; no timestamp is sampled at command entry.
 void apply_model_command(ModelControlState& state,const ModelCommand& command);
+// Actual raw command owner. MOVE/MOVEEX timer/unlock/heading/channel allocation
+// precede name/code/parameter consumption; MUTEKI flags do not read frames.
+void apply_model_command(ModelControlState& state,const ModelSceneCommand& command);
 
 struct ModelControlDecision {
     std::string requested_sequence;

@@ -7,6 +7,7 @@
 #include "dw4/model_script_context.hpp"
 #include "dw4/model_player_work.hpp"
 #include "dw4/model_dispatch.hpp"
+#include "dw4/model_sequence_entry.hpp"
 #include "dw4/player_runtime_binding.hpp"
 #include "dw4/pad.hpp"
 
@@ -84,6 +85,16 @@ public:
     ControllerObjectId register_model_scene_ram(std::shared_ptr<ActorSceneResource>,
         std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number);
     std::shared_ptr<ModelSceneRam> model_ram(ControllerObjectId id) const;
+    // Actual current manager+0C context. Attaching/replacing this reference is
+    // explicit preparation; this method does not run the original scheduler.
+    void set_model_context(std::shared_ptr<ModelSceneContext>);
+    std::shared_ptr<ModelSceneContext> model_context() const;
+    // Missing services may be installed before a suspended operation reaches
+    // them. An entry retains the first non-null service owner across retries.
+    void set_model_sequence_services(std::shared_ptr<ModelSequenceEntryServices>);
+    std::shared_ptr<ModelSequenceEntry> begin_model_sequence_entry(
+        std::shared_ptr<ModelSceneRam>,std::shared_ptr<ModelSceneInfo>,
+        std::shared_ptr<ModelPlayerWork>,std::optional<std::string> command);
     void set_player_creation_services(ModelPlayerCreateServices);
     std::shared_ptr<ModelPlayerWork> model_work(ControllerObjectId id);
     std::shared_ptr<const ModelPlayerWork> model_work(ControllerObjectId id) const;
@@ -201,7 +212,11 @@ public:
     // delivery is suspended rejects before starting another send.
     MessengerResult broadcast(ControllerObjectId model,const ActionBroadcast& event);
     ActionServices action_services(ControllerObjectId model);
+    // ACTION-owned broadcast continuation for an explicit loaded ACTION
+    // binding. Does not manufacture a prepared MODELCTRL work registration.
+    ActionServices action_services(const PlayerRuntimeBinding& action);
 private:
+    friend class ModelSequenceEntry;
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };

@@ -1,7 +1,10 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/action_queries.hpp"
 #include "dw4/model_status.hpp"
+#include "dw4/model_sequence_entry.hpp"
+#include "dw4/model_timer.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <cmath>
 #include <map>
@@ -27,8 +30,9 @@ struct OperationScope {
     ~OperationScope() { current=previous; }
 };
 }
-struct ActionEventRuntime::Impl {
+struct ActionEventRuntime::Impl : ModelSceneManager, std::enable_shared_from_this<ActionEventRuntime::Impl> {
     ActionEventRuntime& events_runtime;
+    bool facade_attached=true;
     explicit Impl(ActionEventRuntime& owner):events_runtime(owner) {}
     struct PendingBroadcast {
         ActionBroadcast event;
@@ -113,9 +117,25 @@ struct ActionEventRuntime::Impl {
     MessengerServices external;
     ModelCollisionServices collision_services;
     struct ModelOwner {
+        struct Execution {
+            std::shared_ptr<ModelPlayerWork> work;
+            ModelSequenceRuntime sequence;
+            ModelSubcommandQueue queue;
+            ModelWaitRuntime wait;
+            Execution(std::shared_ptr<ModelPlayerWork> captured,std::shared_ptr<ModelSceneRam> ram)
+                :work(std::move(captured)),
+                 sequence(ModelControlState(ModelMotionPose::fields_only(
+                     std::shared_ptr<ModelMotionFields>(work,&work->motion)),
+                     std::shared_ptr<ModelControlFields>(work,&work->control),
+                     std::make_shared<ModelRamTimerAccess>(std::move(ram))),
+                     std::shared_ptr<ModelSequenceFields>(work,&work->sequence)),
+                 queue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>(work,&work->subcommands)) {}
+        };
         std::shared_ptr<Model> prepared;
         std::shared_ptr<ActorSceneResource> scene;
         std::shared_ptr<ModelSceneRam> ram;
+        std::shared_ptr<Execution> current_execution;
+        std::map<std::weak_ptr<ModelPlayerWork>,std::weak_ptr<Execution>,std::owner_less<std::weak_ptr<ModelPlayerWork>>> executions;
         explicit ModelOwner(std::shared_ptr<Model> value):prepared(std::move(value)) {}
         ModelOwner(std::shared_ptr<ActorSceneResource> source,std::shared_ptr<ModelSceneRam> actual)
             :scene(std::move(source)),ram(std::move(actual)) {}
@@ -123,6 +143,7 @@ struct ActionEventRuntime::Impl {
     };
     std::map<Key,std::shared_ptr<ModelOwner>> models;
     ModelPlayerCreateServices player_creation;
+    std::shared_ptr<ModelSequenceEntryServices> sequence_services;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
     std::map<Key,NativeControllerServices> prepared_controllers;
@@ -326,10 +347,13 @@ struct ActionEventRuntime::Impl {
                     if(found->second->ram) {
                         const auto manager=found->second->ram->manager.lock();
                         if(!manager || manager.get()!=this)return {};
-                        return {[this,ram=found->second->ram,call=std::shared_ptr<ModelBaseInvocation>{}]
+                        return {[owner=weak_from_this(),ram=found->second->ram,call=std::shared_ptr<ModelBaseInvocation>{}]
                         (NativeMessenger&,const MessengerDelivery& delivery) mutable {
+                        const auto live=owner.lock();
+                        if(!live || !live->facade_attached)
+                            return MessengerCallResult{false,0,"The captured MODELCTRL manager no longer has its live event runtime."};
                         if(!call)call=std::make_shared<ModelBaseInvocation>(ram,delivery.message.command);
-                        return call->resume(messenger,events_runtime,player_creation);
+                        return call->resume(live->messenger,live->events_runtime,live->player_creation);
                     },{}};
                     }
                     return {[this,id,captured=found->second->prepared,status=std::shared_ptr<ModelStatusInvocation>{},status_result=std::optional<std::uint32_t>{}]
@@ -511,6 +535,7 @@ struct ActionEventRuntime::Impl {
 };
 ActionEventRuntime::ActionEventRuntime():impl_(std::make_shared<Impl>(*this)) {}
 ActionEventRuntime::~ActionEventRuntime() {
+    impl_->facade_attached=false;
     // A paused recipient can retain model callback owners. Break model-owned
     // continuation edges while the model map still owns every target; captured
     // work must stay strong during execution. Matrices have separate ownership.
@@ -570,7 +595,7 @@ ControllerObjectId ActionEventRuntime::register_model_scene_ram(std::shared_ptr<
     // 802F251C clears these words before writing the manager/parent/index.
     // Registration does not activate a RAM or allocate its ONE.work.
     ram->words[0]=0;ram->words[3]=0;ram->words[2]=0;ram->words[1]=0;
-    register_model_ram(info,ram,number,std::shared_ptr<const void>(impl_));
+    register_model_ram(info,ram,number,std::shared_ptr<const ModelSceneManager>(impl_));
     impl_->messenger.register_recipient(id,"MODELCTRL",info->name.value_or(std::string{}),ram->number);
     const auto record=find_model_named(info->data,"HIT");
     if(record) {
@@ -1062,5 +1087,162 @@ ActionServices ActionEventRuntime::action_services(ControllerObjectId id) {
         return result.stop==MessengerStop::completed;
     };
     return services;
+}
+ActionServices ActionEventRuntime::action_services(const PlayerRuntimeBinding& binding) {
+    if(binding.source_occurrence()>std::numeric_limits<std::uint32_t>::max() ||
+        binding.instance_index()>static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
+        fail("ACTION broadcast identity exceeds the original messenger field widths.");
+    impl_->require_source(static_cast<std::uint32_t>(binding.source_occurrence()),binding.source());
+    auto pending=std::make_shared<std::optional<Impl::PendingBroadcast>>();
+    ActionServices services;
+    services.try_broadcast=[owner=std::weak_ptr<Impl>(impl_),pending,source=binding.source(),name=binding.model_name(),
+        number=static_cast<std::int32_t>(binding.instance_index())](const ActionBroadcast& event) {
+        const auto live=owner.lock();
+        if(!live || !live->facade_attached)return false;
+        if(event.source!=source || event.info_name!=name || event.ram_no!=number)
+            fail("ACTION broadcast does not belong to its captured loaded ACTION owner.");
+        if(*pending && !same((*pending)->event,event))fail("Resume the retained ACTION broadcast before a different event.");
+        if(!*pending)pending->emplace(Impl::PendingBroadcast{event,
+            live->messenger.begin_send_to("ACTION_BROADCAST",event.info_name,event.ram_no,event.action)});
+        const auto result=live->events_runtime.resume((*pending)->dispatch);
+        if(result.stop==MessengerStop::faulted)fail(result.diagnostic.c_str());
+        if(result.stop!=MessengerStop::completed)return false;
+        pending->reset();return true;
+    };
+    return services;
+}
+
+struct ModelSequenceEntry::Impl {
+    enum class Phase { select,cleanup_start,cleanup_resume,finish,run,completed };
+    std::weak_ptr<ActionEventRuntime::Impl> manager;
+    std::shared_ptr<ActionEventRuntime::Impl::ModelOwner> registration;
+    std::shared_ptr<ActionEventRuntime::Impl::ModelOwner::Execution> execution;
+    std::shared_ptr<ModelSceneRam> ram;
+    std::shared_ptr<ModelSceneInfo> parent;
+    std::shared_ptr<ModelPlayerWork> work;
+    std::optional<std::string> command;
+    std::shared_ptr<ModelSequenceActualFrame> frame;
+    std::unique_ptr<ModelSubcommandQueue> cleanup;
+    std::shared_ptr<ModelSequenceEntryServices> services;
+    std::optional<MessengerDispatch> action;
+    std::unique_ptr<ModelBaseInvocation> jump;
+    Phase phase=Phase::select;
+    bool executing{},fault{};
+};
+ModelSequenceEntry::ModelSequenceEntry(std::unique_ptr<Impl> state):impl_(std::move(state)) {}
+ModelSequenceEntry::~ModelSequenceEntry()=default;
+bool ModelSequenceEntry::completed() const noexcept {return impl_->phase==Impl::Phase::completed;}
+bool ModelSequenceEntry::faulted() const noexcept {return impl_->fault;}
+const std::shared_ptr<ModelPlayerWork>& ModelSequenceEntry::captured_work() const noexcept {return impl_->work;}
+void ActionEventRuntime::set_model_context(std::shared_ptr<ModelSceneContext> context) {impl_->context=std::move(context);}
+std::shared_ptr<ModelSceneContext> ActionEventRuntime::model_context() const {return impl_->context;}
+void ActionEventRuntime::set_model_sequence_services(std::shared_ptr<ModelSequenceEntryServices> services) {
+    impl_->sequence_services=std::move(services);
+}
+std::shared_ptr<ModelSequenceEntry> ActionEventRuntime::begin_model_sequence_entry(
+    std::shared_ptr<ModelSceneRam> ram,std::shared_ptr<ModelSceneInfo> parent,
+    std::shared_ptr<ModelPlayerWork> work,std::optional<std::string> command) {
+    const auto found=std::find_if(impl_->models.begin(),impl_->models.end(),
+        [&](const auto& row){return row.second->ram==ram;});
+    if(!ram || found==impl_->models.end())fail("Actual sequence entry requires this manager's registered RAM owner.");
+    auto state=std::make_unique<ModelSequenceEntry::Impl>();
+    state->manager=impl_;state->registration=found->second;state->ram=std::move(ram);
+    state->parent=std::move(parent);state->work=std::move(work);state->command=std::move(command);
+    return std::shared_ptr<ModelSequenceEntry>(new ModelSequenceEntry(std::move(state)));
+}
+MessengerCallResult ModelSequenceEntry::resume(ActionEventRuntime& events) {
+    auto& state=*impl_;
+    const auto manager=state.manager.lock();
+    if(state.fault || state.executing || !manager || !manager->facade_attached || manager!=events.impl_) {
+        state.fault=true;fail("Actual sequence entry requires its original manager and a nonrecursive unfaulted continuation.");
+    }
+    if(completed())return {true,1,{}};
+    struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(state.executing);
+    const auto check_reentry=[&] {if(state.fault)fail("A caught recursive failure invalidated this sequence entry.");};
+    const auto retain_services=[&] {
+        if(state.services && state.services!=manager->sequence_services)
+            fail("A suspended actual sequence requires its retained external service owner.");
+        if(!state.services)state.services=manager->sequence_services;
+    };
+    const ModelSubcommandServices empty_services;
+    try {
+        for(;;)switch(state.phase) {
+        case Impl::Phase::select: {
+            if(!state.parent)fail("Ordinary MODELCTRL entry dereferences its captured null parent.");
+            const auto seq=find_model_seq(*state.parent);
+            if(!seq)fail("Ordinary MODELCTRL entry dereferences a missing first named SEQ record.");
+            const auto selected=find_model_sequence_nullable(*seq,state.command ? std::optional<std::string_view>(*state.command) : std::nullopt);
+            // Selection lookup precedes the first work-field store. The bundle
+            // binds fields only and does not inspect an unrelated ONE node.
+            if(!state.work)fail("Ordinary MODELCTRL selection writes through its captured null work.");
+            auto& registration=*state.registration;
+            for(auto row=registration.executions.begin();row!=registration.executions.end();) {
+                if(row->second.expired())row=registration.executions.erase(row);else ++row;
+            }
+            const std::weak_ptr<ModelPlayerWork> generation=state.work;
+            const auto existing=registration.executions.find(generation);
+            if(existing!=registration.executions.end())state.execution=existing->second.lock();
+            if(!state.execution) {
+                state.execution=std::make_shared<ActionEventRuntime::Impl::ModelOwner::Execution>(state.work,state.ram);
+                registration.executions[generation]=state.execution;
+            }
+            registration.current_execution=state.execution;
+            state.frame=state.execution->sequence.make_actual_frame();
+            state.execution->sequence.begin_actual_select(state.frame,state.command,selected);
+            state.phase=Impl::Phase::cleanup_start;break;
+        }
+        case Impl::Phase::cleanup_start: {
+            // E9C8 captures this E4 reference before cleanup; slot replacement
+            // during a suspended service does not retarget this invocation.
+            state.cleanup=std::make_unique<ModelSubcommandQueue>(state.work->subcommands);
+            retain_services();
+            const auto result=state.cleanup->cleanup(state.services ? state.services->subcommands : empty_services);
+            check_reentry();state.phase=result.complete() ? Impl::Phase::finish : Impl::Phase::cleanup_resume;
+            if(!result.complete())return {false,0,"Original sequence cleanup awaits its subcommand service."};
+            break;
+        }
+        case Impl::Phase::cleanup_resume: {
+            retain_services();
+            const auto result=state.cleanup->resume(state.services ? state.services->subcommands : empty_services);
+            check_reentry();
+            if(!result.complete())return {false,0,"Original sequence cleanup awaits its retained subcommand service."};
+            state.phase=Impl::Phase::finish;break;
+        }
+        case Impl::Phase::finish:
+            state.execution->sequence.finish_actual_select(state.frame);state.cleanup.reset();
+            state.phase=Impl::Phase::run;break;
+        case Impl::Phase::run: {
+            retain_services();ModelSequenceActualServices services;
+            services.identity=[&] {
+                return ModelSequenceIdentity{state.parent->source(),state.parent->name.value_or(std::string{}),state.ram->number};
+            };
+            services.action=[&](const ModelActionRequest& request) {
+                if(!state.action && !manager->messenger.has_category("ACTION"))return false;
+                if(!state.action)state.action.emplace(manager->messenger.begin_send_to("ACTION",request.info_name,request.ram_no,request.action));
+                const auto result=events.resume(*state.action);check_reentry();
+                if(result.stop==MessengerStop::faulted)fail(result.diagnostic.c_str());
+                if(result.stop!=MessengerStop::completed)return false;
+                state.action.reset();return true;
+            };
+            services.hitbox=[&](const ModelHitboxCommand& command) {
+                ModelSubcommandQueue queue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>(state.work,&state.work->subcommands));
+                if(command.name=="Set")queue.append_hitbox(command.parameters);
+                else if(command.name=="AllClear")queue.clear_hitboxes();
+                else return false;
+                return true;
+            };
+            if(state.services)services.lua=state.services->lua;
+            services.jump=[&](std::string_view command) {
+                if(!state.jump)state.jump=std::make_unique<ModelBaseInvocation>(state.ram,std::string(command));
+                const auto result=state.jump->resume(manager->messenger,events,manager->player_creation);
+                check_reentry();return result.completed;
+            };
+            const auto result=state.execution->sequence.run_actual(state.frame,services);check_reentry();
+            if(state.frame->completed()) {state.phase=Impl::Phase::completed;return {true,1,{}};}
+            return {false,0,"Original sequence command requires its retained native service: "+result.type+" "+result.name};
+        }
+        case Impl::Phase::completed:return {true,1,{}};
+        }
+    }catch(...){state.fault=true;throw;}
 }
 } // namespace dw4

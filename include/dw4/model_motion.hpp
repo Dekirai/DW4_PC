@@ -28,6 +28,9 @@ struct ModelMotionPose {
     // retained work object, while its turn and control fields stay independent.
     explicit ModelMotionPose(std::shared_ptr<Matrix> node_matrix);
     ModelMotionPose(std::shared_ptr<Matrix> node_matrix,std::shared_ptr<ModelMotionFields> fields);
+    // Entry/control consumers can bind captured work without reading ONE.node.
+    // Matrix consumers still require an explicit real matrix at their own site.
+    static ModelMotionPose fields_only(std::shared_ptr<ModelMotionFields> fields);
     // Candidate copies are detached: failed validation must not write the live
     // node. Assignment publishes values into the destination's existing owner.
     ModelMotionPose(const ModelMotionPose&);
@@ -48,6 +51,7 @@ struct ModelMotionPose {
     const std::uint8_t& position_locked() const;
     bool operator==(const ModelMotionPose&) const;
 private:
+    ModelMotionPose(std::shared_ptr<ModelMotionFields>,std::nullptr_t);
     std::shared_ptr<Matrix> matrix_;
     std::shared_ptr<ModelMotionFields> fields_;
 };

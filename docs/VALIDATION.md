@@ -1,4 +1,65 @@
-# Actual RAM timer integration validation
+# Actual sequence entry and player generation validation
+
+Version 0.41.0 was validated locally on 2026-09-12. Ordinary MODELCTRL entry now
+consumes the canonical mutable SEQ graph, executes through native ACTION
+delivery, invokes player `+B8` and returns through the outer GENERATE tail.
+Actual named timers read the current RAM manager/context. The visible walking
+preview remains unchanged and is available for manual launch; original frame
+scheduling and complete gameplay remain required.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release build/package | 97/97 CTest suites passed; no compiler warnings |
+| Canonical model graph | 75 synthetic / 1,643 original-inclusive checks; real sequence/command/list owners, aliases, nullable names and physical backing |
+| Actual sequence runner | 52 synthetic / 68 original-inclusive checks; publication order, retained data/local cursor, mutable lists, nested JUMP and real-return versus host-suspension distinction |
+| Ordinary entry integration | 26 checks; fields-only entry, exact retained cleanup wrapper, paused ACTION/work replacement, both player callbacks after JUMP, current context reads and facade lifetime |
+| Player sequence callback | 59 checks; real idle effect send, panel dictionary, fresh reconciliation work, status-icon removal, SLEEP/STUN and nested direct entry |
+| Native ACTION adapter | 35 checks; real messenger rows, query priority, definition execution, retained broadcasts/time/services, freeze ordering and recursive-fault boundaries |
+| Raw actual control | 53 checks; MOVE/MUTEKI timer and heading prefixes before current parameter reads, movement allocation, CTRL/PDMOVE field order and committed failures |
+| Original player construction | 62 synthetic / 149 original-inclusive checks; eight real `+98` returns across four slots and two point groups, then four complete registered GENERATE returns with actual ACTION and 58 original exported event tables |
+| Actual original-instruction comparison | 264 cases, zero differences: 144 entry/label prefixes and 120 mutable command-loop cases, freshly linked against the frozen production core |
+| Existing original integration | 160 motion, 202 control, 554 control/timer, 1,324 prepared sequence, 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Packaged application | 18 app / 10 play CLI checks and six Python verifier tests passed |
+| Hidden walking replay | 240 frames, 438 simulation steps, 101.333 source-unit travel, 286 idle / 152 run steps, 241 pose uploads and 240 attached-weapon frames; pause/restart/focus-loss checks passed; final frame visually inspected |
+
+All four original Agumon GENERATE calls return with canonical SQ_WAIT data
+reference 1534, cursor 4, LABEL count 1, null wait name, actual WAITD1 action and
+KEIKATIMER. This sequence contains no WCHECK: its next LABEL returns from the
+command loop. Each player has exactly one untouched `i_pcnumic/SQ_OPENP{slot}`
+effect with delay 480, offset `(0,10,0)` and both original flags enabled.
+Each original physical first child has a null box; the saved and final root boxes
+correctly remain null. Separate synthetic generation covers non-null box copy
+and transform. The first original call also pauses for missing ACTION and then
+resumes without repeating creation. Startup uses explicitly prepared original
+name/default/map tables, font, clock and map-name services; the ACTION source is
+explicitly prepared from original clips and definitions. This is not an
+original boot-to-game or four-controller gameplay acceptance result.
+
+The instruction comparison interprets E944 through its cleanup call and the
+actual D084 label helper, with named lookup/string/reference services supplied.
+The C3AC cases execute the original loop and represented CTRL/ACTION/WCHECK/JUMP
+helpers with explicit ACTION and direct-JUMP service boundaries. They compare
+captured work data, current lists/backing, cursor publication, identity reads and
+retained completed prefixes. The 264 cases do not execute full cleanup, player
+`+B8`, arbitrary recursive entry, HITBOX/Lua or the original frame scheduler.
+Post-cleanup, player callback and raw actual control ordering have source-review
+and native regression evidence; older prepared instruction suites are not
+presented as new original-instruction coverage for those actual paths.
+
+The final current-header comparison driver linked only against the frozen
+production core, SHA-256
+`1B56D7C1A104DBCFB8074CDA4B046ED9DD313181B59D8AC7E6AC761FD5AD2E46`.
+The core hash was unchanged after replay. The packaged application SHA-256 is
+`27F83D48C894D42E53FCA192EBAC2494A098A3789917E5C9D3CCA57A74E2F8B5`.
+
+Hosted CI for the previous v0.40 commit `1342710` completed successfully in all
+three jobs: Windows app, Ubuntu core and Windows core, run `34713726238`.
+This is distinct from local v0.41 validation; v0.41 hosted CI follows publication.
+
+## Previous v0.40 checkpoint
+
+The following records describe the previous build and its own hashes. They do
+not claim the complete v0.40 timer instruction suite was rerun against v0.41.
 
 Version 0.40.0 was validated locally on 2026-09-12. Actual RAM named timers now
 serve MOVE/MUTEKI, movement, per-axis turning and the recovered positive

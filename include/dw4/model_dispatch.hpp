@@ -3,6 +3,8 @@
 #include "dw4/model_player_create.hpp"
 
 namespace dw4 {
+class ModelSequenceEntry;
+class ModelPlayerSequenceInvocation;
 struct ModelPlayerCreateDefinitions {
     ModelPlayerStartDefaults defaults;
     ModelPlayerMapRules maps;
@@ -31,6 +33,8 @@ public:
     const std::shared_ptr<ModelPlayerWork>& outer_work() const;
     const ModelPlayerCreate* player_create() const noexcept;
     const ModelBaseInvocation* direct_entry() const noexcept;
+    const ModelSequenceEntry* sequence_entry() const noexcept;
+    const ModelPlayerSequenceInvocation* player_sequence() const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

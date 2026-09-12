@@ -15,6 +15,20 @@ void MotionChannels::on_sequence_change() {
     candidate[3].active=false; candidate[3].speed=0;
     publish(candidate);
 }
+void MotionChannels::on_sequence_change_actual() {
+    const auto first=list_owner();
+    if(!first)throw MotionError("Sequence cleanup requires its actual movement list.");
+    const auto count=first->size();
+    if(count>4096)throw MotionError("Sequence movement cleanup exceeds its entry budget.");
+    for(std::size_t i=0;i<count;++i) {
+        const auto list=list_owner();
+        if(!list)throw MotionError("Sequence cleanup lost its actual movement list.");
+        const auto entry=list->entry_owner(i);
+        if(!entry)throw MotionError("Sequence cleanup reached a null movement entry.");
+        if(i==3) {entry->active=false;entry->speed=0;}
+        else if(entry->stop_on_sequence)stop_motion(*entry);
+    }
+}
 namespace {
 static_assert(std::numeric_limits<float>::is_iec559 && std::numeric_limits<float>::digits == 24);
 [[noreturn]] void fail(const char* message) { throw MotionError(message); }
