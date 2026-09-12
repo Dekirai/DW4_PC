@@ -1,15 +1,16 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.33 connects deferred weapon generation to actual loaded player
-appearances, skeletons and MODELCTRL sequence labels. Prepared original Agumon
-slots support weapon replacement/removal and common bone-selector traversal.
+Version 0.34 connects original ACTION animation and generated weapons to a shared
+native render pass. The walking preview now carries the original common05 weapon;
+separate inspection also supports the original two-hand common03/common04 graphs.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
 **The native walking preview lets you control Agumon in an original
 map with keyboard or an SDL-mapped gamepad.** It uses original map, model,
-textures, floor/wall collision geometry and idle/run animations. Movement and the
+textures, floor/wall collision geometry, ACTION animations and weapon attachment.
+Movement and the
 follow camera are provisional native implementations. The complete original
 game, combat, progression, audio and saves remain unimplemented.
 
@@ -21,12 +22,22 @@ not contain game files.
 
 ## Current capabilities
 
+- Traverse common weapon children through their actual ordered attribute scopes,
+  shared geometry owners and stored transforms. Render body and weapons with
+  separately captured model-views and one shared depth/MSAA target. Original
+  ACTION and PLAYERARMS messages run on the same prepared actor that is drawn.
+  This uses an explicit reset graphics baseline and the host inspection camera;
+  complete original materials, compiled traversal and the game frame remain
+  pending. See [SCENE_TRAVERSAL.md](docs/SCENE_TRAVERSAL.md),
+  [PREPARED_RENDERING.md](docs/PREPARED_RENDERING.md) and
+  [WEAPON_PREVIEW.md](docs/WEAPON_PREVIEW.md).
+
 - Decode original weapon node/bone/sequence graphs, preserve shared loaded scene
   owners, and execute prepared PLAYERARMS GENERATE/REMOVE through real PLAYER,
   ACTION and MODELCTRL endpoints. Four original Agumon slots pass deferred
   generation and two-hand weapon changes across all twelve appearance branches.
   The common bone-selector calculation is independently compared against original
-  instructions. Child rendering, full player initialization and gameplay remain
+  instructions. Full player initialization and gameplay remain
   required. See [WEAPON_RUNTIME.md](docs/WEAPON_RUNTIME.md),
   [ACTOR_SCENE.md](docs/ACTOR_SCENE.md) and [BONE_SELECT.md](docs/BONE_SELECT.md).
 

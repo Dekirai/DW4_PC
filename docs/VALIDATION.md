@@ -1,4 +1,43 @@
-# Native weapon attachment validation
+# Native ACTION and weapon rendering validation
+
+Version 0.34.0 was validated locally on 2026-09-12 with MSVC 19.51 and an
+NVIDIA GeForce RTX 5070 Ti. The same prepared ACTION runtime now supplies body
+animation, weapon queries and captured draw matrices. Common child traversal
+feeds a shared native depth/MSAA pass. The refreshed walking preview includes
+the original common05 weapon and its slash stand/run actions.
+
+| Check | Evidence |
+| --- | --- |
+| Release build | 78/78 CTest suites passed; no compiler warnings |
+| Common scene traversal | 41 synthetic / 56 original-inclusive checks; exact paths, retained services and callbacks, scope restoration, original flags, left transforms and temporary root observers |
+| Original graphics instructions | Fresh final-core comparison: 459 cases / 61,389 original scalar instructions / 306 submitted matrices and 4,896 exact words; 135 scoped-attribute cases and 72 explicit matrix-list service boundaries; zero differences |
+| Prepared weapon draw ownership | 12 synthetic / 413 original-inclusive checks; three weapons across all four RAMs, actual appearance selector identity, separate slot caches, forward ACTION transitions, placement, same-time recapture and stable body/weapon owners |
+| Original prepared player starts | 577 checks; four deferred generations, eight replacements, twelve appearance branches and 24 selector visits |
+| Original ACTION regression | 6,034,137 checks, including four-instance sequence execution and skin poses |
+| GPU renderer | Shared prepared depth/order/projection, raw pose updates, neutral textured materials, invalid-pass preservation, MSAA, sampler ownership, normalization export and the existing occluded-body visibility aid passed |
+| Gameplay preview | Packaged 240-frame input replay with 8x MSAA; 438 simulation steps, 101.333 source units travelled, 286 idle / 152 run steps, 240 body/weapon frames; pause, restart and focus-loss checks all passed |
+| Two-hand GPU inspection | Original common04, RAM 3, actor 1 and WAITG1 rendered 120 frames with three batches, two shared images and 8x MSAA |
+| Python and CLI | Six verifier tests; 18 app, ten play and nine boot argument tests passed |
+
+Both gameplay and two-hand captures were visually inspected. The gameplay
+preview uses actual original assets and prepared runtime work with host movement,
+collision response and camera. It does not establish original combat, full
+player construction, connected multiplayer, progression, audio or saves.
+The reset graphics baseline and neutral material profile are explicit; complete
+original GX materials and recorded original-frame pixel parity remain pending.
+
+The prior version 0.33 commit `9e59bef1ae02b19c5935d7b9d8f2b0a110eec5c0`
+completed all three GitHub build jobs in run `34453525005`. Its Windows artifact
+`10143040844` has digest
+`c74fe1446c62c28a41b3a49ce531c8b29ba5ec11bc4855d61c4849ee989e152a`.
+That CI evidence applies to the previous commit; the current local checks are
+listed above. Original resources, instruction probes and screenshots remain
+ignored under `work/`.
+
+See [WEAPON_PREVIEW.md](WEAPON_PREVIEW.md), [SCENE_TRAVERSAL.md](SCENE_TRAVERSAL.md),
+[PREPARED_RENDERING.md](PREPARED_RENDERING.md) and [PLAY_PREVIEW.md](PLAY_PREVIEW.md).
+
+## Previous version 0.33 validation
 
 Version 0.33.0 was validated locally on 2026-09-10 with MSVC 19.51. Prepared
 weapon GENERATE/REMOVE now uses actual loaded node, appearance-list and skeleton

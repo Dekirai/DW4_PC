@@ -458,6 +458,12 @@ void MeshRenderer::upload_impl(const MeshData& mesh,bool prepared) {
 }
 
 void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
+    upload_batches_impl(batches,false);
+}
+void MeshRenderer::upload_prepared_batches(std::span<const MeshBatch> batches) {
+    upload_batches_impl(batches,true);
+}
+void MeshRenderer::upload_batches_impl(std::span<const MeshBatch> batches,bool prepared) {
     clear();
     constexpr std::size_t maximum_vertices = 4194304;
     constexpr std::size_t maximum_indices = 4194304 * 3;
@@ -535,9 +541,9 @@ void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
         draws.push_back({indices.size(), mesh.indices.size(), 0, batch.allow_solid_fallback, vertex_base, mesh.positions.size()});
         for (std::size_t i = 0; i < mesh.positions.size(); ++i) {
             const auto& position = mesh.positions[i];
-            vertices.push_back(static_cast<float>((position.x - center[0]) / radius));
-            vertices.push_back(static_cast<float>((position.y - center[1]) / radius));
-            vertices.push_back(static_cast<float>((position.z - center[2]) / radius));
+            vertices.push_back(prepared ? position.x : static_cast<float>((position.x - center[0]) / radius));
+            vertices.push_back(prepared ? position.y : static_cast<float>((position.y - center[1]) / radius));
+            vertices.push_back(prepared ? position.z : static_cast<float>((position.z - center[2]) / radius));
             const auto uv = mesh.texcoords.empty() ? Vec2{} : mesh.texcoords[i];
             vertices.push_back(uv.u); vertices.push_back(uv.v);
             uvs.push_back(uv);
@@ -566,6 +572,7 @@ void MeshRenderer::upload_batches(std::span<const MeshBatch> batches) {
         state.batches = std::move(draws);
         state.index_count = indices.size(); state.batch_mode = true;
         state.center = center; state.radius = radius;
+        state.prepared = prepared;
         // Retain immutable UV pairs for bounded per-batch pose uploads, without
         // keeping a second CPU copy of every normalized scene position/index.
         state.batch_uvs = std::move(uvs);
@@ -611,7 +618,7 @@ void MeshRenderer::update_batch_positions(std::size_t batch_index, std::span<con
     for (std::size_t i = 0; i < positions.size(); ++i) {
         const std::array<double, 3> position{positions[i].x, positions[i].y, positions[i].z};
         for (std::size_t axis = 0; axis < 3; ++axis) {
-            const auto normalized = (position[axis] - state.center[axis]) / state.radius;
+            const auto normalized = state.prepared ? position[axis] : (position[axis] - state.center[axis]) / state.radius;
             if (!std::isfinite(normalized) || std::abs(normalized) > std::numeric_limits<float>::max())
                 throw std::runtime_error("Batch pose contains a non-finite or unrepresentable coordinate");
             updated[i * 5 + axis] = static_cast<float>(normalized);
@@ -675,6 +682,19 @@ void MeshRenderer::focus_camera(OrbitCamera& camera, const MeshBounds& source_bo
     camera.focus(target,static_cast<float>(distance));
 }
 
+std::array<float,16> MeshRenderer::source_normalization() const {
+    if(!has_mesh() || impl_->prepared)throw std::runtime_error("Source normalization requires an ordinary uploaded scene");
+    std::array<float,16> result{};result[15]=1;
+    for(std::size_t axis=0;axis<3;++axis) {
+        const auto scale=1/impl_->radius,translation=-impl_->center[axis]/impl_->radius;
+        if(!std::isfinite(scale) || !std::isfinite(translation) || std::abs(scale)>std::numeric_limits<float>::max() ||
+            std::abs(translation)>std::numeric_limits<float>::max())
+            throw std::runtime_error("Source normalization is not representable as a float matrix");
+        result[axis*5]=static_cast<float>(scale);result[12+axis]=static_cast<float>(translation);
+    }
+    return result;
+}
+
 void MeshRenderer::set_texture(const RgbaImage& image, const MeshTextureOptions& options) {
     if (impl_ && impl_->batch_mode)
         throw std::runtime_error("Scene materials must be supplied through upload_batches");
@@ -691,17 +711,26 @@ std::uint32_t MeshRenderer::render(int width, int height, const OrbitCamera& cam
     MeshDrawMode mode, int requested_samples, std::optional<std::size_t> occluded_batch) {
     if (impl_ && impl_->prepared) throw std::runtime_error("Prepared geometry requires explicit model-view and projection matrices");
     constexpr std::array<float,16> identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-    return render_matrices(width,height,identity,camera.view_projection(static_cast<float>(width)/std::max(height,1)),mode,requested_samples,occluded_batch);
+    return render_matrices(width,height,{&identity,1},camera.view_projection(static_cast<float>(width)/std::max(height,1)),mode,requested_samples,occluded_batch);
 }
 std::uint32_t MeshRenderer::render_prepared(int width,int height,
     const std::array<float,16>& model_view,const std::array<float,16>& projection,MeshDrawMode mode,int requested_samples) {
+    return render_prepared_batches(width,height,{&model_view,1},projection,mode,requested_samples);
+}
+std::uint32_t MeshRenderer::render_prepared_batches(int width,int height,
+    std::span<const std::array<float,16>> model_views,const std::array<float,16>& projection,MeshDrawMode mode,int requested_samples,
+    std::optional<std::size_t> occluded_batch) {
     if (!impl_ || !impl_->prepared) throw std::runtime_error("Explicit matrix rendering requires prepared source coordinates");
-    return render_matrices(width,height,model_view,projection,mode,requested_samples,std::nullopt);
+    return render_matrices(width,height,model_views,projection,mode,requested_samples,occluded_batch);
 }
 std::uint32_t MeshRenderer::render_matrices(int width,int height,
-    const std::array<float,16>& model_view,const std::array<float,16>& matrix,
+    std::span<const std::array<float,16>> model_views,const std::array<float,16>& matrix,
     MeshDrawMode mode,int requested_samples,std::optional<std::size_t> occluded_batch) {
     if (!has_mesh()) throw std::runtime_error("No mesh is uploaded");
+    if (model_views.size() != (impl_->prepared ? batch_count() : 1))
+        throw std::runtime_error("Prepared rendering requires exactly one model-view per uploaded batch");
+    if (mode != MeshDrawMode::solid && mode != MeshDrawMode::wireframe && mode != MeshDrawMode::textured)
+        throw std::runtime_error("Unknown mesh draw mode");
     if (occluded_batch && *occluded_batch >= batch_count())
         throw std::runtime_error("Occluded batch index is outside the uploaded scene");
     if (mode == MeshDrawMode::textured) {
@@ -713,7 +742,8 @@ std::uint32_t MeshRenderer::render_matrices(int width,int height,
     }
     if (width < 1 || height < 1 || width > 4096 || height > 4096 || std::uint64_t(width) * height > 8388608)
         throw std::runtime_error("Mesh viewport exceeds the 4096-axis / 8-megapixel limit");
-    for (const auto value:model_view) if (!std::isfinite(value)) throw std::runtime_error("Prepared model-view contains a non-finite value");
+    for (const auto& model_view:model_views)
+        for (const auto value:model_view) if (!std::isfinite(value)) throw std::runtime_error("Prepared model-view contains a non-finite value");
     for (const auto value:matrix) if (!std::isfinite(value)) throw std::runtime_error("Prepared projection contains a non-finite value");
     auto& state = *impl_;
     SavedState saved(state.gl); discard_prior_errors();
@@ -729,7 +759,7 @@ std::uint32_t MeshRenderer::render_matrices(int width,int height,
     glPolygonMode(GL_FRONT_AND_BACK, mode == MeshDrawMode::wireframe ? GL_LINE : GL_FILL); glLineWidth(1);
     state.gl.UseProgram(state.program);
     state.gl.UniformMatrix4fv(state.matrix_location, 1, GL_FALSE, matrix.data());
-    state.gl.UniformMatrix4fv(state.model_view_location, 1, GL_FALSE, model_view.data());
+    state.gl.UniformMatrix4fv(state.model_view_location, 1, GL_FALSE, model_views.front().data());
     state.gl.Uniform1i(state.prepared_location,state.prepared ? 1 : 0);
     state.gl.Uniform1i(state.mode_location, mode == MeshDrawMode::wireframe ? 1 : mode == MeshDrawMode::textured ? 2 : 0);
     if (mode == MeshDrawMode::textured) {
@@ -756,6 +786,8 @@ std::uint32_t MeshRenderer::render_matrices(int width,int height,
         for (std::size_t index = 0; index < state.batches.size(); ++index) {
             const auto& batch = state.batches[index];
             const auto offset = static_cast<std::uintptr_t>(batch.first_index * sizeof(std::uint32_t));
+            if (state.prepared)
+                state.gl.UniformMatrix4fv(state.model_view_location, 1, GL_FALSE, model_views[index].data());
             if (occluded_batch && *occluded_batch == index)
                 draw_silhouette(batch.index_count, reinterpret_cast<const void*>(offset));
             if (mode == MeshDrawMode::textured) {

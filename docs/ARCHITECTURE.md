@@ -2,6 +2,19 @@
 
 ## Implemented boundary
 
+Version 0.34 adds retained `scene_traversal` common callbacks and a shared
+prepared renderer pass. Ordered normal attribute scopes, geometry trigger and
+invisibility gates, common transforms and actual selector children preserve
+loaded owners through missing services. Each draw retains its own model-view;
+one projection and depth/MSAA target serve the complete pass. `weapon_preview`
+uses the same registered ACTION runtime for animation, skeleton queries and
+body/weapon rendering, under an explicit reset graphics inspection baseline.
+The walking preview connects that prepared owner to host movement and the
+original map. This does not establish the original locomotion state machine,
+game camera, complete materials, combat or full player construction. See
+[SCENE_TRAVERSAL.md](SCENE_TRAVERSAL.md),
+[PREPARED_RENDERING.md](PREPARED_RENDERING.md) and [WEAPON_PREVIEW.md](WEAPON_PREVIEW.md).
+
 Version 0.33 adds `actor_scene`, `weapon_resource`, `weapon_runtime` and
 `bone_select`. Loaded source occurrences own canonical node, appearance-list
 and skeleton objects. ACTION returns its actual ordered appearance list and

@@ -2,7 +2,9 @@
 
 The play preview lets you control an animated Agumon in an original map through
 native C++ code. It loads the map, original collision floor, player, textures
-and idle/run clips from your own extracted USA GameCube files. No PowerPC code
+and original ACTION animation from your own extracted USA GameCube files. Version
+0.34 also generates and renders the original common05 weapon on the same actor.
+No PowerPC code
 or emulated GPU runs here.
 
 This is an early interactive port milestone. Movement, the follow camera and
@@ -58,12 +60,24 @@ hardware verification.
 | Player resource | `_common/p_agumon.igb` |
 | Player visual | Model 1386, appearance branch 1, instance 0 |
 | Entry point | Info 115, group 0, player 0 |
-| Animation clips | Original `waitS` and `runD` |
+| Prepared ACTION | Info 546, RAM 0, actor ordinal 1 |
+| Weapon | `_common/w_common05.igb`, original `w_common05` GENERATE |
+| Stand/run actions | Original `WAITS1` and `RUNNS1`, selected by host movement |
+| Animation clips | Original `waitS` and `runS`, selected by those actions |
 
 The map and player remain separately owned source documents. The renderer
-shares one camera and depth target, preserves the static map batches and updates
-the player's posed vertex range. The original entry matrix supplies the initial
+shares one camera, depth and MSAA target, preserves the static map batches and
+updates the player's posed vertex range. Body and weapon have their own captured
+model-view matrices. The same prepared ACTION runtime answers the weapon queries
+and provides animation caches. The original entry matrix supplies the initial
 placement. The play preview then owns a mutable position and facing direction.
+
+The weapon's recovered sequence labels select the slash stand/run actions for
+this profile. The host still decides when movement starts or stops; the original
+input and locomotion state machines are not yet running. Missing ACTION or
+graphics services stop with an error instead of silently skipping a command.
+The renderer uses an explicit reset graphics baseline and a partial native
+material shader. See [WEAPON_PREVIEW.md](WEAPON_PREVIEW.md) for those boundaries.
 
 When map geometry hides Agumon, the preview draws the hidden part of his shape
 in gold so you can keep track of his position. Visible surfaces retain their

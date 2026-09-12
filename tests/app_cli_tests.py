@@ -238,6 +238,44 @@ class AppCliTests(unittest.TestCase):
             with self.subTest(play=option):
                 self.rejected(["--play", option, "0"], "--play cannot be combined")
 
+    @staticmethod
+    def weapon_options() -> list[str]:
+        return [
+            "--resource", "synthetic-player.igb", "--mesh", "0",
+            "--actor-info", "0", "--actor-ram", "0", "--actor-index", "0",
+            "--actor-model-info", "0", "--actor-action", "synthetic-action",
+            "--actor-weapon-resource", "synthetic-weapon.igb",
+            "--actor-weapon-name", "synthetic-weapon",
+        ]
+
+    def test_weapon_action_inspection_requires_complete_selection(self) -> None:
+        base = self.weapon_options()
+        self.accepted(base)
+        self.accepted([*base, "--animation-time", "0.5", "--animation-play", "--smoke-test", "2"])
+        for option in ("--actor-info", "--actor-ram", "--actor-index", "--actor-model-info",
+                       "--actor-action", "--actor-weapon-resource", "--actor-weapon-name"):
+            with self.subTest(missing=option):
+                incomplete = base.copy()
+                index = incomplete.index(option)
+                del incomplete[index:index + 2]
+                self.rejected(incomplete, "Weapon inspection requires")
+            with self.subTest(duplicate=option):
+                self.rejected([*base, option, "0"], "Duplicate actor inspection option")
+        for option in ("--actor-action", "--actor-weapon-resource", "--actor-weapon-name"):
+            self.rejected(self.replace(base, option, ""), "Weapon inspection requires")
+
+    def test_weapon_action_preserves_pose_and_time_boundaries(self) -> None:
+        base = self.weapon_options()
+        self.rejected([*base, "--animation", "clip"], "cannot be combined with a clip or manual joint pose")
+        self.rejected([*base, "--bone", "0"], "cannot be combined with a clip or manual joint pose")
+        self.rejected([*base, "--rotate-z", "1"], "cannot be combined with a clip or manual joint pose")
+        self.rejected(self.replace(base, "--actor-ram", "4"), "--actor-ram from 0 to 3")
+        self.accepted(self.replace(base, "--actor-ram", "3"))
+        self.accepted([*base, "--animation-time", "600"])
+        self.rejected([*base, "--animation-time", "600.1"], "at most 600 seconds")
+        self.rejected([*base, "--animation-play", "--smoke-test", "1"], "at least two frames")
+        self.rejected([*base, "--scene-root", "0"], "Scene inspection cannot be combined")
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

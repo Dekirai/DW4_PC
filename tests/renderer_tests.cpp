@@ -338,6 +338,198 @@ void prepared_checks(dw4::viewer::MeshRenderer& renderer, const dw4::MeshData& t
     caller.verify();
 }
 
+void prepared_batch_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    constexpr std::array<float,16> identity{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    constexpr std::array<float,16> projection{1,0,0,0, .25f,1.5f,0,0, 0,0,.5f,0, 0,0,0,1};
+    constexpr std::array<float,16> left_root{.125f,0,0,0, 0,.125f,0,0, 0,0,.25f,0, -1.5f,-.5f,-.5f,1};
+    constexpr std::array<float,16> right_root{.125f,0,0,0, 0,.125f,0,0, 0,0,.25f,0, -.5f,-.5f,0,1};
+    std::array<std::array<float,16>,2> roots{left_root,right_root};
+    dw4::MeshData source;
+    source.positions={{6,2,1},{10,2,1},{10,6,1},{6,6,1}};
+    source.indices={0,1,2,0,2,3};source.texcoords.assign(4,{.25f,.25f});
+    const dw4::RgbaImage red{1,1,{255,0,0,255}},green{1,1,{0,255,0,255}};
+    auto color_count=[](const auto& image,std::array<std::uint8_t,3> color) {
+        std::size_t count{};
+        for(std::size_t i=0;i<image.size();i+=4)
+            if(image[i]==color[0] && image[i+1]==color[1] && image[i+2]==color[2]) ++count;
+        return count;
+    };
+    TextureCallerState caller;
+    // Independent single-mesh reference frames use explicitly calculated clip
+    // coordinates. Merging their disjoint colors cannot clear the earlier draw
+    // or substitute one model-view for both occurrences of the same source.
+    auto expected_left=source,expected_right=source;
+    expected_left.positions={{-.8125f,-.375f,-.125f},{-.3125f,-.375f,-.125f},
+        {-.1875f,.375f,-.125f},{-.6875f,.375f,-.125f}};
+    expected_right.positions={{.1875f,-.375f,.125f},{.6875f,-.375f,.125f},
+        {.8125f,.375f,.125f},{.3125f,.375f,.125f}};
+    MeshRenderer reference;
+    reference.upload_prepared(expected_left);reference.set_texture(red);
+    auto expected=pixels(reference.render_prepared(128,128,identity,identity,MeshDrawMode::textured),128,128);
+    const auto left_image=expected;
+    reference.upload_prepared(expected_right);reference.set_texture(green);
+    const auto right_image=pixels(reference.render_prepared(128,128,identity,identity,MeshDrawMode::textured),128,128);
+    for(std::size_t i=0;i<expected.size();i+=4)
+        if(right_image[i+1]==255) std::copy_n(right_image.begin()+i,4,expected.begin()+i);
+    std::array<MeshBatch,2> batches{{{&source,&red},{&source,&green}}};
+    renderer.upload_prepared_batches(batches);caller.verify();
+    check(renderer.batch_count()==2 && renderer.texture_count()==2 && renderer.has_texture() && renderer.triangle_count()==4,
+        "Prepared upload merged repeated geometry occurrences or lost materials");
+    const auto target=renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured);
+    check(pixels(target,128,128)==expected && color_count(expected,{255,0,0})>1400 && color_count(expected,{0,255,0})>1400,
+        "Prepared batch pass normalized source coordinates, reordered matrices or cleared an earlier batch");
+    check(renderer.rendered_frames()==1,"One prepared pass counted each batch as a separate frame");
+    caller.verify();
+    dw4::OrbitCamera camera;
+    const auto original_camera=camera.view_projection(1);
+    rejects([&]{renderer.render(128,128,camera,MeshDrawMode::solid);});
+    rejects([&]{renderer.render_prepared(128,128,left_root,projection,MeshDrawMode::textured);});
+    rejects([&]{renderer.project_to_canvas({0,0,0},camera,1);});
+    rejects([&]{renderer.focus_camera(camera,source.bounds);});
+    check(camera.view_projection(1)==original_camera,"Prepared batch rejection changed the inspection camera");
+
+    auto moved=source.positions;for(auto& point:moved) point.y+=.5f;
+    auto moved_expected=expected_right;
+    for(auto& point:moved_expected.positions) {point.x+=.015625f;point.y+=.09375f;}
+    reference.update_positions(moved_expected.positions);
+    auto moved_image=pixels(reference.render_prepared(128,128,identity,identity,MeshDrawMode::textured),128,128);
+    for(std::size_t i=0;i<moved_image.size();i+=4)
+        if(left_image[i]==255) std::copy_n(left_image.begin()+i,4,moved_image.begin()+i);
+    renderer.update_batch_positions(1,moved);caller.verify();
+    check(renderer.rendered_frames()==1 && renderer.batch_count()==2 && renderer.texture_count()==2,
+        "Prepared pose update reset pass or material ownership");
+    check(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured)==target
+        && pixels(target,128,128)==moved_image && moved_image!=expected,
+        "Prepared batch pose normalized raw coordinates or changed another shared-geometry occurrence");
+
+    const auto valid_frames=renderer.rendered_frames();
+    // Requesting a different target on every bad pass catches validation that
+    // runs after target replacement, clearing or any valid leading batch.
+    for(const auto invalid:{std::numeric_limits<float>::quiet_NaN(),std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity()}) {
+        for(std::size_t batch=0;batch<roots.size();++batch)
+            for(std::size_t element=0;element<16;++element) {
+                auto bad=roots;bad[batch][element]=invalid;
+                rejects([&]{renderer.render_prepared_batches(160,96,bad,projection,MeshDrawMode::textured,8);});
+            }
+        for(std::size_t element=0;element<16;++element) {
+            auto bad=projection;bad[element]=invalid;
+            rejects([&]{renderer.render_prepared_batches(160,96,roots,bad,MeshDrawMode::textured,8);});
+        }
+        for(std::size_t batch=0;batch<roots.size();++batch)
+            for(std::size_t axis=0;axis<3;++axis) {
+                auto bad=moved;
+                if(axis==0) bad.back().x=invalid;
+                else if(axis==1) bad.back().y=invalid;
+                else bad.back().z=invalid;
+                rejects([&]{renderer.update_batch_positions(batch,bad);});
+            }
+    }
+    rejects([&]{renderer.render_prepared_batches(160,96,{},projection,MeshDrawMode::textured,8);});
+    rejects([&]{renderer.render_prepared_batches(160,96,std::span(roots).first(1),projection,MeshDrawMode::textured,8);});
+    const std::array<std::array<float,16>,3> excessive{left_root,right_root,identity};
+    rejects([&]{renderer.render_prepared_batches(160,96,excessive,projection,MeshDrawMode::textured,8);});
+    rejects([&]{renderer.render_prepared_batches(160,96,roots,projection,static_cast<MeshDrawMode>(99),8);});
+    rejects([&]{renderer.render_prepared_batches(0,96,roots,projection,MeshDrawMode::textured,8);});
+    rejects([&]{renderer.render_prepared_batches(4097,96,roots,projection,MeshDrawMode::textured,8);});
+    rejects([&]{renderer.render_prepared_batches(4096,4096,roots,projection,MeshDrawMode::textured,8);});
+    rejects([&]{renderer.update_batch_positions(2,moved);});
+    rejects([&]{renderer.update_batch_positions(1,std::span(moved).first(3));});
+    rejects([&]{renderer.update_positions(moved);});
+    rejects([&]{renderer.set_texture(red);});
+    check(renderer.rendered_frames()==valid_frames && renderer.samples()==0 && pixels(target,128,128)==moved_image,
+        "Rejected prepared pass or pose changed target pixels, samples or the frame counter");
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==moved_image,
+        "Rejected prepared pose changed the previous valid vertex buffers");
+    renderer.update_batch_positions(1,source.positions);
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==expected,
+        "Prepared batch pose reset did not restore its original source positions");
+    caller.verify();
+
+    // Keep equal-size, overlapping geometry at distinct model-view depths.
+    // Opaque visibility must be independent of draw order, whereas equal depth
+    // retains GL_LEQUAL's ordered replacement semantics.
+    auto front=left_root;front[12]=-1;front[14]=-.75f;
+    auto back=front;back[14]=.25f;
+    roots={front,back};
+    const auto front_image=pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128);
+    check(color_count(front_image,{255,0,0})>1400 && color_count(front_image,{0,255,0})==0,
+        "A later prepared batch ignored shared depth from the earlier front batch");
+    const auto highlighted_target=renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured,0,1);
+    const auto highlighted=pixels(highlighted_target,128,128);
+    check(color_count(highlighted,{255,184,56})>1400 && color_count(highlighted,{0,255,0})==0,
+        "Prepared visibility aid did not use the occluded batch's own model-view");
+    const auto highlighted_frames=renderer.rendered_frames();
+    rejects([&]{renderer.render_prepared_batches(160,96,roots,projection,MeshDrawMode::textured,8,2);});
+    check(renderer.rendered_frames()==highlighted_frames && pixels(highlighted_target,128,128)==highlighted,
+        "Invalid prepared occlusion index changed the prior target");
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==front_image,
+        "Disabling prepared visibility aid did not restore the ordinary depth pass");
+    caller.verify();
+    std::reverse(batches.begin(),batches.end());std::reverse(roots.begin(),roots.end());
+    renderer.upload_prepared_batches(batches);
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==front_image,
+        "Prepared opaque visibility depends on draw order instead of one shared depth target");
+    roots={front,front};
+    check(color_count(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128),{255,0,0})>1400,
+        "Prepared equal-depth pass did not retain the later red occurrence");
+    std::reverse(batches.begin(),batches.end());renderer.upload_prepared_batches(batches);
+    check(color_count(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128),{0,255,0})>1400,
+        "Prepared draws were reordered across equal-depth materials");
+
+    roots={left_root,right_root};
+    const auto multisampled=renderer.render_prepared_batches(160,96,roots,projection,MeshDrawMode::textured,8);
+    const auto msaa_image=pixels(multisampled,160,96);
+    check(color_count(msaa_image,{255,0,0})>1000 && color_count(msaa_image,{0,255,0})>1000,
+        "Prepared batches failed to share a resized MSAA color/depth pass");
+    check(renderer.render_prepared_batches(160,96,roots,projection,MeshDrawMode::textured,8)==multisampled,
+        "An unchanged prepared pass replaced its shared target");
+    const auto solid=pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::solid),128,128);
+    const auto wire=pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::wireframe),128,128);
+    check(coverage(solid)>2800 && coverage(wire)>100 && coverage(wire)<coverage(solid),
+        "Prepared pass lost per-batch transforms in Solid or Wireframe mode");
+    caller.verify();
+
+    const dw4::RgbaImage atlas{2,1,{255,0,0,255,0,255,0,255}};
+    source.texcoords.assign(4,{1.25f,.25f});
+    MeshTextureOptions repeat;repeat.min_filter=repeat.mag_filter=MeshTextureFilter::nearest;
+    auto clamp=repeat;clamp.wrap_u=MeshTextureWrap::clamp_to_edge;
+    batches={{{&source,&atlas,repeat},{&source,&atlas,clamp}}};renderer.upload_prepared_batches(batches);
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==expected
+        && renderer.texture_count()==2,"Prepared texture sharing merged unequal sampler options");
+    batches[1].texture_options=repeat;renderer.upload_prepared_batches(batches);
+    check(renderer.texture_count()==1 && renderer.textured_batch_count()==2,
+        "Prepared upload copied a shared image with equal sampler options twice");
+    check(color_count(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128),{255,0,0})>2800,
+        "Prepared shared image was not bound for both geometry occurrences");
+    auto disposable=source;auto disposable_texture=atlas;
+    batches={{{&disposable,&disposable_texture,repeat},{&disposable,&disposable_texture,clamp}}};
+    renderer.upload_prepared_batches(batches);
+    disposable.positions.clear();disposable.texcoords.clear();disposable.indices.clear();disposable_texture.rgba.clear();
+    check(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128)==expected,
+        "Prepared pass retained borrowed mesh or image data after upload");
+
+    batches={{{&source,&red},{&source}}};renderer.upload_prepared_batches(batches);
+    const auto solid_target=renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::solid);
+    const auto solid_only=pixels(solid_target,128,128);const auto solid_frames=renderer.rendered_frames();
+    rejects([&]{renderer.render_prepared_batches(160,96,roots,projection,MeshDrawMode::textured,8);});
+    check(renderer.rendered_frames()==solid_frames && renderer.samples()==0 && pixels(solid_target,128,128)==solid_only,
+        "Missing texture in a later prepared batch changed the previous valid target");
+    batches[1].allow_solid_fallback=true;renderer.upload_prepared_batches(batches);
+    check(color_count(pixels(renderer.render_prepared_batches(128,128,roots,projection,MeshDrawMode::textured),128,128),{255,0,0})>1400,
+        "Explicit prepared mixed-material inspection lost the verified texture");
+    auto malformed=source;malformed.indices.back()=99;batches[1].mesh=&malformed;
+    rejects([&]{renderer.upload_prepared_batches(batches);});
+    check(!renderer.has_mesh() && renderer.batch_count()==0 && renderer.texture_count()==0,
+        "Invalid prepared batch upload retained stale geometry or textures");
+    renderer.upload_batches(std::array<MeshBatch,1>{{{&source}}});
+    rejects([&]{renderer.render_prepared_batches(128,128,std::span(roots).first(1),projection,MeshDrawMode::solid);});
+    renderer.clear();
+    rejects([&]{renderer.render_prepared_batches(128,128,{},projection,MeshDrawMode::solid);});
+    caller.verify();
+}
+
 void batch_pose_checks(dw4::viewer::MeshRenderer& renderer) {
     using namespace dw4::viewer;
     auto quad=[](float x,float z,float extent) {
@@ -582,6 +774,37 @@ void focus_checks(dw4::viewer::MeshRenderer& renderer) {
     caller.verify();renderer.clear();
 }
 
+void normalization_matrix_checks(dw4::viewer::MeshRenderer& renderer) {
+    using namespace dw4::viewer;
+    renderer.clear();rejects([&]{renderer.source_normalization();});
+    dw4::MeshData mesh;mesh.positions={{5,12,0},{11,12,0},{11,20,0},{5,20,0}};
+    mesh.indices={0,1,2,0,2,3};mesh.texcoords.assign(4,{0,0});
+    const dw4::RgbaImage red{1,1,{255,0,0,255}};
+    const std::array<MeshBatch,1> batches{{{&mesh,&red}}};
+    dw4::OrbitCamera camera;camera.orbit(-.4f,-.2f);
+    TextureCallerState caller;renderer.upload_batches(batches);
+    const auto normalization=renderer.source_normalization();
+    const std::array<float,16> expected{.2f,0,0,0, 0,.2f,0,0, 0,0,.2f,0, -1.6f,-3.2f,0,1};
+    check(normalization==expected,"Source normalization did not retain the uploaded scene's bounds center and radius");
+    const auto ordinary=pixels(renderer.render(128,128,camera,MeshDrawMode::textured),128,128);
+    MeshRenderer prepared;prepared.upload_prepared_batches(batches);
+    const auto raw=pixels(prepared.render_prepared(128,128,normalization,camera.view_projection(1),MeshDrawMode::textured),128,128);
+    std::size_t differences{};for(std::size_t i=0;i<raw.size();i+=4)
+        if(!std::equal(raw.begin()+i,raw.begin()+i+4,ordinary.begin()+i))++differences;
+    // The CPU normalization rounds each transformed vertex from double; the
+    // matrix path instead composes floats on the GPU. Permit only edge pixels.
+    check(coverage(raw)>1000 && differences<=8,"Source normalization placed a raw pass differently from the ordinary scene camera");
+    auto moved=mesh.positions;for(auto& point:moved)point.y+=.25f;
+    renderer.update_batch_positions(0,moved);
+    check(renderer.source_normalization()==normalization,"A pose update changed the captured source normalization");
+    rejects([&]{prepared.source_normalization();});caller.verify();
+    auto tiny=mesh;for(auto& point:tiny.positions){point.x*=1e-40f;point.y*=1e-40f;}
+    renderer.upload_batches(std::array<MeshBatch,1>{{{&tiny}}});
+    rejects([&]{renderer.source_normalization();});
+    check(renderer.has_mesh(),"An unrepresentable normalization query destroyed valid normalized geometry");
+    caller.verify();renderer.clear();
+}
+
 void scene_checks(dw4::viewer::MeshRenderer& renderer) {
     using namespace dw4::viewer;
     auto quad = [](float x, float z, float extent) {
@@ -759,15 +982,17 @@ int main() {
             texture_checks(renderer, tetra, camera);
             pose_checks(renderer, tetra, camera);
             prepared_checks(renderer, tetra, camera);
+            prepared_batch_checks(renderer);
             scene_checks(renderer);
             batch_pose_checks(renderer);
             occluded_batch_checks(renderer);
             focus_checks(renderer);
+            normalization_matrix_checks(renderer);
             renderer.upload(tetra); renderer.clear();
             check(!renderer.has_mesh() && renderer.triangle_count() == 0, "Clear retained geometry");
             rejects([&] { renderer.render(128, 128, camera, dw4::viewer::MeshDrawMode::solid); });
             renderer.shutdown(); renderer.shutdown();
-            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, prepared raw CPU positions with separate root/projection, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, occluded-only actor visibility, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
+            std::cout << "Renderer GPU checks passed: coverage, orbit, wireframe, resize, MSAA, textured UV/color/filter/wrap/alpha, stable pose updates, prepared raw CPU positions with separate root/projection, ordered prepared batches with distinct captured model-views/shared depth/MSAA/materials and atomic pass validation, shared scene batches/depth/materials/normalization/budgets, isolated actor-batch poses and exact reset, occluded-only actor visibility, source-bounds camera focus, state restoration, malformed upload and cleanup\n";
         }
         return 0;
     } catch (const std::exception& error) {

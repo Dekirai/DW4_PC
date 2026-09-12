@@ -22,6 +22,14 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.34 connects common weapon child traversal and shared prepared GPU
+rendering to the original ACTION owner. A refreshed walking preview displays
+the original common05 weapon while host movement selects its stand/run actions.
+Original geometry gates and normal attribute scope restoration are compared
+against bounded original instructions. Complete original materials, compiled
+traversal, player construction, game camera and locomotion/combat state machines
+remain required. See [WEAPON_PREVIEW.md](WEAPON_PREVIEW.md).
+
 Version 0.33 connects original weapon registration, GENERATE/REMOVE, live PLAYER
 name queries, ACTION appearance/skeleton results and nullable MODELCTRL labels.
 Four prepared original Agumon starts deliver their real deferred common05

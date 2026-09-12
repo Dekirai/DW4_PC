@@ -21,6 +21,7 @@
 #include "dw4/walking.hpp"
 #include "dw4/walking_collision.hpp"
 #include "mesh_renderer.hpp"
+#include "weapon_preview.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
@@ -98,7 +99,8 @@ struct Options {
     std::string animation;
     std::optional<double> animation_time;
     bool animation_play = false;
-    std::optional<int> actor_info, actor_ram, actor_index;
+    std::optional<int> actor_info, actor_ram, actor_index, actor_model_info;
+    std::string actor_action, actor_weapon_resource, actor_weapon_name;
     int max_entry_mib = 64;
     bool help = false;
 };
@@ -172,6 +174,10 @@ Options parse_options(const std::vector<std::string>& args) {
             if (option == "--actor-info") out.actor_info = parse_integer_option(args[i],option,0,1048575);
             else if (option == "--actor-ram") out.actor_ram = parse_integer_option(args[i],option,0,1023);
             else if (option == "--actor-index") out.actor_index = parse_integer_option(args[i],option,0,63);
+            else if (option == "--actor-model-info") out.actor_model_info = parse_integer_option(args[i],option,0,1048575);
+            else if (option == "--actor-action") out.actor_action = args[i];
+            else if (option == "--actor-weapon-resource") out.actor_weapon_resource = args[i];
+            else if (option == "--actor-weapon-name") out.actor_weapon_name = args[i];
             else throw std::runtime_error("Unknown option: " + option);
             continue;
         }
@@ -300,14 +306,26 @@ Options parse_options(const std::vector<std::string>& args) {
         throw std::runtime_error("Use --scene-switch-control REFERENCE and --scene-switch-command all-on|all-off together.");
     if (out.scene_switch_control && out.scene_inspect_child)
         throw std::runtime_error("Choose an original switch command or a root-child inspection override; they cannot be combined.");
-    if (!actor_options.empty() && (!out.actor_info || !out.actor_ram || !out.actor_index || out.animation.empty()))
+    const bool weapon_requested = actor_options.contains("--actor-model-info") || actor_options.contains("--actor-action") ||
+        actor_options.contains("--actor-weapon-resource") || actor_options.contains("--actor-weapon-name");
+    if (weapon_requested && (!out.actor_info || !out.actor_ram || !out.actor_index || !out.actor_model_info ||
+        out.actor_action.empty() || out.actor_weapon_resource.empty() || out.actor_weapon_name.empty()))
+        throw std::runtime_error("Weapon inspection requires --actor-info, --actor-ram, --actor-index, --actor-model-info, --actor-action, --actor-weapon-resource and --actor-weapon-name together.");
+    if (weapon_requested && (!out.animation.empty() || out.bone || rotation_requested))
+        throw std::runtime_error("Original ACTION weapon inspection cannot be combined with a clip or manual joint pose.");
+    if (weapon_requested && out.actor_ram.value_or(0) > 3)
+        throw std::runtime_error("Weapon inspection requires --actor-ram from 0 to 3.");
+    if (!actor_options.empty() && !weapon_requested && (!out.actor_info || !out.actor_ram || !out.actor_index || out.animation.empty()))
         throw std::runtime_error("Actor inspection requires --actor-info REFERENCE, --actor-ram SLOT, --actor-index INDEX and --animation NAME together.");
     if (!out.animation.empty()) {
         if (out.bone || rotation_requested) throw std::runtime_error("Choose an animation clip or manual bone rotation; these pose inputs cannot be combined.");
         out.rig = true;
     }
-    if (out.animation_time && out.animation.empty()) throw std::runtime_error("--animation-time requires --animation NAME.");
-    if (out.animation_play && out.animation.empty()) throw std::runtime_error("--animation-play requires --animation NAME.");
+    if (weapon_requested) out.rig = true;
+    if (out.animation_time && out.animation.empty() && !weapon_requested) throw std::runtime_error("--animation-time requires --animation NAME.");
+    if (out.animation_time && weapon_requested && *out.animation_time > 600)
+        throw std::runtime_error("Weapon inspection time must be at most 600 seconds.");
+    if (out.animation_play && out.animation.empty() && !weapon_requested) throw std::runtime_error("--animation-play requires --animation NAME.");
     if (out.animation_play && out.smoke_frames == 1) throw std::runtime_error("Animation playback smoke testing requires at least two frames.");
     if (out.rig && !out.entry && out.resource.empty())
         throw std::runtime_error("--rig requires --resource, or --archive and --entry.");
@@ -539,6 +557,7 @@ public:
     explicit Workbench(Options options) : options_(std::move(options)) {}
     ~Workbench() {
         scene_renderer_.shutdown();
+        play_renderer_.shutdown();
         mesh_actor_renderer_.shutdown();
         mesh_renderer_.shutdown();
         for (auto* pad : gamepads_) SDL_CloseGamepad(pad);
@@ -604,8 +623,9 @@ public:
                 return 2;
             }
             if (options_.play) {
-                if (!play_active_ || !play_world_ || !scene_player_.uploaded || !play_error_.empty() ||
-                    !scene_player_.error.empty() || !scene_renderer_.has_texture() || scene_renderer_.rendered_frames() == 0) {
+                if (!play_active_ || !play_world_ || !play_weapon_ || !scene_player_.uploaded || !play_error_.empty() ||
+                    !scene_player_.error.empty() || !play_renderer_.has_texture() || !play_weapon_frames_ ||
+                    play_attachment_count_!=1 || play_renderer_.batch_count()!=scene_data_->instances.size()+2) {
                     std::cerr << "Walking preview failed: " << play_error_ << '\n'; return 3;
                 }
                 const auto p = play_walker_.position();
@@ -614,7 +634,9 @@ public:
                     << " / position " << p.x << ',' << p.y << ',' << p.z << '\n'
                     << "Walking simulation: " << play_steps_ << " steps / distance " << play_distance_ << " / idle " << play_idle_samples_
                     << " / run " << play_run_samples_ << " / pose uploads " << scene_player_.updates << '\n'
-                    << "Walking render: " << scene_target_width_ << 'x' << scene_target_height_ << " / " << scene_renderer_.samples() << " samples\n";
+                    << "Walking render: " << scene_target_width_ << 'x' << scene_target_height_ << " / " << play_renderer_.samples() << " samples\n"
+                    << "Original attached weapon: common05 / " << play_attachment_count_ << " selector / " << play_weapon_frames_
+                    << " shared-depth frames / ACTION " << play_weapon_->action().current_action() << '\n';
                 if (options_.play_smoke) {
                     std::cout << "SDL keyboard replay: pause " << play_pause_verified_ << " / restart " << play_restart_verified_ << " / focus loss " << play_focus_verified_ << '\n';
                     if (play_distance_ < 20 || !play_run_samples_ || !play_idle_samples_ || !play_pause_verified_ || !play_restart_verified_ || !play_focus_verified_ ||
@@ -729,7 +751,10 @@ public:
                 }
             } else if ((options_.entry || !options_.resource.empty()) && options_.initial_page == 5) {
                 auto& mesh_renderer = active_mesh_renderer();
-                if (options_.actor_info && (!mesh_actor_ || !mesh_actor_->frame || !mesh_actor_->clip_reference)) {
+                if (weapon_preview_requested() && (!mesh_weapon_ || mesh_weapon_frame_count_ == 0 || !mesh_animation_error_.empty())) {
+                    std::cerr << "Original ACTION weapon inspection failed: " << mesh_animation_error_ << '\n'; return 3;
+                }
+                if (options_.actor_info && !weapon_preview_requested() && (!mesh_actor_ || !mesh_actor_->frame || !mesh_actor_->clip_reference)) {
                     std::cerr << "Prepared actor inspection failed: " << mesh_animation_error_ << '\n'; return 3;
                 }
                 if (!options_.animation.empty() && (!mesh_animation_ || !mesh_animation_uploaded_ || !mesh_animation_error_.empty())) {
@@ -742,7 +767,7 @@ public:
                     std::cerr << "Animation playback failed: no additional pose was sampled and uploaded.\n";
                     return 3;
                 }
-                if (options_.rig && (!mesh_skin_ || !mesh_pose_ || !mesh_pose_uploaded_ || !mesh_rig_error_.empty() ||
+                if (options_.rig && !weapon_preview_requested() && (!mesh_skin_ || !mesh_pose_ || !mesh_pose_uploaded_ || !mesh_rig_error_.empty() ||
                     mesh_renderer.rendered_frames() <= mesh_pose_start_frame_)) {
                     const auto reason = !mesh_rig_error_.empty() ? mesh_rig_error_ :
                         !mesh_error_.empty() ? mesh_error_ : "No evaluated pose was uploaded and rendered.";
@@ -773,13 +798,20 @@ public:
                         << " / node time " << mesh_actor_->node_time << " / rendered " << mesh_actor_renderer_.rendered_frames() << '\n'
                         << "Original cached CPU skin deformation and captured root; host inspection camera. This inspection path does not dispatch ACTION events. Original camera remains pending.\n";
                 }
+                if (mesh_weapon_) {
+                    std::cout << "Original ACTION weapon inspection: " << options_.actor_action << " / " << options_.actor_weapon_name
+                        << " / slot " << *options_.actor_ram << " / actor index " << *options_.actor_index
+                        << " / batches " << mesh_actor_renderer_.batch_count() << " / textures " << mesh_actor_renderer_.texture_count()
+                        << " / time " << std::setprecision(9) << mesh_animation_time_ << " / frames " << mesh_weapon_frame_count_ << '\n'
+                        << "Real ACTION and PLAYERARMS dispatch; shared body/weapon depth pass. Prepared reset graphics baseline and host inspection camera; full game-frame materials and gameplay remain pending.\n";
+                }
                 if (!loaded_mesh_resource_.empty()) std::cout << "Logical resource: " << loaded_mesh_resource_ << '\n';
                 if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured && mesh_material_) {
                     std::cout << "Bound image: " << mesh_material_->image_name << " / reference " << *mesh_material_->image_reference
                               << " / " << mesh_texture_width_ << 'x' << mesh_texture_height_ << " / " << mesh_data_->texcoords.size() << " UV pairs\n"
                               << "Material provenance: " << mesh_material_->provenance << '\n';
                 }
-                if (options_.rig && mesh_skin_) {
+                if (options_.rig && mesh_skin_ && !weapon_preview_requested()) {
                     const auto& skin = *mesh_skin_;
                     std::cout << "Rig: " << skin.info.skeleton_name << " / skeleton " << *skin.info.skeleton_reference
                               << " / " << skin.bones.size() << " bones / " << skin.joints.size() << " joints / " << skin.influences.size() << " influences\n"
@@ -824,6 +856,10 @@ private:
     dw4::Vec3 play_grounded_spawn_{};
     float play_spawn_facing_ = 0;
     std::optional<dw4::AnimationClip> play_idle_clip_, play_run_clip_;
+    dw4::viewer::MeshRenderer play_renderer_;
+    std::unique_ptr<dw4::viewer::WeaponPreview> play_weapon_;
+    std::uint64_t play_clock_steps_{},play_time_ns_{},play_weapon_frames_{};
+    std::size_t play_attachment_count_{};
     std::string play_error_;
     double play_accumulator_ = 0, play_distance_ = 0;
     std::uint64_t play_steps_ = 0, play_run_samples_ = 0, play_idle_samples_ = 0;
@@ -876,6 +912,8 @@ private:
     dw4::viewer::MeshRenderer mesh_renderer_;
     dw4::viewer::MeshRenderer mesh_actor_renderer_;
     std::optional<MeshActorPreview> mesh_actor_;
+    std::unique_ptr<dw4::viewer::WeaponPreview> mesh_weapon_;
+    std::uint64_t mesh_weapon_frame_count_{};
     dw4::OrbitCamera mesh_camera_;
     std::optional<dw4::assets::AfsArchive> mesh_archive_;
     std::optional<dw4::IgbDocument> mesh_document_;
@@ -1830,7 +1868,51 @@ private:
     void stop_play() {
         play_active_ = false; play_paused_ = false;
         play_keys_.fill(false); play_accumulator_ = 0;
+        play_weapon_.reset(); play_renderer_.clear();
         play_world_.reset(); play_idle_clip_.reset(); play_run_clip_.reset();
+    }
+
+    void prepare_play_weapon() {
+        if (!scene_player_.document || !scene_player_.visual || !scene_data_ || !mounted_resources_)
+            throw std::runtime_error("The walking scene and original player resources are required.");
+        // An explicit preview restart creates fresh loaded appearance owners;
+        // it does not reuse abandoned weapon selectors from an earlier run.
+        const auto source = scene_player_.resource;
+        const auto binding = dw4::decode_player_runtime_binding(*scene_player_.document,
+            {1386,546,0,1},source,0);
+        auto body = std::make_shared<dw4::ActorSceneResource>(*scene_player_.document,source,0);
+        auto weapon = std::make_shared<dw4::ActorSceneResource>(dw4::read_igb_document(
+            mounted_resources_->read("_common/w_common05.igb")),"_common/w_common05.igb",1);
+        const dw4::viewer::WeaponPreviewSelection selection{1386,546,0,
+            static_cast<std::uint32_t>(binding.selected_actor_index()),scene_player_.visual->info.geometry_reference};
+        auto candidate = std::make_unique<dw4::viewer::WeaponPreview>(std::move(body),std::move(weapon),selection,
+            "w_common05","WAITS1",actor_identity);
+        std::vector<dw4::viewer::MeshBatch> batches;
+        std::map<std::uint32_t,dw4::RgbaImage> images;
+        std::size_t image_bytes{};
+        batches.reserve(scene_data_->instances.size()+candidate->batches().size());
+        for (std::size_t i=0;i<scene_data_->instances.size();++i) {
+            auto& instance = scene_data_->instances[i];const auto& material = scene_materials_.at(i);
+            if (!material.supported || !material.image_reference || material.geometry_reference!=instance.geometry_reference)
+                throw std::runtime_error("A walking map instance has no verified material binding.");
+            if (instance.mesh.texcoords.empty())instance.mesh.texcoords=dw4::decode_igb_texcoords(*scene_document_,instance.geometry_reference);
+            const auto reference=*material.image_reference;
+            if (!images.contains(reference)) {
+                auto image=dw4::decode_igb_texture(*scene_document_,reference);
+                if (image.rgba.size()>256u*1024u*1024u-image_bytes)
+                    throw std::runtime_error("Walking map images exceed the checked preview budget.");
+                image_bytes+=image.rgba.size();images.emplace(reference,std::move(image));
+            }
+            dw4::viewer::MeshTextureOptions sampler;
+            sampler.wrap_u=texture_wrap(material.wrap_s);sampler.wrap_v=texture_wrap(material.wrap_t);
+            sampler.min_filter=texture_filter(material.min_filter);sampler.mag_filter=texture_filter(material.mag_filter);
+            batches.push_back({&instance.mesh,&images.at(reference),sampler,false});
+        }
+        for (const auto& batch:candidate->batches())batches.push_back(batch);
+        play_renderer_.upload_prepared_batches(batches);
+        if (!play_renderer_.has_texture() || play_renderer_.batch_count()!=batches.size())
+            throw std::runtime_error("The walking pass did not retain its map, body and attached weapon.");
+        play_weapon_=std::move(candidate);play_clock_steps_=play_time_ns_=0;
     }
 
     void start_play() {
@@ -1866,9 +1948,11 @@ private:
                     throw std::runtime_error(std::string("Walking animation is unavailable: ")+name);
                 return dw4::decode_igb_animation(*scene_player_.document,scene_player_.visual->skin,selected->reference_index);
             };
-            play_idle_clip_ = clip("waitS"); play_run_clip_ = clip("runD");
+            // common05 installs the original slash labels: WAITS1 / RUNNS1.
+            play_idle_clip_ = clip("waitS"); play_run_clip_ = clip("runS");
             play_active_ = true; play_paused_ = false; play_pad_start_ = false;
             play_distance_ = 0; play_steps_ = play_idle_samples_ = play_run_samples_ = 0;
+            play_weapon_frames_=0;play_attachment_count_=0;
             play_pause_verified_ = play_restart_verified_ = play_focus_verified_ = false;
             restart_play();
             play_grounded_spawn_ = play_walker_.position(); play_spawn_facing_ = play_walker_.facing();
@@ -1885,6 +1969,7 @@ private:
         *scene_player_.placement = play_spawn_;
         scene_player_.clip = *play_idle_clip_; scene_player_.playing = false;
         scene_player_.time = 0; play_running_clip_ = false;
+        prepare_play_weapon();
         play_keys_.fill(false); play_accumulator_ = 0; play_zoom_ = 1;
         scene_camera_.reset(); scene_camera_.orbit(-0.65f,0.9f);
         scene_fit_pending_ = scene_player_focus_pending_ = false;
@@ -1897,8 +1982,10 @@ private:
         const float c = std::cos(play_walker_.facing()), s = std::sin(play_walker_.facing());
         // Host controller yaw replaces the actor's outer orientation; source skin remains unchanged.
         scene_player_.placement->matrix = {c,0,-s,0, 0,1,0,0, s,0,c,0, p.x,p.y,p.z,1};
-        update_scene_player_pose(scene_player_.time);
-        if (!scene_player_.error.empty()) throw std::runtime_error(scene_player_.error);
+        if (!play_weapon_)throw std::runtime_error("The walking player has no prepared original weapon owner.");
+        dw4::AnimationMatrix placement{};
+        for (std::size_t i=0;i<placement.size();++i)placement[i]=static_cast<float>(scene_player_.placement->matrix[i]);
+        play_weapon_->set_placement(placement);
     }
 
     void pause_play(bool pause) {
@@ -2000,10 +2087,13 @@ private:
                 play_walker_.advance(x,z,step,*play_world_);
                 const auto after = play_walker_.position();
                 play_distance_ += std::hypot(double(after.x-before.x),double(after.z-before.z));
+                ++play_clock_steps_;
+                play_time_ns_=play_clock_steps_*1000000000ULL/120;
                 const bool moving = play_walker_.moving();
                 if (moving != play_running_clip_) {
                     scene_player_.clip = moving ? *play_run_clip_ : *play_idle_clip_;
                     scene_player_.time = 0; play_running_clip_ = moving;
+                    play_weapon_->dispatch_action(moving ? "RUNNS1" : "WAITS1",play_time_ns_);
                 }
                 scene_player_.time = std::fmod(scene_player_.time+step,scene_player_.clip->info.duration_seconds);
                 ++play_steps_; if (moving) ++play_run_samples_; else ++play_idle_samples_;
@@ -2019,7 +2109,7 @@ private:
         ImGui::Begin("Walking preview",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::TextColored(teal,"DIGIMON WORLD 4 / PC"); ImGui::SameLine();
-        ImGui::TextColored(muted,"  Walking preview"); ImGui::SameLine();
+        ImGui::TextColored(muted,"  Gameplay preview / Agumon"); ImGui::SameLine();
         if (ImGui::Button(play_paused_ ? "Resume" : "Pause")) pause_play(!play_paused_);
         ImGui::TextUnformatted("WASD / Arrows / Left stick: move    Right-drag / Q E: camera    Wheel: zoom    R: restart    Esc / Start: pause");
         const auto size = ImGui::GetContentRegionAvail(); const auto origin = ImGui::GetCursorScreenPos();
@@ -2037,7 +2127,29 @@ private:
             const double height = std::max(1.0,double(size.y*io.DisplayFramebufferScale.y));
             const double reduction = std::min({1.0,4096.0/width,4096.0/height,std::sqrt(8388608.0/(width*height))});
             scene_target_width_ = std::max(1,int(width*reduction)); scene_target_height_ = std::max(1,int(height*reduction));
-            const auto texture = scene_renderer_.render(scene_target_width_,scene_target_height_,scene_camera_,scene_mode_,settings_.msaa,scene_data_->instances.size());
+            const auto camera=scene_camera_.matrices(float(scene_target_width_)/float(scene_target_height_));
+            const auto normalization=scene_renderer_.source_normalization();
+            const auto view=dw4::original_matrix_multiply(camera.view,normalization);
+            auto inverse_camera=actor_identity;
+            for (std::size_t column=0;column<3;++column)for (std::size_t row=0;row<3;++row)
+                inverse_camera[column*4+row]=camera.view[row*4+column];
+            for (std::size_t row=0;row<3;++row) {
+                double value{};for (std::size_t k=0;k<3;++k)value-=double(inverse_camera[k*4+row])*camera.view[12+k];
+                inverse_camera[12+row]=static_cast<float>(value);
+            }
+            auto inverse_normalization=actor_identity;
+            for (std::size_t axis=0;axis<3;++axis) {
+                inverse_normalization[axis*5]=1/normalization[axis*5];
+                inverse_normalization[12+axis]=-normalization[12+axis]/normalization[axis*5];
+            }
+            const auto inverse_view=dw4::original_matrix_multiply(inverse_normalization,inverse_camera);
+            const auto& frame=play_weapon_->frame(view,inverse_view,play_time_ns_);
+            play_renderer_.update_batch_positions(scene_data_->instances.size(),frame.body_pose.positions);
+            std::vector<dw4::AnimationMatrix> matrices(scene_data_->instances.size(),view);
+            matrices.insert(matrices.end(),frame.model_views.begin(),frame.model_views.end());
+            const auto texture = play_renderer_.render_prepared_batches(scene_target_width_,scene_target_height_,matrices,
+                camera.projection,scene_mode_,settings_.msaa,scene_data_->instances.size());
+            play_attachment_count_=frame.attachment_count;++play_weapon_frames_;++scene_player_.updates;
             ImGui::GetWindowDrawList()->AddImage(static_cast<ImTextureID>(texture),origin,{origin.x+size.x,origin.y+size.y},{0,1},{1,0});
         } catch (const std::exception& error) { play_error_ = error.what(); pause_play(true); }
         ImGui::End();
@@ -2150,7 +2262,9 @@ private:
                 mesh_rig_options_consumed_ = true;
                 prepare_mesh_rig(initial_request ? options_.bone : std::nullopt,
                     initial_request ? options_.rotation : dw4::Vec3{});
-                if (mesh_animation_mode_ && mesh_skin_) {
+                if (weapon_preview_requested() && mesh_skin_) {
+                    prepare_mesh_weapon();
+                } else if (mesh_animation_mode_ && mesh_skin_) {
                     prepare_animation_catalog();
                     if (initial_request && !options_.animation.empty()) select_animation_name(options_.animation,options_.animation_time.value_or(0));
                     if (initial_request && options_.animation_play && mesh_animation_uploaded_ && mesh_animation_error_.empty()) {
@@ -2164,6 +2278,8 @@ private:
 
     void clear_mesh_rig() {
         mesh_actor_.reset();
+        mesh_weapon_.reset();
+        mesh_weapon_frame_count_ = 0;
         mesh_actor_renderer_.clear();
         mesh_animations_.clear();
         mesh_animation_.reset();
@@ -2190,7 +2306,11 @@ private:
     }
 
     bool actor_preview_requested() const {
-        return options_.actor_info.has_value() && mesh_rig_enabled_ && mesh_animation_mode_;
+        return options_.actor_info.has_value() && mesh_rig_enabled_ && (mesh_animation_mode_ || weapon_preview_requested());
+    }
+
+    bool weapon_preview_requested() const {
+        return options_.actor_model_info.has_value();
     }
 
     dw4::viewer::MeshRenderer& active_mesh_renderer() {
@@ -2264,6 +2384,36 @@ private:
             mesh_animations_ = dw4::list_igb_animations(*mesh_document_,*mesh_skin_);
             mesh_animation_catalog_ready_ = true;
             mesh_animation_error_ = mesh_animations_.empty() ? "This rig's owning database contains no animation clips." : "";
+        } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
+    }
+
+    void prepare_mesh_weapon() {
+        try {
+            if (!mounted_resources_ || !mesh_document_ || !mesh_data_ || !mesh_skin_ || selected_mesh_ < 0)
+                throw std::runtime_error("Weapon inspection requires a mounted catalog and a decoded actor skin.");
+            const auto& bounds = mesh_data_->bounds;
+            const std::array<double,3> center{(double(bounds.min.x)+bounds.max.x)*0.5,
+                (double(bounds.min.y)+bounds.max.y)*0.5,(double(bounds.min.z)+bounds.max.z)*0.5};
+            const double radius = std::hypot(double(bounds.max.x)-center[0],double(bounds.max.y)-center[1],double(bounds.max.z)-center[2]);
+            if (!std::isfinite(radius) || radius <= 0) throw std::runtime_error("Weapon inspection requires finite nonempty actor bounds.");
+            auto placement = actor_identity;
+            for (std::size_t i=0;i<3;++i) { placement[i*5]=static_cast<float>(1/radius); placement[12+i]=static_cast<float>(-center[i]/radius); }
+            auto body = std::make_shared<dw4::ActorSceneResource>(*mesh_document_,mesh_source_,0);
+            auto weapon = std::make_shared<dw4::ActorSceneResource>(dw4::read_igb_document(
+                mounted_resources_->read(options_.actor_weapon_resource,static_cast<std::size_t>(mesh_entry_limit_mib_)*1024u*1024u)),
+                options_.actor_weapon_resource,1);
+            dw4::viewer::WeaponPreviewSelection selection{static_cast<std::uint32_t>(*options_.actor_model_info),
+                static_cast<std::uint32_t>(*options_.actor_info),static_cast<std::uint32_t>(*options_.actor_ram),
+                static_cast<std::uint32_t>(*options_.actor_index),meshes_.at(static_cast<std::size_t>(selected_mesh_)).reference_index};
+            auto candidate = std::make_unique<dw4::viewer::WeaponPreview>(std::move(body),std::move(weapon),selection,
+                options_.actor_weapon_name,options_.actor_action,placement);
+            mesh_actor_renderer_.upload_prepared_batches(candidate->batches());
+            mesh_render_start_frame_ = mesh_actor_renderer_.rendered_frames();
+            mesh_weapon_ = std::move(candidate);
+            mesh_animation_time_ = options_.animation_time.value_or(0);
+            mesh_animation_playing_ = options_.animation_play;
+            mesh_animation_tick_ = std::chrono::steady_clock::now();
+            mesh_animation_error_.clear();
         } catch (const std::exception& error) { mesh_animation_error_ = error.what(); }
     }
 
@@ -2376,6 +2526,13 @@ private:
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now-mesh_animation_tick_).count();
         mesh_animation_tick_ = now;
+        if (weapon_preview_requested()) {
+            if (page_ == 5 && mesh_weapon_ && mesh_animation_playing_ && elapsed > 0 && mesh_animation_error_.empty()) {
+                mesh_animation_time_ = std::min(600.0,mesh_animation_time_+elapsed);
+                if (mesh_animation_time_ >= 600) mesh_animation_playing_ = false;
+            }
+            return;
+        }
         if (page_ != 5 || !mesh_rig_enabled_ || !mesh_animation_mode_ || !mesh_animation_playing_ || !mesh_animation_) return;
         if (elapsed <= 0) return;
         const double duration = mesh_animation_->info.duration_seconds;
@@ -3068,6 +3225,20 @@ private:
 
     void draw_mesh_rig_controls() {
         if (!mesh_rig_enabled_) return;
+        if (weapon_preview_requested()) {
+            ImGui::TextWrapped("Action: %s",options_.actor_action.c_str());
+            ImGui::TextWrapped("Weapon: %s",options_.actor_weapon_name.c_str());
+            if (!mesh_animation_error_.empty()) paragraph(mesh_animation_error_.c_str(),amber);
+            ImGui::BeginDisabled(!mesh_weapon_ || !mesh_animation_error_.empty() || mesh_animation_time_ >= 600);
+            if (ImGui::Button(mesh_animation_playing_ ? "Pause" : "Play")) {
+                mesh_animation_playing_ = !mesh_animation_playing_;
+                mesh_animation_tick_ = std::chrono::steady_clock::now();
+            }
+            ImGui::EndDisabled();
+            ImGui::Text("Time: %.3f s",mesh_animation_time_);
+            paragraph("Original action and weapon attachment preview. Camera and lighting remain provisional.");
+            return;
+        }
         if (!mesh_rig_error_.empty()) paragraph(("Rig inspection: " + mesh_rig_error_).c_str(),amber);
         if (!mesh_skin_) {
             paragraph("The stored geometry remains available. No verified joint pose is applied.");
@@ -3176,7 +3347,25 @@ private:
             mesh_target_width_ = std::max(1,static_cast<int>(width * reduction));
             mesh_target_height_ = std::max(1,static_cast<int>(height * reduction));
             std::uint32_t target;
-            if (actor_preview_requested()) {
+            if (weapon_preview_requested()) {
+                if (!mesh_weapon_ || !mesh_animation_error_.empty())
+                    throw std::runtime_error("No prepared weapon frame is available: " + mesh_animation_error_);
+                const auto camera=mesh_camera_.matrices(static_cast<float>(mesh_target_width_)/mesh_target_height_);
+                auto inverse=actor_identity;
+                for (std::size_t column=0;column<3;++column) for (std::size_t row=0;row<3;++row)
+                    inverse[column*4+row]=camera.view[row*4+column];
+                for (std::size_t row=0;row<3;++row) {
+                    double value=0;
+                    for (std::size_t k=0;k<3;++k) value-=double(inverse[k*4+row])*camera.view[12+k];
+                    inverse[12+row]=static_cast<float>(value);
+                }
+                const auto& frame=mesh_weapon_->frame(camera.view,inverse,static_cast<std::uint64_t>(mesh_animation_time_*1e9));
+                mesh_actor_renderer_.update_batch_positions(0,frame.body_pose.positions);
+                target=mesh_actor_renderer_.render_prepared_batches(mesh_target_width_,mesh_target_height_,
+                    frame.model_views,camera.projection,mesh_mode_,settings_.msaa);
+                ++mesh_weapon_frame_count_;
+                ++mesh_animation_upload_count_;
+            } else if (actor_preview_requested()) {
                 if (!mesh_actor_ || !mesh_actor_->frame || !mesh_animation_uploaded_)
                     throw std::runtime_error("No prepared actor pose is available: " + mesh_animation_error_);
                 if (mesh_mode_==dw4::viewer::MeshDrawMode::textured) prepare_actor_texture();
@@ -3359,6 +3548,7 @@ private:
                 if (mesh_mode_ == dw4::viewer::MeshDrawMode::textured) prepare_mesh_texture();
             }
             ImGui::SameLine();
+            ImGui::BeginDisabled(weapon_preview_requested());
             if (ImGui::Checkbox("Inspect rig",&mesh_rig_enabled_)) {
                 if (mesh_rig_enabled_) prepare_mesh_rig();
                 else {
@@ -3366,6 +3556,7 @@ private:
                     catch (const std::exception& error) { mesh_rig_enabled_ = true; mesh_rig_error_ = error.what(); }
                 }
             }
+            ImGui::EndDisabled();
             if (ImGui::GetWindowWidth() > 900) { ImGui::SameLine(); ImGui::TextColored(muted,"Drag: orbit / right: pan / wheel: zoom"); }
             if (mesh_mode_ != dw4::viewer::MeshDrawMode::textured || mesh_renderer_.has_texture()) draw_mesh_canvas();
             else {
@@ -4120,10 +4311,14 @@ int main(int argc, char** argv) {
                          "--bone         Zero-based skeleton bone index for manual inspection; requires --rig.\n"
                          "--rotate-x/y/z Manual joint angles from -180 to 180 degrees; require --rig and --bone.\n"
                          "--animation    Original clip name in the selected rig's database; implies --rig.\n"
-                         "--animation-time Paused clip time in seconds (default 0); requires --animation.\n"
+                         "--animation-time Clip or ACTION weapon inspection time in seconds (default 0).\n"
                          "--animation-play Start playback at the selected time; smoke tests require 2+ frames.\n"
                          "--actor-info   Explicit ACTION2 info reference for original actor-cache clip inspection.\n"
                          "--actor-ram    Prepared RAM slot; use with --actor-info, --actor-index and --animation.\n"
+                         "--actor-model-info MODELCTRL reference for original ACTION weapon inspection.\n"
+                         "--actor-action Original action name; replaces --animation in weapon inspection.\n"
+                         "--actor-weapon-resource Logical IGB containing the original PLAYERARMS info.\n"
+                         "--actor-weapon-name Exact original weapon info name. All weapon selectors are required.\n"
                          "--actor-index  Ordered actor in the RAM; --mesh must select its main-skin geometry.\n"
                          "--max-entry-mib Limit an AFS entry read to 1-256 MiB (default 64).\n";
             return 0;
