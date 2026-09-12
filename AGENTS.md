@@ -3,6 +3,10 @@
 This is a native C++20 port effort with an original-asset walking preview and workbench.
 Keep all source code, identifiers, comments, documentation, README content,
 commit messages and application text in English, as requested by the owner.
+Do not use GitHub Actions. The owner disabled hosted workflows to avoid consuming
+the account's Actions minutes. Build, test and package locally. Do not add,
+restore, enable or dispatch hosted workflows unless the owner explicitly changes
+this instruction. Ordinary source commits and pushes remain authorized.
 Read README.md, docs/ARCHITECTURE.md and docs/ROADMAP.md before extending scope.
 Keep the provisional walking preview distinct from the original game baseline;
 do not claim stored preferences implement gameplay. Continue toward the next
