@@ -31,3 +31,7 @@ Build on Windows using scripts/build.ps1; the portable core can use CMake with
 DW4_BUILD_APP=OFF. Run CTest and Python verifier tests after relevant changes.
 For graphics integration, run a finite --smoke-test and inspect an app-rendered
 screenshot. Keep local game-data integration results separate from asset-free CI.
+
+Build refreshed preview snapshots occasionally for the owner to launch manually.
+Do not automatically open an interactive preview unless the owner explicitly
+asks to launch it. Finite hidden smoke tests remain part of graphics validation.
