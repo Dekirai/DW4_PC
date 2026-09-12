@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 
 namespace dw4 {
 // Caller-prepared beModelCtrl work fields at 80/8C/98: desired Euler angles,
@@ -14,12 +15,27 @@ struct ModelTurn {
     bool operator==(const ModelTurn&) const = default;
 };
 struct ModelMotionPose {
-    explicit ModelMotionPose(std::array<float, 16> model_matrix) : matrix(model_matrix) {}
-    std::array<float, 16> matrix; // Owned ONE model transform, column-major.
+    using Matrix=std::array<float,16>;
+    explicit ModelMotionPose(Matrix model_matrix);
+    // A generated work object can share its actual node matrix with an older
+    // retained work object, while its turn and control fields stay independent.
+    explicit ModelMotionPose(std::shared_ptr<Matrix> node_matrix);
+    // Candidate copies are detached: failed validation must not write the live
+    // node. Assignment publishes values into the destination's existing owner.
+    ModelMotionPose(const ModelMotionPose&);
+    ModelMotionPose(ModelMotionPose&&) noexcept = default;
+    ModelMotionPose& operator=(const ModelMotionPose&);
+    ModelMotionPose& operator=(ModelMotionPose&&);
+    Matrix& matrix();
+    const Matrix& matrix() const;
+    std::shared_ptr<Matrix> matrix_owner();
+    std::shared_ptr<const Matrix> matrix_owner() const;
     ModelTurn turn;
     bool translated{}; // Original work+78 (_isHitCheck), written by the motion tick.
     bool position_locked{}; // Original work+A8 (_isPosLock), cleared by MOVE/MOVEEX.
-    bool operator==(const ModelMotionPose&) const = default;
+    bool operator==(const ModelMotionPose&) const;
+private:
+    std::shared_ptr<Matrix> matrix_;
 };
 struct ModelMotionStep {
     MotionStep channels;

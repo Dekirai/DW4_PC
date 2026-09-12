@@ -132,7 +132,7 @@ void retained_time_gate_and_first_body() {
     check(target.handle().stop==ModelCollisionStop::system_time_required && target.runtime.owns_delivery(target.delivery()),
         "Missing timestamp failed to retain this delivery's completed gate prefix");
     target.state.invulnerability_frames=99;target.work.control_enabled=0;target.work.current_sequence="SQ_ERAS";
-    target.state.pose.matrix=matrix(1);target.packet({{100,100,100},{101,101,101}},"p_later",70000);
+    target.state.pose.matrix()=matrix(1);target.packet({{100,100,100},{101,101,101}},"p_later",70000);
     target.services.system_time=[]()->std::optional<std::uint64_t>{return 2;};unsigned scripts{};
     target.services.hit_script=[&](const ModelTargetHitRequest& request)->std::optional<std::uint8_t> {
         ++scripts;check(request.kind==70000 && request.source_name=="p_later" && request.body_ordinal==0,
@@ -206,7 +206,7 @@ void player_script_resume_and_heading() {
         check(target.messenger.buffer_depth()==1 && request.source_record==-1 && request.source_name=="p_source",
             "Player source must enter target Lua with sentinel -1 in the pushed child");
         if(scripts==1) {
-            target.state.pose.matrix=matrix(200,20,-400);target.state.pose.turn.desired={0.25f,-0.5f,-0.125f};
+            target.state.pose.matrix()=matrix(200,20,-400);target.state.pose.turn.desired={0.25f,-0.5f,-0.125f};
             target.state.pose.turn.applied={9,8,7};target.state.pose.turn.rate={0,0,0};
             target.state.pose.translated=true;target.state.pose.position_locked=true;
             target.messenger.select("SCRIPT_CHANGED_SELECTION",std::nullopt,-1);target.messenger.buffer().add_int(99);
@@ -229,8 +229,8 @@ void player_script_resume_and_heading() {
     check(target.state.pose.turn.desired==std::array<float,3>{0.25f,heading,-0.125f} &&
         target.state.pose.turn.applied==target.state.pose.turn.desired && target.state.pose.turn.rate==std::array<float,3>{0,0,0},
         "Forced hit heading must use captured old source/target positions and live post-Lua pitch/roll");
-    check(target.state.pose.matrix[12]==200 && target.state.pose.matrix[13]==20 && target.state.pose.matrix[14]==-400 &&
-        target.state.pose.matrix[3]==0 && target.state.pose.matrix[7]==0 && target.state.pose.matrix[11]==0 && target.state.pose.matrix[15]==1 &&
+    check(target.state.pose.matrix()[12]==200 && target.state.pose.matrix()[13]==20 && target.state.pose.matrix()[14]==-400 &&
+        target.state.pose.matrix()[3]==0 && target.state.pose.matrix()[7]==0 && target.state.pose.matrix()[11]==0 && target.state.pose.matrix()[15]==1 &&
         target.state.pose.translated && target.state.pose.position_locked && target.state.invulnerability_frames==90,
         "Forced hit orientation lost live translation, pose flags or unrelated target work");
     check(target.messenger.buffer_depth()==0 && target.messenger.buffer().booleans()==std::vector<std::uint8_t>{1},

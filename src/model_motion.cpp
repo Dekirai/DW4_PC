@@ -7,6 +7,44 @@
 #include <limits>
 
 namespace dw4 {
+ModelMotionPose::ModelMotionPose(Matrix value):matrix_(std::make_shared<Matrix>(value)) {}
+ModelMotionPose::ModelMotionPose(std::shared_ptr<Matrix> node):matrix_(std::move(node)) {
+    if(!matrix_)throw MotionError("Model motion requires an actual node matrix owner.");
+}
+ModelMotionPose::ModelMotionPose(const ModelMotionPose& other):
+    turn(other.turn),translated(other.translated),position_locked(other.position_locked),
+    matrix_(std::make_shared<Matrix>(other.matrix())) {}
+ModelMotionPose& ModelMotionPose::operator=(const ModelMotionPose& other) {
+    if(this==&other)return *this;
+    const auto value=other.matrix();
+    if(matrix_)*matrix_=value;
+    else matrix_=std::make_shared<Matrix>(value);
+    turn=other.turn;translated=other.translated;position_locked=other.position_locked;
+    return *this;
+}
+ModelMotionPose& ModelMotionPose::operator=(ModelMotionPose&& other) {
+    // Existing publications retain the node owner even when committing a
+    // temporary candidate. A moved-from destination may regain value ownership.
+    return operator=(static_cast<const ModelMotionPose&>(other));
+}
+ModelMotionPose::Matrix& ModelMotionPose::matrix() {
+    if(!matrix_)throw MotionError("This model pose has transferred its matrix owner.");
+    return *matrix_;
+}
+const ModelMotionPose::Matrix& ModelMotionPose::matrix() const {
+    if(!matrix_)throw MotionError("This model pose has transferred its matrix owner.");
+    return *matrix_;
+}
+std::shared_ptr<ModelMotionPose::Matrix> ModelMotionPose::matrix_owner() {
+    (void)matrix();return matrix_;
+}
+std::shared_ptr<const ModelMotionPose::Matrix> ModelMotionPose::matrix_owner() const {
+    (void)matrix();return matrix_;
+}
+bool ModelMotionPose::operator==(const ModelMotionPose& other) const {
+    return matrix()==other.matrix() && turn==other.turn && translated==other.translated &&
+        position_locked==other.position_locked;
+}
 namespace {
 constexpr float tau = 0x1.921fb6p+2f; // GDJEB2 804268DC.
 constexpr float radians_per_degree = 0x1.1df46ap-6f; // 80426804.
@@ -121,9 +159,9 @@ void synchronize_model_heading(ModelMotionPose& pose) {
     // directly copying the Z column changes signed-zero and non-finite cases.
     std::array<float,3> forward;
     for (std::size_t row=0;row<3;++row) {
-        const float y = 0.0f * pose.matrix[4+row];
-        const float xy = std::fma(0.0f,pose.matrix[row],y);
-        forward[row] = std::fma(1.0f,pose.matrix[8+row],xy);
+        const float y = 0.0f * pose.matrix()[4+row];
+        const float xy = std::fma(0.0f,pose.matrix()[row],y);
+        forward[row] = std::fma(1.0f,pose.matrix()[8+row],xy);
     }
     // The caller uses only X/Z; the original temporary Y is not published.
     finite(forward[0]); finite(forward[2]);
@@ -150,15 +188,15 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
         }
         if (angles == pose.turn.applied) { timer = candidate_timer; return false; }
     }
-    auto matrix = pose.matrix; euler_basis(matrix,angles);
-    pose.matrix = matrix; pose.turn.applied = angles; timer = candidate_timer;
+    auto matrix = pose.matrix(); euler_basis(matrix,angles);
+    pose.matrix() = matrix; pose.turn.applied = angles; timer = candidate_timer;
     return true;
 }
 
 void force_model_turn(ModelMotionPose& pose) {
-    auto matrix=pose.matrix;
+    auto matrix=pose.matrix();
     euler_basis(matrix,pose.turn.desired);
-    pose.matrix=matrix;pose.turn.applied=pose.turn.desired;
+    pose.matrix()=matrix;pose.turn.applied=pose.turn.desired;
 }
 
 ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time) {
@@ -185,7 +223,7 @@ ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer
     result.channels.translation_updated = states[0].active || states[1].active || states[2].active;
     if (result.channels.translation_updated) {
         for (std::size_t i=0;i<3;++i) result.channels.translation[i] = advance_motion(states[i],delta);
-        translate_model_local(candidate_pose.matrix,result.channels.translation);
+        translate_model_local(candidate_pose.matrix(),result.channels.translation);
         candidate_pose.translated = true;
     }
     *this = candidate_channels; pose = candidate_pose; timer = candidate_timer;

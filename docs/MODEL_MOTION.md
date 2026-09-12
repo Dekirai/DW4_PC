@@ -40,6 +40,22 @@ separate `_isPosLock` flag at `A8`. See [MODEL_CONTROL.md](MODEL_CONTROL.md).
 Copying a pose, timer or channel set produces independent state. No host pointers
 refer into serialized game data. Matrix updates do not mutate the source IGB.
 
+Version 0.36 separates the live node matrix allocation from per-work pose fields.
+`ModelMotionPose` accepts either a value matrix or an actual shared matrix owner.
+`matrix()` exposes values with const-correct access; `matrix_owner()` retains
+the allocation. Distinct work poses can share the node without sharing turn or
+control state. Copy construction detaches a candidate; copy/move assignment
+publishes into the destination's existing matrix. Move construction retains the
+supplied owner and leaves the source unavailable until reassignment. Pass a
+new shared-node state through registration with `std::move`; passing an lvalue
+to a by-value state API deliberately creates an independent candidate.
+
+Retained script work now holds this same matrix directly. It does not retain
+the entire controller through a matrix alias. This establishes node lifetime,
+not full generation replacement: paused wait/collision callbacks still need
+their old enclosing work owners retained at stable addresses. Replace a work
+owner to create a new generation; assigning a pose only publishes its values.
+
 ## Turning rules
 
 `turn_model` first copies desired Euler angles. Without force, each axis follows

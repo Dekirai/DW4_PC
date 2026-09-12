@@ -658,7 +658,7 @@ void original_data(const std::filesystem::path& root) {
         runtime.select(idle.requested_sequence);runtime.run(42,dispatch);
         for(int i=0;i<6;++i)advance_model_motion(runtime.model(),42);
         check(actions==std::vector<std::string>{waits[weapon],runs[weapon],waits[weapon]},"Original sequence crossed weapon/action branches.");
-        for(std::size_t axis=0;axis<3;++axis)check(std::abs(runtime.model().pose.matrix[12+axis]-(placement.matrix[12+axis]+placement.matrix[8+axis]*8.275f))<0.001f,
+        for(std::size_t axis=0;axis<3;++axis)check(std::abs(runtime.model().pose.matrix()[12+axis]-(placement.matrix[12+axis]+placement.matrix[8+axis]*8.275f))<0.001f,
             "Sequence-driven movement lost its original scalar distance or entry basis.");
     }
 }

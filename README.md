@@ -1,10 +1,11 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.35 connects the prepared original player-start caller to its real
-number, meter and metal-status recipients. Four original Agumon slots initialize
-their number geometry, meter values and shared HP bindings, alongside deferred
-weapon generation. HUD drawing and full player construction remain in progress.
+Version 0.36 adds original PLAYERPOINT queries and message-driven model placement.
+The actual node matrix now has its own lifetime, separate from a model's turn
+and control state. Prepared spawn integration connects the original point
+provider to all four Agumon nodes. Full player construction, HUD drawing and
+the original gameplay loop remain in progress.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 
@@ -22,6 +23,13 @@ boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
 ## Current capabilities
+
+- Query original PLAYERPOINT groups through the native messenger and apply the
+  original vector/matrix placement rules to the actual model node. Shared node
+  matrices survive retained work owners, while candidate motion updates remain
+  independent until publication. Full fresh-work allocation and the GENERATE
+  caller are still required. See [PLAYER_POINT.md](docs/PLAYER_POINT.md),
+  [MODEL_PLACEMENT.md](docs/MODEL_PLACEMENT.md) and [PLAYER_SPAWN.md](docs/PLAYER_SPAWN.md).
 
 - Complete the prepared post-GETPLAYER startup through all five original
   number/meter messages and the map-dependent metal/main-lobby tail. NUMBERCTRL

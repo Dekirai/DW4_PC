@@ -58,12 +58,12 @@ void heading_and_player_rates() {
     synchronize_model_heading(pose);
     check(pose.turn.desired[1]==0x1.921fb6p+1f && pose.turn.applied[1]==pose.turn.desired[1],
         "Model heading must preserve FMA zero rules before atan2; copying negative-zero Z-column X would give -pi.");
-    check(pose.matrix==original.matrix && pose.translated && pose.position_locked &&
+    check(pose.matrix()==original.matrix() && pose.translated && pose.position_locked &&
         pose.turn.desired[0]==0.2f && pose.turn.applied[2]==0.5f && pose.turn.rate[1]==7,
         "Heading synchronization modified the model matrix, rates, X/Z angles or flags.");
-    pose.matrix[5]=std::numeric_limits<float>::quiet_NaN();
+    pose.matrix()[5]=std::numeric_limits<float>::quiet_NaN();
     synchronize_model_heading(pose);check(pose.turn.desired[1]==0x1.921fb6p+1f,"Unused transformed Y poisoned heading.");
-    pose.matrix=identity;pose.matrix[0]=std::numeric_limits<float>::infinity();const auto old=pose.turn;
+    pose.matrix()=identity;pose.matrix()[0]=std::numeric_limits<float>::infinity();const auto old=pose.turn;
     rejects([&]{synchronize_model_heading(pose);});check(pose.turn==old,"Non-finite heading was partially published.");
     pose=ModelMotionPose(identity);set_player_turn_rates(pose);pose.turn.desired[1]=2;
     MotionTimer timer;timer.saved_world_time=42;timer.cached_frames=1;
@@ -72,7 +72,7 @@ void heading_and_player_rates() {
     turn_model(pose,timer,42);check(pose.turn.applied[1]==0.875f,"Player turn rate did not use the actual cached frame fraction.");
 }
 void preparation_and_timer() {
-    ModelControlState state{ModelMotionPose(identity)};state.pose.matrix[8]=1;state.pose.matrix[10]=0;
+    ModelControlState state{ModelMotionPose(identity)};state.pose.matrix()[8]=1;state.pose.matrix()[10]=0;
     state.pose.position_locked=true;state.pose.turn.desired[0]=0.3f;state.pose.turn.applied[2]=0.4f;set_player_turn_rates(state.pose);
     apply_model_command(state,movement(),123456789);
     check(state.elapsed_timer && state.elapsed_timer->saved_world_time==123456789 && state.elapsed_timer->cached_frames==1,
@@ -97,7 +97,7 @@ void preparation_and_timer() {
     const auto saved=no_op;auto bad=movement();bad.channel=4;
     rejects([&]{apply_model_command(no_op,bad,99);});check(same(no_op,saved),"Invalid channel partially modified model control.");
     ModelControlState malformed{ModelMotionPose(identity)};malformed.pose.position_locked=true;
-    malformed.pose.matrix[8]=std::numeric_limits<float>::infinity();const auto before=malformed;
+    malformed.pose.matrix()[8]=std::numeric_limits<float>::infinity();const auto before=malformed;
     rejects([&]{apply_model_command(malformed,movement(),99);});check(same(malformed,before),"Failed unlock published a timer or unlocked pose.");
     ModelControlState empty{ModelMotionPose(identity)};empty.pose.translated=true;
     check(!advance_model_motion(empty,99).turned && !empty.pose.translated && !empty.elapsed_timer,
@@ -247,7 +247,7 @@ void original_data(const std::filesystem::path& root) {
         check(update_model_control(state,0,"SQ_WALK","SQ_NONE").requested_sequence=="SQ_WAIT","Original WALK did not request WAIT.");
         apply_model_command(state,stop,42);apply_model_command(state,to_walk,42);
         for(int i=0;i<6;++i)advance_model_motion(state,42);
-        for(std::size_t axis=0;axis<3;++axis)check(std::abs(state.pose.matrix[12+axis]-(placement.matrix[12+axis]+placement.matrix[8+axis]*8.275f))<0.001f,
+        for(std::size_t axis=0;axis<3;++axis)check(std::abs(state.pose.matrix()[12+axis]-(placement.matrix[12+axis]+placement.matrix[8+axis]*8.275f))<0.001f,
             "Original prepared model movement lost its entry basis.");
         check(state.elapsed_timer && state.elapsed_timer->saved_world_time==42 && state.elapsed_timer->cached_frames==1 &&
             state.pose.turn.rate[1]==7 && !state.channels.states()[2].active,"Original command chain lost its timer, rate or stopped state.");

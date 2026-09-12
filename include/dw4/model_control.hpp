@@ -5,6 +5,7 @@
 #include <optional>
 #include <string_view>
 #include <variant>
+#include <utility>
 
 namespace dw4 {
 struct ModelCtrlCommand {
@@ -29,7 +30,7 @@ ModelCommand decode_model_command(const IgbDocument& document, std::uint32_t ref
 // Owned motion/control fields for one explicitly prepared ONE model. This is
 // not the complete beModelCtrlInfoWork or original player construction routine.
 struct ModelControlState {
-    explicit ModelControlState(ModelMotionPose prepared_pose) : pose(prepared_pose) {}
+    explicit ModelControlState(ModelMotionPose prepared_pose) : pose(std::move(prepared_pose)) {}
     ModelMotionPose pose;
     MotionChannels channels;
     std::optional<MotionTimer> elapsed_timer; // This RAM's named KEIKATIMER.

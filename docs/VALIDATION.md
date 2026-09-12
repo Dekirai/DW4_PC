@@ -1,4 +1,49 @@
-# Native original player-start validation
+# Native original spawn and node ownership validation
+
+Version 0.36.0 was validated locally on 2026-09-12 with MSVC 19.51. Original
+PLAYERPOINT messages now feed the recovered placement helper in a prepared
+integration with all four original Agumon node matrices. The node allocation
+has an independent lifetime; motion candidates remain detached until commit.
+This does not establish full fresh-work construction, GENERATE or multiplayer.
+
+| Check | Evidence |
+| --- | --- |
+| Release build and package | 85/85 CTest suites passed; no compiler warnings |
+| PLAYERPOINT | 141 synthetic / 179 original-inclusive checks; ordered registration, physical aliases, live saved group, point matrices, null-group identity and retained polygon service |
+| Original point handler comparison | 980 cases / 58,760 original instructions; zero differences; matrix append/copy are explicit prepared helpers with original signed-subnormal semantics |
+| Model placement | 42 synthetic checks; vector/matrix precedence, exact two-vector rotation, bottom-row preservation, source/target node reloads, retained setters, reentrancy and partial failures |
+| Original placement comparison | 3,638 cases per run, including 144 checked rejections / 518,913 instructions / 8,668 explicit host trig calls; zero differences in normal and paused publication |
+| Prepared spawn integration | 233 synthetic / 672 original-inclusive checks; two original point groups and positive fallback for all four Agumon nodes, original initial matrices, retained packet and setter, independent work fields sharing actual node storage |
+| Motion ownership and regression | 124 synthetic / 146 original-inclusive checks; shared-node construction, detached candidates, stable publication, moved-state checks, atomic failure, original turning and local movement |
+| Script/controller ownership | 78 synthetic checks; shared matrix survives the registration move chain, state publication and controller destruction; existing HP/status and paused callback checks remain intact |
+| Existing original control/sequence regression | 140 control and 1,122 sequence checks passed against local original resources |
+| Existing original startup/weapon regression | 613 prepared startup and 413 weapon-preview checks passed |
+| Packaged walking preview | 240 frames with 8x MSAA; 438 steps, 101.333 source units, 286 idle / 152 run steps, 240 attached-weapon frames; pause/restart/focus checks passed; actual frame visually inspected |
+| Python and packaged CLI | Six verifier tests; 18 app and ten play argument checks passed |
+
+The placement comparison executes the represented original branch, argument
+readers, Euler arithmetic, paired-single matrix copies and concrete node2
+setter. Host double sine/cosine remain explicit shared service boundaries;
+non-finite copied inputs use checked native rejections. It does not execute the
+earlier RAM/ONE lookup, factory, original MSL or complete game loop. Both normal
+and paused placement drivers were freshly linked against the final core only.
+
+The original factory/default investigation also recovered all 68 inherited and
+player fields, real auto-created list owners and the later GENERATE tail. That
+evidence guides the next implementation; it does not imply those remaining
+owners and callbacks are already integrated. See
+[PLAYER_CONSTRUCTION.md](PLAYER_CONSTRUCTION.md).
+
+The preceding commit `1c54709cc576497d9f9daf480a931b0bbf6694af` passed all three
+GitHub jobs in run `34686844672`. Its Windows artifact `10295703788` has digest
+`4dfed35bae75775c0fd8df213e00934a7fda797e9069788300d1135b07bf6630`.
+That CI result belongs to the preceding commit. Original assets, executable
+probes, complete logs and screenshots remain ignored local files.
+
+See [PLAYER_POINT.md](PLAYER_POINT.md), [MODEL_PLACEMENT.md](MODEL_PLACEMENT.md),
+[PLAYER_SPAWN.md](PLAYER_SPAWN.md) and [MODEL_MOTION.md](MODEL_MOTION.md).
+
+## Native original player-start validation (0.35)
 
 Version 0.35.0 was validated locally on 2026-09-12 with MSVC 19.51. The prepared
 post-GETPLAYER caller now reaches its real number/meter/status recipients and

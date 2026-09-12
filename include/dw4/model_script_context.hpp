@@ -21,8 +21,8 @@ public:
 // Shared identity matters when GAMERAM and model work refer to the same object.
 using ModelScriptInt=GameDataInt;
 
-// Explicit prepared ONE work. The matrix may be an aliasing shared_ptr backed
-// by the actual model owner; it is a live reference, never an implicit identity.
+// Explicit prepared ONE work. The matrix retains the actual node allocation
+// independently from controller work; it is never an implicit identity.
 class ModelScriptWork {
 public:
     ModelScriptWork(ControllerObjectId target,std::string source,std::string name,

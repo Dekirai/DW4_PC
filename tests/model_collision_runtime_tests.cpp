@@ -169,16 +169,16 @@ void hit_script_then_source_script() {
             request.kind==10000 && request.body_ordinal==0 && request.source_name==name && request.source_ram==0 && request.source_record==-1 &&
             request.script_prefix=="hit" && request.event=="Hit","Target hit service lost original script, packet or bound RAM fields.");
         if(!target_ready)return std::nullopt;
-        auto live=runtime.sequence(target).model();live.pose.matrix=matrix(90,50,70);live.pose.matrix[0]=3;live.pose.matrix[5]=4;live.pose.matrix[10]=5;
+        auto live=runtime.sequence(target).model();live.pose.matrix()=matrix(90,50,70);live.pose.matrix()[0]=3;live.pose.matrix()[5]=4;live.pose.matrix()[10]=5;
         live.pose.position_locked=true;live.pose.translated=true;runtime.prepare_model_state(target,std::move(live));
         ++target_effects;order.push_back("target");return std::uint8_t{1};
     }});
     ModelHitboxServices source_services;source_services.lua=[&](const ModelLuaRequest& request) {
         ++source_calls;check(request.script_prefix=="source_hit" && request.event=="BHit","Source did not receive its own BHit callback after target effects.");
         const auto& live=runtime.sequence(target).model().pose;
-        check(live.matrix[12]==90 && live.matrix[13]==50 && live.matrix[14]==70 && live.position_locked && live.translated &&
+        check(live.matrix()[12]==90 && live.matrix()[13]==50 && live.matrix()[14]==70 && live.position_locked && live.translated &&
             std::abs(live.turn.desired[1]-1.5707963267948966f)<0.000001f && live.turn.applied==live.turn.desired &&
-            std::abs(live.matrix[8]-1)<0.000001f && std::abs(live.matrix[2]+1)<0.000001f,
+            std::abs(live.matrix()[8]-1)<0.000001f && std::abs(live.matrix()[2]+1)<0.000001f,
             "Hit response used stale post-Lua work or recomputed direction from the new target position.");
         if(!source_ready)return false;
         ++source_effects;order.push_back("source");return true;

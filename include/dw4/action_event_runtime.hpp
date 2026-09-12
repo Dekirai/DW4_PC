@@ -72,8 +72,8 @@ public:
     // The initial RAM number must match the binding's selected occurrence.
     void prepare_model_queries(ControllerObjectId model,ModelQueryOwner owner);
     // Attach the actual PC virtual+C4 status fields to the same prepared ONE.
-    // The caller retains this owner; the model holds a weak reference to avoid
-    // a cycle through the live script-work matrix. First preparation may
+    // The caller retains this owner; the model holds a weak reference to keep
+    // prepared work lifetime explicit. First preparation may
     // supply a missing status service, but cannot replace published work.
     void prepare_model_status(ControllerObjectId model,std::shared_ptr<ModelStatusWork> work);
     // Explicit original PLAYER registration on an already prepared KIND_PLAYER

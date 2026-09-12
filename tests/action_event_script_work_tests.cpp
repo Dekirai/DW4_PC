@@ -78,20 +78,52 @@ void preparation_and_live_aliases() {
     check(a->hp->data==0 && a->max_hp->data==0 && b->hp->data==0 && b->max_hp->data==0 &&
           !a->hp->name && !a->max_hp->name && !b->hp->name && !b->max_hp->name && a->record==-1 && b->record==-1,
         "Script preparation invented player HP, names or record values.");
-    check(a->matrix().get()==&runtime.sequence(first).model().pose.matrix &&
-          b->matrix().get()==&runtime.sequence(second).model().pose.matrix && a->matrix()!=b->matrix(),
+    check(a->matrix().get()==&runtime.sequence(first).model().pose.matrix() &&
+          b->matrix().get()==&runtime.sequence(second).model().pose.matrix() && a->matrix()!=b->matrix(),
         "Script matrix is a detached pose copy or belongs to another RAM.");
     const auto* stable=a->matrix().get();runtime.prepare_model_state(first,state(13));
     check(a->matrix().get()==stable && (*a->matrix())[12]==13 && (*b->matrix())[12]==7,
         "Live model replacement invalidated the script matrix alias or affected another target.");
     (*a->matrix())[13]=19;
-    check(runtime.sequence(first).model().pose.matrix[13]==19,"Script matrix writes did not reach the owning live pose.");
+    check(runtime.sequence(first).model().pose.matrix()[13]==19,"Script matrix writes did not reach the owning live pose.");
     check(runtime.select_sequence(first,"SQ_WAIT").complete() && a->matrix().get()==stable && (*a->matrix())[13]==19,
         "Sequence entry invalidated the script's stable matrix owner.");
     const auto registrations=runtime.messenger().registration_count();
     rejects([&]{runtime.prepare_target_script_work(first);},"A second script work owner replaced live HP state.");
     check(runtime.messenger().registration_count()==registrations && a->hp->data==0,
         "Rejected script re-preparation changed registrations or live work.");
+}
+
+void supplied_scene_matrix_lifetime() {
+    Fixture fixture;
+    auto node=std::make_shared<AnimationMatrix>(matrix(27));
+    std::weak_ptr<AnimationMatrix> observed=node;
+    std::shared_ptr<ModelScriptWork> retained;
+    {
+        ActionEventRuntime runtime;
+        ModelControlState fresh{ModelMotionPose(node)};
+        fresh.pose.turn.rate={0,7,0};
+        check(fresh.pose.matrix_owner()==node,
+            "ModelControlState construction detached its supplied scene matrix.");
+        const auto target=runtime.register_model(fixture.binding(),std::move(fresh),true);
+        runtime.prepare_collision_target(target,fixture.definition(),true);
+        retained=runtime.prepare_target_script_work(target);
+        check(retained->matrix()==node && runtime.sequence(target).model().pose.matrix_owner()==node,
+            "Model/sequence registration did not retain the actual scene matrix.");
+        auto candidate=runtime.sequence(target).model();candidate.pose.matrix()[12]=81;
+        check((*node)[12]==27,"Detached prepared-state editing leaked into the scene node.");
+        runtime.prepare_model_state(target,std::move(candidate));
+        check(retained->matrix()==node && (*node)[12]==81,
+            "Prepared-state publication replaced the actual scene matrix owner.");
+        node.reset();
+    }
+    check(!observed.expired() && (*retained->matrix())[12]==81,
+        "Retained script state lost its node matrix when the controller was destroyed.");
+    (*retained->matrix())[14]=92;
+    check(observed.lock()->at(14)==92,
+        "Retained script matrix stopped being the actual mutable allocation.");
+    retained.reset();
+    check(observed.expired(),"Node matrix lifetime leaked after all actual owners were released.");
 }
 
 void live_signed_record() {
@@ -325,13 +357,13 @@ void retained_collision_script_glue() {
     check(events.resume(send).stop==MessengerStop::service_required && scripts.pending() &&
           events.collision_target(target).result().stop==ModelCollisionStop::hit_script_required && calls==1 && prefixes==1,
         "Collision script service did not retain its incomplete nested prefix.");
-    check(target_work->hp->data==50 && events.sequence(target).model().pose.matrix[12]==15,
+    check(target_work->hp->data==50 && events.sequence(target).model().pose.matrix()[12]==15,
         "Pending script prematurely merged HP or lost its already committed matrix write.");
     rejects([&]{events.messenger();},"Pending script exposed its nested messenger buffer.");
     source_work->record=-701;ready=true;
     check(events.resume(send).stop==MessengerStop::completed && !scripts.pending() && !scripts.faulted() && calls==2 && prefixes==1,
         "Collision retry replayed a script prefix or failed to finish the retained invocation.");
-    check(target_work->hp->data==43 && events.sequence(target).model().pose.matrix[12]==15 &&
+    check(target_work->hp->data==43 && events.sequence(target).model().pose.matrix()[12]==15 &&
           events.messenger().buffer().booleans()==std::vector<std::uint8_t>{1} && events.messenger().buffer_depth()==0,
         "Completed script did not merge HP, honor direction zero or restore the parent collision buffer.");
     auto record=events.messenger().begin_send_to("MODELCTRL","e_fixture",0,"GETRECNO");
@@ -341,7 +373,7 @@ void retained_collision_script_glue() {
 } // namespace
 int main() {
     try {
-        preparation_and_live_aliases();live_signed_record();original_hp_query();original_status_dispatch();abandoned_status_continuations();
+        preparation_and_live_aliases();supplied_scene_matrix_lifetime();live_signed_record();original_hp_query();original_status_dispatch();abandoned_status_continuations();
         live_hp_presence_gate();expiration_and_lifetime();retained_collision_script_glue();
         std::cout<<"action_event_script_work: "<<checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {

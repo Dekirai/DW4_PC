@@ -382,7 +382,7 @@ struct ActionEventRuntime::Impl {
         for(;;) {
             switch(state.phase) {
             case PendingHitbox::Phase::geometry:
-                state.box=std::make_shared<const CollisionBox>(original_hitbox_box(std::as_const(owner.sequence).model().pose.matrix,
+                state.box=std::make_shared<const CollisionBox>(original_hitbox_box(std::as_const(owner.sequence).model().pose.matrix(),
                     state.request.command.offset,state.request.command.box_size));
                 state.phase=owner.debug_hitbox ? PendingHitbox::Phase::debug : PendingHitbox::Phase::select;
                 break;
@@ -405,7 +405,7 @@ struct ActionEventRuntime::Impl {
                 buffer.add_int(state.request.command.kind); buffer.add_box(state.box);
                 // Original copies the live matrix and attachment after debug,
                 // while the temporary box retains its earlier geometry result.
-                buffer.add_matrix(std::as_const(owner.sequence).model().pose.matrix);
+                buffer.add_matrix(std::as_const(owner.sequence).model().pose.matrix());
                 const auto source=owner.context.attachment.value_or(owner.context.source);
                 buffer.add_string(source.model_name); buffer.add_int(source.ram_no);
                 buffer.set_enabled_only(1);
@@ -655,7 +655,7 @@ void ActionEventRuntime::prepare_model_state(ControllerObjectId id,ModelControlS
     if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.wait.pending() ||
        (!in_check && (owner.hitbox || owner.broadcast || owner.query)))
         fail("Cannot replace prepared model work during a suspended operation.");
-    for(const auto value:state.pose.matrix) if(!std::isfinite(value)) fail("Prepared model matrix must be finite.");
+    for(const auto value:state.pose.matrix()) if(!std::isfinite(value)) fail("Prepared model matrix must be finite.");
     for(const auto* script:{&state.bullet_hit_script,&state.wall_hit_script,&state.floor_hit_script})
         if(*script && ((*script)->size()>4096 || (*script)->find('\0')!=std::string::npos))
             fail("Prepared model script names exceed the bounded sequence string profile.");
@@ -706,10 +706,9 @@ std::shared_ptr<ModelScriptWork> ActionEventRuntime::prepare_target_script_work(
     if(!owner.collision) fail("Validate the target's authored collision ownership before preparing its script work.");
     if(owner.script_work_prepared) fail("This target already has its prepared script work owner.");
     const auto& bound=owner.binding;
-    // The strong matrix alias owns Model; Model keeps only a weak script-work
-    // link. A live external script owner therefore retains the actual matrix
-    // without a Model -> work -> Model ownership cycle.
-    auto matrix=std::shared_ptr<AnimationMatrix>(impl_->models.at(key(id)),&owner.sequence.model().pose.matrix);
+    // The scene matrix has its own lifetime. A retained script work owns that
+    // same allocation without retaining the whole controller and its callbacks.
+    auto matrix=owner.sequence.model().pose.matrix_owner();
     auto work=std::make_shared<ModelScriptWork>(id,bound.source(),bound.model_name(),
         static_cast<std::int32_t>(bound.instance_index()),std::move(matrix));
     owner.script_work=work;owner.script_work_prepared=true;return work;

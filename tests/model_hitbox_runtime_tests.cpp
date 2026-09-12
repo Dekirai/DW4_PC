@@ -72,7 +72,7 @@ void start(ActionEventRuntime& runtime,ControllerObjectId id) {
 }
 void prepare(ActionEventRuntime& runtime,ControllerObjectId id,AnimationMatrix value,
     std::optional<std::string> prefix={}) {
-    auto state=runtime.sequence(id).model();state.pose.matrix=value;state.bullet_hit_script=std::move(prefix);
+    auto state=runtime.sequence(id).model();state.pose.matrix()=value;state.bullet_hit_script=std::move(prefix);
     runtime.prepare_model_state(id,std::move(state));
 }
 MessengerBox box(const MessengerBuffer& buffer) {
@@ -307,12 +307,12 @@ void empty_results_and_validation() {
         ModelHitboxServices services;services.lua=[&](const ModelLuaRequest&){++lua_calls;return true;};
         check(runtime.update_subcommands(id,1,{},services).complete() && calls==(active ? 1u : 0u) && lua_calls==0,
             "Inactive targets, absent script or empty result list must not produce BHit.");
-        const auto before=runtime.sequence(id).model().pose.matrix;
-        auto invalid=runtime.sequence(id).model();invalid.pose.matrix[12]=std::numeric_limits<float>::infinity();
+        const auto before=runtime.sequence(id).model().pose.matrix();
+        auto invalid=runtime.sequence(id).model();invalid.pose.matrix()[12]=std::numeric_limits<float>::infinity();
         rejects([&]{runtime.prepare_model_state(id,invalid);},"Prepared HITBOX accepted a nonfinite live matrix.");
         invalid=runtime.sequence(id).model();invalid.bullet_hit_script=std::string("bad\0prefix",10);
         rejects([&]{runtime.prepare_model_state(id,invalid);},"Prepared HITBOX accepted an embedded-NUL script prefix.");
-        check(runtime.sequence(id).model().pose.matrix==before,"Rejected model preparation partially replaced live state.");
+        check(runtime.sequence(id).model().pose.matrix()==before,"Rejected model preparation partially replaced live state.");
     }
 }
 } // namespace

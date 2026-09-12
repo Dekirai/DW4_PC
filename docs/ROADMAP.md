@@ -22,6 +22,11 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.36 connects original PLAYERPOINT queries to the recovered model
+placement helper in prepared integration. Node matrices now outlive individual
+work owners; fresh work allocation, the full GENERATE continuation and original
+frame scheduling still remain. See [PLAYER_SPAWN.md](PLAYER_SPAWN.md).
+
 Version 0.35 connects the original post-GETPLAYER caller to actual number,
 meter and status recipients across four Agumon slots. Digit UV mutations,
 shared HP/MHP bindings, meter sample times and map-dependent SETMETAL/main-lobby

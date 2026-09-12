@@ -2,6 +2,19 @@
 
 ## Implemented boundary
 
+Version 0.36 adds a registered `player_point` provider and retained
+`model_placement` invocation. The provider preserves actual group/child owners,
+saved-group state and ordered RAM registration. Placement captures its source
+matrix and concrete setter separately, preserving the original vector/matrix
+precedence and nine-entry Euler update. `ModelMotionPose` retains a separate
+node matrix allocation: construction can supply that shared owner, copies
+detach candidates, and assignment publishes through the destination's existing
+owner. Script work retains the matrix directly without retaining the controller.
+This separates node lifetime from per-work turn/control state; complete work
+replacement and retained old-generation callbacks remain required. The prepared
+spawn integration does not complete GENERATE or change the walking preview's
+provisional controller. See [PLAYER_SPAWN.md](PLAYER_SPAWN.md).
+
 Version 0.35 adds `model_player_startup`, `number_control`, `meter_control` and
 `model_status`. The startup continuation owns the existing prefix, five ordered
 UI sends and one captured map-name owner. Actual NUMBERCTRL RAM/digit/UV owners
@@ -9,7 +22,7 @@ and METERCTRL ONE/node/time-list owners receive these messages. MODELCTRL GETHP
 appends the shared HP/MHP wrappers. An explicitly attached status work owner
 shares the same prepared ONE; a separate virtual+C4 invocation belongs to each
 recipient callback and retains nested GETPLAYER delivery. The model keeps a weak
-status link to avoid a cycle through its script work's live matrix. Unknown
+status link to preserve explicit prepared-work lifetime. Unknown
 status commands decline before allocation; known unsupported effects retain a
 service boundary. This completes the represented post-GETPLAYER caller, not
 the preceding constructor or original gameplay scheduler. HUD drawing remains

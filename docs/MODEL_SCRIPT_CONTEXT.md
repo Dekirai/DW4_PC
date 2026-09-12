@@ -39,8 +39,9 @@ remains outside this module; zero factory data is not evidence of playable initi
 
 `ModelScriptWork` has immutable qualified target identity, source path, model
 name, RAM number and matrix attachment. The matrix is a
-`shared_ptr<AnimationMatrix>` and may alias matrix storage inside another
-retained model owner. The caller must supply an owning lifetime, not a no-op
+`shared_ptr<AnimationMatrix>`. The event runtime now shares the node matrix
+allocation directly, independently of controller lifetime. The caller must
+supply an owning lifetime, not a no-op
 deleter around temporary storage. Context publication keeps the live reference,
 so later matrix writes remain visible. No identity matrix is supplied implicitly.
 

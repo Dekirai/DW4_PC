@@ -116,7 +116,7 @@ ModelCollisionResult ModelCollisionRuntime::handle(NativeMessenger& messenger,co
             if(!services.system_time) return owner.stop(ModelCollisionStop::system_time_required,"Target body calculation requires the original system timestamp.");
             const auto time=services.system_time();
             if(!time) return owner.stop(ModelCollisionStop::system_time_required,"Original system timestamp is unavailable.");
-            const auto& boxes=owner.body.update(model.pose.matrix,*time);
+            const auto& boxes=owner.body.update(model.pose.matrix(),*time);
             for(std::size_t i=0;i<boxes.size();++i) if(original_boxes_overlap(*state.incoming,boxes[i])) {owner.result.body_ordinal=i;break;}
             if(!owner.result.body_ordinal) return owner.finish();
             state.phase=Impl::Phase::arguments;break;
@@ -131,7 +131,7 @@ ModelCollisionResult ModelCollisionRuntime::handle(NativeMessenger& messenger,co
             request.target_ram=static_cast<std::int32_t>(owner.body.instance_index());
             request.kind=buffer.integers()[0];request.body_ordinal=static_cast<std::int32_t>(*owner.result.body_ordinal);
             request.source_name=source_name(buffer);request.source_ram=buffer.integers()[1];
-            for(std::size_t i=0;i<3;++i) {state.source_position[i]=buffer.matrices()[0][12+i];state.target_position[i]=model.pose.matrix[12+i];}
+            for(std::size_t i=0;i<3;++i) {state.source_position[i]=buffer.matrices()[0][12+i];state.target_position[i]=model.pose.matrix()[12+i];}
             state.request=std::move(request);state.phase=Impl::Phase::push;break;
         }
         case Impl::Phase::push:
