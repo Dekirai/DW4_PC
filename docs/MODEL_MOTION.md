@@ -68,6 +68,35 @@ independent turn fields and raw flags. The matrix and field owners must both be
 supplied; a missing owner is a checked boundary. This binding does not execute
 the original player factory or install a replacement into `ONE`.
 
+## Actual RAM timer calls
+
+The overloads taking `ModelRamTimerAccess&` use the actual RAM's current named
+records. The endpoint retains the RAM, and each frame helper independently
+resolves `KEIKATIMER` through its current data list. Replacing that list affects
+the next movement or per-axis turn query; no optional timer copy is staged or
+republished by these overloads. The caller still supplies the actual pose and
+matrix owner. Fresh RAM-to-ONE node resolution belongs to the outer movement
+entry, outside this bound-pose helper.
+
+Actual movement captures its list, clears the translated byte, and then checks
+count. Exactly zero skips timer access. Any nonzero count reaches the named
+frame helper before the checked four-channel shape or scalar field consumers.
+Turning then performs a separate named frame call for each changed, nonzero-rate
+axis. Equal axes, zero rates and forced turning skip those calls. A clock change
+between X and Y can therefore give them different frame results.
+
+Completed actual helper prefixes stay published. A later invalid turn rate,
+angle wrap, channel or matrix cannot undo a prior timer query's cache writes.
+Completed rotation/XYZ scalar steps likewise update their actual retained entry
+before the next operation. Rotation's desired angle/rate and a completed turn
+basis survive a later translation failure. Translation sets its work byte only
+after successful matrix publication. Each existing scalar helper retains its
+own checked numeric failure behavior.
+
+The explicit `MotionTimer&`/constant-world-time overloads keep their prepared
+candidate-and-publication behavior unchanged. Their value rollback tests do not
+define the lifetime or commit rules of actual RAM timer calls.
+
 ## Turning rules
 
 `turn_model` first copies desired Euler angles. Without force, each axis follows
@@ -180,7 +209,8 @@ The translated flag becomes true even for zero displacement. Consequently a
 rotation command's new rate is multiplied by delta again during interpolation;
 snapping directly to desired Y would skip original behavior.
 
-Native validation failures preserve channel, pose and timer state together.
+The prepared overload's validation failures preserve channel, pose and timer
+state together. The actual RAM overload follows the committed-prefix rules above.
 Derived scalar NaN/infinity remains supported by the scalar API, but a non-finite
 model pose stops explicitly before matrix publication. This is a native error
 boundary, not an invented successful zero-motion update. The original outer
@@ -199,6 +229,11 @@ attachment branches and subsequent collision/controller work remain pending.
   Ownership checks cover canonical field aliases, raw flags, separate node/work
   generations, detached copies, publication into retained allocations,
   moved-from restoration, const access and owner release.
+- **40 actual RAM timer checks** cover equal/zero-rate/force gates, independent
+  per-axis clock reads, current named lookup after RAM data replacement,
+  count-zero and null-list ordering, missing-timer data-list publication,
+  successful scaled translation, and committed timer/channel prefixes before
+  later frame, rate, channel and matrix failures.
 - **4,932 local raw Euler comparisons** run `80129134/801292D4` and translation
   restoration `80128D90` with exact integer NI arithmetic. All 4,914 accepted
   matrices match in 78,624 output words; 18 nonfinite used-input cases reject.

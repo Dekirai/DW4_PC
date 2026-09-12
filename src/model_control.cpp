@@ -1,4 +1,6 @@
 #include "dw4/model_control.hpp"
+#include "dw4/model_timer.hpp"
+#include "dw4/model_scene.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -173,39 +175,66 @@ ModelControlState::ModelControlState(ModelMotionPose prepared_pose,std::shared_p
         std::make_shared<ModelRamTimerSlot>()) {}
 ModelControlState::ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelControlFields> fields,
     std::shared_ptr<ModelRamTimerSlot> timer)
-    :fields_(std::move(fields)),timer_(std::move(timer)),pose(std::move(prepared_pose)),
-      channels(std::shared_ptr<std::shared_ptr<MotionChannelList>>(fields_owner(),&fields_owner()->movement)),
-      pad_motion(std::shared_ptr<std::shared_ptr<ModelPadMotionList>>(fields_owner(),&fields_owner()->pad_motion)) {
-    (void)timer_slot_owner();
+    :ModelControlState(std::move(prepared_pose),std::move(fields),WorkSnapshot{}) {
+    timer_=std::move(timer);(void)timer_slot_owner();
 }
+ModelControlState::ModelControlState(ModelMotionPose actual_pose,std::shared_ptr<ModelControlFields> fields,
+    std::shared_ptr<ModelRamTimerAccess> timer)
+    :ModelControlState(std::move(actual_pose),std::move(fields),WorkSnapshot{}) {
+    if(!timer)throw MotionError("Actual model control requires its retained RAM timer endpoint.");
+    actual_timer_=std::move(timer);
+}
+ModelControlState::ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelControlFields> fields,WorkSnapshot)
+    :fields_(std::move(fields)),pose(std::move(prepared_pose)),
+      channels(std::shared_ptr<std::shared_ptr<MotionChannelList>>(fields_owner(),&fields_owner()->movement)),
+      pad_motion(std::shared_ptr<std::shared_ptr<ModelPadMotionList>>(fields_owner(),&fields_owner()->pad_motion)) {}
 ModelControlState::ModelControlState(const ModelControlState& other)
-    :ModelControlState(ModelMotionPose(other.pose),detached_control_fields(other),
-        std::make_shared<ModelRamTimerSlot>(*other.timer_slot_owner())) {}
+    :ModelControlState(ModelMotionPose(other.pose),detached_control_fields(other),WorkSnapshot{}) {
+    if(other.actual_timer_)throw MotionError("An actual RAM timer binding cannot be copied into detached state; use snapshot_work().");
+    if(other.timer_)timer_=std::make_shared<ModelRamTimerSlot>(*other.timer_);
+}
+ModelControlState ModelControlState::snapshot_work() const {
+    return ModelControlState(ModelMotionPose(pose),detached_control_fields(*this),WorkSnapshot{});
+}
 ModelControlState& ModelControlState::operator=(const ModelControlState& other) {
     if(this==&other)return *this;
-    if(!fields_ || !timer_) {
+    if(actual_timer_ || other.actual_timer_)
+        throw MotionError("Actual model control assignment requires explicit work-only publication.");
+    if(!fields_) {
         // Only a moved-from host view is reconstructed. Prepare all allocations
         // first; live views always publish into their existing field owners.
         auto restored=other.detached_snapshot();
         static_assert(std::is_nothrow_move_constructible_v<ModelControlState>);
         std::destroy_at(this);std::construct_at(this,std::move(restored));return *this;
     }
-    auto fields=*other.fields_owner();const auto timer=*other.timer_slot_owner();
+    if(bool(timer_)!=bool(other.timer_))throw MotionError("Work-only snapshots require explicit work publication into timer-bound state.");
+    std::optional<MotionTimer> timer;if(other.timer_)timer=other.timer_->value;
+    publish_work(other);
+    if(timer_)timer_->value=timer;
+    return *this;
+}
+void ModelControlState::publish_work(const ModelControlState& other) {
+    if(this==&other)return;
+    (void)fields_owner();
+    auto fields=*other.fields_owner();
     auto next_pose=other.pose;
     // Check cross-binding publication before touching any live field. These
     // detached probes preserve the destination's unused backing/list shape.
     auto movement=channels;movement=other.channels;
     auto pad=pad_motion;pad=other.pad_motion;
-    channels=movement;pad_motion=pad;pose=next_pose;timer_->value=timer.value;
+    channels=movement;pad_motion=pad;pose=next_pose;
     fields_->mode=fields.mode;fields_->phase=fields.phase;
     fields_->bullet_hit_script=std::move(fields.bullet_hit_script);
     fields_->wall_hit_script=std::move(fields.wall_hit_script);
     fields_->floor_hit_script=std::move(fields.floor_hit_script);
     fields_->check_fall=fields.check_fall;fields_->wall_check=fields.wall_check;
     fields_->floor_check=fields.floor_check;fields_->invulnerability_frames=fields.invulnerability_frames;
-    return *this;
 }
 ModelControlState& ModelControlState::operator=(ModelControlState&& other) {
+    if(this==&other)return *this;
+    if(!fields_) {
+        std::destroy_at(this);std::construct_at(this,std::move(other));return *this;
+    }
     return operator=(static_cast<const ModelControlState&>(other));
 }
 std::shared_ptr<ModelControlFields> ModelControlState::fields_owner() {
@@ -261,7 +290,28 @@ ModelCommand decode_model_command(const IgbDocument& doc,std::uint32_t reference
     return PadMotionCommand{reference,std::string(text),number(doc,object,3),number(doc,object,4)};
 }
 
+namespace {
+bool apply_work_command(ModelControlState& state,const ModelCommand& command) {
+    // CTRL/PDMOVE do not inspect or republish even a prepared timer slot.
+    if(std::holds_alternative<ModelCtrlCommand>(command) || std::holds_alternative<PadMotionCommand>(command)) {
+        auto work=state.snapshot_work();
+        if(const auto* control=std::get_if<ModelCtrlCommand>(&command)) {
+            name(control->name);
+            if(control->name=="onWalk") {work.mode()=1;work.phase()=0;}
+            else if(control->name=="toWalk") {work.mode()=2;work.phase()=0;}
+            else if(control->name=="toWait") {work.mode()=3;work.phase()=0;}
+            else if(control->name=="isLive") {work.mode()=4;work.phase()=0;}
+            else if(control->name=="onFall")work.check_fall()=1;
+            else if(control->name=="noFall")work.check_fall()=0;
+        } else {const auto& pad=std::get<PadMotionCommand>(command);name(pad.name);work.pad_motion.apply(pad);}
+        state.publish_work(work);return true;
+    }
+    return false;
+}
+}
 void apply_model_command(ModelControlState& state,const ModelCommand& command,std::uint64_t world_time) {
+    if(state.timer_access_owner()) {apply_model_command(state,command);return;}
+    if(apply_work_command(state,command))return;
     auto candidate=state.detached_snapshot();
     std::visit([&](const auto& value) {
         using Command=std::decay_t<decltype(value)>;
@@ -276,16 +326,7 @@ void apply_model_command(ModelControlState& state,const ModelCommand& command,st
                 synchronize_model_heading(candidate.pose);
             }
             candidate.channels.apply(value);
-        } else if constexpr (std::is_same_v<Command,ModelCtrlCommand>) {
-            if (value.name=="onWalk") {candidate.mode()=1;candidate.phase()=0;}
-            else if (value.name=="toWalk") {candidate.mode()=2;candidate.phase()=0;}
-            else if (value.name=="toWait") {candidate.mode()=3;candidate.phase()=0;}
-            else if (value.name=="isLive") {candidate.mode()=4;candidate.phase()=0;}
-            else if (value.name=="onFall") candidate.check_fall()=true;
-            else if (value.name=="noFall") candidate.check_fall()=false;
-        } else if constexpr (std::is_same_v<Command,PadMotionCommand>) {
-            candidate.pad_motion.apply(value);
-        } else {
+        } else if constexpr (std::is_same_v<Command,ModelMutekiCommand>) {
             finite(value.frames);
             // 8030C1F0 ensures KEIKATIMER even for the four flag-only names.
             if (!candidate.elapsed_timer()) {
@@ -302,10 +343,37 @@ void apply_model_command(ModelControlState& state,const ModelCommand& command,st
     state.publish_snapshot(candidate);
 }
 
+void apply_model_command(ModelControlState& state,const ModelCommand& command) {
+    const auto access=state.timer_access_owner();
+    if(!access)throw MotionError("This command overload requires the actual RAM timer binding.");
+    if(apply_work_command(state,command))return;
+    if(const auto* move=std::get_if<MotionCommand>(&command)) {
+        if(!access->exists("KEIKATIMER"))access->start("KEIKATIMER");
+        if(state.pose.position_locked()) {
+            state.pose.position_locked()=0;
+            const auto one=find_model_one(*access->ram_owner());
+            if(!one || !one->node)throw MotionError("Original MOVE heading requires its freshly looked-up ONE node.");
+            ModelMotionPose pose(one->node->matrix_owner(),state.pose.fields_owner());
+            synchronize_model_heading(pose);
+        }
+        name(move->name);state.channels.apply(*move);return;
+    }
+    if(const auto* muteki=std::get_if<ModelMutekiCommand>(&command)) {
+        if(!access->exists("KEIKATIMER"))access->start("KEIKATIMER");
+        name(muteki->name);
+        if(muteki->name=="OFFWALL")state.wall_check()=0;
+        else if(muteki->name=="ONWALL")state.wall_check()=1;
+        else if(muteki->name=="OFFFLOOR")state.floor_check()=0;
+        else if(muteki->name=="ONFLOOR")state.floor_check()=1;
+        else {finite(muteki->frames);state.invulnerability_frames()=muteki->frames;}
+        return;
+    }
+}
+
 ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t key_input,
     std::string_view current_sequence,std::string_view requested_sequence) {
     name(current_sequence);name(requested_sequence);
-    auto candidate=state.detached_snapshot();
+    auto candidate=state.snapshot_work();
     ModelControlDecision decision{std::string(requested_sequence),false};
     if (requested_sequence=="SQ_NONE") {
         if (candidate.mode()==1) {
@@ -331,13 +399,31 @@ ModelControlDecision update_model_control(ModelControlState& state,std::uint8_t 
         else if (candidate.mode()==3 && key_input==0) decision.requested_sequence="SQ_WAIT";
     }
     decision.dispatch_sequence=decision.requested_sequence!="SQ_NONE" && decision.requested_sequence!=current_sequence;
-    state.publish_snapshot(candidate);
+    state.publish_work(candidate);
     return decision;
 }
 
 ModelMotionStep advance_model_motion(ModelControlState& state,std::uint64_t world_time) {
+    if(state.timer_access_owner())return advance_model_motion(state);
     if (!state.channels.allocated()) {state.pose.translated()=false;return {};}
     if (!state.elapsed_timer()) throw MotionError("Allocated model motion requires its KEIKATIMER.");
     return state.channels.advance_model(state.pose,*state.elapsed_timer(),world_time);
+}
+ModelMotionStep advance_model_motion(ModelControlState& state) {
+    const auto access=state.timer_access_owner();
+    if(!access)throw MotionError("Actual model motion requires its RAM timer endpoint.");
+    return state.channels.advance_model(state.pose,*access);
+}
+void advance_model_invulnerability(ModelControlState& state) {
+    const auto before=state.invulnerability_frames();
+    // Original ble tests NOT GT, including unordered: preserve NaN and -0
+    // without querying time. f31 remains the captured value after the helper.
+    if(!(before>0.0f))return;
+    const auto access=state.timer_access_owner();
+    if(!access)throw MotionError("Actual invulnerability update requires its RAM timer endpoint.");
+    auto remaining=before-access->frames("KEIKATIMER");
+    // Original bge tests NOT LT, so only an ordered-negative result clamps.
+    if(remaining<0.0f)remaining=0.0f;
+    state.invulnerability_frames()=remaining;
 }
 } // namespace dw4

@@ -81,6 +81,10 @@ std::shared_ptr<ModelPlayerWork> prepare_model_player_work(const ModelControlSta
 ModelControlState bind_model_player_control(const std::shared_ptr<ModelPlayerWork>&,
     std::shared_ptr<ModelMotionPose::Matrix> actual_node_matrix,
     std::shared_ptr<ModelRamTimerSlot> actual_ram_timer);
+// Actual named RAM access, with no copied optional timer beside the data list.
+ModelControlState bind_model_player_control(const std::shared_ptr<ModelPlayerWork>&,
+    std::shared_ptr<ModelMotionPose::Matrix> actual_node_matrix,
+    std::shared_ptr<ModelRamTimerAccess> actual_ram_timer);
 std::shared_ptr<ModelScriptWork> bind_model_player_script(const std::shared_ptr<ModelPlayerWork>&,
     ControllerObjectId target,std::string source,std::string name,std::int32_t ram_no,
     std::shared_ptr<AnimationMatrix> actual_node_matrix);
@@ -88,4 +92,8 @@ ModelSequenceRuntime bind_model_player_sequence(const std::shared_ptr<ModelPlaye
     std::shared_ptr<const ModelSequenceProgram>,std::string name,std::int32_t ram_no,
     std::shared_ptr<ModelMotionPose::Matrix> actual_node_matrix,
     std::shared_ptr<ModelRamTimerSlot> actual_ram_timer);
+ModelSequenceRuntime bind_model_player_sequence(const std::shared_ptr<ModelPlayerWork>&,
+    std::shared_ptr<const ModelSequenceProgram>,std::string name,std::int32_t ram_no,
+    std::shared_ptr<ModelMotionPose::Matrix> actual_node_matrix,
+    std::shared_ptr<ModelRamTimerAccess> actual_ram_timer);
 } // namespace dw4

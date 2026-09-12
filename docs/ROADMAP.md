@@ -22,6 +22,15 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.40 connects actual named RAM timers to movement, turning, MOVE/MUTEKI
+and positive invulnerability countdown. Sequence/control staging publishes work
+without reading or writing timers. Original four-slot Agumon WAIT/WALK branches
+exercise that binding with explicit ACTION request boundaries. The next lifecycle
+requirement remains complete direct sequence entry, player `+B8`, a retained
+execution bundle per actual work owner and original manager/context scheduling.
+This timer integration does not change the visible walking demo or complete
+the original gameplay loop. See [MODEL_TIMER.md](MODEL_TIMER.md).
+
 Version 0.39 connects actual loaded RAM/ONE owners to native player construction
 and the retained outer GENERATE branch. Four original Agumon owners can reach
 the post-startup ordinary sequence boundary through original point and game-data

@@ -1,4 +1,5 @@
 #include "dw4/model_motion.hpp"
+#include "dw4/model_timer.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -210,6 +211,29 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
     return true;
 }
 
+bool turn_model(ModelMotionPose& pose, ModelRamTimerAccess& timer, bool force) {
+    auto angles=pose.turn().desired;
+    if(!force) {
+        std::size_t remaining=4096;
+        for(std::size_t i=0;i<3;++i) {
+            if(pose.turn().applied[i]==pose.turn().desired[i])continue;
+            if(pose.turn().rate[i]==0)angles[i]=pose.turn().applied[i];
+            else {
+                // C8E0 precedes the re-read rate/current/desired fields. Do not
+                // roll back this helper's timer writes if later checks fail.
+                const float delta=timer.frames("KEIKATIMER");
+                finite(delta);finite(pose.turn().rate[i]);
+                const float step=pose.turn().rate[i]*delta;
+                angles[i]=interpolate(pose.turn().applied[i],pose.turn().desired[i],step,remaining);
+            }
+        }
+        if(angles==pose.turn().applied)return false;
+    }
+    auto matrix=pose.matrix();euler_basis(matrix,angles);
+    pose.matrix()=matrix;pose.turn().applied=angles;
+    return true;
+}
+
 void force_model_turn(ModelMotionPose& pose) {
     auto matrix=pose.matrix();
     euler_basis(matrix,pose.turn().desired);
@@ -243,6 +267,44 @@ ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer
         candidate_pose.translated() = true;
     }
     publish(states); pose = candidate_pose; timer = candidate_timer;
+    return result;
+}
+
+ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, ModelRamTimerAccess& timer) {
+    ModelMotionStep result;
+    // A468 captures the list before A478 clears the work byte. The checked
+    // null-list boundary belongs to its following count read, after that clear.
+    const auto captured=list_owner();pose.translated()=0;
+    if(!captured)throw MotionError("Model movement requires its actual channel-list owner.");
+    if(captured->size()==0)return result;
+    const float delta=timer.frames("KEIKATIMER");
+    MotionChannels captured_channels(captured);captured_channels.validate_shape();
+    if(captured->entry_owner(3)->active) {
+        // The original active test uses the captured list; the scalar call
+        // independently reads the current work's movement-list field.
+        validate_shape();
+        const auto rotation=list_owner()->entry_owner(3);
+        result.channels.rotation=advance_motion(*rotation,delta);
+        const float radians=radians_per_degree*result.channels.rotation;
+        pose.turn().desired[1]=radians+pose.turn().desired[1];
+        auto magnitude_bits=std::bit_cast<std::uint32_t>(radians);
+        if(magnitude_bits>0x80000000u && magnitude_bits<=0xff800000u)magnitude_bits^=0x80000000u;
+        pose.turn().rate[1]=1.25f*std::bit_cast<float>(magnitude_bits);
+    }
+    result.turned=turn_model(pose,timer);
+    // A510 checks XYZ activity on the original captured list after turning.
+    captured_channels.validate_shape();
+    result.channels.translation_updated=captured->entry_owner(0)->active ||
+        captured->entry_owner(1)->active || captured->entry_owner(2)->active;
+    if(result.channels.translation_updated) {
+        auto matrix=pose.matrix();
+        for(std::size_t i=0;i<3;++i) {
+            validate_shape();
+            result.channels.translation[i]=advance_motion(*list_owner()->entry_owner(i),delta);
+        }
+        translate_model_local(matrix,result.channels.translation);
+        pose.matrix()=matrix;pose.translated()=1;
+    }
     return result;
 }
 } // namespace dw4

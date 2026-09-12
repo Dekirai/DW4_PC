@@ -27,6 +27,21 @@ std::uint64_t scaled_clock(std::uint64_t world_time, float scale) {
 }
 } // namespace
 
+std::uint64_t original_scaled_motion_clock(std::uint64_t world_time,float scale) {
+    if(!std::isfinite(scale))throw MotionError("Motion timer scale must be finite at its arithmetic read.");
+    return scaled_clock(world_time,scale);
+}
+float publish_motion_timer_frames(MotionTimer& timer,std::int64_t current,std::uint64_t world_time) {
+    const auto elapsed=std::bit_cast<std::int64_t>(std::bit_cast<std::uint64_t>(current)-
+        std::bit_cast<std::uint64_t>(timer.previous_time));
+    if(elapsed!=0) {
+        timer.cached_frames=std::min(original_elapsed_frames(elapsed),3.0f);
+        timer.previous_time=current;
+    } else timer.cached_frames=0;
+    timer.saved_world_time=world_time;
+    return timer.cached_frames;
+}
+
 float original_elapsed_frames(std::int64_t elapsed) {
     const float converted=static_cast<float>(static_cast<double>(elapsed));
     // A nonzero signed integer divided by this constant cannot be subnormal;
@@ -51,14 +66,7 @@ float motion_timer_frames(MotionTimer& timer, std::uint64_t world_time) {
     validate(timer);
     if (timer.saved_world_time == world_time) return timer.cached_frames;
     const auto current = motion_timer_time(timer,world_time);
-    const auto elapsed = std::bit_cast<std::int64_t>(std::bit_cast<std::uint64_t>(current) -
-        std::bit_cast<std::uint64_t>(timer.previous_time));
-    if (elapsed != 0) {
-        timer.cached_frames = std::min(original_elapsed_frames(elapsed),3.0f);
-        timer.previous_time = current;
-    } else timer.cached_frames = 0;
-    timer.saved_world_time = world_time;
-    return timer.cached_frames;
+    return publish_motion_timer_frames(timer,current,world_time);
 }
 bool motion_timer_expired(const MotionTimer& timer, std::uint64_t world_time) {
     return timer.end_time < motion_timer_time(timer,world_time);

@@ -15,6 +15,7 @@
 namespace dw4 {
 struct ModelMotionPose;
 struct ModelMotionStep;
+class ModelRamTimerAccess;
 class MotionError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -125,6 +126,10 @@ public:
     // 8030A448: rotation channel, model turning, then local translation. Uses
     // an explicit owned model pose; no attachment, collision or trace callbacks.
     ModelMotionStep advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time);
+    // Actual RAM named-timer calls preserve completed prefixes. The translated
+    // byte clears before the list count check; nonempty lists query frames
+    // before consuming channel fields. Turning performs its own per-axis calls.
+    ModelMotionStep advance_model(ModelMotionPose& pose, ModelRamTimerAccess& timer);
     // 8030EA1C..8030EA74: stop flagged XYZ channels using their stored stop
     // parameters; always deactivate rotation and clear only its speed.
     void on_sequence_change();

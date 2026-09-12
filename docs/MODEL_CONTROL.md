@@ -10,8 +10,8 @@ by sequence entry and source hit scripts. Exact OFFWALL/ONWALL and
 OFFFLOOR/ONFLOOR names set work bytes D8/D9 to zero/one. Every other name,
 including null or empty, assigns the finite frame value to work 7C. The original
 handler at `8030C1F0` ensures the same KEIKATIMER before either branch; an
-existing timer is preserved. This assignment does not yet implement positive
-invulnerability countdown or a target collision manager.
+existing timer is preserved. The separate positive countdown helper is connected
+in version 0.40 below; a target collision manager remains required.
 
 Owned BHit/WHit/FHit prefixes at work 30/34/38 distinguish null from empty.
 Ordinary sequence entry clears them after queue cleanup, enables wall/floor/fall
@@ -99,6 +99,43 @@ slot handles live in the facade, outside the field group, so the group does not
 retain itself. Copies detach fields, node, timer, lists and backing; publication
 retains all destination owners. A moved-from host view can be restored with a
 new independent binding without leaving its list facades attached to stale slots.
+
+## Actual RAM timers and work-only staging
+
+Version 0.40 adds an explicit `ModelRamTimerAccess` binding in place of the
+prepared `ModelRamTimerSlot`. The endpoint retains the actual RAM; every helper
+uses its current named data list and a required context-clock reader. The
+timestamp-taking command/movement overloads route actual bindings through this
+endpoint rather than supplying their prepared timestamp. See
+[MODEL_TIMER.md](MODEL_TIMER.md) for helper captures and checked failures.
+
+MOVE/MOVEEX and MUTEKI first perform untyped KEIKATIMER presence and start only
+when absent. A wrong-type named record therefore suppresses allocation. Flag-only
+MUTEKI consumes no timer payload or frame value. MOVE publishes position unlock
+before its fresh RAM ONE/node lookup for heading, retaining the captured work
+fields. Timer creation and unlock remain visible if a later field check fails.
+
+`snapshot_work()` detaches work, node and list values without any timer binding.
+`publish_work()` publishes those values through existing destination owners,
+without reading, validating or writing a timer. CTRL/PDMOVE, control transitions,
+sequence selection and cleanup use this path. Full copy or value assignment of
+an actual timer-bound state is rejected; move construction retains its binding.
+Prepared full snapshots and optional-slot APIs remain explicit compatibility
+operations and do not implement actual named lookup.
+
+`advance_model_invulnerability()` represents the work-7C update at `8030C334`.
+It captures the field before the helper; positive values query frames and
+subtract from that capture. Only an ordered negative result clamps to positive
+zero. Nonpositive values, negative zero and unordered NaN skip the timer;
+unordered subtraction results are preserved. This isolated helper does not
+establish the complete update schedule or arbitrary-NaN sequence fidelity:
+sequence entry still uses its existing checked finite-field profile.
+
+`model_control_timer_tests` covers timer-free staging, current ONE lookup,
+retained work generations and timer replacement, flag-only wrong-type records,
+countdown branches, and original Agumon WAIT/WALK commands for four player slots
+and four weapon labels. Its ACTION callback records the real request boundary;
+it does not claim to run original animation dispatch or the outer player loop.
 
 ## Player rates and heading
 

@@ -23,6 +23,16 @@ struct MotionTimer {
     bool operator==(const MotionTimer&) const = default;
 };
 
+// Field-specific numerical stages for actual named helpers. These do not
+// inspect unrelated cache fields or own any RAM/list/clock service.
+// Scale must be finite; finite multiplication overflow keeps the original
+// signed saturation. The result is the wrapping scaled coarse clock.
+std::uint64_t original_scaled_motion_clock(std::uint64_t world_time,float scale);
+// 8031E5D4..8031E638: accumulated time may come from a fresh named lookup on a
+// different timer. Read/write only the outer captured timer's previous/cache/
+// saved fields and publish the earlier W1. No scale/end/bias access.
+float publish_motion_timer_frames(MotionTimer& captured,std::int64_t accumulated_time,std::uint64_t world_time);
+
 // 8031DE44: create/reset the named timer's recovered fields. Preserves scale
 // and previous_time when reusing an existing timer. The initial cached result
 // is ONE frame, including immediate queries at the reset timestamp.

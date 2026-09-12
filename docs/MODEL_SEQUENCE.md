@@ -8,6 +8,15 @@ missing. The walking preview continues to use its provisional host controller.
 
 ## Source and serialized graph
 
+Version 0.40 permits an actual named RAM timer endpoint on the canonical work
+binding. `select`, `begin_select` and cleanup use `snapshot_work()` and
+`publish_work()`, preserving control/node/list publication without copying,
+reading or writing a timer. Reached MOVE/MUTEKI commands use their own live
+RAM timer helper calls. Full runtime copying remains a prepared operation and
+rejects an actual timer binding. Original manager/context resolution and the
+complete per-work execution bundle remain separate integration requirements.
+See [MODEL_TIMER.md](MODEL_TIMER.md) and [MODEL_CONTROL.md](MODEL_CONTROL.md).
+
 Evidence uses the owner's USA `GDJEB2` revision-0 DOL, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, and checked original IGB objects.
 Function boundaries and SDK names use [dw4-gc](https://github.com/ivanno4317/dw4-gc)

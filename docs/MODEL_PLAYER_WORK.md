@@ -68,6 +68,13 @@ may bind to the same node and timer while older invocations retain previous
 work fields. Prepared snapshots detach numeric/list state; publishing one
 updates the destination's existing owners. Publication is not work replacement.
 
+Version 0.40 also binds control and sequence facades to `ModelRamTimerAccess`.
+This endpoint resolves the actual RAM's current named timer independently of
+the retained work generation. Work-only staging never captures or republishes
+timer fields. Full copies of actual timer-bound facades are rejected, while
+explicit work snapshots preserve their separate purpose. See
+[MODEL_TIMER.md](MODEL_TIMER.md) and [MODEL_CONTROL.md](MODEL_CONTROL.md).
+
 The checked `ActionEventRuntime::register_model` overload accepts actual work,
 node and timer owners. Its sequence, control, script, status and subcommand
 consumers use that work. The legacy overload preserves explicit prepared

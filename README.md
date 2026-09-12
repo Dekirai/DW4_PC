@@ -1,6 +1,16 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
+Version 0.40 connects movement, turning, MOVE/MUTEKI and invulnerability
+countdown to the current named timer in each actual MODELCTRL RAM. Timer
+lookups and context-clock reads occur at the recovered helper sites; sequence
+and control staging no longer copies or republishes timer state. Original
+Agumon WAIT/WALK branches pass through this binding for all four player slots
+and four weapon labels. This is core integration with explicit external service
+boundaries; full player sequence entry, its callback and original frame
+scheduling remain required. The visible walking preview is unchanged.
+See [MODEL_TIMER.md](docs/MODEL_TIMER.md).
+
 Version 0.39 connects canonical loaded MODELCTRL RAMs to actual player creation.
 The native callback installs fresh work, queries original spawn points, places
 the real scene node and initializes player values and number/meter controllers.

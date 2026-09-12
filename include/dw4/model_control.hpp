@@ -9,6 +9,7 @@
 #include <vector>
 
 namespace dw4 {
+class ModelRamTimerAccess;
 struct ModelCtrlCommand {
     std::uint32_t reference_index{};
     std::string name;
@@ -113,6 +114,9 @@ struct ModelControlState {
 private:
     std::shared_ptr<ModelControlFields> fields_;
     std::shared_ptr<ModelRamTimerSlot> timer_;
+    std::shared_ptr<ModelRamTimerAccess> actual_timer_;
+    struct WorkSnapshot {};
+    ModelControlState(ModelMotionPose,std::shared_ptr<ModelControlFields>,WorkSnapshot);
 public:
     explicit ModelControlState(ModelMotionPose prepared_pose);
     ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list);
@@ -120,6 +124,8 @@ public:
         std::shared_ptr<MotionChannelList> actual_movement_list);
     ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelControlFields> fields,
         std::shared_ptr<ModelRamTimerSlot> timer_slot);
+    ModelControlState(ModelMotionPose pose,std::shared_ptr<ModelControlFields> fields,
+        std::shared_ptr<ModelRamTimerAccess> actual_ram_timer);
     ModelControlState(const ModelControlState&);
     ModelControlState(ModelControlState&&) noexcept = default;
     ModelControlState& operator=(const ModelControlState&);
@@ -128,6 +134,13 @@ public:
     // owners; binding another actual work list uses the constructor above.
     ModelControlState detached_snapshot() const { return *this; }
     void publish_snapshot(const ModelControlState& candidate) { *this=candidate; }
+    // Work-only staging has no prepared timer slot, actual RAM binding or timer
+    // payload. It cannot accidentally allocate/query/publish a timer. Full-state
+    // copies of actual bindings reject; use this explicit field-only operation.
+    ModelControlState snapshot_work() const;
+    void publish_work(const ModelControlState&);
+    std::shared_ptr<ModelRamTimerAccess> timer_access_owner() noexcept {return actual_timer_;}
+    std::shared_ptr<const ModelRamTimerAccess> timer_access_owner() const noexcept {return actual_timer_;}
     ModelMotionPose pose;
     MotionChannels channels;
     PadMotionParameters pad_motion; // Actual work+48 list; Stop pair, then Move pair.
@@ -160,8 +173,12 @@ public:
 // then configure the channels. MUTEKI ensures that same timer, then changes
 // wall/floor flags or assigns its frame value. Existing timers never restart.
 // CTRL and PDMOVE have no implicit timer/motion.
-// Validation failures preserve the complete owned state.
+// The timestamp applies to prepared slots. Actual bindings read their context
+// at original helper sites and preserve published timer/unlock prefixes if a
+// later checked operation fails. Prepared validation retains its atomic profile.
 void apply_model_command(ModelControlState& state, const ModelCommand& command, std::uint64_t world_time);
+// Actual binding only; no timestamp is sampled at command entry.
+void apply_model_command(ModelControlState& state,const ModelCommand& command);
 
 struct ModelControlDecision {
     std::string requested_sequence;
@@ -177,4 +194,9 @@ ModelControlDecision update_model_control(ModelControlState& state, std::uint8_t
 // Motion part only, after control/sequence dispatch. Does not execute the outer
 // attachment/position-lock, action wait, collision or player update callbacks.
 ModelMotionStep advance_model_motion(ModelControlState& state, std::uint64_t world_time);
+ModelMotionStep advance_model_motion(ModelControlState& state);
+// 8030C334: only ordered-positive invulnerability time queries the named timer, then
+// subtracts its original frame delta and clamps a negative remainder to zero.
+// This is one frame effect, not the enclosing original scheduler/update loop.
+void advance_model_invulnerability(ModelControlState& state);
 } // namespace dw4

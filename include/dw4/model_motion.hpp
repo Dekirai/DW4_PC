@@ -66,6 +66,10 @@ struct ModelMotionStep {
 // stagnant original loops or exhausted work stop with pose/timer unchanged.
 // sin/cos use double host libm rounded to float; see MODEL_MOTION.md for limits.
 bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time, bool force = false);
+// Actual named RAM access: each eligible axis independently resolves its timer.
+// Completed timer writes survive subsequent checked motion/matrix failures.
+// Force, equal-angle and zero-rate gates do not access the timer endpoint.
+bool turn_model(ModelMotionPose& pose, ModelRamTimerAccess& timer, bool force = false);
 // The force=1 path without an invented KEIKATIMER. Rebuild from desired angles
 // and synchronize applied angles while preserving translation and pose flags.
 void force_model_turn(ModelMotionPose& pose);

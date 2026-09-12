@@ -401,7 +401,7 @@ void ModelSequenceRuntime::select(std::string_view sequence) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
     auto plan=prepare_selection(sequence);
-    auto candidate=model_;candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
+    auto candidate=model_.snapshot_work();candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
     finish_entry_fields(candidate);
     publish_selection(std::move(plan),std::move(candidate),false);
 }
@@ -409,7 +409,7 @@ void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || external_pending())throw MotionError("Sequence mutation is unavailable during execution or a pending external operation.");
     auto plan=prepare_selection(sequence);
-    auto candidate=model_;candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
+    auto candidate=model_.snapshot_work();candidate.mode()=0;candidate.phase()=0;candidate.pad_motion.clear();
     publish_selection(std::move(plan),std::move(candidate),true);
 }
 ModelSequenceRuntime::SelectionPlan ModelSequenceRuntime::prepare_selection(std::string_view sequence) const {
@@ -442,7 +442,7 @@ ModelSequenceRuntime::SelectionPlan ModelSequenceRuntime::prepare_selection(std:
     return plan;
 }
 void ModelSequenceRuntime::publish_selection(SelectionPlan&& plan,ModelControlState&& candidate,bool pending) {
-    model_=std::move(candidate);
+    model_.publish_work(candidate);
     if(plan.cache_index)ModelSequenceLabels(fields_->labels).cache(*plan.cache_index,plan.cache_offset);
     fields_->name=std::move(plan.name);fields_->command_data=std::move(plan.data);
     fields_->command_index=plan.cursor;fields_->label_count=0;
@@ -451,9 +451,9 @@ void ModelSequenceRuntime::publish_selection(SelectionPlan&& plan,ModelControlSt
 }
 void ModelSequenceRuntime::complete_selection() {
     checked_entry_fields(model_);
-    auto candidate=model_;
+    auto candidate=model_.snapshot_work();
     finish_entry_fields(candidate);
-    model_=std::move(candidate);selection_pending_=false;
+    model_.publish_work(candidate);selection_pending_=false;
 }
 void ModelSequenceRuntime::finish_select() {
     require_no_lua_fault();

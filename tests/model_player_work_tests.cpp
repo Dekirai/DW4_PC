@@ -115,7 +115,7 @@ void prepared_profile_and_missing_owners() {
     values.mode()=11;check(work->control.mode==7,"Prepared scalar conversion retained a second field group's alias.");
     rejects([&]{(void)bind_model_player_control({},values.pose.matrix_owner(),values.timer_slot_owner());},"Missing captured work was fabricated.");
     rejects([&]{(void)bind_model_player_control(work,{},values.timer_slot_owner());},"Missing actual node was fabricated.");
-    rejects([&]{(void)bind_model_player_control(work,values.pose.matrix_owner(),{});},"Missing RAM timer owner was fabricated.");
+    rejects([&]{(void)bind_model_player_control(work,values.pose.matrix_owner(),std::shared_ptr<ModelRamTimerSlot>{});},"Missing RAM timer owner was fabricated.");
 }
 }
 int main() {

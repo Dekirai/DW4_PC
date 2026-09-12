@@ -1,4 +1,47 @@
-# Native player construction validation
+# Actual RAM timer integration validation
+
+Version 0.40.0 was validated locally on 2026-09-12. Actual RAM named timers now
+serve MOVE/MUTEKI, movement, per-axis turning and the recovered positive
+invulnerability countdown. Control/sequence staging does not copy or publish
+timer fields. Full direct player sequence entry, player `+B8`, actual context
+resolution and the original frame loop remain required. The visible walking
+preview remains unchanged and is available for manual launch.
+
+| Check | Evidence |
+| --- | --- |
+| Release build/package | 92/92 CTest suites passed; no compiler warnings |
+| Actual named timer endpoint | 47 checks; live RAM data, untyped presence, captured records, separate W1/W2, field-specific reads, committed failure prefixes and permanent fault state |
+| Actual movement/turn consumers | 40 checks; per-axis clock reads, empty-list gates, live timer lookup and completed movement writes retained after later checked failures |
+| Control/sequence timer integration | 26 synthetic / 554 original-inclusive checks; work-only staging, fresh ONE heading, retained work generations, countdown NaN/zero branches and four-slot/four-weapon-label original Agumon WAIT/WALK commands |
+| Original timer instruction comparison | 12,576 cases / 1,313,041 original instructions / 13,422 named lookups / 8,505 clock reads / 4,389 checked boundaries, zero differences |
+| Existing original integration | 160 model-motion, 202 control, 1,324 sequence, 129 construction, 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Packaged application | 18 app / 10 play CLI checks and six Python verifier tests passed |
+| Hidden walking replay | 240 frames, 438 simulation steps, 101.333 source-unit travel, 286 idle / 152 run steps, 241 pose uploads and 240 attached-weapon frames; pause/restart/focus-loss checks passed; final frame visually inspected |
+
+The final timer driver was freshly compiled against current headers and linked
+only against the frozen production core, SHA-256
+`41D4BB01C42E7099715A81186C16331A0148C0ED49D2214842E275F50DF38B90`.
+The core hash was unchanged after replay. The packaged application SHA-256 is
+`CD9302084F913323528DF74E07EDFD723E737AFF2A86F8AF87D0E76697ED3D0D`.
+
+The comparison executes original `8031E138`, `8031DE44`, `8031E36C`,
+`8031E4C4` and named-lookup instructions with explicit context-clock,
+allocation/name and string-service boundaries. It compares current data/list
+identities, retained timer fields, pre-clock mutation prefixes and independent
+outer/inner captures. It does not prove the guest allocator ABI, original list
+capacity growth or a complete manager/frame. Unsafe consumed pointers and
+nonfinite scales are compared at their reached checked boundaries; the native
+endpoint deliberately rejects those cases. The original integration's ACTION
+callback records actual requests, without claiming complete animation dispatch.
+
+Hosted CI for the previous v0.39 commit `ca2884c` completed successfully in all
+three jobs: Windows app, Ubuntu core and Windows core. This is distinct from
+the local v0.40 validation above; v0.40 hosted CI follows publication.
+
+## Previous v0.39 checkpoint
+
+The following records describe the previous build and its own hashes. They do
+not claim the complete v0.39 lookup comparison was rerun against v0.40.
 
 Version 0.39.0 was validated locally on 2026-09-12. Canonical loaded RAM/ONE
 owners now participate in actual player construction and retained MODELCTRL

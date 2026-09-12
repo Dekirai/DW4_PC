@@ -32,9 +32,22 @@ std::shared_ptr<ModelScriptWork> bind_model_player_script(const std::shared_ptr<
     return std::make_shared<ModelScriptWork>(target,std::move(source),std::move(name),ram_no,std::move(node),
         std::shared_ptr<ModelScriptFields>(work,&work->script),std::shared_ptr<ModelStatusFields>(work,&work->status));
 }
+ModelControlState bind_model_player_control(const std::shared_ptr<ModelPlayerWork>& work,
+    std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerAccess> timer) {
+    require_work(work);
+    ModelMotionPose pose(std::move(node),std::shared_ptr<ModelMotionFields>(work,&work->motion));
+    return ModelControlState(std::move(pose),std::shared_ptr<ModelControlFields>(work,&work->control),std::move(timer));
+}
 ModelSequenceRuntime bind_model_player_sequence(const std::shared_ptr<ModelPlayerWork>& work,
     std::shared_ptr<const ModelSequenceProgram> program,std::string name,std::int32_t ram_no,
     std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerSlot> timer) {
+    require_work(work);
+    return ModelSequenceRuntime(std::move(program),bind_model_player_control(work,std::move(node),std::move(timer)),
+        std::move(name),ram_no,std::shared_ptr<ModelSequenceFields>(work,&work->sequence));
+}
+ModelSequenceRuntime bind_model_player_sequence(const std::shared_ptr<ModelPlayerWork>& work,
+    std::shared_ptr<const ModelSequenceProgram> program,std::string name,std::int32_t ram_no,
+    std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerAccess> timer) {
     require_work(work);
     return ModelSequenceRuntime(std::move(program),bind_model_player_control(work,std::move(node),std::move(timer)),
         std::move(name),ram_no,std::shared_ptr<ModelSequenceFields>(work,&work->sequence));

@@ -2,6 +2,18 @@
 
 ## Implemented boundary
 
+Version 0.40 adds `ModelRamTimerAccess`, retaining one actual RAM and a required
+context-clock reader outside player work. Commands, movement and individual
+turning axes perform their own original named helper calls. Changed-time frame
+queries preserve the captured outer timer while a fresh inner lookup reads its
+own clock. Missing timer creation and completed movement prefixes survive later
+checked failures. Work-only sequence/control snapshots have no timer authority;
+full copies of an actual timer binding are rejected. A recovered positive
+invulnerability countdown uses the same endpoint, including the original
+unordered comparison branches. The actual manager/context resolver, complete
+per-work execution bundle and original scheduling are still separate work.
+See [MODEL_TIMER.md](MODEL_TIMER.md) and [MODEL_CONTROL.md](MODEL_CONTROL.md).
+
 Version 0.39 adds one canonical mutable model graph per loaded scene resource.
 `ActionEventRuntime` registers actual RAM owners and routes their messages through
 retained `ModelBaseInvocation` captures. Player `+98` performs fresh work
