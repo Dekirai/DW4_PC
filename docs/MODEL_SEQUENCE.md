@@ -72,6 +72,23 @@ Runtime copies share that immutable program and independently own model control,
 label selections/cache, current sequence, command cursor and LABEL count.
 The original IGB document can be destroyed without invalidating the program.
 
+Version 0.37 stores labels in the actual three nullable work references:
+`ModelSequenceLabelFields::sequences`, `names` and `offsets`. Their ordered list
+contents are authoritative. `labels()` returns detached inspection values, not
+a competing mutable zipped cache. A constructor can bind the exact supplied
+field owner, including an alias into a future canonical player-work allocation.
+The first SETLABEL allocates the sequence list, name list and offset list in
+the original order (`8030B0F4`, `8030B19C`, `8030B248`); later updates preserve
+those list identities. Host staging precedes publication; guest allocation
+failure, allocator callbacks and exact backing-capacity growth are not modeled.
+
+Copies detach list values while preserving null, partial shapes and aliases.
+Assignments publish through existing destination lists when their shape permits.
+Move construction transfers the original binding. Partial/unequal list counts
+and aliased string-list owners are explicit checked boundaries at consumption;
+they are not silently repaired. Allocated-empty lists remain distinct from null.
+External retained list owners outlive the sequence facade without a back-reference.
+
 `set_label` replaces the first sequence-key entry or appends it, retaining list
 order. Every assignment invalidates the cached offset, even if its text matches
 the previous value. Null and empty keys are distinct, matching the original
@@ -99,7 +116,11 @@ new name/data/cursor and label cache, then resets LABEL/CTRL/PDMOVE fields.
 It preserves channels and the fall flag while cleanup runs. `finish_select`
 applies those post-cleanup fall/channel effects and permits command execution.
 Mutable model access and unrelated selection/label changes reject while pending.
-Legacy `select` still performs both phases on a candidate before publication.
+`select` stages a detached selection plan and model values for both phases before
+publication. It no longer copies the whole runtime to select a sequence. Cached
+offset writes mutate the retained offset list, and model assignment publishes
+through its existing node, PDMOVE and movement-entry owners. `begin_select`
+clears only PDMOVE's logical count, retaining its actual list and backing floats.
 Local JUMP with an owner cleanup hook uses the phased path, retaining original
 jump metadata across a suspended callback while the destination is already
 visible. A retry without that required hook stays suspended. Version 0.26 also

@@ -22,6 +22,12 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.37 establishes actual list storage for existing movement, PDMOVE,
+subcommand and label consumers. Retained views share original allocations;
+validation candidates detach and publication preserves existing owners. The
+next player-lifecycle work is one canonical 68-field work allocation, actual
+RAM/ONE routing and the full retained GENERATE continuation.
+
 Version 0.36 connects original PLAYERPOINT queries to the recovered model
 placement helper in prepared integration. Node matrices now outlive individual
 work owners; fresh work allocation, the full GENERATE continuation and original

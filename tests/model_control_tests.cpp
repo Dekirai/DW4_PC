@@ -120,12 +120,125 @@ void controls_and_parameters() {
         check(same(state,original),"Unknown exact CTRL name is not a successful no-op.");
     }
     apply_model_command(state,Fixture("beModelCtrlPDMOVE","Move",0.7f,6).decode(),42);
-    check(state.pad_motion==std::optional{std::array<float,4>{0,0,0.7f,6}},"First PDMOVE did not initialize the other pair to zero.");
+    check(state.pad_motion.values()==std::optional{std::array<float,4>{0,0,0.7f,6}},"First PDMOVE did not initialize the other pair to zero.");
     apply_model_command(state,Fixture("beModelCtrlPDMOVE","Stop",1,4).decode(),42);
-    check(state.pad_motion==std::optional{std::array<float,4>{1,4,0.7f,6}},"PDMOVE pair order differs from the original.");
+    check(state.pad_motion.values()==std::optional{std::array<float,4>{1,4,0.7f,6}},"PDMOVE pair order differs from the original.");
     apply_model_command(state,Fixture("beModelCtrlPDMOVE","move",2,0).decode(),42);
-    check(state.pad_motion==std::optional{std::array<float,4>{2,0,0.7f,6}},"Nonexact PDMOVE name must select the Stop pair, including zero frames.");
+    check(state.pad_motion.values()==std::optional{std::array<float,4>{2,0,0.7f,6}},"Nonexact PDMOVE name must select the Stop pair, including zero frames.");
     check(!state.elapsed_timer && !state.channels.allocated(),"CTRL/PDMOVE unexpectedly allocated motion or time.");
+}
+void pad_list_ownership() {
+    ModelControlState state{ModelMotionPose(identity)};
+    const auto list=state.pad_motion.list_owner();
+    check(list && list->size()==0 && !list->backing_owner() && !state.pad_motion.values(),
+        "Prepared PDMOVE must own an empty list with no backing allocation.");
+    ModelControlState alias{ModelMotionPose(identity),list};
+    apply_model_command(state,PadMotionCommand{0,"Move",3,4},0);
+    const auto backing=list->backing_owner();const auto data=backing->data();
+    check(alias.pad_motion.list_owner()==list && alias.pad_motion.values()==std::optional{std::array<float,4>{0,0,3,4}},
+        "PDMOVE did not publish its real list data to another binding.");
+    apply_model_command(alias,PadMotionCommand{0,"Stop",1,2},0);
+    check(state.pad_motion.values()==std::optional{std::array<float,4>{1,2,3,4}} && list->backing_owner()==backing && backing->data()==data,
+        "A shared PDMOVE binding replaced the list/backing instead of updating it.");
+    auto candidate=state.detached_snapshot();
+    check(candidate.pad_motion.list_owner()!=list && candidate.pad_motion.list_owner()->backing_owner()!=backing,
+        "Control snapshot shares its mutable PDMOVE list or backing.");
+    candidate.pad_motion.set_values({5,6,7,8});candidate.mode=2;candidate.pose.matrix()[12]=9;
+    check((*backing)[0]==1 && state.mode==0 && state.pose.matrix()[12]==0,"Detached candidate changed live model fields.");
+    const auto matrix=state.pose.matrix_owner();
+    state.publish_snapshot(candidate);
+    check(state.pad_motion.list_owner()==list && list->backing_owner()==backing && backing->data()==data && (*backing)[0]==5 &&
+        state.mode==2 && state.pose.matrix_owner()==matrix && (*matrix)[12]==9,"Control publication replaced an existing owner.");
+    auto move_candidate=state.detached_snapshot();move_candidate.pad_motion.set_values({9,10,11,12});state=std::move(move_candidate);
+    check(state.pad_motion.list_owner()==list && list->backing_owner()==backing && (*backing)[0]==9,
+        "Moving a candidate replaced the destination PDMOVE owners.");
+    const auto transferred_owner=candidate.pad_motion.list_owner();auto transferred=std::move(candidate);
+    check(transferred.pad_motion.list_owner()==transferred_owner,"Move construction did not transfer the list binding.");
+    candidate=transferred;
+    check(candidate.pad_motion.list_owner()!=transferred_owner && candidate.pad_motion==transferred.pad_motion &&
+        candidate.pad_motion.list_owner()->backing_owner()!=transferred_owner->backing_owner(),
+        "Assigning into a moved-from control did not restore independently owned PDMOVE values.");
+    candidate.pad_motion.set_values({101,102,103,104});
+    check((*transferred.pad_motion.values())[0]==5,"Restoring a moved-from control aliased the transferred list.");
+    PadMotionParameters explicit_null(nullptr);
+    rejects([&]{explicit_null.publish_snapshot(transferred.pad_motion);});
+    check(!explicit_null.list_owner(),"Moved-from recovery fabricated a list for an explicit null original reference.");
+    auto empty=state.detached_snapshot();empty.pad_motion.clear();state.publish_snapshot(empty);
+    check(list->size()==0 && list->backing_owner()==backing && backing->data()==data && (*backing)[0]==9 && !state.pad_motion.values(),
+        "Count-only clear discarded or zeroed the retained PDMOVE backing.");
+    apply_model_command(alias,PadMotionCommand{0,"Move",13,14},0);
+    check(state.pad_motion.values()==std::optional{std::array<float,4>{0,0,13,14}} && list->backing_owner()==backing && backing->data()==data,
+        "PDMOVE after count-only clear did not reinitialize four zeros in retained backing.");
+    auto live_view=state.pad_motion.values();(*backing)[2]=21;
+    check((*state.pad_motion.values())[2]==21 && (*live_view)[2]==13,
+        "PDMOVE view is a duplicate mutable cache or fails to detach its returned values.");
+    const auto saved=state.detached_snapshot();
+    rejects([&]{apply_model_command(state,PadMotionCommand{0,"Stop",999,std::numeric_limits<float>::infinity()},0);});
+    check(same(state,saved) && state.pad_motion.list_owner()==list && list->backing_owner()==backing,
+        "Rejected PDMOVE changed shared storage or its owner identity.");
+    const auto same_backing=std::make_shared<ModelPadMotionList>(4,backing);
+    PadMotionParameters second_list(same_backing);second_list.apply(PadMotionCommand{0,"Stop",17,18});
+    check((*backing)[0]==17 && state.pad_motion.list_owner()!=same_backing,
+        "Distinct lists cannot retain the same actual backing allocation.");
+    PadMotionParameters fresh_empty;state.pad_motion.publish_snapshot(fresh_empty);
+    check(list->size()==0 && list->backing_owner()==backing && (*backing)[0]==17,
+        "Publishing empty values replaced retained backing.");
+}
+void pad_list_shapes_and_backing_reads() {
+    using Storage=ModelPadMotionList::Storage;
+    for(std::int32_t count=1;count<=3;++count) {
+        const auto storage=std::make_shared<Storage>(Storage{10,20,30,40,50});
+        const auto list=std::make_shared<ModelPadMotionList>(count,storage);
+        ModelControlState state{ModelMotionPose(identity),list};
+        apply_model_command(state,PadMotionCommand{0,"Move",3,4},0);
+        check(list->size()==count && (*storage)[2]==(count==3 ? 3.f : 30.f) && (*storage)[3]==40 && (*storage)[4]==50,
+            "Short PDMOVE Move list was expanded or an out-of-count frame was written.");
+        apply_model_command(state,PadMotionCommand{0,"other",1,2},0);
+        check((*storage)[0]==1 && (*storage)[1]==(count>=2 ? 2.f : 20.f) && !state.pad_motion.values(),
+            "Short PDMOVE Stop stores ignored their independent count guards.");
+    }
+    ModelControlState negative{ModelMotionPose(identity),std::make_shared<ModelPadMotionList>(-1,nullptr)};
+    apply_model_command(negative,PadMotionCommand{0,"Move",3,4},0);
+    check(negative.pad_motion.size()==-1 && !negative.pad_motion.list_owner()->backing_owner(),
+        "Negative signed PDMOVE count was treated as a large unsigned count or repaired.");
+    ModelControlState malformed{ModelMotionPose(identity),std::make_shared<ModelPadMotionList>(2,std::make_shared<Storage>(Storage{9}))};
+    apply_model_command(malformed,ModelCtrlCommand{0,"toWait"},0);
+    check(malformed.mode==3 && malformed.pad_motion.size()==2,"Unrelated CTRL consumed or repaired short PDMOVE backing.");
+    const auto before=malformed.detached_snapshot();const auto owner=malformed.pad_motion.list_owner();const auto backing=owner->backing_owner();
+    rejects([&]{apply_model_command(malformed,PadMotionCommand{0,"Stop",1,2},0);});
+    check(same(malformed,before) && malformed.pad_motion.list_owner()==owner && owner->backing_owner()==backing && (*backing)[0]==9,
+        "Failed second PDMOVE store published the first candidate store or replaced an owner.");
+    apply_model_command(malformed,PadMotionCommand{0,"Move",1,2},0);
+    check(same(malformed,before),"A skipped PDMOVE pair unexpectedly required or repaired missing backing.");
+    ModelControlState null_list{ModelMotionPose(identity),nullptr};
+    apply_model_command(null_list,ModelCtrlCommand{0,"onFall"},0);
+    check(!null_list.pad_motion.list_owner(),"Unrelated command allocated an explicit null PDMOVE list.");
+    rejects([&]{apply_model_command(null_list,PadMotionCommand{0,"Move",1,2},0);});
+    check(!null_list.pad_motion.list_owner(),"Missing PDMOVE owner was replaced with a fabricated list.");
+    for(bool moving:{false,true}) {
+        ModelControlState state{ModelMotionPose(identity)};state.channels.apply(movement());state.mode=1;
+        state.pad_motion.set_values({1,2,3,4});const auto live_list=state.pad_motion.list_owner();const auto storage=live_list->backing_owner();
+        state.pad_motion.clear();(*storage)[moving ? 2u : 0u]=5;
+        update_model_control(state,static_cast<std::uint8_t>(moving ? 1 : 0),"SQ_WAIT","SQ_NONE");
+        check(state.phase==(moving ? 1 : 2) && state.channels.states()[2].value==5 && state.pad_motion.size()==0 &&
+            state.pad_motion.list_owner()==live_list && live_list->backing_owner()==storage,
+            "onWalk rejected a zero count or read cached values instead of the actual retained backing pair.");
+    }
+    auto short_storage=std::make_shared<Storage>(Storage{2,4});
+    ModelControlState partial{ModelMotionPose(identity),std::make_shared<ModelPadMotionList>(0,short_storage)};
+    partial.channels.apply(movement());partial.mode=1;
+    update_model_control(partial,0,"SQ_WAIT","SQ_NONE");
+    check(partial.phase==2 && partial.channels.states()[2].value==2,"Stop required the unused Move backing pair.");
+    const auto saved=partial.detached_snapshot();
+    rejects([&]{update_model_control(partial,1,"SQ_WAIT","SQ_NONE");});
+    check(same(partial,saved) && (*short_storage)[0]==2,"Missing Move backing partially published a transition.");
+    ModelControlState nonfinite{ModelMotionPose(identity)};nonfinite.channels.apply(movement());nonfinite.mode=1;
+    nonfinite.pad_motion.set_values({1,2,3,std::numeric_limits<float>::quiet_NaN()});const auto untouched=nonfinite.detached_snapshot();
+    rejects([&]{update_model_control(nonfinite,1,"SQ_WAIT","SQ_NONE");});
+    check(same(nonfinite,untouched),"Non-finite live pair partially changed the channel, phase or stored NaN bits.");
+    update_model_control(nonfinite,0,"SQ_WAIT","SQ_NONE");
+    check(nonfinite.phase==2,"Unused non-finite Move pair poisoned a valid Stop transition.");
+    rejects([&]{ModelPadMotionList oversized(Storage(4097));});
 }
 void muteki_fields_and_shared_timer() {
     ModelControlState state{ModelMotionPose(identity)};
@@ -255,7 +368,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();muteki_fields_and_shared_timer();post_input_transitions();malformed_records();
+    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();pad_list_ownership();pad_list_shapes_and_backing_reads();muteki_fields_and_shared_timer();post_input_transitions();malformed_records();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_control_tests [EXTRACTED_ROOT]");
         std::cout<<"Model control tests passed: "<<checks<<" checks\n";return 0;
     }catch(const std::exception& error){std::cerr<<"Model control failure after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

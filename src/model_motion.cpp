@@ -201,11 +201,10 @@ void force_model_turn(ModelMotionPose& pose) {
 
 ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time) {
     ModelMotionStep result;
-    if (!allocated_) { pose.translated = false; return result; }
-    auto candidate_channels = *this; auto candidate_pose = pose; auto candidate_timer = timer;
+    if (!allocated()) { pose.translated = false; return result; }
+    auto states = this->states(); auto candidate_pose = pose; auto candidate_timer = timer;
     candidate_pose.translated = false;
     const float delta = motion_timer_frames(candidate_timer,world_time);
-    auto& states = candidate_channels.states_;
     if (states[3].active) {
         result.channels.rotation = advance_motion(states[3],delta);
         const float radians = radians_per_degree * result.channels.rotation;
@@ -226,7 +225,7 @@ ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer
         translate_model_local(candidate_pose.matrix(),result.channels.translation);
         candidate_pose.translated = true;
     }
-    *this = candidate_channels; pose = candidate_pose; timer = candidate_timer;
+    publish(states); pose = candidate_pose; timer = candidate_timer;
     return result;
 }
 } // namespace dw4

@@ -2,6 +2,21 @@
 
 ## Implemented boundary
 
+Version 0.37 replaces independent movement arrays, optional PDMOVE values,
+inline subcommand entries and zipped label state with actual referenced list
+allocations consumed by the existing algorithms. Movement entries are separate
+owners allocated on the first MOVE. PDMOVE separates logical count from backing
+storage; original sequence entry clears only count. A subcommand facade retains
+the actual wrapper, list, entries and pending pass. Three sequence-label lists
+start null and are allocated by SETLABEL; inspection returns detached values.
+Sequence selection now stages a selection plan and model values explicitly,
+then publishes through existing owners. Complete canonical 68-field work,
+mutable RAM/ONE registration, work replacement and GENERATE remain required.
+These list bindings are production prerequisites, not a second disconnected
+player-state implementation. See [MODEL_CONTROL.md](MODEL_CONTROL.md),
+[MOTION.md](MOTION.md), [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md) and
+[MODEL_SEQUENCE.md](MODEL_SEQUENCE.md).
+
 Version 0.36 adds a registered `player_point` provider and retained
 `model_placement` invocation. The provider preserves actual group/child owners,
 saved-group state and ordered RAM registration. Placement captures its source

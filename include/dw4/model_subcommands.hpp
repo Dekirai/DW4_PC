@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
@@ -97,20 +99,81 @@ struct ModelSubcommandResult {
     bool complete() const noexcept { return stop==ModelSubcommandStop::complete; }
 };
 
+// Actual ordered igObjectList owner. Entries are separate shared allocations;
+// reading this list never copies live sound/effect resource handles.
+class ModelSubcommandList {
+public:
+    class const_iterator {
+    public:
+        using iterator_category=std::forward_iterator_tag;
+        using value_type=ModelSubcommandEntry;
+        using difference_type=std::ptrdiff_t;
+        using pointer=const ModelSubcommandEntry*;
+        using reference=const ModelSubcommandEntry&;
+        const_iterator()=default;
+        reference operator*() const {return **position_;}
+        pointer operator->() const {return position_->get();}
+        const_iterator& operator++() {++position_;return *this;}
+        const_iterator operator++(int) {const auto before=*this;++*this;return before;}
+        bool operator==(const const_iterator&) const = default;
+    private:
+        friend class ModelSubcommandList;
+        explicit const_iterator(std::deque<std::shared_ptr<ModelSubcommandEntry>>::const_iterator position):position_(position) {}
+        std::deque<std::shared_ptr<ModelSubcommandEntry>>::const_iterator position_;
+    };
+    ModelSubcommandList()=default;
+    ModelSubcommandList(const ModelSubcommandList&)=delete;
+    ModelSubcommandList& operator=(const ModelSubcommandList&)=delete;
+    std::size_t size() const noexcept {return entries_.size();}
+    bool empty() const noexcept {return entries_.empty();}
+    const ModelSubcommandEntry& operator[](std::size_t index) const {return *entries_[index];}
+    const ModelSubcommandEntry& at(std::size_t index) const {return *entries_.at(index);}
+    const ModelSubcommandEntry& front() const {return *entries_.front();}
+    const ModelSubcommandEntry& back() const {return *entries_.back();}
+    const_iterator begin() const noexcept {return const_iterator(entries_.begin());}
+    const_iterator end() const noexcept {return const_iterator(entries_.end());}
+    std::shared_ptr<const ModelSubcommandEntry> entry_owner(std::size_t index) const {return entries_.at(index);}
+private:
+    friend class ModelSubcommandWrapper;
+    std::deque<std::shared_ptr<ModelSubcommandEntry>> entries_;
+};
+
+// Actual beModelCtrlSubCom allocation at work+E4, with a distinct igObjectList
+// at wrapper+08. Both exist immediately; the initial list has no entry owners.
+// Native pending-pass state stays with this wrapper across facade replacement.
+class ModelSubcommandWrapper {
+public:
+    ModelSubcommandWrapper();
+    ~ModelSubcommandWrapper();
+    ModelSubcommandWrapper(const ModelSubcommandWrapper&)=delete;
+    ModelSubcommandWrapper& operator=(const ModelSubcommandWrapper&)=delete;
+    std::shared_ptr<ModelSubcommandList> list_owner() const noexcept;
+private:
+    friend class ModelSubcommandQueue;
+    struct State;
+    std::unique_ptr<State> state_;
+};
+
 // Ordered ordinary MODELCTRL sound/effect/hitbox list. External manager resource
 // ownership and the complete collision check operation remain in services.
-// Move-only: copying live sound/effect handles would duplicate cleanup ownership.
+// Move-only facade; additional facades explicitly retain the same wrapper.
+// Wrapper/list/entry reference copies never copy live handle payloads or start
+// cleanup. A pending cursor and fault state belong to their shared wrapper.
 // Destruction does not pretend external cleanup succeeded; call cleanup explicitly.
 class ModelSubcommandQueue {
 public:
-    ModelSubcommandQueue() = default;
+    ModelSubcommandQueue();
+    explicit ModelSubcommandQueue(std::shared_ptr<ModelSubcommandWrapper>);
     ModelSubcommandQueue(const ModelSubcommandQueue&) = delete;
     ModelSubcommandQueue& operator=(const ModelSubcommandQueue&) = delete;
     ModelSubcommandQueue(ModelSubcommandQueue&&);
     ModelSubcommandQueue& operator=(ModelSubcommandQueue&&);
-    const std::deque<ModelSubcommandEntry>& entries() const noexcept { return entries_; }
-    bool pending() const noexcept { return operation_!=Operation::none; }
-    bool faulted() const noexcept { return faulted_; }
+    const ModelSubcommandList& entries() const noexcept;
+    std::shared_ptr<ModelSubcommandWrapper> wrapper_owner() const noexcept {return wrapper_;}
+    std::shared_ptr<ModelSubcommandList> list_owner() const noexcept {return wrapper_->list_owner();}
+    std::shared_ptr<const ModelSubcommandEntry> entry_owner(std::size_t index) const {return entries().entry_owner(index);}
+    bool pending() const noexcept;
+    bool faulted() const noexcept;
     std::uint64_t append_sound(float delay,std::optional<std::string> name);
     std::uint64_t append_effect(ModelEffectSubcommand command);
     std::uint64_t append_hitbox(ModelHitboxSubcommand command);
@@ -132,21 +195,6 @@ public:
     // for resume(); original entry ownership is released after the whole pass.
     ModelSubcommandResult cleanup(const ModelSubcommandServices& services = {});
 private:
-    enum class Operation { none, update, cleanup };
-    void require_usable() const;
-    void require_appendable() const;
-    ModelSubcommandResult process(const ModelSubcommandServices&);
-    ModelSubcommandResult start(ModelSubcommandEntry&,const ModelSubcommandServices&,bool& keep);
-    ModelSubcommandResult check_hitbox(ModelSubcommandEntry&,const ModelSubcommandServices&);
-    ModelSubcommandResult clean(ModelSubcommandEntry&,const ModelSubcommandServices&);
-    void transfer(ModelSubcommandQueue&&);
-    std::deque<ModelSubcommandEntry> entries_;
-    std::uint64_t next_id_{};
-    Operation operation_ = Operation::none;
-    std::size_t cursor_{}, remaining_{};
-    float frame_delta_{};
-    ModelSubcommandContext context_;
-    bool current_advanced_{}, current_start_{}, processing_{}, faulted_{};
-    bool hitbox_check_pending_{};
+    std::shared_ptr<ModelSubcommandWrapper> wrapper_;
 };
 } // namespace dw4

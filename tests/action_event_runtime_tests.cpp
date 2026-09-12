@@ -340,12 +340,15 @@ void local_jump_cleanup() {
 void visible_selection_phases() {
     Fixture f; f.one_sound_and_effect();
     auto state=prepared_model(); state.mode=7; state.phase=8; state.check_fall=false;
-    state.pad_motion=std::array<float,4>{1,2,3,4};
+    state.pad_motion.set_values({1,2,3,4});
     state.channels.apply({1,"beModelCtrlMOVEEX","X",0,MotionSetup{MotionMode::accelerate_positive,4,2,0},MotionStop{true,1,2}});
     state.channels.apply({2,"beModelCtrlMOVEEX","R",3,MotionSetup{MotionMode::accelerate_positive,3,1,0},{}});
     state.channels.advance(1);
     const auto before=state.channels.states(); auto stopped=state.channels; stopped.on_sequence_change();
     ActionEventRuntime runtime; const auto id=runtime.register_model(f.binding(),state,true);
+    const auto pad=runtime.sequence(id).model().pad_motion.list_owner();const auto backing=pad->backing_owner();
+    const auto movement=runtime.sequence(id).model().channels.list_owner();const auto first_channel=movement->entry_owner(0);
+    const auto wrapper=runtime.subcommands(id).wrapper_owner();const auto list=runtime.subcommands(id).list_owner();
     runtime.register_consumer(f.sounds(),true);
     runtime.broadcast(id,f.event());
     ModelSubcommandServices services;
@@ -356,8 +359,12 @@ void visible_selection_phases() {
         ++cleanup_calls; const auto& sequence=runtime.sequence(id); const auto& model=sequence.model();
         check(handle==123 && sequence.current_sequence()=="SQ_WALK" && sequence.command_index()==0 && sequence.selection_pending(),
             "External cleanup sees the original pre-cleanup sequence and cursor publication");
-        check(model.mode==0 && model.phase==0 && !model.pad_motion && !model.check_fall && model.channels.states()==before,
+        check(model.mode==0 && model.phase==0 && model.pad_motion.size()==0 && !model.check_fall && model.channels.states()==before,
             "CTRL/PDMOVE reset precedes cleanup while fall/channel changes follow it");
+        check(model.pad_motion.list_owner()==pad && pad->backing_owner()==backing && *backing==std::vector<float>({1,2,3,4}) &&
+            model.channels.list_owner()==movement && movement->entry_owner(0)==first_channel &&
+            runtime.subcommands(id).wrapper_owner()==wrapper && runtime.subcommands(id).list_owner()==list,
+            "Paused cleanup observes the actual retained model and subcommand list owners");
         return ready;
     };
     check(runtime.select_sequence(id,"SQ_WALK",services).stop==ModelSubcommandStop::sound_volume_down_required && cleanup_calls==1,
@@ -366,6 +373,9 @@ void visible_selection_phases() {
     check(runtime.resume_sequence(id,services).complete() && cleanup_calls==2 && !runtime.sequence(id).selection_pending() &&
         runtime.sequence(id).model().check_fall && runtime.sequence(id).model().channels.states()==stopped.states(),
         "Only completed cleanup applies the original fall and channel-stop effects");
+    check(movement->entry_owner(0)==first_channel && first_channel->mode==MotionMode::stop_positive && list->empty() &&
+        pad->backing_owner()==backing && runtime.subcommands(id).list_owner()==list,
+        "Completed selection preserves list allocations and mutates the retained original movement entry");
 
     ModelSequenceRuntime direct(f.binding().sequence_program(),state,player_name,0);
     direct.begin_select("SQ_WALK");

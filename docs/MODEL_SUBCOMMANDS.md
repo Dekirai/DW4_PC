@@ -24,10 +24,47 @@ not native pointers or executable code shipped with the port.
 | `803108A0` | Sequence-interruption cleanup of the complete list |
 | `80316320` / `800A3FDC` | System frame delta / signed integer conversion |
 
-MODELCTRL work owns its subcommand owner at `+e4`; that object owns the list at
-`+08`. Each append creates another occurrence, including repeated names. Sound
-and effect entries share this ordered list with HITBOX entries. The native queue copies its payloads
-and nullable strings; it does not borrow an IGB document's storage.
+MODELCTRL work owns its subcommand wrapper at `+e4`; that object owns the list
+at `+08`. Each append creates another occurrence, including repeated names.
+Sound and effect entries share this ordered list with HITBOX entries. Append
+owns its supplied payload and nullable strings; it does not borrow an IGB
+document's storage.
+
+## Actual wrapper, list and entry ownership
+
+`ModelSubcommandWrapper` represents the allocated `beModelCtrlSubCom`, and
+`ModelSubcommandList` represents its distinct `igObjectList`. The default queue
+allocates both immediately, with no initial entries. This matches work-field
+metadata `802C7028..802C703C`, wrapper type registration `802C53E8` (size `0x0c`),
+and `_comList` metadata `802C5484` / `802C54DC..802C54F4`, which auto-creates the
+object list through `80028F84` / `8002907C`. The inherited list begins with zero
+count/capacity and null data; no initializer seeds subcommands. The native list
+models the real empty owner and subsequent ordered entries, without exposing
+host container capacity as a recovered guest allocation policy.
+
+The actual ordered container holds separate shared `ModelSubcommandEntry`
+allocations. There is no second authoritative deque of entry values alongside
+identity tokens. Starting a command changes the same entry observed through
+every retaining handle. Selective removal shifts list positions while surviving
+entry addresses remain stable. Removing an entry releases the list's reference;
+an independently retained entry remains intact.
+
+`ModelSubcommandQueue` is a move-only facade over this shared wrapper. Its
+`wrapper_owner()`, `list_owner()` and `entry_owner(index)` accessors retain the
+actual allocations. Constructing another queue facade with the wrapper handle
+operates the same list and the same native pending cursor, elapsed-time prefix,
+selected effect RAM, reentrancy guard and fault state. `entries()` remains a
+live read-only indexed/range view, dereferencing those actual entries rather
+than constructing payload snapshots. Entry identifiers are diagnostic numbers
+within a wrapper; equal identifiers in two fresh wrappers are different objects.
+
+A future canonical player-work reference can retain this wrapper directly.
+Replacing that work reference with a fresh wrapper neither mutates nor cleans
+the retained old wrapper. Its queued resources, pending operation and entry
+identities survive through existing owners. Merely copying or releasing shared
+handles performs no sound/effect calls. Facade update/resume/cleanup calls retain
+their wrapper while executing services, so their storage survives changes to
+external work references.
 
 Base metadata `802C5D70` names byte `+08` `_isOneSet`, float `+0c` `_runFrame`
 and float `+10` `_startFrame`. Fresh values are false, zero and zero. Append
@@ -113,8 +150,16 @@ but is still waiting for generation.
 
 Sequence cleanup visits the original list in order, skipping the cleanup callback
 for effects whose sequence-dead flag is false. It releases all list ownership
-only after the complete cleanup pass. Sound and effect handles therefore have
-one move-only native owner; replacing a nonempty queue requires cleanup first.
+only after the complete cleanup pass. The shared list owner itself survives
+cleanup, and all facades observe the now-empty list. Sound/effect handles live
+in the same shared entry objects throughout the operation. Retained entry
+handles do not trigger another cleanup after removal.
+
+Moving a queue facade transfers its wrapper handle and leaves a fresh empty
+wrapper in the moved-from facade. The existing move-assignment guard still
+requires its destination facade to be empty and have no pending operation.
+This explicit facade-assignment rule does not apply to replacing a canonical
+work's shared wrapper reference: that reference change has no cleanup effect.
 
 Missing callbacks and explicit unavailable results suspend a native operation.
 They must mean that no external effect occurred. `resume` preserves the entry,
@@ -131,8 +176,9 @@ resume and cleanup are rejected because the external outcome may be uncertain.
 This avoids silently repeating a partial effect.
 
 Recursive update/cleanup and append during cleanup are explicitly unsupported.
-Destruction does not call unavailable services or claim external cleanup succeeded;
-the runtime owner must finish explicit cleanup. Full player erase/deactivation
+Destruction of a facade, wrapper, list or entry does not call external services
+or claim cleanup succeeded; the runtime must execute the original explicit
+cleanup operation when required. Full player erase/deactivation
 and the outer sequence callbacks remain separate integration requirements.
 
 ## Validation and limits
@@ -141,6 +187,16 @@ Public synthetic tests cover delay boundaries, uncapped and negative frame
 deltas, nullable strings, completed failures, source/attachment payloads,
 interruption, ordered service suspension, move ownership, callback append,
 reentrancy rejection, uncertain exceptions and NI arithmetic boundaries.
+The ownership refactor adds retained wrapper/list/entry identity checks through
+work-reference replacement, aliased-facade update/cleanup pauses, selective
+HITBOX clear, callback append, fault sharing and destruction. Surviving entries
+retain their addresses and live handles, and distinct work generations retain
+independent queues. Focused standalone checks pass 95 subcommand assertions and
+the existing 65 HITBOX assertions. The 1,005-case original lifecycle comparison
+was rerun against the refactored implementation with no differences. A fresh
+HITBOX comparison also matched all 2,106 cases and 1,690,336 original
+instructions, including append, update, selective clear and cleanup. Its
+factory and complete hitbox-check calls remain explicit service boundaries.
 
 An ignored probe executes the actual original update, sound/effect start and
 cleanup instructions with explicit messenger, prepared-ONE, reference-release

@@ -37,11 +37,18 @@ ignored; the product does not execute PowerPC instructions or link Dolphin.
 | `8030A6BC` | Ensure elapsed timer, release position lock, configure MOVE/MOVEEX channels |
 | `80308EC0` | Exact CTRL names, mode/phase and fall-check flag |
 | `8030AEE0` | PDMOVE Stop/Move parameter pairs |
+| `802C6E74..802C6E88`, `80034E7C`, `80033AA4` | Auto-owned `igFloatList`; inherited count/capacity zero, backing null |
+| `8030AF28..8030AF90` | Initialize four zero values only when the signed logical count is zero |
+| `8030AF98..8030AFF8` | Independently count-guard each selected PDMOVE store |
+| `8030E9BC..8030E9C0` | Sequence entry clears the list count, preserving list and backing |
+| `80309228..803092CC` | onWalk reads its chosen pair directly from backing, without reading count |
 | `80309168` | Post-input control transitions and sequence dispatch decision |
 
 `ModelControlState` owns a pose, channels, one optional `KEIKATIMER`, mode/phase
-and an optional four-float PDMOVE array. Copies are independent. It is a supported
-subset, not a host ABI copy of `beModelCtrlInfoWork`. The original work fields
+and a `PadMotionParameters` binding to the actual PDMOVE list. Its default
+`ModelPadMotionList` is allocated with logical count zero and null backing.
+Constructors can instead retain supplied shared PDMOVE and movement lists.
+It is a supported subset, not a host ABI copy of `beModelCtrlInfoWork`. The original work fields
 are mode/phase `3C/40`, parameter list `48`, input byte `70`, requested sequence
 `74`, target/rate/applied angles `80/8C/98`, motion list `C8` and fall-check flag
 `DA`. Metadata explicitly defaults the latter to true at `802C6FE0..802C6FEC`.
@@ -51,6 +58,23 @@ exposed as `pose.translated`. Work `A8` is the separate `_isPosLock`, exposed as
 `pose.position_locked`. Neither flag alone implements collision or attachment
 updates. Generic metadata registration's temporary objects do not establish
 full player defaults; the API requires an explicitly prepared model matrix.
+
+Version 0.37 keeps the PDMOVE list and its backing allocation independently
+observable. Backing stores the real ordered float values; `values()` derives a
+detached four-float view only when the logical count is four. There is no second
+mutable parameter cache. `clear()` changes the count alone. Shared bindings and
+direct writes through an actual backing owner remain visible to later commands.
+The represented backing length describes addressable floats; host vector
+capacity is not a reconstruction of the original allocator's capacity policy.
+
+`detached_snapshot()` copies matrix, list and backing values for validation.
+`publish_snapshot()` and copy/move assignment update existing destination owners;
+they retain backing and its unused elements when publishing an empty list.
+Move construction transfers the binding. A moved-from host facade can regain
+independent value ownership through assignment; an explicitly supplied null
+original list is distinct and is never repaired by inventing a list.
+`set_values()` explicitly prepares four stored values while retaining existing
+owners. It is a preparation API, not execution of an original command.
 
 ## Player rates and heading
 
@@ -93,9 +117,14 @@ Even an unknown MOVE name performs this preparation and channel allocation.
 | `onFall` / `noFall` | Set / clear fall-check flag; preserve mode/phase |
 | Any other name | Original successful no-op |
 
-PDMOVE lazily creates four zero floats, ordered Stop value/frame then Move
-value/frame. Exact `Move` writes the second pair; **every other name** writes
-the first pair. Zero frames are valid. CTRL/PDMOVE do not allocate motion
+PDMOVE appends four zero floats to the existing list only when its logical count
+is zero, ordered Stop value/frame then Move value/frame. A previously cleared
+list therefore reinitializes those four stored values while retaining sufficient
+backing. Exact `Move` selects the second pair; **every other name** selects
+the first pair. Each store separately checks its index against the signed count:
+short nonempty lists are not expanded, and negative counts skip both stores.
+An out-of-count store does not inspect its unused backing. Zero frames are valid.
+CTRL/PDMOVE do not allocate motion
 channels, create a timer, unlock position or synchronize heading.
 
 ## Post-input control and motion
@@ -114,8 +143,12 @@ skips mode logic. With no request, the original branches are:
 | Other combinations | Any | Preserve state/request |
 
 Mode 1 loads channel 2 before checking phase/input, so requires allocated
-channels even on a stable phase. PDMOVE parameters are needed only on an actual
-transition. It configures the existing scalar directly, preserving its speed;
+channels even on a stable phase. PDMOVE backing parameters are needed only on an
+actual transition. These direct reads do not consult the list's logical count:
+count zero with retained addressable backing can still configure movement.
+Stop only needs backing floats 0/1; Move needs 2/3. Missing used backing fails
+explicitly without publishing the candidate's phase or channel changes.
+It configures the existing scalar directly, preserving its speed;
 it does not run MOVE's timer/position preparation. Nonzero bytes such as 2 and
 255 therefore differ from 1 on the original exact-equality branches.
 
@@ -130,9 +163,12 @@ a successful empty update.
 
 ## Validation and remaining work
 
-- **64 asset-free checks** cover command fields, original rates, signed-zero
+- **128 asset-free checks** cover command fields, original rates, signed-zero
   heading, lazy preparation, independent state, precise input/phase branches,
-  request priority, unused dependencies and atomic failures.
+  request priority, unused dependencies and atomic failures. Ownership cases
+  include shared list/backing aliases, detached and moved-from snapshots,
+  identity-preserving publication, count-only clear/reinitialization, short and
+  null lists, skipped stores, direct backing reads and rejected live parameters.
 - **668 original records** decode across 2,273 recognized archive IGBs:
   526 CTRL and 142 PDMOVE, with zero rejections. PDMOVE has 71 Move / 71 Stop;
   CTRL has 91 isLive, 85 noFall, 71 onWalk, 140 toWait and 139 toWalk.
@@ -141,7 +177,14 @@ a successful empty update.
   uses synthetic named objects and preallocated channel/list capacity. Host
   atan2, timer creation and sequence dispatch are supplied service boundaries;
   allocation internals, full sequences and original libm are not validated by it.
-- **49 optional original-data checks** use Agumon Move 130 / Stop 1540 and
+- **1,800 local list-ownership cases** add 1,445 accepted original-instruction
+  comparisons and 355 separately checked null/range rejections, with zero
+  mismatches over 100,648 original instructions. They cover PDMOVE, count-only
+  clear, reconfiguration and post-input backing reads. Synthetic work/channel
+  objects, string services and 280 supplied backing-growth calls remain explicit
+  boundaries. Rejected invalid guest accesses are not counted as successful
+  original behavior or as a full allocator/factory comparison.
+- **54 optional original-data checks** use Agumon Move 130 / Stop 1540 and
   CTRL 6499 / 622 at both groups and all four stored PLAYERPOINT 115 slots.
   Explicit command effects request WAIT/WALK and travel about 8.275 local units
   over 18 Move / six Stop updates at cached delta 1. They do not execute the

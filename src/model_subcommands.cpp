@@ -28,54 +28,96 @@ ModelSubcommandResult needs(ModelSubcommandStop stop,const ModelSubcommandEntry&
 }
 } // namespace
 
-void ModelSubcommandQueue::require_usable() const {
+struct ModelSubcommandWrapper::State {
+    enum class Operation { none, update, cleanup };
+    std::shared_ptr<ModelSubcommandList> list=std::make_shared<ModelSubcommandList>();
+    std::uint64_t next_id_{};
+    Operation operation_=Operation::none;
+    std::size_t cursor_{},remaining_{};
+    float frame_delta_{};
+    ModelSubcommandContext context_;
+    bool current_advanced_{},current_start_{},processing_{},faulted_{},hitbox_check_pending_{};
+    bool pending() const noexcept {return operation_!=Operation::none;}
+    void require_usable() const;
+    void require_appendable() const;
+    std::uint64_t append_sound(float,std::optional<std::string>);
+    std::uint64_t append_effect(ModelEffectSubcommand);
+    std::uint64_t append_hitbox(ModelHitboxSubcommand);
+    void clear_hitboxes();
+    ModelSubcommandResult update(float,ModelSubcommandContext,const ModelSubcommandServices&);
+    ModelSubcommandResult resume(const ModelSubcommandServices&);
+    ModelSubcommandResult cleanup(const ModelSubcommandServices&);
+    ModelSubcommandResult process(const ModelSubcommandServices&);
+    ModelSubcommandResult start(ModelSubcommandEntry&,const ModelSubcommandServices&,bool&);
+    ModelSubcommandResult check_hitbox(ModelSubcommandEntry&,const ModelSubcommandServices&);
+    ModelSubcommandResult clean(ModelSubcommandEntry&,const ModelSubcommandServices&);
+};
+ModelSubcommandWrapper::ModelSubcommandWrapper():state_(std::make_unique<State>()) {}
+ModelSubcommandWrapper::~ModelSubcommandWrapper()=default;
+std::shared_ptr<ModelSubcommandList> ModelSubcommandWrapper::list_owner() const noexcept {return state_->list;}
+ModelSubcommandQueue::ModelSubcommandQueue():wrapper_(std::make_shared<ModelSubcommandWrapper>()) {}
+ModelSubcommandQueue::ModelSubcommandQueue(std::shared_ptr<ModelSubcommandWrapper> wrapper):wrapper_(std::move(wrapper)) {
+    if(!wrapper_)throw std::invalid_argument("Model subcommands require their actual wrapper owner.");
+}
+ModelSubcommandQueue::ModelSubcommandQueue(ModelSubcommandQueue&& other):ModelSubcommandQueue() {
+    if(other.wrapper_->state_->processing_)throw std::logic_error("Cannot move an executing model subcommand facade.");
+    wrapper_.swap(other.wrapper_);
+}
+ModelSubcommandQueue& ModelSubcommandQueue::operator=(ModelSubcommandQueue&& other) {
+    if(this==&other)return *this;
+    wrapper_->state_->require_usable();
+    if(!entries().empty() || pending())throw std::logic_error("Model subcommand destination requires cleanup before replacement.");
+    if(other.wrapper_->state_->processing_)throw std::logic_error("Cannot move an executing model subcommand facade.");
+    auto replacement=std::make_shared<ModelSubcommandWrapper>();
+    wrapper_=std::exchange(other.wrapper_,std::move(replacement));return *this;
+}
+const ModelSubcommandList& ModelSubcommandQueue::entries() const noexcept {return *wrapper_->state_->list;}
+bool ModelSubcommandQueue::pending() const noexcept {return wrapper_->state_->pending();}
+bool ModelSubcommandQueue::faulted() const noexcept {return wrapper_->state_->faulted_;}
+std::uint64_t ModelSubcommandQueue::append_sound(float delay,std::optional<std::string> name) {
+    return wrapper_->state_->append_sound(delay,std::move(name));
+}
+std::uint64_t ModelSubcommandQueue::append_effect(ModelEffectSubcommand command) {return wrapper_->state_->append_effect(std::move(command));}
+std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command) {return wrapper_->state_->append_hitbox(std::move(command));}
+void ModelSubcommandQueue::clear_hitboxes() {wrapper_->state_->clear_hitboxes();}
+ModelSubcommandResult ModelSubcommandQueue::update(float frames,ModelSubcommandContext context,const ModelSubcommandServices& services) {
+    const auto owner=wrapper_;return owner->state_->update(frames,std::move(context),services);
+}
+ModelSubcommandResult ModelSubcommandQueue::resume(const ModelSubcommandServices& services) {
+    const auto owner=wrapper_;return owner->state_->resume(services);
+}
+ModelSubcommandResult ModelSubcommandQueue::cleanup(const ModelSubcommandServices& services) {
+    const auto owner=wrapper_;return owner->state_->cleanup(services);
+}
+
+void ModelSubcommandWrapper::State::require_usable() const {
     if(processing_) throw std::logic_error("Recursive model subcommand operation is unsupported.");
     if(faulted_) throw std::logic_error("Model subcommand owner has an uncertain service outcome; automatic replay is forbidden.");
 }
-void ModelSubcommandQueue::require_appendable() const {
+void ModelSubcommandWrapper::State::require_appendable() const {
     if(faulted_) throw std::logic_error("Cannot append to a faulted model subcommand owner.");
     if(operation_==Operation::cleanup)
         throw std::logic_error("Cannot append during model subcommand cleanup.");
-    if(entries_.size()>=max_entries || next_id_==std::numeric_limits<std::uint64_t>::max())
+    if(list->size()>=max_entries || next_id_==std::numeric_limits<std::uint64_t>::max())
         throw std::length_error("Model subcommand queue limit exceeded.");
 }
-void ModelSubcommandQueue::transfer(ModelSubcommandQueue&& other) {
-    if(other.processing_) throw std::logic_error("Cannot move an executing model subcommand owner.");
-    entries_=std::move(other.entries_);
-    next_id_=other.next_id_; operation_=other.operation_;
-    cursor_=other.cursor_; remaining_=other.remaining_; frame_delta_=other.frame_delta_;
-    context_=std::move(other.context_); current_advanced_=other.current_advanced_;
-    current_start_=other.current_start_; faulted_=other.faulted_;
-    hitbox_check_pending_=other.hitbox_check_pending_;
-    other.entries_.clear(); other.operation_=Operation::none;
-    other.cursor_=other.remaining_=0; other.current_advanced_=other.current_start_=false;
-    other.faulted_=other.hitbox_check_pending_=false;
-}
-ModelSubcommandQueue::ModelSubcommandQueue(ModelSubcommandQueue&& other) { transfer(std::move(other)); }
-ModelSubcommandQueue& ModelSubcommandQueue::operator=(ModelSubcommandQueue&& other) {
-    if(this==&other) return *this;
-    require_usable();
-    if(!entries_.empty() || pending())
-        throw std::logic_error("Model subcommand destination requires cleanup before replacement.");
-    transfer(std::move(other)); return *this;
-}
-std::uint64_t ModelSubcommandQueue::append_sound(float delay,std::optional<std::string> name) {
+std::uint64_t ModelSubcommandWrapper::State::append_sound(float delay,std::optional<std::string> name) {
     require_appendable(); finite(delay); name_size(name);
     const auto id=next_id_;
-    entries_.push_back({id,0,delay,false,ModelSoundSubcommandState{std::move(name),0}});
+    list->entries_.push_back(std::make_shared<ModelSubcommandEntry>(ModelSubcommandEntry{id,0,delay,false,ModelSoundSubcommandState{std::move(name),0}}));
     ++next_id_; return id;
 }
-std::uint64_t ModelSubcommandQueue::append_effect(ModelEffectSubcommand command) {
+std::uint64_t ModelSubcommandWrapper::State::append_effect(ModelEffectSubcommand command) {
     require_appendable(); finite(command.delay);
     name_size(command.model_name); name_size(command.sequence_name);
     for(float value:command.offset) finite(value);
     for(float value:command.rotation) finite(value);
     const auto id=next_id_;
     const float delay=command.delay;
-    entries_.push_back({id,0,delay,false,ModelEffectSubcommandState{std::move(command),-1,false}});
+    list->entries_.push_back(std::make_shared<ModelSubcommandEntry>(ModelSubcommandEntry{id,0,delay,false,ModelEffectSubcommandState{std::move(command),-1,false}}));
     ++next_id_; return id;
 }
-std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command) {
+std::uint64_t ModelSubcommandWrapper::State::append_hitbox(ModelHitboxSubcommand command) {
     require_appendable(); finite(command.delay); finite(command.length);
     for(float value:command.offset) finite(value);
     for(float value:command.box_size) finite(value);
@@ -86,17 +128,18 @@ std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command)
         quotient==6 ? 1 : (quotient==7 || quotient==8 ? 2 : 0);
     const auto id=next_id_;
     const float delay=command.delay;
-    entries_.push_back({id,0,delay,false,ModelHitboxSubcommandState{std::move(command),mode,end}});
+    list->entries_.push_back(std::make_shared<ModelSubcommandEntry>(ModelSubcommandEntry{id,0,delay,false,ModelHitboxSubcommandState{std::move(command),mode,end}}));
     ++next_id_; return id;
 }
-void ModelSubcommandQueue::clear_hitboxes() {
+void ModelSubcommandWrapper::State::clear_hitboxes() {
     require_usable();
     if(hitbox_check_pending_)
         throw std::logic_error("Complete the pending hitbox check before clearing model subcommands.");
     // Removing an earlier entry shifts the retained native cursor. Entries
     // appended after an update's count snapshot do not belong to its remainder.
-    for(std::size_t index=0;index<entries_.size();) {
-        if(!std::holds_alternative<ModelHitboxSubcommandState>(entries_[index].value)) {++index;continue;}
+    auto& entries=list->entries_;
+    for(std::size_t index=0;index<entries.size();) {
+        if(!std::holds_alternative<ModelHitboxSubcommandState>(entries[index]->value)) {++index;continue;}
         if(operation_!=Operation::none) {
             if(index<cursor_) --cursor_;
             else if(index-cursor_<remaining_) {
@@ -104,39 +147,39 @@ void ModelSubcommandQueue::clear_hitboxes() {
                 if(index==cursor_) current_advanced_=current_start_=false;
             }
         }
-        entries_.erase(entries_.begin()+static_cast<std::ptrdiff_t>(index));
+        entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(index));
     }
     if(operation_==Operation::update && remaining_==0) operation_=Operation::none;
 }
-ModelSubcommandResult ModelSubcommandQueue::update(float frames,ModelSubcommandContext context,
+ModelSubcommandResult ModelSubcommandWrapper::State::update(float frames,ModelSubcommandContext context,
     const ModelSubcommandServices& services) {
     require_usable();
     if(pending()) throw std::logic_error("Resume or clean up the pending model subcommand pass before updating.");
     finite(frames);
     // Reject a non-finite native boundary before any entry or service is changed.
-    for(const auto& entry:entries_) finite(elapsed_sum(entry.elapsed,frames));
+    for(const auto& entry:*list) finite(elapsed_sum(entry.elapsed,frames));
     if(context.source.model_name.size()>max_name_bytes ||
        (context.attachment && context.attachment->model_name.size()>max_name_bytes))
         throw std::invalid_argument("Model subcommand owner name exceeds the size limit.");
     context_=std::move(context); frame_delta_=frames;
-    cursor_=0; remaining_=entries_.size(); current_advanced_=current_start_=false;
+    cursor_=0; remaining_=list->size(); current_advanced_=current_start_=false;
     operation_=Operation::update;
     return process(services);
 }
-ModelSubcommandResult ModelSubcommandQueue::resume(const ModelSubcommandServices& services) {
+ModelSubcommandResult ModelSubcommandWrapper::State::resume(const ModelSubcommandServices& services) {
     require_usable(); return process(services);
 }
-ModelSubcommandResult ModelSubcommandQueue::cleanup(const ModelSubcommandServices& services) {
+ModelSubcommandResult ModelSubcommandWrapper::State::cleanup(const ModelSubcommandServices& services) {
     require_usable();
     if(hitbox_check_pending_)
         throw std::logic_error("Complete the pending hitbox check before model subcommand cleanup.");
     if(operation_!=Operation::cleanup) {
-        operation_=Operation::cleanup; cursor_=0; remaining_=entries_.size();
+        operation_=Operation::cleanup; cursor_=0; remaining_=list->size();
         current_advanced_=current_start_=false;
     }
     return process(services);
 }
-ModelSubcommandResult ModelSubcommandQueue::start(ModelSubcommandEntry& entry,
+ModelSubcommandResult ModelSubcommandWrapper::State::start(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services,bool& keep) {
     if(auto* sound=std::get_if<ModelSoundSubcommandState>(&entry.value)) {
         if(!services.play_sound) return needs(ModelSubcommandStop::sound_play_required,entry);
@@ -162,7 +205,7 @@ ModelSubcommandResult ModelSubcommandQueue::start(ModelSubcommandEntry& entry,
     if(!services.generate_effect(request)) return needs(ModelSubcommandStop::effect_generate_required,entry);
     keep=effect.command.sequence_dead; return {};
 }
-ModelSubcommandResult ModelSubcommandQueue::check_hitbox(ModelSubcommandEntry& entry,
+ModelSubcommandResult ModelSubcommandWrapper::State::check_hitbox(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services) {
     if(!services.check_hitbox) return needs(ModelSubcommandStop::hitbox_check_required,entry);
     const auto& hitbox=std::get<ModelHitboxSubcommandState>(entry.value);
@@ -172,7 +215,7 @@ ModelSubcommandResult ModelSubcommandQueue::check_hitbox(ModelSubcommandEntry& e
     hitbox_check_pending_=false;
     return {};
 }
-ModelSubcommandResult ModelSubcommandQueue::clean(ModelSubcommandEntry& entry,
+ModelSubcommandResult ModelSubcommandWrapper::State::clean(ModelSubcommandEntry& entry,
     const ModelSubcommandServices& services) {
     if(const auto* sound=std::get_if<ModelSoundSubcommandState>(&entry.value)) {
         if(sound->handle!=0 && (!services.sound_volume_down || !services.sound_volume_down(sound->handle)))
@@ -185,11 +228,13 @@ ModelSubcommandResult ModelSubcommandQueue::clean(ModelSubcommandEntry& entry,
     // SCHitBox's cleanup virtual 802E93B4 is empty.
     return {};
 }
-ModelSubcommandResult ModelSubcommandQueue::process(const ModelSubcommandServices& services) {
+ModelSubcommandResult ModelSubcommandWrapper::State::process(const ModelSubcommandServices& services) {
     processing_=true;
     try {
         while(operation_!=Operation::none && remaining_!=0) {
-            auto& entry=entries_.at(cursor_);
+            auto& entries=list->entries_;
+            const auto entry_owner=entries.at(cursor_);
+            auto& entry=*entry_owner;
             bool keep=false;
             ModelSubcommandResult result;
             if(operation_==Operation::cleanup) result=clean(entry,services);
@@ -212,10 +257,10 @@ ModelSubcommandResult ModelSubcommandQueue::process(const ModelSubcommandService
             }
             if(!result.complete()) {processing_=false;return result;}
             if(operation_==Operation::cleanup || keep) ++cursor_;
-            else entries_.erase(entries_.begin()+static_cast<std::ptrdiff_t>(cursor_));
+            else entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(cursor_));
             --remaining_; current_advanced_=current_start_=false;
         }
-        if(operation_==Operation::cleanup) entries_.clear();
+        if(operation_==Operation::cleanup) list->entries_.clear();
         operation_=Operation::none; processing_=false; return {};
     } catch(...) {
         // The callback may have committed an effect before throwing. Retain its

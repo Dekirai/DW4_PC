@@ -1,7 +1,7 @@
 # Original motion channels and elapsed timer
 
-Version 0.14 implements the recovered scalar movement objects, MOVE/MOVEEX
-parameter decoding, four owned movement channels, local matrix translation and
+Version 0.14 introduced the recovered scalar movement objects, MOVE/MOVEEX
+parameter decoding, movement channels, local matrix translation and
 the elapsed timer used by those channels. This portable C++ core has no SDL,
 graphics, Dolphin or executable-DOL dependency. It is not yet connected to the
 original player lifecycle or the provisional walking preview.
@@ -19,6 +19,7 @@ instructions/assets are distributed by this increment.
 | Source address | Recovered operation | Native implementation |
 | --- | --- | --- |
 | `802C86D8`, metadata `804D0C7C / 804D0CC4` | `beModelCtrlMoveObject`, size `0x2C` | `MotionState` |
+| `802C8548`, work metadata `802C6F5C..802C6F70` | Allocated empty `beModelCtrlMoveObjectList` at work+`C8` | `MotionChannelList`, with distinct shared entry owners |
 | `8030A1F4` | Configure scalar mode/value/acceleration | `configure_motion` |
 | `8030A254` | Stop or transition into deceleration | `stop_motion` |
 | `8030A2D8` | Expire, advance speed, integrate displacement | `advance_motion` |
@@ -31,10 +32,48 @@ instructions/assets are distributed by this increment.
 | `8031E4C4` | Cached nominal-frame delta | `motion_timer_frames` |
 | `8031E238` | Strict end-time comparison | `motion_timer_expired` for an existing timer |
 
-The API owns host state, not guest pointers. Serialized command references are
-local to the supplied document. The eventual actor runtime must retain the
-document's source identity, choose sequences, establish timers and own one
-channel set per model. Copying channels/timers gives independent mutable state.
+The API represents shared object identity without guest pointers. Serialized
+command references are local to the supplied document. The eventual actor runtime
+must retain the document's source identity, choose sequences and establish the
+actual RAM timer. Complete player-work construction remains separate.
+
+## Movement list and entry ownership
+
+`MotionChannels` now owns or explicitly binds one `MotionChannelList`. The default
+constructor allocates an empty list, matching the auto-created work+`C8` field;
+it does not create four movement objects. At `8030A81C..8030A9F0`, the first MOVE
+checks the count, allocates four distinct movement objects, and appends them to
+the same list before selecting the command name. This includes an unknown MOVE
+name. Successful later commands, ticks, model integration and sequence stops
+publish into those same entry allocations. `allocated()` reports whether the
+four entries exist; it does not report whether the list itself exists.
+
+`list_owner()` exposes the actual binding for a future canonical player-work
+owner. Another `MotionChannels` constructed from that shared list observes and
+mutates the same entries. Const bindings expose const entry owners. `states()`
+returns a detached value snapshot, including zero values for an empty list;
+reading it does not allocate entries or create an authoritative cached array.
+
+Copy construction detaches the list and each distinct entry for validation.
+Copy and move assignment publish values while preserving the destination list
+and compatible existing entry owners. Assigning an empty snapshot clears the
+entries, preserving the list and any independently retained removed objects.
+Move construction transfers the list binding. A moved-from binding rejects use
+until assignment gives it a new value-owned list.
+
+Raw copies preserve unusual counts, null entries and alias relationships without
+consuming or repairing movement data. This allows an unrelated control command
+to stage its state without adding a movement lookup absent from the original.
+Raw copies are bounded to 4,096 entries. Actual movement consumers support only
+an empty list or exactly four distinct non-null entries; other shapes stop
+explicitly. A null list binding is never silently replaced by an empty list.
+These are checked host boundaries, not implementations of malformed guest memory
+access or the guest allocator's exact backing-capacity growth.
+
+Arithmetic uses detached value candidates. Validation or matrix-publication
+failure preserves the live entries, list identity, timer and model pose. Allocating
+the first four entries is published only after native parameter validation;
+this checked failure policy does not claim original allocator-failure behavior.
 
 ## Scalar arithmetic
 
@@ -113,9 +152,9 @@ is at most 64 bytes, with bounded serialized storage and exact field types.
 | Jump | 1, local Y | 4 |
 | Fall | 1, local Y | 1 |
 
-An unknown name on the **exact MOVE type** is a verified no-op after the original
-lazy channel allocation. It still establishes `allocated()` in this channel
-core. This is not permission to ignore other unsupported controller types.
+An unknown name on the **exact MOVE type** changes no channel values after the
+original lazy entry allocation. It still creates the four actual entry owners
+when the list was empty. This does not ignore unsupported controller types.
 
 MOVEEX also reads end time at field 5, sequence-stop bool at 6, stop value at 7
 and stop frames at 8. Its first four name bytes drive channel/mode selection;
@@ -127,7 +166,7 @@ the trailing bytes. MOVEEX stores its stop fields after scalar configuration.
 
 `MotionChannels` advances rotation (3) first, then X/Y/Z (0/1/2), sharing one
 delta. `translation_updated` records whether a translation channel began active,
-even when the resulting displacement is zero. Empty, unallocated channels do
+even when the resulting displacement is zero. Empty movement lists do
 not query the timer. Invalid native input does not partially publish state.
 Sequence-stop is retained data in this decoder. Version 0.17 adds
 `MotionChannels::on_sequence_change`: stop flagged XYZ channels using the stored
@@ -181,7 +220,11 @@ timer creation and position-lock release; see [MODEL_CONTROL.md](MODEL_CONTROL.m
 ## Validation and next integration
 
 `dw4_motion_tests` runs asset-free mode/expiry/zero-frame, schema, ownership,
-timer and matrix checks in CTest. Local evidence additionally includes:
+timer and matrix checks in CTest. Ownership checks cover empty versus populated
+lists, first and repeated unknown MOVE, shared bindings, detached copies,
+publication into retained entries, raw malformed snapshots, consumer rejection,
+cross-list entry aliases, lifetime release and atomic model-integration failure.
+Local arithmetic evidence additionally includes:
 
 - All **3,796** MOVE/MOVEEX records in **2,273** recognized IGB archive entries
   decode successfully: 3,599 MOVE and 197 MOVEEX, including all 131 zero-frame

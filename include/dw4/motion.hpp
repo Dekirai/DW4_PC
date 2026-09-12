@@ -5,9 +5,12 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace dw4 {
 struct ModelMotionPose;
@@ -76,8 +79,40 @@ struct MotionStep {
     float rotation{}; // Channel 3 scalar displacement, before degrees->radians.
     bool translation_updated{}; // At least one translation channel began active.
 };
+
+// Actual beModelCtrlMoveObjectList ownership. Fresh work owns an allocated empty
+// list; its first MOVE creates four distinct beModelCtrlMoveObject allocations.
+// Mutable bindings can supply original owners; consumers reject unsupported
+// counts, null entries or repeated entry identities instead of repairing them.
+class MotionChannelList {
+public:
+    using Entries = std::vector<std::shared_ptr<MotionState>>;
+    MotionChannelList() = default;
+    explicit MotionChannelList(Entries entries) : entries_(std::move(entries)) {}
+    MotionChannelList(const MotionChannelList&) = delete;
+    MotionChannelList& operator=(const MotionChannelList&) = delete;
+    std::size_t size() const noexcept { return entries_.size(); }
+    Entries& mutable_entries() noexcept { return entries_; }
+    std::shared_ptr<MotionState> entry_owner(std::size_t index) { return entries_.at(index); }
+    std::shared_ptr<const MotionState> entry_owner(std::size_t index) const { return entries_.at(index); }
+private:
+    Entries entries_;
+};
+
 class MotionChannels {
 public:
+    using States = std::array<MotionState,4>;
+    MotionChannels();
+    explicit MotionChannels(std::shared_ptr<MotionChannelList> actual_list);
+    // Validation candidates detach each distinct entry while preserving raw list
+    // shape/aliases; copying does not consume movement or repair malformed data.
+    // Publication preserves the destination list and compatible entry owners;
+    // assigning an empty candidate clears entries only. Move construction
+    // transfers a binding. Raw copies are bounded to 4096 entries.
+    MotionChannels(const MotionChannels&);
+    MotionChannels(MotionChannels&&) noexcept = default;
+    MotionChannels& operator=(const MotionChannels&);
+    MotionChannels& operator=(MotionChannels&&);
     // Applies only the recovered channel effects of 8030A6BC. The caller must
     // separately establish its timer, model work and attachment lifecycle.
     void apply(const MotionCommand& command);
@@ -89,11 +124,18 @@ public:
     // 8030EA1C..8030EA74: stop flagged XYZ channels using their stored stop
     // parameters; always deactivate rotation and clear only its speed.
     void on_sequence_change();
-    const std::array<MotionState, 4>& states() const noexcept { return states_; }
-    bool allocated() const noexcept { return allocated_; }
+    // Detached values for inspection/validation, never authoritative storage.
+    // An empty list returns zero values without allocating entry objects.
+    States states() const;
+    bool allocated() const; // True means four entries, not merely a list owner.
+    std::shared_ptr<MotionChannelList> list_owner();
+    std::shared_ptr<const MotionChannelList> list_owner() const;
 private:
-    std::array<MotionState, 4> states_{};
-    bool allocated_{};
+    std::shared_ptr<MotionChannelList> list_;
+    void require_owner() const;
+    void validate_shape() const;
+    void publish(const States&);
+    void publish_from(const MotionChannels&);
 };
 
 // 80128DC8: column-major 4x4, including the fourth translation component.

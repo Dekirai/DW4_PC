@@ -17,6 +17,12 @@ void checked_entry_fields(const ModelControlState& state) {
         if(*script)checked_name(**script);
     if(!std::isfinite(state.invulnerability_frames))throw MotionError("Prepared invulnerability frames must be finite.");
 }
+void finish_entry_fields(ModelControlState& candidate) {
+    candidate.bullet_hit_script.reset();candidate.wall_hit_script.reset();candidate.floor_hit_script.reset();
+    candidate.wall_check=1;candidate.floor_check=1;candidate.check_fall=true;
+    if(candidate.invulnerability_frames<0)candidate.invulnerability_frames=0;
+    candidate.channels.on_sequence_change();
+}
 void charge(std::size_t value,std::size_t& total,std::size_t limit) {
     if(value>limit-total)throw MotionError("Model sequence allocation budget exceeded.");
     total+=value;
@@ -144,10 +150,113 @@ ModelSequenceProgram decode_model_sequences(const IgbDocument& doc,std::uint32_t
     return result;
 }
 
+ModelSequenceLabels::ModelSequenceLabels(std::shared_ptr<ModelSequenceLabelFields> fields)
+    :fields_(std::move(fields)) {
+    if(!fields_)throw MotionError("Sequence label fields require their actual owner.");
+}
+ModelSequenceLabels::ModelSequenceLabels(const ModelSequenceLabels& other)
+    :ModelSequenceLabels(std::make_shared<ModelSequenceLabelFields>()) {
+    *this=other;
+}
+ModelSequenceLabels& ModelSequenceLabels::operator=(const ModelSequenceLabels& other) {
+    if(this==&other)return *this;
+    if(!other.fields_)throw MotionError("Sequence label fields were moved out of this view.");
+    const auto& source=*other.fields_;
+    auto detached=std::make_shared<ModelSequenceLabelFields>();
+    if(source.sequences)detached->sequences=std::make_shared<ModelSequenceLabelFields::StringList>(*source.sequences);
+    if(source.names)detached->names=source.names==source.sequences ? detached->sequences :
+        std::make_shared<ModelSequenceLabelFields::StringList>(*source.names);
+    if(source.offsets)detached->offsets=std::make_shared<ModelSequenceLabelFields::OffsetList>(*source.offsets);
+    if(!fields_) {fields_=std::move(detached);return *this;}
+    // Copying prepared state is not a guest list access. Preserve partial shapes
+    // and aliases; the first actual label consumer performs checked validation.
+    const bool source_alias=detached->sequences && detached->sequences==detached->names;
+    const bool destination_alias=fields_->sequences && fields_->sequences==fields_->names;
+    const auto publish_list=[](auto& destination,auto& values) {
+        if(!destination || !values)destination=std::move(values);
+        else destination->swap(*values);
+    };
+    publish_list(fields_->sequences,detached->sequences);
+    if(source_alias)fields_->names=fields_->sequences;
+    else if(destination_alias)fields_->names=std::move(detached->names);
+    else publish_list(fields_->names,detached->names);
+    publish_list(fields_->offsets,detached->offsets);return *this;
+}
+ModelSequenceLabels& ModelSequenceLabels::operator=(ModelSequenceLabels&& other) {
+    return *this=static_cast<const ModelSequenceLabels&>(other);
+}
+std::vector<ModelSequenceLabel> ModelSequenceLabels::snapshot() const {
+    if(!fields_)throw MotionError("Sequence label fields were moved out of this view.");
+    const auto& fields=*fields_;
+    if(!fields.sequences && !fields.names && !fields.offsets)return {};
+    if(!fields.sequences || !fields.names || !fields.offsets || fields.sequences==fields.names)
+        throw MotionError("Sequence label fields require three distinct, complete lists.");
+    const auto count=fields.sequences->size();
+    if(count>max_sequences || fields.names->size()!=count || fields.offsets->size()!=count)
+        throw MotionError("Sequence label lists have incompatible counts or exceed their budget.");
+    std::vector<ModelSequenceLabel> rows;rows.reserve(count);
+    std::size_t budget=0;
+    for(std::size_t i=0;i<count;++i) {
+        for(const auto* value:{&(*fields.sequences)[i],&(*fields.names)[i]}) {
+            if(*value) {checked_name(**value);charge((*value)->size(),budget,max_text);}
+        }
+        rows.push_back({(*fields.sequences)[i],(*fields.names)[i],(*fields.offsets)[i]});
+    }
+    return rows;
+}
+void ModelSequenceLabels::publish(const std::vector<ModelSequenceLabel>& rows,bool allocated) {
+    // Stage all allocations before publication. Swapping list contents preserves
+    // the actual list allocations retained by other views of this same work.
+    if(!allocated) {fields_->sequences.reset();fields_->names.reset();fields_->offsets.reset();return;}
+    auto sequences=std::make_shared<ModelSequenceLabelFields::StringList>();
+    auto names=std::make_shared<ModelSequenceLabelFields::StringList>();
+    auto offsets=std::make_shared<ModelSequenceLabelFields::OffsetList>();
+    sequences->reserve(rows.size());names->reserve(rows.size());offsets->reserve(rows.size());
+    std::size_t budget=0;
+    for(const auto& row:rows) {
+        for(const auto* value:{&row.sequence,&row.label}) {
+            if(*value) {checked_name(**value);charge((*value)->size(),budget,max_text);}
+        }
+        sequences->push_back(row.sequence);names->push_back(row.label);offsets->push_back(row.cached_offset);
+    }
+    // Reject a partial prepared owner instead of silently repairing it.
+    static_cast<void>(snapshot());
+    if(fields_->sequences) {
+        fields_->sequences->swap(*sequences);fields_->names->swap(*names);fields_->offsets->swap(*offsets);
+    } else {
+        fields_->sequences=std::move(sequences);fields_->names=std::move(names);fields_->offsets=std::move(offsets);
+    }
+}
+void ModelSequenceLabels::set(std::optional<std::string> sequence,std::optional<std::string> label) {
+    if(sequence)checked_name(*sequence);
+    if(label)checked_name(*label);
+    auto rows=snapshot();
+    const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto& value){return value.sequence==sequence;});
+    if(found!=rows.end()) {*found={std::move(sequence),std::move(label),-1};}
+    else {
+        if(rows.size()==max_sequences)throw MotionError("Sequence label count exceeds its budget.");
+        rows.push_back({std::move(sequence),std::move(label),-1});
+    }
+    publish(rows,true);
+}
+void ModelSequenceLabels::cache(std::size_t index,std::int32_t offset) {
+    // Selection already validated the three lists and its detached plan. No
+    // allocation or reference replacement occurs in this original cache write.
+    if(!fields_ || !fields_->offsets || index>=fields_->offsets->size())
+        throw MotionError("Sequence label cache has no retained entry.");
+    (*fields_->offsets)[index]=offset;
+}
+
 ModelSequenceRuntime::ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
     std::string info_name,std::int32_t ram_no)
+    :ModelSequenceRuntime(std::move(program),std::move(model),std::move(info_name),ram_no,
+        std::make_shared<ModelSequenceLabelFields>()) {}
+ModelSequenceRuntime::ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
+    std::string info_name,std::int32_t ram_no,std::shared_ptr<ModelSequenceLabelFields> labels)
     :program_(std::make_shared<const ModelSequenceProgram>(std::move(program))),model_(std::move(model)),
-    info_name_(std::move(info_name)),ram_no_(ram_no) {checked_name(info_name_);checked_entry_fields(model_);}
+    info_name_(std::move(info_name)),ram_no_(ram_no),labels_(std::move(labels)) {
+    checked_name(info_name_);checked_entry_fields(model_);
+}
 
 std::string_view ModelSequenceRuntime::current_sequence() const noexcept {
     return current_ ? std::string_view(program_->sequences()[*current_].name) : std::string_view{};
@@ -168,38 +277,36 @@ ModelWaitState& ModelSequenceRuntime::wait_state() {
 void ModelSequenceRuntime::set_label(std::optional<std::string> sequence,std::optional<std::string> label) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
-    if(sequence)checked_name(*sequence);
-    if(label)checked_name(*label);
-    auto candidate=labels_;
-    const auto found=std::find_if(candidate.begin(),candidate.end(),[&](const auto& value){return value.sequence==sequence;});
-    if(found!=candidate.end()) {*found={std::move(sequence),std::move(label),-1};}
-    else {
-        if(candidate.size()==max_sequences)throw MotionError("Sequence label count exceeds its budget.");
-        candidate.push_back({std::move(sequence),std::move(label),-1});
-    }
-    std::size_t budget=0;
-    for(const auto& item:candidate) {
-        if(item.label)charge(item.label->size(),budget,max_text);
-        if(item.sequence)charge(item.sequence->size(),budget,max_text);
-    }
-    labels_=std::move(candidate);
+    labels_.set(std::move(sequence),std::move(label));
+}
+std::shared_ptr<ModelSequenceLabelFields> ModelSequenceRuntime::label_fields() {
+    require_no_lua_fault();
+    if(running_ || selection_pending_ || lua_pending_)throw MotionError("Label fields are unavailable during execution or pending selection/Lua.");
+    return labels_.fields();
 }
 void ModelSequenceRuntime::select(std::string_view sequence) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
-    auto candidate=*this;
-    candidate.begin_select(sequence); candidate.finish_select();
-    *this=std::move(candidate);
+    const auto plan=prepare_selection(sequence);
+    auto candidate=model_;candidate.mode=0;candidate.phase=0;candidate.pad_motion.clear();
+    finish_entry_fields(candidate);
+    publish_selection(plan,std::move(candidate),false);
 }
 void ModelSequenceRuntime::begin_select(std::string_view sequence) {
     require_no_lua_fault();
     if(running_ || selection_pending_ || lua_pending_)throw MotionError("Sequence mutation is unavailable during execution or pending selection/Lua.");
+    const auto plan=prepare_selection(sequence);
+    auto candidate=model_;candidate.mode=0;candidate.phase=0;candidate.pad_motion.clear();
+    publish_selection(plan,std::move(candidate),true);
+}
+ModelSequenceRuntime::SelectionPlan ModelSequenceRuntime::prepare_selection(std::string_view sequence) const {
     checked_name(sequence);if(!ordinary(sequence))throw MotionError("This command requires the outer model controller.");
     checked_entry_fields(model_);
     const auto& data=program_->sequences();
     const auto found=std::find_if(data.begin(),data.end(),[&](const auto& item){return item.name==sequence;});
     if(found==data.end())throw MotionError("Requested model sequence is absent from its owned program.");
-    auto labels=labels_;std::int32_t start=0;
+    const auto labels=labels_.snapshot();std::int32_t start=0;
+    SelectionPlan plan;
     const auto selected=std::find_if(labels.begin(),labels.end(),[&](const auto& item){return item.sequence && *item.sequence==sequence;});
     if(selected!=labels.end()) {
         start=selected->cached_offset;
@@ -211,28 +318,27 @@ void ModelSequenceRuntime::begin_select(std::string_view sequence) {
                 return command.opcode==ModelSequenceOpcode::label && command.name==*selected->label;
             });
             if(label!=found->commands.end())start=static_cast<std::int32_t>(label-found->commands.begin());
-            selected->cached_offset=start;
+            plan.cache_index=std::size_t(selected-labels.begin());plan.cache_offset=start;
         }
     }
     if(start<0 || std::size_t(start)>found->commands.size())throw MotionError("Selected sequence label has no valid command offset.");
     // Check post-cleanup motion constraints without stopping the live channels
     // yet. finish_select uses their then-current state, not this validation copy.
     auto stopped=model_.channels;stopped.on_sequence_change();
-    auto candidate=model_;candidate.mode=0;candidate.phase=0;candidate.pad_motion.reset();
-    // Other full-work fields and original subcommand/virtual callbacks are
-    // outside this owned preparation API, never acknowledged as executed here.
-    model_=std::move(candidate);labels_=std::move(labels);
-    current_=std::size_t(found-data.begin());cursor_=static_cast<std::uint32_t>(start);label_count_=0;
+    plan.current=std::size_t(found-data.begin());plan.cursor=static_cast<std::uint32_t>(start);
+    return plan;
+}
+void ModelSequenceRuntime::publish_selection(const SelectionPlan& plan,ModelControlState&& candidate,bool pending) {
+    model_=std::move(candidate);
+    if(plan.cache_index)labels_.cache(*plan.cache_index,plan.cache_offset);
+    current_=plan.current;cursor_=plan.cursor;label_count_=0;
     wait_.name.reset();
-    selection_pending_=true;
+    selection_pending_=pending;
 }
 void ModelSequenceRuntime::complete_selection() {
     checked_entry_fields(model_);
     auto candidate=model_;
-    candidate.bullet_hit_script.reset();candidate.wall_hit_script.reset();candidate.floor_hit_script.reset();
-    candidate.wall_check=1;candidate.floor_check=1;candidate.check_fall=true;
-    if(candidate.invulnerability_frames<0)candidate.invulnerability_frames=0;
-    candidate.channels.on_sequence_change();
+    finish_entry_fields(candidate);
     model_=std::move(candidate);selection_pending_=false;
 }
 void ModelSequenceRuntime::finish_select() {

@@ -1,4 +1,54 @@
-# Native original spawn and node ownership validation
+# Native retained work-list ownership validation
+
+Version 0.37.0 was validated locally on 2026-09-12. Existing motion, PDMOVE,
+subcommand and label consumers now use actual shared list allocations and
+ordered entry owners. Detached arithmetic/selection candidates publish through
+those same live allocations. No separate duplicate cache represents the lists.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release build/package | 85/85 CTest suites passed; no compiler warnings |
+| Movement ownership | 305 synthetic checks; allocated-empty list, first MOVE allocation, shared entries, detached candidates, publication, malformed profiles and matrix integration |
+| PDMOVE/control | 128 synthetic / 182 original-inclusive checks; retained backing after count reset, independent guarded stores, backing reads without count, malformed owners and moved-from recovery |
+| Sequence ownership | 277 synthetic / 1,161 original-inclusive checks; three nullable label lists, first-key replacement, live offset cache, detached snapshots, phased selection and supplied matrix/PDMOVE/movement owners |
+| Event integration | 278 synthetic checks; paused cleanup observes the retained model and subcommand lists, then stops actual movement entries after completion |
+| Subcommand/HITBOX | 95 subcommand and 65 HITBOX checks; actual wrapper/list/entry lifetimes, shared continuation state, ordered cleanup and retained removed entries |
+| Original scalar motion comparison | 18,000 setups / 54,000 ticks, zero differences; NaN classification compared, payloads excluded |
+| Original PDMOVE comparison | 1,800 cases: 1,445 original comparisons and 355 separately asserted checked rejections; 100,648 instructions and 280 explicit backing-growth services, zero differences |
+| Original control comparison | 10,000 prepared cases, zero differences |
+| Original labels/sequences | 3,000 label programs / 24,539 update-lookup pairs and 6,000 command programs, zero differences |
+| Original queued lifecycle comparisons | 1,005 sound/effect cases / 2,018,236 instructions and 2,106 HITBOX cases / 1,690,336 instructions, zero differences |
+| Existing original integration | 146 model-motion, 672 prepared spawn, 613 prepared startup and 413 weapon-preview checks passed |
+| Packaged application | 18 app / 10 play CLI checks and six Python verifier tests passed |
+| Hidden walking replay | 240 frames, 438 simulation steps, 101.333 source-unit travel, 286 idle / 152 run steps, 241 pose uploads and 240 attached-weapon frames; pause/restart/focus-loss checks passed; actual frame visually inspected |
+
+All comparison drivers were freshly compiled against current headers and linked
+only against the final production core, SHA-256
+`C081B014CCB47381C4415F925AC6D23E3FF4A03EE978EBBB8A94DCF6C7B7B3D6`.
+The hash remained unchanged during their runs. These comparisons retain explicit
+prepared list, interned-string, factory, messenger, ACTION and external-effect
+service boundaries. They do not execute complete original allocation, audio,
+collision, player creation or the whole game. The label comparison covers the
+original handler on prepared lists; null-to-allocated native ownership is
+separately checked against the recovered allocation order and synthetic tests.
+
+The first integrated test run exposed a moved-from PDMOVE facade being mistaken
+for an explicit null original list. A host transfer marker now permits restoring
+that detached facade without fabricating a missing original reference. The
+regression and final full suite pass. Independent reviews found no blocking
+issues in label-list selection or PDMOVE publication.
+
+No interactive preview was automatically launched. The existing isolated
+Preview-0.36.1 remains available for the owner to start manually. Full canonical
+68-field player work, RAM/ONE registration and the retained GENERATE continuation
+remain the next requirements.
+
+The preceding source commit `353955a70d5497bd0fdcf9580b72a52719e5f4c6`
+passed all three GitHub jobs in run `34688760568`; that CI result belongs to the
+preceding commit, not this release. Original assets, instruction dumps, drivers,
+logs and captures remain ignored local files.
+
+## Record-query gates (0.36.1)
 
 Version 0.36.1 corrects the original GETRECNO activity and captured-work gates.
 The original branch at `8030E544..E564` leaves the packet unchanged when the RAM

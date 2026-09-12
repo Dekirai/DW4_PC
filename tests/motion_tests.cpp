@@ -1,10 +1,12 @@
 #include "dw4/motion.hpp"
+#include "dw4/model_motion.hpp"
 #include "script_fixtures.hpp"
 
 #include <bit>
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 namespace {
 using namespace dw4;
@@ -224,6 +226,174 @@ void commands_and_channels() {
     rejects([&]{channels.advance(std::numeric_limits<float>::quiet_NaN());});
     check(channels.states()==saved,"A failed tick changed actor channels.");
 }
+void channel_ownership() {
+    static_assert(std::is_same_v<decltype(std::declval<const MotionChannels&>().list_owner()),
+        std::shared_ptr<const MotionChannelList>>);
+    static_assert(std::is_same_v<decltype(std::declval<const MotionChannelList&>().entry_owner(0)),
+        std::shared_ptr<const MotionState>>);
+    rejects([]{ MotionChannels invalid{std::shared_ptr<MotionChannelList>{}}; });
+    MotionChannels channels;
+    const auto list=channels.list_owner();
+    check(list && list->size()==0 && !channels.allocated(),"Fresh channels lack their actual empty list owner.");
+    check(channels.states()==MotionChannels::States{} && list->size()==0,
+        "Reading empty channel values allocated movement objects.");
+    auto empty_copy=channels;
+    check(empty_copy.list_owner()!=list && empty_copy.list_owner()->size()==0,
+        "Copying empty channels retained the source list or created entries.");
+    const auto unknown=Fixture("Unknown").decode();
+    channels.apply(unknown);
+    check(channels.list_owner()==list && channels.allocated() && list->size()==4 &&
+        channels.states()==MotionChannels::States{},"Unknown MOVE did not allocate four zero-valued objects in the same list.");
+    const auto entries=list->mutable_entries();
+    for (std::size_t i=0;i<entries.size();++i) {
+        check(bool(entries[i]),"First MOVE created a null entry.");
+        for (std::size_t j=0;j<i;++j) check(entries[i]!=entries[j],"First MOVE reused a movement object for two channels.");
+    }
+    channels.apply(unknown);
+    check(list->mutable_entries()==entries,"Repeated unknown MOVE replaced existing channel objects.");
+
+    MotionChannels peer(list);
+    peer.apply(Fixture("Move").decode());
+    check(channels.states()[2].active && entries[2]->value==2,
+        "A second list binding did not mutate the actual shared channel objects.");
+    entries[2]->speed=0.5f;
+    check(channels.states()[2].speed==0.5f && peer.states()[2].speed==0.5f,
+        "Channel inspection used a cached array instead of the actual entry.");
+    auto detached=channels;
+    check(detached.list_owner()!=list && detached.states()==channels.states(),"A validation copy did not detach its list.");
+    for (std::size_t i=0;i<entries.size();++i)
+        check(detached.list_owner()->entry_owner(i)!=entries[i],"A validation copy retained a live entry owner.");
+    detached.apply(Fixture("Back").decode());
+    check(entries[2]->mode==MotionMode::accelerate_positive && detached.states()[2].mode==MotionMode::impulse_negative,
+        "Changing a detached candidate leaked into live list storage.");
+    channels=detached;
+    check(channels.list_owner()==list && list->mutable_entries()==entries && channels.states()==detached.states(),
+        "Copy publication replaced the destination's list or entry owners.");
+    detached.apply(Fixture("Stop").decode());
+    channels=std::move(detached);
+    check(channels.list_owner()==list && list->mutable_entries()==entries && entries[2]->mode==MotionMode::stop_positive,
+        "Move publication transferred a detached list into live work.");
+    const auto detached_list=detached.list_owner();
+    MotionChannels transferred(std::move(detached));
+    check(transferred.list_owner()==detached_list,"Move construction did not transfer the actual binding.");
+    rejects([&]{ (void)detached.states(); });
+    detached=channels;
+    check(detached.list_owner()!=list && detached.states()==channels.states(),
+        "Assignment could not restore detached value ownership to a moved-from binding.");
+
+    const auto before=channels.states();
+    auto invalid=Fixture("Move").decode();invalid.channel=4;
+    rejects([&]{channels.apply(invalid);});
+    check(channels.states()==before && list->mutable_entries()==entries,"Rejected setup changed live owner identity or values.");
+    auto invalid_first=Fixture("Move").decode();invalid_first.setup.frames=std::numeric_limits<float>::infinity();
+    const auto empty_list=empty_copy.list_owner();
+    rejects([&]{empty_copy.apply(invalid_first);});
+    check(empty_copy.list_owner()==empty_list && empty_list->size()==0,"Rejected first setup partially allocated channels.");
+    empty_copy=channels;
+    check(empty_copy.list_owner()==empty_list && empty_copy.states()==channels.states(),
+        "Publishing four states into an empty binding replaced its allocated list.");
+    for (std::size_t i=0;i<entries.size();++i)
+        check(empty_list->entry_owner(i)!=entries[i],"Publication into an empty list stole source entry owners.");
+    channels.on_sequence_change();
+    check(list->mutable_entries()==entries,"Sequence stop replaced movement entry owners.");
+    entries[2]->speed=0;
+    channels.apply(Fixture("Move").decode());
+    (void)channels.advance(1);
+    check(list->mutable_entries()==entries && entries[2]->speed==1,
+        "A movement tick failed to publish into the existing entry objects.");
+    MotionChannels empty;
+    const auto retained_value=*entries[2];
+    channels=empty;
+    check(channels.list_owner()==list && list->size()==0 && *entries[2]==retained_value,
+        "Empty value publication replaced the list or reset a retained removed entry.");
+    channels.apply(unknown);
+    for (std::size_t i=0;i<entries.size();++i)
+        check(list->entry_owner(i)!=entries[i],"Repopulating an empty list reused externally retained removed objects.");
+
+    std::weak_ptr<MotionChannelList> lifetime;
+    std::optional<MotionChannels> retained;
+    {
+        auto actual=std::make_shared<MotionChannelList>();lifetime=actual;
+        retained.emplace(actual);
+    }
+    check(!lifetime.expired(),"A bound channel view borrowed its list lifetime.");
+    retained.reset();check(lifetime.expired(),"List ownership formed a cycle after its last view was released.");
+
+    MotionChannels destination;destination.apply(unknown);
+    const auto destination_list=destination.list_owner();const auto original_entries=destination_list->mutable_entries();
+    original_entries[0]->value=1;original_entries[1]->value=2;
+    auto source_entries=original_entries;std::swap(source_entries[0],source_entries[1]);
+    MotionChannels aliased_source(std::make_shared<MotionChannelList>(std::move(source_entries)));
+    destination=aliased_source;
+    check(destination_list->mutable_entries()==original_entries && original_entries[0]->value==2 && original_entries[1]->value==1,
+        "Publication read a later source value after overwriting its shared entry.");
+}
+void malformed_channel_owners() {
+    for (unsigned shape=0;shape<5;++shape) {
+        auto actual=std::make_shared<MotionChannelList>();
+        const std::size_t count=shape==0 ? 1 : shape==1 ? 3 : shape==2 ? 5 : 4;
+        for (std::size_t i=0;i<count;++i) actual->mutable_entries().push_back(std::make_shared<MotionState>());
+        if (shape==3) actual->mutable_entries()[2].reset();
+        if (shape==4) actual->mutable_entries()[3]=actual->mutable_entries()[0];
+        const auto entries=actual->mutable_entries();
+        MotionChannels malformed(actual),destination;
+        const auto destination_owner=destination.list_owner();
+        MotionTimer timer;timer.saved_world_time=7;
+        const auto saved_timer=timer;
+        ModelMotionPose pose({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1});pose.translated=true;
+        const auto saved_pose=pose;
+        rejects([&]{ (void)malformed.allocated(); });
+        rejects([&]{ (void)malformed.states(); });
+        rejects([&]{malformed.apply(Fixture("Unknown").decode());});
+        rejects([&]{ (void)malformed.advance(1); });
+        rejects([&]{ (void)malformed.advance(timer,8); });
+        rejects([&]{malformed.on_sequence_change();});
+        rejects([&]{ (void)malformed.advance_model(pose,timer,8); });
+        check(actual->mutable_entries()==entries && destination.list_owner()==destination_owner &&
+            !destination.allocated() && timer==saved_timer && pose==saved_pose,
+            "Malformed list consumption repaired owners or partially published model/timer state.");
+        MotionChannels copy(malformed);
+        check(copy.list_owner()!=actual && copy.list_owner()->size()==actual->size(),
+            "A raw snapshot repaired malformed list shape or reused its list owner.");
+        for (std::size_t i=0;i<count;++i) {
+            const auto cloned=copy.list_owner()->entry_owner(i);
+            check(bool(cloned)==bool(entries[i]) && (!cloned || (cloned!=entries[i] && *cloned==*entries[i])),
+                "A raw snapshot failed to detach an entry or preserve a null field.");
+        }
+        if (shape==4) check(copy.list_owner()->entry_owner(0)==copy.list_owner()->entry_owner(3),
+            "A raw snapshot silently repaired aliased malformed channel entries.");
+        malformed=copy;
+        check(actual->mutable_entries()==entries,"Publishing an unchanged raw snapshot replaced malformed owner identities.");
+        destination=copy;
+        check(destination.list_owner()==destination_owner && destination_owner->size()==count,
+            "Non-consuming publication rejected or repaired a raw malformed list.");
+        rejects([&]{ (void)destination.states(); });
+        rejects([&]{ (void)copy.states(); });
+    }
+    auto oversized=std::make_shared<MotionChannelList>();oversized->mutable_entries().resize(4097);
+    MotionChannels too_large(oversized),destination;
+    const auto destination_list=destination.list_owner();
+    rejects([&]{MotionChannels copy(too_large);});
+    rejects([&]{destination=too_large;});
+    check(destination.list_owner()==destination_list && destination_list->size()==0 && oversized->size()==4097,
+        "A bounded raw snapshot failure partially changed its source or destination.");
+}
+void model_channel_publication() {
+    MotionChannels channels;channels.apply(Fixture("Move").decode());
+    const auto list=channels.list_owner();const auto entries=list->mutable_entries();
+    ModelMotionPose pose({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1});
+    const auto matrix=pose.matrix_owner();
+    MotionTimer timer;start_motion_timer(timer,0);
+    const auto result=channels.advance_model(pose,timer,0);
+    check(result.channels.translation[2]==1 && pose.matrix()[14]==1 && pose.matrix_owner()==matrix &&
+        channels.list_owner()==list && list->mutable_entries()==entries && entries[2]->speed==1,
+        "Model integration failed to publish into the actual matrix/list/entry owners.");
+    pose.matrix()[10]=std::numeric_limits<float>::max();
+    const auto before=channels.states();const auto old_pose=pose;const auto old_timer=timer;
+    rejects([&]{ (void)channels.advance_model(pose,timer,0); });
+    check(channels.states()==before && list->mutable_entries()==entries && pose==old_pose && timer==old_timer,
+        "Rejected model translation leaked candidate values into live owners.");
+}
 void local_matrix() {
     std::array<float,16> matrix{0,0,-2,0, 0,3,0,0, 4,0,0,0, 10,20,30,1};
     translate_model_local(matrix,{1,2,3});
@@ -287,7 +457,7 @@ void timers() {
 
     MotionChannels empty; MotionTimer untouched; untouched.saved_world_time=7;
     const auto old=untouched; check(!empty.advance(untouched,99).translation_updated && untouched==old,
-        "An unallocated movement list queried its timer.");
+        "An empty movement list queried its timer.");
     MotionChannels channels; channels.apply(Fixture("Move").decode());
     timer={}; start_motion_timer(timer,5*quantum);
     check(channels.advance(timer,5*quantum).translation[2]==1 && timer.cached_frames==1,
@@ -299,7 +469,8 @@ void timers() {
 }
 } // namespace
 int main() {
-    try { scalar_modes(); expiry_and_failure(); zero_frame_arithmetic(); commands_and_channels(); local_matrix(); timers();
+    try { scalar_modes(); expiry_and_failure(); zero_frame_arithmetic(); commands_and_channels();
+        channel_ownership(); malformed_channel_owners(); model_channel_publication(); local_matrix(); timers();
         std::cout << "Motion tests passed: " << checks << " checks\n"; return 0; }
     catch (const std::exception& error) { std::cerr << "Motion test failure after " << checks << " checks: " << error.what() << '\n'; return 1; }
 }

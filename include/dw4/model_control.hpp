@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 #include <utility>
+#include <vector>
 
 namespace dw4 {
 struct ModelCtrlCommand {
@@ -27,15 +28,88 @@ using ModelCommand = std::variant<MotionCommand,ModelCtrlCommand,PadMotionComman
 // no-ops; PDMOVE selects Move parameters only for the exact name "Move".
 ModelCommand decode_model_command(const IgbDocument& document, std::uint32_t reference_index);
 
+// Actual work+48 igFloatList ownership. The logical count and backing allocation
+// are distinct: original sequence entry clears the former, retaining the latter.
+// Storage::size() describes represented addressable floats, not guest allocator
+// capacity. No host vector growth rule is claimed to reproduce the guest heap.
+class ModelPadMotionList {
+public:
+    using Storage=std::vector<float>;
+    ModelPadMotionList() = default;
+    explicit ModelPadMotionList(Storage values);
+    // Explicit original/prepared shape. Consumers check the fields they use;
+    // merely retaining or detaching a malformed shape does not repair it.
+    ModelPadMotionList(std::int32_t count,std::shared_ptr<Storage> backing)
+        : count_(count),backing_(std::move(backing)) {}
+    ModelPadMotionList(const ModelPadMotionList&) = delete;
+    ModelPadMotionList& operator=(const ModelPadMotionList&) = delete;
+    std::int32_t size() const noexcept { return count_; }
+    void clear() noexcept { count_=0; }
+    std::shared_ptr<Storage> backing_owner() { return backing_; }
+    std::shared_ptr<const Storage> backing_owner() const { return backing_; }
+private:
+    std::int32_t count_{};
+    std::shared_ptr<Storage> backing_;
+    friend class PadMotionParameters;
+};
+
+class PadMotionParameters {
+public:
+    using Values=std::array<float,4>;
+    PadMotionParameters();
+    explicit PadMotionParameters(std::shared_ptr<ModelPadMotionList> actual_list);
+    // Copies detach actual list/backing values for validation. Assignments
+    // publish into the destination's existing list/backing; move construction
+    // transfers a binding. Assignment is not reference-field replacement.
+    PadMotionParameters(const PadMotionParameters&);
+    PadMotionParameters(PadMotionParameters&&) noexcept;
+    PadMotionParameters& operator=(const PadMotionParameters&);
+    PadMotionParameters& operator=(PadMotionParameters&&);
+    PadMotionParameters detached_snapshot() const;
+    void publish_snapshot(const PadMotionParameters&);
+    std::shared_ptr<ModelPadMotionList> list_owner() { return list_; }
+    std::shared_ptr<const ModelPadMotionList> list_owner() const { return list_; }
+    std::int32_t size() const;
+    void clear();
+    // Explicit prepared contents, not the original PDMOVE command. Existing
+    // owners and storage beyond these four floats remain intact.
+    void set_values(const Values&);
+    // Detached convenience view, derived from a logical four-element list.
+    std::optional<Values> values() const;
+    // Exact PDMOVE: initialize four zeros only when count==0, then independently
+    // guard the selected value and frame stores by the actual logical count.
+    void apply(const PadMotionCommand&);
+    // 80309168 reads the chosen backing pair without consulting logical count.
+    // A cleared list with retained storage therefore remains readable here.
+    std::array<float,2> backing_pair(bool moving) const;
+    bool operator==(const PadMotionParameters&) const;
+private:
+    std::shared_ptr<ModelPadMotionList> list_;
+    // A moved-from host facade may regain detached value ownership. An
+    // explicitly supplied null original reference must remain distinguishable.
+    bool transferred_{};
+    void require_owner() const;
+    void prepare_storage(std::size_t size);
+};
+
 // Owned motion/control fields for one explicitly prepared ONE model. This is
 // not the complete beModelCtrlInfoWork or original player construction routine.
 struct ModelControlState {
     explicit ModelControlState(ModelMotionPose prepared_pose) : pose(std::move(prepared_pose)) {}
+    ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list)
+        : pose(std::move(prepared_pose)),pad_motion(std::move(actual_pad_list)) {}
+    ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list,
+        std::shared_ptr<MotionChannelList> actual_movement_list)
+        : pose(std::move(prepared_pose)),channels(std::move(actual_movement_list)),pad_motion(std::move(actual_pad_list)) {}
+    // Member copies detach matrix/list values. Publication retains existing
+    // owners; binding another actual work list uses the constructor above.
+    ModelControlState detached_snapshot() const { return *this; }
+    void publish_snapshot(const ModelControlState& candidate) { *this=candidate; }
     ModelMotionPose pose;
     MotionChannels channels;
     std::optional<MotionTimer> elapsed_timer; // This RAM's named KEIKATIMER.
     std::int32_t mode{}, phase{}; // _ctrlSt0 / _ctrlSt1, work+3C/+40.
-    std::optional<std::array<float,4>> pad_motion; // Stop value/frame, Move value/frame.
+    PadMotionParameters pad_motion; // Actual work+48 list; Stop pair, then Move pair.
     bool check_fall = true; // _isFallCheck, work+DA; CTRL changes the flag only.
     std::optional<std::string> bullet_hit_script,wall_hit_script,floor_hit_script; // Work+30/34/38; null differs from empty.
     std::uint8_t wall_check=1,floor_check=1; // Work+D8/D9.

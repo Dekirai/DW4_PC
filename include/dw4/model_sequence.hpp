@@ -52,6 +52,32 @@ struct ModelSequenceLabel {
     std::int32_t cached_offset = -1;
     bool operator==(const ModelSequenceLabel&) const = default;
 };
+// Actual nullable work+24/+28/+2C references. The lists own the authoritative
+// ordered values; ModelSequenceLabel is only a detached inspection snapshot.
+// A future complete work owner can embed these fields and supply an aliasing
+// shared_ptr to the runtime. No list is allocated until the first SETLABEL.
+struct ModelSequenceLabelFields {
+    using StringList=std::vector<std::optional<std::string>>;
+    using OffsetList=std::vector<std::int32_t>;
+    std::shared_ptr<StringList> sequences,names;
+    std::shared_ptr<OffsetList> offsets;
+};
+class ModelSequenceLabels {
+public:
+    explicit ModelSequenceLabels(std::shared_ptr<ModelSequenceLabelFields> fields);
+    ModelSequenceLabels(const ModelSequenceLabels&);
+    ModelSequenceLabels(ModelSequenceLabels&&) noexcept = default;
+    // Value publication keeps the destination's fields and existing list owners.
+    ModelSequenceLabels& operator=(const ModelSequenceLabels&);
+    ModelSequenceLabels& operator=(ModelSequenceLabels&&);
+    std::vector<ModelSequenceLabel> snapshot() const;
+    std::shared_ptr<ModelSequenceLabelFields> fields() const noexcept {return fields_;}
+    void set(std::optional<std::string> sequence,std::optional<std::string> label);
+    void cache(std::size_t index,std::int32_t offset);
+private:
+    std::shared_ptr<ModelSequenceLabelFields> fields_;
+    void publish(const std::vector<ModelSequenceLabel>& rows,bool allocated);
+};
 enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting, hitbox_required, lua_required };
 struct ModelSequenceResult {
     ModelSequenceStop stop{};
@@ -97,6 +123,8 @@ class ModelSequenceRuntime {
 public:
     ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
         std::string info_name,std::int32_t ram_no);
+    ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
+        std::string info_name,std::int32_t ram_no,std::shared_ptr<ModelSequenceLabelFields> labels);
     ModelControlState& model();
     const ModelControlState& model() const noexcept { return model_; }
     ModelWaitState& wait_state();
@@ -105,7 +133,9 @@ public:
     bool selected() const noexcept { return current_.has_value(); }
     std::uint32_t command_index() const noexcept { return cursor_; }
     std::uint32_t label_count() const noexcept { return label_count_; }
-    const std::vector<ModelSequenceLabel>& labels() const noexcept { return labels_; }
+    std::vector<ModelSequenceLabel> labels() const { return labels_.snapshot(); }
+    std::shared_ptr<ModelSequenceLabelFields> label_fields();
+    std::shared_ptr<const ModelSequenceLabelFields> label_fields() const noexcept {return labels_.fields();}
     bool selection_pending() const noexcept { return selection_pending_; }
     bool jump_pending() const noexcept { return pending_jump_.has_value(); }
     bool lua_pending() const noexcept { return lua_pending_; }
@@ -155,7 +185,7 @@ private:
     ModelWaitState wait_;
     std::string info_name_;
     std::int32_t ram_no_{};
-    std::vector<ModelSequenceLabel> labels_;
+    ModelSequenceLabels labels_;
     std::optional<std::size_t> current_;
     std::uint32_t cursor_{},label_count_{};
     struct PendingJump {
@@ -165,7 +195,15 @@ private:
     };
     std::optional<PendingJump> pending_jump_;
     bool running_{},selection_pending_{},lua_faulted_{},lua_pending_{};
+    struct SelectionPlan {
+        std::size_t current{};
+        std::uint32_t cursor{};
+        std::optional<std::size_t> cache_index;
+        std::int32_t cache_offset{};
+    };
     void require_no_lua_fault() const;
+    SelectionPlan prepare_selection(std::string_view sequence) const;
+    void publish_selection(const SelectionPlan&,ModelControlState&&,bool pending);
     void complete_selection();
 };
 } // namespace dw4

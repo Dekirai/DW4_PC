@@ -176,6 +176,105 @@ void original_timing_and_ni() {
     }
 }
 
+void actual_owner_graph_and_reference_replacement() {
+    static_assert(!std::is_copy_constructible_v<ModelSubcommandWrapper>);
+    static_assert(!std::is_copy_constructible_v<ModelSubcommandList>);
+    ModelSubcommandQueue initial;
+    auto current_work_reference=initial.wrapper_owner();const auto old_wrapper=current_work_reference;
+    const auto old_list=old_wrapper->list_owner();
+    check(old_wrapper && old_list && old_list->empty() && initial.list_owner()==old_list && &initial.entries()==old_list.get(),
+        "Factory preparation must allocate the actual wrapper and its distinct empty list.");
+    rejects([&]{ModelSubcommandQueue absent(std::shared_ptr<ModelSubcommandWrapper>{});});
+    rejects([&]{initial.entry_owner(0);});
+    initial.append_sound(0,"first");initial.append_sound(0,"second");
+    const auto first=initial.entry_owner(0),second=initial.entry_owner(1);
+    check(first!=second && first.get()==&old_list->front() && second.get()==&old_list->back(),
+        "The actual ordered list must retain separate entry allocations.");
+    ModelSubcommandQueue old_alias(old_wrapper);std::vector<std::string> plays;std::vector<std::uint64_t> downs;
+    bool second_available{};
+    ModelSubcommandServices services;
+    services.play_sound=[&](const auto& name) {
+        if(name=="second" && !second_available)return ModelSoundPlayResult{};
+        plays.push_back(*name);return ModelSoundPlayResult{true,name=="first"?101u:102u,4};
+    };
+    check(initial.update(2,context(),services).stop==ModelSubcommandStop::sound_play_required && old_alias.pending(),
+        "A second facade did not observe the actual wrapper's pending pass.");
+    check(std::get<ModelSoundSubcommandState>(first->value).handle==101 && second->started && second->elapsed==2,
+        "Shared entry owners did not expose the committed start prefix.");
+    current_work_reference=std::make_shared<ModelSubcommandWrapper>();ModelSubcommandQueue fresh(current_work_reference);
+    check(current_work_reference!=old_wrapper && fresh.list_owner()!=old_list && fresh.entries().empty() &&
+        plays==std::vector<std::string>{"first"} && downs.empty() && old_alias.pending(),
+        "Replacing a work reference reset old commands, reused list storage or performed implicit cleanup.");
+    fresh.append_sound(9,"new generation");
+    check(fresh.entry_owner(0)!=first && fresh.entries()[0].id==first->id && old_list->size()==2,
+        "Separate wrappers must own independent entries even when diagnostic IDs are equal.");
+    second_available=true;check(old_alias.resume(services).complete() && !initial.pending(),
+        "Retained old wrapper did not resume the same pass through another facade.");
+    check(plays==std::vector<std::string>{"first","second"} && initial.entry_owner(0)==first && old_alias.entry_owner(1)==second &&
+        first->elapsed==2 && second->elapsed==2 && fresh.entries()[0].elapsed==0,
+        "Owner alias resume copied handles, replayed playback or advanced another generation.");
+    services.sound_volume_down=[&](std::uint64_t handle) {if(handle==102)return false;downs.push_back(handle);return true;};
+    check(initial.cleanup(services).stop==ModelSubcommandStop::sound_volume_down_required && old_alias.pending() && old_list->size()==2,
+        "Pending cleanup did not retain its complete actual list.");
+    ModelSubcommandQueue transferred(std::move(old_alias));
+    check(transferred.wrapper_owner()==old_wrapper && old_alias.wrapper_owner()!=old_wrapper && transferred.entry_owner(1)==second,
+        "Moving a facade copied entry payloads or moved the actual list into another owner.");
+    services.sound_volume_down=[&](std::uint64_t handle){downs.push_back(handle);return true;};
+    check(transferred.resume(services).complete() && initial.entries().empty() && old_list->empty() &&
+        transferred.list_owner()==old_list && downs==std::vector<std::uint64_t>{101,102},
+        "Cleanup replaced the list owner or replayed an already completed cleanup entry.");
+    check(std::get<ModelSoundSubcommandState>(first->value).handle==101 && std::get<ModelSoundSubcommandState>(second->value).handle==102,
+        "Removing list references mutated independently retained entry objects.");
+    initial.resume(services);initial.cleanup(services);
+    check(downs.size()==2 && fresh.entries().size()==1,"Empty shared cleanup replayed retained entry resources or touched fresh work.");
+}
+
+void owner_retention_clear_and_faults() {
+    ModelSubcommandQueue queue;ModelSubcommandQueue alias(queue.wrapper_owner());
+    const auto list=queue.list_owner();queue.append_hitbox({0,99,10,{},{}});
+    const auto hitbox=queue.entry_owner(0);queue.append_sound(0,"pending");const auto sound=queue.entry_owner(1);
+    auto effect_command=effect();effect_command.delay=4;queue.append_effect(effect_command);const auto delayed=queue.entry_owner(2);
+    check(queue.update(1,context()).stop==ModelSubcommandStop::sound_play_required,"Clear fixture must pause at the actual sound entry.");
+    alias.clear_hitboxes();
+    check(queue.list_owner()==list && queue.entries().size()==2 && queue.entry_owner(0)==sound && queue.entry_owner(1)==delayed &&
+        hitbox->elapsed==1 && !hitbox->started && sound->elapsed==1 && delayed->elapsed==0,
+        "Selective clear relocated entry objects, changed the list owner or advanced the paused tail.");
+    ModelSubcommandServices services;unsigned plays{};
+    services.play_sound=[&](const auto&) {
+        ++plays;alias.append_sound(0,"later");
+        rejects([&]{alias.resume(services);});rejects([&]{alias.cleanup(services);});
+        return ModelSoundPlayResult{true,0,4};
+    };
+    check(alias.resume(services).complete() && plays==1 && queue.entry_owner(0)==delayed && delayed->elapsed==1 &&
+        queue.entries().back().elapsed==0 && sound->started,
+        "Shared callback append/clear lost list order, entry identity or the original count snapshot.");
+    queue.cleanup();check(list->empty() && delayed->elapsed==1,"Explicit cleanup did not release only the list's entry references.");
+
+    std::weak_ptr<ModelSubcommandWrapper> weak_wrapper;std::weak_ptr<ModelSubcommandList> weak_list;
+    std::shared_ptr<ModelSubcommandList> retained_list;std::shared_ptr<const ModelSubcommandEntry> retained_entry;
+    unsigned cleanups{};
+    {
+        ModelSubcommandQueue owner;weak_wrapper=owner.wrapper_owner();retained_list=owner.list_owner();weak_list=retained_list;
+        owner.append_sound(0,"retained");retained_entry=owner.entry_owner(0);
+        services.play_sound=[](const auto&){return ModelSoundPlayResult{true,777,4};};
+        services.sound_volume_down=[&](auto){++cleanups;return true;};owner.update(0,context(),services);
+        const auto wrapper_copy=owner.wrapper_owner(),another_copy=wrapper_copy;
+        check(wrapper_copy==another_copy && owner.entry_owner(0)==retained_entry,"Retaining wrapper handles copied live entry state.");
+    }
+    check(weak_wrapper.expired() && !weak_list.expired() && retained_list->entry_owner(0)==retained_entry &&
+        std::get<ModelSoundSubcommandState>(retained_entry->value).handle==777 && cleanups==0,
+        "Facade/wrapper destruction performed external cleanup or invalidated an independently retained list.");
+    retained_list.reset();check(weak_list.expired() && retained_entry->started && cleanups==0,
+        "Dropping the last list reference performed synthetic resource cleanup on its retained entry.");
+
+    queue.append_sound(0,"uncertain");const auto failed_entry=queue.entry_owner(0);
+    services.play_sound=[](const auto&)->ModelSoundPlayResult{throw std::runtime_error("Uncertain original manager outcome.");};
+    rejects([&]{queue.update(1,context(),services);});
+    ModelSubcommandQueue after_failure(queue.wrapper_owner());
+    check(after_failure.faulted() && after_failure.entry_owner(0)==failed_entry,"Another facade bypassed the shared fault or replaced its entry.");
+    rejects([&]{after_failure.resume(services);});rejects([&]{after_failure.cleanup(services);});
+}
+
 int numeric_oracle() {
     char kind{};
     while(std::cin>>kind) {
@@ -227,7 +326,7 @@ int main(int argc,char** argv) {
         if(argc==2 && std::string(argv[1])=="--oracle")return oracle();
         if(argc==2 && std::string(argv[1])=="--numeric-oracle")return numeric_oracle();
         defaults_delay_and_results();pending_order_and_cleanup();effect_binding_and_interruption();callbacks_moves_and_bounds();
-        original_timing_and_ni();
+        original_timing_and_ni();actual_owner_graph_and_reference_replacement();owner_retention_clear_and_faults();
         std::cout<<"model subcommand checks: "<<checks<<'\n';return 0;
     } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

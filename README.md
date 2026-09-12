@@ -1,6 +1,12 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
+Version 0.37 makes the existing movement, PDMOVE, subcommand and sequence-label
+consumers operate on actual retained list owners. Sequence entry preserves
+allocated lists and PDMOVE backing storage, and paused subcommands retain their
+original entries when another facade takes over. This prepares the storage
+needed for original player-work replacement; the complete factory, GENERATE
+continuation and gameplay loop still remain.
 Version 0.36 adds original PLAYERPOINT queries and message-driven model placement.
 The actual node matrix now has its own lifetime, separate from a model's turn
 and control state. Prepared spawn integration connects the original point

@@ -178,6 +178,131 @@ void nullable_label_storage_and_lookup() {
     runtime.set_label(std::nullopt,"replacement");
     check(runtime.labels().size()==3 && runtime.labels()[0].label=="replacement","Null sequence-key replacement appended an unrelated row.");
 }
+void label_list_owners_and_publication() {
+    auto f=branches();auto fields=std::make_shared<ModelSequenceLabelFields>();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0,fields);
+    check(runtime.label_fields()==fields && !fields->sequences && !fields->names && !fields->offsets,
+        "Prepared sequence construction allocated the originally null label lists.");
+    runtime.select("SQ_WAIT");
+    check(!fields->sequences && !fields->names && !fields->offsets,
+        "Unlabelled selection allocated label lists.");
+    runtime.set_label("SQ_WALK","gun");
+    const auto sequences=fields->sequences,names=fields->names;const auto offsets=fields->offsets;
+    check(sequences && names && offsets && sequences!=names && sequences->size()==1 && names->size()==1 &&
+        offsets->size()==1 && (*sequences)[0]=="SQ_WALK" && (*names)[0]=="gun" && (*offsets)[0]==-1,
+        "SETLABEL failed to allocate and populate the three actual list owners.");
+    runtime.select("SQ_WALK");
+    check(runtime.label_fields()==fields && fields->sequences==sequences && fields->names==names && fields->offsets==offsets &&
+        (*offsets)[0]==12 && runtime.command_index()==12,"Sequence selection replaced a retained label owner or missed its cache write.");
+    auto snapshot=runtime.labels();snapshot[0].label="detached";snapshot[0].cached_offset=7;
+    check((*names)[0]=="gun" && (*offsets)[0]==12,"Inspection snapshots changed canonical label fields.");
+    (*names)[0]="slash";(*offsets)[0]=-1;runtime.select("SQ_WALK");
+    check(runtime.command_index()==4 && runtime.labels()[0].label=="slash" && (*offsets)[0]==4,
+        "Selection read stale zipped labels instead of the actual supplied lists.");
+    auto copy=runtime;
+    check(copy.label_fields()!=fields && copy.label_fields()->sequences!=sequences && copy.label_fields()->names!=names &&
+        copy.label_fields()->offsets!=offsets && copy.labels()==runtime.labels(),"Sequence copy retained live mutable label allocations.");
+    copy.set_label("SQ_WALK","dual");copy.select("SQ_WALK");
+    check((*names)[0]=="slash" && (*offsets)[0]==4,"A detached sequence candidate modified the original labels.");
+    runtime=copy;
+    check(runtime.label_fields()==fields && fields->sequences==sequences && fields->names==names && fields->offsets==offsets &&
+        (*names)[0]=="dual" && (*offsets)[0]==0,"Sequence assignment replaced published label-list owners.");
+    ModelSequenceRuntime moved(std::move(runtime));
+    check(moved.label_fields()==fields,"Sequence move construction detached its supplied field owner.");
+    moved.set_label("SQ_WALK","absent");const auto before=moved.labels();
+    rejects([&]{moved.select("SQ_WALK");});
+    check(moved.labels()==before && moved.command_index()==0 && fields->offsets==offsets,
+        "Failed selection published its candidate cache or replaced the actual offset list.");
+    // Original searches the first matching key even when prepared lists contain
+    // duplicate occurrences. Entries are not canonicalized by equal text.
+    sequences->push_back("SQ_WALK");names->push_back("gun");offsets->push_back(12);
+    moved.set_label("SQ_WALK","arm");
+    check(names->size()==2 && (*names)[0]=="arm" && (*offsets)[0]==-1 && (*names)[1]=="gun" && (*offsets)[1]==12,
+        "SETLABEL replaced a later equal key or merged ordered occurrences.");
+    moved.begin_select("SQ_WALK");
+    check((*offsets)[0]==8 && moved.selection_pending() && moved.command_index()==8,
+        "Phased selection failed to publish its cache before cleanup.");
+    rejects([&]{moved.label_fields();});moved.finish_select();
+    check(fields->sequences==sequences && fields->names==names && fields->offsets==offsets,
+        "Finishing selection replaced one of the canonical label allocations.");
+    std::weak_ptr<ModelSequenceLabelFields> retained;
+    std::shared_ptr<ModelSequenceLabelFields::StringList> retained_names;
+    {
+        ModelSequenceRuntime transient(f.program(),model(),"other",1);
+        transient.set_label("SQ_WAIT","dual");retained=transient.label_fields();retained_names=transient.label_fields()->names;
+    }
+    check(retained.expired() && retained_names && (*retained_names)[0]=="dual",
+        "A retained label list required the lifetime of the sequence facade.");
+}
+void malformed_label_lists() {
+    auto f=branches();auto fields=std::make_shared<ModelSequenceLabelFields>();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0,fields);
+    rejects([&]{ModelSequenceRuntime invalid(f.program(),model(),"actor",0,nullptr);});
+    fields->sequences=std::make_shared<ModelSequenceLabelFields::StringList>();
+    const auto sequences=fields->sequences;
+    rejects([&]{runtime.set_label("SQ_WAIT","dual");});rejects([&]{runtime.select("SQ_WAIT");});
+    check(fields->sequences==sequences && !fields->names && !fields->offsets,
+        "A partial label owner was silently repaired or discarded.");
+    fields->names=sequences;fields->offsets=std::make_shared<ModelSequenceLabelFields::OffsetList>();
+    auto detached=runtime;
+    check(detached.label_fields()!=fields && detached.label_fields()->sequences!=sequences &&
+        detached.label_fields()->sequences==detached.label_fields()->names,
+        "Copying a prepared label profile repaired aliases or retained live list owners.");
+    rejects([&]{detached.labels();});
+    rejects([&]{runtime.set_label("SQ_WAIT","dual");});
+    fields->names=std::make_shared<ModelSequenceLabelFields::StringList>();
+    runtime.select("SQ_WAIT");
+    check(fields->sequences==sequences && sequences->empty() && fields->names->empty() && fields->offsets->empty(),
+        "An allocated-empty label profile was conflated with null fields.");
+    sequences->push_back("SQ_WAIT");
+    rejects([&]{runtime.labels();});rejects([&]{runtime.select("SQ_WAIT");});
+    check(sequences->size()==1 && fields->names->empty() && fields->offsets->empty(),
+        "Mismatched label counts were padded to manufacture a valid profile.");
+    fields->names->push_back("dual");fields->offsets->push_back(99);
+    rejects([&]{runtime.select("SQ_WAIT");});
+    check((*fields->offsets)[0]==99 && runtime.command_index()==0,"An invalid cached offset changed the current sequence.");
+    (*fields->offsets)[0]=-1;(*fields->names)[0]=std::string(4097,'x');
+    rejects([&]{runtime.select("SQ_WAIT");});
+    check((*fields->offsets)[0]==-1,"An invalid stored label name was cached or normalized.");
+}
+void sequence_publishes_into_actual_model_lists() {
+    auto f=branches();
+    auto matrix=std::make_shared<ModelMotionPose::Matrix>(identity);
+    auto pad=std::make_shared<ModelPadMotionList>();auto movement=std::make_shared<MotionChannelList>();
+    auto labels=std::make_shared<ModelSequenceLabelFields>();
+    ModelControlState state(ModelMotionPose(matrix),pad,movement);
+    state.pad_motion.set_values({1,2,3,4});const auto backing=pad->backing_owner();
+    MotionCommand move;move.type="beModelCtrlMOVE";move.channel=2;
+    move.setup={MotionMode::accelerate_positive,2,4,0};move.stop=MotionStop{true,1,2};
+    apply_model_command(state,move,42);const auto entries=movement->mutable_entries();
+    ModelSequenceRuntime runtime(f.program(),std::move(state),"actor",0,labels);
+    check(runtime.model().pose.matrix_owner()==matrix && runtime.model().pad_motion.list_owner()==pad &&
+        runtime.model().channels.list_owner()==movement && movement->mutable_entries()==entries,
+        "Sequence construction detached supplied node, pad or movement owners.");
+    runtime.set_label("SQ_WALK","dual");const auto offsets=labels->offsets;
+    runtime.begin_select("SQ_WALK");
+    check(pad->size()==0 && pad->backing_owner()==backing && *backing==std::vector<float>({1,2,3,4}) &&
+        entries[2]->mode==MotionMode::accelerate_positive && (*offsets)[0]==0,
+        "Early sequence publication replaced or cleared backing storage, or prematurely stopped movement.");
+    runtime.finish_select();
+    check(runtime.model().channels.list_owner()==movement && movement->mutable_entries()==entries &&
+        entries[2]->mode==MotionMode::stop_positive && !entries[2]->stop_on_sequence &&
+        runtime.model().pose.matrix_owner()==matrix,"Post-cleanup stop missed the original retained movement entries.");
+    const auto result=runtime.run(42,[](const auto&){});
+    check(result.stop==ModelSequenceStop::label_boundary && movement->mutable_entries()==entries &&
+        entries[2]->mode==MotionMode::accelerate_positive && entries[2]->value==0.7f && pad->backing_owner()==backing,
+        "A live sequence MOVE wrote a detached control copy or lost the cleared PDMOVE backing.");
+    auto retained=entries[2];auto copied=runtime;
+    copied.select("SQ_WAIT");
+    check(retained->active && retained->value==0.7f && runtime.command_index()==4,
+        "Selecting a detached runtime modified the live original list or cursor.");
+    // A failed sequence lookup must preserve the published graph, not merely
+    // equal-looking copied field values.
+    const auto before=*retained;const auto saved=*matrix;
+    rejects([&]{runtime.select("SQ_ABSENT");});
+    check(movement->mutable_entries()==entries && *retained==before && *matrix==saved &&
+        pad->backing_owner()==backing && labels->offsets==offsets,"Rejected selection changed the live owner graph.");
+}
 void motion_sequence_stop() {
     MotionChannels channels;channels.on_sequence_change();check(!channels.allocated(),"Sequence change allocated unused channels.");
     for(std::uint32_t i=0;i<4;++i) {
@@ -193,10 +318,10 @@ void motion_sequence_stop() {
     auto rotation=before[3];rotation.active=false;rotation.speed=0;
     check(after[3]==rotation,"Rotation reset changed fields other than active and speed.");
     auto f=branches();auto state=model();state.channels=channels;state.mode=4;state.phase=8;state.check_fall=false;
-    state.pad_motion=std::array<float,4>{1,2,3,4};state.pose.position_locked=true;
+    state.pad_motion.set_values({1,2,3,4});state.pose.position_locked=true;
     start_motion_timer(state.elapsed_timer.emplace(),42);
     const auto timer=state.elapsed_timer;ModelSequenceRuntime runtime(f.program(),state,"actor",0);runtime.select("SQ_WAIT");
-    check(runtime.model().mode==0 && runtime.model().phase==0 && runtime.model().check_fall && !runtime.model().pad_motion,
+    check(runtime.model().mode==0 && runtime.model().phase==0 && runtime.model().check_fall && runtime.model().pad_motion.size()==0,
         "Owned sequence preparation did not reset original control fields.");
     check(runtime.model().elapsed_timer==timer && runtime.model().pose.position_locked,"Sequence preparation invented timer restart or position unlock.");
 }
@@ -253,7 +378,7 @@ void wait_assignment_and_resume() {
         ModelSequenceRuntime runtime(std::move(program),model(),"actor",0);runtime.select("SQ_WAIT");
         runtime.wait_state().control_enabled=0x7f;runtime.wait_state().attack_state=-4;runtime.wait_state().attack_mode=19;
         runtime.model().mode=4;runtime.model().phase=3;runtime.model().check_fall=false;
-        runtime.model().pad_motion=std::array<float,4>{1,2,3,4};
+        runtime.model().pad_motion.set_values({1,2,3,4});
         start_motion_timer(runtime.model().elapsed_timer.emplace(),17);
         const auto channels=runtime.model().channels.states();const auto timer=runtime.model().elapsed_timer;
         const auto pad_motion=runtime.model().pad_motion;
@@ -298,10 +423,10 @@ void wait_selection_and_guards() {
     runtime.set_label("SQ_B","missing");rejects([&]{runtime.select("SQ_B");});
     check(runtime.wait_state()==before && !runtime.selection_pending(),"Invalid selected label cleared the wait.");
     runtime.model().mode=4;runtime.model().phase=5;runtime.model().check_fall=false;
-    runtime.model().pad_motion=std::array<float,4>{1,2,3,4};
+    runtime.model().pad_motion.set_values({1,2,3,4});
     runtime.begin_select("SQ_A");const auto& view=std::as_const(runtime);
     check(view.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && view.model().mode==0 && view.model().phase==0 &&
-        !view.model().pad_motion && !view.model().check_fall && runtime.selection_pending() && runtime.command_index()==0,
+        view.model().pad_motion.size()==0 && !view.model().check_fall && runtime.selection_pending() && runtime.command_index()==0,
         "Sequence begin failed to clear only wait name before external cleanup.");
     rejects([&]{runtime.wait_state();});rejects([&]{runtime.run(42);});rejects([&]{runtime.begin_select("SQ_A");});
     runtime.finish_select();check(runtime.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && runtime.model().check_fall,
@@ -664,7 +789,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {command_prefix_and_branches();nullable_label_storage_and_lookup();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
+    try {command_prefix_and_branches();nullable_label_storage_and_lookup();label_list_owners_and_publication();malformed_label_lists();sequence_publishes_into_actual_model_lists();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
         entry_fields_and_lua_setters();hitbox_and_immediate_lua_boundaries();uncertain_lua_is_not_replayed();incomplete_lua_retains_ownership();malformed_hitbox_and_lua();malformed();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_sequence_tests [EXTRACTED_ROOT]");
         std::cout<<"Model sequence tests passed: "<<checks<<" checks\n";return 0;
