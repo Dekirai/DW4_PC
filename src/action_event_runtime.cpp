@@ -190,14 +190,18 @@ struct ActionEventRuntime::Impl {
             else messenger.buffer().add_object({});
             return {true,1,{}};
         }
-        if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" || command=="GETRECNO" ||
-           (owner.collision && owner.collision->owns_delivery(delivery))))
-            return {false,0,"The target's prepared script work owner is unavailable."};
-        if(command=="GETRECNO" && script_work) {
-            // Base 8030E55C loads the signed work+10 value directly, with no
-            // wrapper dereference, active gate or automatic default on lookup.
+        if(command=="GETRECNO") {
+            // 8030E544..E564: inactive RAM or a captured null work pointer
+            // returns without appending. On this fixed prepared ONE profile,
+            // status declines without accessing status data or changing work.
+            if(*owner.active==0 || (owner.query_owner && !*owner.query_owner->work_available))
+                return {true,1,{}};
+            if(!script_work)return {false,0,"MODELCTRL GETRECNO requires its actual prepared work owner."};
             messenger.buffer().add_int(script_work->record);return {true,1,{}};
         }
+        if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" ||
+           (owner.collision && owner.collision->owns_delivery(delivery))))
+            return {false,0,"The target's prepared script work owner is unavailable."};
         const bool collision_retry=owner.collision && owner.collision->owns_delivery(delivery);
         if(collision_retry || command=="CHKBULLET") {
             if(!owner.collision) return {false,0,"CHKBULLET requires this target's authored HIT graph and prepared ONE work."};
@@ -298,7 +302,12 @@ struct ActionEventRuntime::Impl {
                     return {[this,id,status=std::shared_ptr<ModelStatusInvocation>{},status_result=std::optional<std::uint32_t>{}]
                         (NativeMessenger&,const MessengerDelivery& delivery) mutable {
                         auto& owner=model(id);
-                        if(owner.status_work_prepared) {
+                        // GETRECNO is absent from the original status dictionary.
+                        // After the prepared ONE lookup, virtual+C4 declines
+                        // before status-field access/allocation. This known
+                        // decline needs no optional status facade. Full mutable
+                        // RAM/ONE generation still requires that fresh lookup.
+                        if(owner.status_work_prepared && delivery.message.command!="GETRECNO") {
                             if(!status_result) {
                                 if(!status) {
                                     std::shared_ptr<ModelStatusWork> work;
@@ -319,7 +328,7 @@ struct ActionEventRuntime::Impl {
                                 // capture that could keep a self-recipient alive.
                                 status.reset();
                             }
-                            if((*status_result&0xffu)!=0)return MessengerCallResult{true,*status_result,{}};
+                            if((*status_result&0xffu)==1)return MessengerCallResult{true,*status_result,{}};
                         }
                         return model_message(id,owner,delivery);
                     },{}};
@@ -468,9 +477,9 @@ struct ActionEventRuntime::Impl {
 };
 ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>(*this)) {}
 ActionEventRuntime::~ActionEventRuntime() {
-    // A paused self-recipient can retain status -> script work -> the live
-    // Model matrix. Break model-owned continuation edges while the model map
-    // still owns every target; captured work must stay strong during execution.
+    // A paused recipient can retain model callback owners. Break model-owned
+    // continuation edges while the model map still owns every target; captured
+    // work must stay strong during execution. Matrices have separate ownership.
     for(auto& entry:impl_->models) {
         entry.second->query.reset();
         entry.second->broadcast.reset();

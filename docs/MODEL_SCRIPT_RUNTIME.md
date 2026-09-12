@@ -18,9 +18,12 @@ Actual player preparation must bind the existing GAMERAM HP/MHP objects.
 Register the returned work with the script runtime, then supply
 `runtime.handle(request)` as `ModelCollisionServices::hit_script`. The script
 runtime retains the strong work owner. The event adapter keeps a weak reference
-to avoid a model/work/matrix ownership cycle; an expired prepared owner stops
-GETRECNO/CHKBULLET instead of silently manufacturing replacement state.
-GETRECNO reads the live signed record directly. The collision HP-presence gate
+so prepared work lifetime remains explicit. An active GETRECNO or CHKBULLET
+that requires expired work stops instead of manufacturing replacement state.
+GETRECNO leaves the packet unchanged for inactive RAM or an explicitly null
+work pointer; otherwise it appends the signed record directly. Its original
+status virtual declines before accessing any status fields. An empty record
+response makes the collision caller skip the target hit script. The collision HP-presence gate
 reads the current shared HP reference, including replacement or removal.
 
 The Lua VM may be supplied explicitly to retain an existing Lua heap/globals.

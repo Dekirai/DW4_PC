@@ -6,6 +6,8 @@ The actual node matrix now has its own lifetime, separate from a model's turn
 and control state. Prepared spawn integration connects the original point
 provider to all four Agumon nodes. Full player construction, HUD drawing and
 the original gameplay loop remain in progress.
+Patch 0.36.1 also restores the original active/work gates for GETRECNO, so an
+inactive hit source cannot supply a record that triggers the target hit script.
 The full original game, including local
 multiplayer, remains the development target. See [ORIGINAL_BASELINE.md](docs/ORIGINAL_BASELINE.md).
 

@@ -128,7 +128,7 @@ void supplied_scene_matrix_lifetime() {
 
 void live_signed_record() {
     Fixture fixture;ActionEventRuntime runtime;
-    const auto target=runtime.register_model(fixture.binding(1),state(),false);
+    const auto target=runtime.register_model(fixture.binding(1),state(),true);
     runtime.prepare_collision_target(target,fixture.definition(),false);
     auto work=runtime.prepare_target_script_work(target);
     check(!runtime.sequence(target).selected(),"Record fixture accidentally selected a sequence.");
@@ -137,12 +137,47 @@ void live_signed_record() {
         auto send=runtime.messenger().begin_send_to("MODELCTRL",name,1,"GETRECNO");
         check(runtime.resume(send).stop==MessengerStop::completed &&
               runtime.messenger().buffer().integers()==std::vector<std::int32_t>{value},
-            "GETRECNO gated inactive work, dereferenced a wrapper or changed a signed record.");
+            "GETRECNO dereferenced a wrapper or changed an active model's signed record.");
     }
     work->hp.reset();work->max_hp.reset();work->record=-900;
     auto send=runtime.messenger().begin_send_to("MODELCTRL",name,1,"GETRECNO");
     check(runtime.resume(send).stop==MessengerStop::completed && runtime.messenger().buffer().integers()==std::vector<std::int32_t>{-900},
         "Direct record lookup incorrectly requires HP wrappers.");
+}
+
+void record_query_gates() {
+    Fixture fixture;ActionEventRuntime runtime;
+    const auto target=runtime.register_model(fixture.binding(1),state(),true);
+    runtime.prepare_collision_target(target,fixture.definition(),true);
+    auto work=runtime.prepare_target_script_work(target);work->record=-401;
+    auto active=std::make_shared<std::uint8_t>(1);
+    auto available=std::make_shared<bool>(true);
+    runtime.prepare_model_queries(target,{{3,fixture.model},source,
+        std::make_shared<std::optional<std::string>>(name),std::make_shared<std::int32_t>(1),active,available});
+    auto status=std::make_shared<ModelStatusWork>(work,1);runtime.prepare_model_status(target,status);
+    status.reset(); // The original status decline requires none of these fields.
+    auto query=[&](bool append) {
+        auto& messenger=runtime.messenger();messenger.select("MODELCTRL",name,1);
+        messenger.buffer().add_int(57);messenger.buffer().add_string("prefix");messenger.buffer().add_object({});
+        auto call=messenger.begin_send("GETRECNO");
+        check(runtime.resume(call).stop==MessengerStop::completed,
+            "GETRECNO required irrelevant status fields or stopped its original gate.");
+        check(messenger.buffer().integers()==(append?std::vector<std::int32_t>{57,-401}:std::vector<std::int32_t>{57}) &&
+            messenger.buffer().strings()==std::vector<std::optional<std::string>>{"prefix"} &&
+            messenger.buffer().objects().size()==1 && std::holds_alternative<std::monostate>(messenger.buffer().objects()[0]),
+            "GETRECNO changed the existing packet or appended on an inactive/null-work exit.");
+    };
+    for(auto value:{std::uint8_t{1},std::uint8_t{128},std::uint8_t{255}}) {*active=value;query(true);}
+    *active=0;query(false);
+    *active=1;*available=false;query(false);
+    work.reset(); // Expired preparation is not proof of a null original work.
+    *available=true;*active=0;query(false);
+    *active=1;*available=false;query(false);
+    *available=true;
+    auto& pending_messenger=runtime.messenger();
+    auto unresolved=pending_messenger.begin_send_to("MODELCTRL",name,1,"GETRECNO");
+    check(runtime.resume(unresolved).stop==MessengerStop::service_required && pending_messenger.buffer().integers().empty(),
+        "An active query converted missing native work into a false null-work result.");
 }
 
 MessengerDispatch collision_send(ActionEventRuntime& runtime) {
@@ -369,11 +404,27 @@ void retained_collision_script_glue() {
     auto record=events.messenger().begin_send_to("MODELCTRL","e_fixture",0,"GETRECNO");
     check(events.resume(record).stop==MessengerStop::completed && events.messenger().buffer().integers()==std::vector<std::int32_t>{-701},
         "Later record query did not observe the live source owner after the retained script completed.");
+    events.set_active(source_id,false);
+    auto& next=events.messenger();next.select("HITPLAYERBULLET",name,1);
+    // The earlier real script moved the target to X=15. Cover that live body
+    // as well as its prior cache so this query actually reaches GETRECNO.
+    next.buffer().add_box(std::make_shared<const CollisionBox>(CollisionBox{{-100,-100,-100},{100,100,100}}));
+    next.buffer().add_string("e_fixture");next.buffer().add_int(10000);next.buffer().add_int(0);
+    next.buffer().add_matrix(*source_work->matrix());
+    auto inactive_source=next.begin_send("CHKBULLET");
+    const auto inactive_result=events.resume(inactive_source);
+    check(inactive_result.stop==MessengerStop::completed,
+        ("The inactive-source collision did not complete its record-query gate: "+inactive_result.diagnostic).c_str());
+    check(calls==2 && prefixes==1 && target_work->hp->data==43 && !scripts.pending(),
+        "An inactive source supplied a record and incorrectly ran the target hit script.");
+    check(events.messenger().buffer_depth()==0 && events.collision_target(target).result().body_ordinal==0 &&
+        events.messenger().buffer().booleans()==std::vector<std::uint8_t>{1},
+        "The inactive-source regression did not reach the overlapping body or restore its packet.");
 }
 } // namespace
 int main() {
     try {
-        preparation_and_live_aliases();supplied_scene_matrix_lifetime();live_signed_record();original_hp_query();original_status_dispatch();abandoned_status_continuations();
+        preparation_and_live_aliases();supplied_scene_matrix_lifetime();live_signed_record();record_query_gates();original_hp_query();original_status_dispatch();abandoned_status_continuations();
         live_hp_presence_gate();expiration_and_lifetime();retained_collision_script_glue();
         std::cout<<"action_event_script_work: "<<checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {

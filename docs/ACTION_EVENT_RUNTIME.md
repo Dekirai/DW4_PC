@@ -191,7 +191,8 @@ RAM and add authored collision categories. The base target path preserves live
 work gates, timestamp-based body caches and first overlap, then retains nested
 GETRECNO/target-script/heading effects. `prepare_target_script_work` binds the
 live matrix and shared HP wrappers for `ModelScriptRuntime`; GETRECNO reads its
-signed record and collision gates read current HP-reference presence. The
+signed record only for active RAM with actual work; inactive/null-work exits
+append nothing. Collision gates read current HP-reference presence. The
 script runtime must retain the returned owner. Full player/GAMERAM preparation
 remains separate. See [MODEL_COLLISION.md](MODEL_COLLISION.md) and
 [MODEL_SCRIPT_RUNTIME.md](MODEL_SCRIPT_RUNTIME.md).

@@ -1,5 +1,34 @@
 # Native original spawn and node ownership validation
 
+Version 0.36.1 corrects the original GETRECNO activity and captured-work gates.
+The original branch at `8030E544..E564` leaves the packet unchanged when the RAM
+is inactive or the captured work is null; otherwise it appends the signed record.
+The preceding code and an older test incorrectly allowed inactive reads.
+Missing active native work still requires its real owner, rather than becoming
+an invented null-work result. The prepared status facade is unnecessary for
+this known status decline; complete mutable RAM/ONE construction must still
+perform the original separate status lookup.
+
+- Fresh Release build/package: 85/85 CTest suites passed without compiler warnings.
+- Script/controller integration: 96 checks, including raw nonzero activity,
+  null/expired work, packet preservation and an actual overlapping collision
+  whose inactive source must not invoke the target hit script.
+- Fresh production-core GETRECNO comparison: 1,968 rows, comprising 1,608
+  comparisons against 45,888 original instructions and 360 separate native
+  missing-owner checks; zero differences. The original comparisons include
+  480 appended records and 1,128 unchanged packets, signed extremes and exact
+  preservation of typed packet contents. This scope uses the original player's
+  known status-decline result, not a fabricated generic status override.
+- Original spawn, prepared startup and weapon regression: 672, 613 and 413
+  checks passed respectively. The packaged 240-frame walking replay also passed.
+
+A separate read-only 960-case capture audit established the surrounding
+pre-status work capture and the exact low-byte-equals-one return gate. That
+broader reference audit does not prove complete native mutable-work dispatch;
+the full lifecycle remains the next implementation requirement.
+
+## Spawn and node ownership (0.36.0)
+
 Version 0.36.0 was validated locally on 2026-09-12 with MSVC 19.51. Original
 PLAYERPOINT messages now feed the recovered placement helper in a prepared
 integration with all four original Agumon node matrices. The node allocation
