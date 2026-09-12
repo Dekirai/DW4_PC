@@ -14,6 +14,7 @@ namespace dw4 {
 class ActorSceneError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 class ActorSceneResource;
 class ModelSceneObjects;
+class ModelSceneList;
 class ActorSceneNodeList;
 class ActorSceneNodeStorage;
 struct ActorSceneSource;
@@ -36,8 +37,8 @@ private:
     std::optional<std::uint32_t> reference_;
 };
 
-// Canonical loaded node identity and mutable original node fields. Geometry/material fields stay
-// in the owned original document; this is not a baked world-space mesh or actor.
+// Canonical loaded node identity and mutable original node fields. Attribute
+// lists share the resource's object registry; this is not a baked world-space mesh.
 class ActorSceneNode : public std::enable_shared_from_this<ActorSceneNode> {
 public:
     ActorSceneNode(const ActorSceneNode&)=delete;
@@ -49,6 +50,14 @@ public:
     const std::string& type() const noexcept { return type_; }
     const std::optional<std::string>& name() const noexcept { return name_; }
     std::uint32_t flags() const noexcept { return flags_; }
+    bool is_a(std::string_view type) const;
+    std::optional<std::uint32_t> runtime_dispatch_index() const noexcept { return runtime_dispatch_index_; }
+    void set_runtime_dispatch_index(std::optional<std::uint32_t> value) noexcept { runtime_dispatch_index_=value; }
+    bool attribute_field_available() const noexcept { return attributes_available_; }
+    std::shared_ptr<ModelSceneList> attribute_list_owner() const;
+    void set_attribute_list_owner(std::shared_ptr<ModelSceneList>);
+    std::uint8_t attributes_enabled() const;
+    void set_attributes_enabled(std::uint8_t);
     std::span<const std::shared_ptr<const ActorSceneNode>> children() const;
     bool matrix_field_available() const noexcept { return bool(matrix_); }
     std::shared_ptr<AnimationMatrix> matrix_owner();
@@ -85,6 +94,10 @@ private:
     bool mask_available_{},source_transform_available_{};
     std::shared_ptr<ActorSceneBitMask> mask_;
     std::shared_ptr<ActorSceneNode> source_transform_;
+    std::optional<std::uint32_t> runtime_dispatch_index_;
+    bool attributes_available_{};
+    std::uint8_t attributes_enabled_{};
+    std::shared_ptr<ModelSceneList> attributes_;
     mutable std::vector<std::weak_ptr<ActorSceneNodeStorage>> incoming_;
     mutable std::vector<std::weak_ptr<ActorSceneNode>> incoming_sources_;
 };

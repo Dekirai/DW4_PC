@@ -1,4 +1,5 @@
 #include "dw4/model_scene.hpp"
+#include "dw4/actor_geometry.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -8,6 +9,7 @@
 namespace dw4 {
 namespace {
 constexpr std::size_t max_owners=65536,max_entries=262144,max_text=16u*1024u*1024u,max_depth=128;
+constexpr std::size_t max_geometry_bytes=128u*1024u*1024u;
 [[noreturn]] void fail(const char* reason) { throw ModelSceneError(reason); }
 std::uint32_t little32(std::span<const std::uint8_t> bytes,std::size_t offset=0) {
     if(offset>bytes.size() || bytes.size()-offset<4)fail("Model scene scalar is truncated.");
@@ -34,7 +36,9 @@ struct Reader {
         std::optional<std::size_t> size=4) const {
         const auto* field=doc.field(object,slot);
         if(!field || doc.metadata.field_types.at(field->type_index).name!=type ||
-            (size && field->size!=*size))fail("Model scene field type or width differs from its verified schema.");
+            (size && field->size!=*size))throw ModelSceneError("Model scene field type or width differs from its verified schema: "+
+                doc.metadata.object_types.at(object.type_index).name+" reference "+std::to_string(object.reference_index)+
+                " slot "+std::to_string(slot)+" requires "+std::string(type)+".");
         doc.field_bytes(*field);return *field;
     }
     std::optional<std::uint32_t> ref(const IgbObject& object,std::uint16_t slot) const {
@@ -70,6 +74,9 @@ template<class T> std::shared_ptr<T> required_type(const std::shared_ptr<ModelSc
 }
 }
 
+bool ModelSceneObject::is_a(std::string_view type) const {
+    return document_ && reference_ ? document_->is_a(document_->object(*reference_),type) : type_==type;
+}
 std::span<const std::shared_ptr<ModelSceneObject>> ModelSceneList::values() const {
     if(count<0 || capacity<0 || count>capacity || std::size_t(capacity)>max_entries ||
         (capacity && !backing) || (backing && std::size_t(capacity)>backing->size()))
@@ -99,15 +106,77 @@ struct ModelSceneObjects::Impl {
     std::shared_ptr<const IgbDocument> document;
     std::map<std::uint32_t,std::shared_ptr<ModelSceneObject>> objects;
     std::map<std::uint32_t,std::shared_ptr<ModelSceneList::Storage>> memories;
+    std::map<std::uint32_t,std::shared_ptr<ActorGeometryBuffer>> geometry_memories;
+    std::map<std::uint32_t,std::shared_ptr<ActorVertexStreams>> vertex_streams;
     std::map<std::uint32_t,std::size_t> heights;
     std::set<std::uint32_t> visiting,visiting_memory;
-    std::size_t entries{},text{};
+    std::size_t entries{},text{},geometry_bytes{};
+    struct Checkpoint {
+        decltype(Impl::objects) objects;
+        decltype(Impl::memories) memories;
+        decltype(Impl::geometry_memories) geometry_memories;
+        decltype(Impl::vertex_streams) vertex_streams;
+        decltype(Impl::heights) heights;
+        std::size_t entries,text,geometry_bytes;
+        explicit Checkpoint(const Impl& owner):objects(owner.objects),memories(owner.memories),
+            geometry_memories(owner.geometry_memories),vertex_streams(owner.vertex_streams),heights(owner.heights),
+            entries(owner.entries),text(owner.text),geometry_bytes(owner.geometry_bytes) {}
+        void restore(Impl& owner) const {
+            owner.objects=objects;owner.memories=memories;owner.geometry_memories=geometry_memories;
+            owner.vertex_streams=vertex_streams;owner.heights=heights;
+            owner.entries=entries;owner.text=text;owner.geometry_bytes=geometry_bytes;
+        }
+    };
+    struct Transaction {
+        std::shared_ptr<const Checkpoint> rollback;
+        Transaction* parent;
+    };
+    Transaction* transaction{};
     explicit Impl(ActorSceneResource& owner):resource(owner),document(owner.document_owner()) {}
 
     void require(std::size_t owners,std::size_t extra_entries=0,std::size_t extra_text=0) const {
-        if(owners>max_owners-objects.size()-memories.size())fail("Model scene exceeds its aggregate owner budget.");
+        if(owners>max_owners-objects.size()-memories.size()-geometry_memories.size()-vertex_streams.size())
+            fail("Model scene exceeds its aggregate owner budget.");
         if(extra_entries>max_entries-entries)fail("Model scene exceeds its aggregate backing-entry budget.");
         if(extra_text>max_text-text)fail("Model scene exceeds its aggregate copied-text budget.");
+    }
+    std::uint32_t canonical_memory(std::uint32_t ref) const {
+        if(ref>=document->references.size() || document->references[ref].kind!=IgbReferenceKind::memory)
+            fail("Geometry backing references a non-memory object.");
+        const auto& record=document->memories.at(document->references[ref].value_index);
+        const auto canonical=record.reference_index;
+        if(canonical>=document->references.size() || document->references[canonical].kind!=IgbReferenceKind::memory ||
+            document->references[canonical].value_index!=document->references[ref].value_index)
+            fail("Geometry canonical memory does not identify its physical allocation.");
+        return canonical;
+    }
+    std::shared_ptr<ActorGeometryBuffer> geometry_memory(std::uint32_t ref) {
+        const auto canonical=canonical_memory(ref);
+        if(memories.contains(canonical) || vertex_streams.contains(canonical) || visiting_memory.contains(canonical))
+            fail("Geometry scalar backing aliases an incompatible pointer allocation.");
+        if(const auto it=geometry_memories.find(canonical);it!=geometry_memories.end())return it->second;
+        const auto bytes=document->memory(ref);
+        if(bytes.size()>max_geometry_bytes-geometry_bytes)fail("Geometry backing exceeds its aggregate byte budget.");
+        require(1);auto result=std::make_shared<ActorGeometryBuffer>();
+        result->bytes.assign(bytes.begin(),bytes.end());result->document_=document;result->reference_=canonical;
+        geometry_bytes+=bytes.size();geometry_memories.emplace(canonical,result);return result;
+    }
+    std::shared_ptr<ActorVertexStreams> streams(std::uint32_t ref) {
+        const auto canonical=canonical_memory(ref);
+        if(memories.contains(canonical) || geometry_memories.contains(canonical) || visiting_memory.contains(canonical))
+            fail("Vertex stream table aliases an incompatible physical allocation or itself.");
+        if(const auto it=vertex_streams.find(canonical);it!=vertex_streams.end())return it->second;
+        const auto bytes=document->memory(ref);
+        if(bytes.size()%4)fail("Vertex stream table has a partial memory reference.");
+        const auto count=bytes.size()/4;require(1,count);visiting_memory.insert(canonical);
+        auto result=std::make_shared<ActorVertexStreams>();result->slots.reserve(count);
+        result->document=document;result->reference=canonical;
+        for(std::size_t i=0;i<count;++i) {
+            const auto target=little32(bytes,i*4);
+            result->slots.push_back(target==0xffffffffu ? nullptr : geometry_memory(target));
+        }
+        visiting_memory.erase(canonical);require(1,count);entries+=count;
+        vertex_streams.emplace(canonical,result);return result;
     }
     std::shared_ptr<ModelSceneList::Storage> memory(std::uint32_t ref,std::size_t depth,std::size_t& height) {
         if(depth>max_depth)fail("Model scene backing exceeds its path-depth budget.");
@@ -115,6 +184,8 @@ struct ModelSceneObjects::Impl {
             fail("Model scene list references a non-memory object.");
         const auto& record=document->memories.at(document->references[ref].value_index);
         const auto canonical=record.reference_index;
+        if(geometry_memories.contains(canonical) || vertex_streams.contains(canonical))
+            fail("Object list aliases an incompatible geometry allocation.");
         if(canonical>=document->references.size() || document->references[canonical].kind!=IgbReferenceKind::memory ||
             document->references[canonical].value_index!=document->references[ref].value_index)
             fail("Model scene canonical memory reference does not identify its physical allocation.");
@@ -164,6 +235,11 @@ struct ModelSceneObjects::Impl {
         else if(type=="beModelCtrlData")result=std::make_shared<ModelSceneSequence>();
         else if(type=="beModelCtrlInfoDataHit")result=std::make_shared<ModelSceneHit>();
         else if(type=="igAABox")result=std::make_shared<ModelSceneBox>();
+        else if(document->is_a(authored,"igGeometryAttr") || document->is_a(authored,"igGeometryAttr1_5") || document->is_a(authored,"igGeometryAttr2"))
+            result=std::make_shared<ActorGeometryAttribute>(type);
+        else if(document->is_a(authored,"igVertexArray1_1"))result=std::make_shared<ActorVertexArray>(type);
+        else if(document->is_a(authored,"igIndexArray"))result=std::make_shared<ActorIndexArray>(type);
+        else if(document->is_a(authored,"igPrimLengthArray1_1"))result=std::make_shared<ActorPrimitiveLengths>(type);
         else if(document->is_a(authored,"igObjectList"))result=std::make_shared<ModelSceneList>(type);
         else if(document->is_a(authored,"beBaseInfoData"))result=std::make_shared<ModelSceneData>(type);
         else if(type.starts_with("beModelCtrl") && document->field(authored,2) &&
@@ -186,6 +262,14 @@ struct ModelSceneObjects::Impl {
             if(list && list->type()!=expected)fail("Model scene list has an unsupported concrete type.");
             return list;
         };
+        const auto unsigned_field=[&](std::uint16_t slot,std::string_view field_type="igUnsignedIntMetaField") {
+            read.field(authored,slot,field_type);return document->field_u32(authored,slot);
+        };
+        const auto byte_memory=[&](std::uint16_t slot) {
+            read.field(authored,slot,"igMemoryRefMetaField");
+            const auto reference=document->field_reference(authored,slot);
+            return reference ? geometry_memory(*reference) : nullptr;
+        };
         if(auto list=std::dynamic_pointer_cast<ModelSceneList>(result)) {
             list->count=read.integer(authored,2);list->capacity=read.integer(authored,3);
             read.field(authored,4,"igMemoryRefMetaField");
@@ -196,7 +280,33 @@ struct ModelSceneObjects::Impl {
             // Named lookup and the sequence runner ignore capacity and check
             // only reached backing slots. Retain even a malformed named-list
             // shape until its actual consumer, without allocating by count.
-            if(type!="igNamedObjectList" && type!="igStringObjList")list->values();
+            if(type!="igNamedObjectList" && type!="igStringObjList" && type!="igAttrList")list->values();
+        } else if(auto geometry=std::dynamic_pointer_cast<ActorGeometryAttribute>(result)) {
+            if(geometry->is_primary()) {
+                geometry->vertices=required_type<ActorVertexArray>(child(4),"Geometry vertex reference has an unsupported array type.");
+                geometry->index=required_type<ActorIndexArray>(child(5),"Geometry index reference has an unsupported array type.");
+                geometry->primitive_mode=unsigned_field(6,"igEnumMetaField");
+                geometry->primitive_count=unsigned_field(7);geometry->vertex_base=unsigned_field(8);
+                geometry->state=read.integer(authored,10);
+                geometry->primitive_lengths=required_type<ActorPrimitiveLengths>(child(13),"Geometry primitive lengths have an unsupported array type.");
+            }
+        } else if(auto vertices=std::dynamic_pointer_cast<ActorVertexArray>(result)) {
+            read.field(authored,2,"igMemoryRefMetaField");
+            if(const auto table=document->field_reference(authored,2))vertices->streams=streams(*table);
+            vertices->count=unsigned_field(3);vertices->offset=unsigned_field(4);vertices->flags=unsigned_field(5);
+            // Authored files store the inline format as a four-byte struct;
+            // generated legacy fixtures use the equivalent unsigned scalar.
+            const auto* format_field=document->field(authored,6);
+            const auto format_type=format_field ? document->metadata.field_types.at(format_field->type_index).name : std::string{};
+            if(format_type!="igStructMetaField" && format_type!="igUnsignedIntMetaField")
+                fail("Vertex format is not its verified four-byte struct or unsigned representation.");
+            vertices->format->word=unsigned_field(6,format_type);
+            vertices->blend_weights=byte_memory(7);vertices->blend_indices=byte_memory(8);vertices->extra_data=byte_memory(10);
+        } else if(auto indices=std::dynamic_pointer_cast<ActorIndexArray>(result)) {
+            indices->backing=byte_memory(2);indices->count=unsigned_field(3);
+            indices->format=unsigned_field(4,"igEnumMetaField");indices->offset=unsigned_field(5);
+        } else if(auto lengths=std::dynamic_pointer_cast<ActorPrimitiveLengths>(result)) {
+            lengths->backing=byte_memory(2);lengths->count=unsigned_field(3);lengths->element_bits=unsigned_field(4);
         } else if(auto sequence=std::dynamic_pointer_cast<ModelSceneSequence>(result)) {
             sequence->commands=child_list(3,"igNamedObjectList");
         } else if(auto command=std::dynamic_pointer_cast<ModelSceneCommand>(result)) {
@@ -220,15 +330,15 @@ struct ModelSceneObjects::Impl {
         } else if(auto land_info=std::dynamic_pointer_cast<ModelHitLandInfo>(result)) {
             land_info->name=read.text(authored,2);land_info->active=read.boolean(authored,4);
             land_info->data=child_list(5,"beBaseInfoDataList");land_info->rams=child_list(6,"beBaseInfoRamList");
-        } else if(auto geometry=std::dynamic_pointer_cast<ModelHitLandGeometryInfo>(result)) {
-            geometry->active=read.boolean(authored,4);
-            geometry->data=child_list(5,"beBaseInfoDataList");geometry->rams=child_list(6,"beBaseInfoRamList");
-            if(const auto graph=read.ref(authored,7))geometry->switch_graph=resource.mutable_node(*graph);
-            if(const auto check=read.ref(authored,8))geometry->check_switch=resource.mutable_node(*check);
+        } else if(auto land_geometry=std::dynamic_pointer_cast<ModelHitLandGeometryInfo>(result)) {
+            land_geometry->active=read.boolean(authored,4);
+            land_geometry->data=child_list(5,"beBaseInfoDataList");land_geometry->rams=child_list(6,"beBaseInfoRamList");
+            if(const auto graph=read.ref(authored,7))land_geometry->switch_graph=resource.mutable_node(*graph);
+            if(const auto check=read.ref(authored,8))land_geometry->check_switch=resource.mutable_node(*check);
             // Original static categories use igNamedObjectList; the dynamic
             // g_box category authors an empty igStringObjList in this field.
-            geometry->names=required_type<ModelSceneList>(child(9),"HITLANDMODEL names reference is not an actual list.");
-            geometry->kind=read.integer(authored,10);
+            land_geometry->names=required_type<ModelSceneList>(child(9),"HITLANDMODEL names reference is not an actual list.");
+            land_geometry->kind=read.integer(authored,10);
         } else if(auto land=std::dynamic_pointer_cast<ModelHitLandRam>(result)) {
             land->number=read.integer(authored,2);
             if((document->field(authored,3) && read.ref(authored,3)) ||
@@ -290,15 +400,29 @@ struct ModelSceneObjects::Impl {
 ModelSceneObjects::ModelSceneObjects(ActorSceneResource& owner):impl_(std::make_unique<Impl>(owner)) {}
 ModelSceneObjects::~ModelSceneObjects()=default;
 std::shared_ptr<ModelSceneObject> ModelSceneObjects::object(std::uint32_t ref) {
-    // Failed loads publish no partial graph owners. Previously exposed owners
-    // and backing allocations retain their exact identities.
-    const auto old_objects=impl_->objects;
-    const auto old_memories=impl_->memories;
-    const auto old_heights=impl_->heights;const auto old_entries=impl_->entries,old_text=impl_->text;
-    try {std::size_t height{};return impl_->load(ref,0,height);}
+    // A scene-node load can reenter this API and retain its returned attributes
+    // in the separate canonical node registry. Commit those completed owners
+    // to every enclosing rollback point before they escape the nested call.
+    // Unfinished owners are never inserted into the completed-object caches.
+    Impl::Transaction transaction{std::make_shared<Impl::Checkpoint>(*impl_),impl_->transaction};
+    const auto old_visiting=impl_->visiting,old_visiting_memory=impl_->visiting_memory;
+    struct Guard {
+        Impl& owner;
+        Impl::Transaction* parent;
+        ~Guard() {owner.transaction=parent;}
+    } guard{*impl_,transaction.parent};
+    impl_->transaction=&transaction;
+    try {
+        std::size_t height{};auto result=impl_->load(ref,0,height);
+        if(transaction.parent) {
+            const auto published=std::make_shared<Impl::Checkpoint>(*impl_);
+            for(auto* parent=transaction.parent;parent;parent=parent->parent)parent->rollback=published;
+        }
+        return result;
+    }
     catch(const std::exception& error) {
-        impl_->objects=old_objects;impl_->memories=old_memories;impl_->heights=old_heights;
-        impl_->entries=old_entries;impl_->text=old_text;impl_->visiting.clear();impl_->visiting_memory.clear();
+        transaction.rollback->restore(*impl_);
+        impl_->visiting=old_visiting;impl_->visiting_memory=old_visiting_memory;
         throw ModelSceneError(error.what());
     }
 }
@@ -322,6 +446,18 @@ std::shared_ptr<ModelSceneData> ModelSceneObjects::data(std::uint32_t ref) {
 }
 std::shared_ptr<ModelSceneList> ModelSceneObjects::list(std::uint32_t ref) {
     return required_type<ModelSceneList>(object(ref),"Requested model list is not an object-list owner.");
+}
+std::shared_ptr<ActorGeometryAttribute> ModelSceneObjects::geometry_attribute(std::uint32_t ref) {
+    return required_type<ActorGeometryAttribute>(object(ref),"Requested geometry attribute has a different concrete type.");
+}
+std::shared_ptr<ActorVertexArray> ModelSceneObjects::vertex_array(std::uint32_t ref) {
+    return required_type<ActorVertexArray>(object(ref),"Requested vertex array has a different concrete type.");
+}
+std::shared_ptr<ActorIndexArray> ModelSceneObjects::index_array(std::uint32_t ref) {
+    return required_type<ActorIndexArray>(object(ref),"Requested index array has a different concrete type.");
+}
+std::shared_ptr<ActorPrimitiveLengths> ModelSceneObjects::primitive_lengths(std::uint32_t ref) {
+    return required_type<ActorPrimitiveLengths>(object(ref),"Requested primitive lengths have a different concrete type.");
 }
 std::shared_ptr<ModelSceneObject> find_model_named(const std::shared_ptr<ModelSceneList>& list,std::string_view name) {
     return find_model_named_nullable(list,name);

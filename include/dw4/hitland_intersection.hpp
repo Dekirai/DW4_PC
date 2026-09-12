@@ -12,7 +12,12 @@ namespace dw4 {
 class ActorSceneNode;
 class HitLandQuery;
 class HitLandSegment;
+class ModelSceneObject;
 struct HitLandTraversalScratch;
+struct HitLandDispatchTable;
+struct HitLandNodeDispatchServices;
+struct HitLandIntersectionVisitor;
+std::shared_ptr<HitLandDispatchTable> default_hitland_dispatch_table();
 
 // Actual matrix values are inline in a retained physical stack allocation.
 // Unwritten spare elements remain unspecified, independently of logical count.
@@ -25,11 +30,18 @@ struct HitLandNodePath {
     std::shared_ptr<std::vector<std::optional<std::shared_ptr<const ActorSceneNode>>>> backing;
 };
 struct HitLandIntersectionVisitor {
+    std::uint8_t filter_enabled{}; // +08, independent from the filter target.
+    std::function<MessengerCallResult(const std::shared_ptr<HitLandIntersectionVisitor>&,
+        const std::shared_ptr<const ActorSceneNode>&)> filter; // +0C.
+    std::uint32_t time_high{},time_low{}; // +10/+14.
+    std::uint8_t bound_time{}; // +18.
+    std::shared_ptr<HitLandDispatchTable> dispatch_table=default_hitland_dispatch_table(); // +1C.
     std::shared_ptr<HitLandMatrixList> matrix_stack=std::make_shared<HitLandMatrixList>(); // +20.
     std::shared_ptr<HitLandNodePath> node_path=std::make_shared<HitLandNodePath>(); // +24.
     std::shared_ptr<HitLandTraversalScratch> scratch; // +28, retained.
     std::uint32_t flags{}; // +2C.
     bool query_candidate_callback{}; // +30, known 802FE1A4 adapter only.
+    std::shared_ptr<HitLandSegment> transformed_segment; // +38, retained transformed ray scratch.
     std::shared_ptr<HitLandQuery> query; // +40, retained.
 };
 
@@ -46,6 +58,7 @@ struct HitLandIntersectionServices {
     // this is not a flattened mesh or synthetic candidate-list callback.
     std::function<MessengerCallResult(const std::shared_ptr<HitLandIntersectionVisitor>&,
         const std::shared_ptr<const ActorSceneNode>&)> node_dispatch;
+    std::shared_ptr<HitLandNodeDispatchServices> native_dispatch;
 };
 
 // Concrete beHitLandModelTraversal +64 = 8020B13C. The recovered inherited
@@ -70,5 +83,10 @@ private:
 // reject explicitly after the raw cross-product normal has been published.
 float original_hitland_triangle(const HitLandSegment&,const std::array<float,3>& a,
     const std::array<float,3>& b,const std::array<float,3>& c,
+    std::array<float,3>& position,std::array<float,3>& normal,std::int32_t side);
+// Actual nullable pointer profile: missing/wrong-type segment fails only at
+// the first segment read, after the normal publication at 80123A28.
+float original_hitland_triangle(const std::shared_ptr<ModelSceneObject>&,
+    const std::array<float,3>& a,const std::array<float,3>& b,const std::array<float,3>& c,
     std::array<float,3>& position,std::array<float,3>& normal,std::int32_t side);
 } // namespace dw4

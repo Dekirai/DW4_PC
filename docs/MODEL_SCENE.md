@@ -121,8 +121,14 @@ unreached backing; concrete lookup/runner consumers enforce their own checks.
 
 Loading is bounded to 65,536 model objects/backing owners, 262,144 represented
 backing entries, 16 MiB of copied text and 128 object/memory reference edges.
-Malformed loads do not publish partial model caches. Node/box loading uses the
-separate existing scene-owner budgets. Serialized nonnull work and serialized
+Malformed loads do not publish unfinished model owners. A successful nested
+public load can expose canonical attributes through the separate node registry;
+those completed objects and backing allocations advance the enclosing rollback
+checkpoints. A later failure in an outer info or RAM therefore preserves the
+same list, attribute, vertex and memory owners already retained by a node.
+Repeated-failure tests verify that these identities and their live mutations
+survive while the unfinished outer owner remains unavailable. Node/box loading
+uses the separate existing scene-owner budgets. Serialized nonnull work and serialized
 nonnull runtime registration backlinks require their missing original services;
 they are not replaced with successful placeholders. Unknown derived named-data
 payloads remain source-qualified records for their concrete consumers. This

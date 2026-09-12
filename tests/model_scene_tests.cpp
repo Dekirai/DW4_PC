@@ -1,5 +1,7 @@
 #include "dw4/model_scene.hpp"
+#include "dw4/actor_geometry.hpp"
 #include "dw4/resources.hpp"
+#include "hitland_scene_fixture.hpp"
 #include "player_runtime_binding_fixture.hpp"
 
 #include <algorithm>
@@ -308,6 +310,43 @@ void serialized_timer_and_hit() {
     check(std::dynamic_pointer_cast<ModelSceneHit>(scene.models().data(hit_ref))->hit_player_bullet==0,
         "HIT registration must read current owner fields instead of decoding original immutable bytes again.");
 }
+void nested_publication_survives_outer_failure() {
+    hitland_scene_fixture::Fixture fixture;
+    auto doc=fixture.document();
+    auto& info=doc.objects.at(doc.references.at(fixture.info).value_index);
+    for(auto& field:info.fields)if(field.slot==10)field.type_index=8; // Float instead of the required integer.
+    const auto alias=static_cast<std::uint32_t>(doc.references.size());
+    doc.references.push_back(doc.references.at(fixture.source.geom));
+    ActorSceneResource scene(std::move(doc),"synthetic/nested-load-failure",9);
+    bool failed_at_kind{};
+    try {scene.models().hit_land_geometry_info(fixture.info);}
+    catch(const ModelSceneError& error) {
+        failed_at_kind=std::string_view(error.what()).find("slot 10 requires igIntMetaField")!=std::string_view::npos;
+    }
+    check(failed_at_kind,"The malformed final kind field must fail after its node graph has loaded.");
+    const auto node=scene.mutable_node(fixture.source.owner);
+    const auto attributes=node->attribute_list_owner();
+    const auto geometry=std::dynamic_pointer_cast<ActorGeometryAttribute>(attributes->backing->at(0));
+    check(geometry && attributes==scene.models().list(fixture.source.owner_attrs) &&
+        geometry==scene.models().geometry_attribute(fixture.source.geom) && geometry==scene.models().object(alias),
+        "Outer rollback discarded a successful nested load already retained by a canonical node.");
+    const auto vertices=geometry->vertices;
+    const auto streams=vertices->streams;
+    const auto memory=streams->slots.at(0);
+    check(vertices==scene.models().vertex_array(fixture.source.vertices) && memory && !memory->bytes.empty(),
+        "Nested publication did not preserve canonical vertex and physical backing owners.");
+    geometry->primitive_count=73;memory->bytes[0]^=1;
+    const auto changed=memory->bytes[0];
+    for(unsigned i=0;i<3;++i) {
+        rejects([&]{scene.models().hit_land_geometry_info(fixture.info);},
+            "A repeated outer failure exposed an unfinished info owner.");
+        const auto current=scene.models().geometry_attribute(alias);
+        check(current==geometry && current->primitive_count==73 && current->vertices==vertices &&
+            current->vertices->streams==streams && streams->slots.at(0)==memory && memory->bytes[0]==changed &&
+            node->attribute_list_owner()==attributes && attributes==scene.models().list(fixture.source.owner_attrs),
+            "Retry replaced an exposed nested owner, allocation or its live mutations.");
+    }
+}
 void malformed() {
     pf::RuntimeFixture fixture;
     fixture.scalar(fixture.instances,2,3);
@@ -384,7 +423,8 @@ void original(const std::filesystem::path& root) {
 }
 int main(int argc,char** argv) {
     try {
-        ordered_identity_and_retention();live_lists_and_lookup();timer_records_and_registration();sequence_owners_and_live_fields();serialized_timer_and_hit();malformed();
+        ordered_identity_and_retention();live_lists_and_lookup();timer_records_and_registration();sequence_owners_and_live_fields();serialized_timer_and_hit();
+        nested_publication_survives_outer_failure();malformed();
         const auto synthetic=checks;
         if(argc==2)original(argv[1]);else if(argc!=1)return 2;
         std::cout<<"Model scene checks: "<<checks<<" (synthetic "<<synthetic<<")\n";return 0;

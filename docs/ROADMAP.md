@@ -1,33 +1,53 @@
 # Roadmap and acceptance criteria
 
-This is a staged native-port project. A checked data reader or settings control
-does not imply the original game has been ported. Dates are intentionally not
-estimated before the missing engine and game logic have been measured.
+The selected implementation is DolRecomp with the ModernGekko runtime. A
+successful build or settings control does not establish playable behavior.
+The owner's updated target includes aggressive optimization, the requested PC
+features, modding, online co-op and a simple ROM-driven release experience.
 
-| Stage | Deliverable | Acceptance | Status |
+| Gate | Deliverable | Acceptance | Current evidence |
 | --- | --- | --- | --- |
-| 0 | Native Windows workbench; disc, archive, banner and IGB metadata readers | Builds as x64, rejects malformed synthetic inputs, reads verified original local data | Available |
-| 1 | Native original-asset viewer | One actual game texture and mesh decoded from AFS/IGB with correct layout and transforms; no manually recreated substitute | Textured mesh, original single-clip animation, named packages and static scenes with explicit original switch commands available for verified profiles; full materials and original-frame comparison pending |
-| 2 | First playable original scene | Load a scene, spawn and control a Digimon, collision, camera, animation, one enemy and verified combat | Native Agumon walking preview available; actual construction/sequence and player-frame input/status/motion/wait connected in the core; original scheduling, camera/collision response, enemies and combat pending |
-| 3 | Original game baseline | Progression, inventory, weapons, transitions, audio, saves and local 1–4-player play; repeatable reference comparisons | Not implemented |
-| 4 | Full PC settings | Verified resolution, borderless/windowed, 16:9 camera/UI, 144 Hz presentation without faster simulation, VSync, MSAA and input rebinding | Host controls started; gameplay work pending |
-| 5 | Content modding | Stable asset IDs, validated manifests, texture replacements and documented data schemas | Not implemented |
-| 6 | Online four-player co-op | End-to-end multi-machine play, state consistency, latency/disconnect handling and save ownership | Not implemented |
+| 1 | Reliable optimized game | Sustained original-speed menus and gameplay, smooth audible output, progression, saves and independent local 1–4-player controls | Optimized module and bounded boot test pass; original memory-card check rendered. Owner reached the main menu with low FPS and audio stutter in the earlier diagnostic build. |
+| 2 | Performance and PC graphics | At least 60 FPS on documented hardware; options up to 300 FPS without faster simulation/audio; validated frame times, 16:9 camera/culling/HUD, 4K, display modes, VSync and MSAA | Optimized boot counter rate is about 60/s at speed 1.0 versus about 40/s at speed 0.685; gameplay, audible audio and widescreen still unverified. |
+| 3 | ImGui settings and QoL | Working graphics/input controls, optional cheats, save/load states and original/modernized options; applied settings and unsupported combinations visible | Frontend integration and game-specific validation pending. Existing walking-preview controls are separate. |
+| 4 | Content modding | HD texture replacements, versioned loader/manifests, custom maps, Digimon and weapons, reproducible randomizers, optional rebalancing and bug fixes | Prior asset analysis retained; recompiled-game integration pending. |
+| 5 | Online four-player co-op | Multi-machine sessions with consistent state, input ownership, latency/disconnect handling, matching mods and clear save ownership | Pending. Preserve the required state/input interfaces during optimization; local play is a prerequisite. |
+| 6 | Simple EXE release | User selects their ROM; supported revision is validated and required assets prepared automatically, without a compiler or manual extraction; repeat launches reuse validated local data | Developer scripts and local extracted data only. Release importer, frontend and packaging pending. |
+
+Gate order sets the immediate queue, not an excuse to design out later features.
+Keep rendering enhancements separate from simulation speed; a speed multiplier,
+duplicated presents or an FPS slider alone cannot satisfy the 300 FPS target.
+Higher internal render resolution and higher-resolution texture content also
+have separate acceptance checks. Report hardware, scene, settings and measured
+frame times with each performance claim; 300 FPS is a target, not a guarantee
+for every device or scene.
 
 ## Next acceptance gate
 
-The current acceptance target is the full original game, including local
-one-to-four-player play with independent connected controllers. Quality-of-life
-changes and optional enhancements follow that baseline. The walking preview
-does not satisfy this target. Track reference evidence and outstanding original
-systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
+The immediate gate is correcting the owner's low-FPS/audio-stutter report in
+the **DolRecomp + ModernGekko** build. The optimized module passes its equivalent
+bounded startup comparison at original speed. Next check real audible output
+and gameplay, and establish a repeatable in-game benchmark. Headless frame
+progress alone does not verify
+host audio or actual monitor FPS. Continue with profiling measured bottlenecks,
+the original simulation/render timing and original boot-to-game comparisons.
+Track original behavior in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md). See
+[RECOMPILATION.md](RECOMPILATION.md). Do not launch interactive previews
+automatically; build occasional snapshots for the owner to start manually.
 
-Version 0.44 adds the actual HITLANDMODEL geometry graph, retained segment and
-candidate pools, common traversal and intersection primitives. The actual player
-frame remains connected through its outer wall/floor consumer and shared-node
-HITLANDDELIVER recipient, reaching the required HITLANDMODEL query. Completing
-typed visitor dispatch and its geometry/attribute cursors, CHECKLAND reduction
-and CHECKWALL's multiple passes is the next collision integration requirement.
+## Retained manual-core reference work
+
+The following manual-engine requirements remain documented for reference.
+They are not the primary implementation queue while validating recompilation.
+
+Version 0.45 connects actual HITLANDMODEL static geometry selection, typed
+visitor dispatch, mapped primitive enumeration and candidate publication.
+The original player frame still reaches the required HITLANDMODEL recipient
+through its outer wall/floor consumer and HITLANDDELIVER. Completing dynamic
+bound transformation, original matrix inversion and missing geometry-bound
+construction, then CHECKLAND reduction and CHECKWALL's multiple passes, is the
+next collision integration requirement. Runtime class registration in tests is
+explicit preparation; original manager startup remains required.
 Four original Agumon GENERATE calls and this first frame prefix form the local
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).
@@ -297,7 +317,7 @@ one verified asset profile; it does not mark those startup stages complete.
 | 3840×2160 | Host window preference | Verified 4K scene render target and readable UI |
 | Borderless | Host fullscreen desktop window | Game renderer resizes correctly across monitors |
 | 16:9 | Stored preference only | Camera, culling, HUD and menus adapted |
-| 144 FPS | Workbench frame pacing | Presentation decoupled from measured original simulation |
+| 60–300 FPS | Walking-preview frame pacing is separate; recompilation performance is under measurement | At least 60 FPS on documented hardware and presentation options up to 300 FPS, decoupled from measured original simulation |
 | VSync Off | Host OpenGL swap-interval request | Validated frame pacing in gameplay |
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
 | Keyboard / Mouse | Tool UI input | Complete bindings and appropriate mouse camera support |

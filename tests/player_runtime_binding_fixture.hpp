@@ -37,7 +37,7 @@ enum Type : std::uint32_t {
     object, object_dir, memory_dir, attr, geometry_attr, vertex_array, object_list,
     attr_list, node_list, skin_list, skeleton_list, bone_list, node, group,
     attr_set, geometry_node, selector_type, blend_state, skin_type, database_type,
-    skeleton_type, bone_type, actor_type, appearance_type, palette_type, info_type, info_list, model_type, ram_type, ram_list, base_data_type, one_type, data_list, model_node, lod_type, modifiers_list, matrix_bone_list, string_list, unknown_node, sequence_type, sequence_data_type, named_list, action_info, action_ram, action_data_list, animation_type, animation_list, action_combiner_list, combiner_type, actor_list, appearance_list
+    skeleton_type, bone_type, actor_type, appearance_type, palette_type, info_type, info_list, model_type, ram_type, ram_list, base_data_type, one_type, data_list, model_node, lod_type, modifiers_list, matrix_bone_list, string_list, unknown_node, sequence_type, sequence_data_type, named_list, action_info, action_ram, action_data_list, animation_type, animation_list, action_combiner_list, combiner_type, actor_list, appearance_list, geometry_attr_base
 };
 struct Schema { std::string name; std::uint32_t parent, slots; std::vector<IgbObjectField> fields; };
 const std::vector<Schema> schemas{
@@ -91,7 +91,8 @@ const std::vector<Schema> schemas{
     {"igAnimationCombinerList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
     {"igAnimationCombiner",object,4,{{2,3,4}}},
     {"igActorList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
-    {"igAppearanceList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}}
+    {"igAppearanceList",object_list,5,{{1,2,4},{1,3,4},{3,4,4}}},
+    {"igGeometryAttr",attr,13,{}}
 };
 
 // Generated IGB records and local reference graph; no original game bytes.
@@ -176,7 +177,13 @@ struct Graph {
         append(bytes,fields); push32(bytes,4); append(bytes,types); append(bytes,entries);
         append(bytes,words({8 + 2 * count,count}));
         for (std::uint32_t i = 0; i < count; ++i) push16(bytes,static_cast<std::uint16_t>(i));
-        push32(bytes,info_reference); append(bytes,objects); append(bytes,memories); return read_igb_document(std::move(bytes));
+        push32(bytes,info_reference); append(bytes,objects); append(bytes,memories);
+        auto result=read_igb_document(std::move(bytes));
+        // Keep established fixture enum/reference numbering. The serialized
+        // parser requires earlier parents; install the actual native parent
+        // relationship on the synthetic document after appending its base type.
+        result.metadata.object_types[geometry_attr].parent_index=geometry_attr_base;
+        return result;
     }
 };
 

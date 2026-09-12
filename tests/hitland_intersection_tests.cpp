@@ -60,14 +60,15 @@ void reset_and_backing() {
 void retained_dispatch() {
     auto visitor=std::make_shared<HitLandIntersectionVisitor>();
     HitLandIntersectionInvocation call(visitor,{});
-    auto empty=std::make_shared<HitLandIntersectionServices>();
-    check(!call.resume(empty).completed && !call.faulted(),"Absent actual dispatch was replaced with invented completion");
+    HitLandIntersectionInvocation no_node(visitor,{});
+    rejects([&] {no_node.resume();});
+    check(no_node.faulted(),"Default native dispatch did not reach its null-node fault");
     auto actual=std::make_shared<HitLandIntersectionServices>();unsigned calls{};bool ready{};
     actual->node_dispatch=[&](const auto& selected,const auto& node) {
         ++calls;check(selected==visitor && !node,"Retained +64 substituted visitor or nullable node identity");
         return MessengerCallResult{ready,2,"Controlled dispatch remains pending."};
     };
-    check(!call.resume(actual).completed && calls==1,"An unused empty provider became an irreversible service binding");
+    check(!call.resume(actual).completed && calls==1,"Explicit actual dispatch did not retain its operation");
     ready=true;check(call.resume(actual).completed && calls==2 && call.completed(),"Real node dispatch did not resume its retained operation");
     check(call.resume().completed && calls==2,"Completed +64 replayed its node dispatch");
     HitLandIntersectionInvocation changed(visitor,{});ready=false;changed.resume(actual);

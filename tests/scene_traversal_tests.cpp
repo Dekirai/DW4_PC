@@ -26,7 +26,13 @@ struct Fixture : ScriptFixture {
     std::vector<N> nodes;
     std::vector<A> attrs;
     std::uint32_t attribute(std::string type,std::uint32_t value=0,std::uint16_t unit=0) {
-        const auto ref=add(object);attrs.push_back({ref,memory(words({unit,value})),std::move(type)});return ref;
+        const auto ref=add(object);
+        // Geometry now also has a canonical live owner. Keep its authored
+        // pointer/scalar fields valid while leaving vertex/index/group owners
+        // null: this render-submission fixture never maps triangle data.
+        auto data=words({unit,value});
+        if(type=="igGeometryAttr1_5")append(data,words({null_ref,null_ref,3,0,0,0,null_ref}));
+        attrs.push_back({ref,memory(std::move(data)),std::move(type)});return ref;
     }
     std::uint32_t make_node(std::string type,std::vector<std::uint32_t> children={},
         std::vector<std::uint32_t> attributes={},std::uint32_t flags=0,bool trigger=false,
@@ -46,6 +52,7 @@ struct Fixture : ScriptFixture {
         };
         const auto group=type("igGroup",node),attr_set=type("igAttrSet",static_cast<std::int32_t>(group));
         const auto attr=type("igAttr",object),node_list=type("igNodeList",object_list),attr_list=type("igAttrList",object_list);
+        const auto geometry_attr=type("igGeometryAttr",static_cast<std::int32_t>(attr));
         const auto short_type=static_cast<std::uint16_t>(doc.metadata.field_types.size());doc.metadata.field_types.push_back({"igShortMetaField",1,0});
         const auto obj=[&](std::uint32_t ref)->IgbObject& {return doc.objects.at(doc.references.at(ref).value_index);};
         const auto offset=[&](std::uint32_t ref) {return doc.memories.at(doc.references.at(ref).value_index).offset;};
@@ -59,8 +66,12 @@ struct Fixture : ScriptFixture {
             obj(n.children).type_index=node_list;obj(n.attributes).type_index=attr_list;
         }
         for(const auto& a:attrs) {
-            auto& value=obj(a.ref);value.type_index=type(a.type,static_cast<std::int32_t>(attr));const auto at=offset(a.storage);
-            value.fields={{2,short_type,at,2},{4,4,at+4,1}};
+            auto& value=obj(a.ref);value.type_index=type(a.type,static_cast<std::int32_t>(a.type=="igGeometryAttr1_5" ? geometry_attr : attr));
+            const auto at=offset(a.storage);
+            if(a.type=="igGeometryAttr1_5")
+                value.fields={{2,short_type,at,2},{4,2,at+8,4},{5,2,at+12,4},{6,6,at+16,4},
+                    {7,5,at+20,4},{8,5,at+24,4},{10,1,at+28,4},{13,2,at+32,4}};
+            else value.fields={{2,short_type,at,2},{4,4,at+4,1}};
         }
         return doc;
     }

@@ -1,15 +1,47 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
-Version 0.44 adds the original HITLANDMODEL query owners and common geometry
-traversal. Queries retain reusable segment/result allocations, current inner
-switch masks and shared static/dynamic scene nodes. Native segment, normal and
-triangle arithmetic have separate original-instruction comparisons. The typed
-geometry visitor and wall/floor query handlers still need integration before
-these operations can return a complete original collision response. See
-[HITLAND_QUERY.md](docs/HITLAND_QUERY.md),
-[HITLAND_TRAVERSAL.md](docs/HITLAND_TRAVERSAL.md) and
-[HITLAND_INTERSECTION.md](docs/HITLAND_INTERSECTION.md).
+
+The selected implementation path is now **DolRecomp with the ModernGekko
+template**: compiled original PowerPC logic with a Dolphin-derived runtime for
+graphics, audio and console services. The supplied USA executable translates
+to C, and the runtime and complete Windows game module now build locally.
+Bounded original startup and an offscreen original boot image are verified;
+complete gameplay, audio, saves and controller validation remain in progress. See
+[RECOMPILATION.md](docs/RECOMPILATION.md) for the tool inputs and measured results.
+Builds and tests run locally; GitHub Actions is disabled.
+
+The current priority is performance: the first diagnostic build was slow and
+the owner reports audio stutter at the main menu. The optimized build now
+advances about 60 unique-frame counter steps per second at normal simulation
+speed in a bounded boot test, compared with about 40 in the diagnostic build.
+This does not yet validate gameplay performance or audible output.
+The PC target includes at
+least 60 FPS on measured hardware, presentation options up to 300 FPS without
+faster gameplay, 16:9, higher render resolution, HD textures and an ImGui menu
+for graphics, cheats, save states and other QoL. Mods, custom content and online
+four-player co-op remain planned. These features are not established by the
+existing walking preview's settings. [The roadmap](docs/ROADMAP.md) separates
+the active acceptance gates from earlier manual-engine work.
+
+The eventual release should start through a simple EXE, accept the user's ROM
+and prepare its required game files automatically. The current experimental
+build still uses developer scripts and locally extracted data. After a verified
+build, run `scripts/start-recomp.ps1` yourself to open it; builds never launch
+the game automatically.
+
+## Retained manual core and walking preview
+
+The existing manually recovered core remains available for reference and tests.
+Version 0.45 connects original static geometry to the native collision candidate
+pipeline. Canonical vertex/index/group owners feed the original primitive scan,
+typed node dispatch and actual query result storage. Point, segment, matrix and
+triangle operations retain their original arithmetic and publication order.
+Dynamic bound/inverse operations and the complete wall/floor query handlers
+remain required before the original player can consume a complete collision
+response. See [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md),
+[HITLAND_PRIMITIVES.md](docs/HITLAND_PRIMITIVES.md) and
+[HITLAND_NODE_DISPATCH.md](docs/HITLAND_NODE_DISPATCH.md).
 
 This is a core execution milestone. Original four-slot GENERATE acceptance
 and its prepared service prerequisites are tracked in
@@ -27,20 +59,22 @@ Movement and the
 follow camera are provisional native implementations. The complete original
 game, combat, progression, audio and saves remain unimplemented.
 
-The Windows x64 application uses SDL3, OpenGL and Dear ImGui. It reads your
-original local files directly. The PowerPC `main.dol` is inspected as data and
-never executed. A bounded native Lua 4 interpreter executes selected embedded
+The existing walking-preview application uses SDL3, OpenGL and Dear ImGui. It
+reads your original local files directly. In this separate application, the
+PowerPC `main.dol` is inspected as data and never executed. A bounded native Lua
+4 interpreter executes selected embedded
 boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
-## Current capabilities
+## Manual-core and walking-preview capabilities
 
-- Select original collision geometry through canonical `beHitLandModelInfo`
-  owners, physical switch masks and retained query/visitor/scratch state.
-  Dynamic source matrices update the actual child before broad-phase rejection.
-  Original triangle intersection is a recovered leaf; complete typed geometry
-  dispatch, query result selection and HITLANDMODEL delivery remain required.
-  See [HITLAND_TRAVERSAL.md](docs/HITLAND_TRAVERSAL.md).
+- Produce original static triangle candidates through canonical
+  `beHitLandModelInfo` selection, registered node handlers and live geometry
+  attribute/vertex/index owners. Results retain the actual query segment,
+  matrix-stack element, node path and original group/stream cursor. Dynamic
+  source matrices still update before broad-phase rejection; complete dynamic
+  geometry operations, CHECKLAND/CHECKWALL response selection and HITLANDMODEL
+  delivery remain required. See [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md).
 
 - Route original player wall/floor checks through canonical HITLANDDELIVER
   info/RAM records with a distinct manager and shared model nodes. The five

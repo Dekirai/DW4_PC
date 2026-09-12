@@ -90,6 +90,25 @@ struct ActorSceneResource::Impl {
     }
 };
 const IgbDocument& ActorSceneNode::document() const noexcept { return source_->document; }
+bool ActorSceneNode::is_a(std::string_view type) const {
+    return document().is_a(document().object(reference_),type);
+}
+std::shared_ptr<ModelSceneList> ActorSceneNode::attribute_list_owner() const {
+    if(!attributes_available_)fail("This actor scene node has no represented attribute-list field.");
+    return attributes_;
+}
+void ActorSceneNode::set_attribute_list_owner(std::shared_ptr<ModelSceneList> owner) {
+    if(!attributes_available_)fail("This actor scene node has no represented attribute-list field.");
+    attributes_=std::move(owner);
+}
+std::uint8_t ActorSceneNode::attributes_enabled() const {
+    if(!attributes_available_)fail("This actor scene node has no represented attribute-enable field.");
+    return attributes_enabled_;
+}
+void ActorSceneNode::set_attributes_enabled(std::uint8_t value) {
+    if(!attributes_available_)fail("This actor scene node has no represented attribute-enable field.");
+    attributes_enabled_=value;
+}
 std::shared_ptr<const IgbDocument> ActorSceneBitMask::document_owner() const noexcept {
     return source_ ? std::shared_ptr<const IgbDocument>(source_,&source_->document) : nullptr;
 }
@@ -519,6 +538,12 @@ std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t r
                 if(const auto ref_list=document().field_reference(value,7)) {
                     result->children_=child_list(*ref_list,depth+1);result->children_->attach(result);
                 }
+            }
+            if(document().is_a(value,"igAttrSet")) {
+                read.field(value,8,"igObjectRefMetaField");
+                const auto& enabled=read.field(value,9,"igBoolMetaField",1);
+                result->attributes_available_=true;result->attributes_enabled_=document().field_bytes(enabled)[0];
+                if(const auto attributes=document().field_reference(value,8))result->attributes_=models().list(*attributes);
             }
             if(type=="igSwitch") {
                 read.field(value,8,"igObjectRefMetaField");result->mask_available_=true;

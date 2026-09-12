@@ -1,4 +1,52 @@
-# HITLAND query infrastructure validation
+# Local validation
+
+## Recompilation integration
+
+The selected DolRecomp/ModernGekko path has its own evidence and acceptance
+scope in [RECOMPILATION.md](RECOMPILATION.md). The manual-core results below
+do not establish that the recompiled game boots or plays correctly.
+
+## Version 0.45 static collision candidates
+
+Validated locally on 2026-09-13. Canonical geometry owners, typed node dispatch
+and the original mapped primitive scan now connect common static traversal to
+actual query candidate storage. Dynamic bound/inverse operations, complete
+CHECKLAND/CHECKWALL responses and original player scheduling remain required
+in this manual engine. It remains available as reference work while the
+selected recompilation path is integrated.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 115/115 CTest suites passed; no compiler warnings |
+| Static geometry producer | 37 synthetic / 62 original-inclusive checks; 12 original floor queries produce 10 triangle candidates through typed dispatch and actual query storage |
+| Canonical geometry owners | 47 synthetic / 242 original-inclusive checks; 27 original collision attributes and vertex arrays, plus indexed stage-mesh coverage |
+| Primitive enumeration | 83 synthetic / 198 original-inclusive checks; all 102 original stage-179 floor triangles reached with their original cursors |
+| Node dispatch and retained traversal | 51 node-dispatch, 44 intersection and 54 synthetic / 85 original-inclusive common-traversal checks |
+| Model owner rollback | 84 synthetic / 1,652 original-inclusive checks; completed reentrant loads retain canonical attributes, vertices and backing across repeated outer-load failures |
+| Existing original integrations | 198 actor-scene, 156 player-construction/frame, 43 HITLANDDELIVER-scene, 62 scene-traversal and 413 weapon-preview checks |
+| Point, distance and segment arithmetic | 2,628 cases, 253,216 original instructions, 1,675 square-root comparisons and 52 checked numeric boundaries; zero differences |
+| Matrix composition and paired-single copy | 7,743 cases, 1,461,363 original instructions and 1,093 checked numeric boundaries; zero mismatches |
+| Primitive instruction comparison | 861 cases, 302,123 original instructions and 460 checked prefixes; zero mismatches |
+| Python and command-line tools | Six verifier, eight inspect and five catalog tests passed; boot suite ran nine tests with one skipped because no application executable was supplied |
+
+All three numerical drivers were freshly compiled with current headers and
+linked only against the final production core, without replacement module
+objects. The core hash remained unchanged before and after the replays:
+`C60609B12E5CBBC81A0BD48EC56FECEAF86ED8EAB807EFB8A26A9EC1E5A38CA1`.
+These comparisons cover represented original instructions and reached prefixes;
+they are not a physical Gekko/FPSCR oracle or full-game execution. Explicit
+numeric boundaries do not claim the original nonfinite fallback behavior.
+
+The original-data player acceptance still completes four prepared GENERATE
+calls and reaches HITLANDMODEL in the first player-frame prefix. That frame
+does not yet consume a complete collision response. The separate candidate
+integration explicitly prepares class registration and a static query profile.
+No v0.45 walking-preview application was built or launched; the manual preview
+remains v0.42. GitHub Actions remained disabled throughout this validation.
+
+## Previous v0.44 checkpoint
+
+### HITLAND query infrastructure validation
 
 Version 0.44.0 was validated locally on 2026-09-12 and 2026-09-13. Canonical HITLANDMODEL
 geometry, reusable query pools, common switch traversal, retained visitor

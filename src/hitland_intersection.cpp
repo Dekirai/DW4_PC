@@ -2,6 +2,7 @@
 
 #include "dw4/actor_scene.hpp"
 #include "dw4/hitland_query.hpp"
+#include "dw4/hitland_node_dispatch.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -112,6 +113,7 @@ struct HitLandIntersectionInvocation::Impl {
     std::shared_ptr<HitLandIntersectionVisitor> visitor;
     std::shared_ptr<const ActorSceneNode> node;
     std::shared_ptr<HitLandIntersectionServices> services;
+    std::unique_ptr<HitLandNodeDispatchInvocation> native;
     bool executing{},fault{},done{};
     std::uint32_t result{};
 };
@@ -130,19 +132,24 @@ MessengerCallResult HitLandIntersectionInvocation::resume(std::shared_ptr<HitLan
     try {
         if(!state.visitor)fail("Original intersection +64 dereferences a null visitor.");
         if(state.services && services && state.services!=services)fail("Retained HITLAND intersection requires its original service owner.");
-        if(!state.services && services && services->node_dispatch)state.services=std::move(services);
+        if(!state.services && services)state.services=std::move(services);
         // +5C ->801F6010->8020B134 and +60 ->801F6030->8020B138 are
         // verified no-ops. 8020B06C owns the reached callback/type/node reads.
-        if(!state.services || !state.services->node_dispatch)
-            return {false,0,"Original HITLAND intersection requires its actual node dispatch and geometry visitor."};
-        const auto result=state.services->node_dispatch(state.visitor,state.node);
+        MessengerCallResult result;
+        if(state.services && state.services->node_dispatch) {
+            if(state.native)fail("Retained HITLAND intersection cannot replace an entered native dispatch.");
+            result=state.services->node_dispatch(state.visitor,state.node);
+        } else {
+            if(!state.native)state.native=std::make_unique<HitLandNodeDispatchInvocation>(state.visitor,state.node);
+            result=state.native->resume(state.services ? state.services->native_dispatch:nullptr);
+        }
         if(state.fault)fail("A caught recursive failure invalidated HITLAND intersection.");
         if(!result.completed)return result;
         state.result=result.value;state.done=true;return result;
     }catch(...){state.fault=true;throw;}
 }
 
-float original_hitland_triangle(const HitLandSegment& segment,const Vector& a,const Vector& b,const Vector& c,
+static float triangle(const HitLandSegment* segment_pointer,const Vector& a,const Vector& b,const Vector& c,
     Vector& position,Vector& normal,std::int32_t side) {
     const auto ab=subtract(b,a),ac=subtract(c,a);
     normal=cross(ab,ac); // 80123980 publishes even before normal-length failure.
@@ -150,6 +157,8 @@ float original_hitland_triangle(const HitLandSegment& segment,const Vector& a,co
     if(!(squared>0) || !std::isfinite(squared))fail("Original HITLAND triangle has no supported finite nonzero normal.");
     const float reciprocal=divide(1.f,std::sqrt(squared));
     normal[0]=product(normal[0],reciprocal);normal[1]=product(normal[1],reciprocal);normal[2]=product(normal[2],reciprocal);
+    if(!segment_pointer)fail("Original HITLAND triangle reads a null or unsupported segment after publishing its normal.");
+    const auto& segment=*segment_pointer;
     const float facing=dot(normal,segment.direction);finite(facing);
     if(side!=2) {
         if((!std::signbit(facing) && side==0) || (std::signbit(facing) && side==1))return -2.f;
@@ -170,5 +179,13 @@ float original_hitland_triangle(const HitLandSegment& segment,const Vector& a,co
     const float x=dot(second,normal),y=dot(first,normal),z=dot(third,normal);
     finite(x);finite(y);finite(z);
     return std::signbit(x)==std::signbit(y) && std::signbit(y)==std::signbit(z) ? distance:-4.f;
+}
+float original_hitland_triangle(const HitLandSegment& segment,const Vector& a,const Vector& b,const Vector& c,
+    Vector& position,Vector& normal,std::int32_t side) {
+    return triangle(&segment,a,b,c,position,normal,side);
+}
+float original_hitland_triangle(const std::shared_ptr<ModelSceneObject>& segment,const Vector& a,const Vector& b,const Vector& c,
+    Vector& position,Vector& normal,std::int32_t side) {
+    return triangle(dynamic_cast<const HitLandSegment*>(segment.get()),a,b,c,position,normal,side);
 }
 } // namespace dw4

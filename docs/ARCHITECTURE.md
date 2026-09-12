@@ -1,6 +1,58 @@
 # Native port architecture
 
+## Selected recompilation path
+
+The owner selected DolRecomp and the ModernGekko template as the next path to
+the complete original game. DolRecomp translates original CPU code; ModernGekko
+supplies a Dolphin-derived runtime for graphics, audio and console services.
+Generated code and runtime builds stay in ignored local output directories.
+See [RECOMPILATION.md](RECOMPILATION.md) for source pins, integration evidence
+and the remaining boot/gameplay acceptance steps.
+
+The current product target adds measured performance optimization, presentation
+up to 300 FPS with unchanged simulation timing, 16:9, higher internal resolution
+and replacement textures. The PC frontend should expose graphics, cheats, save
+states and other optional QoL through ImGui. Mods and online four-player co-op
+remain required future integrations; optimizations must preserve the state,
+input and asset ownership needed by those features. See the active acceptance
+gates in [ROADMAP.md](ROADMAP.md).
+
+The release entry point should be a simple EXE that accepts the user's ROM,
+validates the supported revision and prepares local game data automatically.
+It must not require the end user to install a compiler or manually extract the
+disc. The current developer scripts and local module cache are not that release
+experience. Distribution contains the port and dependency notices, with original
+game content supplied locally by each user.
+
+The manually recovered engine below remains a separate reference core. Its
+checked helpers and original-asset walking preview do not establish correctness
+of the recompilation runtime. Original game behavior must be validated there,
+including rendering, timing, collision, animation, audio, saves and four
+independent local controllers.
+
 ## Implemented boundary
+
+Version 0.45 connects common collision traversal to native typed node dispatch
+and the actual static geometry candidate producer. Runtime dispatch indices
+belong to an explicit native class registration, independently of serialized
+IGB type indices. Group/transform/geometry handlers retain their filter,
+path, matrix, time and child-loop phases; unrecovered transform updates and
+missing-bound construction remain reached services.
+
+Canonical geometry attributes share live vertex, unsigned-16 index and
+primitive-group owners through the existing scene cache. The original mapped
+primitive scan preserves format gates, physical accesses, strip winding,
+cursor publication and unmap order. Candidate production retains captured list
+and matrix owners while reloading the original segment and current callback
+metadata for each hit. A pending callback does not replay its triangle scan.
+The installed static flag-4 profile produces real query candidates; general
+transformed-bound/inverse operations and complete CHECKLAND/CHECKWALL responses
+still need implementation. See [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
+[HITLAND_PRIMITIVES.md](HITLAND_PRIMITIVES.md) and
+[HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md).
+
+The following versioned boundaries describe earlier milestones; their missing
+operations are superseded where the current boundary above connects them.
 
 Version 0.44 represents actual `beHitLandModelInfo` owners separately from
 HITLANDDELIVER. The canonical graph retains live masks, child lists, bounds and

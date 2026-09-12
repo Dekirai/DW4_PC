@@ -1,5 +1,6 @@
 #include "dw4/hitland_traversal.hpp"
 #include "dw4/hitland_intersection.hpp"
+#include "dw4/hitland_node_dispatch.hpp"
 #include "dw4/assets.hpp"
 #include "hitland_scene_fixture.hpp"
 
@@ -146,12 +147,19 @@ void retained_visit_and_live_children() {
         f.manager->scratch->segments->count==1 && f.query->current_index==1,
         "Resume replayed preparation, retargeted the passed query/switch or consumed changed logical child count.");
     check(call.resume().completed && callbacks==3,"Completed traversal replayed visits.");
-    Fixture late;HitLandTraversalInvocation unavailable(late.manager,late.query);
+    Fixture late;late.manager->visitor->dispatch_table=std::make_shared<HitLandDispatchTable>();
+    HitLandTraversalInvocation unavailable(late.manager,late.query);
     auto blank=std::make_shared<HitLandIntersectionServices>();
-    check(!unavailable.resume(blank).completed,"Missing dispatcher returned successful geometry traversal.");
+    check(!unavailable.resume(blank).completed,"An unregistered native node returned successful geometry traversal.");
     late.manager->visitor->flags=99;
-    check(unavailable.resume(late.services).completed && late.manager->visitor->flags==99,
-        "Installing a missing dispatcher replayed earlier visitor preparation.");
+    const auto late_node=late.scene->node(late.source.source.owner);
+    register_hitland_node_type(late.manager->visitor,late_node);
+    // A prepared empty handler isolates the retained registration boundary from
+    // geometry production; it does not stand in for a successful hit query.
+    (*late.manager->visitor->dispatch_table->backing)[*late_node->runtime_dispatch_index()]=
+        static_cast<std::uint32_t>(HitLandNodeHandler::empty);
+    check(unavailable.resume(blank).completed && late.manager->visitor->flags==99,
+        "Resuming the entered native dispatcher replayed earlier visitor preparation.");
 }
 void physical_mask_and_dynamic_copy() {
     Fixture inactive(false);

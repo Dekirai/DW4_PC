@@ -72,7 +72,7 @@ class BootCliTests(unittest.TestCase):
 
     def test_app_source_guards(self):
         if len(EXECUTABLES) < 2:
-            self.skipTest("The app executable is checked only by Windows app CI.")
+            self.skipTest("The app executable was not supplied for this local check.")
         exe = EXECUTABLES[1]
         self.invoke(exe, ["--boot-player-0", "p_test"], 1)
         for extra in [["--page", "scenes"], ["--resource", "mesh.igb"],

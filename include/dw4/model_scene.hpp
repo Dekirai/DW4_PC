@@ -13,6 +13,10 @@
 #include <vector>
 
 namespace dw4 {
+class ActorGeometryAttribute;
+class ActorVertexArray;
+class ActorIndexArray;
+class ActorPrimitiveLengths;
 class ModelSceneError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 
 // A source-qualified physical object, or a fresh runtime allocation with no
@@ -28,6 +32,7 @@ public:
     std::uint32_t source_occurrence() const noexcept { return occurrence_; }
     std::optional<std::uint32_t> reference() const noexcept { return reference_; }
     const std::string& type() const noexcept { return type_; }
+    bool is_a(std::string_view type) const;
     std::optional<std::string> name;
 protected:
     explicit ModelSceneObject(std::string type):type_(std::move(type)) {}
@@ -173,6 +178,10 @@ public:
     std::shared_ptr<ModelHitLandInfo> hit_land_info(std::uint32_t reference);
     std::shared_ptr<ModelHitLandRam> hit_land_ram(std::uint32_t reference);
     std::shared_ptr<ModelHitLandGeometryInfo> hit_land_geometry_info(std::uint32_t reference);
+    std::shared_ptr<ActorGeometryAttribute> geometry_attribute(std::uint32_t reference);
+    std::shared_ptr<ActorVertexArray> vertex_array(std::uint32_t reference);
+    std::shared_ptr<ActorIndexArray> index_array(std::uint32_t reference);
+    std::shared_ptr<ActorPrimitiveLengths> primitive_lengths(std::uint32_t reference);
     std::shared_ptr<ModelSceneData> data(std::uint32_t reference);
     std::shared_ptr<ModelSceneList> list(std::uint32_t reference);
 private:

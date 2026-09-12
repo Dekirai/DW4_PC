@@ -1,8 +1,34 @@
 # Third-party notices and provenance
 
-The MIT license in this repository covers the new DW4_PC code. It does not
+The MIT license in this repository covers the new DW4_PC code, except where
+an individual file or the notices below identify an upstream adaptation. It does not
 license Digimon World 4 or its game content. Users supply their own local data.
 Original executable and asset bytes are not distributed by this repository.
+
+The selected recompilation pipeline builds additional dependencies locally:
+
+| Dependency | Verified source | License source |
+| --- | --- | --- |
+| [DolRecomp](https://github.com/ExpansionPak/DolRecomp) | Owner's local archive; 161 compared source files match `40637c4683bd2820ac5b23607ee344720beb26df` after line-ending normalization | Upstream `LICENSE`, GNU GPL version 3; individual CPU source declares GPL-3.0-or-later |
+| [ModernGekko](https://github.com/ExpansionPak/ModernGekko) | `5417826c31187d4dadf8588c7aa25bf107782936` | Upstream `LICENSE`, GNU GPL version 3 |
+| [RecompCore](https://github.com/ExpansionPak/RecompCore) | ModernGekko submodule `55c7b023fa0f4eba1cf3fdbbb25b1c5ec468d5ac` | Upstream `Copying`, per-file SPDX notices and `LICENSES/`; Dolphin-derived source |
+
+The [ModernGekko template](https://github.com/ExpansionPak/ModernGekko-Template)
+is a build-recipe reference supplied locally by the owner. Its source is not
+vendored into the original manual core. Runtime adaptations in `patches/`
+retain the upstream ModernGekko/RecompCore licensing; the repository's MIT license does not
+relicense those patches or the runtime. Dependency checkouts, generated game
+code and binaries remain in ignored local directories. Future runtime binary
+distribution must retain the corresponding upstream notices and source/build
+information. See [RECOMPILATION.md](docs/RECOMPILATION.md) for integration scope.
+
+`patches/moderngekko-local-runtime.patch` retains the
+[ModernGekko GPL version 3 license](licenses/ModernGekko-GPL-3.0.txt).
+`patches/recompcore-headless-shader-progress.patch` adapts `ShaderCache.cpp`,
+Copyright 2018 Dolphin Emulator Project, identified upstream as
+`GPL-2.0-or-later`. Its [upstream license text](licenses/RecompCore-GPL-2.0-or-later.txt)
+is retained separately. Neither patch is relicensed under this repository's MIT
+license.
 
 The native application builds these pinned dependencies using CMake:
 
