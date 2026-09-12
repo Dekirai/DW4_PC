@@ -1,10 +1,27 @@
 # Original player construction and remaining integration
 
-The USA player callback at `8034D61C` is the next lifecycle integration target.
+`ModelPlayerCreate` implements the USA player callback at `8034D61C` through
+the existing startup return at `8034DF3C`, using the actual mutable model graph.
 The registered controller's outer GENERATE branch at `8030D9CC` calls it through
 virtual `+98`, then performs additional work before returning. The existing
-post-GETPLAYER startup and prepared spawn integration implement parts of this
-chain; neither establishes complete player construction.
+post-GETPLAYER startup is reused directly after the real GETPLAYER delivery.
+The result `outer_generate_required` explicitly returns to the outer caller;
+it does not establish full GENERATE completion or a playable original frame.
+
+The invocation captures its own live parent and first named ONE, installs the
+normal built-in factory result in that ONE, applies the player-specific fields,
+and performs the conditional point query. Placement freshly searches the RAM's
+then-current data list. Its node reader retains that placement-scope ONE and
+resolves its live canonical scene node at each original source/setter read.
+GETPLAYER freshly reads the RAM number and retains the actual returned object0
+row. Startup keeps the new work and earlier parent even if nested services
+replace ONE.work, RAM.parent, RAM.data or GAMERAM's current row.
+
+Nested dispatches, point-buffer push/pop, placement candidates and startup
+phases survive service pauses without repeated factory or packet preparation.
+Missing ONE, an unsupported concrete node setter and missing/wrong GETPLAYER
+object0 are checked faults preserving completed effects. A missing map-context
+reader remains an explicit resumable service boundary.
 
 Evidence uses the supplied USA `sys/main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, and original Agumon resource
@@ -12,8 +29,9 @@ Evidence uses the supplied USA `sys/main.dol`, SHA-1
 
 ## Fresh work and persistent node
 
-The callback ensures the RAM data-list owner exists, then finds the first
-non-null entry named ONE. Allocating an empty list does not create ONE or a node.
+The callback ensures the RAM data-list owner exists, then finds the first entry
+named ONE. A reached null entry faults; it is not skipped. Allocating an empty
+list does not create ONE or a node.
 It unconditionally installs a fresh `beNDMWMdlPlayerInfoWork` in ONE, including
 on repeated generation. Retained older work remains a distinct owner. The scene
 node is a separate object and must not be reset or replaced with the work.

@@ -81,8 +81,10 @@ struct ModelPlayerStartup::Impl {
     bool executing{},failed{};
     Impl(ModelPlayerStartOwner owner,std::shared_ptr<GameDataList> row,ModelPlayerStartDefaults defaults,ModelPlayerMapRules rules)
         :prefix(std::move(owner),std::move(row),std::move(defaults)),maps(std::move(rules)) {}
+    Impl(ModelPlayerStartCapture capture,std::shared_ptr<GameDataList> row,ModelPlayerStartDefaults defaults,ModelPlayerMapRules rules)
+        :prefix(std::move(capture),std::move(row),std::move(defaults)),maps(std::move(rules)) {}
     std::int32_t ram() const {
-        const auto value=*prefix.owner().live_ram_no;
+        const auto value=*prefix.capture().live_ram_no;
         if(value<0 || value>3)fail("Player-start UI requires the live original player RAM in 0..3.");
         return value;
     }
@@ -113,6 +115,9 @@ struct ModelPlayerStartup::Impl {
 ModelPlayerStartup::ModelPlayerStartup(ModelPlayerStartOwner owner,std::shared_ptr<GameDataList> row,
     ModelPlayerStartDefaults defaults,ModelPlayerMapRules maps)
     :impl_(std::make_unique<Impl>(std::move(owner),std::move(row),std::move(defaults),std::move(maps))) {}
+ModelPlayerStartup::ModelPlayerStartup(ModelPlayerStartCapture capture,std::shared_ptr<GameDataList> row,
+    ModelPlayerStartDefaults defaults,ModelPlayerMapRules maps)
+    :impl_(std::make_unique<Impl>(std::move(capture),std::move(row),std::move(defaults),std::move(maps))) {}
 ModelPlayerStartup::~ModelPlayerStartup()=default;
 ModelPlayerStartup::ModelPlayerStartup(ModelPlayerStartup&&) noexcept=default;
 ModelPlayerStartup& ModelPlayerStartup::operator=(ModelPlayerStartup&&) noexcept=default;
@@ -148,7 +153,7 @@ ModelPlayerStartupResult ModelPlayerStartup::resume(NativeMessenger& messenger,A
                     ModelPlayerStartupPhase::metal:ModelPlayerStartupPhase::main_lobby;
             } else if(state.phase==ModelPlayerStartupPhase::main_lobby) {
                 if(std::find(state.maps.main_lobby().begin(),state.maps.main_lobby().end(),*state.map)!=state.maps.main_lobby().end())
-                    state.prefix.owner().work->original_is_main_lobby()=std::uint8_t{1};
+                    state.prefix.capture().fields->original_is_main_lobby=std::uint8_t{1};
                 state.phase=ModelPlayerStartupPhase::completed;
             } else {
                 if(!state.dispatch)state.prepare();

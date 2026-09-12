@@ -112,7 +112,17 @@ struct ActionEventRuntime::Impl {
     NativeMessenger messenger;
     MessengerServices external;
     ModelCollisionServices collision_services;
-    std::map<Key,std::shared_ptr<Model>> models;
+    struct ModelOwner {
+        std::shared_ptr<Model> prepared;
+        std::shared_ptr<ActorSceneResource> scene;
+        std::shared_ptr<ModelSceneRam> ram;
+        explicit ModelOwner(std::shared_ptr<Model> value):prepared(std::move(value)) {}
+        ModelOwner(std::shared_ptr<ActorSceneResource> source,std::shared_ptr<ModelSceneRam> actual)
+            :scene(std::move(source)),ram(std::move(actual)) {}
+        std::uint8_t& active() {return ram ? ram->active : *prepared->active;}
+    };
+    std::map<Key,std::shared_ptr<ModelOwner>> models;
+    ModelPlayerCreateServices player_creation;
     std::map<Key,Consumer> consumers;
     std::map<Key,Action> actions;
     std::map<Key,NativeControllerServices> prepared_controllers;
@@ -154,7 +164,9 @@ struct ActionEventRuntime::Impl {
     Model& model(ControllerObjectId id) {
         const auto found=models.find(key(id));
         if(found==models.end()) fail("No prepared model work owns this source-qualified RAM.");
-        return *found->second;
+        if(!found->second->prepared)
+            fail("This live MODELCTRL RAM requires its connected sequence execution bundle; no prepared facade is substituted.");
+        return *found->second->prepared;
     }
     std::size_t owner_count() const noexcept {
         return models.size()+consumers.size()+actions.size()+prepared_controllers.size();
@@ -302,7 +314,7 @@ struct ActionEventRuntime::Impl {
     MessengerServices services() {
         return {
             [this](ControllerObjectId id)->std::optional<std::uint8_t> {
-                if(const auto found=models.find(key(id));found!=models.end()) return *found->second->active;
+                if(const auto found=models.find(key(id));found!=models.end()) return found->second->active();
                 if(const auto found=consumers.find(key(id));found!=consumers.end()) return found->second.active;
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.runtime->active();
                 if(const auto found=prepared_controllers.find(key(id));found!=prepared_controllers.end()) return found->second.active();
@@ -310,10 +322,19 @@ struct ActionEventRuntime::Impl {
                 return std::nullopt;
             },
             [this](ControllerObjectId id)->MessengerManager {
-                if(const auto found=models.find(key(id));found!=models.end())
-                    return {[this,id,status=std::shared_ptr<ModelStatusInvocation>{},status_result=std::optional<std::uint32_t>{}]
+                if(const auto found=models.find(key(id));found!=models.end()) {
+                    if(found->second->ram) {
+                        const auto manager=found->second->ram->manager.lock();
+                        if(!manager || manager.get()!=this)return {};
+                        return {[this,ram=found->second->ram,call=std::shared_ptr<ModelBaseInvocation>{}]
                         (NativeMessenger&,const MessengerDelivery& delivery) mutable {
-                        auto& owner=model(id);
+                        if(!call)call=std::make_shared<ModelBaseInvocation>(ram,delivery.message.command);
+                        return call->resume(messenger,events_runtime,player_creation);
+                    },{}};
+                    }
+                    return {[this,id,captured=found->second->prepared,status=std::shared_ptr<ModelStatusInvocation>{},status_result=std::optional<std::uint32_t>{}]
+                        (NativeMessenger&,const MessengerDelivery& delivery) mutable {
+                        auto& owner=*captured;
                         // GETRECNO is absent from the original status dictionary.
                         // After the prepared ONE lookup, virtual+C4 declines
                         // before status-field access/allocation. This known
@@ -344,6 +365,7 @@ struct ActionEventRuntime::Impl {
                         }
                         return model_message(id,owner,delivery);
                     },{}};
+                }
                 if(const auto found=consumers.find(key(id));found!=consumers.end())
                     return {[this,id](NativeMessenger&,const MessengerDelivery& delivery) { return consume(consumers.at(key(id)),delivery); },{}};
                 if(const auto found=actions.find(key(id));found!=actions.end()) return found->second.manager;
@@ -487,15 +509,16 @@ struct ActionEventRuntime::Impl {
         }
     }
 };
-ActionEventRuntime::ActionEventRuntime():impl_(std::make_unique<Impl>(*this)) {}
+ActionEventRuntime::ActionEventRuntime():impl_(std::make_shared<Impl>(*this)) {}
 ActionEventRuntime::~ActionEventRuntime() {
     // A paused recipient can retain model callback owners. Break model-owned
     // continuation edges while the model map still owns every target; captured
     // work must stay strong during execution. Matrices have separate ownership.
     for(auto& entry:impl_->models) {
-        entry.second->query.reset();
-        entry.second->broadcast.reset();
-        entry.second->hitbox.reset();
+        if(!entry.second->prepared)continue;
+        entry.second->prepared->query.reset();
+        entry.second->prepared->broadcast.reset();
+        entry.second->prepared->hitbox.reset();
     }
 }
 ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding binding,ModelControlState model,
@@ -518,14 +541,74 @@ ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding bindi
     impl_->require_registration_capacity(1,std::string_view("MODELCTRL").size()+binding.model_name().size());
     impl_->require_source(id.file_index,binding.source());
     const auto [found,inserted]=impl_->models.emplace(key(id),
-        std::make_shared<Impl::Model>(std::move(binding),std::move(work),std::move(node),std::move(timer),active));
+        std::make_shared<Impl::ModelOwner>(std::make_shared<Impl::Model>(std::move(binding),std::move(work),std::move(node),std::move(timer),active)));
     (void)inserted;
-    const auto& value=found->second->binding;
+    const auto& value=found->second->prepared->binding;
     impl_->messenger.register_recipient(id,"MODELCTRL",value.model_name(),static_cast<std::int32_t>(value.instance_index()));
     return id;
 }
-std::shared_ptr<ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) { return impl_->model(id).work; }
-std::shared_ptr<const ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) const { return impl_->model(id).work; }
+ControllerObjectId ActionEventRuntime::register_model_scene_ram(std::shared_ptr<ActorSceneResource> scene,
+    std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number) {
+    if(!scene)fail("Live MODELCTRL registration requires its actual loaded scene owner.");
+    const auto info=scene->models().info(info_reference);
+    if(!info || info->kind!="KIND_PLAYER")fail("This MODELCTRL registration implements the exact KIND_PLAYER hook only.");
+    const auto ram=scene->models().ram(ram_reference);
+    if(!ram || !ram->reference())fail("Loaded MODELCTRL registration requires a physical serialized RAM.");
+    const ControllerObjectId id{ram->source_occurrence(),*ram->reference()};
+    const auto found=impl_->models.find(key(id));
+    if(found!=impl_->models.end()) {
+        if(found->second->scene!=scene || found->second->ram!=ram)
+            fail("The MODELCTRL identity already belongs to another actual loaded owner.");
+    } else {
+        impl_->check_new(key(id));
+        for(const auto& [other_id,owner]:impl_->models)
+            if(other_id.file_index==id.file_index && owner->scene && owner->scene!=scene)
+                fail("One source occurrence cannot represent two separately loaded model scenes.");
+        impl_->require_source(id.file_index,ram->source());
+        impl_->models.emplace(key(id),std::make_shared<Impl::ModelOwner>(scene,ram));
+    }
+    // 802F251C clears these words before writing the manager/parent/index.
+    // Registration does not activate a RAM or allocate its ONE.work.
+    ram->words[0]=0;ram->words[3]=0;ram->words[2]=0;ram->words[1]=0;
+    register_model_ram(info,ram,number,std::shared_ptr<const void>(impl_));
+    impl_->messenger.register_recipient(id,"MODELCTRL",info->name.value_or(std::string{}),ram->number);
+    const auto record=find_model_named(info->data,"HIT");
+    if(record) {
+        const auto hit=std::dynamic_pointer_cast<ModelSceneHit>(record);
+        if(!hit)fail("MODELCTRL registration reached a first named HIT with an incompatible concrete type.");
+        if(hit->hit_player_bullet)impl_->messenger.register_recipient(id,"HITPLAYERBULLET",info->name.value_or(std::string{}),ram->number);
+        if(hit->hit_player_talk)impl_->messenger.register_recipient(id,"HITPLAYERTALK",info->name.value_or(std::string{}),ram->number);
+        if(hit->hit_enemy_bullet)impl_->messenger.register_recipient(id,"HITENEMYBULLET",info->name.value_or(std::string{}),ram->number);
+    }
+    // The generic PC registration/context prefix remains an explicit prepared
+    // prerequisite; this appends its recovered player-category tail.
+    impl_->messenger.register_recipient(id,"PLAYER",info->name.value_or(std::string{}),ram->number);
+    return id;
+}
+std::shared_ptr<ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) {
+    if(const auto ram=model_ram(id)) {
+        const auto one=find_model_one(*ram);
+        if(!one)fail("MODELCTRL current-work lookup dereferences a missing ONE.");
+        return one->work;
+    }
+    return impl_->model(id).work;
+}
+std::shared_ptr<const ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) const {
+    if(const auto ram=model_ram(id)) {
+        const auto one=find_model_one(*ram);
+        if(!one)fail("MODELCTRL current-work lookup dereferences a missing ONE.");
+        return one->work;
+    }
+    return impl_->model(id).work;
+}
+std::shared_ptr<ModelSceneRam> ActionEventRuntime::model_ram(ControllerObjectId id) const {
+    const auto found=impl_->models.find(key(id));
+    if(found==impl_->models.end())fail("No MODELCTRL registration owns this RAM.");
+    return found->second->ram;
+}
+void ActionEventRuntime::set_player_creation_services(ModelPlayerCreateServices services) {
+    impl_->player_creation=std::move(services);
+}
 void ActionEventRuntime::prepare_model_queries(ControllerObjectId id,ModelQueryOwner fields) {
     // Like installing a missing recipient provider, first preparation can
     // resolve a suspended query. It cannot replace any existing live owner.
@@ -539,8 +622,9 @@ void ActionEventRuntime::prepare_model_queries(ControllerObjectId id,ModelQueryO
         fail("Initial prepared PLAYER RAM number must match the bound selected occurrence.");
     if(*fields.parent_name && ((*fields.parent_name)->size()>65535 || (*fields.parent_name)->find('\0')!=std::string::npos))
         fail("Prepared MODELCTRL parent name exceeds the original bounded string profile.");
-    for(const auto& [other_id,other]:impl_->models) {
-        if(other_id==id || !other->query_owner)continue;
+    for(const auto& [other_id,registration]:impl_->models) {
+        const auto& other=registration->prepared;
+        if(other_id==id || !other || !other->query_owner)continue;
         const auto& previous=*other->query_owner;
         if(previous.ram_no==fields.ram_no || previous.active==fields.active || previous.work_available==fields.work_available)
             fail("Distinct MODELCTRL RAMs cannot share their physical RAM field owners.");
@@ -664,7 +748,7 @@ void ActionEventRuntime::register_controllers(std::span<const PreparedController
     impl_->sources.merge(sources);impl_->prepared_controllers.merge(providers);
 }
 void ActionEventRuntime::set_active(ControllerObjectId id,bool active) {
-    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) *found->second->active=active ? std::uint8_t{1} : std::uint8_t{0};
+    if(const auto found=impl_->models.find(key(id));found!=impl_->models.end()) found->second->active()=active ? std::uint8_t{1} : std::uint8_t{0};
     else if(const auto consumer=impl_->consumers.find(key(id));consumer!=impl_->consumers.end()) consumer->second.active=active;
     else fail("Cannot change activity of an unowned event RAM.");
 }
@@ -709,8 +793,9 @@ void ActionEventRuntime::prepare_collision_target(ControllerObjectId id,ModelHit
        graph.model_reference()!=binding.model_reference() || graph.model_name()!=binding.model_name() ||
        (id.reference_index!=body.ram_reference() && id.reference_index!=body.ram_owner_reference()))
         fail("Prepared collision HIT graph does not belong to this model's actual source-qualified RAM.");
-    for(const auto& [other_id,other]:impl_->models) {
-        if(other_id.file_index==id.file_index && other->collision &&
+    for(const auto& [other_id,registration]:impl_->models) {
+        const auto& other=registration->prepared;
+        if(other_id.file_index==id.file_index && other && other->collision &&
            other->collision->body().ram_owner_reference()==body.ram_owner_reference())
             fail("The physical model RAM already owns its mutable collision body through another reference.");
     }

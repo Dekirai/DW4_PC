@@ -2,6 +2,17 @@
 
 ## Implemented boundary
 
+Version 0.39 adds one canonical mutable model graph per loaded scene resource.
+`ActionEventRuntime` registers actual RAM owners and routes their messages through
+retained `ModelBaseInvocation` captures. Player `+98` performs fresh work
+installation, point query, placement, GETPLAYER and the existing startup. The
+outer branch reloads its original ONE's work and performs HP fallback, box and
+heading preparation, and optional AI allocation before a fresh direct controller
+entry. Full ordinary entry and player `+B8` remain required. Prepared sequence
+adapters remain explicit and cannot stand in for that missing execution bundle.
+See [MODEL_SCENE.md](MODEL_SCENE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md),
+and [PLAYER_CONSTRUCTION.md](PLAYER_CONSTRUCTION.md).
+
 Version 0.38 introduces one noncopyable `ModelPlayerWork` allocation containing
 all 68 reflected field locations. Motion/control, sequence/wait, script and
 status facades retain aliasing pointers into it. The work object never stores
@@ -10,8 +21,8 @@ remain separate. The normal built-in factory field profile allocates six
 distinct referenced guest objects and applies the recovered defaults. The
 existing checked MODELCTRL runtime directly consumes supplied canonical work;
 its legacy prepared overload uses an explicit compatible preparation profile.
-No second gameplay state is maintained. Mutable RAM/ONE registration, captured
-work replacement and the complete GENERATE continuation still remain. See
+No second gameplay state is maintained. The complete GENERATE continuation
+and native original frame scheduling still remain. See
 [MODEL_PLAYER_WORK.md](MODEL_PLAYER_WORK.md).
 
 Version 0.37 replaces independent movement arrays, optional PDMOVE values,

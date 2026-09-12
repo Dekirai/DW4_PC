@@ -133,9 +133,60 @@ void gates_and_transform() {
     };
     check(clock.run(service).stop==BoneSelectStop::children_required && clock.scene.model_view()==identity(),
         "Transform clock pause occurred after matrix composition.");
+    auto current=local;current[12]=83;*resource->mutable_node(transform)->matrix_owner()=current;
+    draws.clear();
     check(clock.run(service).value==0 && queries==2,"Transform clock was skipped, resampled, or lost a zero time value.");
+    check(draws.size()==1 && draws[0].model_view==original_matrix_multiply(identity(),current),
+        "Transform callback resume must compose the actual current node matrix, not stale serialized bytes.");
     Fixture bad;const auto input=bad.make_node("igTransform",{},{},2,false,identity(),0,0);auto invalid=bad.resource();Execution b({invalid->node(input)});
     check(b.run(service).stop==BoneSelectStop::faulted,"Non-null transform input bypassed its actual update service.");
+}
+void mutable_children() {
+    Fixture f;const auto first=f.make_node("ExternalNode"),second=f.make_node("ExternalNode");
+    const auto group=f.make_node("igGroup",{first});auto resource=f.resource();auto node=resource->mutable_node(group);
+    auto scope=rigid();scope.previsit_enabled=true;
+    Execution e({node},scope);std::vector<std::uint32_t> visited;SceneTraversalServices services;
+    services.previsit=[&](const SceneSubmissionRequest& request)->std::optional<std::int32_t> {
+        if(request.node==node) {
+            auto list=std::make_shared<ActorSceneNodeList>();list->replace({resource->node(second),resource->node(second)});
+            node->set_child_list_owner(std::move(list));
+        }
+        return 0;
+    };
+    services.node_handler=[&](const SceneSubmissionRequest& request)->std::optional<std::int32_t> {
+        visited.push_back(request.node->reference());
+        node->set_child_list_owner({});return 0;
+    };
+    check(e.run(services).stop==BoneSelectStop::completed && visited==std::vector{second,second},
+        "Child traversal must capture the live list after previsit and preserve its ordered storage through nested slot replacement.");
+    check(node->children().empty(),"A completed child callback's actual list-slot publication was lost.");
+}
+void captured_child_backing() {
+    Fixture f;const auto first=f.make_node("ExternalNode"),second=f.make_node("ExternalNode");
+    const auto group=f.make_node("igGroup",{first,second});auto resource=f.resource();
+    const auto root=resource->mutable_node(group);const auto first_node=resource->node(first);
+    const auto list=root->child_list_owner();const auto backing=list->storage_owner();
+    Execution in_place({root});std::vector<std::uint32_t> visited;SceneTraversalServices services;
+    services.node_handler=[&](const SceneSubmissionRequest& request)->std::optional<std::int32_t> {
+        visited.push_back(request.node->reference());
+        if(visited.size()==1) {list->replace({first_node,first_node});list->clear();}
+        return 0;
+    };
+    check(in_place.run(services).stop==BoneSelectStop::completed && visited==std::vector{first,first} &&
+        list->storage_owner()==backing && list->values().empty(),
+        "Captured child end must ignore later count clear while same-backing slot writes remain visible.");
+    Execution after_clear({root});visited.clear();
+    check(after_clear.run(services).stop==BoneSelectStop::completed && visited.empty(),
+        "A later child traversal must observe the current zero logical count.");
+    list->replace({first_node,resource->node(second)});Execution growing({root});visited.clear();
+    services.node_handler=[&](const SceneSubmissionRequest& request)->std::optional<std::int32_t> {
+        visited.push_back(request.node->reference());
+        if(visited.size()==1) {list->append(first_node);list->replace({first_node,first_node,first_node});}
+        return 0;
+    };
+    check(growing.run(services).stop==BoneSelectStop::completed && visited==std::vector{first,second} &&
+        list->storage_owner()!=backing && backing->values()[1]->reference()==second,
+        "List growth must preserve the captured old backing and end rather than redirect an active traversal.");
 }
 void flush_and_dispatch() {
     Fixture f;const auto a=f.attribute("igMaterialAttr"),leaf=f.make_node("ExternalNode"),later=f.make_node("ExternalNode");
@@ -226,7 +277,7 @@ void original(const std::filesystem::path& root) {
 }
 }
 int main(int argc,char** argv) {
-    try {retained_geometry();gates_and_transform();flush_and_dispatch();blend_and_failure();malformed();const auto synthetic=checks;
+    try {retained_geometry();gates_and_transform();mutable_children();captured_child_backing();flush_and_dispatch();blend_and_failure();malformed();const auto synthetic=checks;
         if(argc==2)original(argv[1]);else if(argc!=1)return 2;
         std::cout<<"Common scene traversal checks: "<<checks<<" (synthetic "<<synthetic<<")\n";return 0;
     }catch(const std::exception& error){std::cerr<<"Common scene traversal after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

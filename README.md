@@ -1,12 +1,22 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
+Version 0.39 connects canonical loaded MODELCTRL RAMs to actual player creation.
+The native callback installs fresh work, queries original spawn points, places
+the real scene node and initializes player values and number/meter controllers.
+Separate base, status and startup captures survive work replacement and paused
+messages. The outer GENERATE continuation now reaches its required ordinary
+sequence entry; that entry, its player callback and the original frame loop are
+still incomplete. The visible walking preview remains the existing demo.
+See [PLAYER_CONSTRUCTION.md](docs/PLAYER_CONSTRUCTION.md) and
+[MODEL_DISPATCH.md](docs/MODEL_DISPATCH.md).
+
 Version 0.38 connects movement, control, sequence, script and status consumers
 to one shared player-work allocation with all 68 recovered field defaults.
 The checked model runtime consumes this allocation directly; node matrices and
 RAM timers keep their separate lifetimes. Retained views keep captured work
 alive, and detached validation values publish through existing owners. Full
-mutable RAM/ONE registration, GENERATE and original gameplay remain in progress.
+GENERATE and original gameplay remain in progress.
 Version 0.37 makes the existing movement, PDMOVE, subcommand and sequence-label
 consumers operate on actual retained list owners. Sequence entry preserves
 allocated lists and PDMOVE backing storage, and paused subcommands retain their

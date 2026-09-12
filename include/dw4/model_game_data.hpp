@@ -18,6 +18,7 @@ private:
     std::shared_ptr<GameDataInt> hp_,max_hp_;
     bool refilled_{};
     friend ModelGameDataBinding bind_model_game_data(ModelScriptWork&,std::shared_ptr<GameDataList>);
+    friend ModelGameDataBinding bind_model_game_data(ModelScriptFields&,std::shared_ptr<GameDataList>);
 };
 
 // The caller supplies the actual captured GETPLAYER object0 from its retained
@@ -26,4 +27,5 @@ private:
 // MMP->MP. Negative HP does not trigger either copy. The required named types
 // are prevalidated before mutation; malformed host rows fail atomically.
 ModelGameDataBinding bind_model_game_data(ModelScriptWork& work,std::shared_ptr<GameDataList> returned_row);
+ModelGameDataBinding bind_model_game_data(ModelScriptFields& fields,std::shared_ptr<GameDataList> returned_row);
 } // namespace dw4

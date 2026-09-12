@@ -1,0 +1,141 @@
+#pragma once
+
+#include "dw4/actor_scene.hpp"
+#include "dw4/model_player_work.hpp"
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace dw4 {
+class ModelSceneError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
+
+// A source-qualified physical object, or a fresh runtime allocation with no
+// serialized reference. Retaining it retains the document, never its resource
+// facade. Equal paths and occurrence numbers do not establish owner equality.
+class ModelSceneObject {
+public:
+    virtual ~ModelSceneObject()=default;
+    ModelSceneObject(const ModelSceneObject&)=delete;
+    ModelSceneObject& operator=(const ModelSceneObject&)=delete;
+    std::shared_ptr<const IgbDocument> document_owner() const noexcept { return document_; }
+    const std::string& source() const noexcept { return source_; }
+    std::uint32_t source_occurrence() const noexcept { return occurrence_; }
+    std::optional<std::uint32_t> reference() const noexcept { return reference_; }
+    const std::string& type() const noexcept { return type_; }
+    std::optional<std::string> name;
+protected:
+    explicit ModelSceneObject(std::string type):type_(std::move(type)) {}
+private:
+    friend class ModelSceneObjects;
+    std::shared_ptr<const IgbDocument> document_;
+    std::string source_,type_;
+    std::uint32_t occurrence_{};
+    std::optional<std::uint32_t> reference_;
+};
+
+// Count, capacity and the backing allocation have independent identities.
+// The backing represents all serialized slots, including unused capacity.
+// Consumers validate only the live prefix; null/repeated entries stay intact.
+class ModelSceneList final : public ModelSceneObject {
+public:
+    using Storage=std::vector<std::shared_ptr<ModelSceneObject>>;
+    explicit ModelSceneList(std::string type="beBaseInfoDataList") :ModelSceneObject(std::move(type)) {}
+    std::int32_t count{},capacity{};
+    std::shared_ptr<Storage> backing;
+    std::span<const std::shared_ptr<ModelSceneObject>> values() const;
+    void append(std::shared_ptr<ModelSceneObject>);
+};
+
+class ModelSceneData : public ModelSceneObject {
+public:
+    explicit ModelSceneData(std::string type="beBaseInfoData"):ModelSceneObject(std::move(type)) {}
+    std::int32_t value{};
+};
+class ModelSceneOne final : public ModelSceneData {
+public:
+    ModelSceneOne():ModelSceneData("beModelCtrlInfoRamData") {}
+    std::shared_ptr<ActorSceneNode> node;
+    std::shared_ptr<ModelPlayerWork> work;
+};
+class ModelSceneTimer final : public ModelSceneData {
+public:
+    ModelSceneTimer():ModelSceneData("beBaseInfoRamTimer") {}
+    MotionTimer timer;
+};
+class ModelSceneHit final : public ModelSceneData {
+public:
+    ModelSceneHit():ModelSceneData("beModelCtrlInfoDataHit") {}
+    std::uint8_t hit_player_bullet{},hit_enemy_bullet{},hit_player_talk{};
+    std::shared_ptr<ModelSceneList> boxes;
+};
+class ModelSceneBox final : public ModelSceneObject {
+public:
+    ModelSceneBox():ModelSceneObject("igAABox") {}
+    // The same box allocation is used by aliased node-bound fields.
+    std::shared_ptr<CollisionBox> box;
+};
+class ModelSceneInfo final : public ModelSceneObject {
+public:
+    ModelSceneInfo():ModelSceneObject("beModelCtrlInfo") {}
+    std::uint8_t active{};
+    std::shared_ptr<ModelSceneList> data,rams;
+    std::optional<std::string> kind;
+};
+class ModelSceneRam final : public ModelSceneObject {
+public:
+    ModelSceneRam():ModelSceneObject("beBaseInfoRam") {}
+    std::int32_t number{};
+    std::uint8_t active{};
+    std::array<std::uint32_t,4> words{};
+    std::shared_ptr<ModelSceneList> data;
+    // Original registration establishes these links; serialization does not.
+    std::weak_ptr<ModelSceneInfo> parent;
+    std::weak_ptr<const void> manager;
+};
+
+// One registry, owned lazily by ActorSceneResource. The nonowning resource
+// reference is used only while loading; captured graph owners outlive it.
+class ModelSceneObjects {
+public:
+    ~ModelSceneObjects();
+    ModelSceneObjects(const ModelSceneObjects&)=delete;
+    ModelSceneObjects& operator=(const ModelSceneObjects&)=delete;
+    std::shared_ptr<ModelSceneObject> object(std::uint32_t reference);
+    std::shared_ptr<ModelSceneInfo> info(std::uint32_t reference);
+    std::shared_ptr<ModelSceneRam> ram(std::uint32_t reference);
+    std::shared_ptr<ModelSceneData> data(std::uint32_t reference);
+    std::shared_ptr<ModelSceneList> list(std::uint32_t reference);
+private:
+    friend class ActorSceneResource;
+    explicit ModelSceneObjects(ActorSceneResource&);
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// Ordered first-name lookup happens before the requested concrete type check.
+// A wrong-type match shadows later records. Reached null entries and a null
+// list are unsafe original dereferences; count<=0 does not inspect backing.
+std::shared_ptr<ModelSceneObject> find_model_named(const std::shared_ptr<ModelSceneList>&,std::string_view name);
+std::shared_ptr<ModelSceneData> find_model_data(const std::shared_ptr<ModelSceneList>&,std::string_view name);
+std::shared_ptr<ModelSceneList> ensure_model_data(ModelSceneRam&);
+std::shared_ptr<ModelSceneOne> find_model_one(ModelSceneRam&);
+std::shared_ptr<ModelSceneTimer> find_model_timer(ModelSceneRam&,std::string_view name);
+// 8031DE44: ensure the data list; reuse the first matching timer, or allocate,
+// name and append one; then restart its existing fields at the supplied clock.
+std::shared_ptr<ModelSceneTimer> start_model_timer(ModelSceneRam&,std::string_view name,
+    std::uint64_t world_time,std::int64_t end_time=0);
+// 8031E4C4: ensure the data list but require an existing named timer.
+float model_timer_frames(ModelSceneRam&,std::string_view name,std::uint64_t world_time);
+
+// The registration caller supplies the actual manager owner and original index.
+// This does not append, sort, deduplicate, activate or invent a GETROOT result.
+void register_model_ram(const std::shared_ptr<ModelSceneInfo>&,
+    const std::shared_ptr<ModelSceneRam>&,std::int32_t number,
+    const std::shared_ptr<const void>& actual_manager);
+} // namespace dw4

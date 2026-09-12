@@ -26,6 +26,8 @@ std::shared_ptr<ModelStatusFields> prepared_status_fields(const std::shared_ptr<
     fields->is_player=player;return fields;
 }
 }
+ModelStatusWork::ModelStatusWork(std::shared_ptr<ModelStatusFields> fields)
+    :fields_(status_fields(std::move(fields))) {}
 ModelStatusWork::ModelStatusWork(std::shared_ptr<ModelScriptWork> work,std::uint8_t player)
     :ModelStatusWork(work,prepared_status_fields(work,player)) {}
 ModelStatusWork::ModelStatusWork(std::shared_ptr<ModelScriptWork> work,std::shared_ptr<ModelStatusFields> fields)

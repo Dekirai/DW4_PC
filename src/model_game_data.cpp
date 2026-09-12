@@ -4,6 +4,9 @@
 
 namespace dw4 {
 ModelGameDataBinding bind_model_game_data(ModelScriptWork& work,std::shared_ptr<GameDataList> returned_row) {
+    return bind_model_game_data(*work.fields_owner(),std::move(returned_row));
+}
+ModelGameDataBinding bind_model_game_data(ModelScriptFields& fields,std::shared_ptr<GameDataList> returned_row) {
     if(!returned_row)throw GameDataError("Player data binding requires the captured GETPLAYER row object.");
     const auto hp=returned_row->require<GameDataInt>("HP");
     const auto maximum_hp=returned_row->require<GameDataInt>("MHP");
@@ -17,7 +20,7 @@ ModelGameDataBinding bind_model_game_data(ModelScriptWork& work,std::shared_ptr<
     ModelGameDataBinding result;
     result.row_=std::move(returned_row);result.hp_=hp;result.max_hp_=maximum_hp;result.refilled_=refill;
     // 8034D9D8 / DA24: reference assignment, not copied integer payloads.
-    work.hp()=hp;work.max_hp()=maximum_hp;
+    fields.hp=hp;fields.max_hp=maximum_hp;
     if(refill) {
         // DA44 reads MHP before DA54 writes HP; DA64 reads MMP only after
         // that HP write, and DA74 then writes MP. No clamp or fallback exists.

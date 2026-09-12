@@ -6,6 +6,7 @@
 #include "dw4/model_collision.hpp"
 #include "dw4/model_script_context.hpp"
 #include "dw4/model_player_work.hpp"
+#include "dw4/model_dispatch.hpp"
 #include "dw4/player_runtime_binding.hpp"
 #include "dw4/pad.hpp"
 
@@ -54,9 +55,10 @@ struct ModelHitboxResult {
     std::uint64_t entry_id{};
     std::string diagnostic;
 };
-// Explicitly prepared model work and loaded event-consumer RAMs. This owns
-// ordinary sound/effect/HITBOX queues and synchronous messenger continuations,
-// not original player creation, a frame scheduler or complete external managers.
+// Canonical loaded MODELCTRL RAMs and explicit prepared execution adapters.
+// This owns message routing, player-creation continuations and the existing
+// sound/effect/HITBOX execution. Full ordinary sequence entry, the original
+// frame scheduler and complete external managers still remain requirements.
 // Object IDs distinguish repeated source loads; message matching does not.
 class ActionEventRuntime {
 public:
@@ -74,6 +76,15 @@ public:
     // binding, not the original mutable RAM graph or complete GENERATE tail.
     ControllerObjectId register_model(PlayerRuntimeBinding binding,std::shared_ptr<ModelPlayerWork> work,
         std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerSlot> timer,bool active);
+    // One explicit registration occurrence on the canonical loaded graph.
+    // The caller has prepared manager/context attachment; this writes original
+    // RAM links/index/reset words and appends MODELCTRL, enabled HIT categories
+    // and PLAYER rows. Aliased occurrences retain distinct ordered row snapshots.
+    // It does not execute the generic manager scheduler/context attach prelude.
+    ControllerObjectId register_model_scene_ram(std::shared_ptr<ActorSceneResource>,
+        std::uint32_t info_reference,std::uint32_t ram_reference,std::int32_t number);
+    std::shared_ptr<ModelSceneRam> model_ram(ControllerObjectId id) const;
+    void set_player_creation_services(ModelPlayerCreateServices);
     std::shared_ptr<ModelPlayerWork> model_work(ControllerObjectId id);
     std::shared_ptr<const ModelPlayerWork> model_work(ControllerObjectId id) const;
     // Attach these exact live fields once to an existing checked model binding.
@@ -192,6 +203,6 @@ public:
     ActionServices action_services(ControllerObjectId model);
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<Impl> impl_;
 };
 } // namespace dw4

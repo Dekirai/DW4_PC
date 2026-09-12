@@ -52,6 +52,34 @@ void packet(const MessengerDelivery& delivery,const NativeMessenger& messenger,c
         "Caller lost exact GAMERAM route or live integer packet.");
 }
 
+void canonical_fields_without_prepared_identity() {
+    GameDataState data;ActionEventRuntime events;const auto row=data.player(0);
+    auto fields=std::make_shared<ModelScriptFields>();
+    auto name=std::make_shared<std::optional<std::string>>(std::string("ignored\0name",12));
+    auto number=std::make_shared<std::int32_t>(9);
+    row->require<GameDataBool>("ISUSE")->data=1;
+    row->require<GameDataInt>("MHP")->data=81;
+    std::fill(integers(row,"UPDATA")->begin(),integers(row,"UPDATA")->end(),7);
+    ModelPlayerStart start(ModelPlayerStartCapture{fields,name,number},row,defaults());
+    check(start.capture().fields==fields && start.capture().parent_name==name && start.capture().live_ram_no==number,
+        "Canonical startup detached its actual field owners.");
+    rejects([&]{start.owner();},"Canonical startup fabricated a prepared script identity.");
+    rejects([&]{start.resume(events.messenger(),events,0);},"Out-of-profile RAM escaped its actual request read.");
+    check(start.faulted() && fields->hp==row->require<GameDataInt>("HP") && fields->hp->data==81 &&
+        integers(row,"UPDATA")->at(0)==0 && integers(row,"UPDATA")->at(7)==7,
+        "Canonical startup read unrelated name/RAM values before its HP/reset prefix.");
+
+    ActionEventRuntime resumed;*number=1;unsigned calls{};
+    provider(resumed,"GAMERAM",{},0,[&](NativeMessenger& messenger,const MessengerDelivery& delivery) {
+        ++calls;packet(delivery,messenger,"RECALCPLAYER",1);return MessengerCallResult{true,1,{}};
+    });
+    ModelPlayerStart valid(ModelPlayerStartCapture{fields,name,number},row,defaults());
+    check(valid.resume(resumed.messenger(),resumed,0).stop==ModelPlayerStartStop::later_ui_required && calls==1,
+        "Canonical startup rejected an irrelevant parent name or invented a prior RAM snapshot mismatch.");
+    ModelPlayerStart moved(std::move(valid));
+    check(moved.capture().fields==fields && moved.row()==row,"Moved canonical startup lost its actual work/row anchors.");
+}
+
 void ordered_retained_prefix() {
     GameDataState data;ActionEventRuntime events;auto prepared=owner();const auto captured=data.player(0);
     const auto hp=captured->require<GameDataInt>("HP"),mhp=captured->require<GameDataInt>("MHP");
@@ -424,6 +452,7 @@ void original(const std::filesystem::path& root) {
 int main(int argc,char** argv) {
     try {
         ordered_retained_prefix();branch_and_nullable_values();malformed_ownership_and_faults();default_table_validation();
+        canonical_fields_without_prepared_identity();
         const auto synthetic=checks;
         if(argc==2)original(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_player_start_tests [EXTRACTED_ROOT]");
         std::cout<<"Model player start checks: "<<checks<<" (synthetic "<<synthetic<<")\n";return 0;

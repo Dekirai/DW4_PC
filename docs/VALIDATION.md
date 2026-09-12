@@ -1,4 +1,43 @@
-# Native canonical player-work validation
+# Native player construction validation
+
+Version 0.39.0 was validated locally on 2026-09-12. Canonical loaded RAM/ONE
+owners now participate in actual player construction and retained MODELCTRL
+dispatch. The normal GENERATE path reaches its explicit ordinary sequence-entry
+boundary; complete sequence entry, player `+B8`, original frame scheduling and
+gameplay remain unfinished. The visible walking demo is unchanged.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release build/package | 89/89 CTest suites passed; no compiler warnings |
+| Canonical model graph | 61 synthetic / 75 original-inclusive checks; four actual Agumon RAMs, aliases, retained documents, null/name lookup, shared HIT boxes and RAM timers |
+| Mutable scene nodes | 94 synthetic / 198 original-inclusive checks; shared matrices, nullable box/list fields, physical child backing, independent count/capacity, alias writes, growth and cycle/depth guards |
+| Common scene traversal | 47 synthetic / 62 original-inclusive checks; live matrix reads and retained child backing/end through mutation and pauses |
+| Player construction | 62 synthetic / 129 original-inclusive checks; eight real `+98` returns across four Agumon owners and two original point groups, actual GETPLAYER/GAMESTART/RECALC and number/meter startup, then registered GENERATE retained at SQ_WAIT entry |
+| Base dispatch | 30 synthetic checks; separate base/status/player/outer captures, null work, live registration fields, manager backlinks, paused status, captured queue writes, recursive faults, count-zero first-child access and retained outer prefixes |
+| Final box tail | Synthetic registered GENERATE completes with a valid direct GETHP override and preserves source/previous box owners; normal ordinary-sequence completion remains unimplemented |
+| Original named-list lookup comparison | 10,000 cases / 264,516 original instructions / 4,321 explicit string comparisons; 5,604 checked null/addressability boundaries, zero differences |
+| Existing original integration | 620 player-start, 672 prepared spawn and 413 weapon-preview checks passed |
+| Packaged application | 18 app / 10 play CLI checks and six Python verifier tests passed |
+| Hidden walking replay | 240 frames, 438 simulation steps, 101.333 source-unit travel, 286 idle / 152 run steps, 241 pose uploads and 240 attached-weapon frames; pause/restart/focus-loss checks passed; final frame visually inspected |
+
+The final lookup driver was freshly compiled against current headers and linked
+only against the final production core, SHA-256
+`A5166A136162025DB0F1ED04464D4FE759E759FB07390B5D557790B55106F210`.
+Its hash was unchanged after verification. The packaged application SHA-256 is
+`E9A25D8F3114DD33810D950E325C506E0EE46845DBDD879B04BA2CC0DD6747F3`.
+
+The lookup comparison executes the retained original instructions with explicit
+memory/string-service boundaries. It does not execute the guest allocator or a
+complete original manager/frame. Other construction ordering was checked against
+the supplied DOL and owner-replacement regressions, rather than claimed as a new
+whole-function CPU comparison. The earlier v0.38 Ubuntu build failure was traced
+to a missing `<utility>` include in a test and corrected here; final hosted CI
+results are reported separately from local Windows validation.
+
+## Previous v0.38 checkpoint
+
+The following records describe the previous build and its own hashes. They do
+not claim those complete instruction suites were rerun against v0.39.
 
 Version 0.38.0 was validated locally on 2026-09-12. One `ModelPlayerWork`
 allocation now supplies the recovered 68 field locations to existing

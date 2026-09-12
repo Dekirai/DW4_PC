@@ -22,11 +22,19 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.39 connects actual loaded RAM/ONE owners to native player construction
+and the retained outer GENERATE branch. Four original Agumon owners can reach
+the post-startup ordinary sequence boundary through original point and game-data
+providers. The next lifecycle requirement is the full direct sequence entry,
+its player `+B8` callback, and a retained execution bundle per actual work owner.
+Named RAM timers must remain authoritative when those consumers are connected.
+Manager/context attachment and original scheduling remain separate requirements.
+
 Version 0.38 supplies one canonical 68-field player-work allocation and routes
 the existing checked MODELCTRL, motion/control, sequence/wait, script and status
 consumers through it. Fresh defaults and retained old-generation views are
 covered separately from prepared value publication. The next player-lifecycle
-work is actual mutable RAM/ONE routing and the full retained GENERATE continuation.
+work continues with the full retained GENERATE continuation.
 
 Version 0.37 establishes actual list storage for existing movement, PDMOVE,
 subcommand and label consumers. Retained views share original allocations;

@@ -33,6 +33,16 @@ struct ModelPlayerStartOwner {
     std::shared_ptr<std::optional<std::string>> parent_name;
     std::shared_ptr<std::int32_t> live_ram_no;
 };
+// Actual field anchors captured by player +98. They retain the new work and
+// earlier parent independently of later ONE.work / RAM.parent replacement.
+// Values are read only at their original use; no script identity is implied.
+// A null parent_name anchor represents a captured null parent, distinct from
+// a nonnull parent whose name field is null. Only GAMESTART dereferences it.
+struct ModelPlayerStartCapture {
+    std::shared_ptr<ModelScriptFields> fields;
+    std::shared_ptr<std::optional<std::string>> parent_name;
+    std::shared_ptr<std::int32_t> live_ram_no;
+};
 enum class ModelPlayerStartPhase { binding, reset_modifiers, game_start, base_isuse,
     weapon_generate, recalculate, later_ui };
 enum class ModelPlayerStartStop { service_required, later_ui_required };
@@ -49,6 +59,8 @@ using ModelPlayerClock=std::function<std::uint64_t()>;
 class ModelPlayerStart {
 public:
     ModelPlayerStart(ModelPlayerStartOwner owner,std::shared_ptr<GameDataList> captured_row,
+        ModelPlayerStartDefaults defaults);
+    ModelPlayerStart(ModelPlayerStartCapture capture,std::shared_ptr<GameDataList> captured_row,
         ModelPlayerStartDefaults defaults);
     ~ModelPlayerStart();
     ModelPlayerStart(ModelPlayerStart&&) noexcept;
@@ -68,6 +80,7 @@ public:
     bool prefix_completed() const noexcept;
     bool faulted() const noexcept;
     const ModelPlayerStartOwner& owner() const;
+    const ModelPlayerStartCapture& capture() const;
     const std::shared_ptr<GameDataList>& row() const;
     const ModelGameDataBinding& binding() const;
 private:

@@ -38,6 +38,8 @@ class ModelPlayerStartup {
 public:
     ModelPlayerStartup(ModelPlayerStartOwner,std::shared_ptr<GameDataList>,
         ModelPlayerStartDefaults,ModelPlayerMapRules);
+    ModelPlayerStartup(ModelPlayerStartCapture,std::shared_ptr<GameDataList>,
+        ModelPlayerStartDefaults,ModelPlayerMapRules);
     ~ModelPlayerStartup();
     ModelPlayerStartup(ModelPlayerStartup&&) noexcept;
     ModelPlayerStartup& operator=(ModelPlayerStartup&&) noexcept;

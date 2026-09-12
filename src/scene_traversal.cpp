@@ -53,10 +53,13 @@ SceneAttributeOwner::SceneAttributeOwner(std::shared_ptr<const ActorSceneNode> o
 struct SceneTraversal::Impl {
     struct Frame {
         std::shared_ptr<const ActorSceneNode> node;
+        std::shared_ptr<const ActorSceneNodeList> child_list;
+        std::shared_ptr<const ActorSceneNodeStorage> child_storage;
         std::vector<std::shared_ptr<const ActorSceneNode>> children;
+        bool children_captured{};
         AnimationMatrix view{};
         Stage stage=Stage::previsit;
-        std::size_t cursor{},pushed{};
+        std::size_t cursor{},pushed{},child_end{};
         std::int32_t value{};
         std::optional<std::uint32_t> attribute_list;
         std::vector<Attribute> attributes;
@@ -271,12 +274,7 @@ SceneTraversalResult SceneTraversalContext::resume(SceneTraversal& traversal,con
                     field(doc,object,9,"igIntMetaField",4);field(doc,object,11,"igObjectRefMetaField",4);
                     if(doc.field_i32(object,9)!=0 || doc.field_reference(object,11))
                         fail("Common transform requires its original nonzero-target or input-update service.");
-                    const auto bytes=doc.field_bytes(field(doc,object,8,"igMatrix44fMetaField",64));
-                    AnimationMatrix local{};
-                    for(std::size_t i=0;i<local.size();++i) {
-                        std::uint32_t word{};for(unsigned b=0;b<4;++b)word|=std::uint32_t(bytes[i*4+b])<<(b*8);
-                        local[i]=std::bit_cast<float>(word);
-                    }
+                    const auto local=*frame.node->matrix_owner();
                     frame.view=original_matrix_multiply(frame.view,local);frame.stage=Stage::children;
             } else if(frame.stage==Stage::flush || frame.stage==Stage::geometry) {
                 const bool geometry=frame.stage==Stage::geometry;
@@ -301,11 +299,23 @@ SceneTraversalResult SceneTraversalContext::resume(SceneTraversal& traversal,con
                 if(!result)return required("The retained common scene node handler is incomplete.");
                 frame.request.reset();state->finish(*operation,*result);
             } else if(frame.stage==Stage::children) {
-                if(frame.cursor==frame.children.size()) {frame.stage=Stage::leave;continue;}
+                if(frame.node && !frame.children_captured) {
+                    // 8020B288 reads the live node list at child-handler entry;
+                    // its ordered storage/end capture survives nested callbacks.
+                    if(frame.node->child_field_available())frame.child_list=frame.node->child_list_owner();
+                    if(frame.child_list) {
+                        frame.child_end=frame.child_list->values().size();
+                        frame.child_storage=frame.child_list->storage_owner();
+                    }
+                    frame.children_captured=true;
+                }
+                const auto& children=frame.child_storage ? frame.child_storage->values() : frame.children;
+                if(frame.cursor==(frame.node ? frame.child_end : children.size())) {frame.stage=Stage::leave;continue;}
                 if(operation->frames.size()>=max_depth || ++operation->visits>max_visits)
                     fail("Common scene traversal exceeds its path or occurrence budget.");
-                SceneTraversal::Impl::Frame child;child.node=frame.children[frame.cursor++];
-                child.children=child.node->children();child.view=frame.view;operation->frames.push_back(std::move(child));
+                SceneTraversal::Impl::Frame child;child.node=children[frame.cursor++];
+                if(!child.node)fail("Common child traversal requires the actual non-null node at its captured backing slot.");
+                child.view=frame.view;operation->frames.push_back(std::move(child));
             } else state->finish(*operation,frame.value==2 ? 2 : 0);
         }
         state->current.reset();return {SceneTraversalStop::completed,operation->value,{}};

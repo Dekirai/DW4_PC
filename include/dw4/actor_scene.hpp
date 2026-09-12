@@ -1,20 +1,26 @@
 #pragma once
 
 #include "dw4/animation_hierarchy.hpp"
+#include "dw4/collision_math.hpp"
+#include "dw4/model_placement.hpp"
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace dw4 {
 class ActorSceneError : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 class ActorSceneResource;
+class ModelSceneObjects;
+class ActorSceneNodeList;
+class ActorSceneNodeStorage;
 struct ActorSceneSource;
 
-// Immutable loaded node identity and child graph. Geometry/material fields stay
+// Canonical loaded node identity and mutable original node fields. Geometry/material fields stay
 // in the owned original document; this is not a baked world-space mesh or actor.
-class ActorSceneNode {
+class ActorSceneNode : public std::enable_shared_from_this<ActorSceneNode> {
 public:
     ActorSceneNode(const ActorSceneNode&)=delete;
     ActorSceneNode& operator=(const ActorSceneNode&)=delete;
@@ -25,16 +31,78 @@ public:
     const std::string& type() const noexcept { return type_; }
     const std::optional<std::string>& name() const noexcept { return name_; }
     std::uint32_t flags() const noexcept { return flags_; }
-    const std::vector<std::shared_ptr<const ActorSceneNode>>& children() const noexcept { return children_; }
+    std::span<const std::shared_ptr<const ActorSceneNode>> children() const;
+    bool matrix_field_available() const noexcept { return bool(matrix_); }
+    std::shared_ptr<AnimationMatrix> matrix_owner();
+    std::shared_ptr<const AnimationMatrix> matrix_owner() const;
+    bool bound_field_available() const noexcept { return bound_available_; }
+    std::shared_ptr<CollisionBox> box_owner();
+    std::shared_ptr<const CollisionBox> box_owner() const;
+    void set_box_owner(std::shared_ptr<CollisionBox> box);
+    bool child_field_available() const noexcept { return children_available_; }
+    std::shared_ptr<ActorSceneNodeList> child_list_owner();
+    std::shared_ptr<const ActorSceneNodeList> child_list_owner() const;
+    void set_child_list_owner(std::shared_ptr<ActorSceneNodeList> children);
+    std::shared_ptr<ModelPlacementNode> placement_node();
 private:
     friend class ActorSceneResource;
+    friend class ActorSceneNodeList;
     ActorSceneNode()=default;
     std::shared_ptr<const ActorSceneSource> source_;
     std::uint32_t reference_{},flags_{};
     std::string type_;
     std::optional<std::string> name_;
-    std::vector<std::shared_ptr<const ActorSceneNode>> children_;
-    std::size_t subtree_height_{};
+    std::shared_ptr<AnimationMatrix> matrix_;
+    bool bound_available_{},children_available_{};
+    std::shared_ptr<CollisionBox> box_;
+    std::shared_ptr<ActorSceneNodeList> children_;
+    mutable std::vector<std::weak_ptr<ActorSceneNodeStorage>> incoming_;
+};
+
+// One physical nullable pointer backing allocation, independently shared by
+// serialized list objects. Logical counts and capacities belong to each list.
+class ActorSceneNodeStorage {
+public:
+    using Values=std::vector<std::shared_ptr<const ActorSceneNode>>;
+    const Values& values() const noexcept { return values_; }
+private:
+    friend class ActorSceneNodeList;
+    friend class ActorSceneResource;
+    Values values_;
+    std::vector<std::weak_ptr<ActorSceneNodeList>> lists_;
+};
+
+// Ordered strong node references. Checked mutation preserves physical memory
+// aliases and rejects cycles through capacity slots, including inactive ones.
+class ActorSceneNodeList : public std::enable_shared_from_this<ActorSceneNodeList> {
+public:
+    using Values=ActorSceneNodeStorage::Values;
+    ActorSceneNodeList()=default;
+    ActorSceneNodeList(const ActorSceneNodeList&)=delete;
+    ActorSceneNodeList& operator=(const ActorSceneNodeList&)=delete;
+    std::span<const std::shared_ptr<const ActorSceneNode>> values() const;
+    std::int32_t count() const noexcept { return count_; }
+    std::int32_t capacity() const noexcept { return capacity_; }
+    void clear() noexcept { count_=0; }
+    std::shared_ptr<const ActorSceneNode> first_backing_node() const;
+    std::shared_ptr<const ActorSceneNodeStorage> storage_owner() const noexcept { return storage_; }
+    void replace(std::vector<std::shared_ptr<const ActorSceneNode>> values);
+    void append(std::shared_ptr<const ActorSceneNode> value);
+private:
+    friend class ActorSceneNode;
+    friend class ActorSceneResource;
+    static void validate(const ActorSceneNode* changed_node,const ActorSceneNodeList* changed_list,
+        const ActorSceneNodeStorage* changed_storage,
+        const std::vector<std::shared_ptr<const ActorSceneNode>>& candidate,
+        const std::vector<std::shared_ptr<const ActorSceneNode>>& roots);
+    void attach(const std::shared_ptr<ActorSceneNode>& node);
+    void detach(const ActorSceneNode* node);
+    void bind_storage(std::shared_ptr<ActorSceneNodeStorage> storage);
+    void publish(Values values,std::int32_t count);
+    static void write_storage(const std::shared_ptr<ActorSceneNodeStorage>&,Values values);
+    std::int32_t count_{},capacity_{};
+    std::shared_ptr<ActorSceneNodeStorage> storage_;
+    std::vector<std::weak_ptr<ActorSceneNode>> holders_;
 };
 
 // Newly allocated original selector's represented fields. Each allocation has
@@ -145,10 +213,14 @@ public:
     ActorSceneResource(const ActorSceneResource&)=delete;
     ActorSceneResource& operator=(const ActorSceneResource&)=delete;
     const IgbDocument& document() const noexcept;
+    std::shared_ptr<const IgbDocument> document_owner() const noexcept;
     const std::string& source() const noexcept;
     std::uint32_t source_occurrence() const noexcept;
     std::uint32_t canonical_reference(std::uint32_t reference) const;
     std::shared_ptr<const ActorSceneNode> node(std::uint32_t reference);
+    std::shared_ptr<ActorSceneNode> mutable_node(std::uint32_t reference);
+    std::shared_ptr<CollisionBox> box(std::uint32_t reference);
+    ModelSceneObjects& models();
     std::shared_ptr<const ActorSceneSkeleton> skeleton(std::uint32_t reference);
     std::shared_ptr<ActorSceneAppearance> appearance(std::uint32_t reference);
     std::shared_ptr<ActorSceneAppearanceList> appearance_list(std::uint32_t reference);

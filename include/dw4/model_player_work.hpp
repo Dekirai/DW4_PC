@@ -7,7 +7,8 @@ namespace dw4 {
 class NativeMessenger;
 // These non-null concrete owners still require their original implementations.
 // Fresh work stores null references; it allocates no stand-in scene objects.
-class ModelWorkNode;
+class ActorSceneNode;
+using ModelWorkNode=ActorSceneNode;
 class ModelPositionTrace;
 class ModelRideData;
 class ModelHitBodyWork;

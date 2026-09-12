@@ -13,6 +13,12 @@ The source is the owner's USA GameCube `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Original bytes, instruction probes and
 captures remain external or ignored. The implementation and fixtures are English.
 
+The canonical `ModelPlayerStartCapture` overload now also accepts the actual
+new-work, captured-parent-name and live-RAM field owners from `ModelPlayerCreate`.
+The prepared `ModelPlayerStartOwner` overload keeps its earlier identity checks.
+Both entries execute the same retained fields and returned row; there is no
+extra script facade or matrix dependency on the canonical startup path.
+
 ## Ordered messages and numeric behavior
 
 After the existing RECALCPLAYER returns, each selection clears the real packet

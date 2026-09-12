@@ -71,7 +71,8 @@ ModelPlayerStartDefaults read_model_player_start_defaults(const std::filesystem:
 }
 
 struct ModelPlayerStart::Impl {
-    ModelPlayerStartOwner owner;
+    std::optional<ModelPlayerStartOwner> owner;
+    ModelPlayerStartCapture capture;
     std::shared_ptr<GameDataList> row;
     ModelPlayerStartDefaults defaults;
     std::optional<ModelGameDataBinding> binding;
@@ -80,9 +81,9 @@ struct ModelPlayerStart::Impl {
     std::optional<MessengerDispatch> dispatch;
     ModelPlayerStartPhase phase=ModelPlayerStartPhase::binding;
     bool executing{},fault{};
-    Impl(ModelPlayerStartOwner value,std::shared_ptr<GameDataList> captured,ModelPlayerStartDefaults names)
-        :owner(std::move(value)),row(std::move(captured)),defaults(std::move(names)) {}
-    std::int32_t live_ram() const {const auto value=*owner.live_ram_no;ram_number(value);return value;}
+    Impl(ModelPlayerStartCapture value,std::shared_ptr<GameDataList> captured,ModelPlayerStartDefaults names)
+        :capture(std::move(value)),row(std::move(captured)),defaults(std::move(names)) {}
+    std::int32_t live_ram() const {const auto value=*capture.live_ram_no;ram_number(value);return value;}
     std::optional<ModelPlayerStartResult> deliver() {
         const auto result=events->resume(*dispatch);
         if(result.stop==MessengerStop::faulted)fail("Original MODELCTRL player caller message delivery faulted.");
@@ -104,7 +105,15 @@ ModelPlayerStart::ModelPlayerStart(ModelPlayerStartOwner owner,std::shared_ptr<G
     if(*owner.live_ram_no!=owner.work->ram_no())
         fail("Prepared MODELCTRL player caller initial RAM number differs from its captured work.");
     if(*owner.parent_name)text(**owner.parent_name);
-    impl_=std::make_unique<Impl>(std::move(owner),std::move(row),std::move(defaults));
+    ModelPlayerStartCapture capture{owner.work->fields_owner(),owner.parent_name,owner.live_ram_no};
+    impl_=std::make_unique<Impl>(std::move(capture),std::move(row),std::move(defaults));
+    impl_->owner=std::move(owner);
+}
+ModelPlayerStart::ModelPlayerStart(ModelPlayerStartCapture capture,std::shared_ptr<GameDataList> row,
+    ModelPlayerStartDefaults defaults) {
+    if(!capture.fields || !capture.live_ram_no || !row)
+        fail("Original MODELCTRL player caller requires retained work, row and live field owners.");
+    impl_=std::make_unique<Impl>(std::move(capture),std::move(row),std::move(defaults));
 }
 ModelPlayerStart::~ModelPlayerStart()=default;
 ModelPlayerStart::ModelPlayerStart(ModelPlayerStart&&) noexcept=default;
@@ -116,8 +125,12 @@ ModelPlayerStartPhase ModelPlayerStart::phase() const {
 bool ModelPlayerStart::prefix_completed() const noexcept {return impl_ && impl_->phase==ModelPlayerStartPhase::later_ui;}
 bool ModelPlayerStart::faulted() const noexcept {return !impl_ || impl_->fault;}
 const ModelPlayerStartOwner& ModelPlayerStart::owner() const {
-    if(!impl_)fail("A moved MODELCTRL player caller has no owner.");
-    return impl_->owner;
+    if(!impl_ || !impl_->owner)fail("This MODELCTRL player caller has no prepared script owner.");
+    return *impl_->owner;
+}
+const ModelPlayerStartCapture& ModelPlayerStart::capture() const {
+    if(!impl_)fail("A moved MODELCTRL player caller has no captured fields.");
+    return impl_->capture;
 }
 const std::shared_ptr<GameDataList>& ModelPlayerStart::row() const {
     if(!impl_)fail("A moved MODELCTRL player caller has no captured row.");
@@ -142,7 +155,7 @@ ModelPlayerStartResult ModelPlayerStart::resume(NativeMessenger& messenger,Actio
     struct Guard {bool& flag;explicit Guard(bool& value):flag(value){flag=true;}~Guard(){flag=false;}} guard(state.executing);
     try {
         if(state.phase==ModelPlayerStartPhase::binding) {
-            state.binding=bind_model_game_data(*state.owner.work,state.row);
+            state.binding=bind_model_game_data(*state.capture.fields,state.row);
             state.phase=ModelPlayerStartPhase::reset_modifiers;
         }
         if(state.phase==ModelPlayerStartPhase::reset_modifiers) {
@@ -157,7 +170,9 @@ ModelPlayerStartResult ModelPlayerStart::resume(NativeMessenger& messenger,Actio
             if(!state.dispatch) {
                 messenger.select("GAMERAM",std::nullopt,-1);
                 messenger.buffer().add_int(state.live_ram());
-                auto name=state.owner.parent_name->value_or("");text(name);
+                if(!state.capture.parent_name)
+                    fail("Original GAMESTART dereferences the player callback's captured null parent.");
+                auto name=state.capture.parent_name->value_or("");text(name);
                 messenger.buffer().add_string(std::move(name));
                 messenger.buffer().add_string(state.defaults.names()[static_cast<std::size_t>(state.live_ram())]);
                 state.dispatch.emplace(messenger.begin_send("GAMESTART"));

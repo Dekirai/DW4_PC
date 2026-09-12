@@ -24,6 +24,9 @@ class ModelStatusWork {
 private:
     std::shared_ptr<ModelStatusFields> fields_;
 public:
+    // A captured canonical status group needs no script identity or node read.
+    // actual_work() is null for this original owner-graph profile.
+    explicit ModelStatusWork(std::shared_ptr<ModelStatusFields> actual_fields);
     ModelStatusWork(std::shared_ptr<ModelScriptWork> actual_work,std::uint8_t is_player);
     ModelStatusWork(std::shared_ptr<ModelScriptWork> actual_work,std::shared_ptr<ModelStatusFields> actual_fields);
     ModelStatusWork(const ModelStatusWork&)=delete;

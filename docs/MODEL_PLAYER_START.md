@@ -20,6 +20,18 @@ Related owners are described in [GAME_DATA.md](GAME_DATA.md),
 
 ## Supplied owners
 
+`ModelPlayerStartCapture` is the canonical entry used by the actual player
+construction callback. It retains the new work's `ModelScriptFields`, the
+earlier captured parent's nullable name cell and the actual live RAM-number
+cell. It needs no script name, target identity or node matrix. Its constructor
+validates work, row and live-RAM owner presence only; a null parent-name anchor
+represents the original captured null parent. It faults only if GAMESTART
+reaches the name read, after appending the live RAM number. Name and number
+values are checked at their original consumption sites. In particular, a GETPLAYER recipient may change
+the RAM number without introducing an artificial snapshot-equality failure.
+`capture()` exposes these retained anchors. `owner()` is available only for
+the separate prepared adapter described below.
+
 `ModelPlayerStartOwner` supplies an existing `ModelScriptWork`, the captured
 parent-info identity and source, a shared nullable parent-name field, and a
 shared live RAM-number field. Work and parent info must be serialized owners

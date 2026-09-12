@@ -1,6 +1,8 @@
 #include "dw4/actor_scene.hpp"
+#include "dw4/model_scene.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <functional>
 #include <limits>
 #include <map>
@@ -48,6 +50,15 @@ struct Reader {
         }
         return result;
     }
+    template<std::size_t N> std::array<float,N> floats(const IgbObject& value,std::uint16_t slot,std::string_view type) const {
+        const auto bytes=doc.field_bytes(field(value,slot,type,N*4));
+        std::array<float,N> result{};
+        for(std::size_t i=0;i<N;++i) {
+            std::uint32_t word{};for(unsigned j=0;j<4;++j)word|=std::uint32_t(bytes[i*4+j])<<(j*8);
+            result[i]=std::bit_cast<float>(word);
+        }
+        return result;
+    }
 };
 }
 struct ActorSceneSource {
@@ -57,14 +68,18 @@ struct ActorSceneSource {
 };
 struct ActorSceneResource::Impl {
     std::shared_ptr<const ActorSceneSource> source;
-    std::map<std::uint32_t,std::shared_ptr<const ActorSceneNode>> nodes;
+    std::map<std::uint32_t,std::shared_ptr<ActorSceneNode>> nodes;
+    std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeList>> node_lists;
+    std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeStorage>> node_memories;
+    std::map<std::uint32_t,std::shared_ptr<CollisionBox>> boxes;
+    std::unique_ptr<ModelSceneObjects> models;
     std::map<std::uint32_t,std::shared_ptr<const ActorSceneSkeleton>> skeletons;
     std::map<std::uint32_t,std::shared_ptr<ActorSceneAppearance>> appearances;
     std::map<std::uint32_t,std::shared_ptr<ActorSceneAppearanceList>> lists;
     std::map<std::uint32_t,std::shared_ptr<ActorBoneSelectorList>> selector_lists;
     std::size_t links{},text{};
     std::size_t owners() const noexcept {
-        return nodes.size()+skeletons.size()+appearances.size()+lists.size()+selector_lists.size();
+        return nodes.size()+node_lists.size()+node_memories.size()+boxes.size()+skeletons.size()+appearances.size()+lists.size()+selector_lists.size();
     }
     void require(std::size_t objects,std::size_t entries=0,std::size_t bytes=0) const {
         if(objects>max_objects-owners())fail("Actor scene exceeds its aggregate owner budget.");
@@ -75,6 +90,179 @@ struct ActorSceneResource::Impl {
 const IgbDocument& ActorSceneNode::document() const noexcept { return source_->document; }
 const std::string& ActorSceneNode::source() const noexcept { return source_->source; }
 std::uint32_t ActorSceneNode::source_occurrence() const noexcept { return source_->occurrence; }
+std::span<const std::shared_ptr<const ActorSceneNode>> ActorSceneNode::children() const {
+    return children_ ? children_->values() : std::span<const std::shared_ptr<const ActorSceneNode>>{};
+}
+std::shared_ptr<AnimationMatrix> ActorSceneNode::matrix_owner() {
+    if(!matrix_)fail("This actor scene node has no represented transform matrix field.");return matrix_;
+}
+std::shared_ptr<const AnimationMatrix> ActorSceneNode::matrix_owner() const {
+    if(!matrix_)fail("This actor scene node has no represented transform matrix field.");return matrix_;
+}
+std::shared_ptr<CollisionBox> ActorSceneNode::box_owner() {
+    if(!bound_available_)fail("This actor scene node has no represented bound field.");return box_;
+}
+std::shared_ptr<const CollisionBox> ActorSceneNode::box_owner() const {
+    if(!bound_available_)fail("This actor scene node has no represented bound field.");return box_;
+}
+void ActorSceneNode::set_box_owner(std::shared_ptr<CollisionBox> value) {
+    if(!bound_available_)fail("This actor scene node has no represented bound field.");box_=std::move(value);
+}
+std::shared_ptr<ActorSceneNodeList> ActorSceneNode::child_list_owner() {
+    if(!children_available_)fail("This actor scene node has no represented child-list field.");return children_;
+}
+std::shared_ptr<const ActorSceneNodeList> ActorSceneNode::child_list_owner() const {
+    if(!children_available_)fail("This actor scene node has no represented child-list field.");return children_;
+}
+std::span<const std::shared_ptr<const ActorSceneNode>> ActorSceneNodeList::values() const {
+    if(count_<0 || capacity_<0 || count_>capacity_ || std::size_t(capacity_)>max_objects ||
+        (capacity_ && !storage_) || (storage_ && std::size_t(capacity_)>storage_->values_.size()))
+        fail("Actor scene child list has an unsupported logical count, capacity or backing range.");
+    if(!count_)return {};
+    return {storage_->values_.data(),static_cast<std::size_t>(count_)};
+}
+std::shared_ptr<const ActorSceneNode> ActorSceneNodeList::first_backing_node() const {
+    // 8030DA7C..8030DA94 dereferences storage[0], without inspecting count.
+    if(!storage_ || storage_->values_.empty())fail("Actor scene child list requires its addressable first backing slot.");
+    return storage_->values_.front();
+}
+void ActorSceneNodeList::validate(const ActorSceneNode* changed_node,const ActorSceneNodeList* changed_list,
+    const ActorSceneNodeStorage* changed_storage,const Values& candidate,
+    const std::vector<std::shared_ptr<const ActorSceneNode>>& initial_roots) {
+    if(candidate.size()>max_objects)fail("Actor scene child backing exceeds its allocation budget.");
+    auto roots=initial_roots;
+    std::set<const ActorSceneNode*> ancestors;
+    std::size_t incoming_edges{};
+    for(std::size_t index=0;index<roots.size();++index) {
+        const auto node=roots[index];if(!ancestors.insert(node.get()).second)continue;
+        if(ancestors.size()>max_objects)fail("Actor scene mutation exceeds its ancestor budget.");
+        for(const auto& weak_storage:node->incoming_)if(const auto storage=weak_storage.lock()) {
+            if(++incoming_edges>max_links)fail("Actor scene mutation exceeds its parent-link budget.");
+            for(const auto& weak_list:storage->lists_)if(const auto list=weak_list.lock())
+                for(const auto& weak_parent:list->holders_)if(auto parent=weak_parent.lock()) {
+                    if(roots.size()>=max_links)fail("Actor scene mutation exceeds its retained-parent budget.");
+                    roots.push_back(std::move(parent));
+                }
+        }
+    }
+    std::map<const ActorSceneNode*,std::size_t> heights;
+    std::set<const ActorSceneNode*> visiting;
+    std::size_t edges{};
+    std::function<std::size_t(const ActorSceneNode*,std::size_t)> visit;
+    visit=[&](const ActorSceneNode* node,std::size_t depth)->std::size_t {
+        if(depth>max_depth || visiting.contains(node))fail("Actor scene child mutation creates a cycle or exceeds its path budget.");
+        if(const auto it=heights.find(node);it!=heights.end()) {
+            if(it->second>max_depth-depth)fail("Actor scene cached child path exceeds its depth budget.");return it->second;
+        }
+        if(heights.size()+visiting.size()>=max_objects)fail("Actor scene mutation exceeds its reachable-node budget.");
+        visiting.insert(node);std::size_t height{};
+        static const Values empty;
+        const auto list=node->children_;
+        const auto& values=node==changed_node || (changed_list && list.get()==changed_list) ||
+            (changed_storage && list && list->storage_.get()==changed_storage) ? candidate :
+            list && list->storage_ ? list->storage_->values_ : empty;
+        if(values.size()>max_links-edges)fail("Actor scene mutation exceeds its reachable-edge budget.");edges+=values.size();
+        for(const auto& child:values)if(child)height=std::max(height,visit(child.get(),depth+1)+1);
+        visiting.erase(node);heights.emplace(node,height);return height;
+    };
+    for(const auto& root:roots)visit(root.get(),0);
+    for(const auto& child:candidate)if(child)visit(child.get(),0);
+}
+void ActorSceneNodeList::attach(const std::shared_ptr<ActorSceneNode>& node) {
+    std::erase_if(holders_,[](const auto& weak){return weak.expired();});
+    if(std::none_of(holders_.begin(),holders_.end(),[&](const auto& weak){return weak.lock()==node;})) {
+        if(holders_.size()>=max_objects)fail("Actor scene child list exceeds its attached-parent budget.");holders_.push_back(node);
+    }
+}
+void ActorSceneNodeList::detach(const ActorSceneNode* node) {
+    std::erase_if(holders_,[&](const auto& weak){const auto owner=weak.lock();return !owner || owner.get()==node;});
+}
+void ActorSceneNode::set_child_list_owner(std::shared_ptr<ActorSceneNodeList> value) {
+    if(!children_available_)fail("This actor scene node has no represented child-list field.");
+    if(value==children_)return;
+    static const ActorSceneNodeList::Values empty;
+    auto self=shared_from_this();
+    ActorSceneNodeList::validate(this,nullptr,nullptr,value && value->storage_ ? value->storage_->values() : empty,{self});
+    if(value)value->attach(self);
+    if(children_)children_->detach(this);
+    children_=std::move(value);
+}
+void ActorSceneNodeList::bind_storage(std::shared_ptr<ActorSceneNodeStorage> storage) {
+    const auto self=weak_from_this().lock();
+    if(!self)fail("Actor scene child list mutation requires its shared list owner.");
+    if(storage==storage_)return;
+    if(storage) {
+        std::erase_if(storage->lists_,[](const auto& weak){return weak.expired();});
+        if(storage->lists_.size()>=max_objects)fail("Actor scene backing exceeds its aliased-list budget.");
+        storage->lists_.push_back(self);
+    }
+    if(storage_)std::erase_if(storage_->lists_,[&](const auto& weak){const auto list=weak.lock();return !list || list.get()==this;});
+    storage_=std::move(storage);
+}
+void ActorSceneNodeList::write_storage(const std::shared_ptr<ActorSceneNodeStorage>& storage,Values values) {
+    if(!storage->values_.empty() && storage->values_.size()!=values.size())
+        fail("Actor scene backing growth must allocate a new backing owner.");
+    // Weak incoming links cover every strong backing reference, regardless of count.
+    for(const auto& node:values)if(node) {
+        std::erase_if(node->incoming_,[](const auto& weak){return weak.expired();});
+        if(node->incoming_.size()>=max_objects && std::none_of(node->incoming_.begin(),node->incoming_.end(),
+            [&](const auto& weak){return weak.lock()==storage;}))fail("Actor scene node exceeds its incoming-backing budget.");
+        node->incoming_.reserve(node->incoming_.size()+1);
+    }
+    for(const auto& node:storage->values_)if(node)std::erase_if(node->incoming_,[&](const auto& weak){const auto owner=weak.lock();return !owner || owner==storage;});
+    for(const auto& node:values)if(node && std::none_of(node->incoming_.begin(),node->incoming_.end(),
+        [&](const auto& weak){return weak.lock()==storage;}))node->incoming_.push_back(storage);
+    // Existing capacity is fixed for this backing object, so retained spans and
+    // original storage/end captures keep their addressed slots during writes.
+    if(storage->values_.size()==values.size())std::copy(values.begin(),values.end(),storage->values_.begin());
+    else if(storage->values_.empty())storage->values_=std::move(values);
+    else fail("Actor scene backing growth must allocate a new backing owner.");
+}
+void ActorSceneNodeList::publish(Values values,std::int32_t count) {
+    this->values();
+    const auto self=weak_from_this().lock();if(!self)fail("Actor scene child list mutation requires its shared list owner.");
+    const bool growing=count>capacity_;
+    auto capacity=capacity_;
+    if(growing) {
+        // 80069128 -> 80041970 -> 80041660/8004155C: growth replaces only
+        // this list's backing and copies its old capacity slots.
+        capacity=std::max<std::int32_t>(capacity,4);
+        while(capacity<count)capacity=capacity<1024 ? capacity*2 : capacity+1024;
+        if(std::size_t(capacity)>max_objects)fail("Actor scene child growth exceeds its allocation budget.");
+    }
+    Values candidate=!growing && storage_ ? storage_->values_ : Values(static_cast<std::size_t>(capacity));
+    if(growing && storage_)std::copy_n(storage_->values_.begin(),capacity_,candidate.begin());
+    std::copy(values.begin(),values.end(),candidate.begin());
+    std::vector<std::shared_ptr<const ActorSceneNode>> roots;
+    const auto add_roots=[&](const ActorSceneNodeList& list) {
+        for(const auto& weak:list.holders_)if(auto owner=weak.lock()) {
+            if(roots.size()>=max_links)fail("Actor scene mutation exceeds its retained-parent budget.");roots.push_back(std::move(owner));
+        }
+    };
+    if(!growing && storage_) {
+        for(const auto& weak:storage_->lists_)if(const auto list=weak.lock())add_roots(*list);
+    } else add_roots(*this);
+    validate(nullptr,growing ? this : nullptr,growing ? nullptr : storage_.get(),candidate,roots);
+    if(growing) {
+        auto replacement=std::make_shared<ActorSceneNodeStorage>();write_storage(replacement,std::move(candidate));
+        bind_storage(std::move(replacement));capacity_=capacity;
+    } else if(storage_)write_storage(storage_,std::move(candidate));
+    count_=count;
+}
+void ActorSceneNodeList::replace(Values values) {
+    if(values.size()>max_objects || std::any_of(values.begin(),values.end(),[](const auto& node){return !node;}))
+        fail("Actor scene child replacement requires bounded non-null active entries.");
+    const auto count=static_cast<std::int32_t>(values.size());publish(std::move(values),count);
+}
+void ActorSceneNodeList::append(std::shared_ptr<const ActorSceneNode> value) {
+    const auto active=values();
+    if(active.size()>=max_objects || !value)fail("Actor scene child append requires a bounded non-null node.");
+    Values replacement(active.begin(),active.end());replacement.push_back(std::move(value));replace(std::move(replacement));
+}
+std::shared_ptr<ModelPlacementNode> ActorSceneNode::placement_node() {
+    if(type_!="beModelCtrlNode2")fail("This actor scene node requires its original concrete placement setter service.");
+    return make_model_ctrl_node2_placement(matrix_owner());
+}
 ActorBoneSelector::ActorBoneSelector(std::int32_t index,std::vector<std::shared_ptr<const ActorSceneNode>> children)
     :matrix_index_(index),children_(std::move(children)) {
     if(children_.size()>max_objects || std::any_of(children_.begin(),children_.end(),[](const auto& node){return !node;}))
@@ -116,6 +304,12 @@ ActorSceneResource::ActorSceneResource(IgbDocument document,std::string source,s
 }
 ActorSceneResource::~ActorSceneResource()=default;
 const IgbDocument& ActorSceneResource::document() const noexcept { return impl_->source->document; }
+std::shared_ptr<const IgbDocument> ActorSceneResource::document_owner() const noexcept {
+    return {impl_->source,&impl_->source->document};
+}
+ModelSceneObjects& ActorSceneResource::models() {
+    if(!impl_->models)impl_->models.reset(new ModelSceneObjects(*this));return *impl_->models;
+}
 const std::string& ActorSceneResource::source() const noexcept { return impl_->source->source; }
 std::uint32_t ActorSceneResource::source_occurrence() const noexcept { return impl_->source->occurrence; }
 std::uint32_t ActorSceneResource::canonical_reference(std::uint32_t ref) const {
@@ -127,54 +321,117 @@ std::uint32_t ActorSceneResource::canonical_reference(std::uint32_t ref) const {
       catch(const std::exception& error) {throw ActorSceneError(error.what());}
 }
 std::shared_ptr<const ActorSceneNode> ActorSceneResource::node(std::uint32_t reference) {
+    return mutable_node(reference);
+}
+std::shared_ptr<CollisionBox> ActorSceneResource::box(std::uint32_t reference) {
     try {
-        Reader read{document()};std::set<std::uint32_t> visiting;
-        std::map<std::uint32_t,std::shared_ptr<const ActorSceneNode>> added;
+        reference=canonical_reference(reference);
+        if(const auto it=impl_->boxes.find(reference);it!=impl_->boxes.end())return it->second;
+        impl_->require(1);Reader read{document()};const auto& object=read.object(reference,"igAABox");
+        auto owner=std::make_shared<CollisionBox>(CollisionBox{read.floats<3>(object,2,"igVec3fMetaField"),
+            read.floats<3>(object,3,"igVec3fMetaField")});
+        impl_->boxes.emplace(reference,owner);return owner;
+    } catch(const ActorSceneError&) {throw;}
+      catch(const std::exception& error) {throw ActorSceneError(error.what());}
+}
+std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t reference) {
+    try {
+        Reader read{document()};std::set<std::uint32_t> visiting,visiting_lists,visiting_memory;
+        std::map<std::uint32_t,std::shared_ptr<ActorSceneNode>> added;
+        std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeList>> added_lists;
+        std::map<std::uint32_t,std::shared_ptr<ActorSceneNodeStorage>> added_memory;
+        std::map<std::uint32_t,std::shared_ptr<CollisionBox>> added_boxes;
         std::size_t links{},copied_text{};
-        std::function<std::shared_ptr<const ActorSceneNode>(std::uint32_t,std::size_t)> visit;
-        visit=[&](std::uint32_t ref,std::size_t depth)->std::shared_ptr<const ActorSceneNode> {
+        const auto require=[&](std::size_t extra=0) {
+            impl_->require(added.size()+visiting.size()+added_lists.size()+added_memory.size()+visiting_memory.size()+added_boxes.size()+extra,links,copied_text);
+        };
+        const auto box=[&](std::uint32_t ref) {
             ref=canonical_reference(ref);
-            if(visiting.contains(ref)) fail("Actor scene node graph contains a cycle.");
-            if(depth>max_depth) fail("Actor scene node graph exceeds its depth budget.");
-            const auto cached=[&](const auto& owner) {
-                if(owner->subtree_height_>max_depth-depth)fail("Cached actor scene subtree exceeds the node path budget.");
-                return owner;
-            };
-            if(const auto found=impl_->nodes.find(ref);found!=impl_->nodes.end()) return cached(found->second);
-            if(const auto found=added.find(ref);found!=added.end()) return cached(found->second);
-            impl_->require(added.size()+visiting.size()+1,links,copied_text);
-            const auto& value=document().object(ref);
-            if(!document().is_a(value,"igNode")) fail("Actor scene child is not a node.");
-            const auto& type=document().metadata.object_types.at(value.type_index).name;
-            read.object(ref,type);
+            if(const auto it=impl_->boxes.find(ref);it!=impl_->boxes.end())return it->second;
+            if(const auto it=added_boxes.find(ref);it!=added_boxes.end())return it->second;
+            require(1);const auto& object=read.object(ref,"igAABox");
+            auto owner=std::make_shared<CollisionBox>(CollisionBox{read.floats<3>(object,2,"igVec3fMetaField"),
+                read.floats<3>(object,3,"igVec3fMetaField")});
+            added_boxes.emplace(ref,owner);return owner;
+        };
+        std::function<std::shared_ptr<ActorSceneNode>(std::uint32_t,std::size_t)> visit;
+        std::function<std::shared_ptr<ActorSceneNodeList>(std::uint32_t,std::size_t)> child_list;
+        std::function<std::shared_ptr<ActorSceneNodeStorage>(std::uint32_t,std::size_t)> memory;
+        memory=[&](std::uint32_t ref,std::size_t depth) {
+            if(ref>=document().references.size() || document().references[ref].kind!=IgbReferenceKind::memory)
+                fail("Actor scene child backing is not a memory reference.");
+            const auto& record=document().memories.at(document().references[ref].value_index);
+            const auto canonical=record.reference_index;
+            if(canonical>=document().references.size() || document().references[canonical].kind!=IgbReferenceKind::memory ||
+                document().references[canonical].value_index!=document().references[ref].value_index)
+                fail("Actor scene canonical memory does not identify its physical allocation.");
+            if(visiting_memory.contains(canonical))fail("Actor scene physical backing graph contains a strong cycle.");
+            if(const auto it=impl_->node_memories.find(canonical);it!=impl_->node_memories.end())return it->second;
+            if(const auto it=added_memory.find(canonical);it!=added_memory.end())return it->second;
+            const auto bytes=document().memory(ref);
+            if(bytes.size()%4 || bytes.size()/4>max_objects)fail("Actor scene backing exceeds its pointer allocation profile.");
+            const auto capacity=bytes.size()/4;
+            if(capacity>max_links-links)fail("Actor scene backing exceeds its aggregate entry budget.");
+            links+=capacity;require(1);visiting_memory.insert(canonical);
+            auto owner=std::make_shared<ActorSceneNodeStorage>();ActorSceneNodeStorage::Values values;values.reserve(capacity);
+            for(std::size_t i=0;i<capacity;++i) {
+                std::uint32_t item{};for(unsigned byte=0;byte<4;++byte)item|=std::uint32_t(bytes[i*4+byte])<<(byte*8);
+                values.push_back(item==0xffffffffu ? std::shared_ptr<const ActorSceneNode>{} : visit(item,depth));
+            }
+            ActorSceneNodeList::write_storage(owner,std::move(values));visiting_memory.erase(canonical);
+            added_memory.emplace(canonical,owner);return owner;
+        };
+        child_list=[&](std::uint32_t ref,std::size_t depth) {
+            ref=canonical_reference(ref);
+            if(visiting_lists.contains(ref))fail("Actor scene child-list graph contains a cycle.");
+            if(const auto it=impl_->node_lists.find(ref);it!=impl_->node_lists.end())return it->second;
+            if(const auto it=added_lists.find(ref);it!=added_lists.end())return it->second;
+            require(1);auto owner=std::make_shared<ActorSceneNodeList>();added_lists.emplace(ref,owner);
+            const auto& object=read.object(ref,"igNodeList");
+            read.field(object,2,"igIntMetaField");read.field(object,3,"igIntMetaField");read.field(object,4,"igMemoryRefMetaField");
+            owner->count_=document().field_i32(object,2);owner->capacity_=document().field_i32(object,3);
+            visiting_lists.insert(ref);
+            if(const auto storage=document().field_reference(object,4))owner->bind_storage(memory(*storage,depth));
+            visiting_lists.erase(ref);return owner;
+        };
+        visit=[&](std::uint32_t ref,std::size_t depth)->std::shared_ptr<ActorSceneNode> {
+            ref=canonical_reference(ref);
+            if(visiting.contains(ref))fail("Actor scene node graph contains a cycle.");
+            if(depth>max_depth)fail("Actor scene node graph exceeds its depth budget.");
+            if(const auto found=impl_->nodes.find(ref);found!=impl_->nodes.end())return found->second;
+            if(const auto found=added.find(ref);found!=added.end())return found->second;
+            require(1);const auto& value=document().object(ref);
+            if(!document().is_a(value,"igNode"))fail("Actor scene child is not a node.");
+            const auto& type=document().metadata.object_types.at(value.type_index).name;read.object(ref,type);
             const auto& name=read.field(value,2,"igStringMetaField",{});
-            if(name.size>4104) fail("Actor scene node name exceeds its byte budget.");
+            if(name.size>4104)fail("Actor scene node name exceeds its byte budget.");
             const auto text=document().field_string(value,2);
-            if(text.size()>4096 || text.find('\0')!=std::string_view::npos) fail("Actor scene node name is invalid.");
+            if(text.size()>4096 || text.find('\0')!=std::string_view::npos)fail("Actor scene node name is invalid.");
             const auto bytes=text.size()+type.size();
             if(bytes>max_text-copied_text)fail("Actor scene node text exceeds its aggregate byte budget.");
-            impl_->require(added.size()+visiting.size()+1,links,copied_text+bytes);
-            copied_text+=bytes;
-            read.field(value,5,"igIntMetaField");
+            copied_text+=bytes;require(1);read.field(value,5,"igIntMetaField");
             auto result=std::shared_ptr<ActorSceneNode>(new ActorSceneNode);
             result->source_=impl_->source;result->reference_=ref;result->type_=type;
             result->name_=name.size==4 ? std::optional<std::string>{} : std::string(text);
-            result->flags_=document().field_u32(value,5);
-            visiting.insert(ref);
+            result->flags_=document().field_u32(value,5);visiting.insert(ref);
+            if(document().is_a(value,"igTransform") || type=="beModelCtrlNode2")
+                result->matrix_=std::make_shared<AnimationMatrix>(read.floats<16>(value,8,"igMatrix44fMetaField"));
+            if(document().field(value,3)) {
+                read.field(value,3,"igObjectRefMetaField");result->bound_available_=true;
+                if(const auto ref_box=document().field_reference(value,3))result->box_=box(*ref_box);
+            }
             if(document().is_a(value,"igGroup")) {
-                const auto children=read.list(read.ref(value,7),"igNodeList");
-                if(children.size()>max_links-links) fail("Actor scene graph exceeds its edge budget.");
-                impl_->require(added.size()+visiting.size(),links+children.size(),copied_text);
-                links+=children.size();
-                for(const auto child:children) {
-                    auto owner=visit(child,depth+1);
-                    result->subtree_height_=std::max(result->subtree_height_,owner->subtree_height_+1);
-                    result->children_.push_back(std::move(owner));
+                read.field(value,7,"igObjectRefMetaField");result->children_available_=true;
+                if(const auto ref_list=document().field_reference(value,7)) {
+                    result->children_=child_list(*ref_list,depth+1);result->children_->attach(result);
                 }
             }
             visiting.erase(ref);added.emplace(ref,result);return result;
         };
-        auto result=visit(reference,0);impl_->nodes.merge(added);impl_->links+=links;impl_->text+=copied_text;return result;
+        auto result=visit(reference,0);
+        ActorSceneNodeList::validate(nullptr,nullptr,nullptr,{}, {result});
+        impl_->nodes.merge(added);impl_->node_lists.merge(added_lists);impl_->node_memories.merge(added_memory);impl_->boxes.merge(added_boxes);
+        impl_->links+=links;impl_->text+=copied_text;return result;
     } catch(const ActorSceneError&) {throw;}
       catch(const std::exception& error) {throw ActorSceneError(error.what());}
 }

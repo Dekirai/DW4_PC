@@ -21,6 +21,17 @@ The supplied USA `main.dol` has SHA-1
 | `801DDB84` | Normal geometry trigger/invisible gates, matrix-list stack gate, effective blend-state/root substitution, submission |
 | `801DE28C`, `801DC85C`, `801DCDF8` | Normal target-zero transform update/composition, children and scope restoration |
 | `801D73A8` | Null transform input leaves the stored local matrix unchanged |
+
+Common transforms compose the canonical mutable `ActorSceneNode` matrix after
+their clock callback returns. Child-handler entry reads the node's current
+nullable child-list owner after previsit and attribute/transform callbacks.
+`8020B288` through `8020B2A4` capture the ordered storage and end pointer before
+visiting children. Native traversal retains the corresponding actual storage
+owner and logical end count. Writes within that backing remain visible; a later
+logical clear does not shorten the captured end. Growth preserves that captured
+allocation while the growing list switches to new backing. New traversals
+observe its current backing and count. Null captured child pointers fail at
+their actual traversal read rather than being silently omitted.
 | `801D8D98` | Transform context time query uses the time stack, a cached clock, or initializes that cache |
 | `80205684` | Geometry enters the existing render submission layer; submission is not GPU completion |
 
