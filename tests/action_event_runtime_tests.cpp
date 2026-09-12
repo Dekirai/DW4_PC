@@ -198,7 +198,7 @@ void nested_resume_and_snapshot() {
             throw std::runtime_error("Retain the sequence ACTION cursor while its real delivery is unavailable");
     };
     rejects([&]{runtime.run_sequence(model,0,dispatch);},"Sequence ACTION retains a suspended native delivery");
-    check(runtime.subcommands(model).entries().size()==1 && runtime.sequence(model).model().mode==2 && runtime.sequence(model).command_index()==1,
+    check(runtime.subcommands(model).entries().size()==1 && runtime.sequence(model).model().mode()==2 && runtime.sequence(model).command_index()==1,
         "Missing nested service suspends after the first real model append");
     rejects([&]{runtime.run_sequence(model,1,dispatch);},"Owning sequence may retry its pending ACTION delivery");
     check(runtime.subcommands(model).entries().size()==1 && attempts==2 && runtime.sequence(model).command_index()==1,
@@ -209,7 +209,7 @@ void nested_resume_and_snapshot() {
     rejects([&]{runtime.broadcast(second,f.event(1));},"Another player cannot overwrite shared messenger state during suspended delivery");
     rejects([&]{runtime.messenger();},"Top-level mutable messenger access cannot overwrite a suspended message");
     rejects([&]{runtime.run_sequence(second,1);},"Another player's sequence must stop before applying CTRL during suspended delivery");
-    check(runtime.sequence(second).model().mode==0 && runtime.sequence(second).command_index()==0,
+    check(runtime.sequence(second).model().mode()==0 && runtime.sequence(second).command_index()==0,
         "Rejected second-player sequence execution preserves its control fields and command cursor");
     ready=true;
     check(runtime.run_sequence(model,2,dispatch).stop==ModelSequenceStop::end && runtime.subcommands(model).entries().size()==4 && runtime.subcommands(second).entries().empty(),
@@ -339,7 +339,7 @@ void local_jump_cleanup() {
 }
 void visible_selection_phases() {
     Fixture f; f.one_sound_and_effect();
-    auto state=prepared_model(); state.mode=7; state.phase=8; state.check_fall=false;
+    auto state=prepared_model(); state.mode()=7; state.phase()=8; state.check_fall()=false;
     state.pad_motion.set_values({1,2,3,4});
     state.channels.apply({1,"beModelCtrlMOVEEX","X",0,MotionSetup{MotionMode::accelerate_positive,4,2,0},MotionStop{true,1,2}});
     state.channels.apply({2,"beModelCtrlMOVEEX","R",3,MotionSetup{MotionMode::accelerate_positive,3,1,0},{}});
@@ -359,7 +359,7 @@ void visible_selection_phases() {
         ++cleanup_calls; const auto& sequence=runtime.sequence(id); const auto& model=sequence.model();
         check(handle==123 && sequence.current_sequence()=="SQ_WALK" && sequence.command_index()==0 && sequence.selection_pending(),
             "External cleanup sees the original pre-cleanup sequence and cursor publication");
-        check(model.mode==0 && model.phase==0 && model.pad_motion.size()==0 && !model.check_fall && model.channels.states()==before,
+        check(model.mode()==0 && model.phase()==0 && model.pad_motion.size()==0 && !model.check_fall() && model.channels.states()==before,
             "CTRL/PDMOVE reset precedes cleanup while fall/channel changes follow it");
         check(model.pad_motion.list_owner()==pad && pad->backing_owner()==backing && *backing==std::vector<float>({1,2,3,4}) &&
             model.channels.list_owner()==movement && movement->entry_owner(0)==first_channel &&
@@ -371,7 +371,7 @@ void visible_selection_phases() {
         "A suspended cleanup retains the visible intermediate selection phase");
     ready=true;
     check(runtime.resume_sequence(id,services).complete() && cleanup_calls==2 && !runtime.sequence(id).selection_pending() &&
-        runtime.sequence(id).model().check_fall && runtime.sequence(id).model().channels.states()==stopped.states(),
+        runtime.sequence(id).model().check_fall() && runtime.sequence(id).model().channels.states()==stopped.states(),
         "Only completed cleanup applies the original fall and channel-stop effects");
     check(movement->entry_owner(0)==first_channel && first_channel->mode==MotionMode::stop_positive && list->empty() &&
         pad->backing_owner()==backing && runtime.subcommands(id).list_owner()==list,
@@ -400,6 +400,33 @@ void visible_selection_phases() {
     const auto completed=jumping.run(3,{},[](auto){return true;});
     check(completed.stop==ModelSequenceStop::end && !jumping.jump_pending() && !jumping.selection_pending(),
         "Resumed jump finishes its selection before entering destination commands");
+}
+void jump_cleanup_slot_preflight() {
+    for(const bool replace_in_action:{false,true}) {
+        Fixture fixture;
+        const auto action=fixture.command("beModelCtrlACTION","replace_slot");
+        const auto jump=fixture.command("beModelCtrlJUMP","SQ_WALK");
+        fixture.player.scalar(fixture.wait_sequence,3,fixture.player.list(pf::named_list,
+            replace_in_action ? std::vector<std::uint32_t>{action,jump} : std::vector<std::uint32_t>{jump}));
+        ActionEventRuntime runtime;const auto id=runtime.register_model(fixture.binding(),prepared_model(),true);
+        runtime.select_sequence(id,"SQ_WAIT");const auto work=runtime.model_work(id);
+        const auto old=work->subcommands;ModelSubcommandQueue old_queue(old);old_queue.append_sound(0,"old");
+        check(runtime.update_subcommands(id,0).stop==ModelSubcommandStop::sound_play_required,
+            "The jump fixture did not retain its old subcommand update.");
+        const auto fresh=std::make_shared<ModelSubcommandWrapper>();ModelSubcommandQueue fresh_queue(fresh);fresh_queue.append_sound(0,"fresh");
+        if(!replace_in_action)work->subcommands=fresh;
+        unsigned actions{};
+        const auto dispatch=[&](const ModelActionRequest&) {++actions;work->subcommands=fresh;};
+        rejects([&]{runtime.run_sequence(id,1,dispatch);},"JUMP published selection before checking cross-wrapper cleanup.");
+        check(!runtime.sequence(id).selection_pending() && !runtime.sequence(id).jump_pending() &&
+            runtime.sequence(id).current_sequence()=="SQ_WAIT" && runtime.sequence(id).command_index()==(replace_in_action?1:0) &&
+            actions==(replace_in_action?1u:0u),"Rejected JUMP stranded old work or rolled back a completed ACTION prefix.");
+        ModelSubcommandServices finish;finish.play_sound=[](const auto&){return ModelSoundPlayResult{true,0,0};};
+        check(runtime.resume_subcommands(id,finish).complete() && old->list_owner()->empty() && fresh_queue.entries().size()==1,
+            "Rejected JUMP prevented resuming the old update or consumed fresh work.");
+        check(runtime.run_sequence(id,1,dispatch).stop==ModelSequenceStop::end && runtime.sequence(id).current_sequence()=="SQ_WALK" &&
+            fresh_queue.entries().empty() && actions==(replace_in_action?1u:0u),"JUMP retry replayed ACTION or failed to clean the fresh wrapper.");
+    }
 }
 void repeated_consumer_owners() {
     Fixture f; f.events.contents(f.events.starter_first_actions,{f.events.effects[1]});
@@ -467,7 +494,7 @@ void immediate_lua_owner_and_nested_guards() {
     };
     auto result=runtime.run_sequence(id,17,{},{},{},dispatch);
     check(result.stop==ModelSequenceStop::lua_required && result.command_reference==lua && runtime.sequence(id).lua_pending() &&
-        runtime.sequence(id).command_index()==0 && runtime.sequence(id).model().mode==0,
+        runtime.sequence(id).command_index()==0 && runtime.sequence(id).model().mode()==0,
         "Incomplete immediate Lua must retain its cursor and stop before the next command.");
     ModelSubcommandServices services;services.play_sound=[&](const auto&) {++plays;return ModelSoundPlayResult{true,0,0};};
     rejects([&]{runtime.update_subcommands(id,3,services);},"A pending Lua call allowed a later model frame.");
@@ -477,7 +504,7 @@ void immediate_lua_owner_and_nested_guards() {
         !runtime.sequence(id).selection_pending(),"Rejected Lua interruption changed queue timing or published sequence entry.");
     result=runtime.run_sequence(id,17,{},{},{},dispatch);
     check(result.stop==ModelSequenceStop::end && calls==2 && effects==1 && !runtime.sequence(id).lua_pending() &&
-        runtime.sequence(id).model().mode==2,"Lua retry replayed a completed prefix or failed to execute its later command.");
+        runtime.sequence(id).model().mode()==2,"Lua retry replayed a completed prefix or failed to execute its later command.");
     check(runtime.run_sequence(other,44).stop==ModelSequenceStop::end &&
         runtime.select_sequence(other,"SQ_WAIT").complete(),"Nested preflight left a hidden sequence-time or selection latch.");
     check(runtime.update_subcommands(id,3,services).complete() && plays==1 && runtime.subcommands(id).entries().empty(),
@@ -536,7 +563,7 @@ void immediate_lua_owned_dispatch() {
     rejects([&]{runtime.messenger();},"Suspended Lua delivery exposed mutable shared arguments.");
     rejects([&]{runtime.run_sequence(other,19);},"Another sequence bypassed a suspended Lua-owned delivery.");
     check(runtime.run_sequence(id,18,{},{},{},dispatch).stop==ModelSequenceStop::end && lua_calls==2 &&
-        first_calls==1 && second_calls==2 && second_effects==1 && !pending && runtime.sequence(id).model().mode==2,
+        first_calls==1 && second_calls==2 && second_effects==1 && !pending && runtime.sequence(id).model().mode()==2,
         "Owning Lua retry replayed a completed recipient or could not finish its retained dispatch.");
     check(runtime.run_sequence(id,20,{},{},{},dispatch).stop==ModelSequenceStop::end && lua_calls==2 &&
         runtime.run_sequence(other,19).stop==ModelSequenceStop::end,"Completed Lua retained a stale dispatch/sequence ownership gate.");
@@ -546,7 +573,7 @@ void immediate_lua_owned_dispatch() {
 int main() {
     try {
         cross_source_and_duplicates(); inactive_targets(); nested_resume_and_snapshot(); sequence_cleanup_before_selection();
-        local_jump_cleanup(); visible_selection_phases(); repeated_consumer_owners(); source_occurrence_consistency(); atomic_registration_limit();
+        local_jump_cleanup(); visible_selection_phases();jump_cleanup_slot_preflight(); repeated_consumer_owners(); source_occurrence_consistency(); atomic_registration_limit();
         immediate_lua_owner_and_nested_guards();immediate_lua_fault();immediate_lua_owned_dispatch();
         std::cout<<checks<<" action event runtime checks passed\n"; return 0;
     } catch (const std::exception& error) { std::cerr<<"Action event runtime failure after "<<checks<<" checks: "<<error.what()<<'\n'; return 1; }

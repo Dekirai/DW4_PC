@@ -44,8 +44,8 @@ ignored; the product does not execute PowerPC instructions or link Dolphin.
 | `80309228..803092CC` | onWalk reads its chosen pair directly from backing, without reading count |
 | `80309168` | Post-input control transitions and sequence dispatch decision |
 
-`ModelControlState` owns a pose, channels, one optional `KEIKATIMER`, mode/phase
-and a `PadMotionParameters` binding to the actual PDMOVE list. Its default
+`ModelControlState` binds a pose, canonical control fields and a separate RAM
+timer slot, with facades for the actual PDMOVE and movement lists. Its default
 `ModelPadMotionList` is allocated with logical count zero and null backing.
 Constructors can instead retain supplied shared PDMOVE and movement lists.
 It is a supported subset, not a host ABI copy of `beModelCtrlInfoWork`. The original work fields
@@ -54,8 +54,8 @@ are mode/phase `3C/40`, parameter list `48`, input byte `70`, requested sequence
 `DA`. Metadata explicitly defaults the latter to true at `802C6FE0..802C6FEC`.
 
 Work `78` is `_isHitCheck`, the flag written by the motion tick and currently
-exposed as `pose.translated`. Work `A8` is the separate `_isPosLock`, exposed as
-`pose.position_locked`. Neither flag alone implements collision or attachment
+exposed as `pose.translated()`. Work `A8` is the separate `_isPosLock`, exposed as
+`pose.position_locked()`. Neither flag alone implements collision or attachment
 updates. Generic metadata registration's temporary objects do not establish
 full player defaults; the API requires an explicitly prepared model matrix.
 
@@ -75,6 +75,30 @@ independent value ownership through assignment; an explicitly supplied null
 original list is distinct and is never repaired by inventing a list.
 `set_values()` explicitly prepares four stored values while retaining existing
 owners. It is a preparation API, not execution of an original command.
+
+Version 0.38 places mode/phase, hit-script prefixes, raw fall/wall/floor check
+bytes, invulnerability frames and both actual list reference fields in
+`ModelControlFields`. It can be an alias into one enclosing player-work owner.
+The state exposes const-correct named accessors such as `mode()`, `phase()` and
+`check_fall()`; each reads or writes that same storage. Check bytes retain all
+eight bits. The field group's factory defaults allocate two empty lists but
+require neither a node nor a timer.
+
+`ModelRamTimerSlot` belongs to the RAM lifetime, independently of work generation.
+Its optional value is exposed through `elapsed_timer()`. A fresh work binding
+can retain the same actual node and RAM timer while using distinct work fields.
+MOVE and MUTEKI preserve an existing timer through that shared slot. The native
+slot does not implement the original named dictionary lookup by itself.
+
+The list facades bind the actual reference slots in `ModelControlFields`, not
+copies of their initial list pointers. Each synchronous operation resolves the
+current slot; replacing a reference is visible to the next operation while a
+separately retained old list remains alive. A known null reference is retained
+without repair and rejected only by operations that consume it. The aliasing
+slot handles live in the facade, outside the field group, so the group does not
+retain itself. Copies detach fields, node, timer, lists and backing; publication
+retains all destination owners. A moved-from host view can be restored with a
+new independent binding without leaving its list facades attached to stale slots.
 
 ## Player rates and heading
 
@@ -163,12 +187,15 @@ a successful empty update.
 
 ## Validation and remaining work
 
-- **128 asset-free checks** cover command fields, original rates, signed-zero
+- **148 asset-free checks** cover command fields, original rates, signed-zero
   heading, lazy preparation, independent state, precise input/phase branches,
   request priority, unused dependencies and atomic failures. Ownership cases
   include shared list/backing aliases, detached and moved-from snapshots,
   identity-preserving publication, count-only clear/reinitialization, short and
   null lists, skipped stores, direct backing reads and rejected live parameters.
+  Canonical binding checks additionally cover field aliases, raw bytes, shared
+  RAM timers, live reference replacement, distinct work generations, detached
+  publication, moved-from restoration and release without ownership cycles.
 - **668 original records** decode across 2,273 recognized archive IGBs:
   526 CTRL and 142 PDMOVE, with zero rejections. PDMOVE has 71 Move / 71 Stop;
   CTRL has 91 isLive, 85 noFall, 71 onWalk, 140 toWait and 139 toWalk.

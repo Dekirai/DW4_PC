@@ -58,13 +58,39 @@ live read-only indexed/range view, dereferencing those actual entries rather
 than constructing payload snapshots. Entry identifiers are diagnostic numbers
 within a wrapper; equal identifiers in two fresh wrappers are different objects.
 
-A future canonical player-work reference can retain this wrapper directly.
-Replacing that work reference with a fresh wrapper neither mutates nor cleans
-the retained old wrapper. Its queued resources, pending operation and entry
-identities survive through existing owners. Merely copying or releasing shared
-handles performs no sound/effect calls. Facade update/resume/cleanup calls retain
-their wrapper while executing services, so their storage survives changes to
-external work references.
+The canonical-slot constructor accepts an aliasing
+`shared_ptr<shared_ptr<ModelSubcommandWrapper>>` to the actual work `+E4` field.
+New append, clear, update and cleanup operations resolve that field's current
+wrapper. `wrapper_owner()`, `list_owner()` and `entries()` describe the live field;
+`pending_wrapper_owner()` separately identifies an already captured pass.
+Const facade access returns const owner handles. Binding a null field does not
+allocate a replacement wrapper: a new operation that needs it rejects.
+
+Replacing the field with a fresh wrapper neither mutates nor cleans the retained
+old wrapper. A pending update or cleanup resumes its captured wrapper/list even
+after the live field changes or becomes null. Completed prefixes, count snapshot,
+cursor, shared fault and reentrancy guards remain with that wrapper. Callback
+appends can therefore enter a newly installed wrapper while the original pass
+finishes its old list. A new facade can operate the new wrapper independently.
+
+One facade retains at most one resumable pass. Starting another update before
+that pass finishes rejects. Same-wrapper cleanup can still interrupt an update;
+cleanup against a different live wrapper rejects until the retained pass finishes,
+or the caller uses a separate facade for that new operation. This explicit host
+boundary avoids discarding a continuation or cleaning the wrong work allocation.
+Neither a slot replacement nor another facade bypasses a same-wrapper service
+fault or recursive-operation guard.
+
+`require_cleanup_startable()` performs the same read-only null-slot, retained
+wrapper, fault, reentrancy and pending-HITBOX checks used by cleanup. Enclosing
+sequence operations call it before publishing their pre-cleanup fields. It does
+not cancel a pending update or start cleanup, so a rejected host overlap cannot
+later be mistaken for a suspended sequence cleanup.
+
+Merely copying or releasing shared handles performs no sound/effect calls.
+Move construction transfers both the actual slot binding and any pending capture;
+the moved-from facade owns a fresh independent empty wrapper. Groups own their
+wrapper field, never a facade, so aliasing slot retention creates no back-cycle.
 
 Base metadata `802C5D70` names byte `+08` `_isOneSet`, float `+0c` `_runFrame`
 and float `+10` `_startFrame`. Fresh values are false, zero and zero. Append
@@ -137,6 +163,20 @@ returned RAM number, selects that effect model/RAM and sends `GENERATE` with:
 The source and attachment identities are distinct from the effect recipient.
 The caller supplies a prepared equivalent of the original ONE work's attachment
 name/RAM fields `+dc/+e0`; this module does not fabricate that model work.
+An optional context `resolve_attachment` callback reads live captured-work fields
+after successful `FIND_SPACE`, matching `8031037C` before `803104A8/AC/F0`.
+The complete `GENERATE` packet is then retained across missing or unavailable
+generation services. Later changes do not alter that packet; the next effect
+entry resolves its own attachment. A non-null empty name stays empty, while null
+uses the prepared source name/RAM fallback. No-space results skip the read.
+Without a resolver the supplied attachment value remains the explicit prepared
+boundary. An unused fallback value is not validated when a resolver is present.
+
+AER supplies a weak reference to its canonical work for this callback, avoiding
+a work-to-wrapper-to-context ownership cycle. This covers live `+DC/+E0` fields
+of the captured prepared work, not the future mutable RAM/ONE lookup graph.
+The source identity likewise remains the explicit prepared binding. HITBOX's
+later packet phase retains its separately recovered live attachment read.
 For MODELCTRL SETEFFECT, a second vector supplies rotation only when the message
 contains exactly two vectors; otherwise rotation is zero.
 
@@ -191,7 +231,10 @@ The ownership refactor adds retained wrapper/list/entry identity checks through
 work-reference replacement, aliased-facade update/cleanup pauses, selective
 HITBOX clear, callback append, fault sharing and destruction. Surviving entries
 retain their addresses and live handles, and distinct work generations retain
-independent queues. Focused standalone checks pass 95 subcommand assertions and
+independent queues. Canonical-slot tests additionally cover replacement during
+callbacks, fresh appends, old pass resumption, null live fields, explicit overlapping
+cleanup rejection, independent fresh facades, retained faults and containing-work
+lifetime. Focused standalone checks pass 131 subcommand assertions and
 the existing 65 HITBOX assertions. The 1,005-case original lifecycle comparison
 was rerun against the refactored implementation with no differences. A fresh
 HITBOX comparison also matched all 2,106 cases and 1,690,336 original

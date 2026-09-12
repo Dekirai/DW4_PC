@@ -38,7 +38,7 @@ float radians(float degrees) {
 }
 void rotation(AnimationMatrix& matrix,const std::array<float,3>& degrees) {
     ModelMotionPose temporary(matrix);
-    for(std::size_t i=0;i<3;++i)temporary.turn.desired[i]=radians(degrees[i]);
+    for(std::size_t i=0;i<3;++i)temporary.turn().desired[i]=radians(degrees[i]);
     // Reuse the verified 801292D4 trig branches and scalar/FMA order. The
     // surrounding motion operation also resets a bottom row; placement does
     // not, so copy only the nine entries written by 801292D4 itself.

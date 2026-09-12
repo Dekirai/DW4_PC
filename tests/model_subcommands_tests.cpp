@@ -151,6 +151,51 @@ void callbacks_moves_and_bounds() {
     const int before=plays;rejects([&]{occupied.resume(services);});rejects([&]{occupied.cleanup(services);});
     check(plays==before,"A throwing service must never be replayed automatically.");
 }
+
+void live_effect_attachment_capture() {
+    struct Work {
+        std::shared_ptr<ModelSubcommandWrapper> subcommands=std::make_shared<ModelSubcommandWrapper>();
+        std::optional<ModelSubcommandOwner> attachment=ModelSubcommandOwner{"initial",-1};
+    };
+    std::weak_ptr<Work> observed;
+    {
+        auto work=std::make_shared<Work>();observed=work;
+        ModelSubcommandQueue queue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>(work,&work->subcommands));
+        auto prepared=context();unsigned reads{},finds{},generations{};
+        prepared.attachment=ModelSubcommandOwner{std::string(1048577,'x'),0}; // Unused when the live resolver is present.
+        prepared.resolve_attachment=[weak=std::weak_ptr<Work>(work),&reads] {
+            ++reads;const auto live=weak.lock();if(!live)throw std::runtime_error("Missing captured work.");
+            return live->attachment;
+        };
+        queue.append_sound(0,"first");queue.append_effect(effect(false));queue.append_effect(effect(false));
+        ModelSubcommandServices services;
+        services.play_sound=[&](const auto&){work->attachment=ModelSubcommandOwner{"sound mutation",3};return ModelSoundPlayResult{true,0,4};};
+        services.find_effect_space=[&](const auto&) {
+            ++finds;check(reads==finds-1,"Attachment was read before FIND_SPACE completed.");
+            work->attachment=finds==1 ? std::optional<ModelSubcommandOwner>{{"",std::numeric_limits<std::int32_t>::min()}} : std::nullopt;
+            return ModelEffectSpaceResult{true,19};
+        };
+        check(queue.update(2,prepared,services).stop==ModelSubcommandStop::effect_generate_required && reads==1 && finds==1,
+            "Missing GENERATE did not retain the post-FIND_SPACE attachment capture.");
+        work->attachment=ModelSubcommandOwner{"later",91};
+        services.generate_effect=[&](const ModelEffectGenerateRequest& request) {
+            ++generations;
+            if(generations<=2)check(request.attachment==ModelSubcommandOwner{"",std::numeric_limits<std::int32_t>::min()},
+                "A GENERATE retry re-read the live attachment or replaced a non-null empty name with its fallback.");
+            else check(request.attachment==request.source,"A later entry failed to re-read the original null attachment fallback.");
+            return generations!=1;
+        };
+        check(queue.resume(services).stop==ModelSubcommandStop::effect_generate_required && reads==1 && finds==1,
+            "Unavailable GENERATE re-ran a completed context read or space selection.");
+        work->attachment=ModelSubcommandOwner{"changed again",100};
+        check(queue.resume(services).complete() && queue.entries().empty() && reads==2 && finds==2 && generations==3,
+            "Effect packet capture leaked across entries or replayed the first effect's prefix.");
+        queue.append_effect(effect(false));services.find_effect_space=[](const auto&){return ModelEffectSpaceResult{true,{}};};
+        queue.update(0,prepared,services);check(reads==2,"No-space effect performed a work attachment read absent from the original branch.");
+        work.reset();check(!observed.expired(),"Queue slot stopped retaining its actual work.");
+    }
+    check(observed.expired(),"Retained effect context formed a work-to-wrapper ownership cycle.");
+}
 void original_timing_and_ni() {
     check(original_elapsed_frames(0)==0 && original_elapsed_frames(16666667)==1 &&
         original_elapsed_frames(-16666667)==-1,"System elapsed conversion preserves sign and nominal units.");
@@ -275,6 +320,127 @@ void owner_retention_clear_and_faults() {
     rejects([&]{after_failure.resume(services);});rejects([&]{after_failure.cleanup(services);});
 }
 
+void canonical_wrapper_slot() {
+    static_assert(std::is_same_v<decltype(std::declval<const ModelSubcommandQueue&>().wrapper_owner()),std::shared_ptr<const ModelSubcommandWrapper>>);
+    static_assert(std::is_same_v<decltype(std::declval<const ModelSubcommandQueue&>().pending_wrapper_owner()),std::shared_ptr<const ModelSubcommandWrapper>>);
+    static_assert(std::is_same_v<decltype(std::declval<const ModelSubcommandQueue&>().list_owner()),std::shared_ptr<const ModelSubcommandList>>);
+    struct Work {std::shared_ptr<ModelSubcommandWrapper> subcommands=std::make_shared<ModelSubcommandWrapper>();};
+    std::weak_ptr<Work> weak_work;
+    {
+        auto work=std::make_shared<Work>();weak_work=work;
+        auto slot=std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>(work,&work->subcommands);
+        ModelSubcommandQueue queue(slot);auto old=queue.wrapper_owner();std::weak_ptr<ModelSubcommandWrapper> weak_old=old;
+        const auto old_list=queue.list_owner();queue.append_sound(0,"old first");queue.append_sound(0,"old second");
+        const auto first=queue.entry_owner(0),second=queue.entry_owner(1);
+        auto fresh=std::make_shared<ModelSubcommandWrapper>();std::vector<std::string> plays;
+        ModelSubcommandServices services;bool ready=false;
+        services.play_sound=[&](const auto& name) {
+            if(*name=="old second" && !ready)return ModelSoundPlayResult{};
+            plays.push_back(*name);
+            if(*name=="old first") {
+                *slot=fresh;queue.append_sound(0,"fresh");
+                check(queue.wrapper_owner()==fresh && queue.pending_wrapper_owner()==old && queue.entries().size()==1 &&
+                    queue.entries().front().elapsed==0,"Callback replacement redirected the active pass or appended to a cached old wrapper.");
+                rejects([&]{queue.resume(services);});rejects([&]{queue.update(1,context(),services);});
+                rejects([&]{queue.cleanup(services);});rejects([&]{ModelSubcommandQueue moving(std::move(queue));});
+                ModelSubcommandQueue same_wrapper(old);rejects([&]{same_wrapper.resume(services);});
+            }
+            return ModelSoundPlayResult{true,*name=="old first" ? 11u : 12u,4};
+        };
+        const auto paused=queue.update(2,context(),services);
+        check(paused.stop==ModelSubcommandStop::sound_play_required &&
+            first->started && second->elapsed==2 && second->started && plays==std::vector<std::string>{"old first"},
+            "Slot replacement lost an original completed prefix or advanced a pending entry twice.");
+        check(queue.pending() && queue.pending_wrapper_owner()==old && queue.wrapper_owner()==fresh &&
+            old_list->size()==2 && fresh->list_owner()->size()==1,"Live and pending wrapper owners were conflated.");
+        rejects([&]{queue.cleanup(services);});rejects([&]{queue.update(99,context(),services);});
+        ModelSubcommandQueue separate(slot);
+        check(separate.cleanup().complete() && fresh->list_owner()->empty() && old_list->size()==2,
+            "Separate facade could not clean the new live wrapper without touching a captured old pass.");
+        old.reset();check(!weak_old.expired(),"Pending update did not retain the replaced wrapper allocation.");
+        ready=true;
+        check(queue.resume(services).complete() && plays==std::vector<std::string>{"old first","old second"} &&
+            first->elapsed==2 && second->elapsed==2 && second->started && !queue.pending(),
+            "Resuming a captured update replayed its prefix or switched to the live replacement.");
+        check(weak_old.expired() && old_list->size()==2 && std::get<ModelSoundSubcommandState>(first->value).handle==11,
+            "Completed slot pass retained its old wrapper or performed synthetic external cleanup.");
+        queue.append_hitbox({0,0,5,{},{}});check(queue.entries().size()==1,"New append ignored the current canonical wrapper.");
+        separate.clear_hitboxes();check(queue.entries().empty(),"New clear did not resolve the canonical wrapper field.");
+        ModelSubcommandQueue moved(std::move(queue));
+        check(moved.wrapper_owner()==fresh && queue.wrapper_owner()!=fresh && queue.entries().empty(),
+            "Moving a slot facade lost its field binding or left the moved-from facade bound to canonical work.");
+        *slot=std::make_shared<ModelSubcommandWrapper>();
+        check(moved.wrapper_owner()==*slot && separate.wrapper_owner()==*slot,"Moved slot facade cached the previous work reference.");
+        work.reset();slot.reset();check(!weak_work.expired(),"Slot facade did not retain its aliasing containing work owner.");
+    }
+    check(weak_work.expired(),"Canonical work slot and subcommand facade formed an ownership cycle.");
+}
+void retained_slot_cleanup_null_and_faults() {
+    auto slot=std::make_shared<std::shared_ptr<ModelSubcommandWrapper>>(std::make_shared<ModelSubcommandWrapper>());
+    ModelSubcommandQueue queue(slot);queue.append_sound(0,"cleanup old");auto old=queue.wrapper_owner();const auto list=queue.list_owner();
+    std::weak_ptr<ModelSubcommandWrapper> weak_old=old;
+    ModelSubcommandServices services;services.play_sound=[](const auto&){return ModelSoundPlayResult{true,77,4};};
+    queue.update(1,context(),services);
+    check(queue.cleanup().stop==ModelSubcommandStop::sound_volume_down_required && queue.pending_wrapper_owner()==old,
+        "Cleanup did not capture the actual old wrapper before pausing.");
+    slot->reset();old.reset();
+    check(!queue.wrapper_owner() && queue.pending_wrapper_owner() && !weak_old.expired(),
+        "Nulling the actual work slot discarded its captured cleanup continuation.");
+    rejects([&]{queue.append_sound(0,"missing");});rejects([&]{queue.entries();});rejects([&]{queue.list_owner();});
+    rejects([&]{queue.cleanup();});
+    unsigned cleaned{};services.sound_volume_down=[&](auto handle){++cleaned;return handle==77;};
+    check(queue.resume(services).complete() && cleaned==1 && list->empty() && weak_old.expired() && !*slot && !queue.pending(),
+        "Cleanup resume failed to retain old work, repeated its effect or fabricated a null live wrapper.");
+    rejects([&]{queue.resume();});rejects([&]{queue.update(1,context());});
+    check(!*slot,"Missing live operations repaired the canonical null field.");
+    rejects([&]{ModelSubcommandQueue absent(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>{});});
+
+    *slot=std::make_shared<ModelSubcommandWrapper>();queue.append_sound(0,"uncertain");const auto faulted=queue.wrapper_owner();
+    services.play_sound=[](const auto&)->ModelSoundPlayResult{throw std::runtime_error("uncertain old service");};
+    rejects([&]{queue.update(1,context(),services);});
+    *slot=std::make_shared<ModelSubcommandWrapper>();
+    check(queue.faulted() && queue.pending_wrapper_owner()==faulted,"Slot replacement bypassed the captured wrapper fault.");
+    rejects([&]{queue.resume(services);});rejects([&]{queue.cleanup(services);});
+    ModelSubcommandQueue fresh(slot);fresh.append_sound(0,"independent");
+    services.play_sound=[](const auto&){return ModelSoundPlayResult{true,0,0};};
+    check(fresh.update(1,context(),services).complete() && fresh.entries().empty() && queue.faulted(),
+        "A separate new-wrapper operation cleared an old fault or inherited unrelated failed work.");
+}
+
+void cleanup_preflight_preserves_operation() {
+    auto slot=std::make_shared<std::shared_ptr<ModelSubcommandWrapper>>(std::make_shared<ModelSubcommandWrapper>());
+    ModelSubcommandQueue queue(slot);queue.append_sound(0,"pending");
+    const auto original=queue.wrapper_owner();const auto list_entry=queue.entry_owner(0);
+    check(queue.update(3,context()).stop==ModelSubcommandStop::sound_play_required,"Preflight fixture did not suspend sound start.");
+    std::as_const(queue).require_cleanup_startable();
+    check(queue.pending() && queue.pending_wrapper_owner()==original && list_entry->elapsed==3 && list_entry->started,
+        "Read-only cleanup preflight canceled the update or changed its completed prefix.");
+    *slot=std::make_shared<ModelSubcommandWrapper>();queue.append_sound(0,"new");
+    rejects([&]{std::as_const(queue).require_cleanup_startable();});
+    check(queue.entries().size()==1 && queue.pending_wrapper_owner()==original,"Rejected cleanup preflight captured the new wrapper.");
+    slot->reset();rejects([&]{queue.require_cleanup_startable();});
+    check(!*slot && queue.pending_wrapper_owner()==original,"Null cleanup preflight fabricated work or discarded a continuation.");
+    *slot=original;
+    ModelSubcommandServices services;
+    services.play_sound=[&](const auto&) {
+        rejects([&]{queue.require_cleanup_startable();});
+        return ModelSoundPlayResult{true,77,4};
+    };
+    check(queue.resume(services).complete() && list_entry->elapsed==3,"Preflight disrupted resumed sound timing.");
+    check(queue.cleanup().stop==ModelSubcommandStop::sound_volume_down_required,"Cleanup was not resumable after preflight.");
+    queue.require_cleanup_startable();
+    services.sound_volume_down=[](auto){return true;};check(queue.resume(services).complete(),"Preflight changed pending cleanup.");
+    queue.append_hitbox({0,0,5,{},{}});
+    services.check_hitbox=[](const auto&){return false;};
+    check(queue.update(1,context(),services).stop==ModelSubcommandStop::hitbox_check_required,"Hitbox preflight fixture did not suspend.");
+    rejects([&]{queue.require_cleanup_startable();});
+    services.check_hitbox=[](const auto&){return true;};queue.resume(services);queue.cleanup();
+    queue.append_sound(0,"uncertain");
+    services.play_sound=[](const auto&)->ModelSoundPlayResult{throw std::runtime_error("uncertain");};
+    rejects([&]{queue.update(1,context(),services);});rejects([&]{queue.require_cleanup_startable();});
+    check(queue.faulted(),"Read-only cleanup preflight cleared an uncertain outcome.");
+}
+
 int numeric_oracle() {
     char kind{};
     while(std::cin>>kind) {
@@ -326,7 +492,9 @@ int main(int argc,char** argv) {
         if(argc==2 && std::string(argv[1])=="--oracle")return oracle();
         if(argc==2 && std::string(argv[1])=="--numeric-oracle")return numeric_oracle();
         defaults_delay_and_results();pending_order_and_cleanup();effect_binding_and_interruption();callbacks_moves_and_bounds();
+        live_effect_attachment_capture();
         original_timing_and_ni();actual_owner_graph_and_reference_replacement();owner_retention_clear_and_faults();
+        canonical_wrapper_slot();retained_slot_cleanup_null_and_faults();cleanup_preflight_preserves_operation();
         std::cout<<"model subcommand checks: "<<checks<<'\n';return 0;
     } catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

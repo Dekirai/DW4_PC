@@ -45,9 +45,9 @@ struct ActionEventRuntime::Impl {
     };
     struct Model {
         PlayerRuntimeBinding binding;
+        std::shared_ptr<ModelPlayerWork> work;
         ModelSequenceRuntime sequence;
         ModelSubcommandQueue queue;
-        ModelSubcommandContext context;
         std::shared_ptr<std::uint8_t> active;
         std::optional<ModelQueryOwner> query_owner;
         bool jump_cleanup{};
@@ -76,12 +76,24 @@ struct ActionEventRuntime::Impl {
         bool script_work_prepared{};
         std::weak_ptr<ModelStatusWork> status_work;
         bool status_work_prepared{};
-        Model(PlayerRuntimeBinding bound,ModelControlState state,bool enabled,
-            std::optional<ModelSubcommandOwner> attachment)
-            : binding(std::move(bound)),sequence(binding.sequence_program(),std::move(state),
-              binding.model_name(),static_cast<std::int32_t>(binding.instance_index())),
-              context{{binding.model_name(),static_cast<std::int32_t>(binding.instance_index())},std::move(attachment)},
+        Model(PlayerRuntimeBinding bound,std::shared_ptr<ModelPlayerWork> captured,
+            std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerSlot> timer,bool enabled)
+            : binding(std::move(bound)),work(std::move(captured)),
+              sequence(bind_model_player_sequence(work,std::make_shared<const ModelSequenceProgram>(binding.sequence_program()),
+                  binding.model_name(),static_cast<std::int32_t>(binding.instance_index()),std::move(node),std::move(timer))),
+              queue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>>(work,&work->subcommands)),
               active(std::make_shared<std::uint8_t>(enabled ? std::uint8_t{1} : std::uint8_t{0})) {}
+        ModelSubcommandContext context() const {
+            ModelSubcommandContext result{{binding.model_name(),static_cast<std::int32_t>(binding.instance_index())},{}};
+            if(work->hit_parent_name)result.attachment=ModelSubcommandOwner{*work->hit_parent_name,work->hit_parent_ram};
+            result.resolve_attachment=[captured=std::weak_ptr<ModelPlayerWork>(work)]()->std::optional<ModelSubcommandOwner> {
+                const auto live=captured.lock();
+                if(!live)fail("The captured model work for effect attachment no longer exists.");
+                if(!live->hit_parent_name)return {};
+                return ModelSubcommandOwner{*live->hit_parent_name,live->hit_parent_ram};
+            };
+            return result;
+        }
     };
     struct Consumer { std::shared_ptr<const ActionEventTableProgram> program; bool active; };
     struct Action {
@@ -183,10 +195,10 @@ struct ActionEventRuntime::Impl {
                 messenger.buffer().add_int(0);return {true,1,{}};
             }
             if(!script_work)return {false,0,"MODELCTRL GETHP requires its actual prepared HP work owner."};
-            if(!script_work->hp)fail("Active MODELCTRL GETHP reached a null current-HP wrapper.");
-            messenger.buffer().add_int(script_work->hp->data);
-            messenger.buffer().add_game_object(script_work->hp);
-            if(script_work->max_hp)messenger.buffer().add_game_object(script_work->max_hp);
+            if(!script_work->hp())fail("Active MODELCTRL GETHP reached a null current-HP wrapper.");
+            messenger.buffer().add_int(script_work->hp()->data);
+            messenger.buffer().add_game_object(script_work->hp());
+            if(script_work->max_hp())messenger.buffer().add_game_object(script_work->max_hp());
             else messenger.buffer().add_object({});
             return {true,1,{}};
         }
@@ -197,7 +209,7 @@ struct ActionEventRuntime::Impl {
             if(*owner.active==0 || (owner.query_owner && !*owner.query_owner->work_available))
                 return {true,1,{}};
             if(!script_work)return {false,0,"MODELCTRL GETRECNO requires its actual prepared work owner."};
-            messenger.buffer().add_int(script_work->record);return {true,1,{}};
+            messenger.buffer().add_int(script_work->record());return {true,1,{}};
         }
         if(owner.script_work_prepared && !script_work && (command=="CHKBULLET" ||
            (owner.collision && owner.collision->owns_delivery(delivery))))
@@ -213,7 +225,7 @@ struct ActionEventRuntime::Impl {
             // it does not construct PC status or infer another controller type.
             OperationScope operation(processing_collision,key(id));
             const auto& sequence=std::as_const(owner.sequence);
-            ModelCollisionWork work{sequence.wait_state().control_enabled,script_work ? bool(script_work->hp) : owner.hp_reference_present,
+            ModelCollisionWork work{sequence.wait_state().control_enabled,script_work ? bool(script_work->hp()) : owner.hp_reference_present,
                 sequence.selected() ? std::optional<std::string_view>(sequence.current_sequence()) : std::nullopt};
             // A target script may suspend its own sequence cleanup/Lua prefix.
             // Retain the stable member reference obtained before that prefix;
@@ -379,7 +391,7 @@ struct ActionEventRuntime::Impl {
     bool check_hitbox(ActionEventRuntime& runtime,ControllerObjectId id,const ModelHitboxCheckRequest& request,
         const ModelHitboxServices& services) {
         auto& owner=model(id);
-        if(request.context.source!=owner.context.source)
+        if(request.context.source!=owner.context().source)
             fail("HITBOX source does not belong to the prepared model RAM.");
         if(owner.hitbox && owner.hitbox->request.entry_id!=request.entry_id)
             fail("Complete this model's pending HITBOX check before another entry.");
@@ -415,7 +427,7 @@ struct ActionEventRuntime::Impl {
                 // Original copies the live matrix and attachment after debug,
                 // while the temporary box retains its earlier geometry result.
                 buffer.add_matrix(std::as_const(owner.sequence).model().pose.matrix());
-                const auto source=owner.context.attachment.value_or(owner.context.source);
+                const auto source=owner.context().attachment.value_or(owner.context().source);
                 buffer.add_string(source.model_name); buffer.add_int(source.ram_no);
                 buffer.set_enabled_only(1);
                 state.dispatch.emplace(messenger.begin_send("CHKBULLET"));
@@ -430,7 +442,7 @@ struct ActionEventRuntime::Impl {
                 state.dispatch.reset();
                 // 8030690C returns list COUNT, not boolean[0] truth. A false
                 // appended result can still require the live source BHit script.
-                const auto& prefix=std::as_const(owner.sequence).model().bullet_hit_script;
+                const auto& prefix=std::as_const(owner.sequence).model().bullet_hit_script();
                 if(!messenger.buffer().booleans().empty() && prefix)
                     state.script=ModelLuaRequest{owner.binding.source(),std::nullopt,owner.binding.model_name(),
                         static_cast<std::int32_t>(owner.binding.instance_index()),*prefix,"BHit"};
@@ -465,7 +477,7 @@ struct ActionEventRuntime::Impl {
         auto services=supplied;
         services.check_hitbox=[&](const ModelHitboxCheckRequest& request) { return check_hitbox(runtime,id,request,hitbox_services); };
         try {
-            const auto result=frames ? owner.queue.update(*frames,owner.context,services) : owner.queue.resume(services);
+            const auto result=frames ? owner.queue.update(*frames,owner.context(),services) : owner.queue.resume(services);
             if(owner.hitbox) suspended_hitbox=key(id);
             else if(suspended_hitbox==key(id)) suspended_hitbox.reset();
             return result;
@@ -488,6 +500,15 @@ ActionEventRuntime::~ActionEventRuntime() {
 }
 ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding binding,ModelControlState model,
     bool active,std::optional<ModelSubcommandOwner> attachment) {
+    auto work=prepare_model_player_work(model);
+    if(attachment) {
+        work->hit_parent_name=std::move(attachment->model_name);
+        work->hit_parent_ram=attachment->ram_no;
+    }
+    return register_model(std::move(binding),std::move(work),model.pose.matrix_owner(),model.timer_slot_owner(),active);
+}
+ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding binding,std::shared_ptr<ModelPlayerWork> work,
+    std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerSlot> timer,bool active) {
     impl_->require_top_level_idle();
     if(binding.source_occurrence()>std::numeric_limits<std::uint32_t>::max() ||
        binding.instance_index()>static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
@@ -497,12 +518,14 @@ ControllerObjectId ActionEventRuntime::register_model(PlayerRuntimeBinding bindi
     impl_->require_registration_capacity(1,std::string_view("MODELCTRL").size()+binding.model_name().size());
     impl_->require_source(id.file_index,binding.source());
     const auto [found,inserted]=impl_->models.emplace(key(id),
-        std::make_shared<Impl::Model>(std::move(binding),std::move(model),active,std::move(attachment)));
+        std::make_shared<Impl::Model>(std::move(binding),std::move(work),std::move(node),std::move(timer),active));
     (void)inserted;
     const auto& value=found->second->binding;
     impl_->messenger.register_recipient(id,"MODELCTRL",value.model_name(),static_cast<std::int32_t>(value.instance_index()));
     return id;
 }
+std::shared_ptr<ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) { return impl_->model(id).work; }
+std::shared_ptr<const ModelPlayerWork> ActionEventRuntime::model_work(ControllerObjectId id) const { return impl_->model(id).work; }
 void ActionEventRuntime::prepare_model_queries(ControllerObjectId id,ModelQueryOwner fields) {
     // Like installing a missing recipient provider, first preparation can
     // resolve a suspended query. It cannot replace any existing live owner.
@@ -656,19 +679,19 @@ void ActionEventRuntime::set_label(ControllerObjectId id,std::optional<std::stri
     owner.sequence.set_label(std::move(sequence),std::move(label));
 }
 void ActionEventRuntime::prepare_model_state(ControllerObjectId id,ModelControlState state) {
-    // A live callback may change original work before the later packet/script
+    // A live callback may publish field values before the later packet/script
     // reads. Outside that callback, a suspended check owns the work until retry.
     const bool in_check=impl_->processing_subcommands==key(id) || impl_->processing_collision==key(id);
     if(!in_check) impl_->require_top_level_idle();
     auto& owner=impl_->model(id);
     if(owner.selecting || owner.jump_cleanup || owner.sequence_time || owner.wait.pending() ||
        (!in_check && (owner.hitbox || owner.broadcast || owner.query)))
-        fail("Cannot replace prepared model work during a suspended operation.");
+        fail("Cannot publish prepared control values during a suspended operation.");
     for(const auto value:state.pose.matrix()) if(!std::isfinite(value)) fail("Prepared model matrix must be finite.");
-    for(const auto* script:{&state.bullet_hit_script,&state.wall_hit_script,&state.floor_hit_script})
+    for(const auto* script:{&state.bullet_hit_script(),&state.wall_hit_script(),&state.floor_hit_script()})
         if(*script && ((*script)->size()>4096 || (*script)->find('\0')!=std::string::npos))
             fail("Prepared model script names exceed the bounded sequence string profile.");
-    if(!std::isfinite(state.invulnerability_frames)) fail("Prepared invulnerability frames must be finite.");
+    if(!std::isfinite(state.invulnerability_frames())) fail("Prepared invulnerability frames must be finite.");
     owner.sequence.model()=std::move(state);
 }
 void ActionEventRuntime::set_hitbox_debug(ControllerObjectId id,bool enabled) {
@@ -715,10 +738,10 @@ std::shared_ptr<ModelScriptWork> ActionEventRuntime::prepare_target_script_work(
     if(!owner.collision) fail("Validate the target's authored collision ownership before preparing its script work.");
     if(owner.script_work_prepared) fail("This target already has its prepared script work owner.");
     const auto& bound=owner.binding;
-    // The scene matrix has its own lifetime. A retained script work owns that
-    // same allocation without retaining the whole controller and its callbacks.
+    // The facade retains its captured work and the separately owned scene
+    // matrix, without retaining the controller or its callbacks.
     auto matrix=owner.sequence.model().pose.matrix_owner();
-    auto work=std::make_shared<ModelScriptWork>(id,bound.source(),bound.model_name(),
+    auto work=bind_model_player_script(owner.work,id,bound.source(),bound.model_name(),
         static_cast<std::int32_t>(bound.instance_index()),std::move(matrix));
     owner.script_work=work;owner.script_work_prepared=true;return work;
 }
@@ -732,6 +755,7 @@ ModelSubcommandResult ActionEventRuntime::select_sequence(ControllerObjectId id,
     if(owner.selecting || owner.jump_cleanup || owner.broadcast || owner.sequence_time || owner.query ||
        owner.hitbox || impl_->processing_subcommands==key(id))
         fail("Resume pending model delivery or sequence cleanup first.");
+    owner.queue.require_cleanup_startable();
     owner.sequence.begin_select(name); // Publish the original pre-cleanup fields.
     owner.selecting=true;
     const auto result=owner.queue.cleanup(services);
@@ -768,7 +792,7 @@ ModelSequenceResult ActionEventRuntime::run_sequence(ControllerObjectId id,std::
         if(command.name=="Set") owner.queue.append_hitbox(command.parameters);
         else if(command.name=="AllClear") owner.queue.clear_hitboxes();
         return true;
-    },lua);
+    },lua,[&] {owner.queue.require_cleanup_startable();});
 }
 ModelSequenceResult ActionEventRuntime::run_action_sequence(ControllerObjectId id,AnimationSourceRuntime& sources,
     std::uint64_t time,ActionServices& action,const ModelSubcommandServices& services,const ModelLuaDispatch& lua) {

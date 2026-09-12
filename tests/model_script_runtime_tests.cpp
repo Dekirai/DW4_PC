@@ -75,7 +75,7 @@ AnimationMatrix identity() {return {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};}
 std::shared_ptr<ModelScriptWork> work(std::uint32_t ram=0,std::string name="p_test") {
     auto result=std::make_shared<ModelScriptWork>(ControllerObjectId{7,100+ram},"prepared/player.igb",std::move(name),
         static_cast<std::int32_t>(ram),std::make_shared<AnimationMatrix>(identity()));
-    result->hp->data=100;result->max_hp->data=200;return result;
+    result->hp()->data=100;result->max_hp()->data=200;return result;
 }
 ModelTargetHitRequest request(const ModelScriptWork& target) {
     return {target.target(),target.source(),target.name(),target.ram_no(),"hit","Hit",70126,3,"enemy",2,-9};
@@ -102,7 +102,7 @@ void ordered_selection_and_getters() {
     auto document=fixture.document();
     const std::array registrations{ScriptRegistration{&document,"first load",4,0,a.reference},
         ScriptRegistration{&document,"first load",4,1,b.reference},ScriptRegistration{&document,"first load",4,0,a.reference}};
-    ModelScriptRuntime runtime{ScriptRegistry(registrations)};auto target=work(2);target->record=std::numeric_limits<std::int32_t>::min();
+    ModelScriptRuntime runtime{ScriptRegistry(registrations)};auto target=work(2);target->record()=std::numeric_limits<std::int32_t>::min();
     runtime.register_work(target);initialize_counter(runtime);unsigned fallback{};
     runtime.set_file_service([&](auto&,auto&,const auto&,bool)->std::optional<std::int32_t>{++fallback;return 9;});
     auto input=request(*target);input.kind=std::numeric_limits<std::int32_t>::max();input.body_ordinal=-7;
@@ -114,7 +114,7 @@ void ordered_selection_and_getters() {
     check(global(runtime,"ram")==2 && global(runtime,"record")==std::numeric_limits<std::int32_t>::min() &&
         global(runtime,"kind")==std::numeric_limits<std::int32_t>::max() && global(runtime,"body")==-7,
         "Native getters lost signed payloads or read source RAM/record instead of target values.");
-    check(target->hp->data==100 && runtime.context_runtime().context().direction==0,"Completed read/setter scripts changed unrelated HP.");
+    check(target->hp()->data==100 && runtime.context_runtime().context().direction==0,"Completed read/setter scripts changed unrelated HP.");
     check(runtime.handle(input)==std::optional<std::uint8_t>{std::uint8_t{0}} && global(runtime,"counter")==24,
         "A fresh completed Hit request did not execute a fresh invocation.");
 }
@@ -135,7 +135,7 @@ void missing_host_and_retained_service() {
             call.arguments.size()==2 && call.arguments[1].as_number()==7,"Retried host call lost owned arguments or identity.");
         return {old_calls==2,{},"waiting for prepared native effect"};
     });
-    check(!runtime.handle(input) && old_calls==1 && target->hp->data==100 && global(runtime,"counter")==1,
+    check(!runtime.handle(input) && old_calls==1 && target->hp()->data==100 && global(runtime,"counter")==1,
         "Partial service completion replayed code or merged HP before script completion.");
     auto other=input;other.kind++;
     rejects([&]{runtime.handle(other);});rejects([&]{runtime.register_work(work(1));});
@@ -145,7 +145,7 @@ void missing_host_and_retained_service() {
         context.mutable_context().direction=3;return {true,{},{}};
     });
     check(runtime.handle(input)==std::optional<std::uint8_t>{std::uint8_t{3}} && old_calls==2 && new_calls==1 &&
-        global(runtime,"counter")==11 && target->hp->data==55,"Resume lost retained service ownership or repeated earlier effects.");
+        global(runtime,"counter")==11 && target->hp()->data==55,"Resume lost retained service ownership or repeated earlier effects.");
 }
 
 void filesystem_continuation() {
@@ -176,7 +176,7 @@ void filesystem_continuation() {
     runtime.set_file_service([&](auto&,auto&,const auto&,bool)->std::optional<std::int32_t>{++replacement_calls;return 0;});
     ready=true;
     check(runtime.handle(input)==std::optional<std::uint8_t>{std::uint8_t{0}} && !runtime.pending() && file_calls==2 && host_calls==2 &&
-        replacement_calls==0 && global(runtime,"counter")==55 && target->hp->data==25,
+        replacement_calls==0 && global(runtime,"counter")==55 && target->hp()->data==25,
         "Fallback retry replaced its owner, replayed Lua, or treated final status -1 as another fallback.");
 }
 
@@ -201,14 +201,14 @@ void nested_shared_vm_and_context() {
         return {ready,{},"child service pending"};
     });
     check(!runtime.handle(parent_request) && runtime.context_runtime().depth()==2 && global(runtime,"counter")==11 &&
-        parent->hp->data==100 && child->hp->data==100,"Nested pause merged HP or replayed/discarded a parent frame.");
+        parent->hp()->data==100 && child->hp()->data==100,"Nested pause merged HP or replayed/discarded a parent frame.");
     rejects([&]{runtime.handle(child_request);});
     check(!runtime.faulted(),"Rejected detached child resume poisoned the retained parent.");
     ready=true;
     check(runtime.handle(parent_request)==std::optional<std::uint8_t>{std::uint8_t{0}} && parents==2 && children==2 &&
         global(runtime,"counter")==1111 && global(runtime,"after_child_ram")==1,
         "Nested resume replayed native prefixes or restored the parent shared context.");
-    check(parent->hp->data==7 && child->hp->data==7 && !runtime.pending() && runtime.context_runtime().depth()==0,
+    check(parent->hp()->data==7 && child->hp()->data==7 && !runtime.pending() && runtime.context_runtime().depth()==0,
         "Outer HP epilogue did not consume the child's live shared-context result.");
 }
 
@@ -250,7 +250,7 @@ void setter_conversion_and_boundaries() {
         const auto result=runtime.handle(request(*target));
         check(result && *result==expected && runtime.context_runtime().context().direction==expected && !runtime.pending(),
             "Setter did not truncate finite binary64 then compare the prepared integer with exactly one.");
-        check(runtime.last_lua_result().completed && runtime.last_lua_result().returned.empty() && target->hp->data==100,
+        check(runtime.last_lua_result().completed && runtime.last_lua_result().returned.empty() && target->hp()->data==100,
             "Setter exposed a Lua result or changed unrelated HP state.");
     }
     for(unsigned kind=0;kind<5;++kind) {
@@ -288,18 +288,18 @@ void original(const std::filesystem::path& root) {
         auto target=std::make_shared<ModelScriptWork>(ControllerObjectId{7,binding.model_ram_reference()},binding.source(),
             binding.model_name(),static_cast<std::int32_t>(i),std::make_shared<AnimationMatrix>(identity()));
         // Explicit prepared values, not a claim about original starting HP.
-        target->hp->data=125;target->max_hp->data=250;runtime.register_work(target);targets.push_back(target);
+        target->hp()->data=125;target->max_hp()->data=250;runtime.register_work(target);targets.push_back(target);
         auto input=request(*target);input.kind=70126+2*static_cast<std::int32_t>((i+1)%4);
         check(runtime.handle(input)==std::optional<std::uint8_t>{std::uint8_t{1}} && runtime.last_lua_result().completed &&
             runtime.last_lua_result().host_calls==2 && !runtime.pending(),
             "Unchanged original Hit early-return path did not finish through both verified getters.");
         const auto& context=runtime.context_runtime().context();
         check(context.target==target->target() && context.target_ram==static_cast<std::int32_t>(i) &&
-            context.kind==input.kind && target->hp->data==125,"Original early return lost qualified identity or changed HP.");
+            context.kind==input.kind && target->hp()->data==125,"Original early return lost qualified identity or changed HP.");
     }
     auto ordinary=request(*targets[0]);ordinary.kind=80000;
     check(!runtime.handle(ordinary) && runtime.pending() && !runtime.faulted() &&
-        runtime.context_runtime().context().direction==0 && targets[0]->hp->data==125,
+        runtime.context_runtime().context().direction==0 && targets[0]->hp()->data==125,
         "Original kind80000 skipped verified setDMGTurn0 or completed through an unavailable native effect.");
     check(runtime.diagnostic().find("be.BLPcalcKoukaMagic")!=std::string::npos &&
         runtime.last_lua_result().stop==Lua4RunStop::host_required,

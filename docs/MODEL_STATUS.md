@@ -58,8 +58,29 @@ The native fields follow `beNDMWMdlPEBaseInfoWork` metadata at `804E2998` /
 | `F4` | `display_positions` | `_dispPosNoList` |
 | `F8` | `timers` | `_timerList` |
 | `FC` | `first_flags` | `_isFirstList` |
+| `100` | `poison_damage` | `_poisonDamage` |
+| `104` | `poison_endurance` | `_poisonEndurance` |
 | `108` | `down_data` | `_downDataList` |
 | `10C` | `up_data` | `_upDataList` |
+
+`ModelStatusFields` stores these actual canonical fields. Its initial player
+byte and both signed poison integers are zero; all six list references are
+null. The zero poison defaults follow the inherited integer metadata without
+an override. `ModelStatusWork` retains the group and the captured actual
+`ModelScriptWork`. Its named accessors operate directly on the group; const
+facades return const scalars/list owners. No mutable field cache is kept.
+The poison fields are stored and preserved, but their status-update consumers
+are not claimed to be implemented by SETMETAL.
+
+The explicit group constructor can retain an aliasing shared pointer into a
+containing player-work generation. The compatible `(script_work, is_player)`
+constructor reuses the script facade's canonical status anchor when present,
+then writes the explicitly supplied player byte. Without an anchor, it creates
+standalone prepared fields as before. An explicit status group that conflicts
+with a captured script facade's canonical anchor is rejected.
+Groups never retain their facades, node or messenger, so these links do not
+form a back-reference cycle. Replacing the current generation does not redirect
+an already retained status invocation or its nested DOWNDATA query.
 
 Each list retains its shared identity. A null field and an existing empty list
 are different states. The original initialization gate tests only whether
@@ -114,10 +135,13 @@ behavior, appearance changes or timed status processing.
 
 ## Validation and limits
 
-The asset-free suite contains 77 checks covering command gates, original list
+The asset-free suite contains 95 checks covering command gates, original list
 sizes and defaults, null and short lists, shared aliases, old-row retention,
 nullable payloads, interrupted nested requests, a separate nested invocation
-on the same work, packet restoration and committed-prefix failures.
+on the same work, packet restoration and committed-prefix failures. Canonical
+field tests additionally cover shared list-reference replacements, const views,
+the two signed poison fields, anchored prepared construction, conflicting-group
+rejection, paused old-generation retention and release without ownership cycles.
 
 A local independent comparison executes the supplied original instructions
 from `803AECAC`, the allocation loops, `SETMETAL`, and helper `803AE5F8`.

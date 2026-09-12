@@ -148,7 +148,7 @@ ModelPlayerStartupResult ModelPlayerStartup::resume(NativeMessenger& messenger,A
                     ModelPlayerStartupPhase::metal:ModelPlayerStartupPhase::main_lobby;
             } else if(state.phase==ModelPlayerStartupPhase::main_lobby) {
                 if(std::find(state.maps.main_lobby().begin(),state.maps.main_lobby().end(),*state.map)!=state.maps.main_lobby().end())
-                    state.prefix.owner().work->original_is_main_lobby=std::uint8_t{1};
+                    state.prefix.owner().work->original_is_main_lobby()=std::uint8_t{1};
                 state.phase=ModelPlayerStartupPhase::completed;
             } else {
                 if(!state.dispatch)state.prepare();

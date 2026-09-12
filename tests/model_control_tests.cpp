@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <type_traits>
 
 namespace {
 using namespace dw4;
@@ -20,10 +21,10 @@ template<class F> void rejects(F action) {
 }
 bool same(const ModelControlState& a,const ModelControlState& b) {
     return a.pose==b.pose && a.channels.states()==b.channels.states() && a.channels.allocated()==b.channels.allocated() &&
-        a.elapsed_timer==b.elapsed_timer && a.mode==b.mode && a.phase==b.phase && a.pad_motion==b.pad_motion && a.check_fall==b.check_fall &&
-        a.bullet_hit_script==b.bullet_hit_script && a.wall_hit_script==b.wall_hit_script && a.floor_hit_script==b.floor_hit_script &&
-        a.wall_check==b.wall_check && a.floor_check==b.floor_check &&
-        std::bit_cast<std::uint32_t>(a.invulnerability_frames)==std::bit_cast<std::uint32_t>(b.invulnerability_frames);
+        a.elapsed_timer()==b.elapsed_timer() && a.mode()==b.mode() && a.phase()==b.phase() && a.pad_motion==b.pad_motion && a.check_fall()==b.check_fall() &&
+        a.bullet_hit_script()==b.bullet_hit_script() && a.wall_hit_script()==b.wall_hit_script() && a.floor_hit_script()==b.floor_hit_script() &&
+        a.wall_check()==b.wall_check() && a.floor_check()==b.floor_check() &&
+        std::bit_cast<std::uint32_t>(a.invulnerability_frames())==std::bit_cast<std::uint32_t>(b.invulnerability_frames());
 }
 MotionCommand movement(float value=1,float frames=2) {
     MotionCommand command;command.type="beModelCtrlMOVE";command.name="Move";command.channel=2;
@@ -51,56 +52,56 @@ struct Fixture : dw4::test::ScriptFixture {
 };
 void heading_and_player_rates() {
     ModelMotionPose pose({-1,0,0,0, 0,2,0,0, -0.0f,0,-1,0, 15,16,17,1});
-    pose.turn.desired={0.2f,1,0.3f};pose.turn.applied={0.4f,2,0.5f};pose.translated=true;pose.position_locked=true;
+    pose.turn().desired={0.2f,1,0.3f};pose.turn().applied={0.4f,2,0.5f};pose.translated()=true;pose.position_locked()=true;
     const auto original=pose;
     set_player_turn_rates(pose);
-    check(pose.turn.rate==std::array<float,3>{0,7,0},"Original player turn rates are not (0,7,0) radians/frame.");
+    check(pose.turn().rate==std::array<float,3>{0,7,0},"Original player turn rates are not (0,7,0) radians/frame.");
     synchronize_model_heading(pose);
-    check(pose.turn.desired[1]==0x1.921fb6p+1f && pose.turn.applied[1]==pose.turn.desired[1],
+    check(pose.turn().desired[1]==0x1.921fb6p+1f && pose.turn().applied[1]==pose.turn().desired[1],
         "Model heading must preserve FMA zero rules before atan2; copying negative-zero Z-column X would give -pi.");
-    check(pose.matrix()==original.matrix() && pose.translated && pose.position_locked &&
-        pose.turn.desired[0]==0.2f && pose.turn.applied[2]==0.5f && pose.turn.rate[1]==7,
+    check(pose.matrix()==original.matrix() && pose.translated() && pose.position_locked() &&
+        pose.turn().desired[0]==0.2f && pose.turn().applied[2]==0.5f && pose.turn().rate[1]==7,
         "Heading synchronization modified the model matrix, rates, X/Z angles or flags.");
     pose.matrix()[5]=std::numeric_limits<float>::quiet_NaN();
-    synchronize_model_heading(pose);check(pose.turn.desired[1]==0x1.921fb6p+1f,"Unused transformed Y poisoned heading.");
-    pose.matrix()=identity;pose.matrix()[0]=std::numeric_limits<float>::infinity();const auto old=pose.turn;
-    rejects([&]{synchronize_model_heading(pose);});check(pose.turn==old,"Non-finite heading was partially published.");
-    pose=ModelMotionPose(identity);set_player_turn_rates(pose);pose.turn.desired[1]=2;
+    synchronize_model_heading(pose);check(pose.turn().desired[1]==0x1.921fb6p+1f,"Unused transformed Y poisoned heading.");
+    pose.matrix()=identity;pose.matrix()[0]=std::numeric_limits<float>::infinity();const auto old=pose.turn();
+    rejects([&]{synchronize_model_heading(pose);});check(pose.turn()==old,"Non-finite heading was partially published.");
+    pose=ModelMotionPose(identity);set_player_turn_rates(pose);pose.turn().desired[1]=2;
     MotionTimer timer;timer.saved_world_time=42;timer.cached_frames=1;
-    turn_model(pose,timer,42);check(pose.turn.applied[1]==2,"Player rate was converted from degrees or otherwise changed.");
-    pose.turn.applied[1]=0;timer.cached_frames=0.125f;
-    turn_model(pose,timer,42);check(pose.turn.applied[1]==0.875f,"Player turn rate did not use the actual cached frame fraction.");
+    turn_model(pose,timer,42);check(pose.turn().applied[1]==2,"Player rate was converted from degrees or otherwise changed.");
+    pose.turn().applied[1]=0;timer.cached_frames=0.125f;
+    turn_model(pose,timer,42);check(pose.turn().applied[1]==0.875f,"Player turn rate did not use the actual cached frame fraction.");
 }
 void preparation_and_timer() {
     ModelControlState state{ModelMotionPose(identity)};state.pose.matrix()[8]=1;state.pose.matrix()[10]=0;
-    state.pose.position_locked=true;state.pose.turn.desired[0]=0.3f;state.pose.turn.applied[2]=0.4f;set_player_turn_rates(state.pose);
+    state.pose.position_locked()=true;state.pose.turn().desired[0]=0.3f;state.pose.turn().applied[2]=0.4f;set_player_turn_rates(state.pose);
     apply_model_command(state,movement(),123456789);
-    check(state.elapsed_timer && state.elapsed_timer->saved_world_time==123456789 && state.elapsed_timer->cached_frames==1,
+    check(state.elapsed_timer() && state.elapsed_timer()->saved_world_time==123456789 && state.elapsed_timer()->cached_frames==1,
         "MOVE did not create and start its owned elapsed timer.");
-    check(!state.pose.position_locked && state.pose.turn.desired[1]==0x1.921fb6p+0f &&
-        state.pose.turn.applied[1]==state.pose.turn.desired[1] && state.pose.turn.desired[0]==0.3f && state.pose.turn.applied[2]==0.4f,
+    check(!state.pose.position_locked() && state.pose.turn().desired[1]==0x1.921fb6p+0f &&
+        state.pose.turn().applied[1]==state.pose.turn().desired[1] && state.pose.turn().desired[0]==0.3f && state.pose.turn().applied[2]==0.4f,
         "MOVE did not release position lock and synchronize only Y.");
-    const auto timer=state.elapsed_timer;
-    state.pose.turn.desired[1]=0.25f;state.pose.turn.applied[1]=0.5f;
+    const auto timer=state.elapsed_timer();
+    state.pose.turn().desired[1]=0.25f;state.pose.turn().applied[1]=0.5f;
     apply_model_command(state,movement(),234567890);
-    check(state.elapsed_timer==timer && state.pose.turn.desired[1]==0.25f && state.pose.turn.applied[1]==0.5f,
+    check(state.elapsed_timer()==timer && state.pose.turn().desired[1]==0.25f && state.pose.turn().applied[1]==0.5f,
         "Repeated MOVE restarted an existing timer or overwrote unlocked heading.");
-    ModelControlState copy=state;copy.pose.position_locked=true;
+    ModelControlState copy=state;copy.pose.position_locked()=true;
     apply_model_command(copy,movement(2),345678901);
-    check(state.pose.turn.desired[1]==0.25f && state.channels.states()[2].value==1 && state.elapsed_timer==timer,
+    check(state.pose.turn().desired[1]==0.25f && state.channels.states()[2].value==1 && state.elapsed_timer()==timer,
         "Independent models share mutable movement state.");
     MotionCommand unknown;unknown.type="beModelCtrlMOVE";unknown.name="unrecognized";
-    ModelControlState no_op{ModelMotionPose(identity)};no_op.pose.position_locked=true;
+    ModelControlState no_op{ModelMotionPose(identity)};no_op.pose.position_locked()=true;
     apply_model_command(no_op,unknown,42);
-    check(no_op.channels.allocated() && no_op.elapsed_timer && !no_op.pose.position_locked,
+    check(no_op.channels.allocated() && no_op.elapsed_timer() && !no_op.pose.position_locked(),
         "Unknown MOVE skipped its original preparation and allocation effects.");
     const auto saved=no_op;auto bad=movement();bad.channel=4;
     rejects([&]{apply_model_command(no_op,bad,99);});check(same(no_op,saved),"Invalid channel partially modified model control.");
-    ModelControlState malformed{ModelMotionPose(identity)};malformed.pose.position_locked=true;
+    ModelControlState malformed{ModelMotionPose(identity)};malformed.pose.position_locked()=true;
     malformed.pose.matrix()[8]=std::numeric_limits<float>::infinity();const auto before=malformed;
     rejects([&]{apply_model_command(malformed,movement(),99);});check(same(malformed,before),"Failed unlock published a timer or unlocked pose.");
-    ModelControlState empty{ModelMotionPose(identity)};empty.pose.translated=true;
-    check(!advance_model_motion(empty,99).turned && !empty.pose.translated && !empty.elapsed_timer,
+    ModelControlState empty{ModelMotionPose(identity)};empty.pose.translated()=true;
+    check(!advance_model_motion(empty,99).turned && !empty.pose.translated() && !empty.elapsed_timer(),
         "Unallocated movement created a timer or failed to clear the original flag.");
     empty.channels.apply(unknown);const auto missing=empty;
     rejects([&]{advance_model_motion(empty,99);});check(same(empty,missing),"Missing KEIKATIMER failure changed state.");
@@ -108,12 +109,12 @@ void preparation_and_timer() {
 void controls_and_parameters() {
     ModelControlState state{ModelMotionPose(identity)};
     for(const auto& [text,mode]:std::array<std::pair<const char*,int>,4>{{{"onWalk",1},{"toWalk",2},{"toWait",3},{"isLive",4}}}) {
-        state.phase=99;apply_model_command(state,Fixture("beModelCtrlCTRL",text).decode(),42);
-        check(state.mode==mode && state.phase==0,"CTRL name selected the wrong mode or retained its substate.");
+        state.phase()=99;apply_model_command(state,Fixture("beModelCtrlCTRL",text).decode(),42);
+        check(state.mode()==mode && state.phase()==0,"CTRL name selected the wrong mode or retained its substate.");
     }
-    state.phase=2;apply_model_command(state,Fixture("beModelCtrlCTRL","noFall").decode(),42);
-    check(!state.check_fall && state.phase==2 && state.mode==4,"noFall changed control mode or failed to change the flag.");
-    apply_model_command(state,Fixture("beModelCtrlCTRL","onFall").decode(),42);check(state.check_fall,"onFall did not restore the flag.");
+    state.phase()=2;apply_model_command(state,Fixture("beModelCtrlCTRL","noFall").decode(),42);
+    check(!state.check_fall() && state.phase()==2 && state.mode()==4,"noFall changed control mode or failed to change the flag.");
+    apply_model_command(state,Fixture("beModelCtrlCTRL","onFall").decode(),42);check(state.check_fall(),"onFall did not restore the flag.");
     const auto original=state;
     for(const auto text:{"ToWalk","unknown",""}) {
         apply_model_command(state,Fixture("beModelCtrlCTRL",text).decode(),42);
@@ -125,7 +126,7 @@ void controls_and_parameters() {
     check(state.pad_motion.values()==std::optional{std::array<float,4>{1,4,0.7f,6}},"PDMOVE pair order differs from the original.");
     apply_model_command(state,Fixture("beModelCtrlPDMOVE","move",2,0).decode(),42);
     check(state.pad_motion.values()==std::optional{std::array<float,4>{2,0,0.7f,6}},"Nonexact PDMOVE name must select the Stop pair, including zero frames.");
-    check(!state.elapsed_timer && !state.channels.allocated(),"CTRL/PDMOVE unexpectedly allocated motion or time.");
+    check(!state.elapsed_timer() && !state.channels.allocated(),"CTRL/PDMOVE unexpectedly allocated motion or time.");
 }
 void pad_list_ownership() {
     ModelControlState state{ModelMotionPose(identity)};
@@ -143,12 +144,12 @@ void pad_list_ownership() {
     auto candidate=state.detached_snapshot();
     check(candidate.pad_motion.list_owner()!=list && candidate.pad_motion.list_owner()->backing_owner()!=backing,
         "Control snapshot shares its mutable PDMOVE list or backing.");
-    candidate.pad_motion.set_values({5,6,7,8});candidate.mode=2;candidate.pose.matrix()[12]=9;
-    check((*backing)[0]==1 && state.mode==0 && state.pose.matrix()[12]==0,"Detached candidate changed live model fields.");
+    candidate.pad_motion.set_values({5,6,7,8});candidate.mode()=2;candidate.pose.matrix()[12]=9;
+    check((*backing)[0]==1 && state.mode()==0 && state.pose.matrix()[12]==0,"Detached candidate changed live model fields.");
     const auto matrix=state.pose.matrix_owner();
     state.publish_snapshot(candidate);
     check(state.pad_motion.list_owner()==list && list->backing_owner()==backing && backing->data()==data && (*backing)[0]==5 &&
-        state.mode==2 && state.pose.matrix_owner()==matrix && (*matrix)[12]==9,"Control publication replaced an existing owner.");
+        state.mode()==2 && state.pose.matrix_owner()==matrix && (*matrix)[12]==9,"Control publication replaced an existing owner.");
     auto move_candidate=state.detached_snapshot();move_candidate.pad_motion.set_values({9,10,11,12});state=std::move(move_candidate);
     check(state.pad_motion.list_owner()==list && list->backing_owner()==backing && (*backing)[0]==9,
         "Moving a candidate replaced the destination PDMOVE owners.");
@@ -203,7 +204,7 @@ void pad_list_shapes_and_backing_reads() {
         "Negative signed PDMOVE count was treated as a large unsigned count or repaired.");
     ModelControlState malformed{ModelMotionPose(identity),std::make_shared<ModelPadMotionList>(2,std::make_shared<Storage>(Storage{9}))};
     apply_model_command(malformed,ModelCtrlCommand{0,"toWait"},0);
-    check(malformed.mode==3 && malformed.pad_motion.size()==2,"Unrelated CTRL consumed or repaired short PDMOVE backing.");
+    check(malformed.mode()==3 && malformed.pad_motion.size()==2,"Unrelated CTRL consumed or repaired short PDMOVE backing.");
     const auto before=malformed.detached_snapshot();const auto owner=malformed.pad_motion.list_owner();const auto backing=owner->backing_owner();
     rejects([&]{apply_model_command(malformed,PadMotionCommand{0,"Stop",1,2},0);});
     check(same(malformed,before) && malformed.pad_motion.list_owner()==owner && owner->backing_owner()==backing && (*backing)[0]==9,
@@ -216,62 +217,62 @@ void pad_list_shapes_and_backing_reads() {
     rejects([&]{apply_model_command(null_list,PadMotionCommand{0,"Move",1,2},0);});
     check(!null_list.pad_motion.list_owner(),"Missing PDMOVE owner was replaced with a fabricated list.");
     for(bool moving:{false,true}) {
-        ModelControlState state{ModelMotionPose(identity)};state.channels.apply(movement());state.mode=1;
+        ModelControlState state{ModelMotionPose(identity)};state.channels.apply(movement());state.mode()=1;
         state.pad_motion.set_values({1,2,3,4});const auto live_list=state.pad_motion.list_owner();const auto storage=live_list->backing_owner();
         state.pad_motion.clear();(*storage)[moving ? 2u : 0u]=5;
         update_model_control(state,static_cast<std::uint8_t>(moving ? 1 : 0),"SQ_WAIT","SQ_NONE");
-        check(state.phase==(moving ? 1 : 2) && state.channels.states()[2].value==5 && state.pad_motion.size()==0 &&
+        check(state.phase()==(moving ? 1 : 2) && state.channels.states()[2].value==5 && state.pad_motion.size()==0 &&
             state.pad_motion.list_owner()==live_list && live_list->backing_owner()==storage,
             "onWalk rejected a zero count or read cached values instead of the actual retained backing pair.");
     }
     auto short_storage=std::make_shared<Storage>(Storage{2,4});
     ModelControlState partial{ModelMotionPose(identity),std::make_shared<ModelPadMotionList>(0,short_storage)};
-    partial.channels.apply(movement());partial.mode=1;
+    partial.channels.apply(movement());partial.mode()=1;
     update_model_control(partial,0,"SQ_WAIT","SQ_NONE");
-    check(partial.phase==2 && partial.channels.states()[2].value==2,"Stop required the unused Move backing pair.");
+    check(partial.phase()==2 && partial.channels.states()[2].value==2,"Stop required the unused Move backing pair.");
     const auto saved=partial.detached_snapshot();
     rejects([&]{update_model_control(partial,1,"SQ_WAIT","SQ_NONE");});
     check(same(partial,saved) && (*short_storage)[0]==2,"Missing Move backing partially published a transition.");
-    ModelControlState nonfinite{ModelMotionPose(identity)};nonfinite.channels.apply(movement());nonfinite.mode=1;
+    ModelControlState nonfinite{ModelMotionPose(identity)};nonfinite.channels.apply(movement());nonfinite.mode()=1;
     nonfinite.pad_motion.set_values({1,2,3,std::numeric_limits<float>::quiet_NaN()});const auto untouched=nonfinite.detached_snapshot();
     rejects([&]{update_model_control(nonfinite,1,"SQ_WAIT","SQ_NONE");});
     check(same(nonfinite,untouched),"Non-finite live pair partially changed the channel, phase or stored NaN bits.");
     update_model_control(nonfinite,0,"SQ_WAIT","SQ_NONE");
-    check(nonfinite.phase==2,"Unused non-finite Move pair poisoned a valid Stop transition.");
+    check(nonfinite.phase()==2,"Unused non-finite Move pair poisoned a valid Stop transition.");
     rejects([&]{ModelPadMotionList oversized(Storage(4097));});
 }
 void muteki_fields_and_shared_timer() {
     ModelControlState state{ModelMotionPose(identity)};
-    check(state.wall_check==1 && state.floor_check==1 && state.invulnerability_frames==0 && !state.bullet_hit_script &&
-        !state.wall_hit_script && !state.floor_hit_script,"Prepared entry field defaults changed.");
-    state.pose.position_locked=true;state.mode=3;state.phase=9;state.check_fall=false;
-    state.bullet_hit_script="bullet";state.wall_hit_script="";state.floor_hit_script="floor";
-    state.wall_check=255;state.floor_check=128;state.invulnerability_frames=42;
+    check(state.wall_check()==1 && state.floor_check()==1 && state.invulnerability_frames()==0 && !state.bullet_hit_script() &&
+        !state.wall_hit_script() && !state.floor_hit_script(),"Prepared entry field defaults changed.");
+    state.pose.position_locked()=true;state.mode()=3;state.phase()=9;state.check_fall()=false;
+    state.bullet_hit_script()="bullet";state.wall_hit_script()="";state.floor_hit_script()="floor";
+    state.wall_check()=255;state.floor_check()=128;state.invulnerability_frames()=42;
     apply_model_command(state,Fixture("beModelCtrlMUTEKI","OFFWALL",-1).decode(),123);
-    check(state.wall_check==0 && state.floor_check==128 && state.invulnerability_frames==42 &&
-        state.elapsed_timer && state.elapsed_timer->saved_world_time==123 && state.elapsed_timer->cached_frames==1,
+    check(state.wall_check()==0 && state.floor_check()==128 && state.invulnerability_frames()==42 &&
+        state.elapsed_timer() && state.elapsed_timer()->saved_world_time==123 && state.elapsed_timer()->cached_frames==1,
         "OFFWALL failed to ensure KEIKATIMER or overwrote unrelated counter/check fields.");
-    const auto timer=state.elapsed_timer;
+    const auto timer=state.elapsed_timer();
     apply_model_command(state,Fixture("beModelCtrlMUTEKI","ONWALL",999).decode(),456);
     apply_model_command(state,Fixture("beModelCtrlMUTEKI","OFFFLOOR",999).decode(),456);
-    check(state.wall_check==1 && state.floor_check==0 && state.invulnerability_frames==42 && state.elapsed_timer==timer,
+    check(state.wall_check()==1 && state.floor_check()==0 && state.invulnerability_frames()==42 && state.elapsed_timer()==timer,
         "Exact MUTEKI flag names assigned frame values or restarted an existing timer.");
     apply_model_command(state,Fixture("beModelCtrlMUTEKI","ONFLOOR",999).decode(),456);
-    check(state.floor_check==1 && !state.check_fall && state.pose.position_locked && state.mode==3 && state.phase==9 &&
-        !state.channels.allocated() && state.bullet_hit_script=="bullet" && state.wall_hit_script=="" && state.floor_hit_script=="floor",
+    check(state.floor_check()==1 && !state.check_fall() && state.pose.position_locked() && state.mode()==3 && state.phase()==9 &&
+        !state.channels.allocated() && state.bullet_hit_script()=="bullet" && state.wall_hit_script()=="" && state.floor_hit_script()=="floor",
         "MUTEKI flag commands changed pose, fall, channels, callbacks or control state.");
     for(const auto& [name,value]:std::array<std::pair<const char*,float>,5>{{{"ON",-1.f},{"OFF",0.f},{"offwall",2.f},{"",-0.0f},{"3.0",17.f}}}) {
         const auto command=Fixture("beModelCtrlMUTEKI",name,value).decode();
         check(std::holds_alternative<ModelMutekiCommand>(command) && std::get<ModelMutekiCommand>(command).name==name,
             "MUTEKI did not decode as its exact owned command.");
         apply_model_command(state,command,789);
-        check(std::bit_cast<std::uint32_t>(state.invulnerability_frames)==std::bit_cast<std::uint32_t>(value) &&
-            state.wall_check==1 && state.floor_check==1 && state.elapsed_timer==timer,"MUTEKI parsed its name or normalized the authored float.");
+        check(std::bit_cast<std::uint32_t>(state.invulnerability_frames())==std::bit_cast<std::uint32_t>(value) &&
+            state.wall_check()==1 && state.floor_check()==1 && state.elapsed_timer()==timer,"MUTEKI parsed its name or normalized the authored float.");
     }
     Fixture nullable("beModelCtrlMUTEKI","unused",23);nullable.records[nullable.command].values[2]=dw4::test::words({0});
-    apply_model_command(state,nullable.decode(),789);check(state.invulnerability_frames==23,"Null MUTEKI name failed to take the frame assignment path.");
+    apply_model_command(state,nullable.decode(),789);check(state.invulnerability_frames()==23,"Null MUTEKI name failed to take the frame assignment path.");
     apply_model_command(state,movement(),900);
-    check(state.elapsed_timer==timer && !state.pose.position_locked && state.channels.allocated(),"MOVE did not reuse MUTEKI's existing KEIKATIMER.");
+    check(state.elapsed_timer()==timer && !state.pose.position_locked() && state.channels.allocated(),"MOVE did not reuse MUTEKI's existing KEIKATIMER.");
     const auto saved=state;
     rejects([&]{apply_model_command(state,ModelMutekiCommand{0,"OFFWALL",std::numeric_limits<float>::infinity()},901);});
     check(same(state,saved),"Invalid native MUTEKI partially changed the shared timer or flags.");
@@ -283,38 +284,38 @@ void muteki_fields_and_shared_timer() {
 }
 void post_input_transitions() {
     ModelControlState state{ModelMotionPose(identity)};
-    state.mode=2;
+    state.mode()=2;
     auto decision=update_model_control(state,1,"SQ_WAIT","SQ_NONE");
-    check(decision.requested_sequence=="SQ_WALK" && decision.dispatch_sequence && state.mode==2,
+    check(decision.requested_sequence=="SQ_WALK" && decision.dispatch_sequence && state.mode()==2,
         "toWalk should request the sequence without applying its commands or changing control mode.");
     check(!update_model_control(state,2,"SQ_WAIT","SQ_NONE").dispatch_sequence,"toWalk treats a nonzero byte other than 1 as exactly 1.");
     check(!update_model_control(state,1,"SQ_WALK","SQ_NONE").dispatch_sequence,"An already-current sequence was dispatched again.");
     decision=update_model_control(state,1,"SQ_WAIT","SQ_JUMP");
     check(decision.requested_sequence=="SQ_JUMP" && decision.dispatch_sequence,"Mode logic overwrote the input callback's higher-priority request.");
-    state.mode=3;
+    state.mode()=3;
     decision=update_model_control(state,0,"SQ_WALK","SQ_NONE");
     check(decision.requested_sequence=="SQ_WAIT" && decision.dispatch_sequence,"toWait did not request SQ_WAIT after release.");
     check(!update_model_control(state,1,"SQ_WALK","SQ_NONE").dispatch_sequence,"toWait requested idle while input was active.");
-    state.mode=4;check(!update_model_control(state,0,"SQ_WALK","SQ_NONE").dispatch_sequence,"isLive invented an input transition.");
-    state.mode=1;state.phase=7;const auto saved=state;
+    state.mode()=4;check(!update_model_control(state,0,"SQ_WALK","SQ_NONE").dispatch_sequence,"isLive invented an input transition.");
+    state.mode()=1;state.phase()=7;const auto saved=state;
     rejects([&]{update_model_control(state,1,"SQ_WAIT","SQ_NONE");});check(same(state,saved),"Missing channel dependency changed state.");
     decision=update_model_control(state,1,"SQ_WAIT","SQ_JUMP");
     check(decision.dispatch_sequence,"An existing request incorrectly consumed unused onWalk dependencies.");
-    state.channels.apply(movement());state.phase=1;
+    state.channels.apply(movement());state.phase()=1;
     check(!update_model_control(state,1,"SQ_WAIT","SQ_NONE").dispatch_sequence,"Stable onWalk state read absent unused PDMOVE data.");
     const auto absent=state;rejects([&]{update_model_control(state,0,"SQ_WAIT","SQ_NONE");});
     check(same(state,absent),"Missing PDMOVE pair changed channel state.");
     apply_model_command(state,PadMotionCommand{0,"Move",0.7f,6},0);
     apply_model_command(state,PadMotionCommand{0,"Stop",1,4},0);
-    state.phase=0;state.pose.position_locked=true;
+    state.phase()=0;state.pose.position_locked()=true;
     update_model_control(state,2,"SQ_WAIT","SQ_NONE");
-    check(state.phase==1 && state.channels.states()[2].value==0.7f && state.pose.position_locked && !state.elapsed_timer,
+    check(state.phase()==1 && state.channels.states()[2].value==0.7f && state.pose.position_locked() && !state.elapsed_timer(),
         "onWalk initial nonzero input did not directly configure Move, or incorrectly ran MOVE preparation.");
     update_model_control(state,0,"SQ_WAIT","SQ_NONE");
-    check(state.phase==2 && state.channels.states()[2].mode==MotionMode::stop_positive,"onWalk release did not configure Stop.");
-    update_model_control(state,2,"SQ_WAIT","SQ_NONE");check(state.phase==2,"onWalk phase 2 must require exact input byte 1.");
-    update_model_control(state,1,"SQ_WAIT","SQ_NONE");check(state.phase==1,"onWalk phase 2 did not return to movement.");
-    state.phase=0;update_model_control(state,0,"SQ_WAIT","SQ_NONE");check(state.phase==2,"Initial onWalk idle input did not enter Stop.");
+    check(state.phase()==2 && state.channels.states()[2].mode==MotionMode::stop_positive,"onWalk release did not configure Stop.");
+    update_model_control(state,2,"SQ_WAIT","SQ_NONE");check(state.phase()==2,"onWalk phase 2 must require exact input byte 1.");
+    update_model_control(state,1,"SQ_WAIT","SQ_NONE");check(state.phase()==1,"onWalk phase 2 did not return to movement.");
+    state.phase()=0;update_model_control(state,0,"SQ_WAIT","SQ_NONE");check(state.phase()==2,"Initial onWalk idle input did not enter Stop.");
 }
 void malformed_records() {
     for(const auto type:{"DerivedCTRL","beModelCtrlMOVERL","beModelCtrlACTION"})
@@ -333,6 +334,108 @@ void malformed_records() {
     check(same(state,saved),"Invalid PDMOVE published a parameter list.");
     rejects([&]{update_model_control(state,1,"SQ_WAIT",std::string_view("SQ\0X",4));});
     check(same(state,saved),"Invalid sequence input changed state.");
+}
+void canonical_control_fields_and_slots() {
+    static_assert(std::is_same_v<decltype(std::declval<const ModelControlState&>().mode()),const std::int32_t&>);
+    static_assert(std::is_same_v<decltype(std::declval<const ModelControlState&>().check_fall()),const std::uint8_t&>);
+    static_assert(std::is_same_v<decltype(std::declval<const ModelControlState&>().elapsed_timer()),const std::optional<MotionTimer>&>);
+    struct Work { ModelMotionFields motion;ModelControlFields control; };
+    auto work=std::make_shared<Work>();
+    auto motion=std::shared_ptr<ModelMotionFields>(work,&work->motion);
+    auto control=std::shared_ptr<ModelControlFields>(work,&work->control);
+    auto node=std::make_shared<ModelMotionPose::Matrix>(identity);
+    auto ram_timer=std::make_shared<ModelRamTimerSlot>();
+    ModelControlState first(ModelMotionPose(node,motion),control,ram_timer);
+    ModelControlState peer(ModelMotionPose(node,motion),control,ram_timer);
+    check(first.fields_owner()==control && first.pose.fields_owner()==motion && first.timer_slot_owner()==ram_timer &&
+        &first.mode()==&control->mode && &first.elapsed_timer()==&ram_timer->value,
+        "Control facade copied canonical scalar fields or the RAM timer slot.");
+    check(control->pad_motion && control->movement && control->pad_motion->size()==0 && control->movement->size()==0 &&
+        !ram_timer->value && control->check_fall==1 && control->wall_check==1 && control->floor_check==1,
+        "Canonical control defaults allocated a timer or lost true empty list/check defaults.");
+    first.mode()=-3;first.phase()=5;first.wall_check()=255;first.floor_check()=2;first.check_fall()=128;
+    first.bullet_hit_script()="bullet";control->wall_hit_script="wall";control->floor_hit_script="floor";
+    control->invulnerability_frames=-0.0f;
+    check(peer.mode()==-3 && peer.phase()==5 && peer.wall_check()==255 && peer.floor_check()==2 && peer.check_fall()==128 &&
+        peer.bullet_hit_script()=="bullet" && peer.wall_hit_script()=="wall" && peer.floor_hit_script()=="floor" &&
+        std::bit_cast<std::uint32_t>(peer.invulnerability_frames())==0x80000000u,
+        "Canonical control aliases did not preserve live values or raw byte/float representations.");
+    apply_model_command(first,movement(),123);
+    const auto old_pad=control->pad_motion;const auto old_movement=control->movement;
+    const auto old_entries=old_movement->mutable_entries();
+    check(ram_timer->value && peer.elapsed_timer() && &*first.elapsed_timer()==&*peer.elapsed_timer() &&
+        peer.channels.allocated(),"MOVE did not publish into shared list and RAM timer owners.");
+    auto snapshot=first.detached_snapshot();
+    check(snapshot.fields_owner()!=control && snapshot.pose.fields_owner()!=motion && snapshot.pose.matrix_owner()!=node &&
+        snapshot.timer_slot_owner()!=ram_timer && snapshot.channels.list_owner()!=old_movement && snapshot.pad_motion.list_owner()!=old_pad,
+        "Control candidate retained a canonical work/list/node/timer owner.");
+    snapshot.mode()=7;snapshot.phase()=-8;snapshot.wall_check()=3;snapshot.pose.translated()=254;
+    snapshot.pose.matrix()[12]=88;snapshot.elapsed_timer()->saved_world_time=999;
+    snapshot.pad_motion.apply({0,"Move",6,7});
+    check(control->mode==-3 && (*node)[12]==0 && ram_timer->value->saved_world_time==123 && old_pad->size()==0,
+        "Unpublished candidate changed live canonical fields or separate owners.");
+    first.publish_snapshot(snapshot);
+    check(first.fields_owner()==control && first.pose.fields_owner()==motion && first.pose.matrix_owner()==node &&
+        first.timer_slot_owner()==ram_timer && control->movement==old_movement && old_movement->mutable_entries()==old_entries &&
+        control->pad_motion==old_pad && peer.mode()==7 && peer.phase()==-8 && peer.wall_check()==3 &&
+        work->motion.translated==254 && (*node)[12]==88 && ram_timer->value->saved_world_time==999,
+        "Control publication replaced canonical field/list/timer owners or missed shared scalar writes.");
+
+    auto replacement_pad=std::make_shared<ModelPadMotionList>(ModelPadMotionList::Storage{1,2,3,4});
+    auto replacement_movement=std::make_shared<MotionChannelList>();
+    const auto old_pad_values=old_pad->backing_owner();const auto saved_old_pad=*old_pad_values;
+    control->pad_motion=replacement_pad;control->movement=replacement_movement;
+    check(first.pad_motion.list_owner()==replacement_pad && peer.pad_motion.list_owner()==replacement_pad &&
+        first.channels.list_owner()==replacement_movement && peer.channels.list_owner()==replacement_movement,
+        "Control facades retained stale list references after canonical slot replacement.");
+    apply_model_command(peer,PadMotionCommand{0,"Stop",9,10},777);apply_model_command(first,movement(2,2),888);
+    check(first.pad_motion.values()==std::optional{std::array<float,4>{9,10,3,4}} && replacement_movement->size()==4 &&
+        old_movement->mutable_entries()==old_entries && *old_pad_values==saved_old_pad,
+        "A command used a captured old list after the canonical reference field changed.");
+    control->pad_motion.reset();control->movement.reset();
+    apply_model_command(first,ModelCtrlCommand{0,"toWait"},1000);
+    check(control->mode==3 && control->phase==0 && !first.pad_motion.list_owner() && !first.channels.list_owner(),
+        "An unrelated CTRL command consumed or repaired null live list fields.");
+    const auto before_matrix=*node;const auto before_timer=*ram_timer->value;
+    rejects([&]{apply_model_command(first,movement(),1001);});
+    rejects([&]{apply_model_command(first,PadMotionCommand{0,"Move",1,2},1001);});
+    check(*node==before_matrix && *ram_timer->value==before_timer && !control->pad_motion && !control->movement,
+        "Missing live list consumption fabricated an owner or published a partial command.");
+    control->pad_motion=replacement_pad;control->movement=replacement_movement;
+    auto fresh=std::make_shared<Work>();
+    auto fresh_motion=std::shared_ptr<ModelMotionFields>(fresh,&fresh->motion);
+    auto fresh_control=std::shared_ptr<ModelControlFields>(fresh,&fresh->control);
+    ModelControlState generation(ModelMotionPose(node,fresh_motion),fresh_control,ram_timer);
+    const auto retained_time=*ram_timer->value;
+    apply_model_command(generation,movement(),2000);
+    check(*ram_timer->value==retained_time && generation.timer_slot_owner()==ram_timer && fresh->control.mode==0 &&
+        control->mode==3 && fresh->motion.translated==0 && work->motion.translated==254 &&
+        generation.pose.matrix_owner()==first.pose.matrix_owner(),
+        "Fresh work reset the shared RAM timer/node or merged old generation fields.");
+    auto moved=std::move(snapshot);snapshot=moved;
+    check(snapshot.fields_owner()!=moved.fields_owner() && snapshot.pose.fields_owner()!=moved.pose.fields_owner() &&
+        snapshot.timer_slot_owner()!=moved.timer_slot_owner() &&
+        snapshot.channels.list_owner()==snapshot.fields_owner()->movement &&
+        snapshot.pad_motion.list_owner()==snapshot.fields_owner()->pad_motion,
+        "Moved-from restoration failed to rebind facades to their restored canonical field slots.");
+    snapshot.fields_owner()->pad_motion=std::make_shared<ModelPadMotionList>();
+    snapshot.pad_motion.apply({0,"Move",11,12});
+    check(snapshot.fields_owner()->pad_motion->size()==4 && moved.pad_motion.values()!=snapshot.pad_motion.values(),
+        "Restored facade retained a hidden list slot outside its restored field owner.");
+    rejects([&]{ModelControlState invalid(ModelMotionPose(node,motion),std::shared_ptr<ModelControlFields>{},ram_timer);});
+    rejects([&]{ModelControlState invalid(ModelMotionPose(node,motion),control,std::shared_ptr<ModelRamTimerSlot>{});});
+    std::weak_ptr<Work> lifetime;
+    {
+        std::optional<ModelControlState> retained;
+        {
+            auto owner=std::make_shared<Work>();lifetime=owner;
+            auto actual_motion=std::shared_ptr<ModelMotionFields>(owner,&owner->motion);
+            auto actual_control=std::shared_ptr<ModelControlFields>(owner,&owner->control);
+            retained.emplace(ModelMotionPose(node,actual_motion),actual_control,ram_timer);
+        }
+        check(!lifetime.expired(),"Aliasing field/slot views did not retain the enclosing work generation.");
+    }
+    check(lifetime.expired(),"Canonical control fields retained their own facade and formed a lifecycle cycle.");
 }
 void original_data(const std::filesystem::path& root) {
     const auto resources=MountedResources::open(root);
@@ -362,13 +465,13 @@ void original_data(const std::filesystem::path& root) {
         for(int i=0;i<6;++i)advance_model_motion(state,42);
         for(std::size_t axis=0;axis<3;++axis)check(std::abs(state.pose.matrix()[12+axis]-(placement.matrix[12+axis]+placement.matrix[8+axis]*8.275f))<0.001f,
             "Original prepared model movement lost its entry basis.");
-        check(state.elapsed_timer && state.elapsed_timer->saved_world_time==42 && state.elapsed_timer->cached_frames==1 &&
-            state.pose.turn.rate[1]==7 && !state.channels.states()[2].active,"Original command chain lost its timer, rate or stopped state.");
+        check(state.elapsed_timer() && state.elapsed_timer()->saved_world_time==42 && state.elapsed_timer()->cached_frames==1 &&
+            state.pose.turn().rate[1]==7 && !state.channels.states()[2].active,"Original command chain lost its timer, rate or stopped state.");
     }
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();pad_list_ownership();pad_list_shapes_and_backing_reads();muteki_fields_and_shared_timer();post_input_transitions();malformed_records();
+    try {heading_and_player_rates();preparation_and_timer();controls_and_parameters();pad_list_ownership();pad_list_shapes_and_backing_reads();muteki_fields_and_shared_timer();post_input_transitions();malformed_records();canonical_control_fields_and_slots();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_control_tests [EXTRACTED_ROOT]");
         std::cout<<"Model control tests passed: "<<checks<<" checks\n";return 0;
     }catch(const std::exception& error){std::cerr<<"Model control failure after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

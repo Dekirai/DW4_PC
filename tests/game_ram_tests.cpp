@@ -70,8 +70,8 @@ void reset_and_shared_model_wrappers() {
     auto old_common=common->require<GameDataInt>("NINZU");old_common->data=4;
     auto target=std::make_shared<ModelScriptWork>(ControllerObjectId{7,100},"prepared/player.igb","p_test",0,
         std::make_shared<AnimationMatrix>(identity()));
-    target->hp=row0->require<GameDataInt>("HP");target->max_hp=row0->require<GameDataInt>("MHP");
-    target->hp->data=17;target->max_hp->data=29;
+    target->hp()=row0->require<GameDataInt>("HP");target->max_hp()=row0->require<GameDataInt>("MHP");
+    target->hp()->data=17;target->max_hp()->data=29;
     check(row0->require<GameDataInt>("HP")->data==17,"Model HP preparation copied rather than retained the native wrapper.");
     auto reset1=prepare(runtime,"GAMEDATAINIT",1);completed(runtime,reset1);
     check(game.state().player(0)==row0 && game.state().player(1)!=row1 && game.state().common()==common &&
@@ -80,8 +80,8 @@ void reset_and_shared_model_wrappers() {
     const auto replacement=game.state().player(0);
     check(replacement!=row0 && game.state().common()==common && common->require<GameDataInt>("NINZU")!=old_common &&
         common->require<GameDataInt>("NINZU")->data==0 && old_common->data==4,"Row zero reset did not repopulate the same common-list owner.");
-    check(target->hp==row0->require<GameDataInt>("HP") && target->hp->data==17 && target->max_hp->data==29 &&
-        replacement->require<GameDataInt>("HP")!=target->hp && replacement->require<GameDataInt>("HP")->data==0,
+    check(target->hp()==row0->require<GameDataInt>("HP") && target->hp()->data==17 && target->max_hp()->data==29 &&
+        replacement->require<GameDataInt>("HP")!=target->hp() && replacement->require<GameDataInt>("HP")->data==0,
         "Reset silently retargeted existing MODELCTRL HP aliases.");
     auto get=prepare(runtime,"GETPLAYER",0);completed(runtime,get);check(returned(runtime)==replacement,"GETPLAYER returned a stale cached row after reset.");
     check(runtime.resume(reset0).stop==MessengerStop::completed && game.state().player(0)==replacement,"Completed dispatch retry reset the row twice.");
@@ -195,8 +195,8 @@ void original_hit(const std::filesystem::path& root) {
             auto target=events.prepare_target_script_work(id);
             auto get=prepare(events,"GETPLAYER",static_cast<std::int32_t>(index));completed(events,get);
             const auto bound=bind_model_game_data(*target,returned(events));
-            check(bound.row()==game.state().player(index) && bound.hp()==target->hp && bound.max_hp()==target->max_hp &&
-                bound.refilled() && target->hp->data==0 && target->max_hp->data==0,
+            check(bound.row()==game.state().player(index) && bound.hp()==target->hp() && bound.max_hp()==target->max_hp() &&
+                bound.refilled() && target->hp()->data==0 && target->max_hp()->data==0,
                 "Actual GETPLAYER/model preparation copied aliases or invented initialized HP.");
             scripts.register_work(target);targets.push_back(std::move(target));
         }
@@ -229,7 +229,7 @@ void original_hit(const std::filesystem::path& root) {
             game.pending_count()==1 && scripts.context_runtime().context().direction==0,
             "Unavailable skill-growth retry replayed the completed BLP/Lua/direction prefix.");
         for(std::size_t index=0;index<targets.size();++index)
-            check(targets[index]->hp==game.state().player(index)->require<GameDataInt>("HP") && targets[index]->hp->data==0,
+            check(targets[index]->hp()==game.state().player(index)->require<GameDataInt>("HP") && targets[index]->hp()->data==0,
                 "Pending original Hit replaced another player's HP owner or fabricated damage.");
     }
 }

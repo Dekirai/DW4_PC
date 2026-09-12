@@ -24,7 +24,7 @@ void face_source(ModelMotionPose& pose,const std::array<float,3>& source,const s
     float heading=static_cast<float>(angle);
     if(std::abs(angle)<std::numeric_limits<float>::min()) heading=std::copysign(0.0f,heading);
     if(!std::isfinite(heading)) fail("Original collision heading has no finite native result.");
-    auto candidate=pose;candidate.turn.desired[1]=heading;
+    auto candidate=pose;candidate.turn().desired[1]=heading;
     force_model_turn(candidate);pose=candidate;
 }
 }
@@ -97,8 +97,8 @@ ModelCollisionResult ModelCollisionRuntime::handle(NativeMessenger& messenger,co
         auto& state=*owner.pending;
         for(;;) switch(state.phase) {
         case Impl::Phase::gate:
-            if(!std::isfinite(model.invulnerability_frames)) fail("Prepared collision invulnerability must be finite.");
-            if(model.invulnerability_frames!=0 &&
+            if(!std::isfinite(model.invulnerability_frames())) fail("Prepared collision invulnerability must be finite.");
+            if(model.invulnerability_frames()!=0 &&
                (!player_name(owner.body.definition().model_name()) || !player_name(source_name(messenger.buffer())) || !work.hp_reference_present))
                 return owner.finish();
             if(work.control_enabled==0) return owner.finish();

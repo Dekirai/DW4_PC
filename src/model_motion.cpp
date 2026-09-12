@@ -7,19 +7,23 @@
 #include <limits>
 
 namespace dw4 {
-ModelMotionPose::ModelMotionPose(Matrix value):matrix_(std::make_shared<Matrix>(value)) {}
-ModelMotionPose::ModelMotionPose(std::shared_ptr<Matrix> node):matrix_(std::move(node)) {
-    if(!matrix_)throw MotionError("Model motion requires an actual node matrix owner.");
+ModelMotionPose::ModelMotionPose(Matrix value):ModelMotionPose(std::make_shared<Matrix>(value)) {}
+ModelMotionPose::ModelMotionPose(std::shared_ptr<Matrix> node)
+    :ModelMotionPose(std::move(node),std::make_shared<ModelMotionFields>()) {}
+ModelMotionPose::ModelMotionPose(std::shared_ptr<Matrix> node,std::shared_ptr<ModelMotionFields> fields)
+    :matrix_(std::move(node)),fields_(std::move(fields)) {
+    if(!matrix_ || !fields_)throw MotionError("Model motion requires actual node matrix and work field owners.");
 }
 ModelMotionPose::ModelMotionPose(const ModelMotionPose& other):
-    turn(other.turn),translated(other.translated),position_locked(other.position_locked),
-    matrix_(std::make_shared<Matrix>(other.matrix())) {}
+    ModelMotionPose(std::make_shared<Matrix>(other.matrix()),std::make_shared<ModelMotionFields>(*other.fields_owner())) {}
 ModelMotionPose& ModelMotionPose::operator=(const ModelMotionPose& other) {
     if(this==&other)return *this;
     const auto value=other.matrix();
-    if(matrix_)*matrix_=value;
-    else matrix_=std::make_shared<Matrix>(value);
-    turn=other.turn;translated=other.translated;position_locked=other.position_locked;
+    const auto fields=*other.fields_owner();
+    auto matrix_owner=matrix_ ? matrix_ : std::make_shared<Matrix>();
+    auto field_owner=fields_ ? fields_ : std::make_shared<ModelMotionFields>();
+    *matrix_owner=value;*field_owner=fields;
+    matrix_=std::move(matrix_owner);fields_=std::move(field_owner);
     return *this;
 }
 ModelMotionPose& ModelMotionPose::operator=(ModelMotionPose&& other) {
@@ -41,9 +45,22 @@ std::shared_ptr<ModelMotionPose::Matrix> ModelMotionPose::matrix_owner() {
 std::shared_ptr<const ModelMotionPose::Matrix> ModelMotionPose::matrix_owner() const {
     (void)matrix();return matrix_;
 }
+std::shared_ptr<ModelMotionFields> ModelMotionPose::fields_owner() {
+    if(!fields_)throw MotionError("This model pose has transferred its work field owner.");
+    return fields_;
+}
+std::shared_ptr<const ModelMotionFields> ModelMotionPose::fields_owner() const {
+    if(!fields_)throw MotionError("This model pose has transferred its work field owner.");
+    return fields_;
+}
+ModelTurn& ModelMotionPose::turn() { return fields_owner()->turn; }
+const ModelTurn& ModelMotionPose::turn() const { return fields_owner()->turn; }
+std::uint8_t& ModelMotionPose::translated() { return fields_owner()->translated; }
+const std::uint8_t& ModelMotionPose::translated() const { return fields_owner()->translated; }
+std::uint8_t& ModelMotionPose::position_locked() { return fields_owner()->position_locked; }
+const std::uint8_t& ModelMotionPose::position_locked() const { return fields_owner()->position_locked; }
 bool ModelMotionPose::operator==(const ModelMotionPose& other) const {
-    return matrix()==other.matrix() && turn==other.turn && translated==other.translated &&
-        position_locked==other.position_locked;
+    return matrix()==other.matrix() && *fields_owner()==*other.fields_owner();
 }
 namespace {
 constexpr float tau = 0x1.921fb6p+2f; // GDJEB2 804268DC.
@@ -151,8 +168,8 @@ void euler_basis(std::array<float,16>& matrix, const std::array<float,3>& angles
 }
 } // namespace
 
-void set_player_turn_rates(ModelMotionPose& pose) noexcept {
-    pose.turn.rate = {0,7,0}; // 80456F68 and 8045700C, already radians/frame.
+void set_player_turn_rates(ModelMotionPose& pose) {
+    pose.turn().rate = {0,7,0}; // 80456F68 and 8045700C, already radians/frame.
 }
 void synchronize_model_heading(ModelMotionPose& pose) {
     // 8012D434 transforms (0,0,1) without translation. Retain zero products:
@@ -168,47 +185,47 @@ void synchronize_model_heading(ModelMotionPose& pose) {
     const float heading = static_cast<float>(std::atan2(static_cast<double>(forward[0]),
         static_cast<double>(forward[2])));
     finite(heading);
-    pose.turn.desired[1] = heading; pose.turn.applied[1] = heading;
+    pose.turn().desired[1] = heading; pose.turn().applied[1] = heading;
 }
 
 bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time, bool force) {
     auto candidate_timer = timer;
-    auto angles = pose.turn.desired;
+    auto angles = pose.turn().desired;
     if (!force) {
         std::size_t remaining = 4096;
         for (std::size_t i=0;i<3;++i) {
-            if (pose.turn.applied[i] == pose.turn.desired[i]) continue;
-            if (pose.turn.rate[i] == 0) angles[i] = pose.turn.applied[i];
+            if (pose.turn().applied[i] == pose.turn().desired[i]) continue;
+            if (pose.turn().rate[i] == 0) angles[i] = pose.turn().applied[i];
             else {
-                finite(pose.turn.rate[i]);
+                finite(pose.turn().rate[i]);
                 const float delta = motion_timer_frames(candidate_timer,world_time);
-                const float step = pose.turn.rate[i] * delta;
-                angles[i] = interpolate(pose.turn.applied[i],pose.turn.desired[i],step,remaining);
+                const float step = pose.turn().rate[i] * delta;
+                angles[i] = interpolate(pose.turn().applied[i],pose.turn().desired[i],step,remaining);
             }
         }
-        if (angles == pose.turn.applied) { timer = candidate_timer; return false; }
+        if (angles == pose.turn().applied) { timer = candidate_timer; return false; }
     }
     auto matrix = pose.matrix(); euler_basis(matrix,angles);
-    pose.matrix() = matrix; pose.turn.applied = angles; timer = candidate_timer;
+    pose.matrix() = matrix; pose.turn().applied = angles; timer = candidate_timer;
     return true;
 }
 
 void force_model_turn(ModelMotionPose& pose) {
     auto matrix=pose.matrix();
-    euler_basis(matrix,pose.turn.desired);
-    pose.matrix()=matrix;pose.turn.applied=pose.turn.desired;
+    euler_basis(matrix,pose.turn().desired);
+    pose.matrix()=matrix;pose.turn().applied=pose.turn().desired;
 }
 
 ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_time) {
     ModelMotionStep result;
-    if (!allocated()) { pose.translated = false; return result; }
+    if (!allocated()) { pose.translated() = false; return result; }
     auto states = this->states(); auto candidate_pose = pose; auto candidate_timer = timer;
-    candidate_pose.translated = false;
+    candidate_pose.translated() = false;
     const float delta = motion_timer_frames(candidate_timer,world_time);
     if (states[3].active) {
         result.channels.rotation = advance_motion(states[3],delta);
         const float radians = radians_per_degree * result.channels.rotation;
-        candidate_pose.turn.desired[1] = radians + candidate_pose.turn.desired[1];
+        candidate_pose.turn().desired[1] = radians + candidate_pose.turn().desired[1];
         // Preserve the PPC ordered branch: -0 stays -0, unordered stays
         // unordered. MSVC folds the float comparison/negation into fabs even
         // with /fp:strict; expressing the IEEE classification in bits avoids it.
@@ -216,14 +233,14 @@ ModelMotionStep MotionChannels::advance_model(ModelMotionPose& pose, MotionTimer
         if (magnitude_bits > 0x80000000u && magnitude_bits <= 0xff800000u)
             magnitude_bits ^= 0x80000000u;
         const float magnitude = std::bit_cast<float>(magnitude_bits);
-        candidate_pose.turn.rate[1] = 1.25f * magnitude;
+        candidate_pose.turn().rate[1] = 1.25f * magnitude;
     }
     result.turned = turn_model(candidate_pose,candidate_timer,world_time);
     result.channels.translation_updated = states[0].active || states[1].active || states[2].active;
     if (result.channels.translation_updated) {
         for (std::size_t i=0;i<3;++i) result.channels.translation[i] = advance_motion(states[i],delta);
         translate_model_local(candidate_pose.matrix(),result.channels.translation);
-        candidate_pose.translated = true;
+        candidate_pose.translated() = true;
     }
     publish(states); pose = candidate_pose; timer = candidate_timer;
     return result;

@@ -36,9 +36,11 @@ struct ModelSubcommandWrapper::State {
     std::size_t cursor_{},remaining_{};
     float frame_delta_{};
     ModelSubcommandContext context_;
+    std::optional<ModelEffectGenerateRequest> current_effect_request_;
     bool current_advanced_{},current_start_{},processing_{},faulted_{},hitbox_check_pending_{};
     bool pending() const noexcept {return operation_!=Operation::none;}
     void require_usable() const;
+    void require_cleanup_startable() const;
     void require_appendable() const;
     std::uint64_t append_sound(float,std::optional<std::string>);
     std::uint64_t append_effect(ModelEffectSubcommand);
@@ -54,40 +56,104 @@ struct ModelSubcommandWrapper::State {
 };
 ModelSubcommandWrapper::ModelSubcommandWrapper():state_(std::make_unique<State>()) {}
 ModelSubcommandWrapper::~ModelSubcommandWrapper()=default;
-std::shared_ptr<ModelSubcommandList> ModelSubcommandWrapper::list_owner() const noexcept {return state_->list;}
+std::shared_ptr<ModelSubcommandList> ModelSubcommandWrapper::list_owner() noexcept {return state_->list;}
+std::shared_ptr<const ModelSubcommandList> ModelSubcommandWrapper::list_owner() const noexcept {return state_->list;}
 ModelSubcommandQueue::ModelSubcommandQueue():wrapper_(std::make_shared<ModelSubcommandWrapper>()) {}
 ModelSubcommandQueue::ModelSubcommandQueue(std::shared_ptr<ModelSubcommandWrapper> wrapper):wrapper_(std::move(wrapper)) {
     if(!wrapper_)throw std::invalid_argument("Model subcommands require their actual wrapper owner.");
 }
+ModelSubcommandQueue::ModelSubcommandQueue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>> slot):slot_(std::move(slot)) {
+    if(!slot_)throw std::invalid_argument("Model subcommands require their actual work reference-field owner.");
+}
 ModelSubcommandQueue::ModelSubcommandQueue(ModelSubcommandQueue&& other):ModelSubcommandQueue() {
-    if(other.wrapper_->state_->processing_)throw std::logic_error("Cannot move an executing model subcommand facade.");
-    wrapper_.swap(other.wrapper_);
+    other.require_not_executing();
+    wrapper_.swap(other.wrapper_);slot_.swap(other.slot_);captured_.swap(other.captured_);
 }
 ModelSubcommandQueue& ModelSubcommandQueue::operator=(ModelSubcommandQueue&& other) {
     if(this==&other)return *this;
-    wrapper_->state_->require_usable();
+    require_not_executing();require_live_wrapper()->state_->require_usable();
     if(!entries().empty() || pending())throw std::logic_error("Model subcommand destination requires cleanup before replacement.");
-    if(other.wrapper_->state_->processing_)throw std::logic_error("Cannot move an executing model subcommand facade.");
+    other.require_not_executing();
     auto replacement=std::make_shared<ModelSubcommandWrapper>();
-    wrapper_=std::exchange(other.wrapper_,std::move(replacement));return *this;
+    wrapper_=std::exchange(other.wrapper_,std::move(replacement));
+    slot_=std::move(other.slot_);captured_=std::move(other.captured_);return *this;
 }
-const ModelSubcommandList& ModelSubcommandQueue::entries() const noexcept {return *wrapper_->state_->list;}
-bool ModelSubcommandQueue::pending() const noexcept {return wrapper_->state_->pending();}
-bool ModelSubcommandQueue::faulted() const noexcept {return wrapper_->state_->faulted_;}
+std::shared_ptr<ModelSubcommandWrapper> ModelSubcommandQueue::live_wrapper() const noexcept {return slot_ ? *slot_ : wrapper_;}
+std::shared_ptr<ModelSubcommandWrapper> ModelSubcommandQueue::require_live_wrapper() const {
+    auto owner=live_wrapper();
+    if(!owner)throw std::invalid_argument("Model subcommands require the non-null actual work wrapper at this operation.");
+    return owner;
+}
+std::shared_ptr<ModelSubcommandWrapper> ModelSubcommandQueue::retained_wrapper() const noexcept {
+    if(captured_ && (captured_->state_->pending() || captured_->state_->processing_ || captured_->state_->faulted_))return captured_;
+    return {};
+}
+void ModelSubcommandQueue::require_not_executing() const {
+    const auto current=live_wrapper();
+    if((captured_ && captured_->state_->processing_) || (current && current->state_->processing_))
+        throw std::logic_error("Cannot move or replace an executing model subcommand facade.");
+}
+void ModelSubcommandQueue::release_completed_capture() noexcept {
+    if(captured_ && !captured_->state_->pending() && !captured_->state_->processing_ && !captured_->state_->faulted_)captured_.reset();
+}
+std::shared_ptr<ModelSubcommandWrapper> ModelSubcommandQueue::wrapper_owner() noexcept {return live_wrapper();}
+std::shared_ptr<const ModelSubcommandWrapper> ModelSubcommandQueue::wrapper_owner() const noexcept {return live_wrapper();}
+std::shared_ptr<ModelSubcommandList> ModelSubcommandQueue::list_owner() {return require_live_wrapper()->list_owner();}
+std::shared_ptr<const ModelSubcommandList> ModelSubcommandQueue::list_owner() const {return require_live_wrapper()->list_owner();}
+const ModelSubcommandList& ModelSubcommandQueue::entries() const {return *require_live_wrapper()->state_->list;}
+std::shared_ptr<ModelSubcommandWrapper> ModelSubcommandQueue::pending_wrapper_owner() noexcept {
+    if(auto retained=retained_wrapper())return retained;
+    auto current=live_wrapper();return current && current->state_->pending() ? current : nullptr;
+}
+std::shared_ptr<const ModelSubcommandWrapper> ModelSubcommandQueue::pending_wrapper_owner() const noexcept {
+    if(auto retained=retained_wrapper())return retained;
+    auto current=live_wrapper();return current && current->state_->pending() ? current : nullptr;
+}
+bool ModelSubcommandQueue::pending() const noexcept {
+    const auto owner=pending_wrapper_owner();return owner && owner->state_->pending();
+}
+bool ModelSubcommandQueue::faulted() const noexcept {
+    const auto retained=retained_wrapper(),current=live_wrapper();
+    return (retained && retained->state_->faulted_) || (current && current->state_->faulted_);
+}
 std::uint64_t ModelSubcommandQueue::append_sound(float delay,std::optional<std::string> name) {
-    return wrapper_->state_->append_sound(delay,std::move(name));
+    const auto owner=require_live_wrapper();return owner->state_->append_sound(delay,std::move(name));
 }
-std::uint64_t ModelSubcommandQueue::append_effect(ModelEffectSubcommand command) {return wrapper_->state_->append_effect(std::move(command));}
-std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command) {return wrapper_->state_->append_hitbox(std::move(command));}
-void ModelSubcommandQueue::clear_hitboxes() {wrapper_->state_->clear_hitboxes();}
+std::uint64_t ModelSubcommandQueue::append_effect(ModelEffectSubcommand command) {
+    const auto owner=require_live_wrapper();return owner->state_->append_effect(std::move(command));
+}
+std::uint64_t ModelSubcommandQueue::append_hitbox(ModelHitboxSubcommand command) {
+    const auto owner=require_live_wrapper();return owner->state_->append_hitbox(std::move(command));
+}
+void ModelSubcommandQueue::clear_hitboxes() {
+    const auto owner=require_live_wrapper();owner->state_->clear_hitboxes();release_completed_capture();
+}
 ModelSubcommandResult ModelSubcommandQueue::update(float frames,ModelSubcommandContext context,const ModelSubcommandServices& services) {
-    const auto owner=wrapper_;return owner->state_->update(frames,std::move(context),services);
+    if(const auto retained=retained_wrapper()) {
+        retained->state_->require_usable();
+        throw std::logic_error("Resume or clean up the retained model subcommand pass before updating.");
+    }
+    captured_=require_live_wrapper();
+    try {const auto result=captured_->state_->update(frames,std::move(context),services);release_completed_capture();return result;}
+    catch(...) {release_completed_capture();throw;}
 }
 ModelSubcommandResult ModelSubcommandQueue::resume(const ModelSubcommandServices& services) {
-    const auto owner=wrapper_;return owner->state_->resume(services);
+    captured_=retained_wrapper() ? captured_ : require_live_wrapper();
+    try {const auto result=captured_->state_->resume(services);release_completed_capture();return result;}
+    catch(...) {release_completed_capture();throw;}
+}
+void ModelSubcommandQueue::require_cleanup_startable() const {
+    const auto owner=require_live_wrapper();
+    if(const auto retained=retained_wrapper();retained && retained!=owner)
+        throw std::logic_error("A replaced model subcommand slot requires a separate facade while its earlier pass is pending.");
+    owner->state_->require_cleanup_startable();
 }
 ModelSubcommandResult ModelSubcommandQueue::cleanup(const ModelSubcommandServices& services) {
-    const auto owner=wrapper_;return owner->state_->cleanup(services);
+    require_cleanup_startable();
+    const auto owner=require_live_wrapper();
+    captured_=owner;
+    try {const auto result=captured_->state_->cleanup(services);release_completed_capture();return result;}
+    catch(...) {release_completed_capture();throw;}
 }
 
 void ModelSubcommandWrapper::State::require_usable() const {
@@ -144,7 +210,7 @@ void ModelSubcommandWrapper::State::clear_hitboxes() {
             if(index<cursor_) --cursor_;
             else if(index-cursor_<remaining_) {
                 --remaining_;
-                if(index==cursor_) current_advanced_=current_start_=false;
+                if(index==cursor_) {current_advanced_=current_start_=false;current_effect_request_.reset();}
             }
         }
         entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(index));
@@ -159,23 +225,28 @@ ModelSubcommandResult ModelSubcommandWrapper::State::update(float frames,ModelSu
     // Reject a non-finite native boundary before any entry or service is changed.
     for(const auto& entry:*list) finite(elapsed_sum(entry.elapsed,frames));
     if(context.source.model_name.size()>max_name_bytes ||
-       (context.attachment && context.attachment->model_name.size()>max_name_bytes))
+       (!context.resolve_attachment && context.attachment && context.attachment->model_name.size()>max_name_bytes))
         throw std::invalid_argument("Model subcommand owner name exceeds the size limit.");
     context_=std::move(context); frame_delta_=frames;
     cursor_=0; remaining_=list->size(); current_advanced_=current_start_=false;
+    current_effect_request_.reset();
     operation_=Operation::update;
     return process(services);
 }
 ModelSubcommandResult ModelSubcommandWrapper::State::resume(const ModelSubcommandServices& services) {
     require_usable(); return process(services);
 }
-ModelSubcommandResult ModelSubcommandWrapper::State::cleanup(const ModelSubcommandServices& services) {
+void ModelSubcommandWrapper::State::require_cleanup_startable() const {
     require_usable();
     if(hitbox_check_pending_)
         throw std::logic_error("Complete the pending hitbox check before model subcommand cleanup.");
+}
+ModelSubcommandResult ModelSubcommandWrapper::State::cleanup(const ModelSubcommandServices& services) {
+    require_cleanup_startable();
     if(operation_!=Operation::cleanup) {
         operation_=Operation::cleanup; cursor_=0; remaining_=list->size();
         current_advanced_=current_start_=false;
+        current_effect_request_.reset();
     }
     return process(services);
 }
@@ -198,11 +269,19 @@ ModelSubcommandResult ModelSubcommandWrapper::State::start(ModelSubcommandEntry&
         if(!result.ram_no) {keep=false;return {};}
         effect.ram_no=*result.ram_no; effect.space_selected=true;
     }
+    if(!current_effect_request_) {
+        // 8031037C completes FIND_SPACE before 803104A8/AC/F0 reads the
+        // current ONE work's attachment. Retain the built packet, not a
+        // resolver that would observe a later mutation on GENERATE retry.
+        const auto attachment=context_.resolve_attachment ? context_.resolve_attachment() : context_.attachment;
+        if(attachment && attachment->model_name.size()>max_name_bytes)
+            throw std::invalid_argument("Model effect attachment name exceeds the size limit.");
+        current_effect_request_=ModelEffectGenerateRequest{effect.command.model_name,effect.command.sequence_name,
+            effect.ram_no,context_.source,attachment.value_or(context_.source),
+            effect.command.offset,effect.command.rotation,effect.command.position_lock};
+    }
     if(!services.generate_effect) return needs(ModelSubcommandStop::effect_generate_required,entry);
-    const ModelEffectGenerateRequest request{effect.command.model_name,effect.command.sequence_name,
-        effect.ram_no,context_.source,context_.attachment.value_or(context_.source),
-        effect.command.offset,effect.command.rotation,effect.command.position_lock};
-    if(!services.generate_effect(request)) return needs(ModelSubcommandStop::effect_generate_required,entry);
+    if(!services.generate_effect(*current_effect_request_)) return needs(ModelSubcommandStop::effect_generate_required,entry);
     keep=effect.command.sequence_dead; return {};
 }
 ModelSubcommandResult ModelSubcommandWrapper::State::check_hitbox(ModelSubcommandEntry& entry,
@@ -258,7 +337,7 @@ ModelSubcommandResult ModelSubcommandWrapper::State::process(const ModelSubcomma
             if(!result.complete()) {processing_=false;return result;}
             if(operation_==Operation::cleanup || keep) ++cursor_;
             else entries.erase(entries.begin()+static_cast<std::ptrdiff_t>(cursor_));
-            --remaining_; current_advanced_=current_start_=false;
+            --remaining_; current_advanced_=current_start_=false;current_effect_request_.reset();
         }
         if(operation_==Operation::cleanup) list->entries_.clear();
         operation_=Operation::none; processing_=false; return {};

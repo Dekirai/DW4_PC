@@ -22,12 +22,23 @@ void wrapper(const std::shared_ptr<ModelScriptInt>& value) {
     if(!value) fail("Model script requires its real HP and maximum-HP objects.");
     if(value->name) text(*value->name);
 }
+std::shared_ptr<ModelScriptFields> script_fields(std::shared_ptr<ModelScriptFields> fields) {
+    if(!fields)fail("Model script requires its actual canonical field owner.");
+    return fields;
+}
 struct Identity { bool faulted{}; };
 }
 
 ModelScriptWork::ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
     std::int32_t ram,std::shared_ptr<AnimationMatrix> live_matrix)
-    :max_hp(std::make_shared<ModelScriptInt>()),hp(std::make_shared<ModelScriptInt>()),
+    :ModelScriptWork(target,std::move(source),std::move(name),ram,std::move(live_matrix),std::make_shared<ModelScriptFields>()) {}
+ModelScriptWork::ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
+    std::int32_t ram,std::shared_ptr<AnimationMatrix> live_matrix,std::shared_ptr<ModelScriptFields> fields)
+    :ModelScriptWork(target,std::move(source),std::move(name),ram,std::move(live_matrix),std::move(fields),{}) {}
+ModelScriptWork::ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
+    std::int32_t ram,std::shared_ptr<AnimationMatrix> live_matrix,std::shared_ptr<ModelScriptFields> fields,
+    std::shared_ptr<ModelStatusFields> status_fields)
+    :fields_(script_fields(std::move(fields))),status_fields_(std::move(status_fields)),
      target_(target),source_(std::move(source)),name_(std::move(name)),ram_no_(ram),matrix_(std::move(live_matrix)) {
     if(target.is_native() || target.reference_index==std::numeric_limits<std::uint32_t>::max())
         fail("Model script target requires its actual serialized MODELCTRL RAM.");
@@ -89,13 +100,13 @@ ModelScriptInvocation ModelScriptContextRuntime::begin(std::shared_ptr<ModelScri
        request.target_name!=work->name() || request.target_ram!=work->ram_no())
         fail("Model script arguments do not belong to their source-qualified target work.");
     text(request.target_source,false);text(request.target_name);text(request.script_prefix);
-    text(request.event);text(request.source_name);validate_matrix(work->matrix());wrapper(work->max_hp);wrapper(work->hp);
+    text(request.event);text(request.source_name);validate_matrix(work->matrix());wrapper(work->max_hp());wrapper(work->hp());
     auto call=ModelScriptCall{request,request.script_prefix+"_"+request.target_name+".lua"};
     text(call.filename);
     // Complete all checked allocation before publishing the original fields.
     auto state=std::make_shared<ModelScriptInvocation::State>(ModelScriptInvocation::State{
         owner.identity,std::move(work),std::move(call),0,{}});
-    state->entry_hp=state->work->hp->data;
+    state->entry_hp=state->work->hp()->data;
     ModelScriptContext prepared;
     prepared.target_source=request.target_source;
     prepared.target_name=request.target_name;prepared.source_name=request.source_name;prepared.event=request.event;
@@ -106,9 +117,9 @@ ModelScriptInvocation ModelScriptContextRuntime::begin(std::shared_ptr<ModelScri
     live.target=request.target;                         // B7F4: +00.
     live.target_ram=state->work->ram_no();               // B80C: +04.
     live.matrix=state->work->matrix();                   // B81C: +08, live node matrix.
-    live.maximum_hp=state->work->max_hp->data;           // B828: +0C.
+    live.maximum_hp=state->work->max_hp()->data;           // B828: +0C.
     live.hp=state->entry_hp;                            // B834: +10.
-    live.target_record=state->work->record;             // B83C: +14, scalar.
+    live.target_record=state->work->record();             // B83C: +14, scalar.
     live.target_name=std::move(prepared.target_name);    // B840: +18.
     live.kind=request.kind;                            // B844: +1C.
     live.body_ordinal=request.body_ordinal;             // B848: +20.
@@ -147,8 +158,8 @@ std::optional<std::uint8_t> ModelScriptContextRuntime::resume(ModelScriptInvocat
         if(owner.stack.back()!=state) fail("Complete the retained child before finishing its parent model script.");
         // Reload the current HP reference. A replacement object with the same
         // entry value receives the shared context value, just as B878..B88C.
-        if(!state->work->hp) fail("Completed model script removed its required live HP object.");
-        if(state->work->hp->data==state->entry_hp) state->work->hp->data=owner.context->hp;
+        if(!state->work->hp()) fail("Completed model script removed its required live HP object.");
+        if(state->work->hp()->data==state->entry_hp) state->work->hp()->data=owner.context->hp;
         state->result=owner.context->direction;
         owner.stack.pop_back();
         return state->result;

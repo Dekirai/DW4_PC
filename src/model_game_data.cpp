@@ -17,7 +17,7 @@ ModelGameDataBinding bind_model_game_data(ModelScriptWork& work,std::shared_ptr<
     ModelGameDataBinding result;
     result.row_=std::move(returned_row);result.hp_=hp;result.max_hp_=maximum_hp;result.refilled_=refill;
     // 8034D9D8 / DA24: reference assignment, not copied integer payloads.
-    work.hp=hp;work.max_hp=maximum_hp;
+    work.hp()=hp;work.max_hp()=maximum_hp;
     if(refill) {
         // DA44 reads MHP before DA54 writes HP; DA64 reads MMP only after
         // that HP write, and DA74 then writes MP. No clamp or fallback exists.

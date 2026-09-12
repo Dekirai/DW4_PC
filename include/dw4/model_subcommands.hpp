@@ -31,6 +31,10 @@ struct ModelSubcommandContext {
     ModelSubcommandOwner source;
     // ONE work +dc/+e0 when attached; otherwise GENERATE uses source again.
     std::optional<ModelSubcommandOwner> attachment;
+    // Optional live captured-work +DC/+E0 read, performed after FIND_SPACE.
+    // Results are retained across GENERATE retries. A containing work must not
+    // be captured strongly: it owns this wrapper and its retained context.
+    std::function<std::optional<ModelSubcommandOwner>()> resolve_attachment{};
 };
 struct ModelHitboxCheckRequest {
     std::uint64_t entry_id{}; // Stable within this queue; not a guest object ID.
@@ -147,7 +151,8 @@ public:
     ~ModelSubcommandWrapper();
     ModelSubcommandWrapper(const ModelSubcommandWrapper&)=delete;
     ModelSubcommandWrapper& operator=(const ModelSubcommandWrapper&)=delete;
-    std::shared_ptr<ModelSubcommandList> list_owner() const noexcept;
+    std::shared_ptr<ModelSubcommandList> list_owner() noexcept;
+    std::shared_ptr<const ModelSubcommandList> list_owner() const noexcept;
 private:
     friend class ModelSubcommandQueue;
     struct State;
@@ -164,13 +169,20 @@ class ModelSubcommandQueue {
 public:
     ModelSubcommandQueue();
     explicit ModelSubcommandQueue(std::shared_ptr<ModelSubcommandWrapper>);
+    // Alias the actual work+E4 reference field. New operations resolve its
+    // current wrapper; an interrupted pass retains its original wrapper/list.
+    explicit ModelSubcommandQueue(std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>> actual_slot);
     ModelSubcommandQueue(const ModelSubcommandQueue&) = delete;
     ModelSubcommandQueue& operator=(const ModelSubcommandQueue&) = delete;
     ModelSubcommandQueue(ModelSubcommandQueue&&);
     ModelSubcommandQueue& operator=(ModelSubcommandQueue&&);
-    const ModelSubcommandList& entries() const noexcept;
-    std::shared_ptr<ModelSubcommandWrapper> wrapper_owner() const noexcept {return wrapper_;}
-    std::shared_ptr<ModelSubcommandList> list_owner() const noexcept {return wrapper_->list_owner();}
+    const ModelSubcommandList& entries() const;
+    std::shared_ptr<ModelSubcommandWrapper> wrapper_owner() noexcept;
+    std::shared_ptr<const ModelSubcommandWrapper> wrapper_owner() const noexcept;
+    std::shared_ptr<ModelSubcommandList> list_owner();
+    std::shared_ptr<const ModelSubcommandList> list_owner() const;
+    std::shared_ptr<ModelSubcommandWrapper> pending_wrapper_owner() noexcept;
+    std::shared_ptr<const ModelSubcommandWrapper> pending_wrapper_owner() const noexcept;
     std::shared_ptr<const ModelSubcommandEntry> entry_owner(std::size_t index) const {return entries().entry_owner(index);}
     bool pending() const noexcept;
     bool faulted() const noexcept;
@@ -189,12 +201,25 @@ public:
     ModelSubcommandResult update(float cached_frames,ModelSubcommandContext context,
         const ModelSubcommandServices& services = {});
     ModelSubcommandResult resume(const ModelSubcommandServices& services = {});
+    // Read-only host preflight before publishing an enclosing sequence prefix.
+    // Checks the current slot and retained pass without starting/canceling work.
+    void require_cleanup_startable() const;
     // 803108A0: sequence interruption. Cancels a pending update, performs ordered
     // cleanup (except non-sequence-dead effects), then removes all entries.
     // Missing cleanup services retain the list and its completed cleanup cursor
     // for resume(); original entry ownership is released after the whole pass.
+    // If the live work slot changed while this facade retains another pending
+    // pass, use a separate facade for the new wrapper's cleanup. It cannot
+    // discard the old continuation or silently clean the wrong work allocation.
     ModelSubcommandResult cleanup(const ModelSubcommandServices& services = {});
 private:
     std::shared_ptr<ModelSubcommandWrapper> wrapper_;
+    std::shared_ptr<std::shared_ptr<ModelSubcommandWrapper>> slot_;
+    std::shared_ptr<ModelSubcommandWrapper> captured_;
+    std::shared_ptr<ModelSubcommandWrapper> live_wrapper() const noexcept;
+    std::shared_ptr<ModelSubcommandWrapper> require_live_wrapper() const;
+    std::shared_ptr<ModelSubcommandWrapper> retained_wrapper() const noexcept;
+    void require_not_executing() const;
+    void release_completed_capture() noexcept;
 };
 } // namespace dw4

@@ -102,34 +102,43 @@ float number(const IgbDocument& doc, const IgbObject& object, std::uint16_t slot
 }
 } // namespace
 
-MotionChannels::MotionChannels() : list_(std::make_shared<MotionChannelList>()) {}
+MotionChannels::MotionChannels() : MotionChannels(std::make_shared<MotionChannelList>()) {}
 MotionChannels::MotionChannels(std::shared_ptr<MotionChannelList> actual_list)
-    : list_(std::move(actual_list)) { require_owner(); }
+    : slot_(std::make_shared<std::shared_ptr<MotionChannelList>>(std::move(actual_list))) { require_owner(); }
+MotionChannels::MotionChannels(std::shared_ptr<std::shared_ptr<MotionChannelList>> actual_slot)
+    :slot_(std::move(actual_slot)) { require_slot(); }
+void MotionChannels::require_slot() const {
+    if(!slot_)fail("Motion channels have transferred their movement reference slot.");
+}
 void MotionChannels::require_owner() const {
-    if (!list_) fail("Motion channels require their actual movement list owner.");
+    require_slot();
+    if (!*slot_) fail("Motion channels require their actual movement list owner.");
 }
 void MotionChannels::validate_shape() const {
     require_owner();
-    const auto count=list_->size();
+    const auto list=*slot_;
+    const auto count=list->size();
     if (count!=0 && count!=4) fail("Movement list must be empty or contain exactly four channel objects.");
     for (std::size_t i=0;i<count;++i) {
-        const auto entry=list_->entry_owner(i);
+        const auto entry=list->entry_owner(i);
         if (!entry) fail("Movement list contains a null channel object.");
         for (std::size_t j=0;j<i;++j)
-            if (entry==list_->entry_owner(j)) fail("Aliased movement channel entries are outside the supported list profile.");
+            if (entry==list->entry_owner(j)) fail("Aliased movement channel entries are outside the supported list profile.");
     }
 }
-bool MotionChannels::allocated() const { validate_shape(); return list_->size()!=0; }
+bool MotionChannels::allocated() const { validate_shape(); return (*slot_)->size()!=0; }
 MotionChannels::States MotionChannels::states() const {
     validate_shape(); States result{};
-    for (std::size_t i=0;i<list_->size();++i) result[i]=*list_->entry_owner(i);
+    const auto list=*slot_;
+    for (std::size_t i=0;i<list->size();++i) result[i]=*list->entry_owner(i);
     return result;
 }
-std::shared_ptr<MotionChannelList> MotionChannels::list_owner() { require_owner(); return list_; }
-std::shared_ptr<const MotionChannelList> MotionChannels::list_owner() const { require_owner(); return list_; }
+std::shared_ptr<MotionChannelList> MotionChannels::list_owner() { require_slot(); return *slot_; }
+std::shared_ptr<const MotionChannelList> MotionChannels::list_owner() const { require_slot(); return *slot_; }
 void MotionChannels::publish(const States& values) {
     validate_shape();
-    auto& entries=list_->mutable_entries();
+    const auto list=*slot_;
+    auto& entries=list->mutable_entries();
     if (entries.empty()) {
         MotionChannelList::Entries created; created.reserve(values.size());
         for (const auto& value:values) created.push_back(std::make_shared<MotionState>(value));
@@ -139,19 +148,23 @@ void MotionChannels::publish(const States& values) {
     }
 }
 void MotionChannels::publish_from(const MotionChannels& other) {
-    other.require_owner();
-    if (list_==other.list_) return;
+    other.require_slot();
+    if(!slot_) {
+        MotionChannels restored(other);slot_=std::move(restored.slot_);return;
+    }
+    const auto source_list=*other.slot_,destination=*slot_;
+    if (destination==source_list) return;
+    if(!destination || !source_list)fail("Movement publication cannot replace an actual list reference.");
     constexpr std::size_t copy_limit=4096;
-    if (other.list_->size()>copy_limit || (list_ && list_->size()>copy_limit))
+    if (source_list->size()>copy_limit || destination->size()>copy_limit)
         fail("Movement list snapshot exceeds 4096 retained entries.");
-    auto destination=list_ ? list_ : std::make_shared<MotionChannelList>();
-    MotionChannelList::Entries entries;entries.reserve(other.list_->size());
+    MotionChannelList::Entries entries;entries.reserve(source_list->size());
     std::vector<std::pair<std::shared_ptr<MotionState>,MotionState>> writes;
-    writes.reserve(other.list_->size());
+    writes.reserve(source_list->size());
     std::unordered_map<const MotionState*,std::shared_ptr<MotionState>> aliases;
     std::unordered_set<const MotionState*> reused;
-    for (std::size_t i=0;i<other.list_->size();++i) {
-        const auto source=other.list_->entry_owner(i);
+    for (std::size_t i=0;i<source_list->size();++i) {
+        const auto source=source_list->entry_owner(i);
         if (!source) { entries.push_back({}); continue; }
         if (const auto found=aliases.find(source.get());found!=aliases.end()) {
             entries.push_back(found->second);continue;
@@ -165,9 +178,13 @@ void MotionChannels::publish_from(const MotionChannels& other) {
     // particular, source/destination lists may share some entry allocations.
     for (const auto& [entry,value]:writes) *entry=value;
     destination->mutable_entries()=std::move(entries);
-    list_=std::move(destination);
 }
-MotionChannels::MotionChannels(const MotionChannels& other) : MotionChannels() { publish_from(other); }
+MotionChannels::MotionChannels(const MotionChannels& other)
+    :slot_(std::make_shared<std::shared_ptr<MotionChannelList>>()) {
+    other.require_slot();
+    if(*other.slot_) *slot_=std::make_shared<MotionChannelList>();
+    publish_from(other);
+}
 MotionChannels& MotionChannels::operator=(const MotionChannels& other) {
     publish_from(other);return *this;
 }

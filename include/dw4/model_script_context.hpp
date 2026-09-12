@@ -20,13 +20,33 @@ public:
 // beDataObjInt: nullable inherited name and signed _data at guest+0C.
 // Shared identity matters when GAMERAM and model work refer to the same object.
 using ModelScriptInt=GameDataInt;
+struct ModelStatusFields;
+
+// Canonical work fields, independent of any captured node or dispatch identity.
+// A full player-work owner can embed this group and supply an aliasing shared
+// pointer. The prepared profile leaves +125 unknown; the factory sets known 0.
+struct ModelScriptFields {
+    std::shared_ptr<ModelScriptInt> max_hp=std::make_shared<ModelScriptInt>();
+    std::shared_ptr<ModelScriptInt> hp=std::make_shared<ModelScriptInt>();
+    std::int32_t record=-1;
+    std::optional<std::uint8_t> original_is_main_lobby;
+};
 
 // Explicit prepared ONE work. The matrix retains the actual node allocation
 // independently from controller work; it is never an implicit identity.
 class ModelScriptWork {
+private:
+    std::shared_ptr<ModelScriptFields> fields_;
+    std::shared_ptr<ModelStatusFields> status_fields_;
 public:
     ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
         std::int32_t ram_no,std::shared_ptr<AnimationMatrix> matrix);
+    ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
+        std::int32_t ram_no,std::shared_ptr<AnimationMatrix> matrix,
+        std::shared_ptr<ModelScriptFields> actual_fields);
+    ModelScriptWork(ControllerObjectId target,std::string source,std::string name,
+        std::int32_t ram_no,std::shared_ptr<AnimationMatrix> matrix,
+        std::shared_ptr<ModelScriptFields> actual_fields,std::shared_ptr<ModelStatusFields> actual_status_fields);
     ModelScriptWork(const ModelScriptWork&)=delete;
     ModelScriptWork& operator=(const ModelScriptWork&)=delete;
     ModelScriptWork(ModelScriptWork&&)=delete;
@@ -36,13 +56,24 @@ public:
     const std::string& name() const noexcept { return name_; }
     std::int32_t ram_no() const noexcept { return ram_no_; }
     const std::shared_ptr<AnimationMatrix>& matrix() const noexcept { return matrix_; }
+    const std::shared_ptr<ModelScriptFields>& fields_owner() noexcept { return fields_; }
+    std::shared_ptr<const ModelScriptFields> fields_owner() const noexcept { return fields_; }
+    // Optional canonical sibling group, not a status facade. A prepared status
+    // view reuses this anchor, avoiding a second mutable set of work fields.
+    const std::shared_ptr<ModelStatusFields>& status_fields_owner() noexcept { return status_fields_; }
+    std::shared_ptr<const ModelStatusFields> status_fields_owner() const noexcept { return status_fields_; }
     // Fresh work has two distinct zero-data objects. Actual player preparation
     // replaces these references with its existing GAMERAM HP/MHP objects.
-    std::shared_ptr<ModelScriptInt> max_hp,hp;
-    std::int32_t record=-1;
+    std::shared_ptr<ModelScriptInt>& max_hp() noexcept { return fields_->max_hp; }
+    std::shared_ptr<const ModelScriptInt> max_hp() const noexcept { return fields_->max_hp; }
+    std::shared_ptr<ModelScriptInt>& hp() noexcept { return fields_->hp; }
+    std::shared_ptr<const ModelScriptInt> hp() const noexcept { return fields_->hp; }
+    std::int32_t& record() noexcept { return fields_->record; }
+    const std::int32_t& record() const noexcept { return fields_->record; }
     // Exact original ONE+125 (_isMainLobby). Unknown until actual prepared
     // initialization supplies it or the original player-start tail writes it.
-    std::optional<std::uint8_t> original_is_main_lobby;
+    std::optional<std::uint8_t>& original_is_main_lobby() noexcept { return fields_->original_is_main_lobby; }
+    const std::optional<std::uint8_t>& original_is_main_lobby() const noexcept { return fields_->original_is_main_lobby; }
 private:
     ControllerObjectId target_;
     std::string source_,name_;

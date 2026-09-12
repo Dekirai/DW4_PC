@@ -78,6 +78,30 @@ private:
     std::shared_ptr<ModelSequenceLabelFields> fields_;
     void publish(const std::vector<ModelSequenceLabel>& rows,bool allocated);
 };
+// Canonical work+14..2C and wait/player fields. The host label-field grouping
+// owns the three actual nullable guest list references; it is not a guest list.
+// command_data aliases an actual immutable ModelSequenceData in its qualified
+// program allocation. Neither a numeric program index nor a copied command
+// record substitutes for that owner. Null name and null data are independent.
+struct ModelSequenceExecutorLease;
+struct ModelSequenceFields {
+    ModelSequenceFields()=default;
+    ModelSequenceFields(const ModelSequenceFields&)=delete;
+    ModelSequenceFields& operator=(const ModelSequenceFields&)=delete;
+    ModelSequenceFields(ModelSequenceFields&&)=delete;
+    ModelSequenceFields& operator=(ModelSequenceFields&&)=delete;
+    std::optional<std::string> name;
+    std::shared_ptr<const ModelSequenceData> command_data;
+    std::int32_t command_index{},label_count{};
+    std::shared_ptr<ModelSequenceLabelFields> labels=std::make_shared<ModelSequenceLabelFields>();
+    ModelWaitState wait;
+private:
+    friend class ModelSequenceRuntime;
+    // Host lifetime metadata only: never another guest field or a strong
+    // back-reference to the facade/work. One executor owns service continuation.
+    std::weak_ptr<ModelSequenceExecutorLease> executor_;
+    bool executor_unavailable_{};
+};
 enum class ModelSequenceStop { end, label_boundary, action_required, controller_required, unsupported_command, sequence_cleanup_required, waiting, hitbox_required, lua_required };
 struct ModelSequenceResult {
     ModelSequenceStop stop{};
@@ -125,21 +149,40 @@ public:
         std::string info_name,std::int32_t ram_no);
     ModelSequenceRuntime(ModelSequenceProgram program,ModelControlState model,
         std::string info_name,std::int32_t ram_no,std::shared_ptr<ModelSequenceLabelFields> labels);
+    // Retains the exact canonical fields and immutable program. Exactly one
+    // executor may bind a field generation. The caller must retain that facade
+    // while its external services (including its separate wait pass) are pending.
+    ModelSequenceRuntime(std::shared_ptr<const ModelSequenceProgram> program,ModelControlState model,
+        std::string info_name,std::int32_t ram_no,std::shared_ptr<ModelSequenceFields> fields);
+    // Healthy prepared copies detach mutable values. A pending/executing/faulted
+    // copy is inspection-only; it cannot resume another external continuation.
+    // Assignment publishes through the
+    // destination's field/list owners; move construction transfers the binding.
+    // Assignment cannot abandon an executing, pending or faulted destination.
+    ModelSequenceRuntime(const ModelSequenceRuntime&);
+    ModelSequenceRuntime(ModelSequenceRuntime&&);
+    ~ModelSequenceRuntime();
+    ModelSequenceRuntime& operator=(const ModelSequenceRuntime&);
+    ModelSequenceRuntime& operator=(ModelSequenceRuntime&&);
+    std::shared_ptr<ModelSequenceFields> fields();
+    std::shared_ptr<const ModelSequenceFields> fields() const noexcept {return fields_;}
+    std::shared_ptr<const ModelSequenceProgram> program_owner() const noexcept {return program_;}
     ModelControlState& model();
     const ModelControlState& model() const noexcept { return model_; }
     ModelWaitState& wait_state();
-    const ModelWaitState& wait_state() const noexcept { return wait_; }
+    const ModelWaitState& wait_state() const;
     std::string_view current_sequence() const noexcept;
-    bool selected() const noexcept { return current_.has_value(); }
-    std::uint32_t command_index() const noexcept { return cursor_; }
-    std::uint32_t label_count() const noexcept { return label_count_; }
-    std::vector<ModelSequenceLabel> labels() const { return labels_.snapshot(); }
+    bool selected() const noexcept { return fields_ && bool(fields_->command_data); }
+    std::int32_t command_index() const;
+    std::int32_t label_count() const;
+    std::vector<ModelSequenceLabel> labels() const;
     std::shared_ptr<ModelSequenceLabelFields> label_fields();
-    std::shared_ptr<const ModelSequenceLabelFields> label_fields() const noexcept {return labels_.fields();}
+    std::shared_ptr<const ModelSequenceLabelFields> label_fields() const;
     bool selection_pending() const noexcept { return selection_pending_; }
     bool jump_pending() const noexcept { return pending_jump_.has_value(); }
     bool lua_pending() const noexcept { return lua_pending_; }
     bool lua_faulted() const noexcept { return lua_faulted_; }
+    bool external_pending() const noexcept {return action_pending_ || hitbox_pending_ || lua_pending_;}
     // 8030B014: replace the first sequence-key entry or append; invalidate offset.
     void set_label(std::optional<std::string> sequence,std::optional<std::string> label);
     // Owned selection/control/motion effects of ordinary sequence entry only.
@@ -174,36 +217,44 @@ public:
     // HITBOX Set/AllClear and immediate LUACALL require their owning services;
     // missing/false callbacks stop before consuming the command. Exact LUACALL
     // BHit/WHit/FHit modes only assign owned callback prefixes locally.
-    // Once Lua is invoked and returns false, only run may resume that command;
-    // selection and mutable state access cannot abandon its external prefix.
+    // Once ACTION, HITBOX or Lua is invoked and remains incomplete, only run
+    // may resume it; selection/mutable access cannot abandon its external prefix.
+    // The optional pure cleanup preflight runs at each newly visited local JUMP,
+    // immediately before publishing its selection. It may reject an unavailable
+    // external cleanup owner without entering that selection. Retrying an
+    // already-entered jump does not invoke this validation again.
     ModelSequenceResult run(std::uint64_t world_time,const ModelActionDispatch& action = {},
         const ModelSequenceCleanup& cleanup = {},const ModelActionTryDispatch& try_action = {},
-        const ModelHitboxDispatch& hitbox = {},const ModelLuaDispatch& lua = {});
+        const ModelHitboxDispatch& hitbox = {},const ModelLuaDispatch& lua = {},
+        const std::function<void()>& cleanup_preflight = {});
 private:
     std::shared_ptr<const ModelSequenceProgram> program_;
     ModelControlState model_;
-    ModelWaitState wait_;
+    std::shared_ptr<ModelSequenceFields> fields_;
+    std::shared_ptr<ModelSequenceExecutorLease> executor_lease_;
     std::string info_name_;
     std::int32_t ram_no_{};
-    ModelSequenceLabels labels_;
-    std::optional<std::size_t> current_;
-    std::uint32_t cursor_{},label_count_{};
     struct PendingJump {
         std::uint32_t reference{};
         std::string type,name;
         bool cleanup_complete{};
     };
     std::optional<PendingJump> pending_jump_;
-    bool running_{},selection_pending_{},lua_faulted_{},lua_pending_{};
+    bool running_{},selection_pending_{},lua_faulted_{},lua_pending_{},action_pending_{},hitbox_pending_{};
     struct SelectionPlan {
-        std::size_t current{};
-        std::uint32_t cursor{};
+        std::string name;
+        std::shared_ptr<const ModelSequenceData> data;
+        std::int32_t cursor{};
         std::optional<std::size_t> cache_index;
         std::int32_t cache_offset{};
     };
+    void require_fields() const;
+    void acquire_executor();
+    static std::shared_ptr<const ModelSequenceProgram> transfer_program(ModelSequenceRuntime&);
+    const ModelSequenceData& current_data() const;
     void require_no_lua_fault() const;
     SelectionPlan prepare_selection(std::string_view sequence) const;
-    void publish_selection(const SelectionPlan&,ModelControlState&&,bool pending);
+    void publish_selection(SelectionPlan&&,ModelControlState&&,bool pending);
     void complete_selection();
 };
 } // namespace dw4

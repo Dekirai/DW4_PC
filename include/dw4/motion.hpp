@@ -103,7 +103,11 @@ class MotionChannels {
 public:
     using States = std::array<MotionState,4>;
     MotionChannels();
+    explicit MotionChannels(std::nullptr_t) : MotionChannels(std::shared_ptr<MotionChannelList>{}) {}
     explicit MotionChannels(std::shared_ptr<MotionChannelList> actual_list);
+    // Bind the actual reference field, including a known null value. Each
+    // operation resolves its live value; list_owner() captures one current list.
+    explicit MotionChannels(std::shared_ptr<std::shared_ptr<MotionChannelList>> actual_slot);
     // Validation candidates detach each distinct entry while preserving raw list
     // shape/aliases; copying does not consume movement or repair malformed data.
     // Publication preserves the destination list and compatible entry owners;
@@ -131,7 +135,8 @@ public:
     std::shared_ptr<MotionChannelList> list_owner();
     std::shared_ptr<const MotionChannelList> list_owner() const;
 private:
-    std::shared_ptr<MotionChannelList> list_;
+    std::shared_ptr<std::shared_ptr<MotionChannelList>> slot_;
+    void require_slot() const;
     void require_owner() const;
     void validate_shape() const;
     void publish(const States&);

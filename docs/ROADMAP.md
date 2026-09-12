@@ -22,11 +22,17 @@ changes and optional enhancements follow that baseline. The walking preview
 does not satisfy this target. Track reference evidence and outstanding original
 systems in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
 
+Version 0.38 supplies one canonical 68-field player-work allocation and routes
+the existing checked MODELCTRL, motion/control, sequence/wait, script and status
+consumers through it. Fresh defaults and retained old-generation views are
+covered separately from prepared value publication. The next player-lifecycle
+work is actual mutable RAM/ONE routing and the full retained GENERATE continuation.
+
 Version 0.37 establishes actual list storage for existing movement, PDMOVE,
 subcommand and label consumers. Retained views share original allocations;
 validation candidates detach and publication preserves existing owners. The
-next player-lifecycle work is one canonical 68-field work allocation, actual
-RAM/ONE routing and the full retained GENERATE continuation.
+next player-lifecycle work requires actual RAM/ONE routing and the full retained
+GENERATE continuation.
 
 Version 0.36 connects original PLAYERPOINT queries to the recovered model
 placement helper in prepared integration. Node matrices now outlive individual

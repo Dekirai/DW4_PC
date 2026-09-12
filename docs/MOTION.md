@@ -48,11 +48,20 @@ name. Successful later commands, ticks, model integration and sequence stops
 publish into those same entry allocations. `allocated()` reports whether the
 four entries exist; it does not report whether the list itself exists.
 
-`list_owner()` exposes the actual binding for a future canonical player-work
-owner. Another `MotionChannels` constructed from that shared list observes and
+`list_owner()` exposes the actual binding for canonical player work.
+Another `MotionChannels` constructed from that shared list observes and
 mutates the same entries. Const bindings expose const entry owners. `states()`
 returns a detached value snapshot, including zero values for an empty list;
 reading it does not allocate entries or create an authoritative cached array.
+
+Version 0.38 can instead bind the actual shared-list reference slot, including a
+known null reference. This is how `ModelControlState` follows its canonical
+work+`C8` field. Every synchronous operation resolves the current slot, so a
+subsequent reference replacement is observed without overwriting a retained old
+list. The slot handle belongs to the facade, outside the canonical field owner.
+Snapshots detach both the slot and its current list/entry values; publication
+does not replace actual reference fields. A null value is preserved while copying
+and rejected when a movement operation requires a list.
 
 Copy construction detaches the list and each distinct entry for validation.
 Copy and move assignment publish values while preserving the destination list

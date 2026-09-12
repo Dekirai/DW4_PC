@@ -1,4 +1,58 @@
-# Native retained work-list ownership validation
+# Native canonical player-work validation
+
+Version 0.38.0 was validated locally on 2026-09-12. One `ModelPlayerWork`
+allocation now supplies the recovered 68 field locations to existing
+motion/control, sequence/wait, script, status and subcommand consumers. The
+checked MODELCTRL runtime consumes this work directly. Node matrices and RAM
+timers remain separate owners. See [MODEL_PLAYER_WORK.md](MODEL_PLAYER_WORK.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release build/package | 86/86 CTest suites passed; no compiler warnings |
+| Canonical factory/work | 46 checks covering the complete recovered default table, six distinct guest referenced allocations, prepared compatibility, live field aliases, detached publication, generation retention and no ownership cycle |
+| Motion/control | 305 scalar motion checks; 138/160 model-motion and 148/202 control synthetic/original-inclusive checks; live list-slot replacement, raw bytes and independent node/timer owners |
+| Sequence/wait | 440 synthetic / 1,324 original-inclusive checks; actual command-data provenance, stable wait address, signed cursor/count, one executor per generation, abandoned/copy-prefix rejection and pre-JUMP cleanup validation |
+| Script/status | 93 script-context and 95 status checks; canonical HP/list replacement, sibling status anchor, const views and retained invocations |
+| Event integration | 288 event-runtime and 115 script-work checks; actual factory registration, shared fields, rejected cleanup overlaps, post-ACTION JUMP recovery and live effect attachment |
+| Subcommand/HITBOX | 157 subcommand and 65 HITBOX checks; live wrapper slot, retained pending pass, cleanup preflight and post-FIND_SPACE payload capture |
+| Original scalar motion comparison | 18,000 setups / 54,000 ticks, zero differences; NaN classification compared, payloads excluded |
+| Original control/PDMOVE comparison | 10,000 control cases including raw 0/1/2/255 flags; 1,800 PDMOVE cases (1,445 original comparisons, 355 checked rejections), 100,648 instructions and 280 supplied backing-growth services; zero differences |
+| Original labels/sequences | 3,000 label programs / 24,539 update-lookup pairs and 6,000 command programs; zero differences |
+| Original status comparison | 594 cases / 90,899 instructions / 312 queries, both normal and paused native delivery; zero differences |
+| Original queued lifecycle comparison | 1,005 sound/effect cases / 2,018,236 instructions and 2,106 HITBOX cases / 1,690,336 instructions; zero differences |
+| Original dynamic effect attachment | 120 cases / 46,525 instructions; earlier PLAY/FIND_SPACE mutations, null/empty names, signed RAM extremes and retained paused GENERATE payload; zero differences |
+| Existing original integration | 672 prepared spawn, 613 player-start and 413 weapon-preview checks passed |
+| Packaged application | 18 app / 10 play CLI checks and six Python verifier tests passed |
+| Hidden walking replay | 240 frames, 438 simulation steps, 101.333 source-unit travel, 286 idle / 152 run steps, 241 pose uploads and 240 attached-weapon frames; pause/restart/focus-loss checks passed; final frame visually inspected |
+
+Final comparison drivers were freshly compiled against current headers and
+linked only against the frozen production core, SHA-256
+`2FC2FDE64888D010A6124F4C2E697785BE4F76B7E87531E5A6787F54A62A2A8E`.
+The packaged application SHA-256 is
+`B1DFBCDB7EBF65D440553CA95C1412839FD6C601D8DF7437696F0823F45210CF`.
+The recovered factory/default table was independently checked against the
+supplied DOL and its metadata. This is not execution of the guest allocator
+or runtime type registry. All instruction comparisons retain explicit prepared
+objects, string/list/factory, messenger, ACTION and external-effect services.
+They do not execute complete original player creation, sound, collision or
+gameplay. Full mutable RAM/ONE routing and the retained GENERATE continuation
+remain required.
+
+Review found and corrected three integration hazards: a second or copied
+sequence executor could bypass a pending prefix; rejected wrapper cleanup
+could leave half-published selection state; and effect attachment was read
+before the original post-FIND_SPACE phase. Regression tests cover these cases,
+including a slot change by an earlier ACTION in the same sequence. Initial
+full-build failures were missed pointer-style test accessors and one synthetic
+fixture requesting an absent sequence. The corrected final full suite passes.
+
+No interactive preview was automatically launched. The packaged preview is
+available for manual launch; the isolated Preview-0.36.1 is preserved.
+The preceding commit `2601e6ce35f076a94b241491f050f14d71c5cb72` passed all three
+GitHub jobs in run `34690070862`; that result belongs to the preceding commit.
+Original assets, instruction dumps, drivers, logs and captures remain ignored.
+
+## Retained work lists (0.37)
 
 Version 0.37.0 was validated locally on 2026-09-12. Existing motion, PDMOVE,
 subcommand and label consumers now use actual shared list allocations and

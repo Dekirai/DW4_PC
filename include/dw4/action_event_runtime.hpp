@@ -5,6 +5,7 @@
 #include "dw4/messenger.hpp"
 #include "dw4/model_collision.hpp"
 #include "dw4/model_script_context.hpp"
+#include "dw4/model_player_work.hpp"
 #include "dw4/player_runtime_binding.hpp"
 #include "dw4/pad.hpp"
 
@@ -68,6 +69,13 @@ public:
 
     ControllerObjectId register_model(PlayerRuntimeBinding binding,ModelControlState model,
         bool active,std::optional<ModelSubcommandOwner> attachment = {});
+    // Consume one actual factory/prepared work allocation. Scene-node matrix
+    // and named RAM timer remain independent owners. This installs the checked
+    // binding, not the original mutable RAM graph or complete GENERATE tail.
+    ControllerObjectId register_model(PlayerRuntimeBinding binding,std::shared_ptr<ModelPlayerWork> work,
+        std::shared_ptr<ModelMotionPose::Matrix> node,std::shared_ptr<ModelRamTimerSlot> timer,bool active);
+    std::shared_ptr<ModelPlayerWork> model_work(ControllerObjectId id);
+    std::shared_ptr<const ModelPlayerWork> model_work(ControllerObjectId id) const;
     // Attach these exact live fields once to an existing checked model binding.
     // The initial RAM number must match the binding's selected occurrence.
     void prepare_model_queries(ControllerObjectId model,ModelQueryOwner owner);
@@ -106,8 +114,9 @@ public:
     const ModelSequenceRuntime& sequence(ControllerObjectId id) const;
     const ModelSubcommandQueue& subcommands(ControllerObjectId id) const;
     void set_label(ControllerObjectId id,std::optional<std::string> sequence,std::optional<std::string> label);
-    // Explicit live ONE work replacement; preserves sequence/wait cursors.
-    // Callers prepare this state; it does not create original player work.
+    // Publish prepared control values into existing work; preserve its owner,
+    // sequence/wait cursors and actual node/list references. This is not a
+    // fresh ONE work replacement or original player creation.
     void prepare_model_state(ControllerObjectId id,ModelControlState state);
     // Prepared combination of the original controller/debug-node gates.
     void set_hitbox_debug(ControllerObjectId id,bool enabled);

@@ -2,6 +2,18 @@
 
 ## Implemented boundary
 
+Version 0.38 introduces one noncopyable `ModelPlayerWork` allocation containing
+all 68 reflected field locations. Motion/control, sequence/wait, script and
+status facades retain aliasing pointers into it. The work object never stores
+those retaining facades. Actual node matrices and RAM-owned KEIKATIMER slots
+remain separate. The normal built-in factory field profile allocates six
+distinct referenced guest objects and applies the recovered defaults. The
+existing checked MODELCTRL runtime directly consumes supplied canonical work;
+its legacy prepared overload uses an explicit compatible preparation profile.
+No second gameplay state is maintained. Mutable RAM/ONE registration, captured
+work replacement and the complete GENERATE continuation still remain. See
+[MODEL_PLAYER_WORK.md](MODEL_PLAYER_WORK.md).
+
 Version 0.37 replaces independent movement arrays, optional PDMOVE values,
 inline subcommand entries and zipped label state with actual referenced list
 allocations consumed by the existing algorithms. Movement entries are separate
@@ -10,8 +22,8 @@ storage; original sequence entry clears only count. A subcommand facade retains
 the actual wrapper, list, entries and pending pass. Three sequence-label lists
 start null and are allocated by SETLABEL; inspection returns detached values.
 Sequence selection now stages a selection plan and model values explicitly,
-then publishes through existing owners. Complete canonical 68-field work,
-mutable RAM/ONE registration, work replacement and GENERATE remain required.
+then publishes through existing owners. Mutable RAM/ONE registration, work
+replacement and GENERATE remain required.
 These list bindings are production prerequisites, not a second disconnected
 player-state implementation. See [MODEL_CONTROL.md](MODEL_CONTROL.md),
 [MOTION.md](MOTION.md), [MODEL_SUBCOMMANDS.md](MODEL_SUBCOMMANDS.md) and

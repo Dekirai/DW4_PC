@@ -340,7 +340,7 @@ void malformed_channel_owners() {
         const auto destination_owner=destination.list_owner();
         MotionTimer timer;timer.saved_world_time=7;
         const auto saved_timer=timer;
-        ModelMotionPose pose({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1});pose.translated=true;
+        ModelMotionPose pose({1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1});pose.translated()=true;
         const auto saved_pose=pose;
         rejects([&]{ (void)malformed.allocated(); });
         rejects([&]{ (void)malformed.states(); });

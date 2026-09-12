@@ -1,12 +1,17 @@
 # Digimon World 4 PC
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
+Version 0.38 connects movement, control, sequence, script and status consumers
+to one shared player-work allocation with all 68 recovered field defaults.
+The checked model runtime consumes this allocation directly; node matrices and
+RAM timers keep their separate lifetimes. Retained views keep captured work
+alive, and detached validation values publish through existing owners. Full
+mutable RAM/ONE registration, GENERATE and original gameplay remain in progress.
 Version 0.37 makes the existing movement, PDMOVE, subcommand and sequence-label
 consumers operate on actual retained list owners. Sequence entry preserves
 allocated lists and PDMOVE backing storage, and paused subcommands retain their
 original entries when another facade takes over. This prepares the storage
-needed for original player-work replacement; the complete factory, GENERATE
-continuation and gameplay loop still remain.
+needed for original player-work replacement.
 Version 0.36 adds original PLAYERPOINT queries and message-driven model placement.
 The actual node matrix now has its own lifetime, separate from a model's turn
 and control state. Prepared spawn integration connects the original point

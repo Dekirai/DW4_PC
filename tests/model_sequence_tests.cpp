@@ -116,11 +116,11 @@ void command_prefix_and_branches() {
     auto result=runtime.run(42);
     check(result.stop==ModelSequenceStop::action_required && result.commands_executed==3 && result.command_reference==action_ref,
         "Missing action handler did not preserve the executed prefix and exact boundary.");
-    check(runtime.command_index()==3 && runtime.model().mode==2 && runtime.model().elapsed_timer,
+    check(runtime.command_index()==3 && runtime.model().mode()==2 && runtime.model().elapsed_timer(),
         "Sequence prefix did not apply its original CTRL/MOVE effects.");
-    const auto timer=runtime.model().elapsed_timer;
+    const auto timer=runtime.model().elapsed_timer();
     result=runtime.run(99);
-    check(result.commands_executed==0 && runtime.model().elapsed_timer==timer,"Retry replayed the movement prefix or restarted its timer.");
+    check(result.commands_executed==0 && runtime.model().elapsed_timer()==timer,"Retry replayed the movement prefix or restarted its timer.");
     rejects([&]{runtime.run(42,[](const auto&){throw std::runtime_error("Unavailable action manager.");});});
     check(runtime.command_index()==3,"Failed external action was consumed.");
     std::vector<ModelActionRequest> actions;
@@ -135,9 +135,9 @@ void command_prefix_and_branches() {
     for(const auto label:{"dual","slash","arm","gun"}) {
         runtime.set_label("SQ_WALK",label);runtime.select("SQ_WALK");actions.clear();
         result=runtime.run(42,[&](const auto& request){actions.push_back(request);});
-        check(actions.size()==1 && actions[0].action==std::string("run_")+label && runtime.model().mode==3,
+        check(actions.size()==1 && actions[0].action==std::string("run_")+label && runtime.model().mode()==3,
             "Selected weapon section dispatched the wrong action/control mode.");
-        check(runtime.command_index()==4*(index+1) && runtime.labels()[0].cached_offset==static_cast<std::int32_t>(4*index),
+        check(runtime.command_index()==static_cast<std::int32_t>(4*(index+1)) && runtime.labels()[0].cached_offset==static_cast<std::int32_t>(4*index),
             "Label selection or cached ordinal changed.");
         check(result.stop==(index==3 ? ModelSequenceStop::end : ModelSequenceStop::label_boundary),"Sequence end and label boundary were conflated.");++index;
     }
@@ -177,6 +177,204 @@ void nullable_label_storage_and_lookup() {
         "Copied sequence work shared mutable nullable label state.");
     runtime.set_label(std::nullopt,"replacement");
     check(runtime.labels().size()==3 && runtime.labels()[0].label=="replacement","Null sequence-key replacement appended an unrelated row.");
+}
+void canonical_sequence_fields_and_command_owners() {
+    const auto fixture=branches();auto program=std::make_shared<const ModelSequenceProgram>(fixture.program());
+    auto fields=std::make_shared<ModelSequenceFields>();
+    ModelSequenceRuntime runtime(program,model(),"actor",2,fields);
+    check(runtime.fields()==fields && runtime.program_owner()==program && !fields->name && !fields->command_data &&
+        fields->command_index==0 && fields->label_count==0 && !fields->labels->sequences &&
+        !fields->labels->names && !fields->labels->offsets,"Fresh sequence fields fabricated selected data or label lists.");
+    fields->wait={"old",0x80,-7,9};runtime.set_label("SQ_WALK","gun");runtime.select("SQ_WALK");
+    const auto data=fields->command_data;const auto label_fields=fields->labels;const auto offsets=label_fields->offsets;
+    check(fields->name=="SQ_WALK" && data.get()==&program->sequences()[1] &&
+        !data.owner_before(program) && !program.owner_before(data) && fields->command_index==12 &&
+        fields->label_count==0 && fields->wait==ModelWaitState{std::nullopt,0x80,-7,9},
+        "Selection did not publish the exact source-owned data and live sequence/wait fields.");
+    fields->name="independent name";fields->command_index=3;fields->label_count=-17;
+    check(runtime.current_sequence()=="independent name" && runtime.command_index()==3 && runtime.label_count()==-17,
+        "Sequence inspection derived competing values from a program index instead of canonical fields.");
+    fields->command_data=std::shared_ptr<const ModelSequenceData>(program,&program->sequences()[0]);
+    auto result=runtime.run(42);
+    check(result.stop==ModelSequenceStop::action_required && result.name=="wait_dual" && fields->command_index==3,
+        "The command runner ignored a live replacement of the actual command-data owner.");
+    result=runtime.run(42,[](const auto&){});
+    check(result.stop==ModelSequenceStop::label_boundary && fields->command_index==4 && fields->label_count==-17,
+        "Signed nonzero label count was normalized or the live command index was not advanced.");
+    const auto saved_data=fields->command_data;
+    rejects([&]{runtime.select("SQ_ABSENT");});
+    check(fields->name=="independent name" && fields->command_data==saved_data && fields->command_index==4 &&
+        fields->label_count==-17 && fields->labels==label_fields && label_fields->offsets==offsets,
+        "Rejected selection published a replacement name/data reference or canonical label owner.");
+    auto copy=runtime;const auto copy_fields=copy.fields();
+    check(copy_fields!=fields && copy_fields->command_data==fields->command_data &&
+        copy_fields->labels!=label_fields && copy_fields->labels->offsets!=offsets &&
+        &copy.wait_state()!=&runtime.wait_state(),"Prepared copy retained mutable canonical fields or copied immutable data ownership.");
+    copy.wait_state().name="copy wait";copy_fields->name=std::string{};copy_fields->command_index=-5;
+    check(!fields->wait.name && fields->name=="independent name" && fields->command_index==4,
+        "Detached sequence/wait edits leaked to the original generation.");
+    const auto stable_wait=&runtime.wait_state();runtime=copy;
+    check(runtime.fields()==fields && fields->labels==label_fields && label_fields->offsets==offsets &&
+        &runtime.wait_state()==stable_wait && fields->wait.name=="copy wait" && fields->name==std::optional<std::string>{""} &&
+        fields->command_index==-5,"Snapshot publication replaced retained sequence, wait or label owners.");
+    fields->name.reset();fields->command_data.reset();
+    check(!runtime.selected() && runtime.current_sequence().empty() && fields->command_index==-5,
+        "Null selected data implicitly reset other original sequence fields.");
+    rejects([&]{runtime.run(42);});
+    runtime.begin_select("SQ_WAIT");rejects([&]{runtime=copy;});
+    check(runtime.selection_pending() && fields->name=="SQ_WAIT" && fields->command_index==0 &&
+        &std::as_const(runtime).wait_state()==stable_wait,"Assignment abandoned an already-published selection prefix.");
+    runtime.finish_select();
+
+    std::weak_ptr<const ModelSequenceProgram> source_lifetime;
+    std::shared_ptr<const ModelSequenceData> retained_data;
+    {
+        auto source=std::make_shared<const ModelSequenceProgram>(fixture.program());source_lifetime=source;
+        auto retained_fields=std::make_shared<ModelSequenceFields>();
+        ModelSequenceRuntime temporary(source,model(),"other",3,retained_fields);temporary.select("SQ_WAIT");
+        retained_data=retained_fields->command_data;
+    }
+    check(!source_lifetime.expired() && retained_data->name=="SQ_WAIT" && retained_data->commands.size()==16,
+        "Command-data ownership borrowed a destroyed facade or source program.");
+    retained_data.reset();check(source_lifetime.expired(),"Immutable command-data ownership formed a back-reference cycle.");
+}
+void canonical_wait_survives_work_replacement_and_move() {
+    Fixture fixture;fixture.sequence("SQ_A",{fixture.wait("Action"),fixture.command("beModelCtrlACTION","continued")});fixture.finish();
+    auto program=std::make_shared<const ModelSequenceProgram>(fixture.program());
+    struct Work {ModelSequenceFields sequence;};
+    auto current_work=std::make_shared<Work>();std::weak_ptr<Work> old_work=current_work;
+    auto fields=std::shared_ptr<ModelSequenceFields>(current_work,&current_work->sequence);
+    ModelSequenceRuntime original(program,model(),"actor",0,fields);
+    original.select("SQ_A");check(original.run(42).stop==ModelSequenceStop::waiting,"Prepared WCHECK did not establish the actual wait.");
+    ModelWaitRuntime resolver;auto* stable=&original.wait_state();
+    check(resolver.update(*stable,original.model().channels).stop==ModelWaitStop::action_completion_required && resolver.pending(),
+        "The original wait did not pause at its missing action query.");
+    current_work=std::make_shared<Work>();
+    auto fresh_fields=std::shared_ptr<ModelSequenceFields>(current_work,&current_work->sequence);
+    ModelSequenceRuntime fresh(program,model(),"actor",0,fresh_fields);fresh.wait_state().attack_mode=23;
+    ModelSequenceRuntime moved(std::move(original));fields.reset();
+    check(!old_work.expired() && &moved.wait_state()==stable && moved.fields()->command_index==1 &&
+        !fresh_fields->command_data && !fresh_fields->wait.name,
+        "Work replacement or facade move redirected/destroyed the pending wait and command cursor.");
+    rejects([&]{resolver.resume(fresh.wait_state());});
+    unsigned queries=0,actions=0;ModelWaitServices services;
+    services.action_complete=[&] {++queries;return std::optional<bool>{true};};
+    services.resume_commands=[&] {return moved.run(42,[&](const auto& request){check(request.action=="continued","Wrong retained command resumed.");++actions;}).stop==ModelSequenceStop::end;};
+    check(resolver.resume(moved.wait_state(),services).complete() && !resolver.pending() && queries==1 && actions==1 &&
+        !moved.wait_state().name && moved.command_index()==2 && fresh_fields->command_index==0 && fresh_fields->wait.attack_mode==23,
+        "Wait continuation replayed an effect or wrote a replacement work generation.");
+    check(resolver.resume(moved.wait_state(),services).complete() && queries==1 && actions==1,
+        "Completed wait continuation replayed a query or command callback.");
+}
+void malformed_canonical_sequence_fields() {
+    const auto fixture=branches();auto program=std::make_shared<const ModelSequenceProgram>(fixture.program());
+    auto fields=std::make_shared<ModelSequenceFields>();
+    rejects([&]{ModelSequenceRuntime invalid(nullptr,model(),"actor",0,fields);});
+    rejects([&]{ModelSequenceRuntime invalid(program,model(),"actor",0,nullptr);});
+    auto malformed=std::make_shared<ModelSequenceFields>();malformed->labels.reset();
+    rejects([&]{ModelSequenceRuntime invalid(program,model(),"actor",0,malformed);});
+    ModelSequenceRuntime runtime(program,model(),"actor",0,fields);runtime.select("SQ_WAIT");
+    const auto selected=fields->command_data;
+    fields->command_index=-1;rejects([&]{runtime.run(42);});
+    check(fields->command_index==-1 && fields->command_data==selected,"A negative original command index was repaired or rebound.");
+    fields->command_index=17;rejects([&]{runtime.run(42);});
+    fields->command_index=16;check(runtime.run(42).stop==ModelSequenceStop::end,"The exact command-list end cursor was rejected.");
+    fields->command_index=0;fields->command_data=std::make_shared<const ModelSequenceData>(*selected);
+    rejects([&]{runtime.run(42);});
+    auto foreign=std::make_shared<const ModelSequenceProgram>(fixture.program());
+    fields->command_data=std::shared_ptr<const ModelSequenceData>(foreign,&foreign->sequences()[0]);
+    rejects([&]{runtime.run(42);});
+    fields->command_data=std::shared_ptr<const ModelSequenceData>(program,&foreign->sequences()[0]);
+    rejects([&]{runtime.run(42);});
+    check(fields->command_index==0 && fields->name=="SQ_WAIT","A copied or foreign data owner changed the live sequence before rejection.");
+    fields->command_data=selected;fields->command_index=3;unsigned calls=0;
+    rejects([&]{runtime.run(42,[&](const auto&){++calls;fields->command_index=std::numeric_limits<std::int32_t>::max();});});
+    check(calls==1 && fields->command_index==std::numeric_limits<std::int32_t>::min(),
+        "Original 32-bit cursor increment overflowed in host arithmetic or discarded a completed callback.");
+}
+void executor_lease_and_abandoned_services() {
+    Fixture f;f.sequence("SQ_A",{f.command("beModelCtrlACTION","action")});f.finish();
+    auto program=std::make_shared<const ModelSequenceProgram>(f.program());auto fields=std::make_shared<ModelSequenceFields>();
+    {
+        ModelSequenceRuntime runtime(program,model(),"actor",0,fields);runtime.select("SQ_A");
+        rejects([&]{ModelSequenceRuntime second(program,model(),"actor",0,fields);});
+        auto copy=runtime;check(copy.fields()!=fields,"A detached executor copy reused canonical fields.");
+        rejects([&]{ModelSequenceRuntime second(program,model(),"actor",0,copy.fields());});
+        unsigned calls=0;
+        check(runtime.run(42,[&](const auto&){
+            ++calls;rejects([&]{ModelSequenceRuntime moving(std::move(runtime));});
+        }).stop==ModelSequenceStop::end && calls==1 && runtime.fields()==fields,
+            "Moving an executing facade transferred its lease or changed its command owner.");
+        runtime.wait_state().name="unqueried wait";
+    }
+    {
+        ModelSequenceRuntime rebound(program,model(),"actor",0,fields);
+        check(rebound.run(42).stop==ModelSequenceStop::waiting && rebound.wait_state().name=="unqueried wait",
+            "A completed executor or an unqueried wait poisoned later binding.");
+    }
+    for(int kind=0;kind<8;++kind) {
+        Fixture pending;
+        const auto command=kind==1 || kind==7 ? pending.hitbox("Set",{}) :
+            kind==2 || kind==5 ? pending.lua("prefix","event") :
+            kind==4 ? pending.command("beModelCtrlJUMP","SQ_B") : pending.command("beModelCtrlACTION","action");
+        pending.sequence("SQ_A",{command});pending.sequence("SQ_B",{});pending.finish();
+        auto source=std::make_shared<const ModelSequenceProgram>(pending.program());
+        auto owned=std::make_shared<ModelSequenceFields>();
+        auto runtime=std::make_unique<ModelSequenceRuntime>(source,model(),"actor",0,owned);runtime->select("SQ_A");
+        unsigned calls=0;
+        const auto unavailable=[&] {++calls;return false;};
+        const auto fault=[&]()->bool {++calls;throw std::runtime_error("Retained external service failure.");};
+        if(kind==0)runtime->run(42,{},{},[&](const auto&){return unavailable();});
+        else if(kind==1)runtime->run(42,{},{},{},[&](const auto&){return unavailable();});
+        else if(kind==2)runtime->run(42,{},{},{},{},[&](const auto&){return unavailable();});
+        else if(kind==3)runtime->begin_select("SQ_B");
+        else if(kind==4)runtime->run(42,{},[&](auto){return unavailable();});
+        else if(kind==5)rejects([&]{runtime->run(42,{},{},{},{},[&](const auto&){return fault();});});
+        else if(kind==6)rejects([&]{runtime->run(42,{},{},[&](const auto&){return fault();});});
+        else rejects([&]{runtime->run(42,{},{},{},[&](const auto&){return fault();});});
+        const auto name=owned->name;const auto data=owned->command_data;const auto index=owned->command_index;
+        rejects([&]{ModelSequenceRuntime second(source,model(),"actor",0,owned);});
+        rejects([&]{runtime->select("SQ_A");});
+        rejects([&]{runtime->fields();});
+        auto copy=*runtime;
+        check(std::as_const(copy).fields()!=owned && copy.command_index()==index,
+            "A pending inspection copy shared canonical state or lost its saved cursor.");
+        rejects([&]{copy.run(42);});rejects([&]{copy.finish_select();});
+        const auto copied_fields=std::const_pointer_cast<ModelSequenceFields>(std::as_const(copy).fields());
+        rejects([&]{ModelSequenceRuntime copied_executor(source,model(),"actor",0,copied_fields);});
+        ModelSequenceRuntime replacement(source,model(),"actor",0,std::make_shared<ModelSequenceFields>());
+        rejects([&]{*runtime=replacement;});
+        replacement=*runtime;rejects([&]{replacement.run(42);});
+        auto moved=std::make_unique<ModelSequenceRuntime>(std::move(*runtime));runtime.reset();
+        rejects([&]{ModelSequenceRuntime second(source,model(),"actor",0,owned);});
+        moved.reset();
+        rejects([&]{ModelSequenceRuntime revived(source,model(),"actor",0,owned);});
+        check(owned->name==name && owned->command_data==data && owned->command_index==index && calls==(kind==3 ? 0u : 1u),
+            "Releasing an abandoned executor modified guest fields or repeated external service work.");
+    }
+    for(int kind=0;kind<4;++kind) {
+        Fixture pending;
+        const auto command=kind==1 ? pending.hitbox("Set",{}) : kind==2 ? pending.lua("prefix","event") :
+            kind==3 ? pending.command("beModelCtrlJUMP","SQ_B") : pending.command("beModelCtrlACTION","action");
+        pending.sequence("SQ_A",{command});pending.sequence("SQ_B",{});pending.finish();
+        auto source=std::make_shared<const ModelSequenceProgram>(pending.program());auto owned=std::make_shared<ModelSequenceFields>();
+        unsigned calls=0;
+        {
+            ModelSequenceRuntime runtime(source,model(),"actor",0,owned);runtime.select("SQ_A");
+            const auto complete=[&] {return ++calls==2;};
+            const auto run=[&] {
+                if(kind==0)return runtime.run(42,{},{},[&](const auto&){return complete();});
+                if(kind==1)return runtime.run(42,{},{},{},[&](const auto&){return complete();});
+                if(kind==2)return runtime.run(42,{},{},{},{},[&](const auto&){return complete();});
+                return runtime.run(42,{},[&](auto){return complete();});
+            };
+            run();check(run().stop==ModelSequenceStop::end && !runtime.external_pending() && !runtime.selection_pending(),
+                "A completed retained external service did not release its execution guard.");
+        }
+        ModelSequenceRuntime rebound(source,model(),"actor",0,owned);
+        check(rebound.run(42).stop==ModelSequenceStop::end && calls==2,
+            "A completed pending service poisoned the generation or replayed after rebinding.");
+    }
 }
 void label_list_owners_and_publication() {
     auto f=branches();auto fields=std::make_shared<ModelSequenceLabelFields>();
@@ -317,13 +515,13 @@ void motion_sequence_stop() {
     check(!after[2].active && after[2].speed==0,"Flagged impulse channel did not stop immediately.");
     auto rotation=before[3];rotation.active=false;rotation.speed=0;
     check(after[3]==rotation,"Rotation reset changed fields other than active and speed.");
-    auto f=branches();auto state=model();state.channels=channels;state.mode=4;state.phase=8;state.check_fall=false;
-    state.pad_motion.set_values({1,2,3,4});state.pose.position_locked=true;
-    start_motion_timer(state.elapsed_timer.emplace(),42);
-    const auto timer=state.elapsed_timer;ModelSequenceRuntime runtime(f.program(),state,"actor",0);runtime.select("SQ_WAIT");
-    check(runtime.model().mode==0 && runtime.model().phase==0 && runtime.model().check_fall && runtime.model().pad_motion.size()==0,
+    auto f=branches();auto state=model();state.channels=channels;state.mode()=4;state.phase()=8;state.check_fall()=false;
+    state.pad_motion.set_values({1,2,3,4});state.pose.position_locked()=true;
+    start_motion_timer(state.elapsed_timer().emplace(),42);
+    const auto timer=state.elapsed_timer();ModelSequenceRuntime runtime(f.program(),state,"actor",0);runtime.select("SQ_WAIT");
+    check(runtime.model().mode()==0 && runtime.model().phase()==0 && runtime.model().check_fall() && runtime.model().pad_motion.size()==0,
         "Owned sequence preparation did not reset original control fields.");
-    check(runtime.model().elapsed_timer==timer && runtime.model().pose.position_locked,"Sequence preparation invented timer restart or position unlock.");
+    check(runtime.model().elapsed_timer()==timer && runtime.model().pose.position_locked(),"Sequence preparation invented timer restart or position unlock.");
 }
 void labels_jumps_and_guards() {
     Fixture f;
@@ -353,7 +551,7 @@ void labels_jumps_and_guards() {
     runtime.select("SQ_ERASE_TEST");check(runtime.run(42).stop==ModelSequenceStop::controller_required && runtime.command_index()==0,
         "Erase command was mistaken for ordinary local sequence entry.");
     runtime.select("SQ_MISSING");check(runtime.run(42).stop==ModelSequenceStop::controller_required,"Missing jump destination was silently skipped.");
-    runtime.select("SQ_CUSTOM");check(runtime.run(42).stop==ModelSequenceStop::end && runtime.current_sequence()=="custom" && !runtime.model().check_fall,
+    runtime.select("SQ_CUSTOM");check(runtime.run(42).stop==ModelSequenceStop::end && runtime.current_sequence()=="custom" && !runtime.model().check_fall(),
         "A valid named sequence was restricted to an invented SQ_ prefix.");
     rejects([&]{runtime.select("ONCTRL");});
     runtime.select("onctrl");check(runtime.run(42).stop==ModelSequenceStop::end,"Native command reservation lost exact case rules.");
@@ -377,10 +575,10 @@ void wait_assignment_and_resume() {
             program.sequences()[0].commands[1].reference_index==wait,"WCHECK changed exact bytes, null normalization or shared command occurrences.");
         ModelSequenceRuntime runtime(std::move(program),model(),"actor",0);runtime.select("SQ_WAIT");
         runtime.wait_state().control_enabled=0x7f;runtime.wait_state().attack_state=-4;runtime.wait_state().attack_mode=19;
-        runtime.model().mode=4;runtime.model().phase=3;runtime.model().check_fall=false;
+        runtime.model().mode()=4;runtime.model().phase()=3;runtime.model().check_fall()=false;
         runtime.model().pad_motion.set_values({1,2,3,4});
-        start_motion_timer(runtime.model().elapsed_timer.emplace(),17);
-        const auto channels=runtime.model().channels.states();const auto timer=runtime.model().elapsed_timer;
+        start_motion_timer(runtime.model().elapsed_timer().emplace(),17);
+        const auto channels=runtime.model().channels.states();const auto timer=runtime.model().elapsed_timer();
         const auto pad_motion=runtime.model().pad_motion;
         std::uint32_t actions{};
         const ModelActionDispatch dispatch=[&](const auto&){++actions;};
@@ -390,8 +588,8 @@ void wait_assignment_and_resume() {
             "WCHECK did not consume exactly once and yield before the next command.");
         check(runtime.wait_state()==ModelWaitState{name.value_or(""),0x7f,-4,19},
             "WCHECK cleared an empty wait or changed player control/attack fields.");
-        check(runtime.model().channels.states()==channels && runtime.model().elapsed_timer==timer &&
-            runtime.model().pad_motion==pad_motion && runtime.model().mode==4 && runtime.model().phase==3 && !runtime.model().check_fall,
+        check(runtime.model().channels.states()==channels && runtime.model().elapsed_timer()==timer &&
+            runtime.model().pad_motion==pad_motion && runtime.model().mode()==4 && runtime.model().phase()==3 && !runtime.model().check_fall(),
             "WCHECK invented motion, timer or control effects.");
         result=runtime.run(99,dispatch);
         check(result.stop==ModelSequenceStop::waiting && result.commands_executed==0 && !result.command_reference &&
@@ -422,14 +620,14 @@ void wait_selection_and_guards() {
         "Invalid sequence selection cleared the retained wait or changed its cursor.");
     runtime.set_label("SQ_B","missing");rejects([&]{runtime.select("SQ_B");});
     check(runtime.wait_state()==before && !runtime.selection_pending(),"Invalid selected label cleared the wait.");
-    runtime.model().mode=4;runtime.model().phase=5;runtime.model().check_fall=false;
+    runtime.model().mode()=4;runtime.model().phase()=5;runtime.model().check_fall()=false;
     runtime.model().pad_motion.set_values({1,2,3,4});
     runtime.begin_select("SQ_A");const auto& view=std::as_const(runtime);
-    check(view.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && view.model().mode==0 && view.model().phase==0 &&
-        view.model().pad_motion.size()==0 && !view.model().check_fall && runtime.selection_pending() && runtime.command_index()==0,
+    check(view.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && view.model().mode()==0 && view.model().phase()==0 &&
+        view.model().pad_motion.size()==0 && !view.model().check_fall() && runtime.selection_pending() && runtime.command_index()==0,
         "Sequence begin failed to clear only wait name before external cleanup.");
     rejects([&]{runtime.wait_state();});rejects([&]{runtime.run(42);});rejects([&]{runtime.begin_select("SQ_A");});
-    runtime.finish_select();check(runtime.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && runtime.model().check_fall,
+    runtime.finish_select();check(runtime.wait_state()==ModelWaitState{std::nullopt,255,7,-9} && runtime.model().check_fall(),
         "Sequence finish reset player wait fields.");
     runtime.run(42);runtime.select("SQ_JUMP");
     std::uint32_t cleanups{},actions{};
@@ -448,6 +646,43 @@ void wait_selection_and_guards() {
     result=local.run(43,[&](const auto&){rejects([&]{local.wait_state();});++actions;},[](auto){return true;});
     check(result.stop==ModelSequenceStop::end && actions==1 && local.wait_state()==ModelWaitState{std::nullopt,255,7,-9},
         "Completed local jump cleanup changed the retained player wait fields.");
+}
+void local_jump_cleanup_preflight() {
+    Fixture f;
+    f.sequence("SQ_A",{f.command("beModelCtrlACTION","replace cleanup owner"),f.command("beModelCtrlJUMP","SQ_B")});
+    f.sequence("SQ_B",{f.command("beModelCtrlACTION","destination")});
+    f.sequence("SQ_EXTERNAL",{f.command("beModelCtrlJUMP","SQ_MISSING")});f.finish();
+    ModelSequenceRuntime runtime(f.program(),model(),"actor",0);runtime.select("SQ_A");
+    bool available=true,complete=false;
+    unsigned actions{},preflights{},cleanups{};
+    const auto preflight=[&] {
+        ++preflights;
+        check(runtime.current_sequence()=="SQ_A" && runtime.command_index()==1 && !runtime.selection_pending(),
+            "Cleanup preflight observed an already-published local jump.");
+        rejects([&]{runtime.run(42);});
+        if(!available)throw std::runtime_error("The prior cleanup owner is still updating.");
+    };
+    const auto action=[&](const ModelActionRequest& request) {
+        ++actions;if(request.action=="replace cleanup owner")available=false;
+    };
+    const auto cleanup=[&](auto) {++cleanups;return complete;};
+    check(runtime.run(42,{},cleanup,{},{},{},preflight).stop==ModelSequenceStop::action_required && preflights==0,
+        "Unvisited JUMP invoked cleanup preflight before its preceding ACTION.");
+    rejects([&]{runtime.run(42,action,cleanup,{},{},{},preflight);});
+    check(actions==1 && preflights==1 && cleanups==0 && runtime.current_sequence()=="SQ_A" &&
+        runtime.command_index()==1 && !runtime.selection_pending() && !runtime.jump_pending() && !runtime.external_pending(),
+        "Rejected cleanup preflight published a jump or lost the completed ACTION prefix.");
+    available=true;
+    check(runtime.run(43,action,cleanup,{},{},{},preflight).stop==ModelSequenceStop::sequence_cleanup_required &&
+        actions==1 && preflights==2 && cleanups==1 && runtime.current_sequence()=="SQ_B" && runtime.jump_pending(),
+        "Available cleanup preflight failed to publish and retain the real cleanup boundary.");
+    complete=true;
+    check(runtime.run(44,action,cleanup,{},{},{},[&]{throw std::runtime_error("Do not repeat an entered preflight.");}).stop==ModelSequenceStop::end &&
+        actions==2 && preflights==2 && cleanups==2 && !runtime.jump_pending(),
+        "Pending local JUMP repeated its preflight or its preceding ACTION.");
+    runtime.select("SQ_EXTERNAL");
+    check(runtime.run(45,action,cleanup,{},{},{},[&]{throw std::runtime_error("External JUMP is not a local cleanup.");}).stop==ModelSequenceStop::controller_required,
+        "External JUMP invoked a local cleanup preflight.");
 }
 void malformed_waits() {
     Fixture f;const auto wait=f.wait("Action");f.sequence("SQ_A",{wait});f.finish();
@@ -492,13 +727,13 @@ void resumable_actions() {
     check(result.stop==ModelSequenceStop::action_required && result.commands_executed==1 && result.command_reference==action &&
         runtime.command_index()==1 && tries==1 && committed_prefixes==1 && legacy_calls==0,
         "Incomplete ACTION consumed its cursor or invoked the lower-precedence void callback.");
-    const auto timer=runtime.model().elapsed_timer;const auto channels=runtime.model().channels.states();
+    const auto timer=std::as_const(runtime).model().elapsed_timer();const auto channels=std::as_const(runtime).model().channels.states();
     result=runtime.run(99,legacy,{},dispatch);
     check(result.stop==ModelSequenceStop::action_required && result.commands_executed==0 && runtime.command_index()==1 &&
-        runtime.model().elapsed_timer==timer && runtime.model().channels.states()==channels && committed_prefixes==1 && tries==2,
+        std::as_const(runtime).model().elapsed_timer()==timer && std::as_const(runtime).model().channels.states()==channels && committed_prefixes==1 && tries==2,
         "Incomplete ACTION retry replayed movement or discarded the service continuation.");
     rejects([&]{runtime.run(100,{},{},[](const auto&)->bool{throw std::runtime_error("Temporary test failure.");});});
-    check(runtime.command_index()==1 && runtime.model().elapsed_timer==timer,"Throwing resumable ACTION consumed its command or prefix.");
+    check(runtime.command_index()==1 && std::as_const(runtime).model().elapsed_timer()==timer,"Throwing resumable ACTION consumed its command or prefix.");
     result=runtime.run(101,legacy,{},dispatch);
     check(result.stop==ModelSequenceStop::waiting && result.commands_executed==2 && runtime.command_index()==3 &&
         runtime.wait_state().name==std::optional<std::string>{"Action"} && tries==3 && committed_prefixes==1 && legacy_calls==0,
@@ -518,40 +753,40 @@ void entry_fields_and_lua_setters() {
     f.sequence("SQ_B",{f.lua("new","BHit"),f.command("beModelCtrlACTION","b")});f.finish();
     ModelSequenceRuntime runtime(f.program(),model(),"actor",2);runtime.select("SQ_A");
     auto result=runtime.run(123);
-    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==7 && runtime.model().bullet_hit_script=="bullet" &&
-        runtime.model().wall_hit_script==std::optional<std::string>{""} && runtime.model().floor_hit_script=="floor" &&
-        runtime.model().wall_check==0 && runtime.model().floor_check==0 && runtime.model().invulnerability_frames==-1,
+    check(result.stop==ModelSequenceStop::waiting && result.commands_executed==7 && runtime.model().bullet_hit_script()=="bullet" &&
+        runtime.model().wall_hit_script()==std::optional<std::string>{""} && runtime.model().floor_hit_script()=="floor" &&
+        runtime.model().wall_check()==0 && runtime.model().floor_check()==0 && runtime.model().invulnerability_frames()==-1,
         "Exact LUACALL/MUTEKI setters failed to populate owned entry fields.");
-    const auto timer=runtime.model().elapsed_timer;
+    const auto timer=runtime.model().elapsed_timer();
     check(timer && timer->saved_world_time==123 && !runtime.model().channels.allocated(),"MUTEKI did not share one lazily initialized KEIKATIMER.");
-    auto copy=runtime;copy.model().bullet_hit_script="other";
-    check(runtime.model().bullet_hit_script=="bullet","Sequence copies share mutable callback prefixes.");
-    runtime.model().check_fall=false;runtime.model().mode=4;runtime.model().phase=7;
+    auto copy=runtime;copy.model().bullet_hit_script()="other";
+    check(runtime.model().bullet_hit_script()=="bullet","Sequence copies share mutable callback prefixes.");
+    runtime.model().check_fall()=false;runtime.model().mode()=4;runtime.model().phase()=7;
     runtime.wait_state().attack_state=5;runtime.wait_state().attack_mode=-8;
     runtime.begin_select("SQ_B");const auto& during=std::as_const(runtime).model();
-    check(runtime.current_sequence()=="SQ_B" && runtime.command_index()==0 && during.mode==0 && during.phase==0 &&
-        !std::as_const(runtime).wait_state().name && during.bullet_hit_script=="bullet" && during.wall_hit_script=="" &&
-        during.floor_hit_script=="floor" && during.wall_check==0 && during.floor_check==0 && !during.check_fall && during.invulnerability_frames==-1,
+    check(runtime.current_sequence()=="SQ_B" && runtime.command_index()==0 && during.mode()==0 && during.phase()==0 &&
+        !std::as_const(runtime).wait_state().name && during.bullet_hit_script()=="bullet" && during.wall_hit_script()=="" &&
+        during.floor_hit_script()=="floor" && during.wall_check()==0 && during.floor_check()==0 && !during.check_fall() && during.invulnerability_frames()==-1,
         "Pre-cleanup selection cleared callback/check/counter fields before their original phase.");
     runtime.finish_select();
-    check(!runtime.model().bullet_hit_script && !runtime.model().wall_hit_script && !runtime.model().floor_hit_script &&
-        runtime.model().wall_check==1 && runtime.model().floor_check==1 && runtime.model().check_fall &&
-        std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames)==0 && runtime.model().elapsed_timer==timer &&
+    check(!runtime.model().bullet_hit_script() && !runtime.model().wall_hit_script() && !runtime.model().floor_hit_script() &&
+        runtime.model().wall_check()==1 && runtime.model().floor_check()==1 && runtime.model().check_fall() &&
+        std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames())==0 && runtime.model().elapsed_timer()==timer &&
         runtime.wait_state().attack_state==5 && runtime.wait_state().attack_mode==-8,
         "Post-cleanup selection failed to clear callbacks, enable checks or clamp only negative invulnerability.");
     result=runtime.run(456);
-    check(result.stop==ModelSequenceStop::action_required && result.commands_executed==1 && runtime.model().bullet_hit_script=="new" &&
-        !runtime.model().wall_hit_script,"Destination commands ran before entry cleanup or their new callbacks were cleared afterward.");
+    check(result.stop==ModelSequenceStop::action_required && result.commands_executed==1 && runtime.model().bullet_hit_script()=="new" &&
+        !runtime.model().wall_hit_script(),"Destination commands ran before entry cleanup or their new callbacks were cleared afterward.");
     for(const float frames:{23.f,0.f,-0.0f}) {
-        runtime.model().invulnerability_frames=frames;runtime.select("SQ_B");
-        check(std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames)==std::bit_cast<std::uint32_t>(frames),
+        runtime.model().invulnerability_frames()=frames;runtime.select("SQ_B");
+        check(std::bit_cast<std::uint32_t>(runtime.model().invulnerability_frames())==std::bit_cast<std::uint32_t>(frames),
             "Sequence entry reset positive invulnerability or normalized negative zero.");
     }
-    runtime.model().bullet_hit_script="retained";runtime.model().invulnerability_frames=std::numeric_limits<float>::quiet_NaN();
+    runtime.model().bullet_hit_script()="retained";runtime.model().invulnerability_frames()=std::numeric_limits<float>::quiet_NaN();
     rejects([&]{runtime.begin_select("SQ_A");});
-    check(!runtime.selection_pending() && runtime.current_sequence()=="SQ_B" && runtime.model().bullet_hit_script=="retained",
+    check(!runtime.selection_pending() && runtime.current_sequence()=="SQ_B" && runtime.model().bullet_hit_script()=="retained",
         "Invalid prepared entry fields partially published a new sequence.");
-    auto invalid=model();invalid.floor_hit_script=std::string("bad\0script",10);
+    auto invalid=model();invalid.floor_hit_script()=std::string("bad\0script",10);
     rejects([&]{ModelSequenceRuntime bad(f.program(),invalid,"actor",0);});
 }
 void hitbox_and_immediate_lua_boundaries() {
@@ -563,8 +798,8 @@ void hitbox_and_immediate_lua_boundaries() {
     ModelSequenceRuntime runtime(f.program(),model(),"actor",3);runtime.select("SQ_A");
     auto result=runtime.run(123);
     check(result.stop==ModelSequenceStop::hitbox_required && result.command_reference==set && result.commands_executed==2 &&
-        runtime.command_index()==2 && runtime.model().invulnerability_frames==21,"HITBOX Set failed to stop at its actual queue ownership boundary.");
-    const auto timer=runtime.model().elapsed_timer;unsigned hitbox_calls{},lua_calls{},actions{};bool ready=false;
+        runtime.command_index()==2 && std::as_const(runtime).model().invulnerability_frames()==21,"HITBOX Set failed to stop at its actual queue ownership boundary.");
+    const auto timer=std::as_const(runtime).model().elapsed_timer();unsigned hitbox_calls{},lua_calls{},actions{};bool ready=false;
     std::vector<std::uint32_t> accepted;std::vector<ModelLuaRequest> requests;
     const ModelHitboxDispatch dispatch_hitbox=[&](const ModelHitboxCommand& command) {
         ++hitbox_calls;check(command.parameters.kind==-12345 && command.parameters.delay==1.25f && command.parameters.length==-1 &&
@@ -575,10 +810,10 @@ void hitbox_and_immediate_lua_boundaries() {
     };
     result=runtime.run(999,{},{},{},dispatch_hitbox);
     check(result.stop==ModelSequenceStop::hitbox_required && result.commands_executed==0 && runtime.command_index()==2 &&
-        runtime.model().elapsed_timer==timer && accepted.empty(),"Incomplete HITBOX replayed the sequence prefix or consumed its command.");
+        std::as_const(runtime).model().elapsed_timer()==timer && accepted.empty(),"Incomplete HITBOX replayed the sequence prefix or consumed its command.");
     ready=true;result=runtime.run(1000,{},{},{},dispatch_hitbox);
     check(result.stop==ModelSequenceStop::lua_required && result.command_reference==immediate && result.commands_executed==1 &&
-        runtime.command_index()==3 && accepted==std::vector<std::uint32_t>{set} && !runtime.model().bullet_hit_script,
+        runtime.command_index()==3 && accepted==std::vector<std::uint32_t>{set} && !std::as_const(runtime).model().bullet_hit_script(),
         "Nonexact LUACALL mode silently assigned a callback or ran without its real Lua owner.");
     const ModelLuaDispatch dispatch_lua=[&](const ModelLuaRequest& request) {
         ++lua_calls;check(request.source=="synthetic/player.igb" && request.info_name=="actor" && request.ram_no==3,
@@ -613,10 +848,10 @@ void uncertain_lua_is_not_replayed() {
     };
     check(runtime.run(456,{},{},{},{},callback).stop==ModelSequenceStop::lua_required && calls==1 && external_effects==0,
         "A false Lua callback was treated as an uncertain exception.");
-    const auto timer=std::as_const(runtime).model().elapsed_timer;
+    const auto timer=std::as_const(runtime).model().elapsed_timer();
     rejects([&]{runtime.run(789,{},{},{},{},callback);});
     check(calls==2 && external_effects==1 && runtime.command_index()==1 &&
-        std::as_const(runtime).model().elapsed_timer==timer && std::as_const(runtime).model().invulnerability_frames==7,
+        std::as_const(runtime).model().elapsed_timer()==timer && std::as_const(runtime).model().invulnerability_frames()==7,
         "Throwing Lua lost its committed sequence prefix or consumed the uncertain command.");
     rejects([&]{runtime.run(999,{},{},{},{},callback);});
     rejects([&]{runtime.run(999);});
@@ -626,6 +861,8 @@ void uncertain_lua_is_not_replayed() {
     rejects([&]{runtime.set_label("SQ_A","new");});
     rejects([&]{runtime.model();});
     rejects([&]{runtime.wait_state();});
+    ModelSequenceRuntime replacement(f.program(),model(),"actor",0);
+    rejects([&]{runtime=replacement;});rejects([&]{runtime=std::move(replacement);});
     auto copy=runtime;rejects([&]{copy.run(999,{},{},{},{},callback);});
     check(calls==2 && external_effects==1 && runtime.command_index()==1 && !runtime.selection_pending(),
         "A faulted Lua command was replayed or made mutable through a sequence copy.");
@@ -646,18 +883,20 @@ void incomplete_lua_retains_ownership() {
     };
     check(runtime.run(125,{},{},{},{},callback).stop==ModelSequenceStop::lua_required && runtime.lua_pending() &&
         calls==1 && prefixes==1 && runtime.command_index()==1,"Incomplete Lua lost its externally committed prefix or command cursor.");
-    const auto timer=std::as_const(runtime).model().elapsed_timer;
+    const auto timer=std::as_const(runtime).model().elapsed_timer();
     rejects([&]{runtime.select("SQ_B");});rejects([&]{runtime.begin_select("SQ_B");});rejects([&]{runtime.finish_select();});
     rejects([&]{runtime.model();});rejects([&]{runtime.wait_state();});rejects([&]{runtime.set_label("SQ_A","changed");});
+    ModelSequenceRuntime replacement(f.program(),model(),"actor",0);
+    rejects([&]{runtime=replacement;});rejects([&]{runtime=std::move(replacement);});
     check(runtime.run(456).stop==ModelSequenceStop::lua_required && runtime.lua_pending() && calls==1 &&
-        runtime.command_index()==1 && std::as_const(runtime).model().elapsed_timer==timer,
+        runtime.command_index()==1 && std::as_const(runtime).model().elapsed_timer()==timer,
         "Omitting Lua on retry abandoned its pending prefix or restarted preceding MUTEKI timing.");
     ready=true;const auto result=runtime.run(789,{},{},{},{},callback);
     check(result.stop==ModelSequenceStop::waiting && result.commands_executed==2 && !runtime.lua_pending() &&
         calls==2 && prefixes==1 && runtime.command_index()==3 && runtime.wait_state().name=="Action",
         "Successful Lua retry duplicated its prefix or failed to release ownership before the next WCHECK.");
     runtime.select("SQ_B");
-    check(runtime.run(999).stop==ModelSequenceStop::end && runtime.model().invulnerability_frames==9,
+    check(runtime.run(999).stop==ModelSequenceStop::end && runtime.model().invulnerability_frames()==9,
         "Completed Lua permanently blocked later ordinary sequence selection.");
 }
 void malformed_hitbox_and_lua() {
@@ -789,7 +1028,7 @@ void original_data(const std::filesystem::path& root) {
 }
 } // namespace
 int main(int argc,char** argv) {
-    try {command_prefix_and_branches();nullable_label_storage_and_lookup();label_list_owners_and_publication();malformed_label_lists();sequence_publishes_into_actual_model_lists();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();malformed_waits();resumable_actions();
+    try {command_prefix_and_branches();nullable_label_storage_and_lookup();canonical_sequence_fields_and_command_owners();canonical_wait_survives_work_replacement_and_move();malformed_canonical_sequence_fields();executor_lease_and_abandoned_services();label_list_owners_and_publication();malformed_label_lists();sequence_publishes_into_actual_model_lists();motion_sequence_stop();labels_jumps_and_guards();wait_assignment_and_resume();wait_selection_and_guards();local_jump_cleanup_preflight();malformed_waits();resumable_actions();
         entry_fields_and_lua_setters();hitbox_and_immediate_lua_boundaries();uncertain_lua_is_not_replayed();incomplete_lua_retains_ownership();malformed_hitbox_and_lua();malformed();
         if(argc==2)original_data(argv[1]);else if(argc!=1)throw std::runtime_error("Usage: dw4_model_sequence_tests [EXTRACTED_ROOT]");
         std::cout<<"Model sequence tests passed: "<<checks<<" checks\n";return 0;

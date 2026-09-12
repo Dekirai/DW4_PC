@@ -114,7 +114,7 @@ struct PreparedBody {
         matrix(std::make_shared<AnimationMatrix>(authored)),placement(make_model_ctrl_node2_placement(matrix)),
         old_work(std::make_shared<ModelMotionPose>(matrix)),fresh_work(std::make_shared<ModelMotionPose>(matrix)) {
         check(node->type()=="beModelCtrlNode2" && node->reference()==binding.node_reference(),"Prepared spawn setter is not bound to its concrete original node.");
-        old_work->turn={{0.25f,0.5f,0.75f},{1,2,3},{4,5,6}};old_work->position_locked=true;
+        old_work->turn()={{0.25f,0.5f,0.75f},{1,2,3},{4,5,6}};old_work->position_locked()=true;
         set_player_turn_rates(*fresh_work);
         check(placement->matrix==old_work->matrix_owner() && placement->matrix==fresh_work->matrix_owner(),
             "Retained and new work did not share actual prepared node storage.");
@@ -144,16 +144,16 @@ void query_point(ActionEventRuntime& events,std::int32_t live_ram) {
     messenger.buffer().add_matrix(selected);
 }
 void place(ActionEventRuntime& events,PreparedBody& body,const AnimationMatrix& expected) {
-    const auto before_old=body.old_work->turn,before_fresh=body.fresh_work->turn;
+    const auto before_old=body.old_work->turn(),before_fresh=body.fresh_work->turn();
     unsigned reads{};ModelPlacementInvocation placement([&]{++reads;return body.placement;});
     query_point(events,static_cast<std::int32_t>(body.binding.instance_index()));
     const auto result=placement.resume(events.messenger().buffer());
     check(result.completed && placement.published() && reads==1,"Matrix spawn did not invoke exactly the actual node setter branch.");
     check(same(*body.matrix,expected) && same(body.old_work->matrix(),expected) && same(body.fresh_work->matrix(),expected),
         "Spawn did not replace shared node storage with the original point matrix.");
-    check(body.old_work->turn==before_old && body.fresh_work->turn==before_fresh && body.old_work->position_locked && !body.fresh_work->position_locked,
+    check(body.old_work->turn()==before_old && body.fresh_work->turn()==before_fresh && body.old_work->position_locked() && !body.fresh_work->position_locked(),
         "Placement incorrectly shared or reset the separate old/new work fields.");
-    check(body.fresh_work->turn.rate==std::array<float,3>{0,7,0} && body.old_work->turn.rate==std::array<float,3>{1,2,3},
+    check(body.fresh_work->turn().rate==std::array<float,3>{0,7,0} && body.old_work->turn().rate==std::array<float,3>{1,2,3},
         "New-work player turn rates modified the retained old work.");
     check(placement.resume(events.messenger().buffer()).completed && reads==1,"Completed placement replayed its source lookup or setter.");
     check(same(authored_matrix(body.resource->document(),body.binding.node_reference()),body.authored),
@@ -173,8 +173,8 @@ void synthetic() {
     select_group(events,999);caller_packet(events,second);place(events,second,translated(101,1,0));
     check(points.saved_group()==999,"Positive fallback unexpectedly rewrote saved group state.");
     const auto retained=first.old_work;first.old_work.reset();const auto owner=retained->matrix_owner();
-    first.fresh_work->turn.desired[0]=0.125f;
-    check(retained->turn.desired[0]==0.25f && owner==first.fresh_work->matrix_owner(),"Released old-work facade lost its matrix alias or gained new turn state.");
+    first.fresh_work->turn().desired[0]=0.125f;
+    check(retained->turn().desired[0]==0.25f && owner==first.fresh_work->matrix_owner(),"Released old-work facade lost its matrix alias or gained new turn state.");
     auto candidate=*first.fresh_work;candidate.matrix()[12]=1234;
     check((*owner)[12]==110 && candidate.matrix_owner()!=owner,"A candidate mutated the live spawned node before publication.");
     *first.fresh_work=candidate;

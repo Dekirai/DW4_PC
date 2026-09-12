@@ -88,7 +88,7 @@ void start(ActionEventRuntime& runtime,ControllerObjectId id) {
     check(runtime.select_sequence(id,"SQ_BOX").complete(),"Source HITBOX sequence selection did not finish.");
     check(runtime.run_sequence(id,17).stop==ModelSequenceStop::end && runtime.subcommands(id).entries().size()==1,
         "Source HITBOX command did not append exactly one owned entry.");
-    auto state=runtime.sequence(id).model();state.bullet_hit_script="source_hit";runtime.prepare_model_state(id,std::move(state));
+    auto state=runtime.sequence(id).model();state.bullet_hit_script()="source_hit";runtime.prepare_model_state(id,std::move(state));
 }
 MessengerResult search(ActionEventRuntime& runtime,std::string category) {
     auto send=runtime.messenger().begin_send_to(std::move(category),std::nullopt,-1,"SEARCH");return runtime.resume(send);
@@ -170,14 +170,14 @@ void hit_script_then_source_script() {
             request.script_prefix=="hit" && request.event=="Hit","Target hit service lost original script, packet or bound RAM fields.");
         if(!target_ready)return std::nullopt;
         auto live=runtime.sequence(target).model();live.pose.matrix()=matrix(90,50,70);live.pose.matrix()[0]=3;live.pose.matrix()[5]=4;live.pose.matrix()[10]=5;
-        live.pose.position_locked=true;live.pose.translated=true;runtime.prepare_model_state(target,std::move(live));
+        live.pose.position_locked()=true;live.pose.translated()=true;runtime.prepare_model_state(target,std::move(live));
         ++target_effects;order.push_back("target");return std::uint8_t{1};
     }});
     ModelHitboxServices source_services;source_services.lua=[&](const ModelLuaRequest& request) {
         ++source_calls;check(request.script_prefix=="source_hit" && request.event=="BHit","Source did not receive its own BHit callback after target effects.");
         const auto& live=runtime.sequence(target).model().pose;
-        check(live.matrix()[12]==90 && live.matrix()[13]==50 && live.matrix()[14]==70 && live.position_locked && live.translated &&
-            std::abs(live.turn.desired[1]-1.5707963267948966f)<0.000001f && live.turn.applied==live.turn.desired &&
+        check(live.matrix()[12]==90 && live.matrix()[13]==50 && live.matrix()[14]==70 && live.position_locked() && live.translated() &&
+            std::abs(live.turn().desired[1]-1.5707963267948966f)<0.000001f && live.turn().applied==live.turn().desired &&
             std::abs(live.matrix()[8]-1)<0.000001f && std::abs(live.matrix()[2]+1)<0.000001f,
             "Hit response used stale post-Lua work or recomputed direction from the new target position.");
         if(!source_ready)return false;

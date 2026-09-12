@@ -57,7 +57,9 @@ class PadMotionParameters {
 public:
     using Values=std::array<float,4>;
     PadMotionParameters();
+    explicit PadMotionParameters(std::nullptr_t) : PadMotionParameters(std::shared_ptr<ModelPadMotionList>{}) {}
     explicit PadMotionParameters(std::shared_ptr<ModelPadMotionList> actual_list);
+    explicit PadMotionParameters(std::shared_ptr<std::shared_ptr<ModelPadMotionList>> actual_slot);
     // Copies detach actual list/backing values for validation. Assignments
     // publish into the destination's existing list/backing; move construction
     // transfers a binding. Assignment is not reference-field replacement.
@@ -67,8 +69,8 @@ public:
     PadMotionParameters& operator=(PadMotionParameters&&);
     PadMotionParameters detached_snapshot() const;
     void publish_snapshot(const PadMotionParameters&);
-    std::shared_ptr<ModelPadMotionList> list_owner() { return list_; }
-    std::shared_ptr<const ModelPadMotionList> list_owner() const { return list_; }
+    std::shared_ptr<ModelPadMotionList> list_owner() { return slot_ ? *slot_ : nullptr; }
+    std::shared_ptr<const ModelPadMotionList> list_owner() const { return slot_ ? *slot_ : nullptr; }
     std::int32_t size() const;
     void clear();
     // Explicit prepared contents, not the original PDMOVE command. Existing
@@ -84,36 +86,75 @@ public:
     std::array<float,2> backing_pair(bool moving) const;
     bool operator==(const PadMotionParameters&) const;
 private:
-    std::shared_ptr<ModelPadMotionList> list_;
-    // A moved-from host facade may regain detached value ownership. An
-    // explicitly supplied null original reference must remain distinguishable.
-    bool transferred_{};
+    // Null slot means a moved-from host view; a live slot containing null is
+    // the distinct original null-reference case.
+    std::shared_ptr<std::shared_ptr<ModelPadMotionList>> slot_;
     void require_owner() const;
     void prepare_storage(std::size_t size);
 };
 
+struct ModelControlFields {
+    ModelControlFields() = default;
+    ModelControlFields(std::shared_ptr<ModelPadMotionList> pad,std::shared_ptr<MotionChannelList> move)
+        : pad_motion(std::move(pad)),movement(std::move(move)) {}
+    std::int32_t mode{},phase{};
+    std::optional<std::string> bullet_hit_script,wall_hit_script,floor_hit_script;
+    std::uint8_t check_fall=1,wall_check=1,floor_check=1;
+    float invulnerability_frames{};
+    std::shared_ptr<ModelPadMotionList> pad_motion=std::make_shared<ModelPadMotionList>();
+    std::shared_ptr<MotionChannelList> movement=std::make_shared<MotionChannelList>();
+};
+// Separate RAM-owned KEIKATIMER slot, never a member of canonical model work.
+struct ModelRamTimerSlot { std::optional<MotionTimer> value; };
+
 // Owned motion/control fields for one explicitly prepared ONE model. This is
 // not the complete beModelCtrlInfoWork or original player construction routine.
 struct ModelControlState {
-    explicit ModelControlState(ModelMotionPose prepared_pose) : pose(std::move(prepared_pose)) {}
-    ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list)
-        : pose(std::move(prepared_pose)),pad_motion(std::move(actual_pad_list)) {}
+private:
+    std::shared_ptr<ModelControlFields> fields_;
+    std::shared_ptr<ModelRamTimerSlot> timer_;
+public:
+    explicit ModelControlState(ModelMotionPose prepared_pose);
+    ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list);
     ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelPadMotionList> actual_pad_list,
-        std::shared_ptr<MotionChannelList> actual_movement_list)
-        : pose(std::move(prepared_pose)),channels(std::move(actual_movement_list)),pad_motion(std::move(actual_pad_list)) {}
+        std::shared_ptr<MotionChannelList> actual_movement_list);
+    ModelControlState(ModelMotionPose prepared_pose,std::shared_ptr<ModelControlFields> fields,
+        std::shared_ptr<ModelRamTimerSlot> timer_slot);
+    ModelControlState(const ModelControlState&);
+    ModelControlState(ModelControlState&&) noexcept = default;
+    ModelControlState& operator=(const ModelControlState&);
+    ModelControlState& operator=(ModelControlState&&);
     // Member copies detach matrix/list values. Publication retains existing
     // owners; binding another actual work list uses the constructor above.
     ModelControlState detached_snapshot() const { return *this; }
     void publish_snapshot(const ModelControlState& candidate) { *this=candidate; }
     ModelMotionPose pose;
     MotionChannels channels;
-    std::optional<MotionTimer> elapsed_timer; // This RAM's named KEIKATIMER.
-    std::int32_t mode{}, phase{}; // _ctrlSt0 / _ctrlSt1, work+3C/+40.
     PadMotionParameters pad_motion; // Actual work+48 list; Stop pair, then Move pair.
-    bool check_fall = true; // _isFallCheck, work+DA; CTRL changes the flag only.
-    std::optional<std::string> bullet_hit_script,wall_hit_script,floor_hit_script; // Work+30/34/38; null differs from empty.
-    std::uint8_t wall_check=1,floor_check=1; // Work+D8/D9.
-    float invulnerability_frames{}; // Work+7C; negative persists until ordinary entry.
+    std::shared_ptr<ModelControlFields> fields_owner();
+    std::shared_ptr<const ModelControlFields> fields_owner() const;
+    std::shared_ptr<ModelRamTimerSlot> timer_slot_owner();
+    std::shared_ptr<const ModelRamTimerSlot> timer_slot_owner() const;
+    std::optional<MotionTimer>& elapsed_timer();
+    const std::optional<MotionTimer>& elapsed_timer() const;
+    std::int32_t& mode();
+    const std::int32_t& mode() const;
+    std::int32_t& phase();
+    const std::int32_t& phase() const;
+    std::optional<std::string>& bullet_hit_script();
+    const std::optional<std::string>& bullet_hit_script() const;
+    std::optional<std::string>& wall_hit_script();
+    const std::optional<std::string>& wall_hit_script() const;
+    std::optional<std::string>& floor_hit_script();
+    const std::optional<std::string>& floor_hit_script() const;
+    std::uint8_t& check_fall();
+    const std::uint8_t& check_fall() const;
+    std::uint8_t& wall_check();
+    const std::uint8_t& wall_check() const;
+    std::uint8_t& floor_check();
+    const std::uint8_t& floor_check() const;
+    float& invulnerability_frames();
+    const float& invulnerability_frames() const;
 };
 // MOVE/MOVEEX: ensure the timer, release position lock and synchronize heading,
 // then configure the channels. MUTEKI ensures that same timer, then changes

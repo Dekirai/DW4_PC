@@ -14,12 +14,20 @@ struct ModelTurn {
     std::array<float, 3> desired{}, rate{}, applied{};
     bool operator==(const ModelTurn&) const = default;
 };
+// Canonical work fields only. The actual node matrix belongs to a separate
+// node owner and is supplied when a pose view is bound.
+struct ModelMotionFields {
+    ModelTurn turn;
+    std::uint8_t translated{},position_locked{}; // Work+78/+A8; preserve raw bytes.
+    bool operator==(const ModelMotionFields&) const = default;
+};
 struct ModelMotionPose {
     using Matrix=std::array<float,16>;
     explicit ModelMotionPose(Matrix model_matrix);
     // A generated work object can share its actual node matrix with an older
     // retained work object, while its turn and control fields stay independent.
     explicit ModelMotionPose(std::shared_ptr<Matrix> node_matrix);
+    ModelMotionPose(std::shared_ptr<Matrix> node_matrix,std::shared_ptr<ModelMotionFields> fields);
     // Candidate copies are detached: failed validation must not write the live
     // node. Assignment publishes values into the destination's existing owner.
     ModelMotionPose(const ModelMotionPose&);
@@ -30,12 +38,18 @@ struct ModelMotionPose {
     const Matrix& matrix() const;
     std::shared_ptr<Matrix> matrix_owner();
     std::shared_ptr<const Matrix> matrix_owner() const;
-    ModelTurn turn;
-    bool translated{}; // Original work+78 (_isHitCheck), written by the motion tick.
-    bool position_locked{}; // Original work+A8 (_isPosLock), cleared by MOVE/MOVEEX.
+    std::shared_ptr<ModelMotionFields> fields_owner();
+    std::shared_ptr<const ModelMotionFields> fields_owner() const;
+    ModelTurn& turn();
+    const ModelTurn& turn() const;
+    std::uint8_t& translated();
+    const std::uint8_t& translated() const;
+    std::uint8_t& position_locked();
+    const std::uint8_t& position_locked() const;
     bool operator==(const ModelMotionPose&) const;
 private:
     std::shared_ptr<Matrix> matrix_;
+    std::shared_ptr<ModelMotionFields> fields_;
 };
 struct ModelMotionStep {
     MotionStep channels;
@@ -57,7 +71,7 @@ bool turn_model(ModelMotionPose& pose, MotionTimer& timer, std::uint64_t world_t
 void force_model_turn(ModelMotionPose& pose);
 // Player preparation stores (0,7,0) at 8034D788..8034D790. This only initializes
 // the turn rates; it does not allocate an original player or prepare its model.
-void set_player_turn_rates(ModelMotionPose& pose) noexcept;
+void set_player_turn_rates(ModelMotionPose& pose);
 // Transform original +Z by the model basis using the recovered FMA order, then
 // store float(atan2(forwardX,forwardZ)) in desired/applied Y. Other fields and the
 // complete matrix are preserved. Host atan2 has the same libm limit as turning.

@@ -73,10 +73,10 @@ void preparation_and_live_aliases() {
     auto a=runtime.prepare_target_script_work(first),b=runtime.prepare_target_script_work(second);
     check(a->target()==first && a->source()==source && a->name()==name && a->ram_no()==0 &&
           b->target()==second && b->ram_no()==1,"Script work lost its qualified target or actual RAM ordinal.");
-    check(a->hp && a->max_hp && a->hp!=a->max_hp && a->hp!=b->hp && a->max_hp!=b->max_hp,
+    check(a->hp() && a->max_hp() && a->hp()!=a->max_hp() && a->hp()!=b->hp() && a->max_hp()!=b->max_hp(),
         "Prepared targets shared their default HP wrappers.");
-    check(a->hp->data==0 && a->max_hp->data==0 && b->hp->data==0 && b->max_hp->data==0 &&
-          !a->hp->name && !a->max_hp->name && !b->hp->name && !b->max_hp->name && a->record==-1 && b->record==-1,
+    check(a->hp()->data==0 && a->max_hp()->data==0 && b->hp()->data==0 && b->max_hp()->data==0 &&
+          !a->hp()->name && !a->max_hp()->name && !b->hp()->name && !b->max_hp()->name && a->record()==-1 && b->record()==-1,
         "Script preparation invented player HP, names or record values.");
     check(a->matrix().get()==&runtime.sequence(first).model().pose.matrix() &&
           b->matrix().get()==&runtime.sequence(second).model().pose.matrix() && a->matrix()!=b->matrix(),
@@ -90,8 +90,98 @@ void preparation_and_live_aliases() {
         "Sequence entry invalidated the script's stable matrix owner.");
     const auto registrations=runtime.messenger().registration_count();
     rejects([&]{runtime.prepare_target_script_work(first);},"A second script work owner replaced live HP state.");
-    check(runtime.messenger().registration_count()==registrations && a->hp->data==0,
+    check(runtime.messenger().registration_count()==registrations && a->hp()->data==0,
         "Rejected script re-preparation changed registrations or live work.");
+}
+
+void canonical_factory_registration() {
+    Fixture fixture;ActionEventRuntime runtime;
+    auto work=make_model_player_work();
+    auto node=std::make_shared<AnimationMatrix>(matrix(37));
+    auto timer=std::make_shared<ModelRamTimerSlot>();
+    const auto target=runtime.register_model(fixture.binding(),work,node,timer,true);
+    check(runtime.model_work(target)==work && runtime.sequence(target).fields().get()==&work->sequence &&
+        runtime.sequence(target).model().fields_owner().get()==&work->control &&
+        runtime.sequence(target).model().pose.fields_owner().get()==&work->motion,
+        "MODELCTRL did not consume the actual factory work allocation.");
+    check(runtime.sequence(target).model().pose.matrix_owner()==node && runtime.sequence(target).model().timer_slot_owner()==timer &&
+        runtime.subcommands(target).wrapper_owner()==work->subcommands && work->sequence.wait.control_enabled==1,
+        "Registration detached the scene/timer/queue owners or applied prepared wait defaults to factory work.");
+    runtime.prepare_collision_target(target,fixture.definition(),true);
+    auto script=runtime.prepare_target_script_work(target);
+    auto status=std::make_shared<ModelStatusWork>(script,std::uint8_t{1});
+    check(script->fields_owner().get()==&work->script && status->fields_owner().get()==&work->status && work->status.is_player==1,
+        "Script/status preparation created parallel canonical field storage.");
+    work->script.hp->data=67;work->script.record=-45;
+    auto hp=runtime.messenger().begin_send_to("MODELCTRL",name,0,"GETHP");
+    check(runtime.resume(hp).stop==MessengerStop::completed && runtime.messenger().buffer().integers()==std::vector<std::int32_t>{67},
+        "The real MODELCTRL query did not read canonical factory HP.");
+    check(runtime.select_sequence(target,"SQ_WAIT").complete() && work->sequence.name=="SQ_WAIT" && work->sequence.command_data &&
+        &runtime.sequence(target).wait_state()==&work->sequence.wait,"Sequence selection did not update canonical command/wait fields.");
+    auto values=state(81);values.mode()=3;
+    runtime.prepare_model_state(target,std::move(values));
+    check(work->control.mode==3 && (*node)[12]==81 && script->hp()->data==67 && work->script.record==-45 &&
+        runtime.model_work(target)==work && runtime.sequence(target).fields().get()==&work->sequence,
+        "Prepared value publication replaced work or detached a field group.");
+    const auto previous=work->subcommands;
+    work->subcommands=std::make_shared<ModelSubcommandWrapper>();
+    runtime.messenger().select("MODELCTRL",name,0);
+    runtime.messenger().buffer().add_float(2);
+    runtime.messenger().buffer().add_string("fixture_sound");
+    auto sound=runtime.messenger().begin_send("SETSOUND");
+    check(runtime.resume(sound).stop==MessengerStop::completed && previous->list_owner()->empty() &&
+        work->subcommands->list_owner()->size()==1 && runtime.subcommands(target).wrapper_owner()==work->subcommands,
+        "MODELCTRL appended into a cached subcommand wrapper after its canonical slot changed.");
+    check(runtime.update_subcommands(target,2).stop==ModelSubcommandStop::sound_play_required,
+        "The canonical sound fixture did not retain its old update.");
+    const auto pending_wrapper=work->subcommands;
+    work->subcommands=std::make_shared<ModelSubcommandWrapper>();
+    ModelSubcommandQueue fresh_queue(work->subcommands);fresh_queue.append_sound(0,"new_sound");
+    rejects([&]{runtime.select_sequence(target,"SQ_WAIT");},"Selection bypassed an old update on another wrapper.");
+    check(!runtime.sequence(target).selection_pending() && runtime.sequence(target).current_sequence()=="SQ_WAIT" &&
+        fresh_queue.entries().size()==1 && work->control.mode==3,"Rejected cross-wrapper cleanup published sequence fields or removed fresh work.");
+    rejects([&]{runtime.resume_sequence(target);},"An old UPDATE could be resumed as a new sequence cleanup.");
+    ModelSubcommandServices finish;finish.play_sound=[](const auto&){return ModelSoundPlayResult{true,0,0};};
+    check(runtime.resume_subcommands(target,finish).complete() && pending_wrapper->list_owner()->empty() &&
+        runtime.select_sequence(target,"SQ_WAIT").complete() && fresh_queue.entries().empty(),
+        "Finishing the retained update did not permit cleanup of the actual new wrapper.");
+    work->subcommands.reset();
+    rejects([&]{runtime.select_sequence(target,"SQ_WAIT");},"Selection accepted a null actual cleanup wrapper.");
+    check(!runtime.sequence(target).selection_pending() && runtime.sequence(target).current_sequence()=="SQ_WAIT",
+        "A null cleanup wrapper left a fabricated resumable selection.");
+}
+
+void live_canonical_effect_attachment() {
+    Fixture fixture;
+    std::weak_ptr<ModelPlayerWork> weak_work;
+    std::shared_ptr<ModelSubcommandWrapper> retained_wrapper;
+    {
+        ActionEventRuntime runtime;auto work=make_model_player_work();weak_work=work;
+        const auto target=runtime.register_model(fixture.binding(),work,std::make_shared<AnimationMatrix>(matrix()),
+            std::make_shared<ModelRamTimerSlot>(),true);
+        ModelSubcommandQueue queue(work->subcommands);retained_wrapper=work->subcommands;
+        ModelEffectSubcommand effect;effect.model_name="effect";effect.sequence_name="SQ_WAIT";effect.sequence_dead=true;
+        queue.append_effect(effect);work->hit_parent_name="before_find";work->hit_parent_ram=2;
+        unsigned finds{},generates{};bool ready=false;
+        ModelSubcommandServices services;
+        services.find_effect_space=[&](const auto&) {
+            ++finds;work->hit_parent_name="after_find";work->hit_parent_ram=-7;
+            return ModelEffectSpaceResult{true,3};
+        };
+        services.generate_effect=[&](const ModelEffectGenerateRequest& request) {
+            ++generates;
+            check(request.source==ModelSubcommandOwner{name,0} && request.attachment==ModelSubcommandOwner{"after_find",-7},
+                "Effect GENERATE captured attachment before FIND_SPACE or reread it after a paused payload.");
+            return ready;
+        };
+        check(runtime.update_subcommands(target,0,services).stop==ModelSubcommandStop::effect_generate_required && finds==1 && generates==1,
+            "The canonical effect did not stop at its retained GENERATE payload.");
+        work->hit_parent_name="after_pause";work->hit_parent_ram=99;ready=true;
+        check(runtime.resume_subcommands(target,services).complete() && finds==1 && generates==2,
+            "Effect resume repeated FIND_SPACE or lost its original GENERATE payload.");
+    }
+    check(weak_work.expired() && retained_wrapper->list_owner()->size()==1,
+        "A retained subcommand context created a strong cycle back into canonical work.");
 }
 
 void supplied_scene_matrix_lifetime() {
@@ -102,7 +192,7 @@ void supplied_scene_matrix_lifetime() {
     {
         ActionEventRuntime runtime;
         ModelControlState fresh{ModelMotionPose(node)};
-        fresh.pose.turn.rate={0,7,0};
+        fresh.pose.turn().rate={0,7,0};
         check(fresh.pose.matrix_owner()==node,
             "ModelControlState construction detached its supplied scene matrix.");
         const auto target=runtime.register_model(fixture.binding(),std::move(fresh),true);
@@ -133,13 +223,13 @@ void live_signed_record() {
     auto work=runtime.prepare_target_script_work(target);
     check(!runtime.sequence(target).selected(),"Record fixture accidentally selected a sequence.");
     for(const auto value:{std::int32_t{-1},std::numeric_limits<std::int32_t>::min(),std::int32_t{0},std::numeric_limits<std::int32_t>::max()}) {
-        work->record=value;
+        work->record()=value;
         auto send=runtime.messenger().begin_send_to("MODELCTRL",name,1,"GETRECNO");
         check(runtime.resume(send).stop==MessengerStop::completed &&
               runtime.messenger().buffer().integers()==std::vector<std::int32_t>{value},
             "GETRECNO dereferenced a wrapper or changed an active model's signed record.");
     }
-    work->hp.reset();work->max_hp.reset();work->record=-900;
+    work->hp().reset();work->max_hp().reset();work->record()=-900;
     auto send=runtime.messenger().begin_send_to("MODELCTRL",name,1,"GETRECNO");
     check(runtime.resume(send).stop==MessengerStop::completed && runtime.messenger().buffer().integers()==std::vector<std::int32_t>{-900},
         "Direct record lookup incorrectly requires HP wrappers.");
@@ -149,12 +239,12 @@ void record_query_gates() {
     Fixture fixture;ActionEventRuntime runtime;
     const auto target=runtime.register_model(fixture.binding(1),state(),true);
     runtime.prepare_collision_target(target,fixture.definition(),true);
-    auto work=runtime.prepare_target_script_work(target);work->record=-401;
-    auto active=std::make_shared<std::uint8_t>(1);
+    auto work=runtime.prepare_target_script_work(target);work->record()=-401;
+    auto active=std::make_shared<std::uint8_t>(std::uint8_t{1});
     auto available=std::make_shared<bool>(true);
     runtime.prepare_model_queries(target,{{3,fixture.model},source,
         std::make_shared<std::optional<std::string>>(name),std::make_shared<std::int32_t>(1),active,available});
-    auto status=std::make_shared<ModelStatusWork>(work,1);runtime.prepare_model_status(target,status);
+    auto status=std::make_shared<ModelStatusWork>(work,std::uint8_t{1});runtime.prepare_model_status(target,status);
     status.reset(); // The original status decline requires none of these fields.
     auto query=[&](bool append) {
         auto& messenger=runtime.messenger();messenger.select("MODELCTRL",name,1);
@@ -191,8 +281,8 @@ void original_hp_query() {
     const auto target=runtime.register_model(fixture.binding(),state(),true);
     runtime.prepare_collision_target(target,fixture.definition(),true);
     auto work=runtime.prepare_target_script_work(target);
-    auto hp=work->hp,maximum=work->max_hp;hp->data=-17;maximum->data=900;
-    const auto active=std::make_shared<std::uint8_t>(255);
+    auto hp=work->hp(),maximum=work->max_hp();hp->data=-17;maximum->data=900;
+    const auto active=std::make_shared<std::uint8_t>(std::uint8_t{255});
     const auto available=std::make_shared<bool>(true);
     runtime.prepare_model_queries(target,{{3,fixture.model},source,
         std::make_shared<std::optional<std::string>>(name),std::make_shared<std::int32_t>(0),active,available});
@@ -206,13 +296,13 @@ void original_hp_query() {
         std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[2])==maximum &&
         messenger.buffer().strings()==std::vector<std::optional<std::string>>{"keep"} && messenger.buffer().enabled_only()==1,
         "GETHP copied wrappers, normalized signed HP or replaced the caller packet.");
-    work->hp=std::make_shared<GameDataInt>(GameDataInt{"HP",42});work->max_hp.reset();
+    work->hp()=std::make_shared<GameDataInt>(GameDataInt{"HP",42});work->max_hp().reset();
     call=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
     check(runtime.resume(call).stop==MessengerStop::completed && messenger.buffer().integers()==std::vector<std::int32_t>{42} &&
-        std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[0])==work->hp &&
+        std::get<std::shared_ptr<GameDataInt>>(messenger.buffer().objects()[0])==work->hp() &&
         std::holds_alternative<std::monostate>(messenger.buffer().objects()[1]),
         "GETHP cached replaced HP or refused the original nullable maximum pointer.");
-    work->hp.reset();
+    work->hp().reset();
     for(const bool missing_work:{false,true}) {
         *active=missing_work ? std::uint8_t{255}:std::uint8_t{0};*available=!missing_work;
         call=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
@@ -237,28 +327,28 @@ void original_status_dispatch() {
     const auto target=runtime.register_model(fixture.binding(),state(),false);
     runtime.prepare_collision_target(target,fixture.definition(),true);
     const auto work=runtime.prepare_target_script_work(target);
-    const auto active=std::make_shared<std::uint8_t>(0);
+    const auto active=std::make_shared<std::uint8_t>(std::uint8_t{0});
     const auto available=std::make_shared<bool>(true);
     runtime.prepare_model_queries(target,{{3,fixture.model},source,std::make_shared<std::optional<std::string>>(name),
         std::make_shared<std::int32_t>(0),active,available});
     runtime.register_player(target);
-    const auto status=std::make_shared<ModelStatusWork>(work,1);
+    const auto status=std::make_shared<ModelStatusWork>(work,std::uint8_t{1});
     runtime.prepare_model_status(target,status);
     rejects([&]{runtime.prepare_model_status(target,status);},"Published status work was replaced.");
     auto& messenger=runtime.messenger();auto hp=messenger.begin_send_to("MODELCTRL",name,0,"GETHP");
-    check(runtime.resume(hp).stop==MessengerStop::completed && !status->display_ram_numbers &&
+    check(runtime.resume(hp).stop==MessengerStop::completed && !status->display_ram_numbers() &&
         messenger.buffer().integers()==std::vector<std::int32_t>{0},"Unknown status command allocated lists or bypassed the generic active gate.");
     unsigned requests{};
     const auto outer_row=data.player(0),inner_row=data.player(1);
     const auto provider=ControllerObjectId::allocate_native();
-    runtime.register_native_controller(provider,{[]{return std::optional<std::uint8_t>{1};},[&] {
+    runtime.register_native_controller(provider,{[]{return std::optional<std::uint8_t>{std::uint8_t{1}};},[&] {
         return MessengerManager{[&,nested=std::shared_ptr<MessengerDispatch>{}](NativeMessenger& native,const MessengerDelivery& delivery) mutable {
             check(delivery.message.command=="GETPLAYER" && native.buffer().integers()==std::vector<std::int32_t>{0},
                 "SETMETAL used the routing key instead of the actual live player RAM field.");
             ++requests;
             if(requests==1) {
                 native.push_buffer();native.select("PLAYER",name,0);nested=std::make_shared<MessengerDispatch>(native.begin_send("SETMETAL"));
-                check(runtime.resume(*nested).stop==MessengerStop::completed && status->down_data==inner_row->require<GameDataIntList>("DOWNDATA")->data,
+                check(runtime.resume(*nested).stop==MessengerStop::completed && status->down_data()==inner_row->require<GameDataIntList>("DOWNDATA")->data,
                     "Nested same-model status invocation reused its parent's continuation.");
                 native.pop_buffer();native.buffer().add_data_list(outer_row);
             } else native.buffer().add_data_list(inner_row);
@@ -267,13 +357,13 @@ void original_status_dispatch() {
     }},"GAMERAM","game",0);
     messenger.select("PLAYER",name,0);messenger.buffer().add_string("parent");const auto packet=messenger.buffer_owner();
     auto metal=messenger.begin_send("SETMETAL");
-    check(runtime.resume(metal).stop==MessengerStop::completed && requests==2 && status->timers->at(7)==1 && status->first_flags->at(7)==1 &&
-        status->down_data==outer_row->require<GameDataIntList>("DOWNDATA")->data && messenger.buffer_owner()==packet &&
+    check(runtime.resume(metal).stop==MessengerStop::completed && requests==2 && status->timers()->at(7)==1 && status->first_flags()->at(7)==1 &&
+        status->down_data()==outer_row->require<GameDataIntList>("DOWNDATA")->data && messenger.buffer_owner()==packet &&
         messenger.buffer_depth()==0 && messenger.buffer().strings()==std::vector<std::optional<std::string>>{"parent"},
         "Status virtual applied an inactive gate or lost the outer fresh-row publication/packet after nesting.");
-    *available=false;status->timers->at(7)=99;
+    *available=false;status->timers()->at(7)=99;
     metal=messenger.begin_send_to("MODELCTRL",name,0,"SETMETAL");
-    check(runtime.resume(metal).stop==MessengerStop::completed && status->timers->at(7)==99 && requests==2,
+    check(runtime.resume(metal).stop==MessengerStop::completed && status->timers()->at(7)==99 && requests==2,
         "Null actual base work mutated a retained status allocation.");
 }
 
@@ -286,8 +376,8 @@ void abandoned_status_continuations() {
             runtime.prepare_collision_target(target,fixture.definition(),true);
             auto work=runtime.prepare_target_script_work(target);weak=work;
             runtime.prepare_model_queries(target,{{3,fixture.model},source,std::make_shared<std::optional<std::string>>(name),
-                std::make_shared<std::int32_t>(0),std::make_shared<std::uint8_t>(1),std::make_shared<bool>(true)});
-            auto status=std::make_shared<ModelStatusWork>(work,1);
+                std::make_shared<std::int32_t>(0),std::make_shared<std::uint8_t>(std::uint8_t{1}),std::make_shared<bool>(true)});
+            auto status=std::make_shared<ModelStatusWork>(work,std::uint8_t{1});
             if(prepared)runtime.prepare_model_status(target,status);
             // Explicit synthetic self-recipient routing exercises ownership;
             // this is not an assertion about the original asset registrations.
@@ -306,20 +396,20 @@ void live_hp_presence_gate() {
     auto work=runtime.prepare_target_script_work(target);
     check(runtime.select_sequence(target,"SQ_WAIT").complete(),"Collision target sequence preparation failed.");
     runtime.prepare_wait_state(target,{std::nullopt,1,0,0});
-    auto live=runtime.sequence(target).model();live.invulnerability_frames=5;runtime.prepare_model_state(target,std::move(live));
+    auto live=runtime.sequence(target).model();live.invulnerability_frames()=5;runtime.prepare_model_state(target,std::move(live));
     unsigned time_calls{};runtime.set_collision_services({[&]{++time_calls;return std::optional<std::uint64_t>{1};},{}});
-    work->hp.reset();auto absent=collision_send(runtime);
+    work->hp().reset();auto absent=collision_send(runtime);
     check(runtime.resume(absent).stop==MessengerStop::completed && time_calls==0 && !runtime.collision_target(target).body().initialized(),
         "Collision gate used stale prepared HP presence after the live wrapper was cleared.");
     check(runtime.messenger().buffer().booleans().empty(),"HP-gated collision invented a hit boolean.");
-    work->hp=std::make_shared<ModelScriptInt>();auto present=collision_send(runtime);
+    work->hp()=std::make_shared<ModelScriptInt>();auto present=collision_send(runtime);
     check(runtime.resume(present).stop==MessengerStop::completed && time_calls==1 && runtime.collision_target(target).body().initialized(),
         "A present zero-HP wrapper failed the original pointer-presence gate.");
     check(runtime.messenger().buffer().booleans().empty(),"Separated body boxes fabricated collision success.");
-    work->hp.reset();auto absent_again=collision_send(runtime);
+    work->hp().reset();auto absent_again=collision_send(runtime);
     check(runtime.resume(absent_again).stop==MessengerStop::completed && time_calls==1,
         "Collision retained HP presence across distinct deliveries.");
-    live=runtime.sequence(target).model();live.invulnerability_frames=0;runtime.prepare_model_state(target,std::move(live));
+    live=runtime.sequence(target).model();live.invulnerability_frames()=0;runtime.prepare_model_state(target,std::move(live));
     auto vulnerable=collision_send(runtime);
     check(runtime.resume(vulnerable).stop==MessengerStop::completed && time_calls==2,
         "Null HP incorrectly blocked the ordinary zero-invulnerability path.");
@@ -344,7 +434,7 @@ void expiration_and_lifetime() {
         ActionEventRuntime runtime;const auto target=runtime.register_model(fixture.binding(),state(31),true);
         runtime.prepare_collision_target(target,fixture.definition(),true);retained=runtime.prepare_target_script_work(target);
     }
-    check((*retained->matrix())[12]==31 && retained->record==-1,"External script work did not retain its live matrix backing owner.");
+    check((*retained->matrix())[12]==31 && retained->record()==-1,"External script work did not retain its live matrix backing owner.");
     (*retained->matrix())[12]=42;check((*retained->matrix())[12]==42,"Retained matrix backing became unusable after runtime destruction.");
     std::weak_ptr<ModelScriptWork> weak=retained;retained.reset();
     check(weak.expired(),"Released external work left a strong Model/script ownership cycle.");
@@ -357,10 +447,10 @@ void retained_collision_script_glue() {
     ActionEventRuntime events;
     const auto source_id=events.register_model(decode_player_runtime_binding(source_doc,source_fixture.runtime_request(),"synthetic/source.igb",4),state(4),true);
     events.prepare_collision_target(source_id,decode_model_hit_body(source_doc,source_fixture.model,"synthetic/source.igb",4),true);
-    auto source_work=events.prepare_target_script_work(source_id);source_work->record=-700;
+    auto source_work=events.prepare_target_script_work(source_id);source_work->record()=-700;
     const auto target=events.register_model(fixture.binding(1),state(),true);
     events.prepare_collision_target(target,fixture.definition(),true);
-    auto target_work=events.prepare_target_script_work(target);target_work->hp->data=50;target_work->max_hp->data=100;
+    auto target_work=events.prepare_target_script_work(target);target_work->hp()->data=50;target_work->max_hp()->data=100;
     check(events.select_sequence(target,"SQ_WAIT").complete(),"Script glue target selection failed.");
     events.prepare_wait_state(target,{std::nullopt,1,0,0});
     ModelScriptRuntime scripts{ScriptRegistry{}};scripts.register_work(target_work);
@@ -392,13 +482,13 @@ void retained_collision_script_glue() {
     check(events.resume(send).stop==MessengerStop::service_required && scripts.pending() &&
           events.collision_target(target).result().stop==ModelCollisionStop::hit_script_required && calls==1 && prefixes==1,
         "Collision script service did not retain its incomplete nested prefix.");
-    check(target_work->hp->data==50 && events.sequence(target).model().pose.matrix()[12]==15,
+    check(target_work->hp()->data==50 && events.sequence(target).model().pose.matrix()[12]==15,
         "Pending script prematurely merged HP or lost its already committed matrix write.");
     rejects([&]{events.messenger();},"Pending script exposed its nested messenger buffer.");
-    source_work->record=-701;ready=true;
+    source_work->record()=-701;ready=true;
     check(events.resume(send).stop==MessengerStop::completed && !scripts.pending() && !scripts.faulted() && calls==2 && prefixes==1,
         "Collision retry replayed a script prefix or failed to finish the retained invocation.");
-    check(target_work->hp->data==43 && events.sequence(target).model().pose.matrix()[12]==15 &&
+    check(target_work->hp()->data==43 && events.sequence(target).model().pose.matrix()[12]==15 &&
           events.messenger().buffer().booleans()==std::vector<std::uint8_t>{1} && events.messenger().buffer_depth()==0,
         "Completed script did not merge HP, honor direction zero or restore the parent collision buffer.");
     auto record=events.messenger().begin_send_to("MODELCTRL","e_fixture",0,"GETRECNO");
@@ -415,7 +505,7 @@ void retained_collision_script_glue() {
     const auto inactive_result=events.resume(inactive_source);
     check(inactive_result.stop==MessengerStop::completed,
         ("The inactive-source collision did not complete its record-query gate: "+inactive_result.diagnostic).c_str());
-    check(calls==2 && prefixes==1 && target_work->hp->data==43 && !scripts.pending(),
+    check(calls==2 && prefixes==1 && target_work->hp()->data==43 && !scripts.pending(),
         "An inactive source supplied a record and incorrectly ran the target hit script.");
     check(events.messenger().buffer_depth()==0 && events.collision_target(target).result().body_ordinal==0 &&
         events.messenger().buffer().booleans()==std::vector<std::uint8_t>{1},
@@ -424,7 +514,7 @@ void retained_collision_script_glue() {
 } // namespace
 int main() {
     try {
-        preparation_and_live_aliases();supplied_scene_matrix_lifetime();live_signed_record();record_query_gates();original_hp_query();original_status_dispatch();abandoned_status_continuations();
+        preparation_and_live_aliases();canonical_factory_registration();live_canonical_effect_attachment();supplied_scene_matrix_lifetime();live_signed_record();record_query_gates();original_hp_query();original_status_dispatch();abandoned_status_continuations();
         live_hp_presence_gate();expiration_and_lifetime();retained_collision_script_glue();
         std::cout<<"action_event_script_work: "<<checks<<" checks passed\n";return 0;
     } catch(const std::exception& error) {

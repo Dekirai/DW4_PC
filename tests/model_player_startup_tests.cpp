@@ -21,7 +21,7 @@ ModelPlayerMapRules maps() {return {{"metal0","metal1","metal2","metal3","both"}
 using Hook=std::function<MessengerCallResult(NativeMessenger&,const MessengerDelivery&)>;
 void provider(ActionEventRuntime& events,std::string category,std::string name,int index,Hook hook) {
     events.register_native_controller(ControllerObjectId::allocate_native(),{
-        []()->std::optional<std::uint8_t>{return 1;},[hook=std::move(hook)]{return MessengerManager{hook,{}};}},
+        []()->std::optional<std::uint8_t>{return std::uint8_t{1};},[hook=std::move(hook)]{return MessengerManager{hook,{}};}},
         std::move(category),std::move(name),index);
 }
 struct Fixture {
@@ -55,7 +55,7 @@ const ModelPlayerClock clock=[] {return std::uint64_t{100};};
 
 void ordered_retained_sends() {
     Fixture f;f.current_map=std::make_shared<const std::string>("both");const auto old_map=f.current_map;
-    const auto old_work=f.owner.work;const auto old_hp=old_work->hp;
+    const auto old_work=f.owner.work;const auto old_hp=old_work->hp();
     std::array<unsigned,6> calls{};
     const std::array<std::string,5> names{"lvnm","hpmt","hpnm","mpmt","mpnm"};
     const std::array<int,5> indices{0,1,2,3,0};
@@ -102,17 +102,17 @@ void ordered_retained_sends() {
         "Prepared original caller did not return after its map tail.");
     check(trace==std::vector<std::string>{"lvnm","hpmt","hpnm","mpmt","mpnm","metal"} &&
         std::all_of(calls.begin(),calls.end(),[](auto n){return n==2;}) && f.recalculations==1,"Startup replayed or reordered committed sends.");
-    check(startup.captured_map()==old_map && f.map_reads==1 && old_work->original_is_main_lobby==1 &&
-        !f.owner.work->original_is_main_lobby && startup.prefix().row()==f.row && f.row!=f.data.player(0),
+    check(startup.captured_map()==old_map && f.map_reads==1 && old_work->original_is_main_lobby()==1 &&
+        !f.owner.work->original_is_main_lobby() && startup.prefix().row()==f.row && f.row!=f.data.player(0),
         "Startup retargeted its captured map, ONE or player row after callbacks.");
-    check(old_work->hp==f.row->require<GameDataInt>("HP") && old_work->hp!=old_hp,"Startup did not retain its original HP binding.");
+    check(old_work->hp()==f.row->require<GameDataInt>("HP") && old_work->hp()!=old_hp,"Startup did not retain its original HP binding.");
     check(startup.resume(messenger,f.events,clock,f.reader()).stop==ModelPlayerStartupStop::completed && f.recalculations==1 && f.map_reads==1,
         "Completed caller repeated effects.");
 }
 
 void map_rules_and_preconditions() {
     for(const auto& map:std::vector<std::string>{"ordinary","metal0","metal1","metal2","metal3","both","lobby0","lobby1","lobby2","METAL0",""}) {
-        Fixture f;f.ui();f.current_map=std::make_shared<const std::string>(map);f.owner.work->original_is_main_lobby=255;
+        Fixture f;f.ui();f.current_map=std::make_shared<const std::string>(map);f.owner.work->original_is_main_lobby()=std::uint8_t{255};
         unsigned metal{};provider(f.events,"PLAYER","player",0,[&](NativeMessenger&,const MessengerDelivery&){++metal;return MessengerCallResult{true,1,{}};});
         ModelPlayerStartup startup(f.owner,f.row,defaults(),maps());auto& messenger=f.events.messenger();
         check(startup.resume(messenger,f.events,clock).stop==ModelPlayerStartupStop::map_context_required && f.recalculations==1 &&
@@ -124,7 +124,7 @@ void map_rules_and_preconditions() {
             "Rejected preflight poisoned the actual continuation.");
         const auto rules=maps();const bool is_metal=std::find(rules.metal().begin(),rules.metal().end(),map)!=rules.metal().end();
         const bool lobby=std::find(rules.main_lobby().begin(),rules.main_lobby().end(),map)!=rules.main_lobby().end();
-        check(metal==unsigned(is_metal) && f.owner.work->original_is_main_lobby==(lobby?1:255),
+        check(metal==unsigned(is_metal) && f.owner.work->original_is_main_lobby()==(lobby?1:255),
             "Map comparison was case-insensitive or overwrote a nonmatching existing lobby byte.");
     }
     Fixture f;f.ui();ModelPlayerStartup startup(f.owner,f.row,defaults(),maps());auto& messenger=f.events.messenger();

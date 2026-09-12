@@ -68,9 +68,61 @@ then applies existing channel stops (`8030E9DC..8030EA74`). Missing complete
 player entry/status callbacks remain separate from these owned field effects.
 
 An immutable `ModelSequenceProgram` owns the source label and decoded records.
-Runtime copies share that immutable program and independently own model control,
-label selections/cache, current sequence, command cursor and LABEL count.
 The original IGB document can be destroyed without invalidating the program.
+Version 0.38 binds the runner to shared `ModelSequenceFields`, which contain the
+actual nullable sequence name (`+14`), command-data reference (`+18`), signed
+command index and LABEL count (`+1C/+20`), label fields and wait/player state.
+There is no separate authoritative runtime index, cursor, label count or wait
+copy. Inspection reads the canonical fields, including negative signed values;
+null and empty names remain distinct even though `current_sequence()` exposes
+both as an empty string view.
+
+The retaining constructor accepts a shared immutable program, prepared model
+view, info name, RAM number and shared sequence fields. A complete work owner
+can embed the sequence fields and supply an aliasing shared pointer to them.
+The host label-field group is a separate owned allocation with three initially
+null list references; it never points back to the complete work. Existing
+value-program and label-only constructors retain their prepared APIs.
+
+Selection stores an aliasing `shared_ptr<const ModelSequenceData>` into the
+actual immutable program allocation. This retains both the data record and its
+source provenance after the facade or original IGB document is destroyed.
+The runner checks that its live command-data pointer and shared ownership both
+belong to that exact program. An equal-looking copied record or another program
+with the same source text/reference numbers is not accepted as the owner. The
+nullable sequence name is a separate original field and is not regenerated from
+the selected data name. Negative or out-of-range command indices stop before an
+unsafe command read; the exact end index completes. Cursor increments retain
+original 32-bit wrapping if a callback changes the live signed value, followed
+by the next checked access. A nonzero signed LABEL count keeps its boundary.
+
+Prepared runtime copies share immutable program/data owners and detach mutable
+sequence, label, wait and model values. Assignment publishes into the existing
+destination field/list allocations, keeping the wait object's address stable.
+Publication cannot abandon an executing, pending or faulted destination facade.
+Move construction transfers that same binding and rejects a currently executing
+facade. Each field generation has one executor, enforced by a private weak lease
+in host metadata and a strong lease held only by its facade. A second binding
+is rejected. The fields cannot themselves be copied or moved; prepared runtime
+copies explicitly detach guest values. Copying an executing, pending or faulted
+facade creates an inspection-only snapshot whose execution/mutation is blocked.
+Only moving the original facade transfers its resumable continuation.
+
+Pending ACTION, HITBOX, Lua and jump-cleanup state belongs to that executor,
+outside canonical guest fields. The pending marker starts only when a callback
+is invoked; a never-supplied service creates no external prefix. False results
+and ACTION/HITBOX exceptions retain their existing retry boundary. Destroying
+an executing, pending-selection, pending-external or faulted executor marks its
+field generation unavailable; expired weak ownership cannot then revive a
+possibly completed external prefix. No external cleanup runs on destruction.
+A completed healthy executor may release its lease and permit later binding;
+an ordinary wait name without a pending external pass does not poison it.
+A caller must retain the generation/facade together with its separate wait
+resolver while that resolver has an external pass in progress.
+Replacing ONE's work reference leaves the retained old generation intact. Its
+`ModelWaitRuntime` can therefore keep the same raw state pointer through work
+replacement and facade move, while a fresh generation has independent wait and
+command fields. Neither field group caches a strong pointer back to its facade.
 
 Version 0.37 stores labels in the actual three nullable work references:
 `ModelSequenceLabelFields::sequences`, `names` and `offsets`. Their ordered list
@@ -127,6 +179,14 @@ visible. A retry without that required hook stays suspended. Version 0.26 also
 applies the post-cleanup callback-prefix, wall/floor and invulnerability resets
 described above. Player virtual entry/status callbacks remain separate. See
 [ACTION_EVENT_RUNTIME.md](ACTION_EVENT_RUNTIME.md).
+
+The optional pure `run` cleanup preflight validates the actual cleanup owner
+immediately before a visited local JUMP publishes its destination. It therefore
+sees reference-slot changes made by earlier ACTION commands in that same run.
+A rejection leaves the cursor at JUMP and preserves the completed command prefix,
+without publishing a pending selection that would prevent the old update from
+resuming. Unvisited/nonlocal jumps and retries of an already-entered cleanup do
+not call this validation.
 
 This is **not complete sequence entry**. The sequence owner requires its caller
 to perform original subcommand cleanup; the integrated event runtime supplies
@@ -205,13 +265,18 @@ before replacing the preview's direct clip selection.
 
 ## Validation
 
-- **230 asset-free checks** exercise ordered ownership, inherited SEQ fields,
+- **440 asset-free checks** exercise ordered ownership, inherited SEQ fields,
   label caching, weapon barriers, nested jumps, explicit unsupported/action
   boundaries, WCHECK, HITBOX/MUTEKI fields, Lua suspension/fault ownership,
-  failed/reentrant callbacks, sequence-stop fields and input budgets.
+  failed/reentrant callbacks, sequence-stop fields and input budgets. Canonical
+  field tests include actual data/source ownership, live signed fields, detached
+  publication, pending assignment rejection and retained wait continuation
+  through work replacement and facade move. Executor-lease checks reject second
+  bindings and copied/abandoned ACTION, HITBOX, Lua and cleanup continuations,
+  while allowing completed healthy generations to bind again.
 - **884 additional original-data checks** cover all 259 WCHECK, 352 HITBOX and
   62 MUTEKI occurrences, both groups/all four entry matrices and all four Agumon
-  weapon sections, for **1,114 checks** with assets. Original WAIT/WALK lists request the
+  weapon sections, for **1,324 checks** with assets. Original WAIT/WALK lists request the
   matching actions and retain approximately 8.275 local travel over 18 Move and
   six Stop updates at explicitly cached delta 1. A supplied recording service
   validates ACTION requests, not animation playback or full player construction.

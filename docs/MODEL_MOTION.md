@@ -27,9 +27,10 @@ links Dolphin nor executes the DOL. Original code/data dumps stay outside Git.
 | `80128CF4 / 80128DC8` | Matrix copy and local translation |
 | `8012F57C`, initialization pointer `80412E74` | Initialize the matrix helpers' global vectors |
 
-`ModelTurn` owns desired angles, per-axis rates and applied angles, corresponding
-to work offsets `80/84/88`, `8C/90/94` and `98/9C/A0`. `ModelMotionPose` owns the
-model matrix and motion-written `_isHitCheck` flag (`78`, exposed as `translated`). Its constructor requires an explicit
+`ModelTurn` stores desired angles, per-axis rates and applied angles, corresponding
+to work offsets `80/84/88`, `8C/90/94` and `98/9C/A0`. `ModelMotionFields` stores
+that turn state and the raw `_isHitCheck` / `_isPosLock` bytes at `78/A8`.
+`ModelMotionPose` binds these fields and a separate actual node matrix. Its constructor requires an explicit
 matrix. The caller must prepare matching angle/rate state; zero-initialized
 fields do not establish the original spawn or player defaults. The original
 matrix path reaches the model through the RAM dictionary's `ONE` record. Named
@@ -55,6 +56,17 @@ the entire controller through a matrix alias. This establishes node lifetime,
 not full generation replacement: paused wait/collision callbacks still need
 their old enclosing work owners retained at stable addresses. Replace a work
 owner to create a new generation; assigning a pose only publishes its values.
+
+Version 0.38 also accepts a shared `ModelMotionFields` owner, including an alias
+into one enclosing player-work allocation. `turn()`, `translated()` and
+`position_locked()` access those exact fields; they do not consult shadow values.
+The flag accessors preserve all eight bits, including values other than zero and
+one. Const poses expose const values and const field/matrix owners. A detached
+copy duplicates both owners; assignment retains both destination allocations.
+Two work generations may therefore share the actual node matrix while retaining
+independent turn fields and raw flags. The matrix and field owners must both be
+supplied; a missing owner is a checked boundary. This binding does not execute
+the original player factory or install a replacement into `ONE`.
 
 ## Turning rules
 
@@ -177,13 +189,16 @@ attachment branches and subsequent collision/controller work remain pending.
 
 ## Validation
 
-- **111 asset-free checks** cover wrap/arc boundaries, signed steps, raw force
+- **138 asset-free checks** cover wrap/arc boundaries, signed steps, raw force
   angles, ignored dependencies, timer side effects, matrix reset and source
   position, negative zero, combined update order, independent model ownership,
   non-finite failure atomicity and exact batching of long accumulated angles.
   Euler cases add signed tiny trig results, exact minimum-normal survival,
   product flushing before rounding, intermediate-product flushing, unchanged
   scalar translation words and shared timer-free/timer-bearing force behavior.
+  Ownership checks cover canonical field aliases, raw flags, separate node/work
+  generations, detached copies, publication into retained allocations,
+  moved-from restoration, const access and owner release.
 - **4,932 local raw Euler comparisons** run `80129134/801292D4` and translation
   restoration `80128D90` with exact integer NI arithmetic. All 4,914 accepted
   matrices match in 78,624 output words; 18 nonfinite used-input cases reject.
@@ -205,7 +220,7 @@ Both local oracle runners were relinked against the final Release
 `dw4_core.lib` after the NI correction. The Euler and older normal-domain
 turn/tick comparisons both passed with zero mismatches; their local logs are
 `work/v27-euler-final-core.log` and `work/v27-model-normal-final-core.log`.
-The final linked test executable passes 133 checks when the 22 original-data
+The current test executable passes 160 checks when the 22 original-data
 checks are included. The ignored Euler reference/report are
 `work/v27-euler-ni-oracle.py` and `work/v27-euler-ni-oracle.json`; the old
 regression is invoked through `work/v27-model-normal-regression.py`.

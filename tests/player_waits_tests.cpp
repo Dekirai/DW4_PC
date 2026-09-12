@@ -159,7 +159,7 @@ void retained_action_services_and_time() {
     check(result.stop==ModelSequenceStop::action_required && events.last_action_result(id)->stop==ActionStop::random_required &&
         events.sequence(id).command_index()==1 && action->command_index()==2 && services.random_lower==1 && prefix_calls==0,
         "Random service boundary lost the name[3]=='S' lower-bound setter or replayed the sequence prefix.");
-    const auto fade=action->timers().at("FADE");const auto motion=events.sequence(id).model().elapsed_timer;
+    const auto fade=action->timers().at("FADE");const auto motion=events.sequence(id).model().elapsed_timer();
     rejects([&]{events.run_sequence(id,started);},"Generic sequence execution bypassed a suspended live ACTION owner.");
     auto foreign_sources=sources;
     rejects([&]{events.run_action_sequence(id,foreign_sources,started,services);},"A copied source runtime replaced a retained invocation owner.");
@@ -171,7 +171,7 @@ void retained_action_services_and_time() {
         action->command_index()==3 && random_calls==1 && prefix_calls==1 && tail_calls==1,
         "ACTION resume did not reach its broadcast once after the missing random source arrived.");
     check(action->timers().at("WAIT").saved_world_time==started && action->timers().at("WAIT").end_time==16666667 &&
-        action->timers().at("FADE")==fade && events.sequence(id).model().elapsed_timer==motion,
+        action->timers().at("FADE")==fade && events.sequence(id).model().elapsed_timer()==motion,
         "Resumed ACTION used retry time, lost the shared random lower bound or restarted completed timers.");
     available=true;result=events.run_action_sequence(id,sources,started+19000000000,services);
     check(result.stop==ModelSequenceStop::waiting && events.sequence(id).command_index()==3 &&

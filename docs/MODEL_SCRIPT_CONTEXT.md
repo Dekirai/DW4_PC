@@ -22,7 +22,7 @@ Null and empty names remain distinct.
 
 Work registration `802C6D18` makes `_mHp` at08 and `_hp` at0C references to that
 type and enables automatic creation for each. `8006A618` performs the two
-separate factory calls. `ModelScriptWork` therefore starts with two distinct
+separate factory calls. Prepared `ModelScriptFields` therefore starts with two distinct
 zero-data shared objects. Work `_recNo` at10 is a signed scalar with explicit
 default-1 (`802C6DAC..6DB0`), not another object reference.
 
@@ -30,12 +30,35 @@ Actual player preparation obtains existing `HP` and `MHP` objects from the
 `GAMERAM/GETPLAYER` result and retains those references in work at
 `8034D998..8034DA24`. A native owner must share those objects, because writes
 through model work also affect their GAMERAM owner. The module allows explicit
-replacement of `work.hp` and `work.max_hp`; it never copies their data into
+replacement through `work.hp()` and `work.max_hp()`; it never copies their data into
 detached replacement objects implicitly. The original zero-HP preparation
 branch also copies MMP into MP. `bind_model_game_data` now implements that
 post-GETPLAYER prefix against the actual captured row, including retained old
 rows after reset. See [GAME_DATA.md](GAME_DATA.md). Complete player preparation
 remains outside this module; zero factory data is not evidence of playable initial HP.
+
+`ModelScriptWork` is a retaining facade over `ModelScriptFields`: the HP/MHP
+reference fields, signed record and prepared optional lobby byte have exactly
+one storage location. Supplying the field-group constructor retains that actual
+group, including an aliasing shared pointer into a containing player-work
+generation. The compatible prepared constructor creates its own group. Its
+lobby byte remains unknown until supplied; a complete factory explicitly sets
+known zero. Binding a supplied group never fills missing HP wrappers.
+
+Mutable `hp()`, `max_hp()`, `record()` and `original_is_main_lobby()` access the
+canonical fields. Const facade access returns const scalars and const wrapper
+owners. `fields_owner()` exposes the retained group. An optional canonical
+`ModelStatusFields` anchor is retained separately and exposed through
+`status_fields_owner()`; it contains no status facade or back-reference.
+This lets an existing prepared status constructor reuse the same generation's
+fields without allocating a second mutable status group.
+
+Replacing a current work reference does not redirect an existing facade or
+invocation. A paused script retains its captured field group and reloads the
+HP reference from that group at completion, even if another view replaced that
+reference. Another generation sharing the same node matrix still owns its own
+HP/MHP and scalar fields. The group holds no script facade or invocation, so
+retention ends when the actual consumers release their captures.
 
 `ModelScriptWork` has immutable qualified target identity, source path, model
 name, RAM number and matrix attachment. The matrix is a
@@ -131,11 +154,14 @@ not those missing native effects.
 
 ## Verification
 
-Synthetic tests cover distinct default objects, signed record defaults,
+The synthetic suite has 93 checks covering distinct default objects, signed record defaults,
 qualified argument rejection, null/empty names, exact retained requests,
 shared GAMERAM HP identity, live aliasing matrix lifetime, missing/false service
 retries, current HP replacement and direct mutation, nested shared-context
 overwrite, LIFO completion, depth limits, abandoned handles and uncertain
-exceptions. They verify the represented native lifecycle against recovered
+exceptions. Canonical-owner checks additionally cover const access, group aliases,
+live reference replacement through another facade, preserved entry scalars,
+null wrapper rejection, old/fresh generation separation and cycle-free release.
+They verify the represented native lifecycle against recovered
 instruction order; they do not claim execution of the original player
 constructor, complete target script or combat system.

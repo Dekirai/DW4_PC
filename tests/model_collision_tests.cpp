@@ -98,32 +98,32 @@ struct Target {
 };
 void lazy_gates() {
     for(const auto name:{"enemy","P_target",""}) {
-        Target target(name);target.state.invulnerability_frames=1;
+        Target target(name);target.state.invulnerability_frames()=1;
         check(target.handle().complete() && !target.runtime.body().initialized() && target.messenger.buffer().booleans().empty(),
             "Non-player invulnerable target must return before reading missing source or incoming arguments");
     }
     for(const auto source:{"enemy","P_source",""})for(const float frames:{1.f,-1.f}) {
-        Target target;target.state.invulnerability_frames=frames;target.messenger.buffer().add_string(source);
+        Target target;target.state.invulnerability_frames()=frames;target.messenger.buffer().add_string(source);
         check(target.handle().complete() && !target.runtime.body().initialized(),"Invulnerability exception requires exact lowercase p on both names");
     }
-    Target missing_hp;missing_hp.state.invulnerability_frames=2;missing_hp.work.hp_reference_present=false;
+    Target missing_hp;missing_hp.state.invulnerability_frames()=2;missing_hp.work.hp_reference_present=false;
     missing_hp.messenger.buffer().add_string("p_source");
     check(missing_hp.handle().complete() && !missing_hp.runtime.body().initialized(),"Invulnerability exception requires the actual HP reference");
     for(const float frames:{0.f,-0.f})for(const std::uint8_t enabled:{std::uint8_t{0},std::uint8_t{2}}) {
-        Target target;target.state.invulnerability_frames=frames;target.work.control_enabled=enabled;
+        Target target;target.state.invulnerability_frames()=frames;target.work.control_enabled=enabled;
         target.work.current_sequence=enabled ? std::optional<std::string_view>{"SQ_ERAS"} : std::nullopt;
         check(target.handle().complete() && !target.runtime.body().initialized(),"Zero signs bypass invulnerability, then control/erase gate before arguments");
     }
-    Target exception;exception.packet();exception.state.invulnerability_frames=3;exception.work.control_enabled=2;
+    Target exception;exception.packet();exception.state.invulnerability_frames()=3;exception.work.control_enabled=2;
     exception.work.current_sequence="SQ_ERAS2";exception.services.system_time={};
     check(exception.handle().stop==ModelCollisionStop::system_time_required && exception.runtime.pending() && !exception.runtime.body().initialized(),
         "Player/HP exception or SQ_ERAS2 was incorrectly treated as an early return");
-    Target null_source;null_source.state.invulnerability_frames=1;null_source.messenger.buffer().add_string(std::nullopt);
+    Target null_source;null_source.state.invulnerability_frames()=1;null_source.messenger.buffer().add_string(std::nullopt);
     rejects([&]{null_source.handle();},"A read null source name must stop at the checked packet boundary");
     check(null_source.runtime.faulted(),"A fault after gate evaluation must prohibit uncertain replay");
     Target null_sequence;null_sequence.work.current_sequence={};
     rejects([&]{null_sequence.handle();},"Enabled work requires its real current sequence name");
-    Target invalid;invalid.state.invulnerability_frames=std::numeric_limits<float>::quiet_NaN();invalid.work.control_enabled=0;
+    Target invalid;invalid.state.invulnerability_frames()=std::numeric_limits<float>::quiet_NaN();invalid.work.control_enabled=0;
     rejects([&]{invalid.handle();},"Nonfinite invulnerability must reject before the control gate");
 }
 void retained_time_gate_and_first_body() {
@@ -131,7 +131,7 @@ void retained_time_gate_and_first_body() {
     const auto incoming=std::get<MessengerBox>(target.messenger.buffer().objects()[0]);
     check(target.handle().stop==ModelCollisionStop::system_time_required && target.runtime.owns_delivery(target.delivery()),
         "Missing timestamp failed to retain this delivery's completed gate prefix");
-    target.state.invulnerability_frames=99;target.work.control_enabled=0;target.work.current_sequence="SQ_ERAS";
+    target.state.invulnerability_frames()=99;target.work.control_enabled=0;target.work.current_sequence="SQ_ERAS";
     target.state.pose.matrix()=matrix(1);target.packet({{100,100,100},{101,101,101}},"p_later",70000);
     target.services.system_time=[]()->std::optional<std::uint64_t>{return 2;};unsigned scripts{};
     target.services.hit_script=[&](const ModelTargetHitRequest& request)->std::optional<std::uint8_t> {
@@ -206,9 +206,9 @@ void player_script_resume_and_heading() {
         check(target.messenger.buffer_depth()==1 && request.source_record==-1 && request.source_name=="p_source",
             "Player source must enter target Lua with sentinel -1 in the pushed child");
         if(scripts==1) {
-            target.state.pose.matrix()=matrix(200,20,-400);target.state.pose.turn.desired={0.25f,-0.5f,-0.125f};
-            target.state.pose.turn.applied={9,8,7};target.state.pose.turn.rate={0,0,0};
-            target.state.pose.translated=true;target.state.pose.position_locked=true;
+            target.state.pose.matrix()=matrix(200,20,-400);target.state.pose.turn().desired={0.25f,-0.5f,-0.125f};
+            target.state.pose.turn().applied={9,8,7};target.state.pose.turn().rate={0,0,0};
+            target.state.pose.translated()=true;target.state.pose.position_locked()=true;
             target.messenger.select("SCRIPT_CHANGED_SELECTION",std::nullopt,-1);target.messenger.buffer().add_int(99);
             return std::nullopt;
         }
@@ -218,7 +218,7 @@ void player_script_resume_and_heading() {
         "Incomplete target Lua did not retain its request and buffer ownership");
     const auto captured=target.runtime.body().boxes();
     target.services.system_time=[]()->std::optional<std::uint64_t>{throw std::runtime_error("A script retry must not refresh bodies");};
-    target.work.control_enabled=0;target.work.current_sequence={};target.state.invulnerability_frames=90;
+    target.work.control_enabled=0;target.work.current_sequence={};target.state.invulnerability_frames()=90;
     check(target.handle().complete() && effects==1 && scripts==2 && target.runtime.body().boxes()==captured,
         "Lua retry replayed gates/body calculation or failed to complete its live effect");
     check(requests.size()==2 && requests[0].target==requests[1].target && requests[0].kind==requests[1].kind &&
@@ -226,12 +226,12 @@ void player_script_resume_and_heading() {
         requests[0].source_ram==requests[1].source_ram && requests[1].target_name=="p_target" && requests[1].body_ordinal==0,
         "Suspended target Lua request was rebuilt from changed shared state");
     const float heading=static_cast<float>(std::atan2(10.0,0.0));
-    check(target.state.pose.turn.desired==std::array<float,3>{0.25f,heading,-0.125f} &&
-        target.state.pose.turn.applied==target.state.pose.turn.desired && target.state.pose.turn.rate==std::array<float,3>{0,0,0},
+    check(target.state.pose.turn().desired==std::array<float,3>{0.25f,heading,-0.125f} &&
+        target.state.pose.turn().applied==target.state.pose.turn().desired && target.state.pose.turn().rate==std::array<float,3>{0,0,0},
         "Forced hit heading must use captured old source/target positions and live post-Lua pitch/roll");
     check(target.state.pose.matrix()[12]==200 && target.state.pose.matrix()[13]==20 && target.state.pose.matrix()[14]==-400 &&
         target.state.pose.matrix()[3]==0 && target.state.pose.matrix()[7]==0 && target.state.pose.matrix()[11]==0 && target.state.pose.matrix()[15]==1 &&
-        target.state.pose.translated && target.state.pose.position_locked && target.state.invulnerability_frames==90,
+        target.state.pose.translated() && target.state.pose.position_locked() && target.state.invulnerability_frames()==90,
         "Forced hit orientation lost live translation, pose flags or unrelated target work");
     check(target.messenger.buffer_depth()==0 && target.messenger.buffer().booleans()==std::vector<std::uint8_t>{1},
         "Heading completion failed to restore and append to the parent result buffer");

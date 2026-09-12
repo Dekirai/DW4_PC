@@ -66,7 +66,7 @@ void ordered_retained_prefix() {
             ++starts;packet(delivery,messenger,"GAMESTART",0);
             check(messenger.buffer().strings()==std::vector<std::optional<std::string>>{"p_test","TestA"},
                 "GAMESTART model/default names changed after original packet construction.");
-            check(prepared.work->hp==hp && prepared.work->max_hp==mhp && hp->data==(starts==1?120:77),
+            check(prepared.work->hp()==hp && prepared.work->max_hp()==mhp && hp->data==(starts==1?120:77),
                 "Caller HP binding/refill was missing or repeated after suspension.");
             check(std::all_of(up->begin(),up->begin()+7,[](auto x){return x==0;}) && up->at(7)==9 &&
                 std::all_of(down->begin(),down->begin()+6,[](auto x){return x==0;}) && down->at(6)==8,
@@ -176,9 +176,9 @@ void malformed_ownership_and_faults() {
     auto bad=original;bad.parent_name=std::make_shared<std::optional<std::string>>(std::string("a\0b",3));
     rejects([&]{ModelPlayerStart start(bad,data.player(0),defaults());},"Embedded NUL parent name was accepted.");
     ActionEventRuntime events;ModelPlayerStart no_clock(original,data.player(0),defaults());auto& messenger=events.messenger();
-    const auto previous=original.work->hp;
+    const auto previous=original.work->hp();
     rejects([&]{no_clock.resume(messenger,events,ModelPlayerClock{});},"Missing explicit clock owner was accepted.");
-    check(!no_clock.faulted() && original.work->hp==previous,"Clock preflight partially bound work.");
+    check(!no_clock.faulted() && original.work->hp()==previous,"Clock preflight partially bound work.");
     for(unsigned variant=0;variant<3;++variant) {
         GameDataState malformed;ActionEventRuntime runtime;auto target=owner();const auto row=malformed.player(0);
         if(variant==0)row->require<GameDataIntList>("UPDATA")->data.reset();
@@ -187,7 +187,7 @@ void malformed_ownership_and_faults() {
         provider(runtime,"GAMERAM","game",0,[](NativeMessenger&,const MessengerDelivery&){return MessengerCallResult{true,1,{}};});
         ModelPlayerStart start(target,row,defaults());auto& native=runtime.messenger();
         rejects([&]{start.resume(native,runtime,1);},"Malformed owned list passed the caller's checked bounds.");
-        check(start.faulted() && target.work->hp==row->require<GameDataInt>("HP"),"Checked later fault lost the earlier HP prefix.");
+        check(start.faulted() && target.work->hp()==row->require<GameDataInt>("HP"),"Checked later fault lost the earlier HP prefix.");
         rejects([&]{start.resume(native,runtime,1);},"Faulted caller replayed its committed prefix.");
     }
     GameDataState failing;ActionEventRuntime runtime;unsigned effects{};ModelPlayerStart start(owner(),failing.player(0),defaults());
@@ -256,7 +256,7 @@ void original(const std::filesystem::path& root) {
         events.prepare_model_queries(id,{{17,1386},binding.source(),parent_name,live_ram,
             std::make_shared<std::uint8_t>(std::uint8_t{1}),std::make_shared<bool>(true)});
         // The prepared entry is after original8034D780 (_isPlayer=1).
-        status.push_back(std::make_shared<ModelStatusWork>(owners.back().work,1));
+        status.push_back(std::make_shared<ModelStatusWork>(owners.back().work,std::uint8_t{1}));
         events.prepare_model_status(id,status.back());
         events.register_player(id);model_ids.push_back(id);
         auto action=std::make_shared<ActionRuntime>(decode_action_actor_runtime(doc,binding.action_program(),sources,static_cast<std::int32_t>(index)));
@@ -291,10 +291,10 @@ void original(const std::filesystem::path& root) {
             "Original prepared caller did not complete its actual UI/map tail.");
         const auto player=static_cast<std::size_t>(index);
         const bool metal=index==0 || index==3;
-        check(metal ? status[player]->down_data==integers(captured,"DOWNDATA") && status[player]->timers->at(7)==1 &&
-            status[player]->first_flags->at(7)==1 : !status[player]->display_ram_numbers && !status[player]->down_data,
+        check(metal ? status[player]->down_data()==integers(captured,"DOWNDATA") && status[player]->timers()->at(7)==1 &&
+            status[player]->first_flags()->at(7)==1 : !status[player]->display_ram_numbers() && !status[player]->down_data(),
             "Actual player status dispatch lost the metal DOWNDATA owner or allocated for an unknown status command.");
-        check(owners[player].work->original_is_main_lobby==(index==1 ? std::optional<std::uint8_t>{1}:std::nullopt),
+        check(owners[player].work->original_is_main_lobby()==(index==1 ? std::optional<std::uint8_t>{std::uint8_t{1}}:std::nullopt),
             "Original map table did not update only the matching captured ONE lobby field.");
         for(const auto& info:numbers.sources()[0].infos()) {
             const char* field=info.name=="lvnm" ? "LEVEL":info.name=="hpnm" ? "HP":info.name=="mpnm" ? "MP":nullptr;
@@ -311,8 +311,8 @@ void original(const std::filesystem::path& root) {
             if(info.name=="hpmt") {
                 messenger.select("METERCTRL",info.name,index);messenger.buffer().add_string("p_agumon");messenger.buffer().add_int(index);
                 auto bind=messenger.begin_send("SETMODELHP");
-                check(events.resume(bind).stop==MessengerStop::completed && displayed.bound_value==owners[player].work->hp &&
-                    displayed.bound_maximum==owners[player].work->max_hp && messenger.buffer_depth()==0,
+                check(events.resume(bind).stop==MessengerStop::completed && displayed.bound_value==owners[player].work->hp() &&
+                    displayed.bound_maximum==owners[player].work->max_hp() && messenger.buffer_depth()==0,
                     "Real MODELCTRL GETHP failed to bind the meter to its exact player HP/MHP wrappers.");
                 const auto saved=displayed.bound_value->data;displayed.bound_value->data=saved/2;
                 meters.update(meter);
@@ -321,7 +321,7 @@ void original(const std::filesystem::path& root) {
                 displayed.bound_value->data=saved;
             }
         }
-        check(start.binding().hp()==owners[static_cast<std::size_t>(index)].work->hp && start.binding().hp()->data>0 &&
+        check(start.binding().hp()==owners[static_cast<std::size_t>(index)].work->hp() && start.binding().hp()->data>0 &&
             start.binding().hp()->data==captured->require<GameDataInt>("MHP")->data,"Original caller lost shared positive HP after GAMESTART/recalculation.");
         check(std::all_of(booleans(captured,"BASE_ISUSE")->begin(),booleans(captured,"BASE_ISUSE")->end(),[](auto value){return value==1;}) &&
             integers(captured,"UPDATA")->at(7)==17 && integers(captured,"DOWNDATA")->at(6)==19,
