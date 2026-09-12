@@ -4,6 +4,7 @@
 #include "script_fixtures.hpp"
 
 #include <bit>
+#include <cmath>
 #include <iostream>
 #include <limits>
 
