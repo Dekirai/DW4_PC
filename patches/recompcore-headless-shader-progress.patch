@@ -783,6 +783,25 @@ index fbfccca11151a408c4c278d817d216ed87197a20..e8b0954b4a75403442d6628b1ecb3aa6
 +extern const Info<bool> MAIN_STATICRECOMP_DW4_CACHE_BATCH;
  extern const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES;
  }  // namespace Config
+diff --git a/Source/Core/Core/Core.cpp b/Source/Core/Core/Core.cpp
+index e58579ecda14837ae37c46286734893a70b3db02..1190efb785980038e10976190d2a7a32e1d97037 100644
+--- a/Source/Core/Core/Core.cpp
++++ b/Source/Core/Core/Core.cpp
+@@ -903,10 +903,11 @@ void DoFrameStep(Core::System& system)
+ 
+ void UpdateInputGate(bool require_focus, bool require_full_focus)
+ {
+-  // If the user accepts background input, controls should pass even if an on screen interface is on
++  // Modal frontend controls capture local input even when background input is
++  // allowed. Update the gate on the polling thread, not the window thread.
+   const bool focus_passes =
+-      !require_focus ||
+-      ((Host_RendererHasFocus() || Host_TASInputHasFocus()) && !Host_UIBlocksControllerState());
++      !Host_UIBlocksControllerState() &&
++      (!require_focus || Host_RendererHasFocus() || Host_TASInputHasFocus());
+   // Ignore full focus if we don't require basic focus
+   const bool full_focus_passes =
+       !require_focus || !require_full_focus || (focus_passes && Host_RendererHasFullFocus());
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
 index e3581cc9386ed6e9485993b7f7231f65a0cd239b..52120a0addd208dcecc3857867f9394d3cffafd3 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
@@ -1306,6 +1325,1170 @@ index 48b122a7072388fece1f1df84747c2c14968532f..9bab243767918d4295a811de5faa0e44
  
  protected:
    uintptr_t GetAddress() const override;
+diff --git a/Source/Core/DolphinNoGUI/Platform.h b/Source/Core/DolphinNoGUI/Platform.h
+index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..06a12916b15dba69bc97556cc8cdc24fddf4dd2f 100644
+--- a/Source/Core/DolphinNoGUI/Platform.h
++++ b/Source/Core/DolphinNoGUI/Platform.h
+@@ -3,11 +3,15 @@
+ 
+ #pragma once
+ 
++#include <atomic>
++#include <functional>
+ #include <memory>
+ #include <string>
++#include <utility>
+ 
+ #include "Common/Flag.h"
+ #include "Common/WindowSystemInfo.h"
++#include "DolphinNoGUI/UIInput.h"
+ 
+ class Platform
+ {
+@@ -22,6 +26,18 @@ public:
+   virtual void SetTitle(const std::string& title);
+   virtual void MainLoop() = 0;
+   virtual void SaveWindowGeometry() {}
++  virtual void ToggleFullscreen() {}
++  bool TakeSurfaceResizeRequest() { return m_surface_resize_requested.TestAndClear(); }
++
++  // Set on the host thread before Init, and retire after MainLoop ends.
++  // Input callbacks may enqueue UI events but must not draw or wait on the GPU.
++  void SetUICallbacks(std::function<bool(const FrontendUI::InputEvent&)> input,
++                      std::function<void()> tick)
++  {
++    m_ui_input = std::move(input);
++    m_ui_tick = std::move(tick);
++  }
++  void SetHiddenWindow(bool hidden) { m_hidden_window = hidden; }
+ 
+   virtual WindowSystemInfo GetWindowSystemInfo() const = 0;
+ 
+@@ -58,13 +74,26 @@ public:
+ 
+ protected:
+   void UpdateRunningFlag();
++  bool DispatchUIInput(const FrontendUI::InputEvent& input)
++  {
++    return m_ui_input && m_ui_input(input);
++  }
++  void TickUI()
++  {
++    if (m_ui_tick)
++      m_ui_tick();
++  }
+ 
+   Common::Flag m_running{true};
+   Common::Flag m_shutdown_requested{false};
+   Common::Flag m_tried_graceful_shutdown{false};
+   Common::Flag m_save_state_requested{false};
+   Common::Flag m_load_state_requested{false};
++  Common::Flag m_surface_resize_requested{false};
+ 
+-  bool m_window_focus = true;  // Should be made atomic if actually implemented
+-  bool m_window_fullscreen = false;
++  std::atomic<bool> m_window_focus{true};
++  std::atomic<bool> m_window_fullscreen{false};
++  bool m_hidden_window = false;
++  std::function<bool(const FrontendUI::InputEvent&)> m_ui_input;
++  std::function<void()> m_ui_tick;
+ };
+diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+index 3402fdae951b7ae8cde8ef4aab26ec2bb9108c5e..1a8f9301e5090d768951ab6c428e7b4522ea581b 100644
+--- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
++++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+@@ -3,42 +3,26 @@
+ 
+ #include "DolphinNoGUI/Platform.h"
+ 
+-#include "Core/Config/MainSettings.h"
+-#include "Core/Config/ConfigManager.h"
+-#include "Core/Core.h"
+-#include "Core/SavestateLayout.h"
+-#include "Core/State.h"
+-#include "Core/System.h"
+-
+-#include "Common/CommonPaths.h"
+-#include "Common/FileUtil.h"
+-#include "Common/StringUtil.h"
+-
+ #include <algorithm>
+ #include <chrono>
+-#include <ctime>
+-#include <filesystem>
++#include <cstdio>
+ #include <string>
+-#include <vector>
++#include <thread>
++
+ #include <windows.h>
+-#include <climits>
+ #include <dwmapi.h>
+-#include <thread>
++#include <windowsx.h>
++
++#include "Common/StringUtil.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/NetPlay/NetPlayProto.h"
++#include "Core/System.h"
+ 
+-#include "VideoCommon/Present.h"
+ #include "resource.h"
+ 
+ namespace
+ {
+-// Menu command ids. Load State entries are allocated a contiguous range,
+-// since the list is rebuilt from disk each time the menu opens.
+-constexpr UINT ID_SAVE_STATE = 41001;
+-constexpr UINT ID_PAUSE = 41002;
+-constexpr UINT ID_MUTE = 41003;
+-constexpr UINT ID_FULLSCREEN = 41004;
+-constexpr UINT ID_LOAD_STATE_FIRST = 41100;
+-constexpr UINT ID_LOAD_STATE_LAST = 41199;
+-
+ // Hold-to-fast-forward target. 2x is fast enough to skip a cutscene without
+ // outrunning what most hosts can actually emulate.
+ constexpr float FAST_FORWARD_SPEED = 2.0f;
+@@ -51,33 +35,29 @@ public:
+   bool Init() override;
+   void SetTitle(const std::string& string) override;
+   void MainLoop() override;
++  void ToggleFullscreen() override;
+ 
+   WindowSystemInfo GetWindowSystemInfo() const override;
+ 
+ private:
+-  static constexpr TCHAR WINDOW_CLASS_NAME[] = _T("DolphinNoGUI");
++  static constexpr TCHAR WINDOW_CLASS_NAME[] = _T("DW4NativeRenderWindow");
+ 
+   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+ 
+-  static bool RegisterRenderWindowClass();
++  bool RegisterRenderWindowClass();
+   bool CreateRenderWindow();
+-  bool CreateMenus();
+-  void RefreshMenu(HMENU menu);
+-  void SaveStateToStatesDirectory();
+-  void ToggleFullscreen();
++  void EndFastForward();
++  void ResetPointerAndTextInput();
++  void InputCharacter(std::uint32_t value, bool utf16);
+   void UpdateWindowPosition();
+   void ProcessEvents();
+ 
+   HWND m_hwnd{};
+-  HMENU m_menu{};
+-  HMENU m_file_menu{};
+-  HMENU m_load_menu{};
+-  HMENU m_view_menu{};
+-  // Parallel to the Load State menu entries, rebuilt whenever it opens.
+-  std::vector<std::string> m_load_state_paths;
+-  std::time_t m_last_save_time{};
+-  std::size_t m_save_sequence{};
+-  bool m_fullscreen = false;
++  bool m_fast_forward = false;
++  float m_previous_speed = 1.0f;
++  std::uint32_t m_pending_surrogate = 0;
++  unsigned m_mouse_buttons = 0;
++  bool m_tracking_mouse = false;
+   LONG m_windowed_style = 0;
+   RECT m_windowed_rect{};
+ 
+@@ -89,8 +69,11 @@ private:
+ 
+ PlatformWin32::~PlatformWin32()
+ {
++  EndFastForward();
+   if (m_hwnd)
+     DestroyWindow(m_hwnd);
++  if (!m_hidden_window)
++    SetThreadExecutionState(ES_CONTINUOUS);
+ }
+ 
+ bool PlatformWin32::RegisterRenderWindowClass()
+@@ -102,16 +85,26 @@ bool PlatformWin32::RegisterRenderWindowClass()
+   wc.cbClsExtra = 0;
+   wc.cbWndExtra = 0;
+   wc.hInstance = GetModuleHandle(nullptr);
+-  wc.hIcon = LoadIcon(nullptr, IDI_ICON1);
++  wc.hIcon = LoadIcon(wc.hInstance, IDI_ICON1);
+   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+   wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+   wc.lpszMenuName = nullptr;
+   wc.lpszClassName = WINDOW_CLASS_NAME;
+-  wc.hIconSm = LoadIcon(nullptr, IDI_ICON1);
++  wc.hIconSm = LoadIcon(wc.hInstance, IDI_ICON1);
+ 
+   if (!RegisterClassEx(&wc))
+   {
+-    MessageBox(nullptr, _T("Window registration failed."), _T("Error"), MB_ICONERROR | MB_OK);
++    if (GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
++    {
++      WNDCLASSEX existing{};
++      existing.cbSize = sizeof(existing);
++      if (GetClassInfoEx(wc.hInstance, WINDOW_CLASS_NAME, &existing) &&
++          existing.lpfnWndProc == WndProc && existing.hInstance == wc.hInstance)
++        return true;
++    }
++    std::fprintf(stderr, "native window registration failed: %lu\n", GetLastError());
++    if (!m_hidden_window)
++      MessageBox(nullptr, _T("Window registration failed."), _T("Error"), MB_ICONERROR | MB_OK);
+     return false;
+   }
+ 
+@@ -120,118 +113,36 @@ bool PlatformWin32::RegisterRenderWindowClass()
+ 
+ bool PlatformWin32::CreateRenderWindow()
+ {
+-  m_hwnd = CreateWindowEx(WS_EX_CLIENTEDGE, WINDOW_CLASS_NAME, _T("Dolphin"), WS_OVERLAPPEDWINDOW,
++  m_hwnd = CreateWindowEx(m_hidden_window ? WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE : 0,
++                          WINDOW_CLASS_NAME, _T("Digimon World 4 PC"), WS_OVERLAPPEDWINDOW,
+                           m_window_x < 0 ? CW_USEDEFAULT : m_window_x,
+-                          m_window_y < 0 ? CW_USEDEFAULT : m_window_y, m_window_width,
+-                          m_window_height, nullptr, nullptr, GetModuleHandle(nullptr), this);
++                          m_window_y < 0 ? CW_USEDEFAULT : m_window_y,
++                          m_hidden_window ? 960 : std::max(m_window_width, 640),
++                          m_hidden_window ? 760 : std::max(m_window_height, 480), nullptr, nullptr,
++                          GetModuleHandle(nullptr), this);
+   if (!m_hwnd)
+   {
+-    MessageBox(nullptr, _T("CreateWindowEx failed."), _T("Error"), MB_ICONERROR | MB_OK);
++    std::fprintf(stderr, "native window creation failed: %lu\n", GetLastError());
++    if (!m_hidden_window)
++      MessageBox(nullptr, _T("CreateWindowEx failed."), _T("Error"), MB_ICONERROR | MB_OK);
+     return false;
+   }
+ 
+-  ShowWindow(m_hwnd, SW_SHOW);
+-  UpdateWindow(m_hwnd);
+-  return true;
+-}
+-
+-bool PlatformWin32::CreateMenus()
+-{
+-  m_menu = CreateMenu();
+-  m_file_menu = CreatePopupMenu();
+-  m_load_menu = CreatePopupMenu();
+-  m_view_menu = CreatePopupMenu();
+-  if (!m_menu || !m_file_menu || !m_load_menu || !m_view_menu)
+-    return false;
+-
+-  AppendMenuW(m_file_menu, MF_STRING, ID_SAVE_STATE, L"&Save State\tF1");
+-  AppendMenuW(m_file_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_load_menu), L"&Load State");
+-  AppendMenuW(m_file_menu, MF_SEPARATOR, 0, nullptr);
+-  // Checked state is refreshed from the core when the menu opens, so it cannot
+-  // drift out of step with an emulation that was paused some other way.
+-  AppendMenuW(m_file_menu, MF_STRING, ID_PAUSE, L"&Pause");
+-
+-  AppendMenuW(m_view_menu, MF_STRING, ID_FULLSCREEN, L"&Fullscreen\tAlt+Enter");
+-  AppendMenuW(m_view_menu, MF_STRING, ID_MUTE, L"&Mute Audio");
+-
+-  AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_file_menu), L"&File");
+-  AppendMenuW(m_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(m_view_menu), L"&View");
+-  return SetMenu(m_hwnd, m_menu) != FALSE;
+-}
+-
+-// Rebuilt on open rather than cached: states are written by this process while
+-// the menu is closed, and by the launcher between sessions.
+-void PlatformWin32::RefreshMenu(const HMENU menu)
+-{
+-  if (menu == m_file_menu)
++  // Diagnostic windows never become visible, including their first frame.
++  if (!m_hidden_window)
+   {
+-    auto& system = Core::System::GetInstance();
+-    const bool paused = Core::GetState(system) == Core::State::Paused;
+-    CheckMenuItem(m_file_menu, ID_PAUSE, MF_BYCOMMAND | (paused ? MF_CHECKED : MF_UNCHECKED));
+-    return;
++    ShowWindow(m_hwnd, SW_SHOW);
++    UpdateWindow(m_hwnd);
+   }
+-
+-  if (menu == m_view_menu)
+-  {
+-    CheckMenuItem(m_view_menu, ID_MUTE,
+-                  MF_BYCOMMAND |
+-                      (Config::Get(Config::MAIN_AUDIO_MUTED) ? MF_CHECKED : MF_UNCHECKED));
+-    CheckMenuItem(m_view_menu, ID_FULLSCREEN,
+-                  MF_BYCOMMAND | (m_fullscreen ? MF_CHECKED : MF_UNCHECKED));
+-    return;
+-  }
+-
+-  if (menu != m_load_menu)
+-    return;
+-
+-  while (DeleteMenu(m_load_menu, 0, MF_BYPOSITION))
+-  {
+-  }
+-  m_load_state_paths.clear();
+-
+-  // Location, extension and order all come from State::Layout, so this menu and
+-  // any frontend listing the same directory cannot disagree.
+-  const std::vector<std::filesystem::path> states =
+-      State::Layout::List(StringToPath(File::GetUserPath(D_STATESAVES_IDX)));
+-
+-  if (states.empty())
+-  {
+-    AppendMenuW(m_load_menu, MF_STRING | MF_GRAYED, 0, L"(no savestates)");
+-    return;
+-  }
+-
+-  const std::size_t limit = std::min<std::size_t>(
+-      states.size(), ID_LOAD_STATE_LAST - ID_LOAD_STATE_FIRST + 1);
+-  for (std::size_t i = 0; i < limit; ++i)
+-  {
+-    AppendMenuW(m_load_menu, MF_STRING, ID_LOAD_STATE_FIRST + i,
+-                states[i].filename().wstring().c_str());
+-    m_load_state_paths.push_back(PathToString(states[i]));
+-  }
+-}
+-
+-void PlatformWin32::SaveStateToStatesDirectory()
+-{
+-  const std::string directory = File::GetUserPath(D_STATESAVES_IDX);
+-  File::CreateFullPath(directory);
+-  const std::time_t now = std::time(nullptr);
+-  if (now == m_last_save_time)
+-    ++m_save_sequence;
+-  else
+-  {
+-    m_last_save_time = now;
+-    m_save_sequence = 0;
+-  }
+-
+-  const std::filesystem::path path =
+-      StringToPath(directory) /
+-      State::Layout::TimestampedName(now, m_save_sequence, State::Layout::MANUAL_PREFIX);
+-  State::SaveAs(Core::System::GetInstance(), PathToString(path));
++  m_window_focus = !m_hidden_window && GetFocus() == m_hwnd;
++  return true;
+ }
+ 
+ void PlatformWin32::ToggleFullscreen()
+ {
+-  if (!m_fullscreen)
++  EndFastForward();
++  const UINT hidden_flags = m_hidden_window ? SWP_NOACTIVATE | SWP_NOZORDER : 0;
++  if (!m_window_fullscreen)
+   {
+     GetWindowRect(m_hwnd, &m_windowed_rect);
+     m_windowed_style = GetWindowLong(m_hwnd, GWL_STYLE);
+@@ -241,37 +152,32 @@ void PlatformWin32::ToggleFullscreen()
+     if (!GetMonitorInfo(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitor))
+       return;
+ 
+-    SetMenu(m_hwnd, nullptr);
+     SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style & ~WS_OVERLAPPEDWINDOW);
+     SetWindowPos(m_hwnd, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
+                  monitor.rcMonitor.right - monitor.rcMonitor.left,
+                  monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+-                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+-    m_fullscreen = true;
++                 SWP_NOOWNERZORDER | SWP_FRAMECHANGED | hidden_flags);
++    m_window_fullscreen = true;
+     return;
+   }
+ 
+   SetWindowLong(m_hwnd, GWL_STYLE, m_windowed_style);
+-  SetMenu(m_hwnd, m_menu);
+   SetWindowPos(m_hwnd, nullptr, m_windowed_rect.left, m_windowed_rect.top,
+                m_windowed_rect.right - m_windowed_rect.left,
+                m_windowed_rect.bottom - m_windowed_rect.top,
+-               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOZORDER);
+-  m_fullscreen = false;
++               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOZORDER | hidden_flags);
++  m_window_fullscreen = false;
+ }
+ 
+ bool PlatformWin32::Init()
+ {
+-  if (!RegisterRenderWindowClass() || !CreateRenderWindow() || !CreateMenus())
++  if (!RegisterRenderWindowClass() || !CreateRenderWindow())
+     return false;
+ 
+-  // TODO: Enter fullscreen if enabled.
+-  if (Config::Get(Config::MAIN_FULLSCREEN))
+-  {
+-    ProcessEvents();
+-  }
++  if (Config::Get(Config::MAIN_FULLSCREEN) && !m_hidden_window)
++    ToggleFullscreen();
+ 
+-  if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
++  if (!m_hidden_window && Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
+     SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+ 
+   UpdateWindowPosition();
+@@ -290,11 +196,16 @@ void PlatformWin32::MainLoop()
+     UpdateRunningFlag();
+     Core::HostDispatchJobs(Core::System::GetInstance());
+     ProcessEvents();
++    TickUI();
+     UpdateWindowPosition();
+ 
+     // TODO: Is this sleep appropriate?
+     std::this_thread::sleep_for(std::chrono::milliseconds(1));
+   }
++  // Restore before Runtime tears down the configuration layers; destruction
++  // alone may happen after UICommon::Shutdown on a signal-driven stop.
++  EndFastForward();
++  ResetPointerAndTextInput();
+ }
+ 
+ WindowSystemInfo PlatformWin32::GetWindowSystemInfo() const
+@@ -308,7 +219,7 @@ WindowSystemInfo PlatformWin32::GetWindowSystemInfo() const
+ 
+ void PlatformWin32::UpdateWindowPosition()
+ {
+-  if (m_window_fullscreen)
++  if (m_window_fullscreen || m_hidden_window)
+     return;
+ 
+   RECT rc = {};
+@@ -326,140 +237,361 @@ void PlatformWin32::ProcessEvents()
+   MSG msg;
+   while (PeekMessage(&msg, m_hwnd, 0, 0, PM_REMOVE))
+   {
++    if (msg.message == WM_QUIT)
++    {
++      RequestShutdown();
++      continue;
++    }
+     TranslateMessage(&msg);
+     DispatchMessage(&msg);
+   }
+ }
+ 
+-LRESULT PlatformWin32::WndProc(const HWND hwnd, const UINT msg, const WPARAM wParam,
+-                               const LPARAM lParam)
++FrontendUI::Key TranslateUIKey(WPARAM value, LPARAM flags)
+ {
+-  PlatformWin32* platform = reinterpret_cast<PlatformWin32*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+-  switch (msg)
+-  {
+-  case WM_NCCREATE:
++  using FrontendUI::Key;
++  if (value >= 'A' && value <= 'Z')
++    return static_cast<Key>(static_cast<unsigned>(Key::A) + value - 'A');
++  if (value >= '0' && value <= '9')
++    return static_cast<Key>(static_cast<unsigned>(Key::Num0) + value - '0');
++  if (value >= VK_F1 && value <= VK_F12)
++    return static_cast<Key>(static_cast<unsigned>(Key::F1) + value - VK_F1);
++  if (value >= VK_NUMPAD0 && value <= VK_NUMPAD9)
++    return static_cast<Key>(static_cast<unsigned>(Key::Keypad0) + value - VK_NUMPAD0);
++  const bool extended = (static_cast<ULONG_PTR>(flags) & (1u << 24)) != 0;
++  switch (value)
+   {
+-    platform = static_cast<PlatformWin32*>(reinterpret_cast<CREATESTRUCT*>(lParam)->lpCreateParams);
+-    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(platform));
+-    return DefWindowProc(hwnd, msg, wParam, lParam);
++  case VK_TAB:
++    return Key::Tab;
++  case VK_LEFT:
++    return Key::Left;
++  case VK_RIGHT:
++    return Key::Right;
++  case VK_UP:
++    return Key::Up;
++  case VK_DOWN:
++    return Key::Down;
++  case VK_PRIOR:
++    return Key::PageUp;
++  case VK_NEXT:
++    return Key::PageDown;
++  case VK_HOME:
++    return Key::Home;
++  case VK_END:
++    return Key::End;
++  case VK_INSERT:
++    return Key::Insert;
++  case VK_DELETE:
++    return Key::Delete;
++  case VK_BACK:
++    return Key::Backspace;
++  case VK_SPACE:
++    return Key::Space;
++  case VK_RETURN:
++    return extended ? Key::KeypadEnter : Key::Enter;
++  case VK_ESCAPE:
++    return Key::Escape;
++  case VK_CONTROL:
++    return extended ? Key::RightCtrl : Key::LeftCtrl;
++  case VK_LCONTROL:
++    return Key::LeftCtrl;
++  case VK_RCONTROL:
++    return Key::RightCtrl;
++  case VK_SHIFT:
++    return MapVirtualKeyW((static_cast<unsigned>(flags) >> 16) & 0xff, MAPVK_VSC_TO_VK_EX) ==
++                   VK_RSHIFT ?
++               Key::RightShift :
++               Key::LeftShift;
++  case VK_LSHIFT:
++    return Key::LeftShift;
++  case VK_RSHIFT:
++    return Key::RightShift;
++  case VK_MENU:
++    return extended ? Key::RightAlt : Key::LeftAlt;
++  case VK_LMENU:
++    return Key::LeftAlt;
++  case VK_RMENU:
++    return Key::RightAlt;
++  case VK_LWIN:
++    return Key::LeftSuper;
++  case VK_RWIN:
++    return Key::RightSuper;
++  case VK_OEM_7:
++    return Key::Apostrophe;
++  case VK_OEM_COMMA:
++    return Key::Comma;
++  case VK_OEM_MINUS:
++    return Key::Minus;
++  case VK_OEM_PERIOD:
++    return Key::Period;
++  case VK_OEM_2:
++    return Key::Slash;
++  case VK_OEM_1:
++    return Key::Semicolon;
++  case VK_OEM_PLUS:
++    return Key::Equal;
++  case VK_OEM_4:
++    return Key::LeftBracket;
++  case VK_OEM_5:
++    return Key::Backslash;
++  case VK_OEM_6:
++    return Key::RightBracket;
++  case VK_OEM_3:
++    return Key::GraveAccent;
++  case VK_CAPITAL:
++    return Key::CapsLock;
++  case VK_SCROLL:
++    return Key::ScrollLock;
++  case VK_NUMLOCK:
++    return Key::NumLock;
++  case VK_SNAPSHOT:
++    return Key::PrintScreen;
++  case VK_PAUSE:
++    return Key::Pause;
++  case VK_DECIMAL:
++    return Key::KeypadDecimal;
++  case VK_DIVIDE:
++    return Key::KeypadDivide;
++  case VK_MULTIPLY:
++    return Key::KeypadMultiply;
++  case VK_SUBTRACT:
++    return Key::KeypadSubtract;
++  case VK_ADD:
++    return Key::KeypadAdd;
++  default:
++    return Key::None;
+   }
++}
+ 
+-  case WM_CREATE:
++void PlatformWin32::EndFastForward()
++{
++  if (m_fast_forward)
++    Config::SetCurrent(Config::MAIN_EMULATION_SPEED, m_previous_speed);
++  m_fast_forward = false;
++}
++
++void PlatformWin32::ResetPointerAndTextInput()
++{
++  m_pending_surrogate = 0;
++  m_mouse_buttons = 0;
++  // Clear ownership before ReleaseCapture, which synchronously delivers
++  // WM_CAPTURECHANGED. This intentional release needs only one reset event.
++  if (GetCapture() == m_hwnd)
++    ReleaseCapture();
++  DispatchUIInput({FrontendUI::InputKind::Reset});
++}
++
++void PlatformWin32::InputCharacter(std::uint32_t value, bool utf16)
++{
++  const auto emit = [this](std::uint32_t scalar) {
++    if (scalar < 0x20)
++      return;
++    FrontendUI::InputEvent input{FrontendUI::InputKind::Character};
++    input.character = scalar;
++    DispatchUIInput(input);
++  };
++  if (utf16 && value >= 0xd800 && value <= 0xdbff)
+   {
+-    if (hwnd)
+-    {
+-      // Remove rounded corners from the render window on Windows 11
+-      constexpr DWM_WINDOW_CORNER_PREFERENCE corner_preference = DWMWCP_DONOTROUND;
+-      DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner_preference,
+-                            sizeof(corner_preference));
+-    }
++    if (m_pending_surrogate)
++      emit(0xfffd);
++    m_pending_surrogate = value;
++    return;
+   }
+-  break;
++  if (utf16 && value >= 0xdc00 && value <= 0xdfff)
++    value = m_pending_surrogate ?
++                0x10000 + ((m_pending_surrogate - 0xd800) << 10) + value - 0xdc00 :
++                0xfffd;
++  else if (m_pending_surrogate)
++    emit(0xfffd);
++  m_pending_surrogate = 0;
++  if (value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff))
++    value = 0xfffd;
++  emit(value);
++}
+ 
+-  case WM_SIZE:
++LRESULT PlatformWin32::WndProc(HWND hwnd, UINT msg, WPARAM value, LPARAM flags)
++{
++  auto* platform = reinterpret_cast<PlatformWin32*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
++  if (msg == WM_NCCREATE)
+   {
+-    if (g_presenter)
+-      g_presenter->ResizeSurface();
++    platform = static_cast<PlatformWin32*>(reinterpret_cast<CREATESTRUCT*>(flags)->lpCreateParams);
++    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(platform));
+   }
+-  break;
+-
+-  case WM_KEYDOWN:
+-    // Bit 30 of lParam is the previous key state: ignore auto-repeat, or holding
+-    // F1 down would write a state every few milliseconds.
+-    if (wParam == VK_F1 && (static_cast<ULONG_PTR>(lParam) & (1u << 30)) == 0)
++  if (!platform)
++    return DefWindowProc(hwnd, msg, value, flags);
++  using FrontendUI::InputKind;
++  FrontendUI::InputEvent input;
++  switch (msg)
++  {
++  case WM_CREATE:
++  {
++    constexpr DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_DONOTROUND;
++    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &preference, sizeof(preference));
++    return 0;
++  }
++  case WM_SIZE:
++    platform->m_surface_resize_requested.Set();
++    return 0;
++  case WM_WINDOWPOSCHANGING:
++    if (platform->m_hidden_window)
+     {
+-      platform->SaveStateToStatesDirectory();
+-      return 0;
++      auto* position = reinterpret_cast<WINDOWPOS*>(flags);
++      position->flags &= ~SWP_SHOWWINDOW;
++      position->flags |= SWP_NOACTIVATE | SWP_NOZORDER;
+     }
+-    else if (wParam == VK_SPACE)
++    break;
++  case WM_MOUSEACTIVATE:
++    if (platform->m_hidden_window)
++      return MA_NOACTIVATEANDEAT;
++    break;
++  case WM_KEYDOWN:
++  case WM_SYSKEYDOWN:
++  case WM_KEYUP:
++  case WM_SYSKEYUP:
++  {
++    input.kind = InputKind::Key;
++    input.key = TranslateUIKey(value, flags);
++    input.down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
++    input.repeat = input.down && (static_cast<ULONG_PTR>(flags) & (1u << 30)) != 0;
++    if (platform->DispatchUIInput(input))
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, FAST_FORWARD_SPEED);
++      platform->EndFastForward();
++      if (input.down && !input.repeat && (value == VK_F1 || value == VK_ESCAPE))
++        platform->ResetPointerAndTextInput();
+       return 0;
+     }
+-    else if (wParam == VK_F11)
++    if (value == VK_SPACE)
+     {
+-      platform->ToggleFullscreen();
++      if (!input.down)
++        platform->EndFastForward();
++      else if (!input.repeat && !platform->m_fast_forward &&
++               Core::IsRunning(Core::System::GetInstance()) && !NetPlay::IsNetPlayRunning())
++      {
++        platform->m_previous_speed = Config::Get(Config::MAIN_EMULATION_SPEED);
++        platform->m_fast_forward = true;
++        Config::SetCurrent(Config::MAIN_EMULATION_SPEED, FAST_FORWARD_SPEED);
++      }
+       return 0;
+     }
+-    else if (wParam == VK_ESCAPE && platform->m_fullscreen)
++    if (input.down && !input.repeat &&
++        (value == VK_F11 || (msg == WM_SYSKEYDOWN && value == VK_RETURN &&
++                             (static_cast<ULONG_PTR>(flags) & (1u << 29)) != 0)))
+     {
+       platform->ToggleFullscreen();
+       return 0;
+     }
+-    else if (wParam == VK_ESCAPE)
+-    {
+-      platform->RequestShutdown();
+-    }
+-    break;
+-
+-  case WM_KEYUP:
+-    if (wParam == VK_SPACE)
++    if (input.down && !input.repeat && value == VK_ESCAPE)
+     {
+-      Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
++      if (platform->m_window_fullscreen)
++        platform->ToggleFullscreen();
++      else
++        platform->RequestShutdown();
+       return 0;
+     }
+     break;
+-
+-  case WM_KILLFOCUS:
+-    // Never leave emulation running fast because Space was released while
+-    // another window had focus and the key-up went elsewhere.
+-    Config::SetCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
+-    break;
+-
+-  case WM_SYSKEYDOWN:
+-    if (wParam == VK_RETURN && (GetKeyState(VK_MENU) & 0x8000) != 0)
++  }
++  case WM_CHAR:
++    platform->InputCharacter(static_cast<std::uint32_t>(value), true);
++    return 0;
++  case WM_UNICHAR:
++    if (value == UNICODE_NOCHAR)
++      return TRUE;
++    platform->InputCharacter(static_cast<std::uint32_t>(value), false);
++    return 0;
++  case WM_MOUSEMOVE:
++    input.kind = InputKind::MousePosition;
++    input.x = static_cast<float>(GET_X_LPARAM(flags));
++    input.y = static_cast<float>(GET_Y_LPARAM(flags));
++    platform->DispatchUIInput(input);
++    if (!platform->m_hidden_window && !platform->m_tracking_mouse)
+     {
+-      platform->ToggleFullscreen();
+-      return 0;
++      TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, hwnd, 0};
++      platform->m_tracking_mouse = TrackMouseEvent(&tracking) != FALSE;
+     }
+-    return DefWindowProc(hwnd, msg, wParam, lParam);
+-
+-  case WM_INITMENUPOPUP:
+-    if (platform)
+-      platform->RefreshMenu(reinterpret_cast<HMENU>(wParam));
+-    break;
+-
+-  case WM_COMMAND:
++    return 0;
++  case WM_MOUSELEAVE:
++    platform->m_tracking_mouse = false;
++    input.kind = InputKind::MousePosition;
++    input.x = input.y = -1.0e30f;
++    platform->DispatchUIInput(input);
++    return 0;
++  case WM_LBUTTONDOWN:
++  case WM_LBUTTONUP:
++  case WM_RBUTTONDOWN:
++  case WM_RBUTTONUP:
++  case WM_MBUTTONDOWN:
++  case WM_MBUTTONUP:
++  case WM_XBUTTONDOWN:
++  case WM_XBUTTONUP:
+   {
+-    if (!platform)
+-      break;
+-    const UINT command = LOWORD(wParam);
+-    auto& system = Core::System::GetInstance();
+-    if (command == ID_SAVE_STATE)
+-    {
+-      platform->SaveStateToStatesDirectory();
+-    }
+-    else if (command == ID_PAUSE)
+-    {
+-      const bool paused = Core::GetState(system) == Core::State::Paused;
+-      Core::SetState(system, paused ? Core::State::Running : Core::State::Paused);
+-    }
+-    else if (command == ID_MUTE)
+-    {
+-      Config::SetCurrent(Config::MAIN_AUDIO_MUTED, !Config::Get(Config::MAIN_AUDIO_MUTED));
+-    }
+-    else if (command == ID_FULLSCREEN)
++    FrontendUI::InputEvent position{InputKind::MousePosition};
++    position.x = static_cast<float>(GET_X_LPARAM(flags));
++    position.y = static_cast<float>(GET_Y_LPARAM(flags));
++    platform->DispatchUIInput(position);
++    input.kind = InputKind::MouseButton;
++    input.down = msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN ||
++                 msg == WM_XBUTTONDOWN;
++    input.button = (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP) ?
++                       0 :
++                   (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ?
++                       1 :
++                   (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONUP) ?
++                       2 :
++                       (GET_XBUTTON_WPARAM(value) == XBUTTON1 ? 3 : 4);
++    platform->m_mouse_buttons = input.down ? platform->m_mouse_buttons | (1u << input.button) :
++                                             platform->m_mouse_buttons & ~(1u << input.button);
++    const bool consumed = platform->DispatchUIInput(input);
++    if (consumed && input.down && !platform->m_hidden_window)
++      SetCapture(hwnd);
++    // An up can arrive after F1/another frame closed the menu. Ownership must
++    // still be released even though the now-closed UI no longer consumes it.
++    if (!platform->m_mouse_buttons && GetCapture() == hwnd)
++      ReleaseCapture();
++    if (consumed)
+     {
+-      platform->ToggleFullscreen();
+-    }
+-    else if (command >= ID_LOAD_STATE_FIRST && command <= ID_LOAD_STATE_LAST)
+-    {
+-      const std::size_t index = command - ID_LOAD_STATE_FIRST;
+-      if (index < platform->m_load_state_paths.size())
+-        State::LoadAs(system, platform->m_load_state_paths[index]);
++      return (msg == WM_XBUTTONDOWN || msg == WM_XBUTTONUP) ? TRUE : 0;
+     }
+     break;
+   }
+-
++  case WM_MOUSEWHEEL:
++  case WM_MOUSEHWHEEL:
++    input.kind = InputKind::MouseWheel;
++    if (msg == WM_MOUSEWHEEL)
++      input.y = static_cast<float>(GET_WHEEL_DELTA_WPARAM(value)) / WHEEL_DELTA;
++    else
++      input.x = static_cast<float>(GET_WHEEL_DELTA_WPARAM(value)) / WHEEL_DELTA;
++    platform->DispatchUIInput(input);
++    return 0;
++  case WM_SETFOCUS:
++  case WM_KILLFOCUS:
++    platform->m_window_focus = msg == WM_SETFOCUS && !platform->m_hidden_window;
++    platform->ResetPointerAndTextInput();
++    input.kind = InputKind::Focus;
++    input.down = platform->m_window_focus;
++    platform->DispatchUIInput(input);
++    if (!input.down)
++      platform->EndFastForward();
++    return 0;
++  case WM_CAPTURECHANGED:
++    // Normal button-up queues the click, then intentionally releases capture.
++    // Resetting here would discard that click before ImGui can process it.
++    if (platform->m_mouse_buttons != 0 && reinterpret_cast<HWND>(flags) != hwnd)
++      platform->ResetPointerAndTextInput();
++    return 0;
++  case WM_CANCELMODE:
++    platform->EndFastForward();
++    platform->ResetPointerAndTextInput();
++    return 0;
+   case WM_CLOSE:
++    platform->EndFastForward();
+     platform->RequestShutdown();
++    return 0;
++  case WM_NCDESTROY:
++    SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
++    platform->m_hwnd = nullptr;
+     break;
+-
+-  default:
+-    return DefWindowProc(hwnd, msg, wParam, lParam);
+   }
+-
+-  return 0;
++  return DefWindowProc(hwnd, msg, value, flags);
+ }
+ }  // namespace
+ 
+diff --git a/Source/Core/DolphinNoGUI/UIInput.h b/Source/Core/DolphinNoGUI/UIInput.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..197f00b090d1205cd7a1c60e04943f4c6db9aeba
+--- /dev/null
++++ b/Source/Core/DolphinNoGUI/UIInput.h
+@@ -0,0 +1,143 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cstdint>
++
++namespace FrontendUI
++{
++// Host input values have no dependency on either a native window toolkit or ImGui.
++enum class Key : std::uint16_t
++{
++  None,
++  Tab,
++  Left,
++  Right,
++  Up,
++  Down,
++  PageUp,
++  PageDown,
++  Home,
++  End,
++  Insert,
++  Delete,
++  Backspace,
++  Space,
++  Enter,
++  Escape,
++  LeftCtrl,
++  RightCtrl,
++  LeftShift,
++  RightShift,
++  LeftAlt,
++  RightAlt,
++  LeftSuper,
++  RightSuper,
++  A,
++  B,
++  C,
++  D,
++  E,
++  F,
++  G,
++  H,
++  I,
++  J,
++  K,
++  L,
++  M,
++  N,
++  O,
++  P,
++  Q,
++  R,
++  S,
++  T,
++  U,
++  V,
++  W,
++  X,
++  Y,
++  Z,
++  Num0,
++  Num1,
++  Num2,
++  Num3,
++  Num4,
++  Num5,
++  Num6,
++  Num7,
++  Num8,
++  Num9,
++  F1,
++  F2,
++  F3,
++  F4,
++  F5,
++  F6,
++  F7,
++  F8,
++  F9,
++  F10,
++  F11,
++  F12,
++  Apostrophe,
++  Comma,
++  Minus,
++  Period,
++  Slash,
++  Semicolon,
++  Equal,
++  LeftBracket,
++  Backslash,
++  RightBracket,
++  GraveAccent,
++  CapsLock,
++  ScrollLock,
++  NumLock,
++  PrintScreen,
++  Pause,
++  Keypad0,
++  Keypad1,
++  Keypad2,
++  Keypad3,
++  Keypad4,
++  Keypad5,
++  Keypad6,
++  Keypad7,
++  Keypad8,
++  Keypad9,
++  KeypadDecimal,
++  KeypadDivide,
++  KeypadMultiply,
++  KeypadSubtract,
++  KeypadAdd,
++  KeypadEnter,
++};
++
++enum class InputKind
++{
++  Key,
++  Character,
++  MousePosition,
++  MouseButton,
++  MouseWheel,
++  Focus,
++  Reset,
++};
++
++struct InputEvent
++{
++  InputKind kind = InputKind::Reset;
++  Key key = Key::None;
++  bool down = false;
++  bool repeat = false;
++  float x = 0;
++  float y = 0;
++  // Unicode scalar, never an individual UTF-16 surrogate. Native adapters
++  // assemble pairs and discard pending pairs on focus/capture/session reset.
++  std::uint32_t character = 0;
++  int button = 0;
++};
++}  // namespace FrontendUI
+diff --git a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+index c88e422c98287d869f0cc49c3333ac28021ec8a8..afc678cef3ccaf5728504b584dfc29bbd2350242 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKGfx.cpp
+@@ -5,9 +5,14 @@
+ 
+ #include <cstddef>
+ #include <cstdio>
++#include <exception>
++#include <limits>
++#include <optional>
++#include <vector>
+ #include <utility>
+ 
+ #include "Common/CommonTypes.h"
++#include "Common/Image.h"
+ #include "Common/Logging/Log.h"
+ #include "Common/MsgHandler.h"
+ 
+@@ -20,6 +25,7 @@
+ #include "VideoBackends/Vulkan/VKTexture.h"
+ #include "VideoBackends/Vulkan/VKVertexFormat.h"
+ 
++#include "VideoCommon/ComposedFrameCapture.h"
+ #include "VideoCommon/DriverDetails.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/Present.h"
+@@ -308,9 +314,55 @@ bool VKGfx::BindBackbuffer(const ClearColor& clear_color)
+ 
+ void VKGfx::PresentBackbuffer()
+ {
+-  // End drawing to backbuffer
++  // End drawing to backbuffer, including the already finalized game and ImGui draws.
+   StateTracker::GetInstance()->EndRenderPass();
+ 
++  const auto capture = m_swap_chain->GetComposedCapture();
++  const auto request = capture ? capture->TakeRequest() : std::nullopt;
++  std::unique_ptr<VKStagingTexture> readback;
++  u64 copy_fence = 0;
++  if (request)
++  {
++    if (!m_swap_chain->IsCurrentImageValid() || !m_swap_chain->SupportsComposedCapture())
++    {
++      capture->Complete(request->id, 0, 0, "No valid capturable Vulkan backbuffer is bound.");
++    }
++    else
++    {
++      const VKTexture* texture = m_swap_chain->GetCurrentTexture();
++      const u64 pixels = static_cast<u64>(texture->GetWidth()) * texture->GetHeight();
++      if (texture->GetWidth() == 0 || texture->GetHeight() == 0 ||
++          pixels > VideoCommon::MAX_COMPOSED_CAPTURE_BYTES / 4)
++      {
++        capture->Complete(request->id, 0, 0, "Composed capture exceeds its diagnostic size limit.");
++      }
++      else
++      {
++        try
++        {
++          const TextureConfig config(texture->GetWidth(), texture->GetHeight(), 1, 1, 1,
++                                     texture->GetFormat(), 0, AbstractTextureType::Texture_2D);
++          readback = VKStagingTexture::Create(StagingTextureType::Readback, config);
++          if (readback)
++          {
++            // Queue only: flushing here could submit before the acquire semaphore is consumed.
++            // Matching source/staging formats are required; BGRA conversion happens on the CPU.
++            copy_fence = g_command_buffer_mgr->GetCurrentFenceCounter();
++            readback->CopyFromTexture(texture, config.GetRect(), 0, 0, config.GetRect());
++          }
++          else
++          {
++            capture->Complete(request->id, 0, 0, "Vulkan composed readback allocation failed.");
++          }
++        }
++        catch (const std::exception& error)
++        {
++          capture->Complete(request->id, 0, 0, error.what());
++        }
++      }
++    }
++  }
++
+   if (m_swap_chain->IsCurrentImageValid())
+   {
+     // Transition the backbuffer to PRESENT_SRC to ensure all commands drawing
+@@ -330,6 +382,54 @@ void VKGfx::PresentBackbuffer()
+     g_command_buffer_mgr->SubmitCommandBuffer(true, false, true);
+   }
+ 
++  // The normal swapchain submission above retains its acquire/render-finished semaphore chain.
++  // Only now may Flush wait for the submitted copy fence and invalidate mapped CPU caches.
++  if (readback)
++  {
++    try
++    {
++      if (g_command_buffer_mgr->GetCurrentFenceCounter() == copy_fence)
++      {
++        capture->Complete(request->id, 0, 0, "Composed copy was not submitted with the backbuffer.");
++      }
++      else
++      {
++        readback->Flush();
++        const u32 width = readback->GetWidth();
++        const u32 height = readback->GetHeight();
++        const size_t stride = readback->GetMappedStride();
++        std::vector<u8> rgba;
++        const bool mapped = readback->Map() && readback->GetMappedPointer() &&
++                            stride <= std::numeric_limits<size_t>::max() / height;
++        const bool converted = mapped && VideoCommon::ConvertComposedCaptureToRGBA(
++            std::span<const u8>(reinterpret_cast<const u8*>(readback->GetMappedPointer()),
++                                stride * height),
++            stride, width, height, readback->GetFormat() == AbstractTextureFormat::BGRA8, &rgba);
++        if (!converted)
++        {
++          capture->Complete(request->id, width, height, "Composed image mapping or conversion failed.");
++        }
++        else if (capture->Snapshot().retired)
++        {
++          // Retirement already published cancellation; never publish a stale successful capture.
++        }
++        else if (!Common::SavePNG(request->path, rgba.data(), Common::ImageByteFormat::RGBA,
++                                  width, height, width * 4))
++        {
++          capture->Complete(request->id, width, height, "Writing the composed PNG failed.");
++        }
++        else
++        {
++          capture->Complete(request->id, width, height);
++        }
++      }
++    }
++    catch (const std::exception& error)
++    {
++      capture->Complete(request->id, 0, 0, error.what());
++    }
++  }
++
+   // New cmdbuffer, so invalidate state.
+   StateTracker::GetInstance()->InvalidateCachedState();
+ }
 diff --git a/Source/Core/VideoBackends/Vulkan/VKMain.cpp b/Source/Core/VideoBackends/Vulkan/VKMain.cpp
 index 6338e52e3d703ed40ada916d44e6a1fbc1f309e0..04cc2fb13814dc15f71019ac4b9d7a98e4b5942d 100644
 --- a/Source/Core/VideoBackends/Vulkan/VKMain.cpp
@@ -1334,6 +2517,337 @@ index 6338e52e3d703ed40ada916d44e6a1fbc1f309e0..04cc2fb13814dc15f71019ac4b9d7a98
    // Since VulkanContext maintains a copy of the device features and properties, we can use this
    // to initialize the backend information, so that we don't need to enumerate everything again.
    VulkanContext::PopulateBackendInfoFeatures(&g_backend_info, g_vulkan_context->GetPhysicalDevice(),
+diff --git a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+index e4d2100120ce08ebd07a673dda0fb1ef76e5391d..1f22c278d7a01634ba8be6964dba62eba6cd76c3 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKSwapChain.cpp
+@@ -17,7 +17,9 @@
+ #include "VideoBackends/Vulkan/ObjectCache.h"
+ #include "VideoBackends/Vulkan/VKTexture.h"
+ #include "VideoBackends/Vulkan/VulkanContext.h"
++#include "VideoCommon/ComposedFrameCapture.h"
+ #include "VideoCommon/Present.h"
++#include "VideoCommon/VideoEvents.h"
+ 
+ #if defined(VK_USE_PLATFORM_XLIB_KHR)
+ #include <X11/Xlib.h>
+@@ -32,10 +34,13 @@ SwapChain::SwapChain(const WindowSystemInfo& wsi, VkSurfaceKHR surface, bool vsy
+     : m_wsi(wsi), m_surface(surface), m_vsync_enabled(vsync),
+       m_fullscreen_supported(g_vulkan_context->SupportsExclusiveFullscreen(wsi, surface))
+ {
++  GetVideoEvents().composed_frame_capture_event.Trigger(m_composed_capture);
+ }
+ 
+ SwapChain::~SwapChain()
+ {
++  if (m_composed_capture)
++    m_composed_capture->SetSupport(false, "The Vulkan swapchain has been destroyed.");
+   DestroySwapChainImages();
+   DestroySwapChain();
+   DestroySurface();
+@@ -182,6 +187,7 @@ bool SwapChain::SelectSurfaceFormat()
+   // If there is a single undefined surface format, the device doesn't care, so we'll just use RGBA8
+   if (surface_formats[0].format == VK_FORMAT_UNDEFINED)
+   {
++    m_texture_format = AbstractTextureFormat::RGBA8;
+     m_surface_format.format = VK_FORMAT_R8G8B8A8_UNORM;
+     m_surface_format.colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+     return true;
+@@ -223,6 +229,12 @@ bool SwapChain::SelectSurfaceFormat()
+   // "g_ActiveConfig" might not have been been updated yet.
+   if (g_Config.bHDR && surface_format_RGBA16F_scRGB)
+     surface_format = surface_format_RGBA16F_scRGB;
++  // Only diagnostic SDR surfaces prefer a directly capturable byte format. Ordinary and HDR
++  // surfaces keep their existing selection order; unsupported HDR capture fails explicitly.
++  else if (!g_Config.bHDR && m_composed_capture && surface_format_RGBA8)
++    surface_format = surface_format_RGBA8;
++  else if (!g_Config.bHDR && m_composed_capture && surface_format_BGRA8)
++    surface_format = surface_format_BGRA8;
+   else if (surface_format_RGB10_A2)
+     surface_format = surface_format_RGB10_A2;
+   else if (surface_format_RGBA8)
+@@ -298,6 +310,9 @@ bool SwapChain::SelectPresentMode()
+ 
+ bool SwapChain::CreateSwapChain()
+ {
++  m_composed_capture_supported = false;
++  if (m_composed_capture)
++    m_composed_capture->SetSupport(false, "The Vulkan swapchain is being initialized or recreated.");
+   // Look up surface properties to determine image count and dimensions
+   VkSurfaceCapabilitiesKHR surface_capabilities;
+   VkResult res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_vulkan_context->GetPhysicalDevice(),
+@@ -352,6 +367,24 @@ bool SwapChain::CreateSwapChain()
+   // Select the number of image layers for Quad-Buffered stereoscopy
+   uint32_t image_layers = g_ActiveConfig.stereo_mode == StereoMode::QuadBuffer ? 2 : 1;
+ 
++  std::string capture_error;
++  if (m_composed_capture)
++  {
++    const bool byte_sdr =
++        (m_surface_format.format == VK_FORMAT_R8G8B8A8_UNORM ||
++         m_surface_format.format == VK_FORMAT_B8G8R8A8_UNORM) &&
++        m_surface_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR && !g_Config.bHDR;
++    if (!(surface_capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
++      capture_error = "The Vulkan surface does not support transfer-source image usage.";
++    else if (!byte_sdr || image_layers != 1)
++      capture_error = "Composed capture requires a single-layer RGBA8 or BGRA8 SDR surface.";
++    else
++    {
++      image_usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
++      m_composed_capture_supported = true;
++    }
++  }
++
+   // Store the old/current swap chain when recreating for resize
+   VkSwapchainKHR old_swap_chain = m_swap_chain;
+   m_swap_chain = VK_NULL_HANDLE;
+@@ -430,6 +463,8 @@ bool SwapChain::CreateSwapChain()
+   m_width = size.width;
+   m_height = size.height;
+   m_layers = image_layers;
++  if (m_composed_capture)
++    m_composed_capture->SetSupport(m_composed_capture_supported, std::move(capture_error));
+   return true;
+ }
+ 
+diff --git a/Source/Core/VideoBackends/Vulkan/VKSwapChain.h b/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
+index 17334dbf97d40fde4ad507946514b9f1c4718362..86114ddeeb2f78ecac5a416911bc963ef075ec1b 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
++++ b/Source/Core/VideoBackends/Vulkan/VKSwapChain.h
+@@ -11,6 +11,11 @@
+ #include "VideoBackends/Vulkan/Constants.h"
+ #include "VideoCommon/TextureConfig.h"
+ 
++namespace VideoCommon
++{
++class ComposedFrameCapture;
++}
++
+ namespace Vulkan
+ {
+ class CommandBufferManager;
+@@ -54,6 +59,13 @@ public:
+   }
+   VkResult AcquireNextImage();
+ 
++  // Session-owned optional diagnostic service, captured before swapchain creation.
++  std::shared_ptr<VideoCommon::ComposedFrameCapture> GetComposedCapture() const
++  {
++    return m_composed_capture;
++  }
++  bool SupportsComposedCapture() const { return m_composed_capture_supported; }
++
+   bool RecreateSurface(void* native_handle);
+   bool ResizeSwapChain();
+   bool RecreateSwapChain();
+@@ -91,6 +103,8 @@ private:
+     std::unique_ptr<VKFramebuffer> framebuffer;
+   };
+ 
++  std::shared_ptr<VideoCommon::ComposedFrameCapture> m_composed_capture;
++  bool m_composed_capture_supported = false;
+   WindowSystemInfo m_wsi;
+   VkSurfaceKHR m_surface = VK_NULL_HANDLE;
+   VkSurfaceFormatKHR m_surface_format = {};
+diff --git a/Source/Core/VideoCommon/ComposedFrameCapture.h b/Source/Core/VideoCommon/ComposedFrameCapture.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e91a66a9c5734b908ab971305cb19b0a91720e52
+--- /dev/null
++++ b/Source/Core/VideoCommon/ComposedFrameCapture.h
+@@ -0,0 +1,165 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <cstddef>
++#include <limits>
++#include <mutex>
++#include <optional>
++#include <span>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "Common/CommonTypes.h"
++
++namespace VideoCommon
++{
++enum class ComposedCaptureState
++{
++  Idle,
++  Pending,
++  Capturing,
++  Succeeded,
++  Failed,
++};
++
++struct ComposedCaptureResult
++{
++  u64 id = 0;
++  ComposedCaptureState state = ComposedCaptureState::Idle;
++  bool supported = false;
++  bool retired = false;
++  u32 width = 0;
++  u32 height = 0;
++  std::string path;
++  std::string error;
++  std::string support_error = "No compatible Vulkan surface has been initialized.";
++};
++
++// One session-owned diagnostic channel, with at most one outstanding capture. This class owns no
++// Runtime, presenter, texture, or GPU pointers. Its short mutex sections perform no I/O or callbacks.
++// The host polls Snapshot and applies its own finite diagnostic deadline; Retire prevents new work
++// and cancels publication from a readback already in flight. Stop video before releasing the session.
++class ComposedFrameCapture final
++{
++public:
++  // A nonzero id is acknowledged even when the backend is unavailable: Snapshot reports Failed.
++  // Zero means invalid input, another outstanding request, a retired session, or exhausted ids.
++  u64 Request(std::string path)
++  {
++    std::lock_guard lock(m_mutex);
++    if (path.empty() || path.find('\0') != std::string::npos || m_result.retired ||
++        m_result.state == ComposedCaptureState::Pending ||
++        m_result.state == ComposedCaptureState::Capturing ||
++        m_result.id == std::numeric_limits<u64>::max())
++      return 0;
++
++    ++m_result.id;
++    m_result.path = std::move(path);
++    m_result.width = 0;
++    m_result.height = 0;
++    m_result.state = m_result.supported ? ComposedCaptureState::Pending :
++                                         ComposedCaptureState::Failed;
++    m_result.error = m_result.supported ? std::string{} : m_result.support_error;
++    return m_result.id;
++  }
++
++  ComposedCaptureResult Snapshot() const
++  {
++    std::lock_guard lock(m_mutex);
++    return m_result;
++  }
++
++  void Retire()
++  {
++    std::lock_guard lock(m_mutex);
++    m_result.retired = true;
++    m_result.supported = false;
++    m_result.support_error = "The composed capture session has retired.";
++    FailOutstanding(m_result.support_error);
++  }
++
++  // Renderer-only endpoints, called on the video owner thread, never under the ImGui mutex.
++  void SetSupport(bool supported, std::string error = {})
++  {
++    std::lock_guard lock(m_mutex);
++    if (m_result.retired)
++      return;
++    m_result.supported = supported;
++    m_result.support_error = supported ? std::string{} : std::move(error);
++    if (!supported)
++      FailOutstanding(m_result.support_error);
++  }
++
++  std::optional<ComposedCaptureResult> TakeRequest()
++  {
++    std::lock_guard lock(m_mutex);
++    if (m_result.retired || !m_result.supported ||
++        m_result.state != ComposedCaptureState::Pending)
++      return std::nullopt;
++    m_result.state = ComposedCaptureState::Capturing;
++    return m_result;
++  }
++
++  void Complete(u64 id, u32 width, u32 height, std::string error = {})
++  {
++    std::lock_guard lock(m_mutex);
++    if (m_result.retired || m_result.id != id ||
++        m_result.state != ComposedCaptureState::Capturing)
++      return;
++    m_result.width = width;
++    m_result.height = height;
++    m_result.state = error.empty() ? ComposedCaptureState::Succeeded : ComposedCaptureState::Failed;
++    m_result.error = std::move(error);
++  }
++
++private:
++  void FailOutstanding(const std::string& error)
++  {
++    if (m_result.state == ComposedCaptureState::Pending ||
++        m_result.state == ComposedCaptureState::Capturing)
++    {
++      m_result.state = ComposedCaptureState::Failed;
++      m_result.error = error;
++    }
++  }
++
++  mutable std::mutex m_mutex;
++  ComposedCaptureResult m_result;
++};
++
++// Diagnostic allocation cap, independent of the backend's maximum render target dimensions.
++inline constexpr size_t MAX_COMPOSED_CAPTURE_BYTES = 256 * 1024 * 1024;
++
++// SavePNG accepts RGBA byte order. Preserve the source row orientation and alpha; remove staging
++// row padding and explicitly swizzle BGRA SDR surfaces. No HDR/tone-map approximation is performed.
++inline bool ConvertComposedCaptureToRGBA(std::span<const u8> source, size_t stride, u32 width,
++                                         u32 height, bool bgra, std::vector<u8>* rgba)
++{
++  const u64 row_bytes = static_cast<u64>(width) * 4;
++  if (!rgba || width == 0 || height == 0 || row_bytes > stride ||
++      static_cast<u64>(width) * height > MAX_COMPOSED_CAPTURE_BYTES / 4 ||
++      static_cast<u64>(height - 1) > (std::numeric_limits<size_t>::max() - row_bytes) / stride ||
++      static_cast<u64>(height - 1) * stride + row_bytes > source.size())
++    return false;
++
++  rgba->resize(static_cast<size_t>(row_bytes * height));
++  for (u32 y = 0; y < height; ++y)
++  {
++    const u8* src = source.data() + static_cast<size_t>(y) * stride;
++    u8* dst = rgba->data() + static_cast<size_t>(y) * static_cast<size_t>(row_bytes);
++    for (u32 x = 0; x < width; ++x)
++    {
++      dst[0] = src[bgra ? 2 : 0];
++      dst[1] = src[1];
++      dst[2] = src[bgra ? 0 : 2];
++      dst[3] = src[3];
++      src += 4;
++      dst += 4;
++    }
++  }
++  return true;
++}
++}  // namespace VideoCommon
+diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
+index 451109bbeb1ab83ca4f5580ea88d357c7b9c6e64..69870ebc4f3b79d5660a51344c6e400065766673 100644
+--- a/Source/Core/VideoCommon/OnScreenUI.cpp
++++ b/Source/Core/VideoCommon/OnScreenUI.cpp
+@@ -30,6 +30,7 @@
+ #include "VideoCommon/Statistics.h"
+ #include "VideoCommon/VertexManagerBase.h"
+ #include "VideoCommon/VideoConfig.h"
++#include "VideoCommon/VideoEvents.h"
+ 
+ #include <inttypes.h>
+ #include <mutex>
+@@ -207,6 +208,7 @@ void OnScreenUI::BeginImGuiFrameUnlocked(u32 width, u32 height)
+       ImVec2(static_cast<float>(m_backbuffer_width), static_cast<float>(m_backbuffer_height));
+   io.DeltaTime = time_diff_secs;
+ 
++  GetVideoEvents().before_imgui_frame_event.Trigger();
+   ImGui::NewFrame();
+ }
+ 
+@@ -422,6 +424,7 @@ void OnScreenUI::Finalize()
+   DrawDebugText();
+   OSD::DrawMessages();
+   DrawChallengesAndLeaderboards();
++  GetVideoEvents().before_imgui_render_event.Trigger();
+   ImGui::Render();
+ 
+   // Check for font changes
 diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
 index 565e4f42f8d641858b755cda66e3a0633c0d7c9a..f3415cfa67d8f119d462725e92a7ed95e35a50ee 100644
 --- a/Source/Core/VideoCommon/ShaderCache.cpp
@@ -1350,3 +2864,47 @@ index 565e4f42f8d641858b755cda66e3a0633c0d7c9a..f3415cfa67d8f119d462725e92a7ed95
      const float center_x = ImGui::GetIO().DisplaySize.x * 0.5f;
      const float center_y = ImGui::GetIO().DisplaySize.y * 0.5f;
      const float scale = ImGui::GetIO().DisplayFramebufferScale.x;
+diff --git a/Source/Core/VideoCommon/VideoEvents.h b/Source/Core/VideoCommon/VideoEvents.h
+index fe30aa251b8d5d7cdf489c4a889e49b143c76110..3d50bf14d3ef7d9e903b4083e358630e11a48787 100644
+--- a/Source/Core/VideoCommon/VideoEvents.h
++++ b/Source/Core/VideoCommon/VideoEvents.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <memory>
+ #include <string_view>
+ #include <vector>
+ 
+@@ -14,6 +15,11 @@ namespace Core
+ class System;
+ }
+ 
++namespace VideoCommon
++{
++class ComposedFrameCapture;
++}
++
+ struct PresentInfo
+ {
+   enum class PresentReason
+@@ -93,6 +99,19 @@ struct VideoEvents
+   // The exact timing of this event depends on backend/driver support.
+   Common::HookableEvent<PresentInfo&> after_present_event;
+ 
++  // Video owner thread only, with OnScreenUI's ImGui mutex already held. Callbacks must not
++  // reacquire that mutex or synchronously wait for CPU, host, or native-window operations.
++  // Input is drained immediately before NewFrame; drawing is submitted immediately before Render.
++  Common::HookableEvent<> before_imgui_frame_event;
++  Common::HookableEvent<> before_imgui_render_event;
++
++  // Queried once when a Vulkan swapchain is constructed, before its image usage is selected.
++  // A diagnostic session may supply one shared channel. The callback must only publish ownership;
++  // it must not touch ImGui or call host/window operations. Register before video boot and retire
++  // the channel before teardown. No listener means normal swapchains request no readback usage.
++  Common::HookableEvent<std::shared_ptr<VideoCommon::ComposedFrameCapture>&>
++      composed_frame_capture_event;
++
+   // An end of frame event that runs on the CPU thread
+   Common::HookableEvent<> vi_end_field_event;
+ };

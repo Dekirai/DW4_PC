@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820d65bf96c 100644
+index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b365669d23 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -144,10 +144,13 @@ else()
@@ -18,7 +18,24 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820
  endif()
  
  add_library(moderngekko_abi INTERFACE)
-@@ -415,6 +418,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -241,6 +244,8 @@ target_link_libraries(moderngekko PUBLIC ModernGekko::ABI PRIVATE fmt::fmt)
+ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+     target_sources(moderngekko PRIVATE
+         src/runtime/dolphin_runtime.cpp
++        src/runtime/ingame_menu.cpp
++        src/runtime/ingame_menu_smoke.cpp
+         tools/automation_protocol.cpp
+         vendor/dolphin/Source/Core/DolphinNoGUI/Platform.cpp
+         vendor/dolphin/Source/Core/DolphinNoGUI/PlatformHeadless.cpp
+@@ -250,6 +255,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+             vendor/dolphin/Source/Core/InputCommon/ControllerInterface/Touch/InputOverrider.cpp)
+     endif()
+     target_include_directories(moderngekko PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tools")
++    target_link_libraries(moderngekko PRIVATE imgui)
+     if(WIN32)
+         target_sources(moderngekko PRIVATE
+             vendor/dolphin/Source/Core/DolphinNoGUI/PlatformWin32.cpp)
+@@ -415,6 +421,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      add_executable(moderngekko-run
          tools/moderngekko_run.cpp
@@ -26,7 +43,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820
          tools/netplay_compatibility.cpp
          tools/netplay_session.cpp
          tools/frontend_config.cpp
-@@ -492,41 +496,35 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -492,41 +499,35 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          target_compile_definitions(moderngekko-run PRIVATE
              MODERNGEKKO_DOL_PATCH_MANIFEST="patches/${_moderngekko_dol_patch_name}")
      endif()
@@ -87,7 +104,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820
      if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
          target_link_libraries(moderngekko-launcher PRIVATE
              "$<LINK_LIBRARY:WHOLE_ARCHIVE,moderngekko>"
-@@ -541,11 +539,20 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -541,11 +542,20 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      set_target_properties(moderngekko-launcher PROPERTIES
          OUTPUT_NAME "${MODERNGEKKO_LAUNCHER_OUTPUT_NAME}")
@@ -109,7 +126,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820
      if(MODERNGEKKO_REQUIRED_DISC_ID)
          target_compile_definitions(moderngekko-launcher PRIVATE
              MODERNGEKKO_REQUIRED_DISC_ID="${MODERNGEKKO_REQUIRED_DISC_ID}")
-@@ -598,8 +605,59 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -598,8 +608,59 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          set_target_properties(moderngekko-run moderngekko-launcher PROPERTIES
              INSTALL_RPATH "$ORIGIN/lib")
      endif()
@@ -171,7 +188,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820
      add_executable(moderngekko-port
          tools/moderngekko_port.cpp
          tools/pgo_support.cpp)
-@@ -608,6 +666,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -608,6 +669,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          "${CMAKE_CURRENT_SOURCE_DIR}/tools")
      target_compile_definitions(moderngekko-port PRIVATE
          MODERNGEKKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -205,7 +222,7 @@ index 24fb92afdbb1f089d87a9eb29d0d1fee5457ed80..6c67fc031d237d5d0b9b53d27d300542
      uint32_t exram_size;
      PPCSPRRead spr_read;
 diff --git a/include/moderngekko/runtime.hpp b/include/moderngekko/runtime.hpp
-index 0adc8556c94577a0c95ba197cd66cc7898551151..f67519beec25f2c95affd943354dc172019ee306 100644
+index 0adc8556c94577a0c95ba197cd66cc7898551151..3572db6650496c540c6891c69e38cbc0c4a5a4b6 100644
 --- a/include/moderngekko/runtime.hpp
 +++ b/include/moderngekko/runtime.hpp
 @@ -38,6 +38,9 @@ struct AudioSettings
@@ -218,8 +235,19 @@ index 0adc8556c94577a0c95ba197cd66cc7898551151..f67519beec25f2c95affd943354dc172
  };
  
  struct InputSettings
+@@ -75,6 +78,10 @@ struct RuntimeConfig
+   // Boot straight into a savestate instead of from the title screen.
+   std::optional<std::filesystem::path> load_state_path;
+   AutomationSettings automation;
++  // Finite developer diagnostic: real but never visible Win32 Vulkan surface.
++  // Requires an isolated explicit user directory and NullSound; never opens an
++  // audio device. Ordinary sessions leave this empty.
++  std::filesystem::path ui_smoke_output_directory;
+ };
+ 
+ enum class RuntimeErrorCode
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798a0799455 100644
+index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d0426702a05 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
 @@ -3,6 +3,7 @@
@@ -230,7 +258,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
  #include "Common/StringUtil.h"
  #include "Core/Boot/Boot.h"
  #include "Core/Boot/BootManager.h"
-@@ -19,6 +20,7 @@
+@@ -19,14 +20,20 @@
  #include "Core/State.h"
  #include "Core/System.h"
  #include "DolphinNoGUI/Platform.h"
@@ -238,7 +266,89 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
  #include "InputCommon/ControllerInterface/Touch/InputOverrider.h"
  #include "UICommon/UICommon.h"
  #include "VideoCommon/FrameDumper.h"
-@@ -193,6 +195,8 @@ void MarkAutomationCommand(RuntimeAutomationState& state, std::string command_na
++#include "VideoCommon/AsyncRequests.h"
++#include "VideoCommon/ComposedFrameCapture.h"
++#include "VideoCommon/Present.h"
+ #include "VideoCommon/PerformanceMetrics.h"
+ #include "VideoCommon/VideoEvents.h"
+ #include "VideoCommon/VideoConfig.h"
+ #include "automation_protocol.hpp"
+ #include "dolphin_runtime_internal.hpp"
++#include "ingame_menu.hpp"
++#include "ingame_menu_smoke.hpp"
+ #include "moderngekko/cpu_state.h"
+ #include "moderngekko/mod_loader.hpp"
+ #include "moderngekko/module_loader.hpp"
+@@ -53,8 +60,18 @@ static_assert(offsetof(ModernGekkoModuleDesc, chunk_hashes) ==
+ std::mutex s_runtime_mutex;
+ bool s_runtime_active = false;
+ Platform *s_platform = nullptr;
+-std::string s_window_title;
+-bool s_show_fps_in_title = true;
++std::atomic<std::shared_ptr<moderngekko::detail::InGameMenu>> s_ingame_menu;
++struct RuntimeUILifetime {
++  std::atomic<bool> alive{true};
++  std::atomic<bool> resize_outstanding{false};
++  std::atomic<bool> title_update_queued{false};
++  // Initialized on the host before publication, then immutable. Only host jobs
++  // may dereference the platform, and retirement precedes its destruction.
++  Platform* platform = nullptr;
++  std::string window_title;
++  bool show_fps_in_title = true;
++};
++std::atomic<std::shared_ptr<RuntimeUILifetime>> s_ui_lifetime;
+ bool s_external_ui_common = false;
+ std::unique_ptr<BootSessionData> s_boot_session_data;
+ u64 s_previous_net_wait_ns = 0;
+@@ -113,21 +130,38 @@ PowerPC::CPUCore SelectCPUCore() {
+ std::vector<std::string> Host_GetPreferredLocales() { return {}; }
+ void Host_PPCSymbolsChanged() {}
+ void Host_PPCBreakpointsChanged() {}
+-bool Host_UIBlocksControllerState() { return false; }
++bool Host_UIBlocksControllerState() {
++  const auto menu = s_ingame_menu.load();
++  return menu && menu->BlocksGameInput();
++}
+ void Host_Message(HostMessageID id) {
+   if (id == HostMessageID::WMUserStop && s_platform)
+     s_platform->Stop();
+ }
+ void Host_UpdateTitle(const std::string &) {
+-  if (!s_platform)
++  // Core startup/configuration and the periodic timer all call this API.
++  // SetWindowText is synchronous across Windows threads, so even callers other
++  // than the timer must never access the native window directly here.
++  const auto lifetime = s_ui_lifetime.load();
++  if (!lifetime || !lifetime->alive.load() || lifetime->title_update_queued.exchange(true))
+     return;
+-
+-  std::string title = s_window_title;
+-  if (s_show_fps_in_title &&
+-      s_platform->GetWindowSystemInfo().type != WindowSystemType::Headless)
+-    title = FormatWindowTitle(
+-        title, Core::System::GetInstance().GetPerfMetrics().GetFPS());
+-  s_platform->SetTitle(title);
++  const std::weak_ptr<RuntimeUILifetime> weak = lifetime;
++  Core::QueueHostJob([weak](Core::System& system) {
++    const auto owner = weak.lock();
++    if (!owner)
++      return;
++    owner->title_update_queued.store(false);
++    if (!owner->alive.load() || !owner->platform)
++      return;
++    std::string title = owner->window_title;
++    if (owner->show_fps_in_title &&
++        owner->platform->GetWindowSystemInfo().type != WindowSystemType::Headless)
++      title = FormatWindowTitle(title, system.GetPerfMetrics().GetFPS());
++    owner->platform->SetTitle(title);
++  }, true);
++  // Allow dispatch during startup/uninitialized state so dropping an early
++  // notification cannot strand the coalescing flag. The live-session guard
++  // independently rejects every job after retirement, including during stop.
+ }
+ void Host_UpdateDisasmDialog() {}
+ void Host_JitCacheInvalidation() {}
+@@ -193,6 +227,8 @@ void MarkAutomationCommand(RuntimeAutomationState& state, std::string command_na
  
  void ClearAutomationPad(int port)
  {
@@ -247,7 +357,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    for (int control = static_cast<int>(ciface::Touch::FIRST_GC_CONTROL);
         control <= static_cast<int>(ciface::Touch::LAST_WII_CONTROL); ++control)
    {
-@@ -203,6 +207,9 @@ void ClearAutomationPad(int port)
+@@ -203,6 +239,9 @@ void ClearAutomationPad(int port)
  
  void ApplyAutomationPad(const automation::PadState& pad)
  {
@@ -257,7 +367,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    ClearAutomationPad(pad.port);
    for (std::size_t index = 0; index < pad.controls.size(); ++index)
    {
-@@ -218,7 +225,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
+@@ -218,7 +257,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
  std::filesystem::path NormalizeScreenshotPath(const std::filesystem::path& path)
  {
    if (!path.has_extension())
@@ -270,7 +380,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    return path;
  }
  
-@@ -228,7 +239,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
+@@ -228,7 +271,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
    std::filesystem::create_directories(path.parent_path(), ec);
    const Core::CPUThreadGuard guard(Core::System::GetInstance());
    if (g_frame_dumper)
@@ -279,7 +389,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
  }
  
  std::optional<RuntimeError> ReadAutomationMemory(const std::filesystem::path& path, u32 address,
-@@ -327,10 +338,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
+@@ -327,10 +370,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
      break;
    case automation::CommandType::SaveState:
      std::filesystem::create_directories(command.path.parent_path());
@@ -292,7 +402,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
      break;
    case automation::CommandType::Screenshot:
      SaveAutomationScreenshot(NormalizeScreenshotPath(command.path));
-@@ -410,12 +421,17 @@ void WriteAutomationStatus(const std::filesystem::path& root, ImplT& impl)
+@@ -410,12 +453,17 @@ void WriteAutomationStatus(const std::filesystem::path& root, ImplT& impl)
    status.title = impl.title;
    status.game_id = impl.metadata.disc_id;
    status.game_name = impl.metadata.game_name;
@@ -310,7 +420,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    }
    status.frame_count =
        impl.automation_state.frame_count.load(std::memory_order_relaxed);
-@@ -463,7 +479,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
+@@ -463,7 +511,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
        if (!automation::ParseCommandFile(command_path, &command, &error))
        {
          SetAutomationError(impl.automation_state,
@@ -319,7 +429,70 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
          MoveAutomationCommand(command_path, root, "failed");
          continue;
        }
-@@ -554,6 +570,15 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -515,6 +563,62 @@ struct Runtime::Impl {
+   Common::EventHook present_hook;
+   bool automation_registered = false;
+   std::jthread automation_thread;
++  std::shared_ptr<RuntimeUILifetime> ui_lifetime = std::make_shared<RuntimeUILifetime>();
++  std::shared_ptr<detail::InGameMenu> menu;
++  std::shared_ptr<VideoCommon::ComposedFrameCapture> composed_capture;
++  std::unique_ptr<detail::InGameMenuSmoke> ui_smoke;
++  Common::EventHook menu_input_hook;
++  Common::EventHook menu_draw_hook;
++  Common::EventHook composed_capture_hook;
++
++  void TickUI() {
++    if (!ui_lifetime->alive.load())
++      return;
++    if (menu)
++      menu->Tick();
++    auto& system = Core::System::GetInstance();
++    if (Core::IsRunning(system) && !ui_lifetime->resize_outstanding.load() &&
++        platform->TakeSurfaceResizeRequest()) {
++      ui_lifetime->resize_outstanding.store(true);
++      const std::weak_ptr<RuntimeUILifetime> weak = ui_lifetime;
++      // WM_SIZE only publishes a flag. AsyncRequests has a single CPU producer;
++      // the GPU callback accesses the presenter on its owner thread.
++      Core::RunOnCPUThread(system, [weak] {
++        const auto owner = weak.lock();
++        if (!owner || !owner->alive.load())
++          return;
++        AsyncRequests::GetInstance()->PushEvent([weak] {
++          if (const auto session = weak.lock()) {
++            if (session->alive.load() && g_presenter)
++              g_presenter->ResizeSurface();
++            session->resize_outstanding.store(false);
++          }
++        });
++      });
++    }
++    if (ui_smoke)
++      ui_smoke->Tick();
++  }
++
++  void RetireUI() {
++    ui_lifetime->alive.store(false);
++    auto expected = ui_lifetime;
++    s_ui_lifetime.compare_exchange_strong(expected, {});
++    if (menu)
++      menu->Retire();
++    s_ingame_menu.store({});
++    if (composed_capture)
++      composed_capture->Retire();
++    if (platform)
++      platform->SetUICallbacks({}, {});
++  }
++
++  void RemoveUIHooks() {
++    // Called after Core::Shutdown has joined the video owner.
++    menu_input_hook = {};
++    menu_draw_hook = {};
++    composed_capture_hook = {};
++  }
+ };
+ 
+ namespace detail {
+@@ -554,6 +658,33 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
          RuntimeError{RuntimeErrorCode::AlreadyActive,
                       "only one ModernGekko runtime may be active per process"}};
  
@@ -332,10 +505,28 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
 +    return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed,
 +                             "the explicitly requested headless audio backend is unavailable"}};
 +
++  if (!config.ui_smoke_output_directory.empty()) {
++#ifndef _WIN32
++    return {{}, RuntimeError{RuntimeErrorCode::PlatformUnavailable,
++                             "the hidden UI diagnostic requires Windows"}};
++#else
++    if (config.headless || config.audio.headless_device_audio || config.user_directory.empty() ||
++        config.graphics.backend != "Vulkan" || !config.mod_directories.empty() ||
++        config.load_state_path || !config.automation.directory.empty())
++      return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed,
++                               "the hidden UI diagnostic requires an isolated Vulkan session"}};
++    config.audio.backend = BACKEND_NULLSOUND;
++    config.audio.mute = true;
++    config.fullscreen = false;
++    // Exercise the ordinary title-update/shutdown path on the hidden HWND too.
++    config.show_fps_in_title = true;
++#endif
++  }
++
    GameInspectResult inspected = InspectGame(config.game_root);
    if (!inspected)
      return {{}, RuntimeError{RuntimeErrorCode::InvalidGame, inspected.error}};
-@@ -565,7 +590,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -565,7 +696,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    ModuleLoadResult module_result{};
    if (config.module.kind == ModuleSource::Kind::DynamicPath)
      module_result =
@@ -344,7 +535,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    else if (config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      module_result =
          validation_library.Attach(config.module.descriptor, requirements);
-@@ -608,7 +633,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -608,7 +739,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
                   mod.version.c_str());
  
    if (!s_external_ui_common) {
@@ -353,7 +544,59 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
      UICommon::Init();
      impl->ui_initialized = true;
    }
-@@ -644,6 +669,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -631,7 +762,43 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   else if (impl->config.window_system != WindowSystem::X11) impl->platform =
+       Platform::CreateWaylandPlatform();
+ #endif
++  if (impl->platform) {
++    impl->platform->SetHiddenWindow(!impl->config.ui_smoke_output_directory.empty());
++#ifdef _WIN32
++    if (!impl->config.headless) {
++      Platform* const platform = impl->platform.get();
++      detail::InGameMenu::HostActions actions;
++      actions.toggle_fullscreen = [platform] { platform->ToggleFullscreen(); };
++      actions.is_fullscreen = [platform] { return platform->IsWindowFullscreen(); };
++      actions.request_shutdown = [platform] { platform->RequestShutdown(); };
++      actions.allow_audio_unmute = impl->config.ui_smoke_output_directory.empty() &&
++                                   !impl->config.audio.headless_device_audio;
++      impl->menu = detail::InGameMenu::Create(std::move(actions));
++      const std::weak_ptr<detail::InGameMenu> weak = impl->menu;
++      impl->platform->SetUICallbacks([weak](const FrontendUI::InputEvent& event) {
++        const auto menu = weak.lock();
++        return menu && menu->HandleInput(event);
++      }, [owner = impl.get()] { owner->TickUI(); });
++      impl->menu_input_hook = GetVideoEvents().before_imgui_frame_event.Register([weak] {
++        if (const auto menu = weak.lock()) menu->BeginFrame();
++      });
++      impl->menu_draw_hook = GetVideoEvents().before_imgui_render_event.Register([weak] {
++        if (const auto menu = weak.lock()) menu->Draw();
++      });
++      if (!impl->config.ui_smoke_output_directory.empty()) {
++        impl->composed_capture = std::make_shared<VideoCommon::ComposedFrameCapture>();
++        impl->composed_capture_hook = GetVideoEvents().composed_frame_capture_event.Register(
++            [channel = impl->composed_capture](std::shared_ptr<VideoCommon::ComposedFrameCapture>& target) {
++              target = channel;
++            });
++      }
++    }
++#endif
++  }
+   if (!impl->platform || !impl->platform->Init()) {
++    impl->RetireUI();
++    impl->RemoveUIHooks();
++    impl->platform.reset();
+     if (impl->ui_initialized)
+       UICommon::Shutdown();
+     return {{},
+@@ -640,10 +807,15 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   }
+ 
+   const WindowSystemInfo wsi = impl->platform->GetWindowSystemInfo();
++  if (impl->composed_capture)
++    impl->ui_smoke = std::make_unique<detail::InGameMenuSmoke>(
++        *impl->platform, impl->menu, impl->composed_capture,
++        impl->config.ui_smoke_output_directory);
+   UICommon::InitControllers(wsi);
    impl->controllers_initialized = true;
    EnsureAutomationDirectories(impl->config.automation.directory);
    if (!impl->config.automation.directory.empty()) {
@@ -361,7 +604,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
      for (int port = 0; port < 4; ++port)
      {
        ciface::Touch::RegisterGameCubeInputOverrider(port);
-@@ -671,7 +697,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -671,7 +843,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    Config::SetBase(Config::GFX_WAIT_FOR_SHADERS_BEFORE_STARTING, true);
    const std::vector<std::string> audio_backends =
        AudioCommon::GetSoundBackends();
@@ -370,7 +613,19 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
      impl->config.audio.backend = BACKEND_NULLSOUND;
    } else if (impl->config.audio.backend.empty() ||
               !std::ranges::contains(audio_backends,
-@@ -695,7 +721,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -686,8 +858,10 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+         preferred != preferred_backends.end() ? *preferred : BACKEND_NULLSOUND;
+   }
+   Config::SetBase(Config::MAIN_AUDIO_BACKEND, impl->config.audio.backend);
+-  if (impl->config.audio.mute)
++  if (impl->config.audio.mute && impl->config.audio.headless_device_audio)
+     Config::SetBase(Config::MAIN_AUDIO_VOLUME, 0);
++  else if (impl->config.audio.mute)
++    Config::SetCurrent(Config::MAIN_AUDIO_MUTED, true);
+   Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
+                   impl->config.input.background_input);
+ 
+@@ -695,7 +869,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    StaticRecompModuleSource recomp_source;
    if (impl->config.module.kind == ModuleSource::Kind::DynamicPath)
      recomp_source =
@@ -379,15 +634,51 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    else if (impl->config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      recomp_source = StaticRecompModuleSource::Attached(
          reinterpret_cast<const StaticRecompModuleDesc *>(
-@@ -722,6 +748,7 @@ Runtime::~Runtime() {
+@@ -709,19 +883,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+ 
+   s_runtime_active = true;
+   s_platform = impl->platform.get();
+-  s_window_title = impl->title;
+-  s_show_fps_in_title = impl->config.show_fps_in_title;
++  s_ingame_menu.store(impl->menu);
++  impl->ui_lifetime->platform = impl->platform.get();
++  impl->ui_lifetime->window_title = impl->title;
++  impl->ui_lifetime->show_fps_in_title = impl->config.show_fps_in_title;
++  s_ui_lifetime.store(impl->ui_lifetime);
+   return {std::unique_ptr<Runtime>(new Runtime(std::move(impl))), {}};
+ }
+ 
+ Runtime::~Runtime() {
+   RequestStop();
++  m_impl->RetireUI();
+   StopAutomation();
+   if (m_impl->booted) {
+     Core::Stop(Core::System::GetInstance());
      Core::Shutdown(Core::System::GetInstance());
    }
++  m_impl->RemoveUIHooks();
    if (m_impl->automation_registered) {
 +    // Automation is joined and emulated input readers have stopped above.
      for (int port = 0; port < 4; ++port)
      {
        ciface::Touch::UnregisterGameCubeInputOverrider(port);
-@@ -755,6 +782,8 @@ RuntimeRunResult Runtime::Run() {
+@@ -732,12 +912,11 @@ Runtime::~Runtime() {
+   m_impl->state_hook = {};
+   if (m_impl->controllers_initialized)
+     UICommon::ShutdownControllers();
+-  if (m_impl->ui_initialized)
+-    UICommon::Shutdown();
+   std::lock_guard lock(s_runtime_mutex);
+   s_platform = nullptr;
+-  s_window_title.clear();
+-  s_show_fps_in_title = true;
++  m_impl->platform.reset();
++  if (m_impl->ui_initialized)
++    UICommon::Shutdown();
+   s_runtime_active = false;
+ }
+ 
+@@ -755,6 +934,8 @@ RuntimeRunResult Runtime::Run() {
              RuntimeError{RuntimeErrorCode::InvalidState,
                           "runtime is already running"}};
  
@@ -396,7 +687,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    std::unique_ptr<BootParameters> boot;
    {
      std::lock_guard lock(s_runtime_mutex);
-@@ -782,6 +811,9 @@ RuntimeRunResult Runtime::Run() {
+@@ -782,6 +963,9 @@ RuntimeRunResult Runtime::Run() {
          if (state == Core::State::Uninitialized && m_impl->platform)
            m_impl->platform->Stop();
        });
@@ -406,7 +697,14 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot),
                               m_impl->platform->GetWindowSystemInfo())) {
      m_impl->running = false;
-@@ -813,7 +845,46 @@ RuntimeRunResult Runtime::Run() {
+@@ -807,13 +991,57 @@ RuntimeRunResult Runtime::Run() {
+   if (!m_impl->config.headless && m_impl->config.show_fps_in_title) {
+     title_thread = std::jthread([](std::stop_token stop_token) {
+       while (!stop_token.stop_requested()) {
+-        Host_UpdateTitle({});
++        Host_UpdateTitle({}); // The shared API queues a lifetime-guarded host job.
+         for (int i = 0; i < 10 && !stop_token.stop_requested(); ++i)
+           std::this_thread::sleep_for(std::chrono::milliseconds(100));
        }
      });
    }
@@ -438,6 +736,11 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
 +    });
 +  }
    m_impl->platform->MainLoop();
++  std::optional<RuntimeError> ui_error;
++  if (m_impl->ui_smoke && !m_impl->ui_smoke->Passed())
++    ui_error = RuntimeError{RuntimeErrorCode::BootFailed,
++                            "hidden UI diagnostic failed: " + m_impl->ui_smoke->Error()};
++  m_impl->RetireUI();
 +  audio_monitor.request_stop();
 +  if (audio_monitor.joinable())
 +    audio_monitor.join();
@@ -453,12 +756,17 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798
    title_thread.request_stop();
    if (title_thread.joinable())
      title_thread.join();
-@@ -823,6 +894,8 @@ RuntimeRunResult Runtime::Run() {
+@@ -821,8 +1049,13 @@ RuntimeRunResult Runtime::Run() {
+   StopAutomation();
+   Core::Stop(Core::System::GetInstance());
    Core::Shutdown(Core::System::GetInstance());
++  m_impl->RemoveUIHooks();
    m_impl->booted = false;
    m_impl->running = false;
 +  if (audio_error)
 +    return {RuntimeExitReason::BootFailed, std::move(audio_error)};
++  if (ui_error)
++    return {RuntimeExitReason::BootFailed, std::move(ui_error)};
    return {};
  }
  
@@ -514,6 +822,1433 @@ index fb4b07c971f2e55d9dbb93ca35a2d42306289b3d..a6615f350792c65524b39feb4ebf655b
 +          nullptr};
 +}
  } // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu.cpp b/src/runtime/ingame_menu.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3c10280f9
+--- /dev/null
++++ b/src/runtime/ingame_menu.cpp
+@@ -0,0 +1,582 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "ingame_menu.hpp"
++#include "ingame_menu_input.hpp"
++
++#include "AudioCommon/AudioCommon.h"
++#include "Common/Config/Config.h"
++#include "Common/FileUtil.h"
++#include "Common/StringUtil.h"
++#include "Core/Config/GraphicsSettings.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/NetPlay/NetPlayProto.h"
++#include "Core/SavestateLayout.h"
++#include "Core/State.h"
++#include "Core/System.h"
++#include "VideoCommon/AsyncRequests.h"
++#include "VideoCommon/Present.h"
++#include "VideoCommon/VideoConfig.h"
++
++#include <imgui.h>
++
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <cmath>
++#include <ctime>
++#include <filesystem>
++#include <mutex>
++#include <stdexcept>
++#include <utility>
++
++namespace moderngekko::detail {
++namespace {
++namespace fs = std::filesystem;
++using Clock = std::chrono::steady_clock;
++std::atomic<std::uint64_t> s_next_generation{0};
++
++ImGuiKey ToImGuiKey(FrontendUI::Key key) {
++  using FrontendUI::Key;
++  // These ranges are contiguous in both the portable protocol and ImGui.
++  if (key >= Key::A && key <= Key::Z)
++    return static_cast<ImGuiKey>(ImGuiKey_A + static_cast<int>(key) - static_cast<int>(Key::A));
++  if (key >= Key::Num0 && key <= Key::Num9)
++    return static_cast<ImGuiKey>(ImGuiKey_0 + static_cast<int>(key) - static_cast<int>(Key::Num0));
++  if (key >= Key::F1 && key <= Key::F12)
++    return static_cast<ImGuiKey>(ImGuiKey_F1 + static_cast<int>(key) - static_cast<int>(Key::F1));
++  if (key >= Key::Keypad0 && key <= Key::Keypad9)
++    return static_cast<ImGuiKey>(ImGuiKey_Keypad0 + static_cast<int>(key) - static_cast<int>(Key::Keypad0));
++#define MENU_KEY(host, imgui) case Key::host: return ImGuiKey_##imgui
++  switch (key) {
++    MENU_KEY(Tab, Tab); MENU_KEY(Left, LeftArrow); MENU_KEY(Right, RightArrow);
++    MENU_KEY(Up, UpArrow); MENU_KEY(Down, DownArrow); MENU_KEY(PageUp, PageUp);
++    MENU_KEY(PageDown, PageDown); MENU_KEY(Home, Home); MENU_KEY(End, End);
++    MENU_KEY(Insert, Insert); MENU_KEY(Delete, Delete); MENU_KEY(Backspace, Backspace);
++    MENU_KEY(Space, Space); MENU_KEY(Enter, Enter); MENU_KEY(Escape, Escape);
++    MENU_KEY(LeftCtrl, LeftCtrl); MENU_KEY(RightCtrl, RightCtrl);
++    MENU_KEY(LeftShift, LeftShift); MENU_KEY(RightShift, RightShift);
++    MENU_KEY(LeftAlt, LeftAlt); MENU_KEY(RightAlt, RightAlt);
++    MENU_KEY(LeftSuper, LeftSuper); MENU_KEY(RightSuper, RightSuper);
++    MENU_KEY(Apostrophe, Apostrophe); MENU_KEY(Comma, Comma); MENU_KEY(Minus, Minus);
++    MENU_KEY(Period, Period); MENU_KEY(Slash, Slash); MENU_KEY(Semicolon, Semicolon);
++    MENU_KEY(Equal, Equal); MENU_KEY(LeftBracket, LeftBracket); MENU_KEY(Backslash, Backslash);
++    MENU_KEY(RightBracket, RightBracket); MENU_KEY(GraveAccent, GraveAccent);
++    MENU_KEY(CapsLock, CapsLock); MENU_KEY(ScrollLock, ScrollLock); MENU_KEY(NumLock, NumLock);
++    MENU_KEY(PrintScreen, PrintScreen); MENU_KEY(Pause, Pause);
++    MENU_KEY(KeypadDecimal, KeypadDecimal); MENU_KEY(KeypadDivide, KeypadDivide);
++    MENU_KEY(KeypadMultiply, KeypadMultiply); MENU_KEY(KeypadSubtract, KeypadSubtract);
++    MENU_KEY(KeypadAdd, KeypadAdd); MENU_KEY(KeypadEnter, KeypadEnter);
++    default: return ImGuiKey_None;
++  }
++#undef MENU_KEY
++}
++
++const char* AspectName(AspectMode mode) {
++  switch (mode) {
++    case AspectMode::Auto: return "Automatic";
++    case AspectMode::ForceStandard: return "4:3";
++    case AspectMode::ForceWide: return "16:9 (stretch)";
++    case AspectMode::Stretch: return "Fill window";
++    default: return "Custom (configured externally)";
++  }
++}
++} // namespace
++
++struct InGameMenu::Impl : std::enable_shared_from_this<Impl> {
++  explicit Impl(HostActions actions_) : actions(std::move(actions_)), generation(++s_next_generation) {}
++
++  struct View {
++    bool running = false, paused = false, netplay = false, muted = false, fullscreen = false;
++    bool vsync = false, ssaa = false, hires = false;
++    int scale = 1;
++    u32 msaa = 1;
++    AspectMode aspect = AspectMode::Auto;
++    std::vector<fs::path> states;
++    std::string message;
++    std::string last_action;
++    std::vector<InGameMenuButtonRect> buttons;
++  };
++
++  HostActions actions; // Host-thread callbacks, immutable for this session.
++  const std::uint64_t generation;
++  InGameMenuInput input;
++  mutable std::mutex mutex;
++  View view;
++  std::atomic<bool> pending_action{false}, redraw_outstanding{false}, redraw_needed{false};
++  std::atomic<bool> refresh_states{true};
++  std::atomic<std::uint64_t> draw_frames{0}, actions_queued{0}, actions_completed{0};
++  Clock::time_point next_snapshot{}, next_redraw{}, next_state_refresh{}; // Host only.
++  std::time_t last_save_time = 0;
++  std::size_t save_sequence = 0;
++  std::string selected_state; // Video only; UTF-8 identity, not an unchecked path from input.
++  bool drawn_open = false;
++  std::array<bool, 8> modifiers{}; // Video only.
++
++  bool IsLive(std::uint64_t expected) const {
++    return generation == expected && input.IsAlive();
++  }
++
++  void Message(std::string text) {
++    std::lock_guard lock(mutex);
++    view.message = std::move(text);
++  }
++
++  void Queue(std::string name, std::function<void(Impl&, Core::System&)> action) {
++    if (!input.IsAlive() || pending_action.exchange(true))
++      return;
++    ++actions_queued;
++    const std::weak_ptr<Impl> weak = weak_from_this();
++    const auto expected = generation;
++    // Only enqueuing occurs under ImGui's lock. Host callbacks may pause/lock
++    // the CPU/GPU, so none may execute inline on the drawing thread.
++    Core::QueueHostJob([weak, expected, name = std::move(name), action = std::move(action)]
++                       (Core::System& system) {
++      const auto self = weak.lock();
++      if (!self || !self->IsLive(expected))
++        return;
++      if (Core::IsRunning(system)) {
++        {
++          std::lock_guard lock(self->mutex);
++          self->view.last_action = name;
++        }
++        try {
++          action(*self, system);
++        } catch (const std::exception& error) {
++          self->Message(std::string("Action failed: ") + error.what());
++        }
++        ++self->actions_completed; // Host dispatch, not asynchronous state-file completion.
++      }
++      self->pending_action.store(false);
++      self->next_snapshot = {};
++      self->redraw_needed.store(true);
++    });
++  }
++
++  void SettingsChanged() {
++    if (actions.on_settings_changed)
++      actions.on_settings_changed();
++    Message("Settings applied to this session.");
++  }
++
++  void SaveState(Core::System& system) {
++    if (NetPlay::IsNetPlayRunning()) {
++      Message("Save states are unavailable during online play.");
++      return;
++    }
++    const fs::path directory = fs::u8path(File::GetUserPath(D_STATESAVES_IDX));
++    if (directory.empty())
++      throw std::runtime_error("The save-state directory is unavailable.");
++    fs::create_directories(directory);
++    const std::time_t now = std::time(nullptr);
++    if (now != last_save_time) {
++      last_save_time = now;
++      save_sequence = 0;
++    }
++    fs::path path;
++    for (unsigned attempts = 0; attempts < 10000; ++attempts) {
++      path = directory / State::Layout::TimestampedName(now, save_sequence++, State::Layout::MANUAL_PREFIX);
++      if (!fs::exists(path))
++        break;
++      path.clear();
++    }
++    if (path.empty())
++      throw std::runtime_error("Cannot allocate a new save-state filename.");
++    State::SaveAs(system, PathToString(path));
++    Message("Save requested. The game reports completion on screen.");
++    next_state_refresh = Clock::now() + std::chrono::seconds(2);
++  }
++
++  void LoadState(Core::System& system, const fs::path& path) {
++    if (NetPlay::IsNetPlayRunning()) {
++      Message("Loading states is unavailable during online play.");
++      return;
++    }
++    const fs::path directory = fs::u8path(File::GetUserPath(D_STATESAVES_IDX));
++    // GetUserPath conventionally has a trailing separator; path comparison
++    // alone would reject every listed file even though the directory is equal.
++    if (!fs::equivalent(path.parent_path(), directory) || path.extension() != State::Layout::EXTENSION ||
++        !fs::is_regular_file(path))
++      throw std::runtime_error("The selected save state is no longer available.");
++    State::LoadAs(system, PathToString(path));
++    Message("Load requested. The game reports the result on screen.");
++  }
++
++  void RedrawPaused(Core::System& system) {
++    const auto now = Clock::now();
++    if (Core::GetState(system) != Core::State::Paused || now < next_redraw ||
++        (!input.IsOpen() && !redraw_needed.load()) || redraw_outstanding.exchange(true))
++      return;
++    redraw_needed.store(false);
++    next_redraw = now + std::chrono::milliseconds(33);
++    const std::weak_ptr<Impl> weak = weak_from_this();
++    const auto expected = generation;
++    Core::RunOnCPUThread(system, [weak, expected] {
++      const auto self = weak.lock();
++      if (!self || !self->IsLive(expected))
++        return;
++      // AsyncRequests has a single CPU producer. A host/window timer must not
++      // push directly into it, including while the emulation CPU is stepping.
++      AsyncRequests::GetInstance()->PushEvent([weak, expected] {
++        const auto owner = weak.lock();
++        if (!owner)
++          return;
++        if (owner->IsLive(expected) &&
++            Core::GetState(Core::System::GetInstance()) == Core::State::Paused && g_presenter)
++          g_presenter->Present(nullptr);
++        owner->redraw_outstanding.store(false);
++      });
++    });
++  }
++
++  void Tick() {
++    if (!input.IsAlive())
++      return;
++    auto& system = Core::System::GetInstance();
++    const auto now = Clock::now();
++    if (now >= next_snapshot) {
++      const auto state = Core::GetState(system);
++      const bool running = state == Core::State::Running || state == Core::State::Paused;
++      View update;
++      update.running = running;
++      update.paused = state == Core::State::Paused;
++      update.netplay = NetPlay::IsNetPlayRunning();
++      update.fullscreen = actions.is_fullscreen && actions.is_fullscreen();
++      if (running) {
++        update.muted = Config::Get(Config::MAIN_AUDIO_MUTED);
++        update.vsync = Config::Get(Config::GFX_VSYNC);
++        update.scale = Config::Get(Config::GFX_EFB_SCALE);
++        update.aspect = Config::Get(Config::GFX_ASPECT_RATIO);
++        update.msaa = Config::Get(Config::GFX_MSAA);
++        update.ssaa = Config::Get(Config::GFX_SSAA);
++        update.hires = Config::Get(Config::GFX_HIRES_TEXTURES);
++      }
++      {
++        std::lock_guard lock(mutex);
++        update.states = std::move(view.states);
++        update.buttons = std::move(view.buttons);
++        update.message = std::move(view.message);
++        update.last_action = std::move(view.last_action);
++        view = std::move(update);
++      }
++      next_snapshot = now + std::chrono::milliseconds(50);
++    }
++    if (input.IsOpen() && (refresh_states.exchange(false) ||
++        (next_state_refresh != Clock::time_point{} && now >= next_state_refresh))) {
++      next_state_refresh = {};
++      const fs::path directory = fs::u8path(File::GetUserPath(D_STATESAVES_IDX));
++      auto files = State::Layout::List(directory);
++      // Keep rendering/snapshots bounded even if a developer has a large archive.
++      if (files.size() > 128)
++        files.resize(128);
++      std::lock_guard lock(mutex);
++      view.states = std::move(files);
++    }
++    RedrawPaused(system);
++  }
++};
++
++std::shared_ptr<InGameMenu> InGameMenu::Create(HostActions actions) {
++  return std::shared_ptr<InGameMenu>(new InGameMenu(std::move(actions)));
++}
++InGameMenu::InGameMenu(HostActions actions) : m_impl(std::make_shared<Impl>(std::move(actions))) {}
++InGameMenu::~InGameMenu() { m_impl->input.Retire(); }
++bool InGameMenu::IsOpen() const { return m_impl->input.IsOpen(); }
++bool InGameMenu::BlocksGameInput() const { return IsOpen(); }
++void InGameMenu::Retire() { m_impl->input.Retire(); }
++bool InGameMenu::HandleInput(const FrontendUI::InputEvent& event) {
++  const bool was_open = IsOpen();
++  const bool consumed = m_impl->input.Handle(event);
++  if (!was_open && IsOpen())
++    m_impl->refresh_states.store(true);
++  if (consumed || was_open)
++    m_impl->redraw_needed.store(true);
++  return consumed;
++}
++void InGameMenu::Tick() { m_impl->Tick(); }
++
++void InGameMenu::BeginFrame() {
++  auto& self = *m_impl;
++  if (!self.input.IsAlive() || !ImGui::GetCurrentContext())
++    return;
++  auto& io = ImGui::GetIO();
++  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
++  io.MouseDrawCursor = self.input.IsOpen();
++  const auto batch = self.input.Drain();
++  if (batch.reset) {
++    // ImGui can retain transitions for later frames when its input trickle
++    // queue is enabled. Clearing only held state would let those reassert it.
++    io.ClearEventsQueue();
++    io.ClearInputKeys();
++    io.ClearInputMouse();
++    self.modifiers.fill(false);
++  }
++  using namespace FrontendUI;
++  for (std::size_t i = 0; i < batch.size; ++i) {
++    const auto& event = batch.events[i];
++    switch (event.kind) {
++      case InputKind::Key: {
++        if (event.repeat)
++          break; // ImGui owns repeat timing from the original down transition.
++        const ImGuiKey key = ToImGuiKey(event.key);
++        if (key != ImGuiKey_None)
++          io.AddKeyEvent(key, event.down);
++        if (event.key >= Key::LeftCtrl && event.key <= Key::RightSuper) {
++          self.modifiers[static_cast<std::size_t>(event.key) - static_cast<std::size_t>(Key::LeftCtrl)] = event.down;
++          io.AddKeyEvent(ImGuiMod_Ctrl, self.modifiers[0] || self.modifiers[1]);
++          io.AddKeyEvent(ImGuiMod_Shift, self.modifiers[2] || self.modifiers[3]);
++          io.AddKeyEvent(ImGuiMod_Alt, self.modifiers[4] || self.modifiers[5]);
++          io.AddKeyEvent(ImGuiMod_Super, self.modifiers[6] || self.modifiers[7]);
++        }
++        break;
++      }
++      case InputKind::Character:
++        if (event.character > 0 && event.character <= 0x10ffff &&
++            (event.character < 0xd800 || event.character > 0xdfff))
++          io.AddInputCharacter(event.character);
++        break;
++      case InputKind::MousePosition:
++        if (std::isfinite(event.x) && std::isfinite(event.y))
++          io.AddMousePosEvent(event.x, event.y);
++        break;
++      case InputKind::MouseButton:
++        if (event.button >= 0 && event.button < 5)
++          io.AddMouseButtonEvent(event.button, event.down);
++        break;
++      case InputKind::MouseWheel:
++        if (std::isfinite(event.x) && std::isfinite(event.y))
++          io.AddMouseWheelEvent(event.x, event.y);
++        break;
++      case InputKind::Focus: io.AddFocusEvent(event.down); break;
++      case InputKind::Reset: break; // Drain's reset flag already released every key/button.
++    }
++  }
++}
++
++void InGameMenu::Draw() {
++  auto& self = *m_impl;
++  if (!self.input.IsAlive() || !ImGui::GetCurrentContext())
++    return;
++  if (!self.input.IsOpen()) {
++    self.drawn_open = false;
++    std::lock_guard lock(self.mutex);
++    self.view.buttons.clear();
++    return;
++  }
++  ++self.draw_frames;
++  Impl::View view;
++  {
++    std::lock_guard lock(self.mutex);
++    view = self.view;
++  }
++  std::vector<InGameMenuButtonRect> buttons;
++  const bool pending = self.pending_action.load();
++  const bool active = view.running && !pending;
++  const auto& io = ImGui::GetIO();
++  if (!self.drawn_open) {
++    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
++                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
++    ImGui::SetNextWindowFocus();
++  }
++  self.drawn_open = true;
++  ImGui::SetNextWindowSize(ImVec2(std::max(1.0f, std::min(650.0f, io.DisplaySize.x - 24.0f)),
++                                std::max(1.0f, std::min(650.0f, io.DisplaySize.y - 24.0f))), ImGuiCond_FirstUseEver);
++  auto record = [&](const char* id, bool enabled) {
++    const auto min = ImGui::GetItemRectMin();
++    const auto max = ImGui::GetItemRectMax();
++    buttons.push_back({id, min.x, min.y, max.x - min.x, max.y - min.y,
++                       enabled && ImGui::IsItemVisible()});
++  };
++  auto button = [&](const char* label, const char* id, bool enabled) {
++    ImGui::BeginDisabled(!enabled);
++    const bool pressed = ImGui::Button(label);
++    record(id, enabled);
++    ImGui::EndDisabled();
++    return pressed;
++  };
++  bool open = true;
++  if (ImGui::Begin("Digimon World 4 - Settings", &open, ImGuiWindowFlags_NoCollapse)) {
++    ImGui::TextUnformatted("F1 or Escape closes this menu. Opening it keeps the game running.");
++    ImGui::Text("Session: %s%s", view.paused ? "Paused" : "Running", view.netplay ? " | Online" : "");
++    if (button(view.paused ? "Resume" : "Pause", view.paused ? "resume" : "pause", active && !view.netplay)) {
++      const bool pause = !view.paused;
++      self.Queue(pause ? "pause" : "resume", [pause](Impl& owner, Core::System& system) {
++        if (NetPlay::IsNetPlayRunning()) {
++          owner.Message("Pause is unavailable during online play.");
++          return;
++        }
++        Core::SetState(system, pause ? Core::State::Paused : Core::State::Running);
++        owner.Message(Core::GetState(system) == Core::State::Paused ? "Game paused." : "Game running.");
++      });
++    }
++    ImGui::SameLine();
++    if (button(view.muted ? "Unmute" : "Mute", "mute",
++               active && (!view.muted || self.actions.allow_audio_unmute))) {
++      const bool mute = !view.muted;
++      self.Queue("mute", [mute](Impl& owner, Core::System& system) {
++        if (!mute && !owner.actions.allow_audio_unmute)
++          return;
++        const std::weak_ptr<Impl> weak = owner.weak_from_this();
++        const auto generation = owner.generation;
++        Core::RunOnCPUThread(system, [weak, generation, mute] {
++          const auto session = weak.lock();
++          if (!session || !session->IsLive(generation))
++            return;
++          Config::SetCurrent(Config::MAIN_AUDIO_MUTED, mute);
++          AudioCommon::UpdateSoundStream(Core::System::GetInstance());
++        });
++        owner.Message(mute ? "Mute requested." : "Unmute requested.");
++      });
++    }
++    ImGui::SameLine();
++    if (button(view.fullscreen ? "Windowed" : "Fullscreen", "fullscreen",
++               active && static_cast<bool>(self.actions.toggle_fullscreen))) {
++      self.Queue("fullscreen", [](Impl& owner, Core::System&) {
++        if (owner.actions.toggle_fullscreen)
++          owner.actions.toggle_fullscreen();
++      });
++    }
++    if (view.netplay)
++      ImGui::TextWrapped("Pause, save states and graphics changes are disabled during online play.");
++    if (!self.actions.allow_audio_unmute)
++      ImGui::TextDisabled("This diagnostic session requires silent audio.");
++
++    ImGui::SeparatorText("Save states");
++    if (button("Save new state", "save_state", active && !view.netplay))
++      self.Queue("save_state", [](Impl& owner, Core::System& system) { owner.SaveState(system); });
++    ImGui::SameLine();
++    if (button("Refresh list", "refresh_states", active))
++      self.refresh_states.store(true);
++    if (self.selected_state.empty() && !view.states.empty())
++      self.selected_state = PathToString(view.states.front());
++    const auto selected = std::find_if(view.states.begin(), view.states.end(), [&](const fs::path& path) {
++      return PathToString(path) == self.selected_state;
++    });
++    const std::string selected_label = selected == view.states.end() ? "Select a state" : PathToString(selected->filename());
++    ImGui::SetNextItemWidth(-1);
++    if (ImGui::BeginCombo("##saved_states", selected_label.c_str())) {
++      for (const auto& path : view.states) {
++        const std::string name = PathToString(path.filename());
++        if (ImGui::Selectable(name.c_str(), PathToString(path) == self.selected_state))
++          self.selected_state = PathToString(path);
++      }
++      ImGui::EndCombo();
++    }
++    if (button("Load selected state", "load_state", active && !view.netplay && selected != view.states.end())) {
++      const fs::path path = *selected;
++      self.Queue("load_state", [path](Impl& owner, Core::System& system) { owner.LoadState(system, path); });
++    }
++    ImGui::TextDisabled("Newest 128 states. Loading replaces your current game progress.");
++
++    ImGui::SeparatorText("Graphics");
++    ImGui::TextDisabled("Changes apply to this session. Game speed is unchanged.");
++    ImGui::BeginDisabled(!active || view.netplay);
++    const int max_scale = std::min(12, static_cast<int>(g_backend_info.MaxTextureSize / 640));
++    const std::string current_scale = view.scale == 0 ? "Automatic" :
++      std::to_string(view.scale) + "x (" + std::to_string(view.scale * 640) + " x " + std::to_string(view.scale * 528) + ")";
++    if (ImGui::BeginCombo("Internal resolution", current_scale.c_str())) {
++      for (int scale : {1, 2, 3, 4, 5, 6, 8, 10, 12}) {
++        if (scale > max_scale)
++          continue;
++        const std::string label = std::to_string(scale) + "x (" + std::to_string(scale * 640) + " x " + std::to_string(scale * 528) + ")";
++        if (ImGui::Selectable(label.c_str(), view.scale == scale))
++          self.Queue("internal_resolution", [scale](Impl& owner, Core::System&) {
++            if (!NetPlay::IsNetPlayRunning()) {
++              Config::SetCurrent(Config::GFX_EFB_SCALE, scale);
++              owner.SettingsChanged();
++            }
++          });
++      }
++      ImGui::EndCombo();
++    }
++    if (ImGui::BeginCombo("Aspect ratio", AspectName(view.aspect))) {
++      for (const auto aspect : {AspectMode::Auto, AspectMode::ForceStandard, AspectMode::ForceWide, AspectMode::Stretch}) {
++        if (ImGui::Selectable(AspectName(aspect), view.aspect == aspect))
++          self.Queue("aspect_ratio", [aspect](Impl& owner, Core::System&) {
++            if (!NetPlay::IsNetPlayRunning()) {
++              Config::SetCurrent(Config::GFX_ASPECT_RATIO, aspect);
++              owner.SettingsChanged();
++            }
++          });
++      }
++      ImGui::EndCombo();
++    }
++    const std::string aa_label = view.msaa <= 1 ? "Off" : std::to_string(view.msaa) + (view.ssaa ? "x SSAA" : "x MSAA");
++    if (ImGui::BeginCombo("Anti-aliasing", aa_label.c_str())) {
++      for (const u32 samples : g_backend_info.AAModes) {
++        const std::string label = samples <= 1 ? "Off" : std::to_string(samples) + "x MSAA";
++        if (ImGui::Selectable(label.c_str(), view.msaa == samples && !view.ssaa))
++          self.Queue("anti_aliasing", [samples](Impl& owner, Core::System&) {
++            if (!NetPlay::IsNetPlayRunning()) {
++              const Config::ConfigChangeCallbackGuard guard;
++              Config::SetCurrent(Config::GFX_MSAA, samples);
++              Config::SetCurrent(Config::GFX_SSAA, false);
++              owner.SettingsChanged();
++            }
++          });
++      }
++      ImGui::EndCombo();
++    }
++    bool vsync = view.vsync;
++    if (ImGui::Checkbox("VSync", &vsync))
++      self.Queue("vsync", [vsync](Impl& owner, Core::System&) {
++        if (!NetPlay::IsNetPlayRunning()) {
++          Config::SetCurrent(Config::GFX_VSYNC, vsync);
++          owner.SettingsChanged();
++        }
++      });
++    bool hires = view.hires;
++    if (ImGui::Checkbox("Load installed HD texture packs", &hires))
++      self.Queue("hd_textures", [hires](Impl& owner, Core::System&) {
++        if (!NetPlay::IsNetPlayRunning()) {
++          Config::SetCurrent(Config::GFX_HIRES_TEXTURES, hires);
++          owner.SettingsChanged();
++        }
++      });
++    ImGui::EndDisabled();
++    ImGui::Separator();
++    if (!view.message.empty())
++      ImGui::TextWrapped("%s", view.message.c_str());
++    if (pending)
++      ImGui::TextDisabled("Applying action...");
++    if (button("Close menu", "close", true))
++      open = false;
++    ImGui::SameLine();
++    if (button("Exit game", "exit", active && static_cast<bool>(self.actions.request_shutdown)))
++      self.Queue("exit", [](Impl& owner, Core::System&) {
++        if (owner.actions.request_shutdown)
++          owner.actions.request_shutdown();
++      });
++  }
++  ImGui::End();
++  if (!open) {
++    self.input.Close();
++    self.redraw_needed.store(true);
++  }
++  {
++    std::lock_guard lock(self.mutex);
++    self.view.buttons = std::move(buttons);
++  }
++}
++
++InGameMenuSnapshot InGameMenu::Snapshot() const {
++  const auto& self = *m_impl;
++  InGameMenuSnapshot snapshot;
++  snapshot.generation = self.generation;
++  snapshot.alive = self.input.IsAlive();
++  snapshot.open = self.input.IsOpen();
++  snapshot.capture = snapshot.open;
++  snapshot.input_events = self.input.Events();
++  snapshot.input_overflows = self.input.Overflows();
++  snapshot.draw_frames = self.draw_frames.load();
++  snapshot.actions_queued = self.actions_queued.load();
++  snapshot.actions_completed = self.actions_completed.load();
++  std::lock_guard lock(self.mutex);
++  snapshot.paused = self.view.paused;
++  snapshot.netplay = self.view.netplay;
++  snapshot.last_action = self.view.last_action;
++  snapshot.message = self.view.message;
++  snapshot.buttons = self.view.buttons;
++  return snapshot;
++}
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu.hpp b/src/runtime/ingame_menu.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..9017c50a4d070fd05b4cdbdd194dda772978b315
+--- /dev/null
++++ b/src/runtime/ingame_menu.hpp
+@@ -0,0 +1,77 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <cstdint>
++#include <functional>
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "DolphinNoGUI/UIInput.h"
++
++namespace moderngekko::detail {
++
++struct InGameMenuButtonRect {
++  std::string id;
++  float x = 0, y = 0, width = 0, height = 0;
++  bool enabled = false;
++};
++
++struct InGameMenuSnapshot {
++  std::uint64_t generation = 0;
++  bool alive = false;
++  bool open = false;
++  bool capture = false;
++  bool paused = false;
++  bool netplay = false;
++  std::uint64_t input_events = 0;
++  std::uint64_t input_overflows = 0;
++  std::uint64_t draw_frames = 0;
++  std::uint64_t actions_queued = 0;
++  std::uint64_t actions_completed = 0;
++  std::string last_action;
++  std::string message;
++  std::vector<InGameMenuButtonRect> buttons;
++};
++
++class InGameMenu final {
++public:
++  struct HostActions {
++    // Called only on the host/window owner thread, before Retire().
++    std::function<void()> toggle_fullscreen;
++    std::function<bool()> is_fullscreen;
++    std::function<void()> request_shutdown;
++    std::function<void()> on_settings_changed;
++    bool allow_audio_unmute = true;
++  };
++
++  static std::shared_ptr<InGameMenu> Create(HostActions actions);
++  ~InGameMenu();
++  InGameMenu(const InGameMenu&) = delete;
++  InGameMenu& operator=(const InGameMenu&) = delete;
++
++  // Host thread. F1/Escape update modal capture synchronously, before native
++  // hotkeys run; other events enter a bounded queue. No ImGui calls occur here.
++  bool HandleInput(const FrontendUI::InputEvent& event);
++  void Tick();
++  // Call before stopping the core/destroying the platform. Queued jobs retain
++  // weak session ownership and cannot invoke platform callbacks after this.
++  void Retire();
++
++  // Video owner thread, with the existing OnScreenUI ImGui mutex already held.
++  // BeginFrame runs before NewFrame; Draw runs before Render. Neither waits
++  // for host/CPU work or acquires the ImGui mutex again.
++  void BeginFrame();
++  void Draw();
++
++  bool IsOpen() const;
++  bool BlocksGameInput() const;
++  InGameMenuSnapshot Snapshot() const;
++
++private:
++  struct Impl;
++  explicit InGameMenu(HostActions actions);
++  std::shared_ptr<Impl> m_impl;
++};
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu_input.hpp b/src/runtime/ingame_menu_input.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..18b764ee59ba283b3aa9e5ce02c5742cd3e43b8f
+--- /dev/null
++++ b/src/runtime/ingame_menu_input.hpp
+@@ -0,0 +1,106 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstddef>
++#include <cstdint>
++#include <mutex>
++
++#include "DolphinNoGUI/UIInput.h"
++
++namespace moderngekko::detail {
++
++// Standard-library-only input policy, shared by the real menu and its tests.
++// Reset is delivered separately, so overflow cannot strand a held ImGui key.
++class InGameMenuInput {
++public:
++  static constexpr std::size_t Capacity = 512;
++  struct Batch {
++    std::array<FrontendUI::InputEvent, Capacity> events{};
++    std::size_t size = 0;
++    bool reset = false;
++  };
++
++  bool Handle(const FrontendUI::InputEvent& event) {
++    using namespace FrontendUI;
++    std::lock_guard lock(m_mutex);
++    if (!m_alive.load())
++      return false;
++    ++m_events;
++    if (event.kind == InputKind::Key && event.key == Key::F1) {
++      if (event.down && !event.repeat)
++        SetOpenLocked(!m_open.load());
++      return true;
++    }
++    if (event.kind == InputKind::Key && event.key == Key::Escape && m_open.load()) {
++      if (event.down && !event.repeat)
++        SetOpenLocked(false);
++      return true;
++    }
++    if (event.kind == InputKind::Reset ||
++        (event.kind == InputKind::Focus && !event.down)) {
++      m_size = 0;
++      m_reset = true;
++    }
++    if (event.kind == InputKind::Focus || event.kind == InputKind::Reset || m_open.load())
++      PushLocked(event);
++    return m_open.load();
++  }
++
++  void Close() {
++    std::lock_guard lock(m_mutex);
++    SetOpenLocked(false);
++  }
++  void Retire() {
++    std::lock_guard lock(m_mutex);
++    m_alive.store(false);
++    SetOpenLocked(false);
++  }
++  bool IsOpen() const { return m_alive.load() && m_open.load(); }
++  bool IsAlive() const { return m_alive.load(); }
++  std::uint64_t Events() const { return m_events.load(); }
++  std::uint64_t Overflows() const { return m_overflows.load(); }
++  Batch Drain() {
++    std::lock_guard lock(m_mutex);
++    Batch batch;
++    batch.size = m_size;
++    batch.reset = m_reset;
++    for (std::size_t i = 0; i < m_size; ++i)
++      batch.events[i] = m_queue[i];
++    m_size = 0;
++    m_reset = false;
++    return batch;
++  }
++
++private:
++  void SetOpenLocked(bool open) {
++    m_open.store(open);
++    m_size = 0;
++    m_reset = true;
++  }
++  void PushLocked(const FrontendUI::InputEvent& event) {
++    using FrontendUI::InputKind;
++    if (event.kind == InputKind::MousePosition && m_size != 0 &&
++        m_queue[m_size - 1].kind == InputKind::MousePosition) {
++      m_queue[m_size - 1] = event;
++      return;
++    }
++    if (m_size == Capacity) {
++      m_size = 0;
++      m_reset = true;
++      ++m_overflows;
++    }
++    m_queue[m_size++] = event;
++  }
++  std::mutex m_mutex;
++  std::array<FrontendUI::InputEvent, Capacity> m_queue{};
++  std::size_t m_size = 0;
++  bool m_reset = true;
++  std::atomic<bool> m_alive{true};
++  std::atomic<bool> m_open{false};
++  std::atomic<std::uint64_t> m_events{0};
++  std::atomic<std::uint64_t> m_overflows{0};
++};
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu_smoke.cpp b/src/runtime/ingame_menu_smoke.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7adb4751e6
+--- /dev/null
++++ b/src/runtime/ingame_menu_smoke.cpp
+@@ -0,0 +1,590 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "ingame_menu_smoke.hpp"
++
++#include "ingame_menu.hpp"
++
++#include "AudioCommon/AudioTelemetry.h"
++#include "Common/Config/Config.h"
++#include "Common/FileUtil.h"
++#include "Common/HookableEvent.h"
++#include "Common/StringUtil.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/System.h"
++#include "DolphinNoGUI/Platform.h"
++#include "VideoCommon/ComposedFrameCapture.h"
++#include "VideoCommon/VideoEvents.h"
++
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include <chrono>
++#include <cmath>
++#include <cstdio>
++#include <fstream>
++#include <map>
++#include <sstream>
++#include <stdexcept>
++#include <string_view>
++#include <utility>
++
++#ifdef _WIN32
++#include <Windows.h>
++#endif
++
++namespace moderngekko::detail {
++namespace {
++namespace fs = std::filesystem;
++using Clock = std::chrono::steady_clock;
++
++std::string Quote(std::string_view text) {
++  std::string result = "\"";
++  constexpr char hex[] = "0123456789abcdef";
++  for (const unsigned char value : text) {
++    if (value == '"' || value == '\\') {
++      result += '\\';
++      result += static_cast<char>(value);
++    } else if (value < 0x20) {
++      result += "\\u00";
++      result += hex[value >> 4];
++      result += hex[value & 15];
++    } else {
++      result += static_cast<char>(value);
++    }
++  }
++  return result + '"';
++}
++
++const char* CaptureState(VideoCommon::ComposedCaptureState state) {
++  using VideoCommon::ComposedCaptureState;
++  switch (state) {
++  case ComposedCaptureState::Idle: return "idle";
++  case ComposedCaptureState::Pending: return "pending";
++  case ComposedCaptureState::Capturing: return "capturing";
++  case ComposedCaptureState::Succeeded: return "succeeded";
++  case ComposedCaptureState::Failed: return "failed";
++  }
++  return "unknown";
++}
++}
++
++struct InGameMenuSmoke::Impl {
++  struct FrameProgress {
++    std::atomic<std::uint64_t> unique_presents{0};
++    std::atomic<std::uint64_t> last_guest_frame{0};
++  };
++  enum class Phase {
++    WaitReady, Open, Repeat, Close, Reopen, Escape, OpenAgain,
++    BackgroundMove, BackgroundDown, BackgroundUp, SpaceDown, SpaceUp,
++    PauseMove, PauseDown, WaitPaused, PauseSettle, PausedRedraw, Capture,
++    ResumeMove, ResumeDown, WaitResumed, FinalClose, Finished
++  };
++  struct Event {
++    std::string phase;
++    double elapsed = 0;
++    std::uint64_t draws = 0, game_frames = 0, inputs = 0, actions = 0;
++  };
++  using StateInventory = std::map<std::string, std::pair<std::uintmax_t, fs::file_time_type>>;
++
++  Platform& platform;
++  const std::shared_ptr<InGameMenu> menu;
++  const std::shared_ptr<VideoCommon::ComposedFrameCapture> capture;
++  const fs::path output_directory;
++  const fs::path capture_path;
++  const Clock::time_point started = Clock::now();
++  const std::shared_ptr<FrameProgress> frames = std::make_shared<FrameProgress>();
++  Common::EventHook frame_hook;
++  Phase phase = Phase::WaitReady;
++  Clock::time_point phase_started = started;
++  InGameMenuSnapshot marker;
++  std::uint64_t marker_frames = 0, paused_frames = 0, paused_draws = 0, capture_id = 0;
++  std::uint64_t window_checks = 0, audio_generation = 0;
++  bool actual_null_audio_verified = false;
++  bool title_update_verified = false;
++  std::vector<Event> events;
++  std::string error;
++  StateInventory initial_states;
++  fs::path states_directory;
++  float initial_speed = 0;
++  bool inventory_ready = false, finished = false, passed = false;
++  bool f1_open = false, repeat_ignored = false, f1_closed = false, escape_closed = false;
++  bool space_suppressed = false, paused_redraw = false, resumed = false, states_unchanged = false;
++#ifdef _WIN32
++  HWND window = nullptr;
++  DWORD host_thread = GetCurrentThreadId();
++  int mouse_x = 0, mouse_y = 0;
++  bool mouse_down = false, f1_down = false, space_down = false;
++#endif
++
++  Impl(Platform& platform_, std::shared_ptr<InGameMenu> menu_,
++       std::shared_ptr<VideoCommon::ComposedFrameCapture> capture_, fs::path output_)
++      : platform(platform_), menu(std::move(menu_)), capture(std::move(capture_)),
++        output_directory(fs::absolute(std::move(output_)).lexically_normal()),
++        capture_path(output_directory / "composed-menu.png") {
++    if (!menu || !capture)
++      throw std::invalid_argument("The hidden UI diagnostic requires a menu and capture channel.");
++    fs::create_directories(output_directory);
++    if (fs::exists(capture_path) || fs::exists(output_directory / "ingame-menu-smoke.json"))
++      throw std::invalid_argument("The hidden UI diagnostic requires a fresh output directory.");
++    const std::weak_ptr<FrameProgress> weak = frames;
++    frame_hook = GetVideoEvents().after_present_event.Register([weak](const PresentInfo& info) {
++      if (info.reason == PresentInfo::PresentReason::VideoInterfaceDuplicate)
++        return;
++      if (const auto owner = weak.lock()) {
++        owner->last_guest_frame.store(info.frame_count, std::memory_order_relaxed);
++        owner->unique_presents.fetch_add(1, std::memory_order_relaxed);
++      }
++    });
++    Note("wait_ready");
++  }
++
++  double Elapsed() const { return std::chrono::duration<double>(Clock::now() - started).count(); }
++  double PhaseElapsed() const {
++    return std::chrono::duration<double>(Clock::now() - phase_started).count();
++  }
++  std::uint64_t GameFrames() const { return frames->unique_presents.load(std::memory_order_relaxed); }
++
++  void Note(const char* name) {
++    const auto current = menu->Snapshot();
++    events.push_back({name, Elapsed(), current.draw_frames, GameFrames(), current.input_events,
++                      current.actions_completed});
++    std::fprintf(stderr, "[ui-smoke] phase=%s elapsed=%.3f draws=%llu game_frames=%llu\n", name,
++                 events.back().elapsed, static_cast<unsigned long long>(current.draw_frames),
++                 static_cast<unsigned long long>(GameFrames()));
++  }
++
++  void Next(Phase next, const char* name) {
++    phase = next;
++    phase_started = Clock::now();
++    marker = menu->Snapshot();
++    marker_frames = GameFrames();
++    Note(name);
++  }
++
++  StateInventory Inventory() const {
++    StateInventory result;
++    if (!fs::exists(states_directory))
++      return result;
++    for (const auto& entry : fs::directory_iterator(states_directory)) {
++      if (!entry.is_regular_file())
++        continue;
++      if (result.size() == 4096)
++        throw std::runtime_error("The diagnostic save-state directory is unexpectedly large.");
++      result.emplace(PathToString(entry.path().filename()),
++                     std::make_pair(entry.file_size(), entry.last_write_time()));
++    }
++    return result;
++  }
++
++  void WriteEvidence() const {
++    const auto snapshot = menu->Snapshot();
++    const auto image = capture->Snapshot();
++    const auto audio = AudioCommon::GetAudioTelemetrySnapshot();
++    const fs::path result = output_directory / "ingame-menu-smoke.json";
++    const fs::path temporary = output_directory / "ingame-menu-smoke.json.tmp";
++    std::ostringstream json;
++    json << std::boolalpha << "{\n  \"schema\":1,\n  \"finished\":" << finished
++         << ",\n  \"passed\":" << passed << ",\n  \"error\":" << Quote(error)
++         << ",\n  \"deadline_seconds\":60,\n  \"elapsed_seconds\":" << Elapsed()
++         << ",\n  \"window_checks\":" << window_checks
++         << ",\n  \"title_updates_verified\":" << title_update_verified
++         << ",\n  \"f1_opened\":" << f1_open << ",\n  \"f1_repeat_ignored\":" << repeat_ignored
++         << ",\n  \"f1_closed\":" << f1_closed << ",\n  \"escape_closed_without_shutdown\":" << escape_closed
++         << ",\n  \"space_fast_forward_suppressed\":" << space_suppressed
++         << ",\n  \"paused_redraw_without_game_frames\":" << paused_redraw
++         << ",\n  \"resumed_game_frames\":" << resumed
++         << ",\n  \"save_states_unchanged\":" << states_unchanged
++         << ",\n  \"initial_save_state_files\":" << initial_states.size()
++         << ",\n  \"save_state_directory\":" << Quote(PathToString(states_directory))
++         << ",\n  \"input_overflows\":" << snapshot.input_overflows
++         << ",\n  \"menu_open_at_finish\":" << snapshot.open
++         << ",\n  \"menu_draws\":" << snapshot.draw_frames
++         << ",\n  \"game_unique_presents\":" << GameFrames()
++         << ",\n  \"last_guest_frame\":" << frames->last_guest_frame.load()
++         << ",\n  \"paused_game_frame_baseline\":" << paused_frames
++         << ",\n  \"audio\":{\"verified_null\":" << actual_null_audio_verified
++         << ",\"available\":" << audio.available << ",\"stream_alive\":" << audio.stream_alive
++         << ",\"generation\":" << audio.generation
++         << ",\"backend\":" << Quote(audio.device.backend == AudioCommon::AudioTelemetryBackend::Null ? "Null" :
++                                              audio.device.backend == AudioCommon::AudioTelemetryBackend::Cubeb ? "Cubeb" : "Unknown")
++         << ",\"output_sample_rate\":" << audio.mixer.output_sample_rate
++         << ",\"device_started\":" << (audio.device.start_succeeded || audio.device.state_started != 0)
++         << ",\"device_callbacks\":" << audio.device.callbacks << "}"
++         << ",\n  \"capture\":{\"id\":" << image.id
++         << ",\"state\":" << Quote(CaptureState(image.state))
++         << ",\"path\":" << Quote(image.path) << ",\"width\":" << image.width
++         << ",\"height\":" << image.height << ",\"error\":" << Quote(image.error)
++         << ",\"supported\":" << image.supported << "},\n  \"events\":[";
++    for (std::size_t i = 0; i < events.size(); ++i) {
++      if (i) json << ',';
++      const auto& event = events[i];
++      json << "\n    {\"phase\":" << Quote(event.phase) << ",\"elapsed_seconds\":" << event.elapsed
++           << ",\"draws\":" << event.draws << ",\"game_frames\":" << event.game_frames
++           << ",\"inputs\":" << event.inputs << ",\"actions\":" << event.actions << '}';
++    }
++    json << "\n  ]\n}\n";
++    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
++    output << json.str();
++    output.close();
++    if (!output)
++      throw std::runtime_error("Cannot write the hidden UI diagnostic evidence.");
++#ifdef _WIN32
++    if (!MoveFileExW(temporary.c_str(), result.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
++      throw std::runtime_error("Cannot publish the hidden UI diagnostic evidence.");
++#else
++    fs::rename(temporary, result);
++#endif
++  }
++
++  void Finish(bool success, std::string reason = {}) {
++    if (finished)
++      return;
++    error = std::move(reason);
++    passed = success;
++    finished = true;
++    phase = Phase::Finished;
++    Note(success ? "passed" : "failed");
++    try {
++      WriteEvidence();
++    } catch (const std::exception& failure) {
++      passed = false;
++      error += (error.empty() ? "" : "; ") + std::string(failure.what());
++    }
++    if (!passed)
++      std::fprintf(stderr, "[ui-smoke] failed: %s\n", error.c_str());
++    // Stop is the immediate host-loop request. RequestShutdown may only deliver a guest power hook.
++    platform.Stop();
++  }
++
++#ifdef _WIN32
++  void CheckWindow() {
++    if (GetCurrentThreadId() != host_thread)
++      throw std::runtime_error("The UI diagnostic was ticked off its host/window owner thread.");
++    const auto wsi = platform.GetWindowSystemInfo();
++    if (wsi.type != WindowSystemType::Windows)
++      throw std::runtime_error("The UI diagnostic requires a Windows surface, not a headless backend.");
++    const auto current = static_cast<HWND>(wsi.render_surface);
++    if (!current) {
++      if (window)
++        throw std::runtime_error("The diagnostic HWND disappeared before completion.");
++      return;
++    }
++    if (window && current != window)
++      throw std::runtime_error("The diagnostic HWND identity changed during the test.");
++    window = current;
++    DWORD process = 0;
++    const auto thread = GetWindowThreadProcessId(window, &process);
++    if (!IsWindow(window) || thread != host_thread || process != GetCurrentProcessId())
++      throw std::runtime_error("The diagnostic HWND is not owned by this process and host thread.");
++    ++window_checks;
++    const auto foreground = GetForegroundWindow();
++    if (IsWindowVisible(window) || (GetWindowLongPtrW(window, GWL_STYLE) & WS_VISIBLE) ||
++        foreground == window || (foreground && GetAncestor(foreground, GA_ROOTOWNER) == window))
++      throw std::runtime_error("The diagnostic game window became visible or foreground.");
++    if (GetMenu(window) != nullptr)
++      throw std::runtime_error("The obsolete native menu is still attached to the game window.");
++  }
++
++  void Post(UINT message, WPARAM value, LPARAM flags) {
++    if (!window || !PostMessageW(window, message, value, flags))
++      throw std::runtime_error("Posting a diagnostic input to its own HWND failed.");
++  }
++
++  void Key(UINT key, bool down, bool repeat = false) {
++    const auto scan = static_cast<ULONG_PTR>(MapVirtualKeyW(key, MAPVK_VK_TO_VSC) & 0xff);
++    ULONG_PTR flags = 1 | (scan << 16);
++    if (repeat || !down) flags |= ULONG_PTR{1} << 30;
++    if (!down) flags |= ULONG_PTR{1} << 31;
++    Post(down ? WM_KEYDOWN : WM_KEYUP, key, static_cast<LPARAM>(flags));
++    if (key == VK_F1) f1_down = down;
++    if (key == VK_SPACE) space_down = down;
++  }
++
++  void Tap(UINT key) { Key(key, true); Key(key, false); }
++
++  LPARAM MousePosition() const {
++    return static_cast<LPARAM>(static_cast<unsigned>(mouse_x) |
++                               (static_cast<unsigned>(mouse_y) << 16));
++  }
++
++  void Move(int x, int y) {
++    RECT client{};
++    if (!GetClientRect(window, &client) || x < 0 || y < 0 || x >= client.right ||
++        y >= client.bottom || x > 32767 || y > 32767)
++      throw std::runtime_error("The requested menu input is outside the diagnostic client area.");
++    mouse_x = x; mouse_y = y;
++    Post(WM_MOUSEMOVE, mouse_down ? MK_LBUTTON : 0, MousePosition());
++  }
++
++  void Mouse(bool down) {
++    Post(down ? WM_LBUTTONDOWN : WM_LBUTTONUP, down ? MK_LBUTTON : 0, MousePosition());
++    mouse_down = down;
++  }
++
++  bool MoveToButton(const InGameMenuSnapshot& snapshot, const char* id) {
++    const auto found = std::find_if(snapshot.buttons.begin(), snapshot.buttons.end(),
++                                  [id](const auto& button) { return button.id == id && button.enabled; });
++    if (found == snapshot.buttons.end())
++      return false;
++    const float x = found->x + found->width * 0.5f;
++    const float y = found->y + found->height * 0.5f;
++    if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || y < 0 || x > 32767 || y > 32767 ||
++        found->width <= 0 || found->height <= 0)
++      throw std::runtime_error("The live menu button has invalid bounds.");
++    Move(static_cast<int>(x), static_cast<int>(y));
++    return true;
++  }
++
++  void VerifyPNG(const VideoCommon::ComposedCaptureResult& image) const {
++    if (image.path != PathToString(capture_path) || image.width == 0 || image.height == 0)
++      throw std::runtime_error("The composed capture result has a different path or invalid dimensions.");
++    std::ifstream file(capture_path, std::ios::binary);
++    std::array<unsigned char, 24> bytes{};
++    file.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
++    constexpr std::array<unsigned char, 8> signature{137, 80, 78, 71, 13, 10, 26, 10};
++    if (!file || !std::equal(signature.begin(), signature.end(), bytes.begin()) ||
++        bytes[12] != 'I' || bytes[13] != 'H' || bytes[14] != 'D' || bytes[15] != 'R')
++      throw std::runtime_error("The composed capture did not publish a valid PNG header.");
++    const auto be = [&](std::size_t offset) {
++      return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
++             (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
++             (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) | bytes[offset + 3];
++    };
++    if (be(8) != 13 || be(16) != image.width || be(20) != image.height)
++      throw std::runtime_error("The composed PNG dimensions differ from the renderer result.");
++  }
++
++  void CheckNullAudio() {
++    const auto audio = AudioCommon::GetAudioTelemetrySnapshot();
++    if (!audio.available || !audio.stream_alive || audio.generation == 0 ||
++        audio.device.backend != AudioCommon::AudioTelemetryBackend::Null ||
++        audio.mixer.output_sample_rate != 0 || audio.device.start_succeeded ||
++        audio.device.state_started != 0 || audio.device.callbacks != 0 ||
++        (audio_generation != 0 && audio.generation != audio_generation))
++      throw std::runtime_error("The hidden UI diagnostic did not observe a live unchanged NullSound backend with no device start/callbacks.");
++    audio_generation = audio.generation;
++    actual_null_audio_verified = true;
++  }
++
++  void TickWindows() {
++    CheckWindow();
++    if (!platform.IsRunning())
++      throw std::runtime_error("The platform stopped before the diagnostic completed.");
++    if (!menu->Snapshot().alive)
++      throw std::runtime_error("The in-game menu session retired before the diagnostic completed.");
++    if (Elapsed() >= 60)
++      throw std::runtime_error("The hidden UI diagnostic exceeded its 60-second internal deadline.");
++    if (inventory_ready)
++      CheckNullAudio();
++    const auto current = menu->Snapshot();
++    if (current.input_overflows != 0)
++      throw std::runtime_error("The bounded menu input queue overflowed during the diagnostic.");
++    const auto state = Core::GetState(Core::System::GetInstance());
++    const bool drew = current.draw_frames >= marker.draw_frames + 2;
++    switch (phase) {
++    case Phase::WaitReady:
++      // Initial XFBs can be black. Leave startup time for an original logo or
++      // movie image, so visual review can inspect the game and menu together.
++      if (!window || state != Core::State::Running || GameFrames() < 100 || Elapsed() < 35)
++        return;
++      {
++        std::array<wchar_t, 512> title{};
++        if (GetWindowTextW(window, title.data(), static_cast<int>(title.size())) <= 0 ||
++            std::wstring_view(title.data()).find(L" FPS") == std::wstring_view::npos)
++          throw std::runtime_error("The ordinary host-thread FPS title update was not observed.");
++        title_update_verified = true;
++      }
++      if (!capture->Snapshot().supported)
++        throw std::runtime_error("Composed surface capture unavailable: " + capture->Snapshot().support_error);
++      states_directory = StringToPath(File::GetUserPath(D_STATESAVES_IDX));
++      if (states_directory.empty())
++        throw std::runtime_error("The diagnostic save-state directory is unavailable.");
++      initial_states = Inventory();
++      CheckNullAudio();
++      inventory_ready = true;
++      initial_speed = Config::Get(Config::MAIN_EMULATION_SPEED);
++      Key(VK_F1, true);
++      Next(Phase::Open, "f1_open");
++      break;
++    case Phase::Open:
++      if (!current.open || !current.capture || !drew) return;
++      f1_open = true;
++      Key(VK_F1, true, true);
++      Next(Phase::Repeat, "f1_repeat");
++      break;
++    case Phase::Repeat:
++      if (current.input_events <= marker.input_events) return;
++      if (!current.open || !current.capture)
++        throw std::runtime_error("An auto-repeat F1 key-down closed the menu.");
++      if (!drew) return;
++      repeat_ignored = true;
++      Key(VK_F1, false);
++      Tap(VK_F1);
++      Next(Phase::Close, "f1_close");
++      break;
++    case Phase::Close:
++      if (current.open || current.capture || current.input_events < marker.input_events + 3 ||
++          PhaseElapsed() < 0.15) return;
++      f1_closed = true;
++      Tap(VK_F1);
++      Next(Phase::Reopen, "f1_reopen");
++      break;
++    case Phase::Reopen:
++      if (!current.open || !drew) return;
++      Tap(VK_ESCAPE);
++      Next(Phase::Escape, "escape_close");
++      break;
++    case Phase::Escape:
++      if (current.open || current.capture || current.input_events < marker.input_events + 2 ||
++          PhaseElapsed() < 0.15) return;
++      escape_closed = true;
++      Tap(VK_F1);
++      Next(Phase::OpenAgain, "open_for_controls");
++      break;
++    case Phase::OpenAgain:
++      if (!current.open || !drew) return;
++      // Click outside the centered ImGui window first. This clears its keyboard activation target,
++      // so Space tests native fast-forward capture without also activating an ImGui Pause button.
++      Move(2, 2);
++      Next(Phase::BackgroundMove, "background_move");
++      break;
++    case Phase::BackgroundMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::BackgroundDown, "background_down");
++      break;
++    case Phase::BackgroundDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::BackgroundUp, "background_up");
++      break;
++    case Phase::BackgroundUp:
++      if (!drew) return;
++      Key(VK_SPACE, true);
++      Next(Phase::SpaceDown, "space_capture");
++      break;
++    case Phase::SpaceDown:
++      if (current.input_events <= marker.input_events) return;
++      if (Config::Get(Config::MAIN_EMULATION_SPEED) != initial_speed)
++        throw std::runtime_error("Space changed emulation speed while the menu was capturing input.");
++      if (!drew || PhaseElapsed() < 0.15) return;
++      Key(VK_SPACE, false);
++      Next(Phase::SpaceUp, "space_release");
++      break;
++    case Phase::SpaceUp:
++      if (!drew || current.input_events <= marker.input_events) return;
++      if (Config::Get(Config::MAIN_EMULATION_SPEED) != initial_speed || !current.open ||
++          state != Core::State::Running)
++        throw std::runtime_error("Space release changed the captured session state.");
++      space_suppressed = true;
++      if (!MoveToButton(current, "pause")) return;
++      Next(Phase::PauseMove, "pause_move");
++      break;
++    case Phase::PauseMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::PauseDown, "pause_down");
++      break;
++    case Phase::PauseDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::WaitPaused, "pause_release");
++      break;
++    case Phase::WaitPaused:
++      if (state != Core::State::Paused || !current.paused || current.last_action != "pause" ||
++          current.actions_completed <= marker.actions_completed) return;
++      Next(Phase::PauseSettle, "pause_settle");
++      break;
++    case Phase::PauseSettle:
++      if (state != Core::State::Paused)
++        throw std::runtime_error("The game resumed without a diagnostic Resume click.");
++      if (PhaseElapsed() < 0.25 || !drew) return;
++      paused_frames = GameFrames();
++      paused_draws = current.draw_frames;
++      Next(Phase::PausedRedraw, "paused_redraw");
++      break;
++    case Phase::PausedRedraw:
++      if (state != Core::State::Paused || GameFrames() != paused_frames)
++        throw std::runtime_error("Paused menu redraw advanced original game presentation frames.");
++      if (PhaseElapsed() < 0.5 || current.draw_frames < paused_draws + 3) return;
++      paused_redraw = true;
++      capture_id = capture->Request(PathToString(capture_path));
++      if (!capture_id)
++        throw std::runtime_error("The composed capture channel rejected the diagnostic request.");
++      Next(Phase::Capture, "composed_capture");
++      break;
++    case Phase::Capture: {
++      if (state != Core::State::Paused || GameFrames() != paused_frames || !current.open)
++        throw std::runtime_error("The paused menu changed state before composed capture completed.");
++      const auto result = capture->Snapshot();
++      if (result.id != capture_id)
++        throw std::runtime_error("A different capture replaced the diagnostic request.");
++      if (result.state == VideoCommon::ComposedCaptureState::Failed)
++        throw std::runtime_error("Composed capture failed: " + result.error);
++      if (result.state != VideoCommon::ComposedCaptureState::Succeeded) return;
++      VerifyPNG(result);
++      if (!MoveToButton(current, "resume")) return;
++      Next(Phase::ResumeMove, "resume_move");
++      break;
++    }
++    case Phase::ResumeMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::ResumeDown, "resume_down");
++      break;
++    case Phase::ResumeDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::WaitResumed, "resume_release");
++      break;
++    case Phase::WaitResumed:
++      if (state != Core::State::Running || current.paused || current.last_action != "resume" ||
++          current.actions_completed <= marker.actions_completed || GameFrames() < marker_frames + 2) return;
++      resumed = true;
++      Tap(VK_F1);
++      Next(Phase::FinalClose, "final_close");
++      break;
++    case Phase::FinalClose:
++      if (current.open || current.capture || current.input_events < marker.input_events + 2 ||
++          PhaseElapsed() < 0.25) return;
++      if (Config::Get(Config::MAIN_EMULATION_SPEED) != initial_speed)
++        throw std::runtime_error("The diagnostic changed the configured emulation speed.");
++      if (!inventory_ready || Inventory() != initial_states)
++        throw std::runtime_error("F1 or UI input changed the save-state file inventory.");
++      states_unchanged = true;
++      if (mouse_down || f1_down || space_down)
++        throw std::runtime_error("The diagnostic finished with an injected input still held.");
++      Finish(true);
++      break;
++    case Phase::Finished: break;
++    }
++  }
++#endif
++
++  void Tick() {
++    if (finished)
++      return;
++    try {
++#ifdef _WIN32
++      TickWindows();
++#else
++      throw std::runtime_error("The hidden in-game UI diagnostic is supported only on Windows.");
++#endif
++    } catch (const std::exception& failure) {
++      Finish(false, failure.what());
++    }
++  }
++};
++
++InGameMenuSmoke::InGameMenuSmoke(Platform& platform, std::shared_ptr<InGameMenu> menu,
++                               std::shared_ptr<VideoCommon::ComposedFrameCapture> capture,
++                               fs::path output_directory)
++    : m_impl(std::make_unique<Impl>(platform, std::move(menu), std::move(capture),
++                                    std::move(output_directory))) {}
++InGameMenuSmoke::~InGameMenuSmoke() = default;
++void InGameMenuSmoke::Tick() { m_impl->Tick(); }
++bool InGameMenuSmoke::Finished() const { return m_impl->finished; }
++bool InGameMenuSmoke::Passed() const { return m_impl->finished && m_impl->passed; }
++std::string InGameMenuSmoke::Error() const { return m_impl->error; }
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu_smoke.hpp b/src/runtime/ingame_menu_smoke.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..3ba42ba748d97e0585b65f7d01b76ceff9503476
+--- /dev/null
++++ b/src/runtime/ingame_menu_smoke.hpp
+@@ -0,0 +1,42 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <filesystem>
++#include <memory>
++#include <string>
++
++class Platform;
++namespace VideoCommon {
++class ComposedFrameCapture;
++}
++
++namespace moderngekko::detail {
++class InGameMenu;
++
++// Explicit Windows diagnostic only. All methods run on the HWND owner thread. The caller supplies
++// an already configured hidden platform, a live menu and its diagnostic capture channel, then ticks
++// this driver from the platform's UI callback. It never injects global/physical input or shows a window.
++// Construct before boot so the owned video-event listener observes real game presentation progress.
++class InGameMenuSmoke final {
++public:
++  InGameMenuSmoke(Platform& platform, std::shared_ptr<InGameMenu> menu,
++                 std::shared_ptr<VideoCommon::ComposedFrameCapture> capture,
++                 std::filesystem::path output_directory);
++  ~InGameMenuSmoke();
++  InGameMenuSmoke(const InGameMenuSmoke&) = delete;
++  InGameMenuSmoke& operator=(const InGameMenuSmoke&) = delete;
++
++  // Host-thread nonblocking state machine, with a 60-second steady-clock deadline. Completion or
++  // failure writes ingame-menu-smoke.json and requests an immediate platform-loop stop. The caller
++  // retains its normal core shutdown/join path and an external process watchdog.
++  void Tick();
++  bool Finished() const;
++  bool Passed() const;
++  std::string Error() const;
++
++private:
++  struct Impl;
++  std::unique_ptr<Impl> m_impl;
++};
++} // namespace moderngekko::detail
 diff --git a/src/runtime/mod_loader.cpp b/src/runtime/mod_loader.cpp
 index 4b2345f412c0591e945a2b54b90262b7b1c1ad54..5221f2446a177afb9249b7444f56500f1d7e80da 100644
 --- a/src/runtime/mod_loader.cpp
@@ -748,10 +2483,10 @@ index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..a6ce1a5641985a6346ed541fd048b02f
    int dolphin_scale;
 diff --git a/tools/frontend_session.cpp b/tools/frontend_session.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8c7a285d2
+index 0000000000000000000000000000000000000000..20020cc3c6fd3aef05c9c51ea2b9b6bd15eefd8b
 --- /dev/null
 +++ b/tools/frontend_session.cpp
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,491 @@
 +#include "frontend_session.hpp"
 +#include "cache_affinity.hpp"
 +#include "frontend_config.hpp"
@@ -813,6 +2548,7 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +               "       [--user-dir <path>] [--title <text>] [--load-state <path>]\n"
 +               "       [--graphics <backend>] [--audio <backend>]\n"
 +               "       [--headless-audio --audio Cubeb --mute] (requires --headless)\n"
++               "       [--ui-smoke-test <output-dir> --user-dir <isolated-profile>]\n"
 +               "       [--mods <directory>] [--no-mods]\n"
 +               "       [--wayland] [-X11] [--headless] [--allow-interpreter]\n"
 +               "       [--netplay-host | --netplay-join <host>] "
@@ -871,6 +2607,7 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +#endif
 +  std::filesystem::path module_path;
 +  bool use_default_mods = true;
++  bool explicit_user_directory = false;
 +  std::optional<moderngekko::frontend::NetplayRole> netplay_role;
 +  std::string netplay_address;
 +  std::optional<std::uint16_t> netplay_port;
@@ -889,8 +2626,10 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +      config.game_root = StringToPath(value("--game"));
 +    else if (arg == "--module")
 +      module_path = StringToPath(value("--module"));
-+    else if (arg == "--user-dir")
++    else if (arg == "--user-dir") {
 +      config.user_directory = StringToPath(value("--user-dir"));
++      explicit_user_directory = true;
++    }
 +    else if (arg == "--title")
 +      config.window_title = value("--title");
 +    else if (arg == "--load-state")
@@ -921,6 +2660,8 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +      config.audio.mute = true;
 +    else if (arg == "--automation-dir")
 +      config.automation.directory = StringToPath(value("--automation-dir"));
++    else if (arg == "--ui-smoke-test")
++      config.ui_smoke_output_directory = StringToPath(value("--ui-smoke-test"));
 +    else if (arg == "--headless")
 +      config.headless = true;
 +    else if (arg == "--headless-audio")
@@ -959,7 +2700,20 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +      return 2;
 +    }
 +  }
-+  if (config.headless) {
++  if (!config.ui_smoke_output_directory.empty()) {
++    if (!explicit_user_directory || config.user_directory.empty() || config.headless ||
++        config.audio.headless_device_audio || netplay_role || config.load_state_path ||
++        !config.mod_directories.empty() || !config.automation.directory.empty()) {
++      std::cerr << "UI diagnostics require --user-dir and cannot use headless mode, device audio, "
++                   "netplay, mods, automation commands or a boot state\n";
++      return 2;
++    }
++    config.graphics.backend = "Vulkan";
++    config.audio.backend = "No Audio Output";
++    config.audio.mute = true;
++    use_default_mods = false;
++  }
++  if (config.headless || !config.ui_smoke_output_directory.empty()) {
 +    Common::RegisterMsgAlertHandler([](const char* caption, const char* text, bool, Common::MsgType) {
 +      std::cerr << "[headless alert] " << (caption ? caption : "") << ": "
 +                << (text ? text : "") << '\n';
@@ -987,6 +2741,11 @@ index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8
 +    config.graphics.backend = frontend_config.graphics_backend;
 +  config.fullscreen = frontend_config.fullscreen;
 +  config.show_fps_in_title = frontend_config.show_fps_in_title;
++  if (!config.ui_smoke_output_directory.empty()) {
++    config.fullscreen = false;
++    config.show_fps_in_title = false;
++    config.graphics.internal_resolution_scale = 1;
++  }
 +  if (use_default_mods) {
 +    config.mod_directories.push_back(executable_directory / "Mods");
 +    config.mod_directories.push_back(config.user_directory / "Mods");

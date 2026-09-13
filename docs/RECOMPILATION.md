@@ -348,8 +348,10 @@ The pinned runtime already contains useful implementation foundations:
   `-UseBundledModule` with `-UsePortableProfile` only on a fresh explicit package
   to verify its adjacent default profile from another working directory.
   Existing `savedata` is refused by that diagnostic option.
-  A DW4 in-game menu requires video-thread drawing, input capture and safe CPU
-  commands; four GameCube player mappings and multi-machine behavior require
+  The F1 in-game menu now has video-thread drawing, input capture and guarded
+  host/CPU actions. Its bounded rendering and pause/resume checks are recorded
+  in [RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md); complete graphics/state/QoL
+  validation remains required. Four GameCube player mappings and multi-machine behavior require
   their own integration. The existing tools do not establish working DW4 online
   co-op. The local automatic-ROM package now passes its import/startup checks;
   complete release acceptance remains separate.

@@ -37,6 +37,12 @@ preserve the original game/service state and existing saves;
 moving the PC-facing interface does not by itself remove Dolphin-derived
 graphics, audio and console-service implementations.
 
+The integrated F1 menu now uses the game renderer's ImGui context, a bounded
+native input queue and session-guarded host actions. Paused redraw continues on
+the video owner without advancing the game. Window-title updates also dispatch
+through the host to avoid synchronous cross-thread window calls during shutdown.
+See [RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md) for actual validation and limits.
+
 The manually recovered engine below remains a separate reference core. Its
 checked helpers and original-asset walking preview do not establish correctness
 of the recompilation runtime. Original game behavior must be validated there,

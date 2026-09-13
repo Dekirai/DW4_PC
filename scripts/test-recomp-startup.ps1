@@ -13,6 +13,8 @@ param(
     [switch]$Screenshot,
     [int[]]$ScreenshotAtSeconds = @(),
     [ValidateRange(0,85)][int]$PressStartAtSeconds = 0,
+    [ValidateRange(0,30)][int]$CpuProfileSeconds = 0,
+    [ValidateRange(0,85)][int]$CpuProfileAtSeconds = 0,
     [ValidateRange(1,90)][int]$TimeoutSeconds = 30,
     [ValidateRange(2,10)][int]$ShutdownGraceSeconds = 5
 )
@@ -20,6 +22,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'recomp-startup-metrics.ps1')
 . (Join-Path $PSScriptRoot 'recomp-audio-metrics.ps1')
+if ($CpuProfileSeconds -gt 0) { . (Join-Path $PSScriptRoot 'profile-recomp.ps1') }
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'This startup harness currently requires Windows.'
 }
@@ -32,6 +35,12 @@ if ($Screenshot -and $Graphics -ne 'Vulkan') {
 if ($ScreenshotAtSeconds.Count -gt 0 -and -not $Screenshot) { throw 'ScreenshotAtSeconds requires Screenshot.' }
 if ($PressStartAtSeconds -gt 0 -and $PressStartAtSeconds -gt $TimeoutSeconds-5) {
     throw 'The controlled Start press must leave at least five seconds for release before shutdown.'
+}
+if ($CpuProfileSeconds -eq 0 -and $CpuProfileAtSeconds -ne 0) {
+    throw 'CpuProfileAtSeconds requires a nonzero CpuProfileSeconds.'
+}
+if ($CpuProfileSeconds -gt 0 -and $CpuProfileAtSeconds + $CpuProfileSeconds -gt $TimeoutSeconds-5) {
+    throw 'The CPU profile schedule must leave at least five seconds before the unchanged runtime deadline. Collector command latency also consumes this run budget.'
 }
 if ($ScreenshotAtSeconds.Count -gt 8 -or @($ScreenshotAtSeconds | Where-Object { $_ -lt 1 -or $_ -ge $TimeoutSeconds-1 }).Count) {
     throw 'Request at most eight screenshots, each at least one second before the test ends.'
@@ -149,26 +158,26 @@ function Publish-Stop([int]$Sequence) {
     # All files in commands/ are parsed, irrespective of extension. Construct
     # the complete file outside that directory before the same-volume rename.
     # A controlled-input probe must process any queued press/release before stop.
-    $name = $(if ($PressStartAtSeconds -gt 0) { '099-stop-{0:D2}.txt' } else { '000-stop-{0:D2}.txt' }) -f $Sequence
-    $pending = Join-Path $automationRoot ($name + '.pending')
-    [IO.File]::WriteAllText($pending,"command=stop`n",$utf8)
-    [IO.File]::Move($pending,(Join-Path $commandRoot $name))
+    $name = $(if ($script:PressStartAtSeconds -gt 0) { '099-stop-{0:D2}.txt' } else { '000-stop-{0:D2}.txt' }) -f $Sequence
+    $pending = Join-Path $script:automationRoot ($name + '.pending')
+    [IO.File]::WriteAllText($pending,"command=stop`n",$script:utf8)
+    [IO.File]::Move($pending,(Join-Path $script:commandRoot $name))
 }
 function Publish-Screenshot([string]$Name,[string]$Path) {
-    $pending = Join-Path $automationRoot ($Name + '.pending')
-    [IO.File]::WriteAllText($pending,"command=screenshot`npath=$Path`n",$utf8)
-    [IO.File]::Move($pending,(Join-Path $commandRoot $Name))
+    $pending = Join-Path $script:automationRoot ($Name + '.pending')
+    [IO.File]::WriteAllText($pending,"command=screenshot`npath=$Path`n",$script:utf8)
+    [IO.File]::Move($pending,(Join-Path $script:commandRoot $Name))
 }
 function Publish-StartInput([bool]$Pressed) {
     # Nonblocking pad commands keep status and shutdown responsive if frames stall.
     $name = if ($Pressed) { '020-start-press.txt' } else { '021-start-release.txt' }
     $body = if ($Pressed) { "command=pad`nport=0`nstart=1`n" } else { "command=clear_pad`nport=0`n" }
-    $pending = Join-Path $automationRoot ($name + '.pending')
-    [IO.File]::WriteAllText($pending,$body,$utf8)
-    [IO.File]::Move($pending,(Join-Path $commandRoot $name))
+    $pending = Join-Path $script:automationRoot ($name + '.pending')
+    [IO.File]::WriteAllText($pending,$body,$script:utf8)
+    [IO.File]::Move($pending,(Join-Path $script:commandRoot $name))
 }
 function Read-Status {
-    $path = Join-Path $automationRoot 'status.txt'
+    $path = Join-Path $script:automationRoot 'status.txt'
     if (-not [IO.File]::Exists($path)) { return }
     try { $raw = [IO.File]::ReadAllText($path) } catch { return }
     if ($raw -eq $script:lastStatusText) { return }
@@ -189,37 +198,37 @@ function Read-Status {
     $script:lastStatusText = $raw
     $script:lastStatus = $values
     if ($frames -gt $script:maxFrames) {
-        $script:lastFrameProgressSeconds = $watch.Elapsed.TotalSeconds
+        $script:lastFrameProgressSeconds = $script:watch.Elapsed.TotalSeconds
         ++$script:frameProgressSamples
     }
-    if ($presents -gt $script:maxPresents) { $script:lastPresentProgressSeconds = $watch.Elapsed.TotalSeconds }
+    if ($presents -gt $script:maxPresents) { $script:lastPresentProgressSeconds = $script:watch.Elapsed.TotalSeconds }
     $script:maxFrames = [Math]::Max($script:maxFrames,$frames)
     $script:maxPresents = [Math]::Max($script:maxPresents,$presents)
     $script:sawRunning = $script:sawRunning -or ($values['booted'] -eq '1' -and $values['state'] -eq 'running')
-    $processSample = if ($processStarted) { Get-RecompProcessSample -Process $taskProcess -Clock $watch } else { $null }
+    $processSample = if ($script:processStarted) { Get-RecompProcessSample -Process $script:taskProcess -Clock $script:watch } else { $null }
     $sample = [ordered]@{
-        observed_at_utc=[DateTime]::UtcNow.ToString('o'); elapsed_seconds=$watch.Elapsed.TotalSeconds;
+        observed_at_utc=[DateTime]::UtcNow.ToString('o'); elapsed_seconds=$script:watch.Elapsed.TotalSeconds;
         status=$values; process=$processSample
     }
-    [IO.File]::AppendAllText((Join-Path $runRoot 'status-history.jsonl'),
-        ($sample | ConvertTo-Json -Depth 5 -Compress) + "`n",$utf8)
+    [IO.File]::AppendAllText((Join-Path $script:runRoot 'status-history.jsonl'),
+        ($sample | ConvertTo-Json -Depth 5 -Compress) + "`n",$script:utf8)
 }
 function Stop-OwnedProcessTree {
-    if (-not $processStarted -or $taskProcess.HasExited) { return }
+    if (-not $script:processStarted -or $script:taskProcess.HasExited) { return }
     # The attached Process handle remains live. Verify this same start time
     # before using Windows' tree terminator; never kill by image name.
-    try { $current = [Diagnostics.Process]::GetProcessById($taskProcess.Id) }
+    try { $current = [Diagnostics.Process]::GetProcessById($script:taskProcess.Id) }
     catch {
-        if ($taskProcess.HasExited) { return }
+        if ($script:taskProcess.HasExited) { return }
         throw
     }
     try {
-        if ($current.StartTime.ToUniversalTime().Ticks -ne $ownedStartTicks) {
+        if ($current.StartTime.ToUniversalTime().Ticks -ne $script:ownedStartTicks) {
             throw 'The watchdog refused a process identity different from its own child.'
         }
         $killInfo = [Diagnostics.ProcessStartInfo]::new()
         $killInfo.FileName = Join-Path $env:SystemRoot 'System32/taskkill.exe'
-        $killInfo.Arguments = '/PID ' + [string]$taskProcess.Id + ' /T /F'
+        $killInfo.Arguments = '/PID ' + [string]$script:taskProcess.Id + ' /T /F'
         $killInfo.UseShellExecute = $false
         $killInfo.CreateNoWindow = $true
         $killInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
@@ -232,10 +241,133 @@ function Stop-OwnedProcessTree {
             $out = $killer.StandardOutput.ReadToEndAsync()
             $err = $killer.StandardError.ReadToEndAsync()
             if (-not $killer.WaitForExit(3000)) { $killer.Kill(); throw 'The child-process watchdog timed out.' }
-            [IO.File]::WriteAllText((Join-Path $runRoot 'watchdog.txt'),$out.Result + $err.Result,$utf8)
-            if (-not $taskProcess.WaitForExit(2000)) { throw 'The started runtime survived its process-tree watchdog.' }
+            [IO.File]::WriteAllText((Join-Path $script:runRoot 'watchdog.txt'),$out.Result + $err.Result,$script:utf8)
+            if (-not $script:taskProcess.WaitForExit(2000)) { throw 'The started runtime survived its process-tree watchdog.' }
         } finally { $killer.Dispose() }
     } finally { $current.Dispose() }
+}
+
+function Complete-RecompStartupObservation {
+    if ($script:observationCaptured) { return }
+    $script:observationProcessSample = Get-RecompProcessSample -Process $script:taskProcess -Clock $script:watch
+    $script:observationEndSeconds = $script:watch.Elapsed.TotalSeconds
+    $script:observationFrameProgressSeconds = $script:lastFrameProgressSeconds
+    $script:observationPresentProgressSeconds = $script:lastPresentProgressSeconds
+    $script:observationFrameProgressSamples = $script:frameProgressSamples
+    $script:observationCaptured = $true
+}
+function Invoke-RecompStartupHostPoll {
+    # This function never invokes the profiler. The same scheduler services both
+    # the host loop and collector command waits, using the original wall clock.
+    # Explicit script scope prevents a collector's TimeoutSeconds parameter or
+    # other dynamically scoped caller locals from replacing host configuration.
+    Read-Status
+    if ($script:taskProcess.HasExited) { Complete-RecompStartupObservation; return }
+    if (-not $script:stopRequested -and $script:watch.Elapsed.TotalSeconds -ge $script:TimeoutSeconds) {
+        Complete-RecompStartupObservation
+        if ($null -ne $script:startPressQueuedSeconds -and $null -eq $script:startReleaseQueuedSeconds) {
+            Publish-StartInput $false
+            $script:startReleaseQueuedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+        Publish-Stop 1
+        $script:stopRequested = $true
+        $script:stopRequestedSeconds = $script:watch.Elapsed.TotalSeconds
+    }
+    if ($script:stopRequested) {
+        if ($null -ne $script:startReleaseQueuedSeconds -and $null -eq $script:startReleaseAcknowledgedSeconds -and
+            [IO.File]::Exists((Join-Path $script:automationRoot 'processed/021-start-release.txt'))) {
+            $script:startReleaseAcknowledgedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+        # RequestShutdown first tries a guest power-button hook if present;
+        # a second request takes the platform's ordinary shutdown path.
+        if (-not $script:secondStopRequested -and $script:watch.Elapsed.TotalSeconds - $script:stopRequestedSeconds -ge 1) {
+            Publish-Stop 2
+            $script:secondStopRequested = $true
+        }
+        if ($script:watch.Elapsed.TotalSeconds - $script:stopRequestedSeconds -ge $script:ShutdownGraceSeconds) {
+            $script:forcedTermination = $true
+            Stop-OwnedProcessTree
+        }
+        return
+    }
+    if ($script:PressStartAtSeconds -gt 0 -and $null -eq $script:startPressQueuedSeconds -and
+        $script:watch.Elapsed.TotalSeconds -ge $script:PressStartAtSeconds -and
+        $script:watch.Elapsed.TotalSeconds -le $script:TimeoutSeconds-5 -and $script:sawRunning -and
+        $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
+        $script:watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
+        Publish-StartInput $true
+        $script:startPressQueuedSeconds = $script:watch.Elapsed.TotalSeconds
+    }
+    if ($null -ne $script:startPressQueuedSeconds) {
+        if ($null -eq $script:startPressAcknowledgedSeconds -and
+            [IO.File]::Exists((Join-Path $script:automationRoot 'processed/020-start-press.txt'))) {
+            $script:startPressAcknowledgedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+        if ($null -eq $script:startReleaseQueuedSeconds -and
+            (($null -ne $script:startPressAcknowledgedSeconds -and $script:watch.Elapsed.TotalSeconds - $script:startPressAcknowledgedSeconds -ge 0.5) -or
+             $script:watch.Elapsed.TotalSeconds - $script:startPressQueuedSeconds -ge 2)) {
+            Publish-StartInput $false
+            $script:startReleaseQueuedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+        if ($null -ne $script:startReleaseQueuedSeconds -and $null -eq $script:startReleaseAcknowledgedSeconds -and
+            [IO.File]::Exists((Join-Path $script:automationRoot 'processed/021-start-release.txt'))) {
+            $script:startReleaseAcknowledgedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+    }
+    if ($script:Screenshot -and $script:screenshotIndex -lt $script:screenshotSchedule.Count -and $script:sawRunning -and
+        $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
+        $script:watch.Elapsed.TotalSeconds -ge $script:screenshotSchedule[$script:screenshotIndex] -and
+        $script:watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
+        # The command only queues an asynchronous renderer capture. Its
+        # processed file alone is not evidence that a PNG was written.
+        $isLast = $script:screenshotIndex -eq $script:screenshotSchedule.Count-1
+        $captureName = if ($isLast) { '050-screenshot.txt' } else { '040-screenshot-{0:D2}.txt' -f $script:screenshotIndex }
+        $capturePath = if ($isLast) { $script:screenshotPath } else { Join-Path $script:runRoot ('screenshot-{0:D2}.png' -f $script:screenshotIndex) }
+        Publish-Screenshot $captureName $capturePath
+        $script:screenshotCaptures.Add([pscustomobject]@{
+            requested_seconds=$script:screenshotSchedule[$script:screenshotIndex]; queued_seconds=$script:watch.Elapsed.TotalSeconds;
+            command_name=$captureName; path=$capturePath
+        })
+        if ($isLast) {
+            $script:screenshotCommandQueued = $true
+            $script:screenshotQueuedSeconds = $script:watch.Elapsed.TotalSeconds
+        }
+        ++$script:screenshotIndex
+    }
+}
+function Invoke-RecompStartupScheduledCpuProfile {
+    if ($script:CpuProfileSeconds -le 0 -or $script:cpuProfileOutcome.classification -ne 'waiting' -or
+        $script:stopRequested -or $script:taskProcess.HasExited -or $script:watch.Elapsed.TotalSeconds -lt $script:CpuProfileAtSeconds) { return }
+    if ($script:watch.Elapsed.TotalSeconds + $script:CpuProfileSeconds -gt $script:TimeoutSeconds-5) {
+        $script:cpuProfileOutcome.classification = 'schedule_missed'
+        $script:cpuProfileOutcome.error = 'No fresh running sample left the requested observation plus five seconds before the runtime deadline.'
+        return
+    }
+    if (-not $script:sawRunning -or $script:lastStatus['state'] -ne 'running' -or
+        $script:frameProgressSamples -lt 2 -or $script:watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -gt 2) { return }
+    # Mark the attempt before invoking a blocking helper. Its callback cannot
+    # recursively enter profiling, and collector latency cannot extend runtime.
+    $script:cpuProfileOutcome.classification = 'running'
+    $script:cpuProfileOutcome.attempted = $true
+    $script:cpuProfileOutcome.begin_seconds = $script:watch.Elapsed.TotalSeconds
+    try {
+        $script:cpuProfileOutcome.result = Invoke-RecompCpuProfile -OwnedProcess $script:taskProcess `
+            -ExpectedStartTimeUtcTicks $script:ownedStartTicks -ExpectedExecutablePath $script:Runner `
+            -ExpectedExecutableSha256 $script:buildRecord.PSObject.Properties[$script:binaryHashField].Value `
+            -OutputDirectory (Join-Path $script:runRoot 'cpu-profile') -DurationSeconds $script:CpuProfileSeconds `
+            -OnPoll { Invoke-RecompStartupHostPoll } -ModulePath $script:Module
+        $script:cpuProfileOutcome.classification = $script:cpuProfileOutcome.result.classification
+    } catch {
+        $script:cpuProfileOutcome.classification = 'failed'
+        $script:cpuProfileOutcome.error = $_.Exception.Message
+        if (Test-Path -LiteralPath $script:cpuProfileOutcome.summary_path -PathType Leaf) {
+            try { $script:cpuProfileOutcome.result = Get-Content -LiteralPath $script:cpuProfileOutcome.summary_path -Raw | ConvertFrom-Json }
+            catch { $script:cpuProfileOutcome.error += ' Profile summary: ' + $_.Exception.Message }
+        }
+    } finally {
+        $script:cpuProfileOutcome.end_seconds = $script:watch.Elapsed.TotalSeconds
+        $script:cpuProfileOutcome.elapsed_seconds = $script:cpuProfileOutcome.end_seconds - $script:cpuProfileOutcome.begin_seconds
+    }
 }
 
 $arguments = @('--game',$ExtractedRoot,
@@ -274,6 +406,15 @@ $start.EnvironmentVariables['STATICRECOMP_LOCKSTEP'] = '0'
 $start.EnvironmentVariables['STATICRECOMP_DISPATCH_SAMPLES'] = '1'
 $start.EnvironmentVariables['STATICRECOMP_TRACE_FILE'] = Join-Path $runRoot 'dispatch.csv'
 
+$cpuProfileOutcome = [ordered]@{
+    enabled=($CpuProfileSeconds -gt 0); requested_at_seconds=$CpuProfileAtSeconds;
+    requested_duration_seconds=$CpuProfileSeconds; attempted=$false;
+    classification=$(if ($CpuProfileSeconds -gt 0) { 'waiting' } else { 'disabled' });
+    executable_hash_field=$binaryHashField; expected_executable_sha256=$runnerHash;
+    begin_seconds=$null; end_seconds=$null; elapsed_seconds=$null; error=$null; result=$null;
+    summary_path=$(if ($CpuProfileSeconds -gt 0) { Join-Path $runRoot 'cpu-profile/summary.json' } else { $null });
+    timing_scope='Requested time is relative to runtime launch; metadata and collector command latency precede sampling and count toward the unchanged runtime deadline. Exact sampling bounds and command latency remain in the helper summary.'
+}
 $record = [ordered]@{
     schema_version=2; scope='Bounded hidden startup with optional Vulkan images and silent real-device audio diagnostics; not audible quality or complete gameplay validation';
     started_at_utc=[DateTime]::UtcNow.ToString('o'); runner=$Runner; module=$Module; extracted_root=$ExtractedRoot;
@@ -299,6 +440,7 @@ $record = [ordered]@{
     dw4_idle_config=[ordered]@{section='Core'; key='StaticRecompDw4Idle'; value=($IdleMode -eq 'Enabled')};
     dw4_cache_config=[ordered]@{section='Core'; key='StaticRecompDw4CacheBatch'; value=($CacheMode -eq 'Enabled')};
     process_sampling_scope='Retained owned runtime Process only; user+kernel CPU across all threads, plus working/private/peak working-set bytes. No machine-wide utilization or child-process totals.'
+    cpu_profile=$cpuProfileOutcome;
 }
 [IO.File]::WriteAllText((Join-Path $runRoot 'invocation.json'),($record | ConvertTo-Json -Depth 5),$utf8)
 Write-Host "Hidden recompilation startup check: $runRoot"
@@ -316,12 +458,15 @@ $script:lastPresentProgressSeconds = -1.0
 $script:frameProgressSamples = 0
 $script:sawRunning = $false
 $observationEndSeconds = 0.0
+$observationCaptured = $false
 $observationProcessSample = $null
 $observationFrameProgressSeconds = -1.0
 $observationPresentProgressSeconds = -1.0
 $observationFrameProgressSamples = 0
 $stallWindowSeconds = [Math]::Min(5.0,[double]$TimeoutSeconds)
 $stopRequested = $false
+$stopRequestedSeconds = $null
+$secondStopRequested = $false
 $forcedTermination = $false
 $harnessError = ''
 $exitCode = $null
@@ -346,87 +491,17 @@ try {
     if (-not $processStarted) { throw 'The runtime process did not start.' }
     $ownedStartTicks = $taskProcess.StartTime.ToUniversalTime().Ticks
     $record['process_id'] = $taskProcess.Id
+    $record['process_start_time_utc_ticks'] = $ownedStartTicks
     [IO.File]::WriteAllText((Join-Path $runRoot 'invocation.json'),($record | ConvertTo-Json -Depth 5),$utf8)
     $stdoutCopy = $taskProcess.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
     $stderrCopy = $taskProcess.StandardError.BaseStream.CopyToAsync($stderrFile)
-    while (-not $taskProcess.HasExited -and $watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        Read-Status
-        if ($PressStartAtSeconds -gt 0 -and $null -eq $startPressQueuedSeconds -and
-            $watch.Elapsed.TotalSeconds -ge $PressStartAtSeconds -and
-            $watch.Elapsed.TotalSeconds -le $TimeoutSeconds-5 -and $script:sawRunning -and
-            $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
-            $watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
-            Publish-StartInput $true
-            $startPressQueuedSeconds = $watch.Elapsed.TotalSeconds
-        }
-        if ($null -ne $startPressQueuedSeconds) {
-            if ($null -eq $startPressAcknowledgedSeconds -and
-                [IO.File]::Exists((Join-Path $automationRoot 'processed/020-start-press.txt'))) {
-                $startPressAcknowledgedSeconds = $watch.Elapsed.TotalSeconds
-            }
-            if ($null -eq $startReleaseQueuedSeconds -and
-                (($null -ne $startPressAcknowledgedSeconds -and $watch.Elapsed.TotalSeconds - $startPressAcknowledgedSeconds -ge 0.5) -or
-                 $watch.Elapsed.TotalSeconds - $startPressQueuedSeconds -ge 2)) {
-                Publish-StartInput $false
-                $startReleaseQueuedSeconds = $watch.Elapsed.TotalSeconds
-            }
-            if ($null -ne $startReleaseQueuedSeconds -and $null -eq $startReleaseAcknowledgedSeconds -and
-                [IO.File]::Exists((Join-Path $automationRoot 'processed/021-start-release.txt'))) {
-                $startReleaseAcknowledgedSeconds = $watch.Elapsed.TotalSeconds
-            }
-        }
-        if ($Screenshot -and $screenshotIndex -lt $screenshotSchedule.Count -and $script:sawRunning -and
-            $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
-            $watch.Elapsed.TotalSeconds -ge $screenshotSchedule[$screenshotIndex] -and
-            $watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
-            # The command only queues an asynchronous renderer capture. Its
-            # processed file alone is not evidence that a PNG was written.
-            $isLast = $screenshotIndex -eq $screenshotSchedule.Count-1
-            $captureName = if ($isLast) { '050-screenshot.txt' } else { '040-screenshot-{0:D2}.txt' -f $screenshotIndex }
-            $capturePath = if ($isLast) { $screenshotPath } else { Join-Path $runRoot ('screenshot-{0:D2}.png' -f $screenshotIndex) }
-            Publish-Screenshot $captureName $capturePath
-            $screenshotCaptures.Add([pscustomobject]@{
-                requested_seconds=$screenshotSchedule[$screenshotIndex]; queued_seconds=$watch.Elapsed.TotalSeconds;
-                command_name=$captureName; path=$capturePath
-            })
-            if ($isLast) {
-                $screenshotCommandQueued = $true
-                $screenshotQueuedSeconds = $watch.Elapsed.TotalSeconds
-            }
-            ++$screenshotIndex
-        }
-        Start-Sleep -Milliseconds 100
+    while (-not $taskProcess.HasExited) {
+        Invoke-RecompStartupHostPoll
+        Invoke-RecompStartupScheduledCpuProfile
+        if (-not $taskProcess.HasExited) { Start-Sleep -Milliseconds 100 }
     }
     Read-Status
-    $observationProcessSample = Get-RecompProcessSample -Process $taskProcess -Clock $watch
-    $observationEndSeconds = $watch.Elapsed.TotalSeconds
-    $observationFrameProgressSeconds = $script:lastFrameProgressSeconds
-    $observationPresentProgressSeconds = $script:lastPresentProgressSeconds
-    $observationFrameProgressSamples = $script:frameProgressSamples
-    if (-not $taskProcess.HasExited) {
-        if ($null -ne $startPressQueuedSeconds -and $null -eq $startReleaseQueuedSeconds) {
-            Publish-StartInput $false
-            $startReleaseQueuedSeconds = $watch.Elapsed.TotalSeconds
-        }
-        Publish-Stop 1
-        $stopRequested = $true
-        $grace = [Diagnostics.Stopwatch]::StartNew()
-        $secondStop = $false
-        while (-not $taskProcess.HasExited -and $grace.Elapsed.TotalSeconds -lt $ShutdownGraceSeconds) {
-            Read-Status
-            # RequestShutdown first tries a guest power-button hook if present;
-            # a second request takes the platform's ordinary shutdown path.
-            if (-not $secondStop -and $grace.Elapsed.TotalSeconds -ge 1) {
-                Publish-Stop 2
-                $secondStop = $true
-            }
-            Start-Sleep -Milliseconds 100
-        }
-        if (-not $taskProcess.HasExited) {
-            $forcedTermination = $true
-            Stop-OwnedProcessTree
-        }
-    }
+    Complete-RecompStartupObservation
 } catch {
     $harnessError = $_.Exception.Message
 } finally {
@@ -516,6 +591,7 @@ $record['classification'] = $classification
 $record['process_exit_code'] = $exitCode
 $record['elapsed_seconds'] = $watch.Elapsed.TotalSeconds
 $record['stop_requested'] = $stopRequested
+$record['stop_requested_seconds'] = $stopRequestedSeconds
 $record['forced_termination'] = $forcedTermination
 $record['harness_error'] = $harnessError
 $record['runtime_error_lines'] = $runtimeErrors
@@ -625,9 +701,14 @@ if ($Screenshot -and -not $allCapturesPresent -and $classification -eq 'passed_s
     $classification = 'screenshot_missing'
     $record['classification'] = $classification
 }
+if ($cpuProfileOutcome.classification -eq 'waiting') { $cpuProfileOutcome.classification = 'not_reached' }
+if ($CpuProfileSeconds -gt 0 -and $cpuProfileOutcome.classification -ne 'completed' -and $classification -eq 'passed_startup') {
+    $classification = 'cpu_profile_unverified'
+    $record['classification'] = $classification
+}
 $record['finished_at_utc'] = [DateTime]::UtcNow.ToString('o')
 $summaryPath = Join-Path $runRoot 'summary.json'
-[IO.File]::WriteAllText($summaryPath,($record | ConvertTo-Json -Depth 8),$utf8)
+[IO.File]::WriteAllText($summaryPath,($record | ConvertTo-Json -Depth 12),$utf8)
 Write-Host "Result: $classification; native dispatches=$nativeTotal; reported interpreter fallback steps=$fallbackTotal; frame count=$script:maxFrames"
 Write-Host "Evidence: $summaryPath"
 if ($classification -ne 'passed_startup') { throw "The bounded recompilation startup check did not pass ($classification). Evidence: $summaryPath" }

@@ -9,7 +9,7 @@ features, modding, online co-op and a simple ROM-driven release experience.
 | --- | --- | --- | --- |
 | 1 | Reliable optimized game | Sustained original-speed menus and gameplay, smooth audible output, progression, saves and independent local 1–4-player controls | Optimized module and bounded package boot tests pass; original boot images rendered. Owner reports low FPS and audio stutter at the main menu; that tested binary was not identified by hash. |
 | 2 | Performance and PC graphics | At least 60 FPS on documented hardware; options up to 300 FPS without faster simulation/audio; validated frame times, 16:9 camera/culling/HUD, 4K, display modes, VSync and MSAA | Optimized boot counter rate is about 60/s at speed 1.0 versus about 40/s at speed 0.685; gameplay, audible audio and widescreen still unverified. |
-| 3 | ImGui settings and QoL | Working graphics/input controls, optional cheats, save/load states, supported game languages and original/modernized options; applied settings and unsupported combinations visible | External experimental frontend builds and renders; in-game controls and DW4 feature validation remain pending. Language corpus audited; see LOCALIZATION.md. Existing walking-preview controls are separate. |
+| 3 | ImGui settings and QoL | Working graphics/input controls, optional cheats, save/load states, supported game languages and original/modernized options; applied settings and unsupported combinations visible | Integrated F1 menu rendered and input/pause/resume sequence verified on a hidden native surface. Live graphics and state actions connected; full state round trips and graphics combinations remain unverified. Cheats/languages/gameplay modes pending; see RECOMP_INGAME_MENU.md and LOCALIZATION.md. |
 | 4 | Content modding | HD texture replacements, versioned loader/manifests, custom maps, Digimon and weapons, reproducible randomizers, optional rebalancing and bug fixes | Prior asset analysis retained; recompiled-game integration pending. |
 | 5 | Online four-player co-op | Multi-machine sessions with consistent state, input ownership, latency/disconnect handling, matching mods and clear save ownership | Pending. Preserve the required state/input interfaces during optimization; local play is a prerequisite. |
 | 6 | Simple EXE release | User selects their ROM; supported revision is validated and required assets prepared automatically, without a compiler or manual extraction; repeat launches reuse validated local data | Local DW4_PC.exe package imports the actual USA ISO; all nine files match the extracted reference, repeat import reuses data and invalid existing folders are preserved. Unicode/hidden frontend checks pass; broader release and clean-machine acceptance remain pending. |
@@ -21,8 +21,9 @@ play, and portable save data beside the executable. The in-game ImGui menu
 must open with **F1**, receive the current File/View commands, and apply
 supported settings while playing. The current package hosts the game directly
 inside `DW4_PC.exe` and defaults to adjacent `savedata`. The external game DLL,
-resource files, internal console-style profile and missing in-game menu still
-leave the final target incomplete. Integrate the runtime,
+resource files and internal console-style profile still leave the final target
+incomplete. The F1 menu now replaces File/View; its graphics settings are
+session-only and broader QoL remains unfinished. Integrate the runtime,
 module and PC-facing storage/UI boundaries; renaming the runner or hiding a
 second executable does not satisfy it. Existing saves must remain preserved.
 

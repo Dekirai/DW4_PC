@@ -59,8 +59,10 @@ Existing invalid import folders are preserved rather than replaced.
 
 Original game assets are not included. This is an experimental local build;
 complete gameplay, audio, controller, mod and online compatibility are still
-being validated. The launcher settings are separate from the future in-game
-ImGui menu. Higher presentation rates and widescreen remain in development.
+being validated. Press F1 during the game to open the integrated settings menu.
+F1 or Escape closes it. Opening the menu keeps the game running; Pause/Resume
+is available inside it. Graphics changes currently apply to this session only.
+Higher presentation rates and proper widescreen gameplay remain in development.
 
 Source and build instructions: https://github.com/Dekirai/DW4_PC
 Runtime source: https://github.com/ExpansionPak/ModernGekko

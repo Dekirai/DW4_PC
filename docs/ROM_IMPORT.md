@@ -52,9 +52,13 @@ This establishes the integrated command-line session and default path, not an
 interactive Play-button or netplay acceptance test. Separate hidden launcher
 images verify the import UI before and after the actual ROM import. The
 opening movie still slows to approximately 30% simulation speed. Save/load
-roundtrips, the F1 menu, full gameplay and single-file distribution remain
+roundtrips, full gameplay and single-file distribution remain
 pending. Evidence stays local under `work/recomp-import/20260913-073647-debed570`
 and `work/recomp-startup/20260913-073751-6e84201c`.
+
+The later integrated F1 menu has separate native-surface rendering and input
+checks; see [RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md). Those checks do not
+extend the ROM import or audible-performance acceptance scope.
 
 The current package additionally passes a 90-second integrated session with a
 controlled intro skip and controller-state synchronization. Both input commands
