@@ -212,3 +212,43 @@ leaving audible quality untested.
 Evidence: `work/recomp-startup/20260913-074432-035d0acd/` and
 `work/recomp-controlled-start-analysis.json`. The run's portable profile was
 archived under its `portable-savedata/` directory.
+
+## Two controlled Start presses
+
+The hidden harness now accepts `-SecondStartPressAtSeconds` alongside
+`-PressStartAtSeconds`. The second request requires the first, at least five
+seconds of scheduled and actual queue separation, a completed first release,
+and a five-second shutdown margin. It has separate command names and records
+both press/release acknowledgments. Normal and exceptional shutdown release
+an active command. Default runs still send no input.
+
+The actual extracted scheduler, publishers, outcome checks and cleanup pass
+60 synthetic checks under PowerShell 7 and 5.1. The existing profile (49),
+in-process probe (15) and reference-build (11) tests also pass on both shells.
+`start_probes` records command-cycle outcomes; neither acknowledgment nor a
+counter rate proves that the original game reached a particular menu.
+
+The rebuilt package's first two-press run, at 40 and 75 seconds, is
+`work/recomp-startup/20260913-101047-8d8ade4a/`. Both command cycles completed,
+but screenshots at 60 and 73 seconds still show the movie; the 85-second image
+shows the **PRESS START** title screen. Its final ten-second window measured
+60.0045 unique counter advances/s, reported speed 1.0024 and 9.6751 process CPU
+ms/advance. Fresh DMA supply was 32,066.2 frames/s, with zero replay events in
+that window and no device errors. Cubeb remained muted. This is title-screen
+evidence, not main-menu progression, audible quality or gameplay acceptance.
+
+A later schedule at 60 and 80 seconds reached the original **Game Start /
+Option** main menu: `work/recomp-startup/20260913-101436-7f7f6bc1/`. The
+73-second image shows PRESS START; both the 85- and 88-second images show the
+main-menu choices. Both command cycles completed and the process exited
+normally, with no failed SMC chunks. The final 5.0900-second window, after
+the first main-menu screenshot, measured 60.7070 unique counter advances/s,
+final simulation speed 1.00291 and 10.1133 process CPU ms/advance. DMA supplied
+32,435.2 frames/s with zero replay events, callback gaps or device errors in
+that window. The ten-second window includes the title-to-menu transition and
+is kept separately in the report.
+
+This establishes bounded arrival at the first main menu on 1x Vulkan, not menu
+navigation, player selection, gameplay, sustained performance at the frontend's
+higher resolution, or audible output. Both runs use the `1104466C…` launcher
+and `4772F734…` module described in [RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md).

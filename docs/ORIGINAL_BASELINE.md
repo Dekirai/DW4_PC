@@ -9,7 +9,20 @@ is a development aid. Its 120 Hz movement,
 speed, body dimensions, follow camera and visibility silhouette are provisional
 host behavior. They are not evidence of original gameplay compatibility.
 
-## Completion requirements
+## Selected recompilation evidence
+
+DolRecomp with ModernGekko is the active path; the manual-core implementation
+table below remains reference work. The rebuilt original-game package reaches
+the first **Game Start / Option** main menu after controlled Start commands.
+The final short 1x Vulkan window runs near 60 unique counter advances/s at
+normal speed, without audio replay in that window. Original movie playback is
+still slow, and audible quality, player selection, gameplay, saves and
+independent local controllers remain unverified. See
+[RECOMP_AUDIO.md](RECOMP_AUDIO.md#two-controlled-start-presses) for screenshots,
+exact timing and the muted-device scope, and [ROADMAP.md](ROADMAP.md) for the
+active acceptance gates. This does not complete the original-game baseline.
+
+## Retained manual-core completion requirements
 
 | System | Evidence required for the baseline | Current gap |
 | --- | --- | --- |
@@ -42,7 +55,7 @@ Unknown effects must stop the corresponding original path rather than become
 successful no-ops. Reuse native state implementations in the eventual game
 runtime instead of treating diagnostic reports as initialized engine objects.
 
-## Current critical paths
+## Retained manual-core critical paths
 
 1. Reconstruct manager preparation, per-info/per-RAM initialization and messenger
    state so deferred original resources acquire their actual native effects.

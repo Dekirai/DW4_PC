@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Module,
     [Parameter(Mandatory=$true)][string]$ExtractedRoot,
     [string]$Runner = '',
+    [string]$ReferenceBuildDirectory = '',
     [switch]$UnifiedExecutable,
     [switch]$UseBundledModule,
     [switch]$UsePortableProfile,
@@ -13,8 +14,11 @@ param(
     [switch]$Screenshot,
     [int[]]$ScreenshotAtSeconds = @(),
     [ValidateRange(0,85)][int]$PressStartAtSeconds = 0,
+    [ValidateRange(0,85)][int]$SecondStartPressAtSeconds = 0,
     [ValidateRange(0,30)][int]$CpuProfileSeconds = 0,
     [ValidateRange(0,85)][int]$CpuProfileAtSeconds = 0,
+    [ValidateRange(0,30)][int]$InProcessCpuProbeSeconds = 0,
+    [ValidateRange(0,85)][int]$InProcessCpuProbeAtSeconds = 0,
     [ValidateRange(1,90)][int]$TimeoutSeconds = 30,
     [ValidateRange(2,10)][int]$ShutdownGraceSeconds = 5
 )
@@ -22,12 +26,16 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'recomp-startup-metrics.ps1')
 . (Join-Path $PSScriptRoot 'recomp-audio-metrics.ps1')
+. (Join-Path $PSScriptRoot 'recomp-inprocess-probe.ps1')
 if ($CpuProfileSeconds -gt 0) { . (Join-Path $PSScriptRoot 'profile-recomp.ps1') }
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'This startup harness currently requires Windows.'
 }
 if ($UsePortableProfile -and (-not $UnifiedExecutable -or -not $UseBundledModule -or -not $Runner)) {
     throw 'Portable-profile verification requires an explicit packaged unified EXE and its bundled module.'
+}
+if ($ReferenceBuildDirectory -and (-not $UnifiedExecutable -or -not $UseBundledModule -or -not $Runner)) {
+    throw 'A preserved reference build requires an explicit packaged unified EXE and its bundled module.'
 }
 if ($Screenshot -and $Graphics -ne 'Vulkan') {
     throw 'A meaningful screenshot requires the headless Vulkan backend, not Null.'
@@ -36,11 +44,22 @@ if ($ScreenshotAtSeconds.Count -gt 0 -and -not $Screenshot) { throw 'ScreenshotA
 if ($PressStartAtSeconds -gt 0 -and $PressStartAtSeconds -gt $TimeoutSeconds-5) {
     throw 'The controlled Start press must leave at least five seconds for release before shutdown.'
 }
+if ($SecondStartPressAtSeconds -gt 0 -and ($PressStartAtSeconds -eq 0 -or
+    $SecondStartPressAtSeconds -lt $PressStartAtSeconds+5 -or $SecondStartPressAtSeconds -gt $TimeoutSeconds-5)) {
+    throw 'A second controlled Start press requires the first press, at least five seconds between presses, and five seconds before shutdown.'
+}
 if ($CpuProfileSeconds -eq 0 -and $CpuProfileAtSeconds -ne 0) {
     throw 'CpuProfileAtSeconds requires a nonzero CpuProfileSeconds.'
 }
 if ($CpuProfileSeconds -gt 0 -and $CpuProfileAtSeconds + $CpuProfileSeconds -gt $TimeoutSeconds-5) {
     throw 'The CPU profile schedule must leave at least five seconds before the unchanged runtime deadline. Collector command latency also consumes this run budget.'
+}
+if ($InProcessCpuProbeSeconds -eq 0 -and $InProcessCpuProbeAtSeconds -ne 0) {
+    throw 'InProcessCpuProbeAtSeconds requires a nonzero InProcessCpuProbeSeconds.'
+}
+if ($InProcessCpuProbeSeconds -gt 0 -and ($CpuProfileSeconds -gt 0 -or
+    $InProcessCpuProbeAtSeconds + $InProcessCpuProbeSeconds -gt $TimeoutSeconds-10)) {
+    throw 'The in-process probe requires a separate run and a ten-second launch/shutdown margin.'
 }
 if ($ScreenshotAtSeconds.Count -gt 8 -or @($ScreenshotAtSeconds | Where-Object { $_ -lt 1 -or $_ -ge $TimeoutSeconds-1 }).Count) {
     throw 'Request at most eight screenshots, each at least one second before the test ends.'
@@ -60,6 +79,12 @@ $ExtractedRoot = (Resolve-Path -LiteralPath $ExtractedRoot).Path
 $buildRecordPath = Join-Path $repoRoot 'work/recomp-build-record.json'
 $runtimePatchPath = Join-Path $repoRoot 'patches/moderngekko-local-runtime.patch'
 $chassisPatchPath = Join-Path $repoRoot 'patches/recompcore-headless-shader-progress.patch'
+if ($ReferenceBuildDirectory) {
+    $ReferenceBuildDirectory = (Resolve-Path -LiteralPath $ReferenceBuildDirectory).Path
+    $buildRecordPath = Join-Path $ReferenceBuildDirectory 'build-record.json'
+    $runtimePatchPath = Join-Path $ReferenceBuildDirectory 'moderngekko-local-runtime.patch'
+    $chassisPatchPath = Join-Path $ReferenceBuildDirectory 'recompcore-headless-shader-progress.patch'
+}
 foreach ($required in @($buildRecordPath,$runtimePatchPath,$chassisPatchPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Rebuild the patched runtime before this hidden test; missing: $required" }
 }
@@ -88,6 +113,9 @@ if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4Idle
 if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4CacheBatch')) {
     throw 'This startup comparison requires a rebuilt runner with the guarded DW4 cache-batch option.'
 }
+if ($InProcessCpuProbeSeconds -gt 0 -and -not [IO.File]::ReadAllText($chassisPatchPath).Contains('cpu-probe:')) {
+    throw 'The in-process CPU probe requires a matching rebuilt runtime with probe support.'
+}
 $expectedModulePath = if ($UseBundledModule) {
     Join-Path (Split-Path -Parent $Runner) 'gGDJEB2_recomp.dll'
 } else { [IO.Path]::GetFullPath($buildRecord.module_path) }
@@ -96,7 +124,9 @@ if ($buildRecord.module_built -isnot [bool] -or -not $buildRecord.module_built -
     $buildRecord.module_sha256 -ne $moduleHash) {
     throw 'The requested module does not match the completed build record. Finish scripts/build-recomp.ps1 before testing.'
 }
-$abiReportPath = [IO.Path]::GetFullPath($buildRecord.abi_report_path)
+$abiReportPath = if ($ReferenceBuildDirectory) {
+    Join-Path $ReferenceBuildDirectory 'abi.json'
+} else { [IO.Path]::GetFullPath($buildRecord.abi_report_path) }
 if (-not (Test-Path -LiteralPath $abiReportPath -PathType Leaf) -or
     (Get-FileHash -LiteralPath $abiReportPath -Algorithm SHA256).Hash -ne $buildRecord.abi_report_sha256) {
     throw 'The ABI report is missing or differs from the completed build record. Rebuild before testing.'
@@ -168,13 +198,52 @@ function Publish-Screenshot([string]$Name,[string]$Path) {
     [IO.File]::WriteAllText($pending,"command=screenshot`npath=$Path`n",$script:utf8)
     [IO.File]::Move($pending,(Join-Path $script:commandRoot $Name))
 }
-function Publish-StartInput([bool]$Pressed) {
+function Publish-StartInput([bool]$Pressed,[ValidateRange(1,2)][int]$Sequence = 1) {
     # Nonblocking pad commands keep status and shutdown responsive if frames stall.
     $name = if ($Pressed) { '020-start-press.txt' } else { '021-start-release.txt' }
+    if ($Sequence -eq 2) { $name = if ($Pressed) { '022-start-press-02.txt' } else { '023-start-release-02.txt' } }
     $body = if ($Pressed) { "command=pad`nport=0`nstart=1`n" } else { "command=clear_pad`nport=0`n" }
     $pending = Join-Path $script:automationRoot ($name + '.pending')
     [IO.File]::WriteAllText($pending,$body,$script:utf8)
     [IO.File]::Move($pending,(Join-Path $script:commandRoot $name))
+}
+function Invoke-RecompStartupSecondStartPoll([switch]$ReleaseForShutdown) {
+    $probe = $script:secondStartProbe
+    $now = $script:watch.Elapsed.TotalSeconds
+    if (-not $ReleaseForShutdown -and $null -eq $probe.press_queued_seconds -and
+        $now -ge $script:SecondStartPressAtSeconds -and $now -le $script:TimeoutSeconds-5 -and
+        $null -ne $script:startReleaseAcknowledgedSeconds -and
+        $now - $script:startPressQueuedSeconds -ge 5 -and $script:sawRunning -and
+        $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
+        $now - $script:lastFrameProgressSeconds -le 2) {
+        Publish-StartInput $true 2
+        $probe.press_queued_seconds = $now
+    }
+    if ($null -eq $probe.press_queued_seconds) { return }
+    if ($null -eq $probe.press_acknowledged_seconds -and
+        [IO.File]::Exists((Join-Path $script:automationRoot 'processed/022-start-press-02.txt'))) {
+        $probe.press_acknowledged_seconds = $now
+    }
+    if ($null -eq $probe.release_queued_seconds -and ($ReleaseForShutdown -or
+        ($null -ne $probe.press_acknowledged_seconds -and $now - $probe.press_acknowledged_seconds -ge 0.5) -or
+        $now - $probe.press_queued_seconds -ge 2)) {
+        Publish-StartInput $false 2
+        $probe.release_queued_seconds = $now
+    }
+    if ($null -ne $probe.release_queued_seconds -and $null -eq $probe.release_acknowledged_seconds -and
+        [IO.File]::Exists((Join-Path $script:automationRoot 'processed/023-start-release-02.txt'))) {
+        $probe.release_acknowledged_seconds = $now
+    }
+}
+function Get-RecompStartupStartOutcome($Probe) {
+    if ($Probe.requested_seconds -eq 0) { return 'disabled' }
+    if ($null -eq $Probe.press_queued_seconds) { return 'not_reached' }
+    if ($null -eq $Probe.press_acknowledged_seconds) { return 'press_unacknowledged' }
+    if ($null -eq $Probe.release_queued_seconds) { return 'release_not_queued' }
+    if ($Probe.release_queued_seconds - $Probe.press_acknowledged_seconds -lt 0.5) { return 'hold_unverified' }
+    if ($null -eq $Probe.release_acknowledged_seconds -or
+        $Probe.release_acknowledged_seconds -le $Probe.release_queued_seconds) { return 'release_unacknowledged' }
+    return 'verified_command_cycle'
 }
 function Read-Status {
     $path = Join-Path $script:automationRoot 'status.txt'
@@ -263,17 +332,23 @@ function Invoke-RecompStartupHostPoll {
     # other dynamically scoped caller locals from replacing host configuration.
     Read-Status
     if ($script:taskProcess.HasExited) { Complete-RecompStartupObservation; return }
+    # Bound-parameter detection leaves the original single-press scheduler usable
+    # independently, including its existing extracted-function synthetic tests.
+    $secondStartEnabled = $script:PSBoundParameters.ContainsKey('SecondStartPressAtSeconds') -and
+        $script:SecondStartPressAtSeconds -gt 0
     if (-not $script:stopRequested -and $script:watch.Elapsed.TotalSeconds -ge $script:TimeoutSeconds) {
         Complete-RecompStartupObservation
         if ($null -ne $script:startPressQueuedSeconds -and $null -eq $script:startReleaseQueuedSeconds) {
             Publish-StartInput $false
             $script:startReleaseQueuedSeconds = $script:watch.Elapsed.TotalSeconds
         }
+        if ($secondStartEnabled) { Invoke-RecompStartupSecondStartPoll -ReleaseForShutdown }
         Publish-Stop 1
         $script:stopRequested = $true
         $script:stopRequestedSeconds = $script:watch.Elapsed.TotalSeconds
     }
     if ($script:stopRequested) {
+        if ($secondStartEnabled) { Invoke-RecompStartupSecondStartPoll -ReleaseForShutdown }
         if ($null -ne $script:startReleaseQueuedSeconds -and $null -eq $script:startReleaseAcknowledgedSeconds -and
             [IO.File]::Exists((Join-Path $script:automationRoot 'processed/021-start-release.txt'))) {
             $script:startReleaseAcknowledgedSeconds = $script:watch.Elapsed.TotalSeconds
@@ -314,6 +389,7 @@ function Invoke-RecompStartupHostPoll {
             $script:startReleaseAcknowledgedSeconds = $script:watch.Elapsed.TotalSeconds
         }
     }
+    if ($secondStartEnabled) { Invoke-RecompStartupSecondStartPoll }
     if ($script:Screenshot -and $script:screenshotIndex -lt $script:screenshotSchedule.Count -and $script:sawRunning -and
         $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
         $script:watch.Elapsed.TotalSeconds -ge $script:screenshotSchedule[$script:screenshotIndex] -and
@@ -405,6 +481,10 @@ $start.EnvironmentVariables['STATICRECOMP_FALLBACK_RANGES'] = ''
 $start.EnvironmentVariables['STATICRECOMP_LOCKSTEP'] = '0'
 $start.EnvironmentVariables['STATICRECOMP_DISPATCH_SAMPLES'] = '1'
 $start.EnvironmentVariables['STATICRECOMP_TRACE_FILE'] = Join-Path $runRoot 'dispatch.csv'
+if ($InProcessCpuProbeSeconds -gt 0) {
+    $start.EnvironmentVariables['STATICRECOMP_CPU_PROBE_SECONDS'] = [string]$InProcessCpuProbeSeconds
+    $start.EnvironmentVariables['STATICRECOMP_CPU_PROBE_DELAY_SECONDS'] = [string]$InProcessCpuProbeAtSeconds
+}
 
 $cpuProfileOutcome = [ordered]@{
     enabled=($CpuProfileSeconds -gt 0); requested_at_seconds=$CpuProfileAtSeconds;
@@ -423,6 +503,9 @@ $record = [ordered]@{
     unified_executable=[bool]$UnifiedExecutable; executable_hash_field=$binaryHashField;
     runner_sha256=$runnerHash; runtime_patch_sha256=$patchHash; chassis_patch_sha256=$chassisPatchHash;
     runtime_build_record=$buildRecordPath;
+    reference_build_directory=$ReferenceBuildDirectory;
+    build_record_sha256=(Get-FileHash -LiteralPath $buildRecordPath -Algorithm SHA256).Hash;
+    runtime_patch_path=$runtimePatchPath; chassis_patch_path=$chassisPatchPath;
     module_sha256=$moduleHash; abi_report_path=$abiReportPath; abi_report_sha256=$buildRecord.abi_report_sha256;
     main_dol_sha256=$dolHash; arguments=$arguments; working_directory=$start.WorkingDirectory;
     user_directory=$profileRoot; automation_directory=$automationRoot;
@@ -435,12 +518,18 @@ $record = [ordered]@{
     audio_scope='Cubeb explicitly opts into real device callbacks with volume zero; Null uses no output device. Source and callback counters do not prove audible quality.';
     input_scope='Emulated GameCube port 0 always connected with explicit empty bindings; other ports disconnected. Physical keyboard/gamepad/adapter input is excluded.';
     start_press_requested_seconds=$PressStartAtSeconds;
+    second_start_press_requested_seconds=$SecondStartPressAtSeconds;
     pad_config_path=$padConfigPath; initial_pad_config_sha256=(Get-FileHash -LiteralPath $padConfigPath -Algorithm SHA256).Hash;
     screenshot_schedule_seconds=$(if ($Screenshot) { $screenshotSchedule } else { @() });
     dw4_idle_config=[ordered]@{section='Core'; key='StaticRecompDw4Idle'; value=($IdleMode -eq 'Enabled')};
     dw4_cache_config=[ordered]@{section='Core'; key='StaticRecompDw4CacheBatch'; value=($CacheMode -eq 'Enabled')};
     process_sampling_scope='Retained owned runtime Process only; user+kernel CPU across all threads, plus working/private/peak working-set bytes. No machine-wide utilization or child-process totals.'
     cpu_profile=$cpuProfileOutcome;
+    in_process_cpu_probe=[ordered]@{
+        enabled=($InProcessCpuProbeSeconds -gt 0); requested_delay_seconds=$InProcessCpuProbeAtSeconds;
+        requested_duration_seconds=$InProcessCpuProbeSeconds;
+        scope='Owned emulation thread only. Window starts relative to first core Run, not process launch. Native samples include hooks; elapsed time includes waits. Sampled CPU cycles are not CPU milliseconds or exclusive percentages.'
+    };
 }
 [IO.File]::WriteAllText((Join-Path $runRoot 'invocation.json'),($record | ConvertTo-Json -Depth 5),$utf8)
 Write-Host "Hidden recompilation startup check: $runRoot"
@@ -484,6 +573,10 @@ $startPressQueuedSeconds = $null
 $startPressAcknowledgedSeconds = $null
 $startReleaseQueuedSeconds = $null
 $startReleaseAcknowledgedSeconds = $null
+$secondStartProbe = [ordered]@{
+    requested_seconds=$SecondStartPressAtSeconds; press_queued_seconds=$null; press_acknowledged_seconds=$null;
+    release_queued_seconds=$null; release_acknowledged_seconds=$null
+}
 try {
     $stdoutFile = [IO.File]::Open((Join-Path $runRoot 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     $stderrFile = [IO.File]::Open((Join-Path $runRoot 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
@@ -506,6 +599,13 @@ try {
     $harnessError = $_.Exception.Message
 } finally {
     if ($processStarted -and -not $taskProcess.HasExited) {
+        try {
+            if ($null -ne $startPressQueuedSeconds -and $null -eq $startReleaseQueuedSeconds) {
+                Publish-StartInput $false
+                $startReleaseQueuedSeconds = $watch.Elapsed.TotalSeconds
+            }
+            if ($SecondStartPressAtSeconds -gt 0) { Invoke-RecompStartupSecondStartPoll -ReleaseForShutdown }
+        } catch { $harnessError += ' Input release: ' + $_.Exception.Message }
         $forcedTermination = $true
         try { Stop-OwnedProcessTree } catch { $harnessError += ' Watchdog: ' + $_.Exception.Message }
     }
@@ -599,15 +699,28 @@ $record['log_capture_complete'] = $logsComplete
 $record['inputs_unchanged'] = $inputUnchanged
 $record['final_pad_config_sha256'] = if (Test-Path -LiteralPath $padConfigPath -PathType Leaf) { (Get-FileHash -LiteralPath $padConfigPath -Algorithm SHA256).Hash } else { $null }
 $record['start_probe'] = [ordered]@{
+    requested_seconds=$PressStartAtSeconds;
     press_queued_seconds=$startPressQueuedSeconds; press_acknowledged_seconds=$startPressAcknowledgedSeconds;
     release_queued_seconds=$startReleaseQueuedSeconds; release_acknowledged_seconds=$startReleaseAcknowledgedSeconds;
     scope='One nonblocking Start press on port 0, cleared after 0.5 seconds from observed acknowledgment (two-second fallback). Acknowledgment proves publication, not that the game consumed Start or reached a menu.'
 }
+$record['start_probe']['classification'] = Get-RecompStartupStartOutcome $record['start_probe']
+$secondStartProbe['classification'] = Get-RecompStartupStartOutcome $secondStartProbe
+$record['start_probes'] = @(
+    if ($PressStartAtSeconds -gt 0) { $record['start_probe'] }
+    if ($SecondStartPressAtSeconds -gt 0) { $secondStartProbe }
+)
+$record['start_schedule_scope'] = 'At most two emulated Start command cycles, separated by at least five seconds and a release acknowledgment. Per-press verification proves command publication only; screenshots require visual inspection to establish an original menu.'
 if ($PressStartAtSeconds -gt 0 -and $classification -eq 'passed_startup' -and
     ($null -eq $startPressAcknowledgedSeconds -or $null -eq $startReleaseAcknowledgedSeconds -or
      $null -eq $startReleaseQueuedSeconds -or
      $startReleaseQueuedSeconds - $startPressAcknowledgedSeconds -lt 0.5 -or
      $startReleaseAcknowledgedSeconds -le $startReleaseQueuedSeconds)) {
+    $classification = 'start_input_unverified'
+    $record['classification'] = $classification
+}
+if ($SecondStartPressAtSeconds -gt 0 -and $classification -eq 'passed_startup' -and
+    $secondStartProbe.classification -ne 'verified_command_cycle') {
     $classification = 'start_input_unverified'
     $record['classification'] = $classification
 }
@@ -704,6 +817,11 @@ if ($Screenshot -and -not $allCapturesPresent -and $classification -eq 'passed_s
 if ($cpuProfileOutcome.classification -eq 'waiting') { $cpuProfileOutcome.classification = 'not_reached' }
 if ($CpuProfileSeconds -gt 0 -and $cpuProfileOutcome.classification -ne 'completed' -and $classification -eq 'passed_startup') {
     $classification = 'cpu_profile_unverified'
+    $record['classification'] = $classification
+}
+$record.in_process_cpu_probe['result'] = Get-RecompInprocessProbe -Lines ($stderr -split "`r?`n") -Enabled ($InProcessCpuProbeSeconds -gt 0)
+if (-not $record.in_process_cpu_probe.result.valid -and $classification -eq 'passed_startup') {
+    $classification = 'in_process_cpu_probe_unverified'
     $record['classification'] = $classification
 }
 $record['finished_at_utc'] = [DateTime]::UtcNow.ToString('o')

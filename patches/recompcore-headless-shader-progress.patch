@@ -1,3 +1,17 @@
+diff --git a/GXRuntime/src/core/cpu.c b/GXRuntime/src/core/cpu.c
+index 345b9602dd02a9f93d5957ff0a9fbb1a4b4f1598..bcddea3a3cd0656af55444979f2c8a01575bce6c 100644
+--- a/GXRuntime/src/core/cpu.c
++++ b/GXRuntime/src/core/cpu.c
+@@ -215,7 +215,8 @@ static f64 psq_load_value(CPUState* cpu, u32 ea, u8 type, s32 scale) {
+ }
+ 
+ static s64 psq_quantize_int(f64 value, s64 min_value, s64 max_value, s32 scale) {
+-    f32 conv = (f32)value * ldexpf(1.0f, scale);
++    /* gqr_scale is signed six-bit, so 2^scale is always an exact normal f32. */
++    f32 conv = (f32)value * f32_value((u32)(scale + 127) << 23);
+     if (isnan(conv))
+         return 0;
+     if (conv <= (f32)min_value)
 diff --git a/Source/Core/AudioCommon/AudioTelemetry.h b/Source/Core/AudioCommon/AudioTelemetry.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..0236a70db0d65c0b7af562e877075b46815d7f55
@@ -802,11 +816,116 @@ index e58579ecda14837ae37c46286734893a70b3db02..1190efb785980038e10976190d2a7a32
    // Ignore full focus if we don't require basic focus
    const bool full_focus_passes =
        !require_focus || !require_full_focus || (focus_passes && Host_RendererHasFullFocus());
+diff --git a/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp b/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp
+index fe4ec83f0876a361fc463cfe04208e67c7f53f21..ce5facef34e49c0a5835c5f9265f25f19a2dfa31 100644
+--- a/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp
++++ b/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp
+@@ -342,7 +342,9 @@ void JitBaseBlockCache::InvalidateICacheInternal(u32 physical_address, u32 addre
+     // FIFO write address cache, so we don't end up with FIFO checks in places they shouldn't
+     // be (this can clobber flags, and thus break any optimization that relies on flags
+     // being in the right place between instructions).
+-    if (!forced)
++    if (!forced && (!m_jit.js.fifoWriteAddresses.empty() ||
++                    !m_jit.js.pairedQuantizeAddresses.empty() ||
++                    !m_jit.js.noSpeculativeConstantsAddresses.empty()))
+     {
+       for (u32 i = address; i < address + length; i += 4)
+       {
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
-index e3581cc9386ed6e9485993b7f7231f65a0cd239b..52120a0addd208dcecc3857867f9394d3cffafd3 100644
+index e3581cc9386ed6e9485993b7f7231f65a0cd239b..99ec97150130d77e90e5c73b802e80f65320ee4d 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
-@@ -182,6 +182,8 @@ void StaticRecompCore::Init()
+@@ -4,6 +4,7 @@
+ #include "Core/PowerPC/StaticRecomp/StaticRecompCore.h"
+ 
+ #include <algorithm>
++#include <charconv>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -36,6 +37,73 @@ u32 StaticRecompShouldYieldAt(u32 address)
+ 
+ namespace
+ {
++StaticRecompDispatchProbe::Config ReadDispatchProbeConfig()
++{
++  StaticRecompDispatchProbe::Config config;
++  const char* duration_text = std::getenv("STATICRECOMP_CPU_PROBE_SECONDS");
++  if (!duration_text)
++    return config;
++  const auto parse_seconds = [](const char* text, unsigned maximum, unsigned& value) {
++    if (!text || !*text)
++      return false;
++    const char* end = text + std::strlen(text);
++    const auto result = std::from_chars(text, end, value);
++    return result.ec == std::errc{} && result.ptr == end && value <= maximum;
++  };
++  unsigned duration = 0;
++  unsigned delay = 0;
++  const char* delay_text = std::getenv("STATICRECOMP_CPU_PROBE_DELAY_SECONDS");
++  if (!parse_seconds(duration_text, 30, duration) || duration == 0 ||
++      (delay_text && !parse_seconds(delay_text, 85, delay)))
++  {
++    std::fprintf(stderr, "[staticrecomp] cpu-probe configuration rejected\n");
++    return config;
++  }
++  config.enabled = true;
++  config.duration_ns = duration * StaticRecompDispatchProbe::NS_PER_SECOND;
++  config.start_delay_ns = delay * StaticRecompDispatchProbe::NS_PER_SECOND;
++  return config;
++}
++
++void WriteDispatchProbeReport(const StaticRecompDispatchProbe::Probe<>& probe)
++{
++  const auto& r = probe.GetReport();
++  if (!r.config.enabled)
++    return;
++  const auto relative = [&](u64 time) { return time >= r.origin_ns ? time - r.origin_ns : 0; };
++  const bool complete = r.state == StaticRecompDispatchProbe::State::Completed &&
++                        !r.window_missed && r.observed_end_ns >= r.scheduled_end_ns;
++  const u64 failures = r.wall_failures + r.cycle_failures + r.cpu_failures +
++                       r.thread_mismatches + r.counter_resets + r.accumulation_overflows +
++                       r.nested_rejections + r.unmatched_ends;
++  std::ostringstream summary;
++  summary << "complete=" << complete << " thread_cpu_valid=" << r.cpu_available
++          << " thread_id=" << r.owner_thread_id << " delay_ns=" << r.config.start_delay_ns
++          << " duration_ns=" << r.config.duration_ns
++          << " start_ns=" << relative(r.observed_start_ns) << " end_ns=" << relative(r.observed_end_ns)
++          << " cpu_100ns=" << r.cpu_100ns
++          << " opportunities=" << r.opportunities << " samples=" << r.accepted
++          << " failures=" << failures << " overflow=" << r.table_overflow_samples
++          << " seed=" << r.config.seed << " stride=" << r.config.mean_sample_stride
++          << " calibration_samples=" << r.calibration.valid_cycle_pairs
++          << " calibration_cycles=" << r.calibration.cycles_sum
++          << " calibration_wall_ns=" << r.calibration.wall_ns_sum;
++  std::fprintf(stderr, "[staticrecomp] cpu-probe: %s\n", summary.str().c_str());
++  for (const auto& entry : r.entries)
++  {
++    if (!entry.used)
++      continue;
++    std::fprintf(stderr,
++        "[staticrecomp] cpu-probe-site: key=%08x samples=%llu cycles=%llu wall_ns=%llu "
++        "zero_cycles=%llu failures=%llu\n", entry.pc,
++        static_cast<unsigned long long>(entry.samples),
++        static_cast<unsigned long long>(entry.cycles),
++        static_cast<unsigned long long>(entry.wall_ns),
++        static_cast<unsigned long long>(entry.zero_cycle_samples),
++        static_cast<unsigned long long>(entry.samples - entry.cycle_samples));
++  }
++}
++
+ bool RangesAreSorted(const StaticRecompRange* ranges, u32 count)
+ {
+   if (!ranges || count == 0)
+@@ -148,6 +216,7 @@ void StaticRecompCore::Init()
+   g_static_recomp_core = this;
+   RefreshConfig();
+   m_collect_dispatch_samples = std::getenv("STATICRECOMP_DISPATCH_SAMPLES") != nullptr;
++  m_dispatch_probe.Configure(ReadDispatchProbeConfig());
+   const char* fallback_override = std::getenv("STATICRECOMP_FALLBACK_RANGES");
+   std::istringstream fallback_ranges(fallback_override ? fallback_override :
+                                                          Config::Get(Config::MAIN_STATICRECOMP_FALLBACK_RANGES));
+@@ -182,6 +251,8 @@ void StaticRecompCore::Init()
  
    LoadModule();
    m_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_PC);
@@ -815,7 +934,17 @@ index e3581cc9386ed6e9485993b7f7231f65a0cd239b..52120a0addd208dcecc3857867f9394d
    m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
    m_lockstep_verifier->Init();
  
-@@ -211,6 +213,25 @@ void StaticRecompCore::Shutdown()
+@@ -200,6 +271,9 @@ void StaticRecompCore::Init()
+ 
+ void StaticRecompCore::Shutdown()
+ {
++  // The CPU execution owner is quiesced here. Reporting must not call a CPU
++  // counter using this shutdown thread's pseudo-handle.
++  WriteDispatchProbeReport(m_dispatch_probe);
+   g_static_recomp_core = nullptr;
+   std::fprintf(stderr,
+                "[staticrecomp] shutdown: native=%llu fallback=%llu native_exc=%llu hook_fb=%llu "
+@@ -211,6 +285,25 @@ void StaticRecompCore::Shutdown()
                 (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
    std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
                                                      m_dispatch_samples.end());
@@ -842,10 +971,18 @@ index e3581cc9386ed6e9485993b7f7231f65a0cd239b..52120a0addd208dcecc3857867f9394d
              [](const auto& left, const auto& right) { return left.second > right.second; });
    for (std::size_t i = 0; i < std::min<std::size_t>(dispatch_samples.size(), 16); ++i)
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-index d084fea634a662590dda61faed30b0a1523771bb..63e1c87ae4b89255a9fdba647ad01f5bdea0016a 100644
+index d084fea634a662590dda61faed30b0a1523771bb..c301f655ab9e09ba99f8dcdec767fb9246fe7df4 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-@@ -177,6 +177,12 @@ private:
+@@ -13,6 +13,7 @@
+ #include "Core/PowerPC/JitCommon/JitBase.h"
+ #include "Core/PowerPC/JitCommon/JitCache.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompABI.h"
++#include "Core/PowerPC/StaticRecomp/StaticRecompDispatchProbe.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompModuleSource.h"
+ 
+ namespace Core
+@@ -177,6 +178,12 @@ private:
    std::unordered_map<u32, u64> m_dispatch_samples;
    u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
    u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
@@ -858,8 +995,15 @@ index d084fea634a662590dda61faed30b0a1523771bb..63e1c87ae4b89255a9fdba647ad01f5b
  
    // D4 guard state: parallel to m_module->chunk_ranges.
    std::vector<u8> m_chunk_state;
-@@ -212,6 +218,8 @@ private:
+@@ -210,8 +217,15 @@ private:
+   mutable u32 m_last_chunk_index = 0;
+ 
    bool m_collect_dispatch_samples = false;
++  // Diagnostic state survives Run reentry. Only the CPU owner samples clocks;
++  // shutdown reads the retained report after that owner has stopped.
++  StaticRecompDispatchProbe::Probe<> m_dispatch_probe;
++  template <bool CollectProbe>
++  void RunImpl();
    bool m_has_rel_modules = false;
    u32 m_idle_pc = 0;
 +  bool m_dw4_idle_enabled = false;
@@ -868,7 +1012,7 @@ index d084fea634a662590dda61faed30b0a1523771bb..63e1c87ae4b89255a9fdba647ad01f5b
  
  extern StaticRecompCore* g_static_recomp_core;
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
-index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480e873a9d9 100644
+index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb17bbe3b4 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
 @@ -6,11 +6,16 @@
@@ -888,7 +1032,47 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
  
  #include <cstdio>
  #include <cstdlib>
-@@ -151,6 +156,11 @@ void StaticRecompCore::Run()
+@@ -49,6 +54,17 @@ FilePtr OpenDispatchTrace()
+ }
+ 
+ void StaticRecompCore::Run()
++{
++  // Select once per Run, not at each native backedge. The ordinary instantiation
++  // contains no probe calls or per-dispatch probe-condition checks.
++  if (m_dispatch_probe.GetReport().config.enabled)
++    RunImpl<true>();
++  else
++    RunImpl<false>();
++}
++
++template <bool CollectProbe>
++void StaticRecompCore::RunImpl()
+ {
+   auto& core_timing = m_system.GetCoreTiming();
+   auto& power_pc = m_system.GetPowerPC();
+@@ -57,6 +73,8 @@ void StaticRecompCore::Run()
+   auto& memory = m_system.GetMemory();
+   const CPU::State* state_ptr = m_system.GetCPU().GetStatePtr();
+   FilePtr dispatch_trace = OpenDispatchTrace();
++  if constexpr (CollectProbe)
++    m_dispatch_probe.BeginWindow();
+ 
+   m_guest.ram = memory.GetRAM();
+   m_guest.ram_size = memory.GetRamSizeReal();
+@@ -119,7 +137,12 @@ void StaticRecompCore::Run()
+ 
+   while (*state_ptr == CPU::State::Running)
+   {
++    if constexpr (CollectProbe)
++      m_dispatch_probe.Poll();
++    const bool timing_sample = CollectProbe && m_dispatch_probe.BeginSample(1);
+     core_timing.Advance();
++    if (timing_sample)
++      m_dispatch_probe.EndSample();
+     const std::string current_game_id = SConfig::GetInstance().GetGameID();
+     m_module_active = m_module && (current_game_id.empty() || current_game_id == m_module->game_id);
+ 
+@@ -151,11 +174,19 @@ void StaticRecompCore::Run()
            if (m_collect_dispatch_samples && (m_native_dispatches & 4095u) == 0)
              ++m_dispatch_samples[m_guest.pc];
            const u32 runtime_dispatch_address = m_guest.pc;
@@ -900,7 +1084,15 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
            u32 linked_dispatch_address = runtime_dispatch_address;
            if (m_has_rel_modules)
              ResolveNativeAddress(runtime_dispatch_address, &linked_dispatch_address, nullptr);
-@@ -172,7 +182,97 @@ void StaticRecompCore::Run()
+           m_guest.pc = linked_dispatch_address;
++          const bool native_sample = CollectProbe && m_dispatch_probe.BeginSample(runtime_dispatch_address);
+           m_module->dispatch(&m_guest, linked_dispatch_address);
++          if (native_sample)
++            m_dispatch_probe.EndSample();
+           if (m_has_rel_modules)
+             m_guest.pc = TranslateRelAddress(m_guest.pc);
+           ++m_native_dispatches;
+@@ -172,7 +203,105 @@ void StaticRecompCore::Run()
            // dispatcher back-edge timing check — CoreTiming regains control
            // with at least CachedInterpreter's per-block frequency, so
            // external-interrupt latency matches stock.
@@ -949,7 +1141,10 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
 +              // Keep the actual fallback-JIT and native SMC invalidation path.
 +              // Range invalidation can conservatively discard more JIT metadata
 +              // than individual cache lines; no guest memory write is invented.
++              const bool cache_sample = CollectProbe && m_dispatch_probe.BeginSample(2);
 +              m_system.GetJitInterface().InvalidateICacheLines(batch.address, batch.lines);
++              if (cache_sample)
++                m_dispatch_probe.EndSample();
 +              StaticRecompDw4Cache::Commit(m_guest, ppc.downcount, charge, batch);
 +              ++m_dw4_cache_accepted;
 +              m_dw4_cache_lines += batch.lines;
@@ -988,7 +1183,12 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
 +            };
 +            const u64 extra = StaticRecompDw4Idle::SynchronizedExtraCycles(
 +                core_timing.UseSyncOnSkipIdle(), read_extra_charge,
-+                [&]() { m_system.GetFifo().FlushGpu(); });
++                [&]() {
++                  const bool fifo_sample = CollectProbe && m_dispatch_probe.BeginSample(3);
++                  m_system.GetFifo().FlushGpu();
++                  if (fifo_sample)
++                    m_dispatch_probe.EndSample();
++                });
 +            if (extra != 0)
 +            {
 +              ++m_dw4_idle_accepted;
@@ -999,7 +1199,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
            m_guest.downcount = 0;
            const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
            ppc.downcount -= static_cast<int>(effective_charge);
-@@ -198,7 +298,7 @@ void StaticRecompCore::Run()
+@@ -198,7 +327,7 @@ void StaticRecompCore::Run()
              m_guest.program_exception = 0;
              ++m_native_exceptions;
            }
@@ -1008,6 +1208,554 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480
              break;  // Hook-raised synchronous exception: deliver via Dolphin below.
            if ((ppc.Exceptions & EXCEPTION_EXTERNAL_INT) != 0 &&
                (m_guest.msr & 0x8000u) != 0 && after_mtmsr(m_guest.pc))
+@@ -218,9 +347,12 @@ void StaticRecompCore::Run()
+         if (m_guest.host_call && IsHostCallAddress(ppc.pc))
+         {
+           SyncIn();
++          const bool host_sample = CollectProbe && m_dispatch_probe.BeginSample(4);
+           bool handled = m_guest.host_call(&m_guest, m_guest.pc);
+           if (!handled && m_guest.pc < m_guest.ram_size)
+             handled = m_guest.host_call(&m_guest, m_guest.pc | 0x80000000u);
++          if (host_sample)
++            m_dispatch_probe.EndSample();
+           if (m_fallback_jit && IsHostCallAddress(m_guest.lr))
+             m_fallback_jit->GetBlockCache()->InvalidateICache(m_guest.lr, 4, true);
+           if (handled)
+@@ -244,15 +376,22 @@ void StaticRecompCore::Run()
+         // interrupts are delivered at slice start, as in Interpreter::Run.
+         if (m_module_active && IsForcedFallbackAddress(ppc.pc))
+         {
++          const bool fallback_sample = CollectProbe && m_dispatch_probe.BeginSample(5);
+           ppc.downcount -= interpreter.SingleStepInner();
++          if (fallback_sample)
++            m_dispatch_probe.EndSample();
+           ++m_fallback_steps;
+         }
+         else if (m_fallback_jit)
+         {
++          const bool fallback_sample = CollectProbe && m_dispatch_probe.BeginSample(5);
+           m_fallback_jit->Run();
++          if (fallback_sample)
++            m_dispatch_probe.EndSample();
+         }
+         else
+         {
++          const bool fallback_sample = CollectProbe && m_dispatch_probe.BeginSample(5);
+           do
+           {
+             ppc.downcount -= interpreter.SingleStepInner();
+@@ -260,6 +399,8 @@ void StaticRecompCore::Run()
+           } while (!(m_module_active && DispatchableAt(ppc.pc)) &&
+                    !IsHostCallAddress(ppc.pc) && ppc.downcount > 0 &&
+                    *state_ptr == CPU::State::Running);
++          if (fallback_sample)
++            m_dispatch_probe.EndSample();
+         }
+       }
+     } while (ppc.downcount > 0 && *state_ptr == CPU::State::Running);
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDispatchProbe.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDispatchProbe.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..6bb737a06b099798c7dfe7859d695da5c31f904f
+--- /dev/null
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDispatchProbe.h
+@@ -0,0 +1,497 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <array>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <limits>
++#include <utility>
++
++#ifdef _WIN32
++#include <windows.h>
++#include <realtimeapiset.h>
++#endif
++
++namespace StaticRecompDispatchProbe
++{
++using u64 = std::uint64_t;
++using u32 = std::uint32_t;
++constexpr u64 NS_PER_SECOND = 1000000000;
++struct Counter
++{
++  bool valid = false;
++  u64 value = 0;
++  u32 thread_id = 0;
++  u32 error = 0;
++};
++struct CpuTimes
++{
++  bool valid = false;
++  u64 user_100ns = 0;
++  u64 kernel_100ns = 0;
++  u32 thread_id = 0;
++  u32 error = 0;
++};
++
++// All methods are called only by the owning emulation thread. Never transfer
++// GetCurrentThread's pseudo-handle to a status, shutdown or sampling thread.
++struct WindowsReader
++{
++  Counter Wall() const noexcept
++  {
++    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++                        std::chrono::steady_clock::now().time_since_epoch()).count();
++    return {ns >= 0, ns >= 0 ? static_cast<u64>(ns) : 0, 0, 0};
++  }
++  u32 ThreadId() const noexcept
++  {
++#ifdef _WIN32
++    return GetCurrentThreadId();
++#else
++    return 0;
++#endif
++  }
++  Counter Cycles() const noexcept
++  {
++#ifdef _WIN32
++    ULONG64 cycles = 0;
++    const u32 id = GetCurrentThreadId();
++    const bool ok = QueryThreadCycleTime(GetCurrentThread(), &cycles) != 0;
++    return {ok, cycles, id, ok ? 0u : GetLastError()};
++#else
++    return {};
++#endif
++  }
++  CpuTimes Cpu() const noexcept
++  {
++#ifdef _WIN32
++    FILETIME creation{}, exit{}, kernel{}, user{};
++    const u32 id = GetCurrentThreadId();
++    const bool ok = GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user) != 0;
++    return {ok, (static_cast<u64>(user.dwHighDateTime) << 32) | user.dwLowDateTime,
++            (static_cast<u64>(kernel.dwHighDateTime) << 32) | kernel.dwLowDateTime,
++            id, ok ? 0u : GetLastError()};
++#else
++    return {};
++#endif
++  }
++};
++
++struct Config
++{
++  bool enabled = false;
++  u64 start_delay_ns = 0;
++  u64 duration_ns = 15 * NS_PER_SECOND;
++  u32 mean_sample_stride = 4096;
++  u32 seed = 0xD047C0DEu;
++};
++enum class State : u32 { Disabled, Waiting, Active, Completed, Invalid };
++struct Entry
++{
++  bool used = false;
++  u32 pc = 0;
++  u64 samples = 0;
++  u64 wall_ns = 0;
++  u64 cycle_samples = 0;
++  u64 cycles = 0;
++  u64 zero_cycle_samples = 0;
++  u64 cycle_failures = 0;
++};
++struct Calibration
++{
++  u64 attempts = 0;
++  u64 valid_wall_pairs = 0;
++  u64 wall_ns_sum = 0;
++  u64 wall_ns_min = 0;
++  u64 valid_cycle_pairs = 0;
++  u64 cycles_sum = 0;
++  u64 cycles_min = 0;
++  u64 zero_cycle_pairs = 0;
++};
++template <std::size_t Capacity>
++struct Report
++{
++  Config config{};
++  State state = State::Disabled;
++  u32 owner_thread_id = 0;
++  u64 origin_ns = 0;
++  u64 scheduled_start_ns = 0;
++  u64 scheduled_end_ns = 0;
++  u64 observed_start_ns = 0;
++  u64 observed_end_ns = 0;
++  u64 cutoff_overshoot_ns = 0;
++  bool window_missed = false;
++  bool cutoff_reached = false;
++  bool cpu_available = false;
++  u64 user_100ns = 0;
++  u64 kernel_100ns = 0;
++  u64 cpu_100ns = 0;
++  u64 opportunities = 0;
++  u64 selected = 0;
++  u64 accepted = 0;
++  u64 cycle_samples = 0;
++  u64 sampled_wall_ns = 0;
++  u64 sampled_cycles = 0;
++  u64 zero_cycle_samples = 0;
++  u64 zero_wall_samples = 0;
++  u64 crossing_cutoff = 0;
++  u64 table_overflow_samples = 0;
++  u64 wall_failures = 0;
++  u64 cycle_failures = 0;
++  u64 cpu_failures = 0;
++  u64 thread_mismatches = 0;
++  u64 counter_resets = 0;
++  u64 accumulation_overflows = 0;
++  u64 nested_rejections = 0;
++  u64 unmatched_ends = 0;
++  u32 last_platform_error = 0;
++  Calibration calibration{};
++  std::array<Entry, Capacity> entries{};
++};
++
++// Inclusive sampled dispatch intervals, not a stack profiler. Entries may also
++// use caller-reserved small keys. Samples share one deterministic jitter stream.
++// No cycles-to-time conversion or statistical extrapolation is performed.
++// Raw samples include fixed reader/instrumentation costs. Calibration reports
++// empty pairs with the same order; it is not subtracted automatically and must
++// be considered before interpreting short samples as useful dispatch work.
++template <typename Reader = WindowsReader, std::size_t Capacity = 1024>
++class Probe
++{
++  static_assert(Capacity > 0);
++public:
++  explicit Probe(Config config = {}, Reader reader = {}) noexcept : m_reader(std::move(reader))
++  {
++    Configure(config);
++  }
++  bool Configure(Config config) noexcept
++  {
++    if (m_origin_set) return false;
++    m_report.config = config;
++    m_report.state = State::Disabled;
++    if (!config.enabled)
++      return true;
++    if (!config.duration_ns || config.duration_ns > 30 * NS_PER_SECOND ||
++        config.start_delay_ns > 90 * NS_PER_SECOND || !config.mean_sample_stride ||
++        config.mean_sample_stride > (1u << 20))
++    {
++      m_report.state = State::Invalid;
++      return false;
++    }
++    m_report.state = State::Waiting;
++    m_rng = config.seed ? config.seed : 0xD047C0DEu;
++    m_report.config.seed = m_rng;
++    m_remaining = NextGap();
++    return true;
++  }
++
++  void BeginWindow() noexcept
++  {
++    if (m_origin_set || m_report.state != State::Waiting)
++      return;
++    const Counter now = m_reader.Wall();
++    const u32 id = m_reader.ThreadId();
++    if (!now.valid || !id || now.value > MAX - m_report.config.start_delay_ns - m_report.config.duration_ns)
++    {
++      ++m_report.wall_failures;
++      m_report.state = State::Invalid;
++      return;
++    }
++    m_origin_set = true;
++    m_last_wall = now.value;
++    m_report.owner_thread_id = id;
++    m_report.origin_ns = now.value;
++    m_report.scheduled_start_ns = now.value + m_report.config.start_delay_ns;
++    m_report.scheduled_end_ns = m_report.scheduled_start_ns + m_report.config.duration_ns;
++  }
++
++  // Caller polls at an outer scheduler boundary. It must retain this object
++  // across Run() reentry; BeginWindow is deliberately idempotent.
++  void Poll() noexcept
++  {
++    if (!m_origin_set || (m_report.state != State::Waiting && m_report.state != State::Active) || m_pending)
++      return;
++    if (!OwnThread())
++      return;
++    const Counter now = ReadWall();
++    if (!now.valid)
++      return;
++    if (m_report.state == State::Active)
++    {
++      if (now.value >= m_report.scheduled_end_ns)
++        Finish(now.value);
++      return;
++    }
++    if (now.value >= m_report.scheduled_end_ns)
++    {
++      m_report.window_missed = true;
++      m_report.observed_end_ns = now.value;
++      m_report.state = State::Completed;
++      return;
++    }
++    if (now.value < m_report.scheduled_start_ns)
++      return;
++    Calibrate();
++    if (m_report.state == State::Invalid) return;
++    const Counter start = ReadWall();
++    if (!start.valid)
++      return;
++    if (start.value >= m_report.scheduled_end_ns)
++    {
++      m_report.window_missed = true;
++      m_report.observed_end_ns = start.value;
++      m_report.state = State::Completed;
++      return;
++    }
++    m_report.observed_start_ns = start.value;
++    m_start_cpu = ReadCpu();
++    if (m_report.state == State::Invalid) return;
++    m_report.state = State::Active;
++  }
++
++  bool IsActive() const noexcept { return m_report.state == State::Active; }
++
++  bool BeginSample(u32 entry_pc) noexcept
++  {
++    if (!IsActive())
++      return false;
++    if (m_pending)
++    {
++      ++m_report.nested_rejections;
++      return false;
++    }
++    ++m_report.opportunities;
++    if (--m_remaining != 0)
++      return false;
++    m_remaining = NextGap();
++    ++m_report.selected;
++    if (!OwnThread())
++      return false;
++    const Counter now = ReadWall();
++    if (!now.valid)
++      return false;
++    if (now.value >= m_report.scheduled_end_ns)
++    {
++      Finish(now.value);
++      return false;
++    }
++    m_sample_pc = entry_pc;
++    m_start_wall = now.value;
++    m_start_cycles = ReadCycles();
++    if (m_report.state == State::Invalid) return false;
++    m_pending = true;
++    return true;
++  }
++
++  void EndSample() noexcept
++  {
++    if (!m_pending)
++    {
++      if (IsActive()) ++m_report.unmatched_ends;
++      return;
++    }
++    const Counter end_cycles = ReadCycles();
++    const Counter end_wall = ReadWall();
++    m_pending = false;
++    if (!IsActive() || !end_wall.valid)
++      return;
++    if (end_wall.value >= m_report.scheduled_end_ns)
++    {
++      ++m_report.crossing_cutoff;
++      Finish(end_wall.value); // Do not attribute a partially out-of-window sample.
++      return;
++    }
++    const u64 wall_delta = end_wall.value - m_start_wall;
++    bool cycles_valid = m_start_cycles.valid && end_cycles.valid;
++    if (cycles_valid && end_cycles.value < m_start_cycles.value)
++    {
++      ++m_report.counter_resets;
++      cycles_valid = false;
++    }
++    const u64 cycle_delta = cycles_valid ? end_cycles.value - m_start_cycles.value : 0;
++    // Everything below is outside the timed sample, including table insertion.
++    ++m_report.accepted;
++    Add(m_report.sampled_wall_ns, wall_delta);
++    if (!wall_delta) ++m_report.zero_wall_samples;
++    if (cycles_valid)
++    {
++      ++m_report.cycle_samples;
++      Add(m_report.sampled_cycles, cycle_delta);
++      if (!cycle_delta) ++m_report.zero_cycle_samples;
++    }
++    Entry* entry = Find(m_sample_pc);
++    if (!entry)
++    {
++      ++m_report.table_overflow_samples;
++      return;
++    }
++    ++entry->samples;
++    Add(entry->wall_ns, wall_delta);
++    if (cycles_valid)
++    {
++      ++entry->cycle_samples;
++      Add(entry->cycles, cycle_delta);
++      if (!cycle_delta) ++entry->zero_cycle_samples;
++    }
++    else ++entry->cycle_failures;
++  }
++
++  // Call on the owner thread when its execution ends early. Shutdown may then
++  // serialize GetReport() after joining/quiescing that thread, without clock APIs.
++  void FinishWindow() noexcept
++  {
++    if (!m_origin_set) return;
++    if (m_report.state == State::Waiting || m_report.state == State::Active)
++    {
++      if (!OwnThread()) return;
++      if (m_pending) { ++m_report.crossing_cutoff; m_pending = false; }
++      const Counter now = ReadWall();
++      if (now.valid)
++      {
++        if (IsActive()) Finish(now.value);
++        else { m_report.window_missed = true; m_report.observed_end_ns = now.value; m_report.state = State::Completed; }
++      }
++    }
++  }
++
++  // No concurrent mutation/read: only the owner or a quiesced shutdown caller.
++  const Report<Capacity>& GetReport() const noexcept { return m_report; }
++
++private:
++  static constexpr u64 MAX = (std::numeric_limits<u64>::max)();
++  u32 NextGap() noexcept
++  {
++    m_rng ^= m_rng << 13;
++    m_rng ^= m_rng >> 17;
++    m_rng ^= m_rng << 5;
++    return 1u + m_rng % (2u * m_report.config.mean_sample_stride - 1u);
++  }
++  bool OwnThread() noexcept
++  {
++    if (m_reader.ThreadId() == m_report.owner_thread_id) return true;
++    ++m_report.thread_mismatches;
++    m_report.state = State::Invalid;
++    return false;
++  }
++  Counter ReadWall() noexcept
++  {
++    Counter value = m_reader.Wall();
++    if (!value.valid || value.value < m_last_wall)
++    {
++      ++m_report.wall_failures;
++      if (value.valid) ++m_report.counter_resets;
++      m_report.last_platform_error = value.error;
++      m_report.state = State::Invalid;
++      value.valid = false;
++    }
++    else m_last_wall = value.value;
++    return value;
++  }
++  Counter ReadCycles() noexcept
++  {
++    Counter value = m_reader.Cycles();
++    if (value.thread_id != m_report.owner_thread_id)
++    {
++      ++m_report.thread_mismatches;
++      m_report.state = State::Invalid;
++      value.valid = false;
++    }
++    if (!value.valid) { ++m_report.cycle_failures; m_report.last_platform_error = value.error; }
++    return value;
++  }
++  CpuTimes ReadCpu() noexcept
++  {
++    CpuTimes value = m_reader.Cpu();
++    if (value.thread_id != m_report.owner_thread_id)
++    {
++      ++m_report.thread_mismatches;
++      m_report.state = State::Invalid;
++      value.valid = false;
++    }
++    if (!value.valid) { ++m_report.cpu_failures; m_report.last_platform_error = value.error; }
++    return value;
++  }
++  void Add(u64& total, u64 value) noexcept
++  {
++    if (value > MAX - total) { total = MAX; ++m_report.accumulation_overflows; }
++    else total += value;
++  }
++  Entry* Find(u32 pc) noexcept
++  {
++    const std::size_t first = (static_cast<u64>(pc) * 2654435761u) % Capacity;
++    for (std::size_t i = 0; i < Capacity; ++i)
++    {
++      Entry& entry = m_report.entries[(first + i) % Capacity];
++      if (entry.used && entry.pc == pc) return &entry;
++      if (!entry.used) { entry.used = true; entry.pc = pc; return &entry; }
++    }
++    return nullptr;
++  }
++  void Calibrate() noexcept
++  {
++    auto& c = m_report.calibration;
++    for (u32 i = 0; i < 16; ++i)
++    {
++      ++c.attempts;
++      const Counter w0 = ReadWall();
++      const Counter c0 = ReadCycles();
++      const Counter c1 = ReadCycles();
++      const Counter w1 = ReadWall();
++      if (m_report.state == State::Invalid) return;
++      if (w0.valid && w1.valid)
++      {
++        const u64 delta = w1.value - w0.value;
++        if (!c.valid_wall_pairs || delta < c.wall_ns_min) c.wall_ns_min = delta;
++        ++c.valid_wall_pairs;
++        Add(c.wall_ns_sum, delta);
++      }
++      if (c0.valid && c1.valid && c1.value >= c0.value)
++      {
++        const u64 delta = c1.value - c0.value;
++        if (!c.valid_cycle_pairs || delta < c.cycles_min) c.cycles_min = delta;
++        ++c.valid_cycle_pairs;
++        Add(c.cycles_sum, delta);
++        if (!delta) ++c.zero_cycle_pairs;
++      }
++      else if (c0.valid && c1.valid) ++m_report.counter_resets;
++    }
++  }
++  void Finish(u64 wall) noexcept
++  {
++    const CpuTimes cpu = ReadCpu();
++    m_report.observed_end_ns = wall;
++    m_report.cutoff_reached = wall >= m_report.scheduled_end_ns;
++    if (wall > m_report.scheduled_end_ns) m_report.cutoff_overshoot_ns = wall - m_report.scheduled_end_ns;
++    if (m_start_cpu.valid && cpu.valid)
++    {
++      if (cpu.user_100ns >= m_start_cpu.user_100ns && cpu.kernel_100ns >= m_start_cpu.kernel_100ns)
++      {
++        m_report.user_100ns = cpu.user_100ns - m_start_cpu.user_100ns;
++        m_report.kernel_100ns = cpu.kernel_100ns - m_start_cpu.kernel_100ns;
++        if (m_report.user_100ns <= MAX - m_report.kernel_100ns)
++        {
++          m_report.cpu_available = true;
++          m_report.cpu_100ns = m_report.user_100ns + m_report.kernel_100ns;
++        }
++        else ++m_report.accumulation_overflows;
++      }
++      else ++m_report.counter_resets;
++    }
++    if (m_report.state != State::Invalid) m_report.state = State::Completed;
++  }
++
++  Reader m_reader;
++  Report<Capacity> m_report{};
++  bool m_origin_set = false;
++  bool m_pending = false;
++  u32 m_rng = 0;
++  u32 m_remaining = 1;
++  u32 m_sample_pc = 0;
++  u64 m_last_wall = 0;
++  u64 m_start_wall = 0;
++  Counter m_start_cycles{};
++  CpuTimes m_start_cpu{};
++};
++} // namespace StaticRecompDispatchProbe
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d98928133b

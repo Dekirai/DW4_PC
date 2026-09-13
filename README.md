@@ -25,9 +25,15 @@ Cubeb callback timing during finite hidden tests at zero device volume. See
 The longer opening-movie test exposes a later slowdown to approximately 30%
 simulation speed at both 1x and 3x EFB, with repeated audio-buffer replay.
 The earlier logo performance does not establish smooth movie or menu playback.
-A controlled intro skip reaches the original "PRESS START" title screen, where
-the bounded test runs near normal simulation speed. Some audio FIFO replay
-remains; audible quality and subsequent menus/gameplay are still unverified.
+An opt-in CPU probe identifies the original movie's pixel-conversion block.
+A rebuilt package reduces CPU cost in one counter-aligned comparison with its
+immediate predecessor, but movie speed and audio-source replay remain inadequate.
+See [RECOMP_CPU_PROFILING.md](docs/RECOMP_CPU_PROFILING.md) and the bounded
+[comparison](docs/RECOMP_PERFORMANCE.md#rebuilt-module-comparison).
+A controlled intro skip and second Start press now reach the original
+"Game Start / Option" main menu. Its short 1x test runs near 60 counter advances/s
+at normal simulation speed, with no audio FIFO replay in the final window.
+Audible quality, higher-resolution menu performance and gameplay remain unverified.
 The PC target includes at
 least 60 FPS on measured hardware, presentation options up to 300 FPS without
 faster gameplay, 16:9, higher render resolution, HD textures and an ImGui menu

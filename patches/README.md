@@ -58,6 +58,26 @@ records recursive dependency revisions and builds locally. It references the
 user's local ModernGekko template as pipeline guidance without vendoring that
 template. Builds and generated modules remain under ignored `work/`.
 
+The port helper also hashes the actual module inputs through
+`tools/module_source_identity.hpp`. Required GXRuntime and ABI files are
+combined with recursively collected source, include and module-template build
+inputs; the current tree contains 63 files. The sorted relative paths and
+SHA256 content hashes contribute to the cache key and are listed in the
+manifest. A local source edit therefore invalidates the module cache without
+requiring an upstream revision change. Missing required inputs, unsupported
+symlinks and invalid reads fail collection.
+
+Cached modules must match their recorded source identity and DLL hash. Pending
+modules require `build-source-identity.txt` and `build-complete.txt` to match the
+cache key and source manifest before publication; the completion record must
+also match the completed DLL hash.
+The helper checks source stability around compilation and publication and
+preserves output when provenance validation fails. The source checker passes
+188 synthetic checks, with three Windows symlink fixtures skipped for missing
+privilege; it does not build or launch a game. See
+[RECOMP_PERFORMANCE.md](../docs/RECOMP_PERFORMANCE.md#module-source-identity-for-the-next-build)
+for local evidence and the remaining integration scope.
+
 ## RecompCore adaptations
 
 `recompcore-headless-shader-progress.patch` applies separately to the pinned
@@ -114,10 +134,27 @@ line reports their count and cycle components. `-CacheMode Disabled` and
 `scripts/test-recomp-cache.ps1` compares the actual emitted loop, independent
 original instruction execution and the policy's register/address/timing effects.
 
-The affected upstream files identify their license as GPL-2.0-or-later. This
-upstream-derived patch retains that license, separately from this
-repository's MIT source; see the [upstream license text](../licenses/RecompCore-GPL-2.0-or-later.txt)
-and [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+The GXRuntime `psq_quantize_int` helper now constructs its power-of-two factor
+directly as `f32_value((u32)(scale + 127) << 23)` instead of
+`ldexpf(1.0f, scale)`. GQR decoding limits the signed scale to `[-32, 31]`, where
+every factor is an exact normal binary32 value. The existing cast, multiply,
+NaN handling, clamps and integer conversion remain unchanged. The checker
+extracts both actual helper bodies and uses MSVC x64 `/O2 /fp:strict` without
+link-time optimization: 876,544 comparisons of returned integers and all six
+MXCSR sticky exception flags, plus 1,024 comparisons of factor bit patterns,
+have zero differences across the tested scales, integer bounds, rounding modes
+and FTZ/DAZ settings. This is helper equivalence evidence; original-game
+integration and any FPS gain from
+the quantizer change remain unverified. See
+[the checker notes](../tools/recomp_quantizer_check/README.md) and
+[performance evidence](../docs/RECOMP_PERFORMANCE.md#exact-paired-single-quantizer-factor).
+
+The affected Dolphin runtime files identify their license as GPL-2.0-or-later;
+GXRuntime's `cpu.c` identifies its license as GPL-3.0-or-later. These adaptations
+retain their respective upstream licenses, separately from this repository's
+MIT source; see the [RecompCore license text](../licenses/RecompCore-GPL-2.0-or-later.txt),
+the [GPL version 3 text](../licenses/ModernGekko-GPL-3.0.txt) and
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 The build wrapper verifies the exact patch independently within each owning
 Git repository. It rejects unexpected root or recursive dependency changes,

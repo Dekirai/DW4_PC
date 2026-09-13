@@ -39,9 +39,12 @@ for every device or scene.
 The immediate gate is correcting the owner's low-FPS/audio-stutter report in
 the **DolRecomp + ModernGekko** build. The optimized module passes its equivalent
 bounded logo comparison at original speed, but longer tests expose an opening
-movie at approximately 30% speed. A controlled skip reaches the "PRESS START"
-title screen near normal speed; audio replay remains and later menus/gameplay
-are unverified. See [RECOMP_AUDIO.md](RECOMP_AUDIO.md). Next check real audible output
+movie substantially below original speed, with audio replay. Two controlled
+Start presses now reach the first "Game Start / Option" main menu. Its short
+1x Vulkan window runs near 60 counter advances/s at normal speed without replay
+in that window; audible output, higher-resolution menu performance, later
+menus and gameplay remain unverified. See [RECOMP_AUDIO.md](RECOMP_AUDIO.md).
+Next check real audible output
 and gameplay, and establish a repeatable in-game benchmark. Headless frame
 progress alone does not verify
 host audio or actual monitor FPS. Continue with profiling measured bottlenecks,

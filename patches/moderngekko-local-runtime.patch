@@ -3928,10 +3928,17 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +  return 1;
  }
 diff --git a/tools/moderngekko_port.cpp b/tools/moderngekko_port.cpp
-index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0ce9aa11a7 100644
+index af1c2a5a109ae8d4447b4187ec654a315fce3747..92c14bd6418a018bf823512e443bd8758024f628 100644
 --- a/tools/moderngekko_port.cpp
 +++ b/tools/moderngekko_port.cpp
-@@ -18,6 +18,7 @@
+@@ -1,5 +1,6 @@
+ #include "pgo_support.hpp"
+ #include "port_command_line.hpp"
++#include "module_source_identity.hpp"
+ 
+ #include "moderngekko/game.hpp"
+ #include "moderngekko/module_abi.h"
+@@ -18,6 +19,7 @@
  #include <map>
  #include <optional>
  #include <sstream>
@@ -3939,7 +3946,7 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
  #include <string>
  #include <string_view>
  #include <thread>
-@@ -33,8 +34,12 @@ namespace fs = std::filesystem;
+@@ -33,8 +35,12 @@ namespace fs = std::filesystem;
  namespace
  {
  constexpr std::string_view RECOMPCORE_REVISION = "55c7b023fa0f4eba1cf3fdbbb25b1c5ec468d5ac";
@@ -3952,7 +3959,7 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
  
  using moderngekko::port::BuildOptions;
  using moderngekko::port::PgoRunOptions;
-@@ -45,6 +50,20 @@ constexpr std::string_view DEFAULT_BACKEND = "llvm";
+@@ -45,6 +51,20 @@ constexpr std::string_view DEFAULT_BACKEND = "llvm";
  constexpr std::string_view DEFAULT_BACKEND = "c";
  #endif
  
@@ -3973,7 +3980,82 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
  fs::path DefaultOutput()
  {
    if (const char* xdg = std::getenv("XDG_CACHE_HOME"))
-@@ -755,7 +774,7 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+@@ -566,6 +586,7 @@ int Inspect(const fs::path& root, const fs::path& output)
+ 
+ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+                               BuildOptions options)
++try
+ {
+   const auto inspected = moderngekko::InspectGame(root);
+   if (!inspected)
+@@ -670,13 +691,16 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+       pgo_compile_flags += " -Werror=profile-instr-out-of-date";
+   }
+ 
++  const auto module_sources = moderngekko::port::CollectModuleSourceIdentity(source_root);
++  const std::string source_manifest = module_sources.Manifest();
+   const std::string identity = std::string(RECOMPCORE_REVISION) + "|dolrecomp=" +
+       std::string(DOLRECOMP_REVISION) + "|module-abi=" +
+       std::to_string(MODERNGEKKO_MODULE_ABI_VERSION) + "|cpu-abi=" +
+       std::to_string(MODERNGEKKO_CPU_ABI_VERSION) + "|" + compiler_identity + "|" +
+       std::string(architecture) + "|" + flags + "|backend=" + options.backend +
+       "|patches=" + patches.fingerprint + "|dolrecomp_binary=" +
+-      *dolrecomp_hash + "|" + moderngekko::pgo::PgoCacheIdentity(options.pgo) +
++      *dolrecomp_hash + "|module_sources_sha256=" + module_sources.sha256 + "|" +
++      moderngekko::pgo::PgoCacheIdentity(options.pgo) +
+       DolRecompCodegenIdentity();
+   std::ostringstream key_tail;
+   key_tail << std::hex << std::setfill('0') << std::setw(16) << Fnv1a(identity);
+@@ -685,8 +709,21 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+   const fs::path module = artifact / ("g" + game.disc_id + "_recomp" + Suffix());
+   const fs::path module_build = artifact / "module-build";
+   const fs::path built = module_build / ("g" + game.disc_id + "_recomp" + Suffix());
++  const fs::path build_sources = artifact / "build-source-identity.txt";
++  const fs::path build_complete = artifact / "build-complete.txt";
++  const std::string build_record = "module_cache_key=" + cache_key + "\n" + source_manifest;
++  const auto require_current_sources = [&]() {
++    if (moderngekko::port::CollectModuleSourceIdentity(source_root).sha256 != module_sources.sha256)
++      throw std::runtime_error("Module sources changed during the build; output was preserved "
++                               "and will not be published. Run the build again with stable sources.");
++  };
+   if (fs::is_regular_file(module))
+   {
++    const auto module_hash = moderngekko::HashFileSha256(module);
++    if (!module_hash || !moderngekko::port::ModuleSourceRecordMatches(
++            artifact / "manifest.txt", source_manifest + "module_sha256=" + *module_hash + "\n", true))
++      throw std::runtime_error("Cached module source or binary provenance does not match: " +
++                               Text(module) + ". Output was preserved; select a fresh output directory.");
+     if (options.make_active && !SetActiveModule(options.output, game.disc_id, module))
+     {
+       std::cerr << "could not update active-module.txt\n";
+@@ -697,9 +734,17 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+   }
+ 
+   const auto publish_module = [&]() -> std::optional<fs::path> {
++    require_current_sources();
++    const auto module_hash = moderngekko::HashFileSha256(built);
++    if (!module_hash ||
++        !moderngekko::port::ModuleSourceRecordMatches(build_sources, build_record) ||
++        !moderngekko::port::ModuleSourceRecordMatches(
++            build_complete, build_record + "module_sha256=" + *module_hash + "\n"))
++      throw std::runtime_error("Pending module has no matching completed build provenance: " +
++                               Text(built) + ". Output was preserved; select a fresh output directory.");
+     fs::create_directories(artifact);
+     fs::copy_file(built, module, fs::copy_options::overwrite_existing);
+-    std::ofstream manifest(artifact / "manifest.txt");
++    std::ofstream manifest(artifact / "manifest.txt", std::ios::binary);
+     manifest << "disc_id=" << game.disc_id << '\n' << "dol_sha256=" << game.dol_sha256 << '\n'
+              << "recompcore_revision=" << RECOMPCORE_REVISION << '\n'
+              << "dolrecomp_revision=" << DOLRECOMP_REVISION << '\n'
+@@ -713,6 +758,7 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+              << "patches=" << patches.fingerprint << '\n';
+     if (options.pgo.mode != moderngekko::pgo::PgoMode::Off)
+       manifest << moderngekko::pgo::FormatPgoManifest(options.pgo, options.pgo_facts);
++    manifest << source_manifest << "module_sha256=" << *module_hash << '\n';
+     manifest.close();
+     if (!manifest)
+       return std::nullopt;
+@@ -755,7 +801,7 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
      }
    }
    std::string generate = Quote(dolrecomp) + " -j" +
@@ -3982,7 +4064,7 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
                           " --backend=" + options.backend + " ";
    if (game.platform == moderngekko::GamePlatform::GameCube)
      generate += "--cpu gekko --gamecube " + Quote(recomp_dol) + " " + Quote(generated_parent);
-@@ -794,7 +813,7 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+@@ -794,7 +840,7 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
    else
      std::ofstream{normalized_smc};
  
@@ -3991,6 +4073,46 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
    std::string configure = "cmake -E env CMAKE_NINJA_FORCE_RESPONSE_FILE=1 cmake -S " +
        Quote(source_root / "vendor/dolphin/module-template") +
        " -B " + Quote(module_build) + " -G Ninja -DCMAKE_BUILD_TYPE=Release" +
+@@ -809,6 +855,14 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+   if (!pgo_compile_flags.empty())
+     configure += " -DCMAKE_C_FLAGS=" + QuoteText(pgo_compile_flags) +
+                  " -DCMAKE_SHARED_LINKER_FLAGS=" + QuoteText(pgo_compile_flags);
++  require_current_sources();
++  {
++    std::ofstream record(build_sources, std::ios::binary);
++    record << build_record;
++    record.close();
++    if (!record)
++      throw std::runtime_error("Could not record module sources before building: " + Text(build_sources));
++  }
+   if (!RunCommand(configure) ||
+       !RunCommand("cmake --build " + Quote(module_build) + " -j" +
+                   std::to_string(compile_jobs)))
+@@ -819,8 +873,24 @@ std::optional<fs::path> Build(const char* argv0, const fs::path& root,
+     std::cerr << "module build completed but did not produce " << built << '\n';
+     return std::nullopt;
+   }
++  require_current_sources();
++  const auto built_hash = moderngekko::HashFileSha256(built);
++  if (!built_hash)
++    throw std::runtime_error("Could not hash the completed module: " + Text(built));
++  {
++    std::ofstream record(build_complete, std::ios::binary);
++    record << build_record << "module_sha256=" << *built_hash << '\n';
++    record.close();
++    if (!record)
++      throw std::runtime_error("Could not record completed module provenance: " + Text(build_complete));
++  }
+   return publish_module();
+ }
++catch (const std::exception& error)
++{
++  std::cerr << "Module build failed: " << error.what() << '\n';
++  return std::nullopt;
++}
+ 
+ fs::path ResolveExecutable(const std::string& name)
+ {
 diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
 index d6b3569e85cc19bdb42ef66fb23fa2d1fcc7d9a0..3303498427f6e4917f18d952d559a9ace9ceecac 100644
 --- a/tools/moderngekko_run.cpp
@@ -4473,6 +4595,204 @@ index d6b3569e85cc19bdb42ef66fb23fa2d1fcc7d9a0..3303498427f6e4917f18d952d559a9ac
 +int main(int argc, char** argv) {
 +  return moderngekko::frontend::RunFrontendSession(argc, argv);
  }
+diff --git a/tools/module_source_identity.hpp b/tools/module_source_identity.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..4d2c9249bf0d2f9320af501ee20b717380cd0925
+--- /dev/null
++++ b/tools/module_source_identity.hpp
+@@ -0,0 +1,192 @@
++#pragma once
++
++#include "moderngekko/sha256.hpp"
++
++#include <algorithm>
++#include <array>
++#include <filesystem>
++#include <fstream>
++#include <stdexcept>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++namespace moderngekko::port
++{
++// These inputs are required by module-template/CMakeLists.txt and the public ABI.
++// Recursive collection also covers newly added sources and local include files.
++inline constexpr std::array REQUIRED_MODULE_SOURCE_FILES = {
++    "vendor/dolphin/GXRuntime/src/core/cpu.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_exception.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_interpreter.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_interpreter_table.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_interpreter_float.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_interpreter_integer.c",
++    "vendor/dolphin/GXRuntime/src/core/cpu_interpreter_private.h",
++    "vendor/dolphin/GXRuntime/include/core/cpu.h",
++    "vendor/dolphin/GXRuntime/include/core/types.h",
++    "vendor/dolphin/GXRuntime/include/cpu/cpu.h",
++    "vendor/dolphin/module-template/CMakeLists.txt",
++    "vendor/dolphin/module-template/module_export.c",
++    "vendor/dolphin/module-template/module.exports",
++    "vendor/dolphin/module-template/gen_module_tables.py",
++    "vendor/dolphin/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompABI.h",
++    "include/moderngekko/cpu_state.h",
++    "include/moderngekko/module_abi.h"};
++
++struct ModuleSourceIdentity
++{
++  std::string sha256;
++  std::vector<std::pair<std::string, std::string>> files;
++
++  std::string Manifest() const
++  {
++    std::string text = "module_sources_version=1\nmodule_sources_sha256=" + sha256 +
++                       "\nmodule_sources_count=" + std::to_string(files.size()) + "\n";
++    for (const auto& [path, hash] : files)
++      text += "module_source=" + hash + " " + path + "\n";
++    return text;
++  }
++};
++
++namespace module_source_detail
++{
++inline std::string PathText(const std::filesystem::path& path)
++{
++  const auto utf8 = path.generic_u8string();
++  return std::string(utf8.begin(), utf8.end());
++}
++
++inline bool IgnoredDirectory(const std::filesystem::path& path)
++{
++  const auto name = PathText(path.filename());
++  return name == "build" || name == "dist" || name == "generated" ||
++         name == "CMakeFiles" || name == ".git" || name == "__pycache__" ||
++         name.starts_with("cmake-build-");
++}
++
++inline bool IsInput(const std::filesystem::path& path)
++{
++  if (path.filename() == "CMakeLists.txt")
++    return true;
++  const auto extension = PathText(path.extension());
++  constexpr std::array extensions = {".c", ".h", ".cc", ".hh", ".cpp", ".hpp",
++      ".cxx", ".hxx", ".inc", ".inl", ".s", ".S", ".asm", ".cmake", ".py",
++      ".exports", ".def", ".map", ".in"};
++  return std::find(extensions.begin(), extensions.end(), extension) != extensions.end();
++}
++
++inline void RequireOrdinaryPath(const std::filesystem::path& root,
++                               const std::filesystem::path& relative, bool directory)
++{
++  namespace fs = std::filesystem;
++  fs::path current = root;
++  if (!fs::is_directory(fs::symlink_status(current)))
++    throw std::runtime_error("Module source root is missing or is not an ordinary directory: " +
++                             PathText(root));
++  for (const auto& component : relative)
++  {
++    current /= component;
++    const auto status = fs::symlink_status(current);
++    if (fs::is_symlink(status))
++      throw std::runtime_error("Module source symlinks are unsupported: " + PathText(current));
++    if (current != root / relative && !fs::is_directory(status))
++      throw std::runtime_error("Module source directory is missing: " + PathText(current));
++  }
++  const auto status = fs::symlink_status(current);
++  if (directory ? !fs::is_directory(status) : !fs::is_regular_file(status))
++    throw std::runtime_error("Required module source is missing or has the wrong file type: " +
++                             PathText(current));
++}
++
++inline std::string FileHash(const std::filesystem::path& path)
++{
++  // Source files should be small; bound allocation and reject short or growing reads.
++  std::ifstream input(path, std::ios::binary | std::ios::ate);
++  const auto size = input.tellg();
++  if (!input || size < 0 || size > 64 * 1024 * 1024)
++    throw std::runtime_error("Could not read bounded module source: " + PathText(path));
++  std::string bytes(static_cast<std::size_t>(size), '\0');
++  input.seekg(0);
++  if ((!bytes.empty() && !input.read(bytes.data(), size)) ||
++      input.peek() != std::char_traits<char>::eof() || input.bad())
++    throw std::runtime_error("Could not completely read module source: " + PathText(path));
++  return Sha256(std::string_view(bytes));
++}
++}  // namespace module_source_detail
++
++inline ModuleSourceIdentity CollectModuleSourceIdentity(const std::filesystem::path& source_root)
++{
++  namespace fs = std::filesystem;
++  using namespace module_source_detail;
++  const fs::path root = source_root.lexically_normal();
++  std::vector<fs::path> paths;
++  for (const auto* required : REQUIRED_MODULE_SOURCE_FILES)
++  {
++    RequireOrdinaryPath(root, required, false);
++    paths.emplace_back(required);
++  }
++  for (const auto* tree : {"vendor/dolphin/GXRuntime/src", "vendor/dolphin/GXRuntime/include",
++                           "vendor/dolphin/module-template"})
++  {
++    RequireOrdinaryPath(root, tree, true);
++    for (fs::recursive_directory_iterator entry(root / tree), end; entry != end; ++entry)
++    {
++      const auto status = entry->symlink_status();
++      if (fs::is_symlink(status))
++        throw std::runtime_error("Module source symlinks are unsupported: " + PathText(entry->path()));
++      if (fs::is_directory(status))
++      {
++        if (IgnoredDirectory(entry->path()))
++          entry.disable_recursion_pending();
++        continue;
++      }
++      if (!IsInput(entry->path()))
++        continue;
++      if (!fs::is_regular_file(status))
++        throw std::runtime_error("Module source is not an ordinary file: " + PathText(entry->path()));
++      paths.push_back(entry->path().lexically_relative(root));
++    }
++  }
++
++  ModuleSourceIdentity result;
++  for (const auto& path : paths)
++  {
++    const auto relative = PathText(path);
++    if (relative.find_first_of("\r\n\t") != std::string::npos)
++      throw std::runtime_error("Unsupported control character in module source path");
++    result.files.emplace_back(relative, std::string{});
++  }
++  std::sort(result.files.begin(), result.files.end());
++  result.files.erase(std::unique(result.files.begin(), result.files.end()), result.files.end());
++  std::string identity = "moderngekko-module-sources-v1\n";
++  for (auto& [path, hash] : result.files)
++  {
++    const fs::path relative(std::u8string(path.begin(), path.end()));
++    RequireOrdinaryPath(root, relative, false);
++    hash = FileHash(root / relative);
++    // Length-prefix UTF-8 paths so every path/content pair has an unambiguous identity.
++    identity += std::to_string(path.size()) + ":" + path + ":" + hash + "\n";
++  }
++  result.sha256 = Sha256(std::string_view(identity));
++  return result;
++}
++
++inline bool ModuleSourceRecordMatches(const std::filesystem::path& path,
++                                     std::string_view expected, bool allow_prefix = false)
++{
++  if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
++    return false;
++  std::ifstream input(path, std::ios::binary | std::ios::ate);
++  const auto size = input.tellg();
++  if (!input || size < 0 || size > 4 * 1024 * 1024)
++    return false;
++  std::string text(static_cast<std::size_t>(size), '\0');
++  input.seekg(0);
++  if ((!text.empty() && !input.read(text.data(), size)) ||
++      input.peek() != std::char_traits<char>::eof() || input.bad())
++    return false;
++  return allow_prefix ? text.ends_with(expected) : text == expected;
++}
++}  // namespace moderngekko::port
 diff --git a/tools/netplay_compatibility.cpp b/tools/netplay_compatibility.cpp
 index 54e16406a8a5851a82ccad4dd1ac9c148132c647..8c02904852df33bd9573c90e8f5202ca54359dbd 100644
 --- a/tools/netplay_compatibility.cpp
