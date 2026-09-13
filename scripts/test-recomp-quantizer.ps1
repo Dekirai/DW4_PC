@@ -4,7 +4,8 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $dolphinRoot = Join-Path $repoRoot 'work/moderngekko/vendor/dolphin'
 $sourceRelative = 'GXRuntime/src/core/cpu.c'
-$sourcePath = Join-Path $dolphinRoot $sourceRelative
+$currentSourceRelative = 'GXRuntime/include/core/cpu.h'
+$sourcePath = Join-Path $dolphinRoot $currentSourceRelative
 $gxInclude = Join-Path $dolphinRoot 'GXRuntime/include'
 $sourceRoot = Join-Path $repoRoot 'tools/recomp_quantizer_check'
 $outputRoot = Join-Path $repoRoot 'build/recomp-quantizer-check'
@@ -23,13 +24,13 @@ $currentSource = [IO.File]::ReadAllText($sourcePath)
 
 function Write-ExtractedQuantizer([string]$Text, [string]$Name) {
     # Deliberately accept the current simple helper only; fail closed on changed structure.
-    $matches = [regex]::Matches($Text, '(?ms)^static s64 psq_quantize_int\(f64 value, s64 min_value, s64 max_value, s32 scale\) \{[^{}]*^\}')
+    $matches = [regex]::Matches($Text, '(?ms)^static (?:inline )?s64 psq_quantize_int\(f64 value, s64 min_value, s64 max_value, s32 scale\) \{[^{}]*^\}')
     if ($matches.Count -ne 1) { throw "Expected one simple quantizer helper in $Name source." }
     $helper = $matches[0].Value
     $factor = [regex]::Match($helper, 'f32 conv = \(f32\)value \* (.+);')
     if (-not $factor.Success) { throw "Cannot extract the factor expression in $Name source." }
     [IO.File]::WriteAllText((Join-Path $outputRoot ($Name + '-helper.txt')), $helper, $encoding)
-    $renamed = $helper.Replace('static s64 psq_quantize_int(', ('__declspec(noinline) s64 ' + $Name + '_quantize('))
+    $renamed = [regex]::Replace($helper, '^static (?:inline )?s64 psq_quantize_int\(', ('__declspec(noinline) s64 ' + $Name + '_quantize('))
     # Volatile arguments plus separate, non-LTCG translation units prevent constant folding.
     $factorExpression = $factor.Groups[1].Value.Replace('1.0f', 'one')
     $factorFunction = @"
@@ -43,7 +44,7 @@ __declspec(noinline) u32 ${Name}_factor(s32 requested_scale) {
     return bits;
 }
 "@
-    $generated = "// Extracted from $Name GXRuntime cpu.c; do not edit.`n#include `"core/types.h`"`n#include <math.h>`n" + $renamed + "`n" + $factorFunction
+    $generated = "// Extracted from $Name GXRuntime quantizer; do not edit.`n#include `"core/types.h`"`n#include <math.h>`n" + $renamed + "`n" + $factorFunction
     [IO.File]::WriteAllText((Join-Path $outputRoot ($Name + '.c')), $generated, $encoding)
 }
 Write-ExtractedQuantizer $baselineSource 'baseline'
@@ -98,6 +99,7 @@ $record = [ordered]@{
     checked_at_utc = [DateTime]::UtcNow.ToString('o')
     baseline_commit = $baselineCommit
     baseline_cpu_blob = [string]$baselineBlob
+    current_cpu_source = $currentSourceRelative
     current_cpu_sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash
     baseline_helper_sha256 = (Get-FileHash -LiteralPath (Join-Path $outputRoot 'baseline-helper.txt') -Algorithm SHA256).Hash
     current_helper_sha256 = (Get-FileHash -LiteralPath (Join-Path $outputRoot 'current-helper.txt') -Algorithm SHA256).Hash

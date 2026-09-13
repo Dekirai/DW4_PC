@@ -1,17 +1,87 @@
+diff --git a/GXRuntime/include/core/cpu.h b/GXRuntime/include/core/cpu.h
+index 65f316fc2dd5087635a0b790a4f328dee8125bd7..52ebcdfa2c50b7f68d16fdfe3ed131b8048bfdd3 100644
+--- a/GXRuntime/include/core/cpu.h
++++ b/GXRuntime/include/core/cpu.h
+@@ -3,6 +3,7 @@
+ #define DOLRECOMP_CPU_H
+ 
+ #include "types.h"
++#include <math.h>
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -408,14 +409,30 @@ void ppc_dcbz_l(CPUState* cpu, u32 ea, u32 cia);
+ bool ppc_psq_load(CPUState* cpu, u8 frD, u32 ea, bool w, u8 gqr, bool indexed, u32 cia);
+ bool ppc_psq_store(CPUState* cpu, u8 frS, u32 ea, bool w, u8 gqr, bool indexed, u32 cia);
+ 
+-/* Inlined fast path for the unquantised case. A `sample` of a Mario Kart race
++/* Shared by the inline type-4 store and the out-of-line integer stores.
++ * Keep the float cast and multiplication, including at scale zero, to retain
++ * host rounding, denormal and exception behavior. */
++static inline s64 psq_quantize_int(f64 value, s64 min_value, s64 max_value, s32 scale) {
++    /* The GQR scale is signed six-bit, so 2^scale is always an exact normal f32. */
++    f32 conv = (f32)value * f32_value((u32)(scale + 127) << 23);
++    if (isnan(conv))
++        return 0;
++    if (conv <= (f32)min_value)
++        return min_value;
++    if (conv >= (f32)max_value)
++        return max_value;
++    return (s64)conv;
++}
++
++/* Inlined fast paths for the unquantised case and type-4 stores.
++ * A `sample` of a Mario Kart race
+  * put psq_load_value and psq_store_value at ~9% of self time inside
+  * StaticRecompCore::Run, on top of ppc_psq_load's own frame.
+  *
+  * Almost all of that is GQR type 0 -- plain IEEE singles, no quantisation and
+  * no scale -- which reduces to two 32-bit accesses and a float conversion.
+- * Quantised types (4..7), an invalid type, and the LSQE illegal-instruction
+- * check all fall through to the out-of-line version, so behaviour is unchanged.
++ * Quantised loads, stores of types 5..7, invalid types, and the LSQE
++ * illegal-instruction check fall through to the out-of-line version.
+  *
+  * The win is bigger than skipping a call: at every generated site w, gqr_index,
+  * indexed and cia are literals, so inlining lets the compiler fold the LSQE
+@@ -440,6 +457,15 @@ static inline bool ppc_psq_store_inline(CPUState* cpu, u8 frS, u32 ea, bool w,
+             mem_write32(cpu, ea + 4u, convert_to_single_ftz(f64_bits(cpu->ps1[frS])));
+         return true;
+     }
++    if ((gqr & 7u) == 4u && (indexed || (cpu->hid2 & PPC_HID2_LSQE) != 0u)) {
++        const s32 scale = sign_extend((gqr >> 8) & 0x3Fu, 6);
++        mem_write8(cpu, ea, (u8)psq_quantize_int(cpu->fpr[frS], 0, 255, scale));
++        /* A write callback may change lane one or GQR. Read the lane after
++         * the first write, but retain this instruction's captured scale. */
++        if (!w)
++            mem_write8(cpu, ea + 1u, (u8)psq_quantize_int(cpu->ps1[frS], 0, 255, scale));
++        return true;
++    }
+     return ppc_psq_store(cpu, frS, ea, w, gqr_index, indexed, cia);
+ }
+ u32 ppc_eciwx(CPUState* cpu, u32 ea, u32 cia);
 diff --git a/GXRuntime/src/core/cpu.c b/GXRuntime/src/core/cpu.c
-index 345b9602dd02a9f93d5957ff0a9fbb1a4b4f1598..bcddea3a3cd0656af55444979f2c8a01575bce6c 100644
+index 345b9602dd02a9f93d5957ff0a9fbb1a4b4f1598..5aa3e6a37c30538086a21e5a1a653688590c9d32 100644
 --- a/GXRuntime/src/core/cpu.c
 +++ b/GXRuntime/src/core/cpu.c
-@@ -215,7 +215,8 @@ static f64 psq_load_value(CPUState* cpu, u32 ea, u8 type, s32 scale) {
+@@ -214,17 +214,6 @@ static f64 psq_load_value(CPUState* cpu, u32 ea, u8 type, s32 scale) {
+     }
  }
  
- static s64 psq_quantize_int(f64 value, s64 min_value, s64 max_value, s32 scale) {
+-static s64 psq_quantize_int(f64 value, s64 min_value, s64 max_value, s32 scale) {
 -    f32 conv = (f32)value * ldexpf(1.0f, scale);
-+    /* gqr_scale is signed six-bit, so 2^scale is always an exact normal f32. */
-+    f32 conv = (f32)value * f32_value((u32)(scale + 127) << 23);
-     if (isnan(conv))
-         return 0;
-     if (conv <= (f32)min_value)
+-    if (isnan(conv))
+-        return 0;
+-    if (conv <= (f32)min_value)
+-        return min_value;
+-    if (conv >= (f32)max_value)
+-        return max_value;
+-    return (s64)conv;
+-}
+-
+ static void psq_store_value(CPUState* cpu, u32 ea, u8 type, s32 scale, f64 value) {
+     switch (type) {
+     case 0:
 diff --git a/Source/Core/AudioCommon/AudioTelemetry.h b/Source/Core/AudioCommon/AudioTelemetry.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..0236a70db0d65c0b7af562e877075b46815d7f55
@@ -772,6 +842,259 @@ index 9e1be0d33fb020fb476e3858edc6dfb063176bc8..864b3593522a407c80d01fd72e879508
    virtual bool Init() { return false; }
    virtual void SetVolume(int) {}
    // Returns true if successful.
+diff --git a/Source/Core/Common/CMakeLists.txt b/Source/Core/Common/CMakeLists.txt
+index 807dca300d0be7d8b69365ae9b3cbbd3d77ecdc2..c33bee877b347bd0fa1c8448145b892691c91826 100644
+--- a/Source/Core/Common/CMakeLists.txt
++++ b/Source/Core/Common/CMakeLists.txt
+@@ -147,6 +147,8 @@ add_library(common
+   StringUtil.h
+   SymbolDB.cpp
+   SymbolDB.h
++  SystemResource.cpp
++  SystemResource.h
+   Thread.cpp
+   Thread.h
+   Timer.cpp
+diff --git a/Source/Core/Common/CommonPaths.h b/Source/Core/Common/CommonPaths.h
+index 474890c4d859c56c69bc9838cfb900adb492858c..b20756f61fc866c4d7d0b2c293aa44ab2cb8e1e3 100644
+--- a/Source/Core/Common/CommonPaths.h
++++ b/Source/Core/Common/CommonPaths.h
+@@ -101,7 +101,7 @@
+ 
+ // Filenames
+ // Files in the directory returned by GetUserPath(D_CONFIG_IDX)
+-#define DOLPHIN_CONFIG "Dolphin.ini"
++#define DOLPHIN_CONFIG "Runtime.ini"
+ #define GCPAD_CONFIG "GCPadNew.ini"
+ #define WIIPAD_CONFIG "WiimoteNew.ini"
+ #define GCKEYBOARD_CONFIG "GCKeyNew.ini"
+@@ -112,7 +112,7 @@
+ #define RETROACHIEVEMENTS_CONFIG "RetroAchievements.ini"
+ 
+ // Files in the directory returned by GetUserPath(D_LOGS_IDX)
+-#define MAIN_LOG "dolphin.log"
++#define MAIN_LOG "engine.log"
+ 
+ // Files in the directory returned by GetUserPath(D_WIISYSCONF_IDX)
+ #define WII_SYSCONF "SYSCONF"
+diff --git a/Source/Core/Common/IniFile.cpp b/Source/Core/Common/IniFile.cpp
+index 6e6749cb0db7a3f7b58e47a7736af8124743f57f..2c529428fa9450abd71a35ba586b9ab7ee87eaed 100644
+--- a/Source/Core/Common/IniFile.cpp
++++ b/Source/Core/Common/IniFile.cpp
+@@ -7,6 +7,7 @@
+ #include <cstddef>
+ #include <fstream>
+ #include <map>
++#include <sstream>
+ #include <string>
+ #include <string_view>
+ #include <utility>
+@@ -14,6 +15,7 @@
+ 
+ #include "Common/FileUtil.h"
+ #include "Common/StringUtil.h"
++#include "Common/SystemResource.h"
+ 
+ namespace Common
+ {
+@@ -246,6 +248,21 @@ bool IniFile::Load(const std::string& filename, bool keep_current_data)
+   std::ifstream in;
+   File::OpenFStream(in, filename, std::ios::in);
+ 
++  if (!in.fail())
++    return Load(in, true);
++
++  const auto embedded = File::ReadSystemResourceFromPath(filename);
++  if (embedded.empty())
++    return false;
++  std::istringstream embedded_input(
++      std::string(reinterpret_cast<const char*>(embedded.data()), embedded.size()));
++  return Load(embedded_input, true);
++}
++
++bool IniFile::Load(std::istream& in, bool keep_current_data)
++{
++  if (!keep_current_data)
++    sections.clear();
+   if (in.fail())
+     return false;
+ 
+@@ -269,11 +286,9 @@ bool IniFile::Load(const std::string& filename, bool keep_current_data)
+       line.remove_prefix(3);
+     first_line = false;
+ 
+-#ifndef _WIN32
+-    // Check for CRLF eol and convert it to LF
++    // File streams normalize CRLF on Windows; embedded memory streams do not.
+     if (!line.empty() && line.back() == '\r')
+       line.remove_suffix(1);
+-#endif
+ 
+     if (!line.empty())
+     {
+@@ -312,7 +327,6 @@ bool IniFile::Load(const std::string& filename, bool keep_current_data)
+     }
+   }
+ 
+-  in.close();
+   return true;
+ }
+ 
+@@ -348,6 +362,8 @@ bool IniFile::Save(const std::string& filename)
+   }
+ 
+   out.close();
++  if (out.fail())
++    return false;
+ 
+   return File::RenameSync(temp, filename);
+ }
+diff --git a/Source/Core/Common/IniFile.h b/Source/Core/Common/IniFile.h
+index 181175101f23674e8bb4a6d63f36333c5f6add98..f405f594b484902da8ccd5f915ae5c2c570115e4 100644
+--- a/Source/Core/Common/IniFile.h
++++ b/Source/Core/Common/IniFile.h
+@@ -3,6 +3,7 @@
+ 
+ #pragma once
+ 
++#include <istream>
+ #include <list>
+ #include <map>
+ #include <string>
+@@ -90,6 +91,7 @@ public:
+    * user-specified) and should eventually be replaced with a less stupid system.
+    */
+   bool Load(const std::string& filename, bool keep_current_data = false);
++  bool Load(std::istream& input, bool keep_current_data = false);
+ 
+   bool Save(const std::string& filename);
+ 
+diff --git a/Source/Core/Common/SystemResource.cpp b/Source/Core/Common/SystemResource.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..b3fad5d36de1ed1a200a4f42cabfcf07e28ca192
+--- /dev/null
++++ b/Source/Core/Common/SystemResource.cpp
+@@ -0,0 +1,71 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include "Common/SystemResource.h"
++
++#include <algorithm>
++
++#include "Common/FileUtil.h"
++
++namespace File
++{
++namespace
++{
++#ifdef MODERNGEKKO_EMBED_SYSTEM_RESOURCES
++struct SystemResource
++{
++  std::string_view path;
++  std::span<const u8> bytes;
++};
++
++#include "moderngekko_system_resources.inc"
++#endif
++}  // namespace
++
++std::span<const u8> ReadSystemResource([[maybe_unused]] std::string_view relative_path)
++{
++#ifdef MODERNGEKKO_EMBED_SYSTEM_RESOURCES
++  std::string normalized(relative_path);
++  std::ranges::replace(normalized, '\\', '/');
++  // Collapse separators only in a relative resource name, after any Sys root check.
++  // Dot segments are intentionally left intact and cannot match the allowlist.
++  normalized.erase(std::unique(normalized.begin(), normalized.end(),
++                               [](char left, char right) { return left == '/' && right == '/'; }),
++                   normalized.end());
++  for (const auto& resource : system_resources)
++  {
++    if (resource.path == normalized)
++      return resource.bytes;
++  }
++#endif
++  return {};
++}
++
++std::span<const u8> ReadSystemResourceFromPath(std::string_view path)
++{
++  std::string root = GetSysDirectory();
++  std::ranges::replace(root, '\\', '/');
++  if (!root.ends_with('/'))
++    root += '/';
++  std::string normalized(path);
++  std::ranges::replace(normalized, '\\', '/');
++  if (!normalized.starts_with(root))
++    return {};
++  path = normalized;
++  path.remove_prefix(root.size());
++  while (path.starts_with('/'))
++    path.remove_prefix(1);
++  return ReadSystemResource(path);
++}
++
++bool ReadFileToStringOrSystemResource(const std::string& path, std::string& contents)
++{
++  if (ReadFileToString(path, contents))
++    return true;
++  const auto bytes = ReadSystemResourceFromPath(path);
++  if (bytes.empty())
++    return false;
++  contents.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
++  return true;
++}
++}  // namespace File
+diff --git a/Source/Core/Common/SystemResource.h b/Source/Core/Common/SystemResource.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b6ebc78fb147aef17d01dd5235c8e1a93ddae11
+--- /dev/null
++++ b/Source/Core/Common/SystemResource.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <span>
++#include <string>
++#include <string_view>
++
++#include "Common/CommonTypes.h"
++
++namespace File
++{
++// Immutable process-lifetime bytes. An unknown resource or a generic build returns an empty span.
++std::span<const u8> ReadSystemResource(std::string_view relative_path);
++
++// Only accepts paths inside GetSysDirectory(); user files never resolve to embedded defaults.
++std::span<const u8> ReadSystemResourceFromPath(std::string_view path);
++
++// Preserve a supplied file first, then fall back to an allowlisted embedded system resource.
++bool ReadFileToStringOrSystemResource(const std::string& path, std::string& contents);
++}  // namespace File
+diff --git a/Source/Core/Core/Cheats/GeckoCode.cpp b/Source/Core/Core/Cheats/GeckoCode.cpp
+index 164aa000f83a30dbb63ca34992725db64e3a92e5..0047fdc16b21316be0f931d983579e463123821c 100644
+--- a/Source/Core/Core/Cheats/GeckoCode.cpp
++++ b/Source/Core/Core/Cheats/GeckoCode.cpp
+@@ -13,6 +13,7 @@
+ #include "Common/CommonPaths.h"
+ #include "Common/CommonTypes.h"
+ #include "Common/FileUtil.h"
++#include "Common/SystemResource.h"
+ 
+ #include "Core/Achievements/AchievementManager.h"
+ #include "Core/Config/CheatSettings.h"
+@@ -118,7 +119,7 @@ std::vector<GeckoCode> SetAndReturnActiveCodes(std::span<const GeckoCode> gcodes
+ static Installation InstallCodeHandlerLocked(const Core::CPUThreadGuard& guard)
+ {
+   std::string data;
+-  if (!File::ReadFileToString(File::GetSysDirectory() + GECKO_CODE_HANDLER, data))
++  if (!File::ReadFileToStringOrSystemResource(File::GetSysDirectory() + GECKO_CODE_HANDLER, data))
+   {
+     ERROR_LOG_FMT(ACTIONREPLAY,
+                   "Could not enable cheats because " GECKO_CODE_HANDLER " was missing.");
 diff --git a/Source/Core/Core/Config/StaticRecompSettings.cpp b/Source/Core/Core/Config/StaticRecompSettings.cpp
 index 653deacf5809cd43ab5cb7789b51b5d0d26daea0..f32b083f15050746c52bd9b8988f65e5af9045c3 100644
 --- a/Source/Core/Core/Config/StaticRecompSettings.cpp
@@ -816,6 +1139,135 @@ index e58579ecda14837ae37c46286734893a70b3db02..1190efb785980038e10976190d2a7a32
    // Ignore full focus if we don't require basic focus
    const bool full_focus_passes =
        !require_focus || !require_full_focus || (focus_passes && Host_RendererHasFullFocus());
+diff --git a/Source/Core/Core/HW/DSPHLE/UCodes/AX.cpp b/Source/Core/Core/HW/DSPHLE/UCodes/AX.cpp
+index 7159a5be4b4c4a95840e4fda1a7ac4dda87260ed..331034e7d84d6fd00508d93b35364379a25e6c70 100644
+--- a/Source/Core/Core/HW/DSPHLE/UCodes/AX.cpp
++++ b/Source/Core/Core/HW/DSPHLE/UCodes/AX.cpp
+@@ -10,6 +10,7 @@
+ #include "Common/ChunkFile.h"
+ #include "Common/CommonTypes.h"
+ #include "Common/FileUtil.h"
++#include "Common/SystemResource.h"
+ #include "Common/Hash.h"
+ #include "Common/IOFile.h"
+ #include "Common/Logging/Log.h"
+@@ -66,12 +67,20 @@ bool AXUCode::LoadResamplingCoefficients(bool require_same_checksum, u32 desired
+   {
+     INFO_LOG_FMT(DSPHLE, "Checking for polyphase resampling coeffs at {}", filename);
+ 
+-    if (File::GetSize(filename) != raw_coeffs_size)
+-      continue;
+-
+-    File::IOFile fp(filename, "rb");
+     std::array<u8, raw_coeffs_size> raw_coeffs;
+-    fp.ReadBytes(raw_coeffs.data(), raw_coeffs_size);
++    if (File::GetSize(filename) == raw_coeffs_size)
++    {
++      File::IOFile fp(filename, "rb");
++      if (!fp.ReadBytes(raw_coeffs.data(), raw_coeffs_size))
++        continue;
++    }
++    else
++    {
++      const auto embedded = File::ReadSystemResourceFromPath(filename);
++      if (embedded.size() != raw_coeffs_size)
++        continue;
++      std::memcpy(raw_coeffs.data(), embedded.data(), raw_coeffs_size);
++    }
+ 
+     u32 checksum = Common::HashAdler32(raw_coeffs.data(), raw_coeffs_size);
+     if (require_same_checksum && checksum != desired_checksum)
+diff --git a/Source/Core/Core/HW/DSPLLE/DSPLLE.cpp b/Source/Core/Core/HW/DSPLLE/DSPLLE.cpp
+index 7495d20fd895e2f7159dcc4098044e4349901678..8bf9f81b5e8d7b32fef201182dc675cde1b9adf1 100644
+--- a/Source/Core/Core/HW/DSPLLE/DSPLLE.cpp
++++ b/Source/Core/Core/HW/DSPLLE/DSPLLE.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include "Core/HW/DSPLLE/DSPLLE.h"
+ 
++#include <cstring>
+ #include <mutex>
+ #include <string>
+ #include <thread>
+@@ -12,7 +13,9 @@
+ #include "Common/CommonTypes.h"
+ #include "Common/Event.h"
+ #include "Common/FileUtil.h"
++#include "Common/IOFile.h"
+ #include "Common/Logging/Log.h"
++#include "Common/SystemResource.h"
+ #include "Common/Thread.h"
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Core.h"
+@@ -83,20 +86,29 @@ void DSPLLE::DSPThread(DSPLLE* dsp_lle)
+ 
+ static bool LoadDSPRom(u16* rom, const std::string& filename, u32 size_in_bytes)
+ {
+-  std::string bytes;
+-  if (!File::ReadFileToString(filename, bytes))
+-    return false;
+-
+-  if (bytes.size() != size_in_bytes)
++  File::IOFile file(filename, "rb");
++  if (file)
+   {
+-    ERROR_LOG_FMT(DSPLLE, "{} has a wrong size ({}, expected {})", filename, bytes.size(),
+-                  size_in_bytes);
+-    return false;
++    const u64 file_size = file.GetSize();
++    if (file_size != size_in_bytes)
++    {
++      ERROR_LOG_FMT(DSPLLE, "{} has a wrong size ({}, expected {})", filename, file_size,
++                    size_in_bytes);
++      return false;
++    }
++    if (!file.ReadBytes(rom, size_in_bytes))
++      return false;
++  }
++  else
++  {
++    const auto embedded = File::ReadSystemResourceFromPath(filename);
++    if (embedded.size() != size_in_bytes)
++      return false;
++    std::memcpy(rom, embedded.data(), size_in_bytes);
+   }
+ 
+-  const u16* words = reinterpret_cast<const u16*>(bytes.c_str());
+   for (u32 i = 0; i < size_in_bytes / 2; ++i)
+-    rom[i] = Common::swap16(words[i]);
++    rom[i] = Common::swap16(rom[i]);
+ 
+   return true;
+ }
+diff --git a/Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp b/Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp
+index 7bb21ca7b706a9f77314f6f7b046805e7ce6295f..95e59e338a7604aa3be1d44a263c09b7d51860be 100644
+--- a/Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp
++++ b/Source/Core/Core/HW/EXI/EXI_DeviceIPL.cpp
+@@ -12,6 +12,7 @@
+ #include "Common/CommonTypes.h"
+ #include "Common/Config/Config.h"
+ #include "Common/FileUtil.h"
++#include "Common/SystemResource.h"
+ #include "Common/IOFile.h"
+ #include "Common/Logging/Log.h"
+ #include "Common/StringUtil.h"
+@@ -164,7 +165,15 @@ bool CEXIIPL::LoadFileToIPL(const std::string& filename, u32 offset)
+ 
+   File::IOFile stream(filename, "rb");
+   if (!stream)
+-    return false;
++  {
++    const auto embedded = File::ReadSystemResourceFromPath(filename);
++    if (embedded.empty())
++      return false;
++    std::memcpy(&m_rom[offset], embedded.data(),
++                std::min<size_t>(embedded.size(), ROM_SIZE - offset));
++    m_fonts_loaded = true;
++    return true;
++  }
+ 
+   const u64 filesize = stream.GetSize();
+   if (!stream.ReadBytes(&m_rom[offset], std::min<u64>(filesize, ROM_SIZE - offset)))
 diff --git a/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp b/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp
 index fe4ec83f0876a361fc463cfe04208e67c7f53f21..ce5facef34e49c0a5835c5f9265f25f19a2dfa31 100644
 --- a/Source/Core/Core/PowerPC/JitCommon/JitCache.cpp
@@ -2074,7 +2526,7 @@ index 48b122a7072388fece1f1df84747c2c14968532f..9bab243767918d4295a811de5faa0e44
  protected:
    uintptr_t GetAddress() const override;
 diff --git a/Source/Core/DolphinNoGUI/Platform.h b/Source/Core/DolphinNoGUI/Platform.h
-index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..06a12916b15dba69bc97556cc8cdc24fddf4dd2f 100644
+index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..6e1dc8716ebef8d06b33831e40ac675e7df336cc 100644
 --- a/Source/Core/DolphinNoGUI/Platform.h
 +++ b/Source/Core/DolphinNoGUI/Platform.h
 @@ -3,11 +3,15 @@
@@ -2112,7 +2564,7 @@ index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..06a12916b15dba69bc97556cc8cdc24f
  
    virtual WindowSystemInfo GetWindowSystemInfo() const = 0;
  
-@@ -58,13 +74,26 @@ public:
+@@ -58,13 +74,27 @@ public:
  
  protected:
    void UpdateRunningFlag();
@@ -2120,6 +2572,7 @@ index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..06a12916b15dba69bc97556cc8cdc24f
 +  {
 +    return m_ui_input && m_ui_input(input);
 +  }
++  bool HasUIInputCallback() const { return static_cast<bool>(m_ui_input); }
 +  void TickUI()
 +  {
 +    if (m_ui_tick)
@@ -2142,7 +2595,7 @@ index 5b0729a9eb8faf6b9b6dd8cae192890fc12a3959..06a12916b15dba69bc97556cc8cdc24f
 +  std::function<void()> m_ui_tick;
  };
 diff --git a/Source/Core/DolphinNoGUI/PlatformWin32.cpp b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
-index 3402fdae951b7ae8cde8ef4aab26ec2bb9108c5e..1a8f9301e5090d768951ab6c428e7b4522ea581b 100644
+index 3402fdae951b7ae8cde8ef4aab26ec2bb9108c5e..e85f4042aeb964df0d3685dff9e82b7116a7200a 100644
 --- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
 +++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
 @@ -3,42 +3,26 @@
@@ -2494,7 +2947,7 @@ index 3402fdae951b7ae8cde8ef4aab26ec2bb9108c5e..1a8f9301e5090d768951ab6c428e7b45
      return;
  
    RECT rc = {};
-@@ -326,140 +237,361 @@ void PlatformWin32::ProcessEvents()
+@@ -326,140 +237,365 @@ void PlatformWin32::ProcessEvents()
    MSG msg;
    while (PeekMessage(&msg, m_hwnd, 0, 0, PM_REMOVE))
    {
@@ -2753,6 +3206,10 @@ index 3402fdae951b7ae8cde8ef4aab26ec2bb9108c5e..1a8f9301e5090d768951ab6c428e7b45
        return 0;
      }
 -    else if (wParam == VK_F11)
++    // The integrated settings menu owns application actions. Gameplay bindings
++    // such as Space=A must never also change speed, display mode or exit state.
++    if (platform->HasUIInputCallback())
++      break; // Keep normal Windows system handling, including Alt+F4.
 +    if (value == VK_SPACE)
      {
 -      platform->ToggleFullscreen();
@@ -3569,10 +4026,18 @@ index 0000000000000000000000000000000000000000..e91a66a9c5734b908ab971305cb19b0a
 +}
 +}  // namespace VideoCommon
 diff --git a/Source/Core/VideoCommon/OnScreenUI.cpp b/Source/Core/VideoCommon/OnScreenUI.cpp
-index 451109bbeb1ab83ca4f5580ea88d357c7b9c6e64..69870ebc4f3b79d5660a51344c6e400065766673 100644
+index 451109bbeb1ab83ca4f5580ea88d357c7b9c6e64..fc29ecee9daacb16f3131e1544b6408a23053b08 100644
 --- a/Source/Core/VideoCommon/OnScreenUI.cpp
 +++ b/Source/Core/VideoCommon/OnScreenUI.cpp
-@@ -30,6 +30,7 @@
+@@ -6,6 +6,7 @@
+ #include "Common/CommonPaths.h"
+ #include "Common/EnumMap.h"
+ #include "Common/FileUtil.h"
++#include "Common/SystemResource.h"
+ #include "Common/Profiler.h"
+ #include "Common/Timer.h"
+ 
+@@ -30,6 +31,7 @@
  #include "VideoCommon/Statistics.h"
  #include "VideoCommon/VertexManagerBase.h"
  #include "VideoCommon/VideoConfig.h"
@@ -3580,7 +4045,23 @@ index 451109bbeb1ab83ca4f5580ea88d357c7b9c6e64..69870ebc4f3b79d5660a51344c6e4000
  
  #include <inttypes.h>
  #include <mutex>
-@@ -207,6 +208,7 @@ void OnScreenUI::BeginImGuiFrameUnlocked(u32 width, u32 height)
+@@ -95,6 +97,15 @@ bool OnScreenUI::Initialize(u32 width, u32 height, float scale)
+     io.Fonts->Clear();
+     io.Fonts->AddFontFromFileTTF(file.c_str());
+   }
++  else if (const auto embedded = File::ReadSystemResource("Resources/OSD_Font.ttf");
++           !embedded.empty())
++  {
++    ImFontConfig font_config;
++    font_config.FontDataOwnedByAtlas = false;
++    io.Fonts->Clear();
++    io.Fonts->AddFontFromMemoryTTF(const_cast<u8*>(embedded.data()),
++                                  static_cast<int>(embedded.size()), 0.0f, &font_config);
++  }
+ 
+   // Setup new font management behavior
+   io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures | ImGuiBackendFlags_RendererHasVtxOffset;
+@@ -207,6 +218,7 @@ void OnScreenUI::BeginImGuiFrameUnlocked(u32 width, u32 height)
        ImVec2(static_cast<float>(m_backbuffer_width), static_cast<float>(m_backbuffer_height));
    io.DeltaTime = time_diff_secs;
  
@@ -3588,7 +4069,7 @@ index 451109bbeb1ab83ca4f5580ea88d357c7b9c6e64..69870ebc4f3b79d5660a51344c6e4000
    ImGui::NewFrame();
  }
  
-@@ -422,6 +424,7 @@ void OnScreenUI::Finalize()
+@@ -422,6 +434,7 @@ void OnScreenUI::Finalize()
    DrawDebugText();
    OSD::DrawMessages();
    DrawChallengesAndLeaderboards();
@@ -3656,3 +4137,66 @@ index fe30aa251b8d5d7cdf489c4a889e49b143c76110..3d50bf14d3ef7d9e903b4083e358630e
    // An end of frame event that runs on the CPU thread
    Common::HookableEvent<> vi_end_field_event;
  };
+diff --git a/Source/UnitTests/Common/CMakeLists.txt b/Source/UnitTests/Common/CMakeLists.txt
+index a2e21d7a802493ae5ed773ea8a6505c3ba5def21..4b735ae2cea83da9063e712f4e7309a506a8d9ae 100644
+--- a/Source/UnitTests/Common/CMakeLists.txt
++++ b/Source/UnitTests/Common/CMakeLists.txt
+@@ -13,6 +13,7 @@ add_dolphin_test(FileUtilTest FileUtilTest.cpp)
+ add_dolphin_test(FixedSizeQueueTest FixedSizeQueueTest.cpp)
+ add_dolphin_test(FlagTest FlagTest.cpp)
+ add_dolphin_test(FloatUtilsTest FloatUtilsTest.cpp)
++add_dolphin_test(IniFileTest IniFileTest.cpp)
+ add_dolphin_test(MathUtilTest MathUtilTest.cpp)
+ add_dolphin_test(MutexTest MutexTest.cpp)
+ add_dolphin_test(NandPathsTest NandPathsTest.cpp)
+diff --git a/Source/UnitTests/Common/IniFileTest.cpp b/Source/UnitTests/Common/IniFileTest.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..98d44c08b7077404ab53943544600a8553fcdc0b
+--- /dev/null
++++ b/Source/UnitTests/Common/IniFileTest.cpp
+@@ -0,0 +1,45 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <sstream>
++#include <string>
++#include <vector>
++
++#include <gtest/gtest.h>
++
++#include "Common/IniFile.h"
++
++TEST(IniFile, MemoryResourcePreservesBomCrlfAndRawCheatLines)
++{
++  std::istringstream source("\xef\xbb\xbf[Core]\r\nCPUThread = False\r\n"
++                            "[ActionReplay]\r\n$Synthetic code\r\n01234567 89ABCDEF\r\n");
++  Common::IniFile ini;
++  ASSERT_TRUE(ini.Load(source));
++  bool cpu_thread = true;
++  ASSERT_TRUE(ini.GetIfExists("Core", "CPUThread", &cpu_thread));
++  EXPECT_FALSE(cpu_thread);
++  std::vector<std::string> codes;
++  ASSERT_TRUE(ini.GetLines("ActionReplay", &codes));
++  EXPECT_EQ(codes, (std::vector<std::string>{"$Synthetic code", "01234567 89ABCDEF"}));
++}
++
++TEST(IniFile, MemoryResourceKeepsLayerPrecedenceAndResetSemantics)
++{
++  Common::IniFile ini;
++  std::istringstream defaults("[Core]\nCPUThread = True\nSpeed = 1\n");
++  ASSERT_TRUE(ini.Load(defaults));
++  std::istringstream user("[Core]\nCPUThread = False\n");
++  ASSERT_TRUE(ini.Load(user, true));
++  bool cpu_thread = true;
++  int speed = 0;
++  ASSERT_TRUE(ini.GetIfExists("Core", "CPUThread", &cpu_thread));
++  ASSERT_TRUE(ini.GetIfExists("Core", "Speed", &speed));
++  EXPECT_FALSE(cpu_thread);
++  EXPECT_EQ(speed, 1);
++  std::istringstream failed;
++  failed.setstate(std::ios::failbit);
++  EXPECT_FALSE(ini.Load(failed, true));
++  EXPECT_TRUE(ini.Exists("Core", "Speed"));
++  EXPECT_FALSE(ini.Load(failed, false));
++  EXPECT_FALSE(ini.Exists("Core"));
++}

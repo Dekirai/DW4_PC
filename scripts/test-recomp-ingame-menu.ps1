@@ -53,7 +53,14 @@ foreach ($directory in @($profile,$output,$temp,(Join-Path $profile 'Config'),
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $profile 'config.ini'),
     "[Video]`nresolution=640x528`nbackend=Vulkan`nfullscreen=false`nshow_fps_in_title=false`n",$utf8)
-[IO.File]::WriteAllText((Join-Path $profile 'Config/Dolphin.ini'),
+$runtimeConfigFilename = 'Dolphin.ini'
+if ($record.PSObject.Properties['runtime_config_filename']) {
+    if ($record.runtime_config_filename -ne 'Runtime.ini') {
+        throw 'The build record contains an unsupported runtime configuration filename.'
+    }
+    $runtimeConfigFilename = 'Runtime.ini'
+}
+[IO.File]::WriteAllText((Join-Path $profile ('Config/' + $runtimeConfigFilename)),
     "[Interface]`nUsePanicHandlers=True`n[Core]`nSIDevice0=6`nSIDevice1=0`nSIDevice2=0`nSIDevice3=0`n",$utf8)
 [IO.File]::WriteAllText((Join-Path $profile 'Config/GCPadNew.ini'),
     "[GCPad1]`nDevice =`nOptions/Always Connected = True`n[GCPad2]`nDevice =`n[GCPad3]`nDevice =`n[GCPad4]`nDevice =`n",$utf8)
@@ -155,8 +162,28 @@ if ($null -ne $report -and $report.PSObject.Properties['audio'] -and $report.PSO
         $report.audio.backend -eq 'Null' -and $report.audio.output_sample_rate -eq 0 -and
         -not $report.audio.device_started -and $report.audio.device_callbacks -eq 0 -and $report.window_checks -gt 0
 }
+$observedKeyboardControls = $false
+if ($null -ne $report -and $report.PSObject.Properties['keyboard'] -and $null -ne $report.keyboard) {
+    $requiredKeyboardChecks = @('native_reload_persistence','first_launch_defaults',
+        'clear_restores_original_controls_and_port','other_players_preserved','reserved_keys_rejected',
+        'core_input_gate_open_menu','core_input_gate_closed_menu','saved_port_reapplied',
+        'player_two_port_attached','controls_panel_drawn','profile_restored',
+        'controls_reload_button','controls_defaults_apply_saved','selected_gamepad_port_preserved')
+    $observedKeyboardControls = $true
+    foreach ($name in $requiredKeyboardChecks) {
+        $property = $report.keyboard.PSObject.Properties[$name]
+        if (-not $property -or $property.Value -isnot [bool] -or -not $property.Value) {
+            $observedKeyboardControls = $false
+        }
+    }
+    if (-not $report.PSObject.Properties['space_game_binding_keeps_normal_speed'] -or
+        $report.space_game_binding_keeps_normal_speed -isnot [bool] -or
+        -not $report.space_game_binding_keeps_normal_speed) {
+        $observedKeyboardControls = $false
+    }
+}
 $passed = -not $failure -and -not $timedOut -and $exitCode -eq 0 -and $null -ne $report -and
-    $report.passed -is [bool] -and $report.passed -and $observedSilentSurface -and
+    $report.passed -is [bool] -and $report.passed -and $observedSilentSurface -and $observedKeyboardControls -and
     (Test-Path -LiteralPath $imagePath -PathType Leaf)
 $summary = [ordered]@{
     passed = [bool]$passed; executable = $Executable; executable_sha256 = $executableHash
@@ -168,6 +195,7 @@ $summary = [ordered]@{
     audio_policy = 'NullSound; no audio device; unmute disabled'
     visibility_policy = 'Real Win32 Vulkan surface, never shown or activated'
     observed_silent_surface = [bool]$observedSilentSurface
+    observed_keyboard_controls = [bool]$observedKeyboardControls
 }
 [IO.File]::WriteAllText((Join-Path $runRoot 'summary.json'),($summary | ConvertTo-Json -Depth 6),$utf8)
 $taskProcess.Dispose()

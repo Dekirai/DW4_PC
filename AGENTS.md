@@ -42,6 +42,15 @@ remaining dependencies accurately. Preserve existing saves while introducing
 the portable layout. ROM selection and automatic asset preparation remain
 required, as do modding, local/online co-op and all earlier acceptance targets.
 
+The product must present DW4-specific setup and in-game UI. Do not ship the
+wholesale upstream Sys tree or unrelated console/game resources in previews.
+Keep component attribution and licenses in third-party notices; removing
+branding does not remove the underlying runtime dependency. The owner also
+requires keyboard play and freely editable, saved key bindings in the F1 menu.
+Preserve existing controller profiles, independent player slots and input
+blocking while settings are open. Verify actual input and persistence rather
+than storing unused preferences.
+
 The owner selected DolRecomp and the recommended ModernGekko template as the
 next implementation path. Prioritize building and validating the original DW4
 recompilation pipeline, using the owner's local tool sources. Keep the existing

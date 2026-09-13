@@ -115,7 +115,9 @@ guarded DW4 scheduler optimization in a fresh profile for a same-binary A/B
 comparison; the generic `StaticRecompIdlePC` remains zero.
 
 For package acceptance, `-UseBundledModule` requires `-Module` to identify the
-hash-matched `gGDJEB2_recomp.dll` beside the selected `-Runner`. It omits the
+hash-matched `data/game.dll` relative to the selected `-Runner` in new packages.
+Preserved build records without the new package-layout field retain the older
+adjacent `gGDJEB2_recomp.dll` location. The harness omits the
 runner's explicit module argument so the real executable-relative discovery
 path is exercised. All build, ABI and content checks remain active; the child
 receives no inherited module override. The imported game folder may be supplied

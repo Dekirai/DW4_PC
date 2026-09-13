@@ -31,8 +31,9 @@ separate runner executable, an in-game F1 ImGui menu replacing the File/View
 menus, and portable save data alongside the EXE. The shared frontend session
 now runs inside `DW4_PC.exe` after destroying the launcher's SDL/ImGui resources;
 the packaged application has no runner process. The default profile is
-`savedata` beside the actual EXE. The game DLL, resource files and internal
-console-style save layout remain transitional. Runtime integration must
+`savedata` beside the actual EXE. New builds embed the selected system resources
+instead of shipping a loose `Sys` tree. The game DLL, runtime libraries and
+internal console-style save layout remain transitional. Runtime integration must
 preserve the original game/service state and existing saves;
 moving the PC-facing interface does not by itself remove Dolphin-derived
 graphics, audio and console-service implementations.

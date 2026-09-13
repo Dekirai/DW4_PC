@@ -1,8 +1,68 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b365669d23 100644
+index fa2503deacb130d62bcc9902f6f741b51079e42b..3f1f88562d374051984f68e7cf7ec04d87e7b1a3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -144,10 +144,13 @@ else()
+@@ -24,6 +24,8 @@ option(MODERNGEKKO_ENABLE_DOLPHIN_TESTS
+        "Build the imported Dolphin unit-test targets" OFF)
+ option(MODERNGEKKO_ENABLE_DISC_TOOL
+        "Build Dolphin's disc conversion and verification tool" OFF)
++option(MODERNGEKKO_EMBED_SYSTEM_RESOURCES
++       "Embed the supported DW4 service resources instead of shipping a Sys directory" OFF)
+ set(MODERNGEKKO_FRONTEND_NAME "ModernGekko" CACHE STRING
+     "Branded frontend display name")
+ set(MODERNGEKKO_LAUNCHER_OUTPUT_NAME "ModernGekko" CACHE STRING
+@@ -122,6 +124,50 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+     set(LINUX_LOCAL_DEV ON CACHE BOOL "" FORCE)
+     set(DISTRIBUTOR "ModernGekko" CACHE STRING "" FORCE)
+     add_subdirectory(vendor/dolphin EXCLUDE_FROM_ALL)
++    if(MODERNGEKKO_EMBED_SYSTEM_RESOURCES)
++        if(NOT MODERNGEKKO_REQUIRED_DISC_ID STREQUAL "GDJEB2")
++            message(FATAL_ERROR "Embedded resources require the supported GDJEB2 branded build")
++        endif()
++        find_package(Python3 REQUIRED COMPONENTS Interpreter)
++        set(_moderngekko_embedded_directory "${CMAKE_CURRENT_BINARY_DIR}/generated/system-resources")
++        set(_moderngekko_embedded_include "${_moderngekko_embedded_directory}/moderngekko_system_resources.inc")
++        set(_moderngekko_embedded_manifest "${_moderngekko_embedded_directory}/system-resources.json")
++        set(_moderngekko_system_resource_root "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Data/Sys")
++        file(GLOB _moderngekko_game_resource_inputs CONFIGURE_DEPENDS
++            "${_moderngekko_system_resource_root}/GameSettings/G.ini"
++            "${_moderngekko_system_resource_root}/GameSettings/GDJ.ini"
++            "${_moderngekko_system_resource_root}/GameSettings/GDJEB2*.ini")
++        set(_moderngekko_embedded_arguments)
++        if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE)
++            list(APPEND _moderngekko_embedded_arguments
++                --game-settings-override "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}")
++            list(APPEND _moderngekko_game_resource_inputs "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}")
++        endif()
++        add_custom_command(
++            OUTPUT "${_moderngekko_embedded_include}" "${_moderngekko_embedded_manifest}"
++            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_system_resources.py"
++                --sys-directory "${_moderngekko_system_resource_root}"
++                --output "${_moderngekko_embedded_include}"
++                --manifest "${_moderngekko_embedded_manifest}"
++                ${_moderngekko_embedded_arguments}
++            DEPENDS tools/embed_system_resources.py
++                "${_moderngekko_system_resource_root}/GC/dsp_coef.bin"
++                "${_moderngekko_system_resource_root}/GC/dsp_rom.bin"
++                "${_moderngekko_system_resource_root}/GC/font_japanese.bin"
++                "${_moderngekko_system_resource_root}/GC/font_western.bin"
++                "${_moderngekko_system_resource_root}/Resources/OSD_Font.ttf"
++                "${_moderngekko_system_resource_root}/codehandler.bin"
++                ${_moderngekko_game_resource_inputs}
++            VERBATIM)
++        # common is created in a different CMake directory. An explicit target dependency
++        # makes its compilation wait for this directory's generated include rule.
++        add_custom_target(moderngekko-system-resources
++            DEPENDS "${_moderngekko_embedded_include}" "${_moderngekko_embedded_manifest}")
++        add_dependencies(common moderngekko-system-resources)
++        target_sources(common PRIVATE "${_moderngekko_embedded_include}")
++        target_include_directories(common PRIVATE "${_moderngekko_embedded_directory}")
++        target_compile_definitions(common PRIVATE MODERNGEKKO_EMBED_SYSTEM_RESOURCES=1)
++    endif()
+     add_library(moderngekko_gxruntime_core STATIC
+         vendor/dolphin/GXRuntime/src/core/cpu_exception.c)
+     target_include_directories(moderngekko_gxruntime_core PUBLIC
+@@ -144,10 +190,13 @@ else()
      add_subdirectory(vendor/fmt/fmt EXCLUDE_FROM_ALL)
  endif()
  
@@ -18,16 +78,17 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
  endif()
  
  add_library(moderngekko_abi INTERFACE)
-@@ -241,6 +244,8 @@ target_link_libraries(moderngekko PUBLIC ModernGekko::ABI PRIVATE fmt::fmt)
+@@ -241,6 +290,9 @@ target_link_libraries(moderngekko PUBLIC ModernGekko::ABI PRIVATE fmt::fmt)
  if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      target_sources(moderngekko PRIVATE
          src/runtime/dolphin_runtime.cpp
 +        src/runtime/ingame_menu.cpp
++        src/runtime/ingame_menu_controls.cpp
 +        src/runtime/ingame_menu_smoke.cpp
          tools/automation_protocol.cpp
          vendor/dolphin/Source/Core/DolphinNoGUI/Platform.cpp
          vendor/dolphin/Source/Core/DolphinNoGUI/PlatformHeadless.cpp
-@@ -250,6 +255,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -250,6 +302,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
              vendor/dolphin/Source/Core/InputCommon/ControllerInterface/Touch/InputOverrider.cpp)
      endif()
      target_include_directories(moderngekko PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tools")
@@ -35,7 +96,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
      if(WIN32)
          target_sources(moderngekko PRIVATE
              vendor/dolphin/Source/Core/DolphinNoGUI/PlatformWin32.cpp)
-@@ -415,6 +421,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -415,6 +468,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      add_executable(moderngekko-run
          tools/moderngekko_run.cpp
@@ -43,7 +104,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
          tools/netplay_compatibility.cpp
          tools/netplay_session.cpp
          tools/frontend_config.cpp
-@@ -492,41 +499,35 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -492,41 +546,35 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          target_compile_definitions(moderngekko-run PRIVATE
              MODERNGEKKO_DOL_PATCH_MANIFEST="patches/${_moderngekko_dol_patch_name}")
      endif()
@@ -104,7 +165,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
      if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
          target_link_libraries(moderngekko-launcher PRIVATE
              "$<LINK_LIBRARY:WHOLE_ARCHIVE,moderngekko>"
-@@ -541,11 +542,20 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -541,11 +589,20 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      set_target_properties(moderngekko-launcher PROPERTIES
          OUTPUT_NAME "${MODERNGEKKO_LAUNCHER_OUTPUT_NAME}")
@@ -126,7 +187,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
      if(MODERNGEKKO_REQUIRED_DISC_ID)
          target_compile_definitions(moderngekko-launcher PRIVATE
              MODERNGEKKO_REQUIRED_DISC_ID="${MODERNGEKKO_REQUIRED_DISC_ID}")
-@@ -598,8 +608,59 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -598,8 +655,61 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          set_target_properties(moderngekko-run moderngekko-launcher PROPERTIES
              INSTALL_RPATH "$ORIGIN/lib")
      endif()
@@ -159,10 +220,12 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
 +                string(APPEND _moderngekko_resource_directory "/$<CONFIG>")
 +            endif()
 +        endif()
-+        list(APPEND _moderngekko_resource_commands
-+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
-+                    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Data/Sys"
-+                    "${_moderngekko_resource_directory}/Sys")
++        if(NOT MODERNGEKKO_EMBED_SYSTEM_RESOURCES)
++            list(APPEND _moderngekko_resource_commands
++                COMMAND "${CMAKE_COMMAND}" -E copy_directory
++                        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Data/Sys"
++                        "${_moderngekko_resource_directory}/Sys")
++        endif()
 +        if(MODERNGEKKO_DOL_PATCH_MANIFEST)
 +            list(APPEND _moderngekko_resource_commands
 +                COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -171,7 +234,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
 +                        "${MODERNGEKKO_DOL_PATCH_MANIFEST}"
 +                        "${_moderngekko_resource_directory}/patches/${_moderngekko_dol_patch_name}")
 +        endif()
-+        if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE)
++        if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE AND NOT MODERNGEKKO_EMBED_SYSTEM_RESOURCES)
 +            list(APPEND _moderngekko_resource_commands
 +                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
 +                        "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}"
@@ -188,7 +251,7 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..8645591e57649d74a6dc6b8cdb9a69b3
      add_executable(moderngekko-port
          tools/moderngekko_port.cpp
          tools/pgo_support.cpp)
-@@ -608,6 +669,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -608,6 +718,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          "${CMAKE_CURRENT_SOURCE_DIR}/tools")
      target_compile_definitions(moderngekko-port PRIVATE
          MODERNGEKKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -247,7 +310,7 @@ index 0adc8556c94577a0c95ba197cd66cc7898551151..3572db6650496c540c6891c69e38cbc0
  
  enum class RuntimeErrorCode
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d0426702a05 100644
+index f9b5405c4579172a68a4e7e58b5b34843de50f51..71bf93cb469ad093fb8c9dd7488e9fe97af5dfa2 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
 @@ -3,6 +3,7 @@
@@ -258,7 +321,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  #include "Common/StringUtil.h"
  #include "Core/Boot/Boot.h"
  #include "Core/Boot/BootManager.h"
-@@ -19,14 +20,20 @@
+@@ -19,14 +20,21 @@
  #include "Core/State.h"
  #include "Core/System.h"
  #include "DolphinNoGUI/Platform.h"
@@ -275,11 +338,12 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  #include "automation_protocol.hpp"
  #include "dolphin_runtime_internal.hpp"
 +#include "ingame_menu.hpp"
++#include "ingame_menu_controls.h"
 +#include "ingame_menu_smoke.hpp"
  #include "moderngekko/cpu_state.h"
  #include "moderngekko/mod_loader.hpp"
  #include "moderngekko/module_loader.hpp"
-@@ -53,8 +60,18 @@ static_assert(offsetof(ModernGekkoModuleDesc, chunk_hashes) ==
+@@ -53,8 +61,18 @@ static_assert(offsetof(ModernGekkoModuleDesc, chunk_hashes) ==
  std::mutex s_runtime_mutex;
  bool s_runtime_active = false;
  Platform *s_platform = nullptr;
@@ -300,7 +364,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  bool s_external_ui_common = false;
  std::unique_ptr<BootSessionData> s_boot_session_data;
  u64 s_previous_net_wait_ns = 0;
-@@ -113,21 +130,38 @@ PowerPC::CPUCore SelectCPUCore() {
+@@ -113,21 +131,38 @@ PowerPC::CPUCore SelectCPUCore() {
  std::vector<std::string> Host_GetPreferredLocales() { return {}; }
  void Host_PPCSymbolsChanged() {}
  void Host_PPCBreakpointsChanged() {}
@@ -348,7 +412,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  }
  void Host_UpdateDisasmDialog() {}
  void Host_JitCacheInvalidation() {}
-@@ -193,6 +227,8 @@ void MarkAutomationCommand(RuntimeAutomationState& state, std::string command_na
+@@ -193,6 +228,8 @@ void MarkAutomationCommand(RuntimeAutomationState& state, std::string command_na
  
  void ClearAutomationPad(int port)
  {
@@ -357,7 +421,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    for (int control = static_cast<int>(ciface::Touch::FIRST_GC_CONTROL);
         control <= static_cast<int>(ciface::Touch::LAST_WII_CONTROL); ++control)
    {
-@@ -203,6 +239,9 @@ void ClearAutomationPad(int port)
+@@ -203,6 +240,9 @@ void ClearAutomationPad(int port)
  
  void ApplyAutomationPad(const automation::PadState& pad)
  {
@@ -367,7 +431,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    ClearAutomationPad(pad.port);
    for (std::size_t index = 0; index < pad.controls.size(); ++index)
    {
-@@ -218,7 +257,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
+@@ -218,7 +258,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
  std::filesystem::path NormalizeScreenshotPath(const std::filesystem::path& path)
  {
    if (!path.has_extension())
@@ -380,7 +444,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    return path;
  }
  
-@@ -228,7 +271,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
+@@ -228,7 +272,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
    std::filesystem::create_directories(path.parent_path(), ec);
    const Core::CPUThreadGuard guard(Core::System::GetInstance());
    if (g_frame_dumper)
@@ -389,7 +453,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  }
  
  std::optional<RuntimeError> ReadAutomationMemory(const std::filesystem::path& path, u32 address,
-@@ -327,10 +370,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
+@@ -327,10 +371,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
      break;
    case automation::CommandType::SaveState:
      std::filesystem::create_directories(command.path.parent_path());
@@ -402,7 +466,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
      break;
    case automation::CommandType::Screenshot:
      SaveAutomationScreenshot(NormalizeScreenshotPath(command.path));
-@@ -410,12 +453,17 @@ void WriteAutomationStatus(const std::filesystem::path& root, ImplT& impl)
+@@ -410,12 +454,17 @@ void WriteAutomationStatus(const std::filesystem::path& root, ImplT& impl)
    status.title = impl.title;
    status.game_id = impl.metadata.disc_id;
    status.game_name = impl.metadata.game_name;
@@ -420,7 +484,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    }
    status.frame_count =
        impl.automation_state.frame_count.load(std::memory_order_relaxed);
-@@ -463,7 +511,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
+@@ -463,7 +512,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
        if (!automation::ParseCommandFile(command_path, &command, &error))
        {
          SetAutomationError(impl.automation_state,
@@ -429,7 +493,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
          MoveAutomationCommand(command_path, root, "failed");
          continue;
        }
-@@ -515,6 +563,62 @@ struct Runtime::Impl {
+@@ -515,6 +564,62 @@ struct Runtime::Impl {
    Common::EventHook present_hook;
    bool automation_registered = false;
    std::jthread automation_thread;
@@ -492,10 +556,13 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
  };
  
  namespace detail {
-@@ -554,6 +658,33 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -552,7 +657,34 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+     return {
+         {},
          RuntimeError{RuntimeErrorCode::AlreadyActive,
-                      "only one ModernGekko runtime may be active per process"}};
- 
+-                     "only one ModernGekko runtime may be active per process"}};
++                     "a game session is already running in this application"}};
++
 +  if (config.audio.headless_device_audio &&
 +      (!config.headless || config.audio.backend != BACKEND_CUBEB))
 +    return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed,
@@ -522,11 +589,10 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
 +    config.show_fps_in_title = true;
 +#endif
 +  }
-+
+ 
    GameInspectResult inspected = InspectGame(config.game_root);
    if (!inspected)
-     return {{}, RuntimeError{RuntimeErrorCode::InvalidGame, inspected.error}};
-@@ -565,7 +696,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -565,7 +697,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    ModuleLoadResult module_result{};
    if (config.module.kind == ModuleSource::Kind::DynamicPath)
      module_result =
@@ -535,7 +601,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    else if (config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      module_result =
          validation_library.Attach(config.module.descriptor, requirements);
-@@ -608,7 +739,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -608,7 +740,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
                   mod.version.c_str());
  
    if (!s_external_ui_common) {
@@ -544,7 +610,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
      UICommon::Init();
      impl->ui_initialized = true;
    }
-@@ -631,7 +762,43 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -631,19 +763,73 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    else if (impl->config.window_system != WindowSystem::X11) impl->platform =
        Platform::CreateWaylandPlatform();
  #endif
@@ -588,7 +654,9 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
      if (impl->ui_initialized)
        UICommon::Shutdown();
      return {{},
-@@ -640,10 +807,15 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+             RuntimeError{RuntimeErrorCode::PlatformUnavailable,
+-                         "the requested Dolphin host platform is unavailable"}};
++                         "the requested game window backend is unavailable"}};
    }
  
    const WindowSystemInfo wsi = impl->platform->GetWindowSystemInfo();
@@ -598,13 +666,26 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
 +        impl->config.ui_smoke_output_directory);
    UICommon::InitControllers(wsi);
    impl->controllers_initialized = true;
++  const std::string controls_error = detail::InitializeKeyboardControls(
++      !impl->config.headless && impl->config.ui_smoke_output_directory.empty(),
++      impl->config.game_root);
++  if (!controls_error.empty()) {
++    impl->RetireUI();
++    impl->RemoveUIHooks();
++    UICommon::ShutdownControllers();
++    impl->controllers_initialized = false;
++    impl->platform.reset();
++    if (impl->ui_initialized)
++      UICommon::Shutdown();
++    return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed, controls_error}};
++  }
    EnsureAutomationDirectories(impl->config.automation.directory);
    if (!impl->config.automation.directory.empty()) {
 +    // Register and initialize before BootCore starts emulated input readers.
      for (int port = 0; port < 4; ++port)
      {
        ciface::Touch::RegisterGameCubeInputOverrider(port);
-@@ -671,7 +843,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -671,7 +857,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    Config::SetBase(Config::GFX_WAIT_FOR_SHADERS_BEFORE_STARTING, true);
    const std::vector<std::string> audio_backends =
        AudioCommon::GetSoundBackends();
@@ -613,7 +694,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
      impl->config.audio.backend = BACKEND_NULLSOUND;
    } else if (impl->config.audio.backend.empty() ||
               !std::ranges::contains(audio_backends,
-@@ -686,8 +858,10 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -686,8 +872,10 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
          preferred != preferred_backends.end() ? *preferred : BACKEND_NULLSOUND;
    }
    Config::SetBase(Config::MAIN_AUDIO_BACKEND, impl->config.audio.backend);
@@ -625,7 +706,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    Config::SetBase(Config::MAIN_INPUT_BACKGROUND_INPUT,
                    impl->config.input.background_input);
  
-@@ -695,7 +869,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -695,7 +883,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    StaticRecompModuleSource recomp_source;
    if (impl->config.module.kind == ModuleSource::Kind::DynamicPath)
      recomp_source =
@@ -634,7 +715,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    else if (impl->config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      recomp_source = StaticRecompModuleSource::Attached(
          reinterpret_cast<const StaticRecompModuleDesc *>(
-@@ -709,19 +883,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -709,19 +897,25 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
  
    s_runtime_active = true;
    s_platform = impl->platform.get();
@@ -662,7 +743,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
      for (int port = 0; port < 4; ++port)
      {
        ciface::Touch::UnregisterGameCubeInputOverrider(port);
-@@ -732,12 +912,11 @@ Runtime::~Runtime() {
+@@ -732,12 +926,11 @@ Runtime::~Runtime() {
    m_impl->state_hook = {};
    if (m_impl->controllers_initialized)
      UICommon::ShutdownControllers();
@@ -678,7 +759,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    s_runtime_active = false;
  }
  
-@@ -755,6 +934,8 @@ RuntimeRunResult Runtime::Run() {
+@@ -755,6 +948,8 @@ RuntimeRunResult Runtime::Run() {
              RuntimeError{RuntimeErrorCode::InvalidState,
                           "runtime is already running"}};
  
@@ -687,7 +768,15 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    std::unique_ptr<BootParameters> boot;
    {
      std::lock_guard lock(s_runtime_mutex);
-@@ -782,6 +963,9 @@ RuntimeRunResult Runtime::Run() {
+@@ -775,19 +970,22 @@ RuntimeRunResult Runtime::Run() {
+     m_impl->running = false;
+     return {RuntimeExitReason::BootFailed,
+             RuntimeError{RuntimeErrorCode::BootFailed,
+-                         "Dolphin rejected the extracted disc"}};
++                         "the prepared game data could not be opened"}};
+   }
+   m_impl->state_hook =
+       Core::AddOnStateChangedCallback([this](Core::State state) {
          if (state == Core::State::Uninitialized && m_impl->platform)
            m_impl->platform->Stop();
        });
@@ -697,7 +786,14 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot),
                               m_impl->platform->GetWindowSystemInfo())) {
      m_impl->running = false;
-@@ -807,13 +991,57 @@ RuntimeRunResult Runtime::Run() {
+     return {RuntimeExitReason::BootFailed,
+             RuntimeError{RuntimeErrorCode::BootFailed,
+-                         "Dolphin could not boot sys/main.dol"}};
++                         "the game could not start from the prepared data"}};
+   }
+   m_impl->booted = true;
+   m_impl->present_hook =
+@@ -807,13 +1005,57 @@ RuntimeRunResult Runtime::Run() {
    if (!m_impl->config.headless && m_impl->config.show_fps_in_title) {
      title_thread = std::jthread([](std::stop_token stop_token) {
        while (!stop_token.stop_requested()) {
@@ -756,7 +852,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..46ff0e1757b4d3be0e84b08110708d04
    title_thread.request_stop();
    if (title_thread.joinable())
      title_thread.join();
-@@ -821,8 +1049,13 @@ RuntimeRunResult Runtime::Run() {
+@@ -821,8 +1063,13 @@ RuntimeRunResult Runtime::Run() {
    StopAutomation();
    Core::Stop(Core::System::GetInstance());
    Core::Shutdown(Core::System::GetInstance());
@@ -824,14 +920,15 @@ index fb4b07c971f2e55d9dbb93ca35a2d42306289b3d..a6615f350792c65524b39feb4ebf655b
  } // namespace moderngekko::detail
 diff --git a/src/runtime/ingame_menu.cpp b/src/runtime/ingame_menu.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3c10280f9
+index 0000000000000000000000000000000000000000..23e4d4403a6c1575eaa8e00a68064bf47bb9568d
 --- /dev/null
 +++ b/src/runtime/ingame_menu.cpp
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,686 @@
 +// Copyright 2026 DW4_PC contributors
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ingame_menu.hpp"
 +#include "ingame_menu_input.hpp"
++#include "ingame_menu_controls.h"
 +
 +#include "AudioCommon/AudioCommon.h"
 +#include "Common/Config/Config.h"
@@ -926,6 +1023,9 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +    std::string message;
 +    std::string last_action;
 +    std::vector<InGameMenuButtonRect> buttons;
++    KeyboardControlsSnapshot controls;
++    std::uint64_t controls_revision = 0;
++    bool controls_panel_open = false;
 +  };
 +
 +  HostActions actions; // Host-thread callbacks, immutable for this session.
@@ -935,12 +1035,18 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +  View view;
 +  std::atomic<bool> pending_action{false}, redraw_outstanding{false}, redraw_needed{false};
 +  std::atomic<bool> refresh_states{true};
++  std::atomic<bool> refresh_controls{true};
 +  std::atomic<std::uint64_t> draw_frames{0}, actions_queued{0}, actions_completed{0};
++  std::atomic<std::uint64_t> controls_rendered_revision{0};
 +  Clock::time_point next_snapshot{}, next_redraw{}, next_state_refresh{}; // Host only.
 +  std::time_t last_save_time = 0;
 +  std::size_t save_sequence = 0;
 +  std::string selected_state; // Video only; UTF-8 identity, not an unchecked path from input.
 +  bool drawn_open = false;
++  int controls_player = 0; // Video only; each slot retains independent bindings.
++  std::uint64_t controls_revision = 0;
++  KeyboardBindings controls_draft;
++  bool controls_dirty = false;
 +  std::array<bool, 8> modifiers{}; // Video only.
 +
 +  bool IsLive(std::uint64_t expected) const {
@@ -1087,6 +1193,9 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +        update.buttons = std::move(view.buttons);
 +        update.message = std::move(view.message);
 +        update.last_action = std::move(view.last_action);
++        update.controls = std::move(view.controls);
++        update.controls_revision = view.controls_revision;
++        update.controls_panel_open = view.controls_panel_open;
 +        view = std::move(update);
 +      }
 +      next_snapshot = now + std::chrono::milliseconds(50);
@@ -1101,6 +1210,12 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +        files.resize(128);
 +      std::lock_guard lock(mutex);
 +      view.states = std::move(files);
++    }
++    if (input.IsOpen() && refresh_controls.exchange(false)) {
++      auto controls = ReadKeyboardControls();
++      std::lock_guard lock(mutex);
++      view.controls = std::move(controls);
++      ++view.controls_revision;
 +    }
 +    RedrawPaused(system);
 +  }
@@ -1117,8 +1232,10 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +bool InGameMenu::HandleInput(const FrontendUI::InputEvent& event) {
 +  const bool was_open = IsOpen();
 +  const bool consumed = m_impl->input.Handle(event);
-+  if (!was_open && IsOpen())
++  if (!was_open && IsOpen()) {
 +    m_impl->refresh_states.store(true);
++    m_impl->refresh_controls.store(true);
++  }
 +  if (consumed || was_open)
 +    m_impl->redraw_needed.store(true);
 +  return consumed;
@@ -1225,6 +1342,7 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +    return pressed;
 +  };
 +  bool open = true;
++  bool controls_panel_open = false;
 +  if (ImGui::Begin("Digimon World 4 - Settings", &open, ImGuiWindowFlags_NoCollapse)) {
 +    ImGui::TextUnformatted("F1 or Escape closes this menu. Opening it keeps the game running.");
 +    ImGui::Text("Session: %s%s", view.paused ? "Paused" : "Running", view.netplay ? " | Online" : "");
@@ -1270,6 +1388,82 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +      ImGui::TextWrapped("Pause, save states and graphics changes are disabled during online play.");
 +    if (!self.actions.allow_audio_unmute)
 +      ImGui::TextDisabled("This diagnostic session requires silent audio.");
++
++    const bool controls_open = ImGui::CollapsingHeader("Controls");
++    controls_panel_open = controls_open;
++    record("controls_expand", active);
++    if (controls_open) {
++      if (self.controls_revision != view.controls_revision) {
++        self.controls_revision = view.controls_revision;
++        self.controls_draft = view.controls.players[static_cast<std::size_t>(self.controls_player)];
++        self.controls_dirty = false;
++      }
++      ImGui::TextWrapped("Keyboard bindings are added alongside this player's saved controller bindings.");
++      ImGui::TextDisabled("F1 and Escape are reserved for the menu. Changes are saved with your profile.");
++      ImGui::BeginDisabled(!active || view.netplay);
++      const char* players[] = {"Player 1", "Player 2", "Player 3", "Player 4"};
++      if (ImGui::Combo("Player", &self.controls_player, players, 4)) {
++        self.controls_draft = view.controls.players[static_cast<std::size_t>(self.controls_player)];
++        self.controls_dirty = false;
++      }
++      if (!view.controls.error.empty())
++        ImGui::TextWrapped("%s", view.controls.error.c_str());
++      const auto device = std::ranges::find(view.controls.devices, self.controls_draft.device,
++                                            &KeyboardDevice::qualifier);
++      if (device == view.controls.devices.end())
++        ImGui::TextWrapped("Keyboard unavailable. Refresh after connecting your input device.");
++      if (ImGui::BeginCombo("Input device", device == view.controls.devices.end() ? "Unavailable" : "Keyboard and mouse")) {
++        for (std::size_t i = 0; i < view.controls.devices.size(); ++i) {
++          const auto& keyboard = view.controls.devices[i];
++          const auto label = "Keyboard and mouse " + std::to_string(i + 1);
++          if (ImGui::Selectable(label.c_str(), self.controls_draft.device == keyboard.qualifier)) {
++            self.controls_draft.device = keyboard.qualifier;
++            self.controls_dirty = true;
++          }
++        }
++        ImGui::EndCombo();
++      }
++      if (ImGui::BeginChild("keyboard_bindings", ImVec2(0, 180), ImGuiChildFlags_Borders)) {
++        for (std::size_t i = 0; i < kKeyboardActions.size(); ++i) {
++          auto& key = self.controls_draft.keys[i];
++          ImGui::PushID(static_cast<int>(i));
++          ImGui::SetNextItemWidth(180);
++          if (ImGui::BeginCombo(kKeyboardActions[i].label, KeyboardKeyLabel(key).c_str())) {
++            if (ImGui::Selectable("Unbound", key.empty())) { key.clear(); self.controls_dirty = true; }
++            if (device != view.controls.devices.end())
++              for (const auto& name : device->keys)
++                if (ImGui::Selectable(KeyboardKeyLabel(name).c_str(), key == name)) { key = name; self.controls_dirty = true; }
++            ImGui::EndCombo();
++          }
++          ImGui::PopID();
++        }
++      }
++      ImGui::EndChild();
++      if (button("Keyboard defaults", "controls_defaults", active && !view.netplay && device != view.controls.devices.end())) {
++        self.controls_draft = DefaultKeyboardBindings(self.controls_draft.device);
++        self.controls_dirty = true;
++      }
++      ImGui::SameLine();
++      if (button("Clear keyboard", "controls_clear", active && !view.netplay)) {
++        self.controls_draft.keys.fill({});
++        self.controls_dirty = true;
++      }
++      if (button("Apply and save", "controls_apply", active && !view.netplay && self.controls_dirty && view.controls.error.empty())) {
++        const auto bindings = self.controls_draft;
++        const auto player = static_cast<std::size_t>(self.controls_player);
++        self.Queue("controls_apply", [bindings, player](Impl& owner, Core::System&) {
++          const auto error = ApplyKeyboardControls(player, bindings);
++          owner.Message(error.empty() ? "Player " + std::to_string(player + 1) + " keyboard bindings saved." : error);
++          owner.refresh_controls.store(true);
++        });
++      }
++      ImGui::SameLine();
++      if (button("Reload bindings", "controls_reload", active && !view.netplay))
++        self.refresh_controls.store(true);
++      if (self.controls_dirty)
++        ImGui::TextDisabled("Changes have not been applied. Switching players or reloading discards them.");
++      ImGui::EndDisabled();
++    }
 +
 +    ImGui::SeparatorText("Save states");
 +    if (button("Save new state", "save_state", active && !view.netplay))
@@ -1386,6 +1580,9 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +  {
 +    std::lock_guard lock(self.mutex);
 +    self.view.buttons = std::move(buttons);
++    self.view.controls_panel_open = controls_panel_open;
++    if (controls_panel_open)
++      self.controls_rendered_revision.store(self.controls_revision);
 +  }
 +}
 +
@@ -1404,6 +1601,9 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +  std::lock_guard lock(self.mutex);
 +  snapshot.paused = self.view.paused;
 +  snapshot.netplay = self.view.netplay;
++  snapshot.controls_panel_open = self.input.IsOpen() && self.view.controls_panel_open;
++  snapshot.controls_action_count = snapshot.controls_panel_open ? kKeyboardActions.size() : 0;
++  snapshot.controls_rendered_revision = self.controls_rendered_revision.load();
 +  snapshot.last_action = self.view.last_action;
 +  snapshot.message = self.view.message;
 +  snapshot.buttons = self.view.buttons;
@@ -1412,10 +1612,10 @@ index 0000000000000000000000000000000000000000..4dd43cb86cea763e4a74d65b649270d3
 +} // namespace moderngekko::detail
 diff --git a/src/runtime/ingame_menu.hpp b/src/runtime/ingame_menu.hpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..9017c50a4d070fd05b4cdbdd194dda772978b315
+index 0000000000000000000000000000000000000000..95aea2e6b349bf2cc532aff61060e26f9641c744
 --- /dev/null
 +++ b/src/runtime/ingame_menu.hpp
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,80 @@
 +// Copyright 2026 DW4_PC contributors
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#pragma once
@@ -1443,6 +1643,9 @@ index 0000000000000000000000000000000000000000..9017c50a4d070fd05b4cdbdd194dda77
 +  bool capture = false;
 +  bool paused = false;
 +  bool netplay = false;
++  bool controls_panel_open = false;
++  std::size_t controls_action_count = 0;
++  std::uint64_t controls_rendered_revision = 0;
 +  std::uint64_t input_events = 0;
 +  std::uint64_t input_overflows = 0;
 +  std::uint64_t draw_frames = 0;
@@ -1492,6 +1695,394 @@ index 0000000000000000000000000000000000000000..9017c50a4d070fd05b4cdbdd194dda77
 +  explicit InGameMenu(HostActions actions);
 +  std::shared_ptr<Impl> m_impl;
 +};
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu_controls.cpp b/src/runtime/ingame_menu_controls.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..6897bc4fbd1d04cb6346c4049468c0cd607fcc8d
+--- /dev/null
++++ b/src/runtime/ingame_menu_controls.cpp
+@@ -0,0 +1,317 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#include "ingame_menu_controls.h"
++
++#include "Common/FileUtil.h"
++#include "Common/IniFile.h"
++#include "Common/Config/Config.h"
++#include "Core/HW/GCPad.h"
++#include "Core/Config/ConfigManager.h"
++#include "Core/Config/MainSettings.h"
++#include "Core/Core.h"
++#include "Core/HW/SI/SI.h"
++#include "Core/HW/SI/SI_Device.h"
++#include "Core/NetPlay/NetPlayProto.h"
++#include "Core/System.h"
++#include "InputCommon/ControlReference/ControlReference.h"
++#include "InputCommon/ControllerEmu/ControllerEmu.h"
++#include "InputCommon/ControllerInterface/ControllerInterface.h"
++#include "InputCommon/InputConfig.h"
++
++#include <algorithm>
++#include <filesystem>
++#include <fstream>
++#include <mutex>
++#include <string_view>
++#include <utility>
++
++namespace moderngekko::detail {
++namespace {
++std::string ConfigPath() { return File::GetUserPath(D_CONFIG_IDX) + "GCPadNew.ini"; }
++std::string PlayerSection(std::size_t player) { return "GCPad" + std::to_string(player + 1); }
++std::string KeyboardSection(std::size_t player) { return "Keyboard" + std::to_string(player + 1); }
++
++std::string Read(const Common::IniFile::Section& section, const std::string& key) {
++  std::string value;
++  section.Get(key, &value);
++  return value;
++}
++bool HasBindings(const KeyboardBindings& bindings) {
++  return std::ranges::any_of(bindings.keys, [](const auto& key) { return !key.empty(); });
++}
++bool HasProfileOverride(std::size_t player) {
++  return SConfig::GetInstance().LoadGameIni().Exists(
++      "Controls", "PadProfile" + std::to_string(player + 1));
++}
++bool HasGamepadAssignment(const Common::IniFile::Section& pad,
++                         const Common::IniFile::Section& metadata) {
++  const auto device = Read(metadata, "GamepadDevice");
++  if (Read(metadata, "GamepadAssigned") != "True" || device != Read(pad, "Device") ||
++      device.size() > 4096 || device.find_first_of("\r\n") != std::string::npos ||
++      device.find('\0') != std::string::npos)
++    return false;
++  ciface::Core::DeviceQualifier qualifier;
++  qualifier.FromString(device);
++  return qualifier.source == "SDL" && qualifier.cid >= 0 && !qualifier.name.empty() &&
++         qualifier.ToString() == device;
++}
++void SetPort(std::size_t player, SerialInterface::SIDevices device) {
++  // The saved keyboard metadata owns this session overlay. Runtime.ini's base
++  // port settings stay intact, and SI applies its atomic request on its owner.
++  const Config::ConfigChangeCallbackGuard guard;
++  Config::SetCurrent(Config::GetInfoForSIDevice(static_cast<int>(player)), device);
++  auto& system = Core::System::GetInstance();
++  if (Core::IsRunning(system))
++    system.GetSerialInterface().ChangeDevice(device, static_cast<int>(player));
++}
++std::string Combined(const std::string& base, const std::string& device, const std::string& key) {
++  if (key.empty())
++    return base;
++  const std::string keyboard = "`" + device + ":" + key + "`";
++  return base.empty() ? keyboard : "(" + base + ") | " + keyboard;
++}
++
++std::vector<KeyboardDevice> Devices() {
++  std::vector<KeyboardDevice> result;
++  // GetAllDevices returns shared owners; hotplug cannot destroy these inputs
++  // during enumeration. Do not hold the controller-state lock while enumerating.
++  for (const auto& device : g_controller_interface.GetAllDevices()) {
++    if (device->GetSource() != "DInput" || device->GetName() != "Keyboard Mouse")
++      continue;
++    KeyboardDevice item{device->GetQualifiedName(), {}};
++    for (const auto* input : device->Inputs()) {
++      const std::string name = input->GetName();
++      // F1 and Escape belong to the menu. Relative/cursor axes are not keys.
++      if (input->IsHidden() || !input->IsDetectable() || name == "F1" || name == "ESCAPE" ||
++          name.starts_with("Cursor ") || name.starts_with("Axis ") || name.starts_with("RelativeMouse ") ||
++          name.find_first_of("`\r\n:") != std::string::npos)
++        continue;
++      item.keys.push_back(name);
++    }
++    std::ranges::sort(item.keys);
++    item.keys.erase(std::unique(item.keys.begin(), item.keys.end()), item.keys.end());
++    result.push_back(std::move(item));
++  }
++  return result;
++}
++
++KeyboardBindings ReadBindings(const Common::IniFile::Section& live,
++                              const Common::IniFile::Section* metadata) {
++  KeyboardBindings result;
++  if (!metadata)
++    return result;
++  result.device = Read(*metadata, "Device");
++  for (std::size_t i = 0; i < kKeyboardActions.size(); ++i) {
++    const std::string setting = kKeyboardActions[i].setting;
++    const auto key = Read(*metadata, "Key/" + setting);
++    const auto base = Read(*metadata, "Base/" + setting);
++    // A game-specific or externally edited profile is authoritative. Only
++    // identify keyboard expressions that this editor still owns exactly.
++    if (Read(live, setting) == Combined(base, result.device, key))
++      result.keys[i] = key;
++  }
++  return result;
++}
++
++std::string Apply(std::size_t player, const KeyboardBindings& bindings, bool fresh_profile) {
++  if (player >= 4 || !Pad::IsInitialized())
++    return "The selected player's controls are unavailable.";
++  if (NetPlay::IsNetPlayRunning())
++    return "Controls cannot be changed during online play.";
++  if (HasProfileOverride(player))
++    return "A game-specific input profile overrides this player. Remove that override before editing here.";
++  const auto devices = Devices();
++  if (HasBindings(bindings)) {
++    const auto device = std::ranges::find(devices, bindings.device, &KeyboardDevice::qualifier);
++    if (device == devices.end())
++      return "The selected keyboard is unavailable. Refresh the device list.";
++    for (const auto& key : bindings.keys)
++      if (!key.empty() && std::ranges::find(device->keys, key) == device->keys.end())
++        return "A selected key is unavailable or reserved for the menu.";
++  }
++  const std::string path = ConfigPath();
++  Common::IniFile file;
++  if (File::Exists(path) && !file.Load(path))
++    return "Could not read the saved controller profile. Existing bindings were kept.";
++  Common::IniFile::Section desired(PlayerSection(player));
++  if (const auto* saved = file.GetSection(PlayerSection(player)))
++    desired = *saved;
++  auto* metadata = file.GetOrCreateSection(KeyboardSection(player));
++  {
++    auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
++    auto* controller = Pad::GetConfig()->GetController(static_cast<int>(player));
++    controller->SaveConfig(&desired);
++  }
++  const KeyboardBindings previous = ReadBindings(desired, metadata);
++  const auto current_port = Config::Get(Config::GetInfoForSIDevice(static_cast<int>(player)));
++  const bool owned_port = Read(*metadata, "ManagedPort") == "True" &&
++                         current_port == SerialInterface::SIDEVICE_GC_CONTROLLER;
++  int original_port = static_cast<int>(current_port);
++  if (owned_port) {
++    if (HasGamepadAssignment(desired, *metadata))
++      original_port = static_cast<int>(SerialInterface::SIDEVICE_GC_CONTROLLER);
++    else if (!metadata->Get("OriginalPort", &original_port) || original_port < 0 ||
++             original_port >= SerialInterface::SIDEVICE_COUNT)
++      return "The saved keyboard port setting is invalid. Existing controls were kept.";
++  }
++  const auto desired_port = HasBindings(bindings) ? SerialInterface::SIDEVICE_GC_CONTROLLER :
++      owned_port ? static_cast<SerialInterface::SIDevices>(original_port) : current_port;
++  std::string original_connection = Read(desired, "Options/Always Connected");
++  if (Read(*metadata, "ManagedAlwaysConnected") == "True" && original_connection == "True")
++    original_connection = Read(*metadata, "OriginalAlwaysConnected");
++  for (std::size_t i = 0; i < kKeyboardActions.size(); ++i) {
++    const std::string setting = kKeyboardActions[i].setting;
++    const std::string base = fresh_profile ? "" : !previous.keys[i].empty() ?
++        Read(*metadata, "Base/" + setting) : Read(desired, setting);
++    const std::string expression = Combined(base, bindings.device, bindings.keys[i]);
++    InputReference checked;
++    if (checked.SetExpression(expression))
++      return "A controller binding could not be parsed. Existing bindings were kept.";
++    desired.Set(setting, expression, "");
++    metadata->Set("Base/" + setting, base);
++    metadata->Set("Key/" + setting, bindings.keys[i]);
++  }
++  if (fresh_profile) {
++    desired.Set("Device", bindings.device);
++    desired.Set("Main Stick/Calibration", "100.00");
++    desired.Set("C-Stick/Calibration", "100.00");
++  }
++  desired.Set("Options/Always Connected", HasBindings(bindings) ? "True" : original_connection, "");
++  metadata->Set("Device", bindings.device);
++  metadata->Set("OriginalAlwaysConnected", original_connection);
++  metadata->Set("ManagedAlwaysConnected", HasBindings(bindings) ? "True" : "False");
++  metadata->Set("ManagedPort", HasBindings(bindings) ? "True" : "False");
++  metadata->Set("OriginalPort", original_port);
++  *file.GetOrCreateSection(PlayerSection(player)) = desired;
++  // Only the selected player's section is replaced. Unknown settings, gamepad
++  // expressions, and all other player slots remain in this same native profile.
++  // IniFile::Save uses a temporary file and rename; unlike InputConfig::SaveConfig
++  // it returns failure, so the live controls remain unchanged if persistence fails.
++  if (!File::CreateFullPath(path) || !file.Save(path))
++    return "Could not save the controller profile. Check the save folder's permissions and free space.";
++  {
++    auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
++    state_lock.unlock();
++    std::unique_lock device_lock(g_controller_interface.GetDevicesMutex(), std::defer_lock);
++    std::lock(state_lock, device_lock);
++    auto* controller = Pad::GetConfig()->GetController(static_cast<int>(player));
++    controller->LoadConfig(&desired);
++    controller->UpdateReferences(g_controller_interface);
++  }
++  SetPort(player, desired_port);
++  return {};
++}
++} // namespace
++
++KeyboardBindings DefaultKeyboardBindings(const std::string& device) {
++  KeyboardBindings result;
++  result.device = device;
++  for (std::size_t i = 0; i < kKeyboardActions.size(); ++i)
++    result.keys[i] = kKeyboardActions[i].default_key;
++  return result;
++}
++
++std::string KeyboardKeyLabel(const std::string& key) {
++  static constexpr std::pair<std::string_view, std::string_view> labels[]{
++      {"LCONTROL", "Left Ctrl"}, {"RCONTROL", "Right Ctrl"},
++      {"LMENU", "Left Alt"}, {"RMENU", "Right Alt"},
++      {"LSHIFT", "Left Shift"}, {"RSHIFT", "Right Shift"},
++      {"LWIN", "Left Windows"}, {"RWIN", "Right Windows"},
++      {"RETURN", "Enter"}, {"SPACE", "Space"}, {"BACK", "Backspace"},
++      {"UP", "Up arrow"}, {"DOWN", "Down arrow"},
++      {"LEFT", "Left arrow"}, {"RIGHT", "Right arrow"},
++      {"PRIOR", "Page Up"}, {"NEXT", "Page Down"},
++      {"HOME", "Home"}, {"END", "End"}, {"INSERT", "Insert"}, {"DELETE", "Delete"},
++      {"TAB", "Tab"}, {"CAPITAL", "Caps Lock"}, {"NUMLOCK", "Num Lock"},
++      {"SCROLL", "Scroll Lock"}, {"NUMPADENTER", "Numpad Enter"},
++      {"Click 0", "Mouse left"}, {"Click 1", "Mouse right"},
++      {"Click 2", "Mouse middle"}, {"Click 3", "Mouse button 4"},
++      {"Click 4", "Mouse button 5"}, {"Click 5", "Mouse button 6"},
++      {"Click 6", "Mouse button 7"}, {"Click 7", "Mouse button 8"}};
++  if (key.empty())
++    return "Unbound";
++  for (const auto& [native, label] : labels)
++    if (native == key)
++      return std::string(label);
++  if (key.starts_with("NUMPAD"))
++    return "Numpad " + key.substr(6);
++  return key;
++}
++
++KeyboardControlsSnapshot ReadKeyboardControls() {
++  KeyboardControlsSnapshot result;
++  result.devices = Devices();
++  if (!Pad::IsInitialized()) {
++    result.error = "Controller settings are not ready.";
++    return result;
++  }
++  Common::IniFile file;
++  if (File::Exists(ConfigPath()) && !file.Load(ConfigPath())) {
++    result.error = "Could not read the saved controller profile.";
++    return result;
++  }
++  const auto lock = ControllerEmu::EmulatedController::GetStateLock();
++  for (std::size_t i = 0; i < result.players.size(); ++i) {
++    Common::IniFile::Section live;
++    Pad::GetConfig()->GetController(static_cast<int>(i))->SaveConfig(&live);
++    result.players[i] = ReadBindings(live, file.GetSection(KeyboardSection(i)));
++    if (result.players[i].device.empty() && !result.devices.empty())
++      result.players[i].device = result.devices.front().qualifier;
++  }
++  return result;
++}
++
++std::string ApplyKeyboardControls(std::size_t player, const KeyboardBindings& bindings) {
++  return Apply(player, bindings, false);
++}
++
++std::string InitializeKeyboardControls(bool allow_default, const std::filesystem::path& game_root) {
++  if (NetPlay::IsNetPlayRunning())
++    return {};
++  auto game_ini = SConfig::GetInstance().LoadGameIni();
++  if (!game_root.empty()) {
++    // Game metadata is not installed in SConfig until BootCore. Read only the
++    // disc identity needed to respect named input profiles before that point.
++    std::array<unsigned char, 8> header{};
++    std::ifstream boot(game_root / "sys" / "boot.bin", std::ios::binary);
++    boot.read(reinterpret_cast<char*>(header.data()), header.size());
++    const auto identity_end = header.begin() + 6;
++    if (!boot || !std::all_of(header.begin(), identity_end, [](unsigned char value) {
++          return (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9');
++        }))
++      return "Could not read the game identity for its input profiles.";
++    const std::string game_id(header.begin(), identity_end);
++    game_ini = SConfig::LoadGameIni(game_id, header[7]);
++  }
++  const auto profile_override = [&](std::size_t player) {
++    return game_ini.Exists("Controls", "PadProfile" + std::to_string(player + 1));
++  };
++  Common::IniFile file;
++  if (File::Exists(ConfigPath())) {
++    if (!file.Load(ConfigPath()))
++      return "Could not read the saved controller profile.";
++    for (std::size_t player = 0; player < 4; ++player) {
++      const auto* saved = file.GetSection(PlayerSection(player));
++      const auto* metadata = file.GetSection(KeyboardSection(player));
++      if (saved && metadata && !profile_override(player) &&
++          (HasGamepadAssignment(*saved, *metadata) ||
++           (Read(*metadata, "ManagedPort") == "True" &&
++            HasBindings(ReadBindings(*saved, metadata)))))
++        SetPort(player, SerialInterface::SIDEVICE_GC_CONTROLLER);
++    }
++    // Even an explicitly cleared keyboard profile remains cleared on restart.
++    if (file.Exists(KeyboardSection(0)))
++      return {};
++    if (const auto* saved = file.GetSection(PlayerSection(0)))
++      for (const auto& action : kKeyboardActions)
++        if (!Read(*saved, action.setting).empty())
++          return {};
++  }
++  if (!allow_default || profile_override(0))
++    return {};
++  const auto devices = Devices();
++  if (devices.empty())
++    return "No keyboard input device is available. Configure a controller before playing.";
++  return Apply(0, DefaultKeyboardBindings(devices.front().qualifier), true);
++}
++} // namespace moderngekko::detail
+diff --git a/src/runtime/ingame_menu_controls.h b/src/runtime/ingame_menu_controls.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..94b3f31f7cba0807cddf6eaacae82fd894c6c31b
+--- /dev/null
++++ b/src/runtime/ingame_menu_controls.h
+@@ -0,0 +1,59 @@
++// Copyright 2026 DW4_PC contributors
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <array>
++#include <cstddef>
++#include <filesystem>
++#include <string>
++#include <vector>
++
++namespace moderngekko::detail {
++struct KeyboardAction {
++  const char* setting;
++  const char* label;
++  const char* default_key;
++};
++// Input names match the native Windows DInput keyboard device. Sticks retain
++// separate directional and modifier controls, and analog triggers stay editable.
++inline constexpr std::array<KeyboardAction, 24> kKeyboardActions{{
++    {"Buttons/A", "A", "SPACE"}, {"Buttons/B", "B", "LCONTROL"},
++    {"Buttons/X", "X", "E"}, {"Buttons/Y", "Y", "R"},
++    {"Buttons/Z", "Z", "Q"}, {"Buttons/Start", "Start", "RETURN"},
++    {"Main Stick/Up", "Move up", "W"}, {"Main Stick/Down", "Move down", "S"},
++    {"Main Stick/Left", "Move left", "A"}, {"Main Stick/Right", "Move right", "D"},
++    {"Main Stick/Modifier", "Move slowly", "LMENU"},
++    {"C-Stick/Up", "C stick up", "I"}, {"C-Stick/Down", "C stick down", "K"},
++    {"C-Stick/Left", "C stick left", "J"}, {"C-Stick/Right", "C stick right", "L"},
++    {"C-Stick/Modifier", "C stick modifier", ""},
++    {"Triggers/L", "L", "LSHIFT"}, {"Triggers/R", "R", "F"},
++    {"Triggers/L-Analog", "L analog", "LSHIFT"}, {"Triggers/R-Analog", "R analog", "F"},
++    {"D-Pad/Up", "D-pad up", "UP"}, {"D-Pad/Down", "D-pad down", "DOWN"},
++    {"D-Pad/Left", "D-pad left", "LEFT"}, {"D-Pad/Right", "D-pad right", "RIGHT"},
++}};
++
++struct KeyboardBindings {
++  std::string device;
++  std::array<std::string, kKeyboardActions.size()> keys;
++  bool operator==(const KeyboardBindings&) const = default;
++};
++struct KeyboardDevice {
++  std::string qualifier;
++  std::vector<std::string> keys;
++};
++struct KeyboardControlsSnapshot {
++  std::array<KeyboardBindings, 4> players;
++  std::vector<KeyboardDevice> devices;
++  std::string error;
++};
++
++KeyboardBindings DefaultKeyboardBindings(const std::string& device);
++std::string KeyboardKeyLabel(const std::string& key);
++// Host thread only. These access the actual Pad configuration, never ImGui.
++KeyboardControlsSnapshot ReadKeyboardControls();
++std::string ApplyKeyboardControls(std::size_t player, const KeyboardBindings& bindings);
++// Call after UICommon::InitControllers, before boot reloads the Pad profile.
++// Headless/hidden diagnostics pass false. Existing profiles are preserved.
++std::string InitializeKeyboardControls(bool allow_default,
++                                       const std::filesystem::path& game_root = {});
 +} // namespace moderngekko::detail
 diff --git a/src/runtime/ingame_menu_input.hpp b/src/runtime/ingame_menu_input.hpp
 new file mode 100644
@@ -1607,25 +2198,36 @@ index 0000000000000000000000000000000000000000..18b764ee59ba283b3aa9e5ce02c5742c
 +} // namespace moderngekko::detail
 diff --git a/src/runtime/ingame_menu_smoke.cpp b/src/runtime/ingame_menu_smoke.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7adb4751e6
+index 0000000000000000000000000000000000000000..e9fa3c3186baf71df8a2f3379a8a1f75e73a6add
 --- /dev/null
 +++ b/src/runtime/ingame_menu_smoke.cpp
-@@ -0,0 +1,590 @@
+@@ -0,0 +1,964 @@
 +// Copyright 2026 DW4_PC contributors
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#include "ingame_menu_smoke.hpp"
 +
 +#include "ingame_menu.hpp"
++#include "ingame_menu_controls.h"
 +
 +#include "AudioCommon/AudioTelemetry.h"
 +#include "Common/Config/Config.h"
 +#include "Common/FileUtil.h"
 +#include "Common/HookableEvent.h"
++#include "Common/IniFile.h"
++#include "Common/ScopeGuard.h"
 +#include "Common/StringUtil.h"
 +#include "Core/Config/MainSettings.h"
 +#include "Core/Core.h"
++#include "Core/HW/GCPad.h"
++#include "Core/HW/GCPadEmu.h"
++#include "Core/HW/SI/SI.h"
++#include "Core/HW/SI/SI_Device.h"
 +#include "Core/System.h"
 +#include "DolphinNoGUI/Platform.h"
++#include "InputCommon/ControlReference/ControlReference.h"
++#include "InputCommon/ControllerInterface/ControllerInterface.h"
++#include "InputCommon/GCPadStatus.h"
++#include "InputCommon/InputConfig.h"
 +#include "VideoCommon/ComposedFrameCapture.h"
 +#include "VideoCommon/VideoEvents.h"
 +
@@ -1690,8 +2292,11 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +  enum class Phase {
 +    WaitReady, Open, Repeat, Close, Reopen, Escape, OpenAgain,
 +    BackgroundMove, BackgroundDown, BackgroundUp, SpaceDown, SpaceUp,
-+    PauseMove, PauseDown, WaitPaused, PauseSettle, PausedRedraw, Capture,
-+    ResumeMove, ResumeDown, WaitResumed, FinalClose, Finished
++    PauseMove, PauseDown, WaitPaused, PauseSettle, ControlsMove, ControlsDown,
++    ControlsExpand, ControlsReloadMove, ControlsReloadDown, ControlsReloadWait,
++    ControlsDefaultsMove, ControlsDefaultsDown, ControlsDefaultsWait,
++    ControlsApplyMove, ControlsApplyDown, ControlsApplyWait, PausedRedraw, Capture,
++    ResumeMove, ResumeDown, WaitResumed, FinalClose, GameSpaceDown, GameSpaceUp, Finished
 +  };
 +  struct Event {
 +    std::string phase;
@@ -1723,6 +2328,18 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +  bool inventory_ready = false, finished = false, passed = false;
 +  bool f1_open = false, repeat_ignored = false, f1_closed = false, escape_closed = false;
 +  bool space_suppressed = false, paused_redraw = false, resumed = false, states_unchanged = false;
++  std::array<Common::IniFile::Section, 4> initial_pads;
++  std::array<SerialInterface::SIDevices, 4> initial_ports;
++  std::string pad_path, initial_pad_bytes;
++  bool keyboard_backup_ready = false, initial_pad_exists = false;
++  bool keyboard_persistence = false, keyboard_independent = false, keyboard_reserved = false;
++  bool keyboard_gate_open = false, keyboard_gate_closed = false, keyboard_port_restart = false;
++  bool keyboard_port_attached = false, keyboard_restored = false, controls_drawn = false;
++  bool keyboard_first_launch = false, keyboard_clear_restores = false, game_space_normal_speed = false;
++  bool controls_reload_button = false, controls_defaults_apply_saved = false;
++  bool selected_gamepad_port_preserved = false;
++  std::uint64_t captured_controls_revision = 0;
++  std::string diagnostic_keyboard_device;
 +#ifdef _WIN32
 +  HWND window = nullptr;
 +  DWORD host_thread = GetCurrentThreadId();
@@ -1808,6 +2425,22 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +         << ",\n  \"paused_redraw_without_game_frames\":" << paused_redraw
 +         << ",\n  \"resumed_game_frames\":" << resumed
 +         << ",\n  \"save_states_unchanged\":" << states_unchanged
++         << ",\n  \"keyboard\":{\"native_reload_persistence\":" << keyboard_persistence
++         << ",\"first_launch_defaults\":" << keyboard_first_launch
++         << ",\"clear_restores_original_controls_and_port\":" << keyboard_clear_restores
++         << ",\"other_players_preserved\":" << keyboard_independent
++         << ",\"reserved_keys_rejected\":" << keyboard_reserved
++         << ",\"core_input_gate_open_menu\":" << keyboard_gate_open
++         << ",\"core_input_gate_closed_menu\":" << keyboard_gate_closed
++         << ",\"saved_port_reapplied\":" << keyboard_port_restart
++         << ",\"selected_gamepad_port_preserved\":" << selected_gamepad_port_preserved
++         << ",\"player_two_port_attached\":" << keyboard_port_attached
++         << ",\"controls_panel_drawn\":" << controls_drawn
++         << ",\"controls_reload_button\":" << controls_reload_button
++         << ",\"controls_defaults_apply_saved\":" << controls_defaults_apply_saved
++         << ",\"captured_controls_revision\":" << captured_controls_revision
++         << ",\"profile_restored\":" << keyboard_restored << "}"
++         << ",\n  \"space_game_binding_keeps_normal_speed\":" << game_space_normal_speed
 +         << ",\n  \"initial_save_state_files\":" << initial_states.size()
 +         << ",\n  \"save_state_directory\":" << Quote(PathToString(states_directory))
 +         << ",\n  \"input_overflows\":" << snapshot.input_overflows
@@ -1855,9 +2488,15 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +      return;
 +    error = std::move(reason);
 +    passed = success;
++    try {
++      RestoreKeyboardProfile();
++    } catch (const std::exception& failure) {
++      passed = false;
++      error += (error.empty() ? "" : "; ") + std::string(failure.what());
++    }
 +    finished = true;
 +    phase = Phase::Finished;
-+    Note(success ? "passed" : "failed");
++    Note(passed ? "passed" : "failed");
 +    try {
 +      WriteEvidence();
 +    } catch (const std::exception& failure) {
@@ -1868,6 +2507,224 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +      std::fprintf(stderr, "[ui-smoke] failed: %s\n", error.c_str());
 +    // Stop is the immediate host-loop request. RequestShutdown may only deliver a guest power hook.
 +    platform.Stop();
++  }
++
++  void RestoreKeyboardProfile() {
++    if (!keyboard_backup_ready)
++      return;
++    // Restore the exact file bytes as well as all live pad owners. The test may
++    // be interrupted after any mutation; never leave diagnostic mappings saved.
++    bool disk_restored = true;
++    if (initial_pad_exists) {
++      const auto temporary = File::GetTempFilenameForAtomicWrite(pad_path);
++      disk_restored = File::WriteStringToFile(temporary, initial_pad_bytes) &&
++                      File::RenameSync(temporary, pad_path);
++    } else if (File::Exists(pad_path)) {
++      disk_restored = File::Delete(pad_path);
++    }
++    {
++      auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
++      state_lock.unlock();
++      std::unique_lock device_lock(g_controller_interface.GetDevicesMutex(), std::defer_lock);
++      std::lock(state_lock, device_lock);
++      for (int player = 0; player < 4; ++player) {
++        auto* pad = Pad::GetConfig()->GetController(player);
++        pad->LoadConfig(&initial_pads[player]);
++        pad->UpdateReferences(g_controller_interface);
++      }
++    }
++    for (int player = 0; player < 4; ++player) {
++      Config::SetCurrent(Config::GetInfoForSIDevice(player), initial_ports[player]);
++      if (Core::IsRunning(Core::System::GetInstance()))
++        Core::System::GetInstance().GetSerialInterface().ChangeDevice(initial_ports[player], player);
++    }
++    keyboard_restored = disk_restored;
++    keyboard_backup_ready = !disk_restored;
++    if (!disk_restored)
++      throw std::runtime_error("The keyboard diagnostic could not restore its controller profile.");
++  }
++
++  void VerifyKeyboardControls() {
++    if (Core::GetState(Core::System::GetInstance()) != Core::State::Paused || !menu->IsOpen())
++      throw std::runtime_error("Keyboard diagnostics require the paused settings menu.");
++    const auto before = ReadKeyboardControls();
++    if (!before.error.empty() || before.devices.empty())
++      throw std::runtime_error("The native keyboard is unavailable to the controls diagnostic.");
++    pad_path = File::GetUserPath(D_CONFIG_IDX) + "GCPadNew.ini";
++    initial_pad_exists = File::Exists(pad_path);
++    if (initial_pad_exists && !File::ReadFileToString(pad_path, initial_pad_bytes))
++      throw std::runtime_error("Cannot back up the diagnostic controller profile.");
++    for (int player = 0; player < 4; ++player) {
++      Pad::GetConfig()->GetController(player)->SaveConfig(&initial_pads[player]);
++      initial_ports[player] = Config::Get(Config::GetInfoForSIDevice(player));
++    }
++    keyboard_backup_ready = true;
++    // The wrapper supplies a fresh empty pad profile. Exercise the real first
++    // launch initializer without requiring any connected gamepad.
++    for (const auto& action : kKeyboardActions) {
++      std::string value;
++      initial_pads[0].Get(action.setting, &value);
++      if (!value.empty())
++        throw std::runtime_error("Keyboard diagnostics require a fresh empty Player 1 profile.");
++    }
++    const auto default_init_error = InitializeKeyboardControls(true);
++    if (!default_init_error.empty() || ReadKeyboardControls().players[0] !=
++        DefaultKeyboardBindings(before.devices.front().qualifier))
++      throw std::runtime_error("First-launch native keyboard defaults were not saved and applied.");
++    keyboard_first_launch = true;
++    std::array<Common::IniFile::Section, 4> comparison_pads;
++    for (int player = 0; player < 4; ++player)
++      Pad::GetConfig()->GetController(player)->SaveConfig(&comparison_pads[player]);
++    // A synthetic, unpressed SDL expression is a preservation fixture. The
++    // added keyboard expression must resolve against the real DInput device.
++    {
++      auto lock = ControllerEmu::EmulatedController::GetStateLock();
++      Pad::GetGroup(1, PadGroup::Buttons)->SetControlExpression(0, "`Button A`");
++    }
++    Config::SetCurrent(Config::GetInfoForSIDevice(1), SerialInterface::SIDEVICE_NONE);
++    auto bindings = DefaultKeyboardBindings(before.devices.front().qualifier);
++    const auto defaults_error = ApplyKeyboardControls(1, bindings);
++    if (!defaults_error.empty())
++      throw std::runtime_error("Native keyboard defaults failed: " + defaults_error);
++    bindings.keys[0] = "F2";
++    const auto apply_error = ApplyKeyboardControls(1, bindings);
++    if (!apply_error.empty())
++      throw std::runtime_error("Native keyboard remapping failed: " + apply_error);
++    const auto expected = "(`Button A`) | `" + bindings.device + ":F2`";
++    {
++      auto lock = ControllerEmu::EmulatedController::GetStateLock();
++      const auto& ref = Pad::GetGroup(1, PadGroup::Buttons)->controls[0]->control_ref;
++      if (ref->GetExpression() != expected || ref->BoundCount() < 1)
++        throw std::runtime_error("The saved keyboard mapping did not bind to native input.");
++    }
++    // The real loader must recover the new keys after live expressions change.
++    {
++      auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
++      state_lock.unlock();
++      std::unique_lock device_lock(g_controller_interface.GetDevicesMutex(), std::defer_lock);
++      std::lock(state_lock, device_lock);
++      Pad::GetGroup(1, PadGroup::Buttons)->SetControlExpression(0, "0");
++      Pad::LoadConfig();
++    }
++    const auto reloaded = ReadKeyboardControls();
++    if (!reloaded.error.empty() || reloaded.players[1] != bindings)
++      throw std::runtime_error("Native pad reload lost the saved keyboard assignment.");
++    keyboard_persistence = true;
++    for (int player : {0, 2, 3}) {
++      Common::IniFile::Section live;
++      Pad::GetConfig()->GetController(player)->SaveConfig(&live);
++      if (live.GetValues() != comparison_pads[player].GetValues())
++        throw std::runtime_error("Keyboard remapping changed another player's controls.");
++    }
++    keyboard_independent = true;
++    std::string saved_bytes;
++    if (!File::ReadFileToString(pad_path, saved_bytes))
++      throw std::runtime_error("Cannot inspect the saved keyboard profile.");
++    for (const char* reserved : {"F1", "ESCAPE"}) {
++      auto invalid = bindings;
++      invalid.keys[0] = reserved;
++      std::string after_bytes;
++      if (ApplyKeyboardControls(1, invalid).empty() ||
++          !File::ReadFileToString(pad_path, after_bytes) || after_bytes != saved_bytes ||
++          ReadKeyboardControls().players[1] != bindings)
++        throw std::runtime_error("A reserved menu key changed the live or saved controls.");
++    }
++    keyboard_reserved = true;
++    auto cleared = bindings;
++    cleared.keys.fill({});
++    if (!ApplyKeyboardControls(1, cleared).empty() ||
++        !InitializeKeyboardControls(false).empty() || ReadKeyboardControls().players[1] != cleared ||
++        Config::Get(Config::GetInfoForSIDevice(1)) != SerialInterface::SIDEVICE_NONE)
++      throw std::runtime_error("Clearing keyboard bindings did not restore the original player port.");
++    {
++      const auto lock = ControllerEmu::EmulatedController::GetStateLock();
++      if (Pad::GetGroup(1, PadGroup::Buttons)->controls[0]->control_ref->GetExpression() != "`Button A`")
++        throw std::runtime_error("Clearing keyboard bindings lost the preserved controller expression.");
++    }
++    keyboard_clear_restores = true;
++    if (!ApplyKeyboardControls(1, bindings).empty())
++      throw std::runtime_error("The second player could not be rebound after clearing its keyboard.");
++    // Reproduce selecting a physical gamepad after keyboard activation of an
++    // empty port. Its saved device-qualified intent must survive Clear and a
++    // subsequent startup, but must not own an externally replaced device.
++    {
++      std::string keyboard_bytes;
++      Common::IniFile physical;
++      if (!File::ReadFileToString(pad_path, keyboard_bytes) || !physical.Load(pad_path))
++        throw std::runtime_error("Cannot prepare the selected-gamepad port fixture.");
++      const auto reload_profile = [&] {
++        auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
++        state_lock.unlock();
++        std::unique_lock device_lock(g_controller_interface.GetDevicesMutex(), std::defer_lock);
++        std::lock(state_lock, device_lock);
++        Pad::LoadConfig();
++      };
++      const std::string selected_device = "SDL/123/DW4 diagnostic gamepad";
++      physical.GetOrCreateSection("GCPad2")->Set("Device", selected_device);
++      physical.GetOrCreateSection("Keyboard2")->Set("GamepadAssigned", "True");
++      physical.GetOrCreateSection("Keyboard2")->Set("GamepadDevice", selected_device);
++      if (!physical.Save(pad_path))
++        throw std::runtime_error("Cannot save the selected-gamepad port fixture.");
++      reload_profile();
++      if (!ApplyKeyboardControls(1, cleared).empty() ||
++          ReadKeyboardControls().players[1] != cleared ||
++          Config::Get(Config::GetInfoForSIDevice(1)) != SerialInterface::SIDEVICE_GC_CONTROLLER)
++        throw std::runtime_error("Clearing keyboard bindings disconnected the selected gamepad port.");
++      Config::SetCurrent(Config::GetInfoForSIDevice(1), SerialInterface::SIDEVICE_NONE);
++      if (!InitializeKeyboardControls(false).empty() ||
++          Config::Get(Config::GetInfoForSIDevice(1)) != SerialInterface::SIDEVICE_GC_CONTROLLER)
++        throw std::runtime_error("Startup did not restore the selected gamepad after keyboard Clear.");
++      if (!physical.Load(pad_path))
++        throw std::runtime_error("Cannot reload the cleared selected-gamepad fixture.");
++      physical.GetOrCreateSection("GCPad2")->Set("Device", "SDL/124/Externally replaced gamepad");
++      if (!physical.Save(pad_path))
++        throw std::runtime_error("Cannot save the stale selected-gamepad fixture.");
++      reload_profile();
++      Config::SetCurrent(Config::GetInfoForSIDevice(1), SerialInterface::SIDEVICE_NONE);
++      if (!InitializeKeyboardControls(false).empty() ||
++          Config::Get(Config::GetInfoForSIDevice(1)) != SerialInterface::SIDEVICE_NONE)
++        throw std::runtime_error("Stale selected-gamepad metadata claimed an externally replaced device.");
++      const auto temporary = File::GetTempFilenameForAtomicWrite(pad_path);
++      if (!File::WriteStringToFile(temporary, keyboard_bytes) || !File::RenameSync(temporary, pad_path))
++        throw std::runtime_error("Cannot restore the keyboard fixture after selected-gamepad checks.");
++      reload_profile();
++      selected_gamepad_port_preserved = true;
++    }
++    Config::SetCurrent(Config::GetInfoForSIDevice(1), SerialInterface::SIDEVICE_NONE);
++    const auto restart_error = InitializeKeyboardControls(false);
++    if (!restart_error.empty() || Config::Get(Config::GetInfoForSIDevice(1)) !=
++                                    SerialInterface::SIDEVICE_GC_CONTROLLER)
++      throw std::runtime_error("The saved second-player keyboard port was not reapplied.");
++    keyboard_port_restart = true;
++    {
++      const auto lock = ControllerEmu::EmulatedController::GetStateLock();
++      auto& ref = Pad::GetGroup(1, PadGroup::Buttons)->controls[0]->control_ref;
++      const auto expression = ref->GetExpression();
++      const bool old_gate = ControlReference::GetInputGate();
++      const Common::ScopeGuard restore([&] {
++        ref->SetExpression(expression);
++        ControlReference::SetInputGate(old_gate);
++      });
++      ref->SetExpression("1");
++      ControlReference::SetInputGate(true);
++      if (!(Pad::GetStatus(1).button & PAD_BUTTON_A))
++        throw std::runtime_error("The diagnostic pad did not produce its positive input sample.");
++      Core::UpdateInputGate(false);
++      if (ControlReference::GetInputGate() || (Pad::GetStatus(1).button & PAD_BUTTON_A))
++        throw std::runtime_error("The real core input gate passed pad input through the open menu.");
++      keyboard_gate_open = true;
++    }
++    // SetExpression invalidates its bound references; reconnect after the guard
++    // restores it, with the same lock ordering as the editor and hotplug path.
++    Pad::GetConfig()->GetController(1)->UpdateReferences(g_controller_interface);
++    // The following real UI clicks must change a value, not merely save an
++    // identical default. This fixture is covered by the existing exact restore.
++    diagnostic_keyboard_device = before.devices.front().qualifier;
++    auto ui_fixture = DefaultKeyboardBindings(diagnostic_keyboard_device);
++    ui_fixture.keys[0] = "F3";
++    const auto ui_fixture_error = ApplyKeyboardControls(0, ui_fixture);
++    if (!ui_fixture_error.empty())
++      throw std::runtime_error("Cannot prepare the keyboard UI fixture: " + ui_fixture_error);
 +  }
 +
 +#ifdef _WIN32
@@ -2113,6 +2970,84 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +      if (state != Core::State::Paused)
 +        throw std::runtime_error("The game resumed without a diagnostic Resume click.");
 +      if (PhaseElapsed() < 0.25 || !drew) return;
++      VerifyKeyboardControls();
++      if (!MoveToButton(current, "controls_expand"))
++        throw std::runtime_error("The Controls header was not available in the settings menu.");
++      Next(Phase::ControlsMove, "controls_move");
++      break;
++    case Phase::ControlsMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::ControlsDown, "controls_down");
++      break;
++    case Phase::ControlsDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::ControlsExpand, "controls_expand");
++      break;
++    case Phase::ControlsExpand:
++      if (!drew || !current.controls_panel_open) return;
++      if (current.controls_action_count != kKeyboardActions.size())
++        throw std::runtime_error("The controls editor did not expose every native pad action.");
++      if (!MoveToButton(current, "controls_reload")) return;
++      Next(Phase::ControlsReloadMove, "controls_reload_move");
++      break;
++    case Phase::ControlsReloadMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::ControlsReloadDown, "controls_reload_down");
++      break;
++    case Phase::ControlsReloadDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::ControlsReloadWait, "controls_reload_release");
++      break;
++    case Phase::ControlsReloadWait:
++      if (!drew || !current.controls_panel_open ||
++          current.controls_rendered_revision <= marker.controls_rendered_revision) return;
++      controls_reload_button = true;
++      if (!MoveToButton(current, "controls_defaults")) return;
++      Next(Phase::ControlsDefaultsMove, "controls_defaults_move");
++      break;
++    case Phase::ControlsDefaultsMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::ControlsDefaultsDown, "controls_defaults_down");
++      break;
++    case Phase::ControlsDefaultsDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::ControlsDefaultsWait, "controls_defaults_release");
++      break;
++    case Phase::ControlsDefaultsWait:
++      if (!drew || !MoveToButton(current, "controls_apply")) return;
++      Next(Phase::ControlsApplyMove, "controls_apply_move");
++      break;
++    case Phase::ControlsApplyMove:
++      if (!drew) return;
++      Mouse(true);
++      Next(Phase::ControlsApplyDown, "controls_apply_down");
++      break;
++    case Phase::ControlsApplyDown:
++      if (!drew) return;
++      Mouse(false);
++      Next(Phase::ControlsApplyWait, "controls_apply_release");
++      break;
++    case Phase::ControlsApplyWait:
++      if (!drew || !current.controls_panel_open || current.last_action != "controls_apply" ||
++          current.actions_completed <= marker.actions_completed ||
++          current.controls_rendered_revision <= marker.controls_rendered_revision) return;
++      {
++        const auto applied = ReadKeyboardControls();
++        if (!applied.error.empty() || applied.players[0] !=
++            DefaultKeyboardBindings(diagnostic_keyboard_device))
++          throw std::runtime_error("The Controls Apply button did not save and apply keyboard defaults.");
++      }
++      if (state != Core::State::Paused || current.controls_action_count != kKeyboardActions.size())
++        throw std::runtime_error("The paused controls editor changed state during its button checks.");
++      controls_defaults_apply_saved = true;
++      captured_controls_revision = current.controls_rendered_revision;
++      controls_drawn = true;
 +      paused_frames = GameFrames();
 +      paused_draws = current.draw_frames;
 +      Next(Phase::PausedRedraw, "paused_redraw");
@@ -2154,6 +3089,13 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +    case Phase::WaitResumed:
 +      if (state != Core::State::Running || current.paused || current.last_action != "resume" ||
 +          current.actions_completed <= marker.actions_completed || GameFrames() < marker_frames + 2) return;
++      {
++        const Core::CPUThreadGuard guard(Core::System::GetInstance());
++        if (Core::System::GetInstance().GetSerialInterface().GetDeviceType(1) !=
++            SerialInterface::SIDEVICE_GC_CONTROLLER)
++          return;
++      }
++      keyboard_port_attached = true;
 +      resumed = true;
 +      Tap(VK_F1);
 +      Next(Phase::FinalClose, "final_close");
@@ -2161,6 +3103,29 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +    case Phase::FinalClose:
 +      if (current.open || current.capture || current.input_events < marker.input_events + 2 ||
 +          PhaseElapsed() < 0.25) return;
++      {
++        InputReference input;
++        input.SetExpression("1");
++        const bool old_gate = ControlReference::GetInputGate();
++        const Common::ScopeGuard restore([&] { ControlReference::SetInputGate(old_gate); });
++        Core::UpdateInputGate(false);
++        if (!ControlReference::GetInputGate() || input.State(0.0) != 1.0)
++          throw std::runtime_error("Closing the menu did not release the core input gate.");
++        keyboard_gate_closed = true;
++      }
++      Key(VK_SPACE, true);
++      Next(Phase::GameSpaceDown, "game_space_down");
++      break;
++    case Phase::GameSpaceDown:
++      if (PhaseElapsed() < 0.2 || current.input_events <= marker.input_events) return;
++      if (Config::Get(Config::MAIN_EMULATION_SPEED) != initial_speed || current.open)
++        throw std::runtime_error("The Space game binding changed simulation speed outside the menu.");
++      Key(VK_SPACE, false);
++      Next(Phase::GameSpaceUp, "game_space_up");
++      break;
++    case Phase::GameSpaceUp:
++      if (PhaseElapsed() < 0.15 || current.input_events <= marker.input_events) return;
++      game_space_normal_speed = true;
 +      if (Config::Get(Config::MAIN_EMULATION_SPEED) != initial_speed)
 +        throw std::runtime_error("The diagnostic changed the configured emulation speed.");
 +      if (!inventory_ready || Inventory() != initial_states)
@@ -2203,10 +3168,10 @@ index 0000000000000000000000000000000000000000..1c8c6545df1e83c8e85927c18a7fbb7a
 +} // namespace moderngekko::detail
 diff --git a/src/runtime/ingame_menu_smoke.hpp b/src/runtime/ingame_menu_smoke.hpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..3ba42ba748d97e0585b65f7d01b76ceff9503476
+index 0000000000000000000000000000000000000000..8cfc0d81f2870320076cd476b1d56b72a33930b5
 --- /dev/null
 +++ b/src/runtime/ingame_menu_smoke.hpp
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,45 @@
 +// Copyright 2026 DW4_PC contributors
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#pragma once
@@ -2227,6 +3192,9 @@ index 0000000000000000000000000000000000000000..3ba42ba748d97e0585b65f7d01b76cef
 +// an already configured hidden platform, a live menu and its diagnostic capture channel, then ticks
 +// this driver from the platform's UI callback. It never injects global/physical input or shows a window.
 +// Construct before boot so the owned video-event listener observes real game presentation progress.
++// Keyboard checks require the wrapper's fresh empty Player 1 profile. While
++// paused they exercise native bindings, disk reload and the core input gate,
++// then verify Player 2 attachment after resume and restore the original profile.
 +class InGameMenuSmoke final {
 +public:
 +  InGameMenuSmoke(Platform& platform, std::shared_ptr<InGameMenu> menu,
@@ -2301,6 +3269,212 @@ index 4b2345f412c0591e945a2b54b90262b7b1c1ad54..5221f2446a177afb9249b7444f56500f
    };
    for (const auto &directory : directories) {
      std::error_code ec;
+diff --git a/tests/frontend_config_test.cpp b/tests/frontend_config_test.cpp
+index 6bb9e0efdd0ff0ad3bfbf458875b86b13ef5b52e..434f3bc1735d697373fb7b6bab4443ec678d53c3 100644
+--- a/tests/frontend_config_test.cpp
++++ b/tests/frontend_config_test.cpp
+@@ -1,26 +1,179 @@
+ #include "frontend_config.hpp"
+ 
+ #include <chrono>
++#include <cstdio>
+ #include <filesystem>
+ #include <fstream>
+ #include <iterator>
+ #include <string>
+ 
++#ifdef _WIN32
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
+ #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
+ constexpr const char *CONTROLLER_CONFIG_NAME = "GCPadNew.ini";
+ #else
+ constexpr const char *CONTROLLER_CONFIG_NAME = "WiimoteNew.ini";
+ #endif
+ 
++namespace {
++std::string ReadBytes(const std::filesystem::path& path) {
++  std::ifstream input(path, std::ios::binary);
++  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
++}
++
++bool Require(bool condition, const char* message) {
++  if (!condition)
++    std::fprintf(stderr, "Controller merge check failed: %s\n", message);
++  return condition;
++}
++
++#ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
++std::string SectionBytes(const std::string& bytes, const std::string& name) {
++  const auto start = bytes.find("[" + name + "]\n");
++  if (start == std::string::npos)
++    return {};
++  const auto end = bytes.find("\n[", start);
++  return bytes.substr(start, end == std::string::npos ? end : end + 1 - start);
++}
++
++bool CheckControllerMerge(const std::filesystem::path& directory) {
++  namespace fs = std::filesystem;
++  const auto user = directory / fs::path(u8"controller-merge-ü日本");
++  fs::create_directories(user / "Config");
++  const auto path = user / "Config" / CONTROLLER_CONFIG_NAME;
++  const auto write = [&](const std::string& bytes) {
++    std::ofstream output(path, std::ios::binary | std::ios::trunc);
++    output << bytes;
++    output.close();
++    return static_cast<bool>(output);
++  };
++  const std::string unchanged_tail =
++      "[Keyboard2]\r\nDevice = DInput/0/Keyboard Mouse\r\nKey/Buttons/A = F8\r\n"
++      "[GCPad2]\r\nDevice = SDL/1/Keep Player Two\r\nButtons/A = CustomTwo\r\n"
++      "[GCPad3]\r\nDevice = SDL/2/Keep Player Three\r\nButtons/B = CustomThree\r\n"
++      "[Other settings]\r\n# preserve this exact comment\r\nValue = untouched\r\n+raw = keep\r\n";
++  const std::string keyboard_only =
++      "\xef\xbb\xbf# Keep the header\r\n[GCPad1]\r\nDevice = DInput/0/Keyboard Mouse\r\n"
++      "Buttons/A = `DInput/0/Keyboard Mouse:SPACE`\r\n"
++      "Buttons/B = `DInput/0/Keyboard Mouse:LCONTROL`\r\n"
++      "Main Stick/Up = `DInput/0/Keyboard Mouse:W`\r\n"
++      "C-Stick/Calibration = 87.00\r\nOptions/Always Connected = True\r\nPrivate = unchanged\r\n"
++      "[Keyboard1]\r\nDevice = DInput/0/Keyboard Mouse\r\n"
++      "Key/Buttons/A = SPACE\r\nBase/Buttons/A =\r\n"
++      "Key/Buttons/B = LCONTROL\r\nBase/Buttons/B =\r\n"
++      "Key/Main Stick/Up = W\r\nBase/Main Stick/Up =\r\n"
++      "ManagedAlwaysConnected = True\r\nOriginalAlwaysConnected = False\r\n"
++      "ManagedPort = True\r\nOriginalPort = 0\r\n" + unchanged_tail;
++  std::string error;
++  if (!Require(write(keyboard_only), "write keyboard fixture") ||
++      !Require(moderngekko::frontend::GenerateControllerConfig(user, "SDL/0/New Pad", &error),
++               "select a gamepad for a keyboard profile"))
++    return false;
++  const auto merged = ReadBytes(path);
++  if (!Require(merged.starts_with("\xef\xbb\xbf# Keep the header\r\n"), "preserve BOM and line endings") ||
++      !Require(merged.contains("Device = SDL/0/New Pad\r\n"), "assign selected device") ||
++      !Require(merged.contains("Buttons/A = (`Button A`) | `DInput/0/Keyboard Mouse:SPACE`\r\n"),
++               "keep keyboard A while adding gamepad A") ||
++      !Require(merged.contains("Buttons/B = (`Button B`) | `DInput/0/Keyboard Mouse:LCONTROL`\r\n"),
++               "keep keyboard B while adding gamepad B") ||
++      !Require(merged.contains("Main Stick/Up = (`Left Y+`) | `DInput/0/Keyboard Mouse:W`\r\n"),
++               "keep keyboard movement while adding stick input") ||
++      !Require(merged.contains("Base/Buttons/A = `Button A`\r\n"), "update owned Base metadata") ||
++      !Require(merged.contains("Key/Buttons/A = SPACE\r\n"), "keep native keyboard key metadata") ||
++      !Require(merged.contains("GamepadAssigned = True\r\n") &&
++               merged.contains("GamepadDevice = SDL/0/New Pad\r\n"), "persist selected physical pad ownership") ||
++      !Require(merged.contains("C-Stick/Calibration = 87.00\r\n"), "keep custom calibration") ||
++      !Require(merged.contains("Private = unchanged\r\n"), "keep unknown player setting") ||
++      !Require(merged.ends_with(unchanged_tail), "keep other player and unknown sections byte-for-byte"))
++    return false;
++
++  const std::string customized =
++      "[GCPad1]\nDevice = SDL/0/Old Pad\nBUTTONS/A = EarlierDuplicate\n"
++      "Buttons/A = \"(`Button X` & `Shoulder L`) | `DInput/0/Keyboard Mouse:SPACE`\"\n"
++      "Buttons/B = `SDL/7/Fixed Device:Button B`\nButtons/X =\n"
++      "Triggers/L = `Trigger R`\nRumble/Motor =\n"
++      "[keyboard1]\ndevice = DInput/0/Keyboard Mouse\n"
++      "key/buttons/a = SPACE\nbase/buttons/a = `Button X` & `Shoulder L`\n"
++      "[GCPad2]\nDevice = SDL/1/Second Old\nButtons/A = CustomTwo\n"
++      "[GCPad4]\nDevice = SDL/3/Keep Fourth\nButtons/A = CustomFour\n";
++  const std::vector<std::string> selected{"SDL/0/Replacement Pad", "SDL/1/Replacement Two"};
++  if (!Require(write(customized), "write customized fixture") ||
++      !Require(moderngekko::frontend::GenerateControllerConfig(user, selected, &error),
++               "replace two devices without resetting their mappings"))
++    return false;
++  const auto changed = ReadBytes(path);
++  if (!Require(changed.contains("Buttons/A = (`Button X` & `Shoulder L`) | `DInput/0/Keyboard Mouse:SPACE`\n"),
++               "preserve custom base and keyboard across duplicate/quoted keys") ||
++      !Require(changed.contains("Base/Buttons/A = `Button X` & `Shoulder L`\n"), "preserve custom keyboard Base") ||
++      !Require(changed.contains("Buttons/B = `SDL/7/Fixed Device:Button B`\n"), "preserve explicit device expressions") ||
++      !Require(changed.contains("Buttons/X =\n") && changed.contains("Rumble/Motor =\n"),
++               "preserve deliberate unbound controls") ||
++      !Require(changed.contains("Triggers/L = `Trigger R`\n"), "preserve custom trigger mapping") ||
++      !Require(changed.contains("Device = SDL/1/Replacement Two\nButtons/A = CustomTwo\n"), "merge only requested second slot") ||
++      !Require(SectionBytes(changed, "GCPad4") == SectionBytes(customized, "GCPad4"),
++               "keep unrequested fourth slot"))
++    return false;
++
++  const std::string external =
++      "[GCPad1]\nDevice = SDL/0/Old\nButtons/A = ExternallyChanged\n"
++      "[Keyboard1]\nDevice = DInput/0/Keyboard Mouse\n"
++      "Key/Buttons/A = SPACE\nBase/Buttons/A = `Button A`\n";
++  if (!Require(write(external), "write externally changed fixture") ||
++      !Require(moderngekko::frontend::GenerateControllerConfig(user, "SDL/0/New", &error), "merge external edits") ||
++      !Require(ReadBytes(path).contains("Buttons/A = ExternallyChanged\n"), "keep unowned edited expression"))
++    return false;
++
++  const auto before_failure = ReadBytes(path);
++#ifdef _WIN32
++  const HANDLE held = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
++                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++  if (!Require(held != INVALID_HANDLE_VALUE, "hold destination against atomic replacement"))
++    return false;
++  const bool saved = moderngekko::frontend::GenerateControllerConfig(user, "SDL/0/Rejected Update", &error);
++  CloseHandle(held);
++  if (!Require(!saved && !error.empty(), "surface rejected atomic publication") ||
++      !Require(ReadBytes(path) == before_failure, "failed write preserves complete original bytes"))
++    return false;
++  for (const auto& entry : fs::directory_iterator(path.parent_path()))
++    if (!Require(!entry.path().filename().string().starts_with(".controller-update-"),
++                 "clean up owned temporary file after write failure"))
++      return false;
++#endif
++  const auto malformed = std::string("[GCPad1]\nButtons/A = ") + '\0' + "bad\n";
++  if (!Require(write(malformed), "write malformed fixture") ||
++      !Require(!moderngekko::frontend::GenerateControllerConfig(user, "SDL/0/New", &error), "reject binary profile") ||
++      !Require(ReadBytes(path) == malformed, "rejected profile remains intact"))
++    return false;
++  return true;
++}
++#endif
++} // namespace
++
+ int main() {
+   namespace fs = std::filesystem;
++  const fs::path temp_root = fs::canonical(fs::temp_directory_path());
+   const fs::path directory =
+-      fs::temp_directory_path() /
++      temp_root /
+       ("moderngekko-frontend-config-" +
+        std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
++  if (directory.lexically_normal().parent_path() != temp_root)
++    return 22;
+ 
+   std::string error;
++#if defined(MODERNGEKKO_GAMECUBE_CONTROLLERS) && defined(_WIN32)
++  if (!moderngekko::frontend::EnsureControllerConfig(directory, std::string_view{}, &error) ||
++      moderngekko::frontend::ControllerConfigExists(directory))
++    return 20;
++#endif
+   const std::string controller = "SDL/0/Test Controller";
+   if (!moderngekko::frontend::SaveConfig(directory, "1920x1080", false,
+                                          controller, &error))
+@@ -95,6 +248,8 @@ int main() {
+       !generated.contains("Triggers/L-Analog = `Trigger L`\n") ||
+       !generated.contains("Rumble/Motor = `Motor L` | `Motor R`\n") ||
+       !generated.contains("[GCPad2]\nDevice = SDL/1/Second Controller\n") ||
++      !generated.contains("[Keyboard1]\nGamepadAssigned = True\nGamepadDevice = SDL/0/Test Controller\n") ||
++      !generated.contains("[Keyboard2]\nGamepadAssigned = True\nGamepadDevice = SDL/1/Second Controller\n") ||
+       generated.contains("[Wiimote") || generated.contains("[BalanceBoard]")) {
+     return 5;
+   }
+@@ -138,6 +293,11 @@ int main() {
+                                  directory) != "SDL/9/Custom Controller")
+     return 12;
+ 
++#ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
++  if (!CheckControllerMerge(directory))
++    return 21;
++#endif
++
+   fs::remove_all(directory);
+   return 0;
+ }
 diff --git a/tools/automation_protocol.cpp b/tools/automation_protocol.cpp
 index 25f4167becb549ce8fd9091cc483baca9542283c..a1f72bc3b6bbb38b43309ca65c84fedcd70d2ef9 100644
 --- a/tools/automation_protocol.cpp
@@ -2397,11 +3571,162 @@ index 2396f01ac78611962839aa6aaf76fd87bf2a6a31..b20ba2df5b50cc5ee16efe4b3b7a8a33
    std::uint64_t frame_count = 0;
    std::uint64_t present_count = 0;
    std::string title;
+diff --git a/tools/embed_system_resources.py b/tools/embed_system_resources.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..07f154c8407da5940d3320267d7dc2f62f57cb2b
+--- /dev/null
++++ b/tools/embed_system_resources.py
+@@ -0,0 +1,113 @@
++#!/usr/bin/env python3
++"""Embed only redistributable service resources for the supported DW4 build."""
++
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++from pathlib import Path
++import re
++
++
++REQUIRED_RESOURCES = (
++    "GC/dsp_coef.bin",
++    "GC/dsp_rom.bin",
++    "GC/font_japanese.bin",
++    "GC/font_western.bin",
++    "Resources/OSD_Font.ttf",
++    "GameSettings/GDJEB2.ini",
++    "codehandler.bin",
++)
++MAX_RESOURCE_BYTES = 4 * 1024 * 1024
++MAX_TOTAL_BYTES = 8 * 1024 * 1024
++
++
++def collect_resources(sys_directory: Path, game_settings_override: Path | None = None):
++    root = sys_directory.resolve(strict=True)
++    names = set(REQUIRED_RESOURCES)
++    for name in ("G.ini", "GDJ.ini"):
++        if (root / "GameSettings" / name).is_file():
++            names.add(f"GameSettings/{name}")
++    for path in (root / "GameSettings").glob("GDJEB2r*.ini"):
++        if re.fullmatch(r"GDJEB2r[0-9]+\.ini", path.name):
++            names.add(f"GameSettings/{path.name}")
++
++    override = None
++    if game_settings_override is not None:
++        override = game_settings_override.resolve(strict=True)
++        if override.name != "GDJEB2.ini":
++            raise ValueError("The supported game settings override must be named GDJEB2.ini")
++
++    resources = []
++    total = 0
++    for name in sorted(names):
++        source = override if name == "GameSettings/GDJEB2.ini" and override else root / name
++        source = source.resolve(strict=True)
++        if source != override:
++            try:
++                source.relative_to(root)
++            except ValueError:
++                raise ValueError(f"System resource escapes the source tree: {name}") from None
++        size = source.stat().st_size
++        if not 0 < size <= MAX_RESOURCE_BYTES:
++            raise ValueError(f"System resource has an invalid size: {name} ({size})")
++        if name == "GC/dsp_coef.bin" and size != 4096:
++            raise ValueError("DSP coefficients must contain exactly 4096 bytes")
++        if name == "GC/dsp_rom.bin" and size != 8192:
++            raise ValueError("DSP ROM must contain exactly 8192 bytes")
++        total += size
++        if total > MAX_TOTAL_BYTES:
++            raise ValueError("Embedded system resources exceed the total byte bound")
++        with source.open("rb") as stream:
++            contents = stream.read(size + 1)
++        if len(contents) != size:
++            raise ValueError(f"System resource changed while being read: {name}")
++        resources.append((name, contents))
++    return resources
++
++
++def generate(sys_directory: Path, output: Path, manifest: Path,
++             game_settings_override: Path | None = None):
++    resources = collect_resources(sys_directory, game_settings_override)
++    lines = ["// Generated by embed_system_resources.py. Do not edit.",
++             "// Contains redistributable service resources only; no original game assets."]
++    records = []
++    for index, (name, contents) in enumerate(resources):
++        digest = hashlib.sha256(contents).hexdigest()
++        lines.append(f"// {name}: {len(contents)} bytes, SHA-256 {digest}")
++        lines.append(f"alignas(16) static constexpr u8 system_resource_{index}[] = {{")
++        for offset in range(0, len(contents), 24):
++            lines.append("  " + ", ".join(f"0x{byte:02x}" for byte in contents[offset:offset + 24]) + ",")
++        lines.append("};")
++        records.append({"path": name, "bytes": len(contents), "sha256": digest})
++    lines.append("static constexpr SystemResource system_resources[] = {")
++    for index, (name, _) in enumerate(resources):
++        lines.append(f'  {{"{name}", system_resource_{index}}},')
++    lines.append("};")
++    output.parent.mkdir(parents=True, exist_ok=True)
++    manifest.parent.mkdir(parents=True, exist_ok=True)
++    with output.open("w", encoding="utf-8", newline="\n") as stream:
++        stream.write("\n".join(lines) + "\n")
++    with manifest.open("w", encoding="utf-8", newline="\n") as stream:
++        stream.write(json.dumps({"schema": 1, "game_id": "GDJEB2", "resources": records},
++                                indent=2) + "\n")
++    return records
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--sys-directory", required=True, type=Path)
++    parser.add_argument("--output", required=True, type=Path)
++    parser.add_argument("--manifest", required=True, type=Path)
++    parser.add_argument("--game-settings-override", type=Path)
++    args = parser.parse_args()
++    try:
++        records = generate(args.sys_directory, args.output, args.manifest, args.game_settings_override)
++    except (OSError, ValueError) as error:
++        parser.error(str(error))
++    print(f"Embedded {len(records)} system resources ({sum(item['bytes'] for item in records)} bytes)")
++
++
++if __name__ == "__main__":
++    main()
 diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
-index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e284793afc6 100644
+index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..75c0ade973a3235cfe157c53f72b6ac2b4b2f098 100644
 --- a/tools/frontend_config.cpp
 +++ b/tools/frontend_config.cpp
-@@ -10,6 +10,11 @@ namespace fs = std::filesystem;
+@@ -1,15 +1,43 @@
+ #include "frontend_config.hpp"
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <cctype>
+ #include <charconv>
++#include <chrono>
++#include <cstdio>
++#include <cstring>
+ #include <fstream>
++#include <new>
++#include <sstream>
++#include <stdexcept>
+ #include <string_view>
+ 
++#ifdef _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <windows.h>
++#else
++#include <unistd.h>
++#endif
++
++#ifndef MODERNGEKKO_FRONTEND_NAME
++#define MODERNGEKKO_FRONTEND_NAME "Digimon World 4 PC"
++#endif
++
+ namespace fs = std::filesystem;
  
  namespace moderngekko::frontend {
  namespace {
@@ -2413,7 +3738,288 @@ index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e28
  std::string Trim(std::string value) {
    const auto not_space = [](unsigned char c) { return !std::isspace(c); };
    value.erase(value.begin(),
-@@ -102,7 +107,7 @@ ConfigResult LoadConfig(const fs::path &user_directory,
+@@ -71,6 +99,280 @@ std::string_view ControllerSectionPrefix() {
+ #endif
+ }
+ 
++// Preserve raw lines outside the exact settings changed by controller selection.
++// Effective lookup follows Common::IniFile: case-insensitive section/key names,
++// last duplicate wins, a leading UTF-8 BOM is ignored, and outer quotes strip.
++class ControllerProfile {
++public:
++  explicit ControllerProfile(const std::string& bytes) {
++    std::string section;
++    for (std::size_t start = 0; start < bytes.size();) {
++      const auto end = bytes.find('\n', start);
++      const auto length = end == std::string::npos ? bytes.size() - start : end - start + 1;
++      if (lines.size() >= 65536 || length > 65536)
++        throw std::runtime_error("controller profile has too many lines or an oversized line");
++      Line line{bytes.substr(start, length), section, {}, {}, false};
++      std::string text = line.raw;
++      if (start == 0 && text.starts_with("\xef\xbb\xbf"))
++        text.erase(0, 3);
++      if (end != std::string::npos && lines.empty())
++        newline = text.ends_with("\r\n") ? "\r\n" : "\n";
++      if (!text.empty() && text.front() == '[') {
++        const auto close = text.find(']');
++        if (close != std::string::npos) {
++          section = Lower(text.substr(1, close - 1));
++          line.section = section;
++          line.header = true;
++        }
++      } else if (!section.empty() && !text.empty() &&
++                 std::string_view("#$*+").find(text.front()) == std::string_view::npos) {
++        const auto equals = text.find('=');
++        if (equals != std::string::npos) {
++          line.key = Lower(Trim(text.substr(0, equals)));
++          line.value = Trim(text.substr(equals + 1));
++          if (line.value.size() >= 2 && line.value.front() == '"' && line.value.back() == '"')
++            line.value = line.value.substr(1, line.value.size() - 2);
++        }
++      }
++      lines.push_back(std::move(line));
++      start += length;
++    }
++  }
++
++  std::string Get(const std::string& section, const std::string& key) const {
++    const auto normalized_section = Lower(section), normalized_key = Lower(key);
++    const auto found = std::find_if(lines.rbegin(), lines.rend(), [&](const Line& line) {
++      return line.section == normalized_section && line.key == normalized_key;
++    });
++    return found == lines.rend() ? std::string{} : found->value;
++  }
++
++  bool Has(const std::string& section, const std::string& key) const {
++    const auto normalized_section = Lower(section), normalized_key = Lower(key);
++    return std::ranges::any_of(lines, [&](const Line& line) {
++      return line.section == normalized_section && line.key == normalized_key;
++    });
++  }
++
++  void Set(const std::string& section, const std::string& key, const std::string& value) {
++    const auto normalized_section = Lower(section), normalized_key = Lower(key);
++    for (auto line = lines.rbegin(); line != lines.rend(); ++line) {
++      if (line->section != normalized_section || line->key != normalized_key)
++        continue;
++      const auto ending = line->raw.ends_with("\r\n") ? "\r\n" :
++                          line->raw.ends_with('\n') ? "\n" : "";
++      line->raw = key + " = " + value + ending;
++      line->value = value;
++      return;
++    }
++    std::size_t insertion = lines.size();
++    bool found_section = false;
++    for (std::size_t i = 0; i < lines.size(); ++i) {
++      if (lines[i].section == normalized_section) {
++        insertion = i + 1;
++        found_section = true;
++      }
++    }
++    if (insertion != 0 && !lines[insertion - 1].raw.ends_with('\n'))
++      lines[insertion - 1].raw += newline;
++    if (!found_section) {
++      lines.push_back({"[" + section + "]" + newline, normalized_section, {}, {}, true});
++      insertion = lines.size();
++    }
++    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(insertion),
++                 {key + " = " + value + newline, normalized_section, normalized_key, value, false});
++  }
++
++  std::vector<std::pair<std::string, std::string>> Settings(const std::string& section) const {
++    std::vector<std::pair<std::string, std::string>> result;
++    const auto normalized_section = Lower(section);
++    for (const auto& line : lines)
++      if (line.section == normalized_section && !line.key.empty())
++        result.emplace_back(Trim(line.raw.substr(0, line.raw.find('='))), line.value);
++    return result;
++  }
++
++  std::string Serialize() const {
++    std::string result;
++    for (const auto& line : lines)
++      result += line.raw;
++    return result;
++  }
++
++private:
++  struct Line {
++    std::string raw, section, key, value;
++    bool header;
++  };
++  std::vector<Line> lines;
++  std::string newline = "\n";
++};
++
++std::string KeyboardExpression(const std::string& base, const std::string& device,
++                               const std::string& key) {
++  if (key.empty())
++    return base;
++  const auto keyboard = "`" + device + ":" + key + "`";
++  return base.empty() ? keyboard : "(" + base + ") | " + keyboard;
++}
++
++bool ValidSDLDevice(const std::string& device) {
++  if (!device.starts_with("SDL/") || device.size() > 4096)
++    return false;
++  const auto separator = device.find('/', 4);
++  if (separator == std::string::npos || separator + 1 == device.size())
++    return false;
++  int index = -1;
++  const auto result = std::from_chars(device.data() + 4, device.data() + separator, index);
++  return result.ec == std::errc{} && result.ptr == device.data() + separator && index >= 0 &&
++         std::ranges::all_of(device, [](unsigned char value) { return value >= 32 && value != 127; });
++}
++
++bool WriteControllerProfile(const fs::path& destination, const std::string& bytes,
++                            std::string* message) {
++  static std::atomic<std::uint64_t> sequence{0};
++  const auto token = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
++                     "-" + std::to_string(sequence.fetch_add(1));
++  const auto temporary_path = destination.parent_path() / (".controller-update-" + token + ".tmp");
++  const auto fail = [&](const char* operation) {
++    if (message)
++      *message = std::string(operation) + "; existing controller bindings were kept";
++    return false;
++  };
++#ifdef _WIN32
++  struct Temporary {
++    HANDLE handle;
++    bool published = false;
++    ~Temporary() {
++      if (handle == INVALID_HANDLE_VALUE)
++        return;
++      if (!published) {
++        FILE_DISPOSITION_INFO disposition{TRUE};
++        SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition));
++      }
++      CloseHandle(handle);
++    }
++  } temporary{CreateFileW(temporary_path.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, CREATE_NEW,
++                           FILE_ATTRIBUTE_NORMAL, nullptr)};
++  if (temporary.handle == INVALID_HANDLE_VALUE)
++    return fail("can't create controller profile temporary file");
++  DWORD written = 0;
++  if (!WriteFile(temporary.handle, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr) ||
++      written != bytes.size() || !FlushFileBuffers(temporary.handle))
++    return fail("can't write controller profile temporary file");
++  // Rename the opened temporary file, so publication/cleanup never follows a
++  // substituted temporary pathname. An open/read-only destination can reject
++  // this operation without receiving a partial write.
++  const auto name = fs::absolute(destination).wstring();
++  if (name.size() > 32767)
++    return fail("controller profile path is too long");
++  const auto name_bytes = name.size() * sizeof(wchar_t);
++  const auto rename_bytes = offsetof(FILE_RENAME_INFO, FileName) + name_bytes + sizeof(wchar_t);
++  std::vector<std::uint64_t> storage((rename_bytes + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
++  static_assert(alignof(std::uint64_t) >= alignof(FILE_RENAME_INFO));
++  auto* rename = new (storage.data()) FILE_RENAME_INFO{};
++  rename->ReplaceIfExists = TRUE;
++  rename->FileNameLength = static_cast<DWORD>(name_bytes);
++  std::memcpy(reinterpret_cast<unsigned char*>(storage.data()) + offsetof(FILE_RENAME_INFO, FileName),
++              name.c_str(), name_bytes + sizeof(wchar_t));
++  if (!SetFileInformationByHandle(temporary.handle, FileRenameInfo, rename, static_cast<DWORD>(rename_bytes)))
++    return fail("can't publish controller profile; close applications editing it and check folder permissions");
++  temporary.published = true;
++  return true;
++#else
++  FILE* temporary = std::fopen(temporary_path.c_str(), "wx");
++  if (!temporary)
++    return fail("can't create controller profile temporary file");
++  const bool written = std::fwrite(bytes.data(), 1, bytes.size(), temporary) == bytes.size() &&
++                       std::fflush(temporary) == 0 && fsync(fileno(temporary)) == 0;
++  const bool closed = std::fclose(temporary) == 0;
++  std::error_code ec;
++  if (written && closed)
++    fs::rename(temporary_path, destination, ec);
++  if (written && closed && !ec)
++    return true;
++  fs::remove(temporary_path, ec);
++  return fail("can't publish controller profile; check folder permissions");
++#endif
++}
++
++bool MergeControllerProfile(const fs::path& destination, const std::string& defaults,
++                            std::size_t players, std::string* message) {
++  try {
++    constexpr std::uintmax_t maximum_bytes = 4u * 1024u * 1024u;
++    std::error_code ec;
++    const auto status = fs::symlink_status(destination, ec);
++    if (ec && ec != std::errc::no_such_file_or_directory)
++      throw std::runtime_error("can't inspect controller profile: " + ec.message());
++    const bool exists = fs::exists(status);
++    std::string existing;
++    if (exists) {
++      if (!fs::is_regular_file(status))
++        throw std::runtime_error("controller profile must be a regular file");
++      const auto size = fs::file_size(destination);
++      if (size > maximum_bytes)
++        throw std::runtime_error("controller profile exceeds the 4 MiB size limit");
++      std::ifstream input(destination, std::ios::binary);
++      existing.resize(static_cast<std::size_t>(size));
++      if (!input.read(existing.data(), static_cast<std::streamsize>(size)) ||
++          input.peek() != std::char_traits<char>::eof() || existing.find('\0') != std::string::npos)
++        throw std::runtime_error("can't read controller profile completely");
++    }
++    ControllerProfile merged(existing), generated(defaults);
++    for (std::size_t player = 0; player < players; ++player) {
++      const auto section = std::string(ControllerSectionPrefix().substr(1)) + std::to_string(player + 1);
++      const auto selected_device = generated.Get(section, "Device");
++      if (!ValidSDLDevice(selected_device)) {
++        // A pre-existing keyboard can remain in the local-player list when
++        // another SDL gamepad is added. Never generate SDL inputs for it.
++        if (exists && !selected_device.starts_with("SDL/") &&
++            merged.Get(section, "Device") == selected_device)
++          continue;
++        throw std::runtime_error("select a valid connected SDL gamepad");
++      }
++#ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
++      const auto metadata = "Keyboard" + std::to_string(player + 1);
++      // Selecting a physical pad is a saved port assignment of its own. The
++      // runtime validates this exact device match before using that intent.
++      merged.Set(metadata, "GamepadAssigned", "True");
++      merged.Set(metadata, "GamepadDevice", selected_device);
++#endif
++      for (const auto& [setting, value] : generated.Settings(section)) {
++        if (setting == "Device") {
++          merged.Set(section, "Device", value);
++          continue;
++        }
++        const auto current = merged.Get(section, setting);
++#ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
++        const auto key = merged.Get(metadata, "Key/" + setting);
++        const auto base = merged.Get(metadata, "Base/" + setting);
++        const auto keyboard = merged.Get(metadata, "Device");
++        if ((merged.Has(metadata, "Key/" + setting) || merged.Has(metadata, "Base/" + setting)) &&
++            current == KeyboardExpression(base, keyboard, key)) {
++          const auto preserved_base = base.empty() ? value : base;
++          merged.Set(section, setting, KeyboardExpression(preserved_base, keyboard, key));
++          merged.Set(metadata, "Base/" + setting, preserved_base);
++          continue;
++        }
++#endif
++        // An explicit empty mapping is a deliberate unbound control. Add
++        // defaults only for absent settings, except the owned keyboard Base
++        // case above, where selecting a gamepad intentionally adds its input.
++        if (!merged.Has(section, setting))
++          merged.Set(section, setting, value);
++      }
++    }
++    const auto result = merged.Serialize();
++    if (result.size() > maximum_bytes)
++      throw std::runtime_error("merged controller profile exceeds the 4 MiB size limit");
++    return WriteControllerProfile(destination, result, message);
++  } catch (const std::exception& error) {
++    if (message)
++      *message = std::string(error.what()) + "; existing controller bindings were kept";
++    return false;
++  }
++}
++
+ } // namespace
+ 
+ const std::vector<ResolutionOption> &SupportedResolutions() {
+@@ -102,7 +404,7 @@ ConfigResult LoadConfig(const fs::path &user_directory,
  
    std::ifstream file(path);
    if (!file)
@@ -2422,7 +4028,16 @@ index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e28
  
    ConfigResult config;
    std::string line;
-@@ -245,7 +250,7 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+@@ -200,7 +502,7 @@ ConfigResult LoadConfig(const fs::path &user_directory,
+     }
+   }
+ 
+-  return {.error = "unsupported Dolphin internal resolution '" +
++  return {.error = "unsupported render resolution '" +
+                    config.resolution +
+                    "'; use a listed display resolution or an exact 640x528 "
+                    "multiple up to 12x"};
+@@ -245,11 +547,11 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
    std::ofstream file(user_directory / "config.ini", std::ios::trunc);
    if (!file) {
      if (error)
@@ -2430,17 +4045,36 @@ index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e28
 +      *error = "can't write " + PathText(user_directory / "config.ini");
      return false;
    }
-   file << "# ModernGekko frontend settings\n"
-@@ -364,7 +369,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
-   std::ofstream output(destination, std::ios::trunc);
-   if (!output) {
-     if (message)
--      *message = "can't write " + destination.string();
-+      *message = "can't write " + PathText(destination);
+-  file << "# ModernGekko frontend settings\n"
+-          "# This is Dolphin's internal render target, not the window size.\n"
++  file << "# " MODERNGEKKO_FRONTEND_NAME " settings\n"
++          "# Render resolution controls the game's rendering detail.\n"
+           "[Video]\n"
+           "resolution="
+        << config.resolution << '\n'
+@@ -346,6 +648,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
+   }
+   for (const std::string &controller : controllers) {
+     if (controller.empty() ||
++        controller.size() > 4096 || controller.find('\0') != std::string::npos ||
+         controller.find_first_of("\r\n") != std::string_view::npos) {
+       if (message)
+         *message = "select connected SDL gamepads";
+@@ -361,12 +664,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
+       *message = "can't create controller config directory: " + ec.message();
      return false;
    }
+-  std::ofstream output(destination, std::ios::trunc);
+-  if (!output) {
+-    if (message)
+-      *message = "can't write " + destination.string();
+-    return false;
+-  }
++  std::ostringstream output;
    for (std::size_t i = 0; i < 4; ++i) {
-@@ -455,7 +460,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
+ #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
+     output << "[GCPad" << i + 1 << "]\n";
+@@ -455,9 +753,11 @@ bool GenerateControllerConfig(const fs::path &user_directory,
  #endif
    if (!output) {
      if (message)
@@ -2448,9 +4082,37 @@ index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e28
 +      *message = "can't write " + PathText(destination);
      return false;
    }
++  if (!MergeControllerProfile(destination, output.str(), controllers.size(), message))
++    return false;
    if (message)
+     *message = std::to_string(controllers.size()) +
+ #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
+@@ -485,6 +785,15 @@ bool EnsureControllerConfig(const fs::path &user_directory,
+       *message = "using existing controller profile";
+     return true;
+   }
++#if defined(MODERNGEKKO_GAMECUBE_CONTROLLERS) && defined(_WIN32)
++  if (controllers.empty()) {
++    // The runtime creates the native keyboard profile once DInput is ready.
++    // Do not generate SDL expressions for a keyboard or require a gamepad.
++    if (message)
++      *message = "keyboard defaults will be prepared when the game starts";
++    return true;
++  }
++#endif
+   return GenerateControllerConfig(user_directory, controllers, message);
+ }
+ 
+@@ -492,6 +801,6 @@ bool EnsureControllerConfig(const fs::path &user_directory,
+                             std::string_view controller, std::string *message) {
+   const std::string value(controller);
+   return EnsureControllerConfig(
+-      user_directory, std::span<const std::string>(&value, 1), message);
++      user_directory, std::span<const std::string>(&value, value.empty() ? 0 : 1), message);
+ }
+ } // namespace moderngekko::frontend
 diff --git a/tools/frontend_config.hpp b/tools/frontend_config.hpp
-index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..a6ce1a5641985a6346ed541fd048b02f4d590d68 100644
+index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..64d352f3129891fb5a645f1858d6b17f162c7f13 100644
 --- a/tools/frontend_config.hpp
 +++ b/tools/frontend_config.hpp
 @@ -8,6 +8,27 @@
@@ -2481,12 +4143,22 @@ index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..a6ce1a5641985a6346ed541fd048b02f
  struct ResolutionOption {
    const char *text;
    int dolphin_scale;
+@@ -49,6 +70,9 @@ ReadConfiguredController(const std::filesystem::path &user_directory);
+ std::vector<std::string>
+ ReadConfiguredControllers(const std::filesystem::path &user_directory);
+ bool ControllerConfigExists(const std::filesystem::path &user_directory);
++// Select the supplied players' devices without replacing other slots/settings.
++// Keep custom mappings and editor-owned keyboard overlays; fill missing gamepad
++// expressions and publish the merged native profile with a checked atomic save.
+ bool GenerateControllerConfig(const std::filesystem::path &user_directory,
+                               std::span<const std::string> controllers,
+                               std::string *message);
 diff --git a/tools/frontend_session.cpp b/tools/frontend_session.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..20020cc3c6fd3aef05c9c51ea2b9b6bd15eefd8b
+index 0000000000000000000000000000000000000000..ef7907ed91e9fc758cb5b21fd624ed721414cb6f
 --- /dev/null
 +++ b/tools/frontend_session.cpp
-@@ -0,0 +1,491 @@
+@@ -0,0 +1,501 @@
 +#include "frontend_session.hpp"
 +#include "cache_affinity.hpp"
 +#include "frontend_config.hpp"
@@ -2494,6 +4166,7 @@ index 0000000000000000000000000000000000000000..20020cc3c6fd3aef05c9c51ea2b9b6bd
 +#include "moderngekko/game.hpp"
 +#include "moderngekko/runtime.hpp"
 +#include "netplay_session.hpp"
++#include "portable_profile.hpp"
 +
 +#include "Common/StringUtil.h"
 +#include "Common/MsgHandler.h"
@@ -2730,6 +4403,12 @@ index 0000000000000000000000000000000000000000..20020cc3c6fd3aef05c9c51ea2b9b6bd
 +    return 2;
 +  }
 +
++  std::string profile_error;
++  if (!MigrateLegacyRuntimeConfig(config.user_directory, &profile_error)) {
++    std::cerr << "Cannot prepare game settings: " << profile_error << '\n';
++    return 2;
++  }
++
 +  auto frontend_config =
 +      moderngekko::frontend::LoadConfig(config.user_directory, true);
 +  if (!frontend_config) {
@@ -2816,10 +4495,13 @@ index 0000000000000000000000000000000000000000..20020cc3c6fd3aef05c9c51ea2b9b6bd
 +    else {
 +      const std::string module_name =
 +          "g" + inspected.metadata->disc_id + "_recomp" + LibrarySuffix();
++      const auto packaged = executable_directory / "data" / ("game" + LibrarySuffix());
 +      const auto bundled = executable_directory / module_name;
 +      const auto user_module =
 +          config.user_directory / "StaticRecompModules" / module_name;
-+      if (std::filesystem::is_regular_file(bundled))
++      if (std::filesystem::is_regular_file(packaged))
++        module_path = packaged;
++      else if (std::filesystem::is_regular_file(bundled))
 +        module_path = bundled;
 +      else if (std::filesystem::is_regular_file(user_module))
 +        module_path = user_module;
@@ -2995,7 +4677,7 @@ index 0000000000000000000000000000000000000000..159cb60dd01abc3712a8ecf65e0b19a3
 +int RunFrontendSession(int argc, char** argv);
 +} // namespace moderngekko::frontend
 diff --git a/tools/moderngekko_launcher.cpp b/tools/moderngekko_launcher.cpp
-index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1df128da1 100644
+index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..1bf349dd14b99a4aa5cb5df9b960dada124ef38a 100644
 --- a/tools/moderngekko_launcher.cpp
 +++ b/tools/moderngekko_launcher.cpp
 @@ -1,14 +1,17 @@
@@ -3024,7 +4706,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
  #include <cstdio>
  #include <cstdlib>
  #include <filesystem>
-@@ -26,20 +30,24 @@
+@@ -26,18 +30,22 @@
  #include <string>
  #include <thread>
  #include <unordered_map>
@@ -3043,16 +4725,15 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
  {
 +using moderngekko::frontend::PathText;
  #ifndef MODERNGEKKO_FRONTEND_NAME
- #define MODERNGEKKO_FRONTEND_NAME "ModernGekko"
- #endif
- 
--#ifndef MODERNGEKKO_RUNNER_FILENAME
--#define MODERNGEKKO_RUNNER_FILENAME "moderngekko-run"
+-#define MODERNGEKKO_FRONTEND_NAME "ModernGekko"
 -#endif
 -
- #ifndef MODERNGEKKO_USER_DIRECTORY_NAME
- #define MODERNGEKKO_USER_DIRECTORY_NAME "moderngekko"
+-#ifndef MODERNGEKKO_RUNNER_FILENAME
+-#define MODERNGEKKO_RUNNER_FILENAME "moderngekko-run"
++#define MODERNGEKKO_FRONTEND_NAME "Digimon World 4 PC"
  #endif
+ 
+ #ifndef MODERNGEKKO_USER_DIRECTORY_NAME
 @@ -50,10 +58,8 @@ namespace
  
  #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
@@ -3160,7 +4841,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
        std::ranges::transform(extension, extension.begin(),
                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
        if (extension == ".wbfs" || extension == ".iso" || extension == ".rvz")
-@@ -283,7 +261,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+@@ -283,10 +261,10 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
                                      const fs::path& release_directory, ExtractionState* state,
                                      std::string* error)
  {
@@ -3168,7 +4849,11 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +  std::unique_ptr<DiscIO::Volume> source = DiscIO::CreateVolume(PathText(image));
    if (!source)
    {
-     *error = "Dolphin rejected the selected disc image";
+-    *error = "Dolphin rejected the selected disc image";
++    *error = "Could not read the selected game image. Select a supported, intact ROM.";
+     return std::nullopt;
+   }
+   const std::string source_id = source->GetGameID(source->GetGamePartition());
 @@ -317,7 +295,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
    const fs::path preparer =
        SiblingExecutable(release_directory, MODERNGEKKO_DISC_PREPARER_FILENAME);
@@ -3262,7 +4947,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
  bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
                   const fs::path& release_directory, ExtractionState* state)
  {
-@@ -355,14 +404,14 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+@@ -355,21 +404,27 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
  
    {
      std::lock_guard lock(state->mutex);
@@ -3277,21 +4962,23 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 -  std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(prepared->string());
 +  std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(PathText(*prepared));
    if (!volume)
-     return fail("Dolphin rejected the prepared disc image");
+-    return fail("Dolphin rejected the prepared disc image");
++    return fail("Could not read the prepared game image. Import the ROM again.");
  
-@@ -371,6 +420,12 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+   const DiscIO::Partition partition = volume->GetGamePartition();
+   const DiscIO::FileSystem* filesystem = volume->GetFileSystem(partition);
    if (!filesystem || !filesystem->IsValid())
-     return fail("Dolphin could not read the game partition filesystem");
- 
+-    return fail("Dolphin could not read the game partition filesystem");
++    return fail("Could not read the files in the game image. Select an intact ROM.");
++
 +  std::uint64_t import_entries = 0;
 +  std::uint64_t import_bytes = 0;
 +  std::string tree_error;
 +  if (!ValidateImportTree(filesystem->GetRoot(), 0, &import_entries, &import_bytes, &tree_error))
 +    return fail(tree_error);
-+
+ 
    std::string disc_id = volume->GetGameID(partition);
    if (disc_id.size() != 6)
-     return fail("the selected image has an invalid disc ID");
 @@ -407,60 +462,79 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
      return true;
    }
@@ -3305,7 +4992,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +  if (ec)
 +    return fail("can't create games directory: " + ec.message());
 +  const fs::path canonical_games = fs::canonical(games_directory, ec);
-+  if (ec)
+   if (ec)
 +    return fail("can't resolve games directory: " + ec.message());
 +  const fs::path staging = canonical_games / (disc_id + ".extracting-" +
 +      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -3319,7 +5006,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +      fs::remove_all(staging, cleanup_error);
 +  };
 +  fs::create_directory(staging / "files", ec);
-   if (ec)
++  if (ec)
 +  {
 +    discard_staging();
      return fail("can't create extraction directory: " + ec.message());
@@ -3333,8 +5020,9 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +  if (!DiscIO::ExportSystemData(*volume, partition, PathText(staging)))
    {
 -    fs::remove_all(staging, ec);
+-    return fail("Dolphin failed while extracting the disc system data");
 +    discard_staging();
-     return fail("Dolphin failed while extracting the disc system data");
++    return fail("Could not import the game's system data. Check the ROM and available disk space.");
    }
  
 -  state->total = std::max(1u, filesystem->GetRoot().GetTotalChildren());
@@ -3559,16 +5247,59 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
    std::optional<fs::path> selected_image = images.empty() ? std::nullopt : std::optional(images[0]);
    fs::path current_game = ReadDefaultGame(user_directory, release_directory);
    bool current_dol_changed = false;
-@@ -683,7 +842,7 @@ int main(int argc, char** argv)
+@@ -668,29 +827,37 @@ int main(int argc, char** argv)
+     controller_status = std::move(message);
+     return true;
+   };
+-  const auto ensure_controller = [&]
++  const auto ensure_controller = [&](bool online = false)
+   {
+     if (moderngekko::frontend::ControllerConfigExists(user_directory))
+     {
+       controller_profile_exists = true;
+       configured_controllers = moderngekko::frontend::ReadConfiguredControllers(user_directory);
+-      if (configured_controllers.empty())
++      if (online && configured_controllers.empty())
+       {
+         std::lock_guard lock(dialog.mutex);
+-        dialog.error = std::string(CONTROLLER_PROFILE_NAME) +
+-                       " has no configured controller device";
++        dialog.error = "Start Play once to configure keyboard controls before joining online play.";
+         return false;
        }
-       selected_controller = configured_controllers.front();
+-      selected_controller = configured_controllers.front();
++      selected_controller = configured_controllers.empty() ? std::string{} : configured_controllers.front();
        controller_index = FindController(controllers, selected_controller);
 -      controller_status = "Using existing " + std::string(CONTROLLER_PROFILE_NAME);
 +      controller_status = "Using saved controller bindings";
        return true;
      }
      if (controller_index < 0)
-@@ -712,7 +871,7 @@ int main(int argc, char** argv)
+     {
+-      std::lock_guard lock(dialog.mutex);
+-      dialog.error = "Connect an SDL-compatible controller before playing";
+-      return false;
++      if (online)
++      {
++        std::lock_guard lock(dialog.mutex);
++        dialog.error = "Start Play once to configure keyboard controls before joining online play.";
++        return false;
++      }
++      // The native input backend creates and saves Player 1 keyboard defaults
++      // after its keyboard device exists. Setup must not require a gamepad.
++      selected_controller.clear();
++      configured_controllers.clear();
++      controller_status = "Keyboard ready; edit bindings in the F1 Controls menu";
++      return true;
+     }
+     return select_controller(controller_index);
+   };
+@@ -708,11 +875,11 @@ int main(int argc, char** argv)
+       if (controller_index >= 0)
+         select_controller(controller_index);
+       else
+-        controller_status = "No SDL gamepad detected";
++        controller_status = "Keyboard ready; edit bindings in the F1 Controls menu";
      }
      else
      {
@@ -3577,7 +5308,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
      }
    };
    refresh_controllers();
-@@ -726,6 +885,8 @@ int main(int argc, char** argv)
+@@ -726,6 +893,8 @@ int main(int argc, char** argv)
      Join,
    };
    bool done = false;
@@ -3586,7 +5317,25 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
    LaunchMode launch_mode = LaunchMode::None;
    while (!done)
    {
-@@ -887,7 +1048,7 @@ int main(int argc, char** argv)
+@@ -831,7 +1000,7 @@ int main(int argc, char** argv)
+       ImGui::SameLine();
+       if (ImGui::Button("Host Netplay", ImVec2(180 * scale, 42 * scale)))
+       {
+-        if (ensure_controller())
++        if (ensure_controller(true))
+         {
+           config.netplay_nickname = netplay_nickname.data();
+           config.netplay_address = netplay_address.data();
+@@ -859,7 +1028,7 @@ int main(int argc, char** argv)
+       ImGui::SameLine();
+       if (ImGui::Button("Join Netplay", ImVec2(180 * scale, 42 * scale)))
+       {
+-        if (ensure_controller())
++        if (ensure_controller(true))
+         {
+           config.netplay_nickname = netplay_nickname.data();
+           config.netplay_address = netplay_address.data();
+@@ -887,7 +1056,7 @@ int main(int argc, char** argv)
      }
      else
      {
@@ -3595,7 +5344,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
      }
  
      ImGui::Spacing();
-@@ -940,7 +1101,7 @@ int main(int argc, char** argv)
+@@ -940,7 +1109,7 @@ int main(int argc, char** argv)
        }
      }
      ImGui::Spacing();
@@ -3604,7 +5353,16 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
      if (ImGui::BeginCombo("##resolution", resolutions[resolution_index].text))
      {
        for (std::size_t i = 0; i < resolutions.size(); ++i)
-@@ -1006,13 +1167,11 @@ int main(int argc, char** argv)
+@@ -984,7 +1153,7 @@ int main(int argc, char** argv)
+     ImGui::TextUnformatted("Controller profile");
+     const char* controller_preview = controller_index >= 0
+                                          ? controllers[controller_index].label.c_str()
+-                                     : selected_controller.empty() ? "No SDL gamepad detected"
++                                     : selected_controller.empty() ? "Keyboard (configure with F1)"
+                                                                    : selected_controller.c_str();
+     if (ImGui::BeginCombo("##controller", controller_preview))
+     {
+@@ -1006,13 +1175,11 @@ int main(int argc, char** argv)
        ImGui::EndCombo();
      }
      ImGui::BeginDisabled(controller_index < 0);
@@ -3620,7 +5378,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
      ImGui::SetNextItemWidth(220 * scale);
      ImGui::InputText("Nickname", netplay_nickname.data(), netplay_nickname.size());
      ImGui::SetNextItemWidth(220 * scale);
-@@ -1029,7 +1188,7 @@ int main(int argc, char** argv)
+@@ -1029,7 +1196,7 @@ int main(int argc, char** argv)
      ImGui::Spacing();
      ImGui::TextUnformatted("Game disc image");
      if (selected_image)
@@ -3629,7 +5387,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
      else
        ImGui::TextDisabled("No ISO, WBFS, or RVZ selected");
  
-@@ -1042,7 +1201,7 @@ int main(int argc, char** argv)
+@@ -1042,7 +1209,7 @@ int main(int argc, char** argv)
              {"ISO", "iso"},
              {"WBFS", "wbfs"},
              {"RVZ", "rvz"}};
@@ -3638,7 +5396,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
          SDL_ShowOpenFileDialog(FileDialogCallback, &dialog, window, filters,
                                 static_cast<int>(std::size(filters)), documents.c_str(), false);
        }
-@@ -1097,177 +1256,128 @@ int main(int argc, char** argv)
+@@ -1097,177 +1264,128 @@ int main(int argc, char** argv)
      SDL_SetRenderDrawColor(renderer, 18, 20, 28, 255);
      SDL_RenderClear(renderer);
      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
@@ -3676,7 +5434,10 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +
 +  std::string launch_error;
 +  if (!WriteDefaultGame(user_directory, release_directory, current_game, &launch_error))
-+  {
+   {
+-    std::string launch_error;
+-    if (!WriteDefaultGame(user_directory, release_directory, current_game,
+-                          &launch_error))
 +    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(), nullptr);
 +    return 1;
 +  }
@@ -3698,10 +5459,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +    argument_storage.emplace_back(config.netplay_address);
 +  }
 +  if (launch_mode == LaunchMode::Host || launch_mode == LaunchMode::Join)
-   {
--    std::string launch_error;
--    if (!WriteDefaultGame(user_directory, release_directory, current_game,
--                          &launch_error))
++  {
 +    argument_storage.emplace_back("--netplay-port");
 +    argument_storage.emplace_back(std::to_string(config.netplay_port));
 +    argument_storage.emplace_back("--nickname");
@@ -3891,7 +5649,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1
 +      launch_error = "The host is running an incompatible netplay build. Both players must use the same release.";
 +      break;
 +    case moderngekko::frontend::NetplayExitCode::CompatibilityMismatch:
-+      launch_error = "The extracted game or recomp module does not match the host. Both players need the same game revision and release.";
++      launch_error = "The game data or application release does not match the host. Both players need the same game revision and release.";
 +      break;
 +    case moderngekko::frontend::NetplayExitCode::RoomFull:
 +      launch_error = "All four controller slots are already occupied.";
@@ -4824,7 +6582,7 @@ index 54e16406a8a5851a82ccad4dd1ac9c148132c647..8c02904852df33bd9573c90e8f5202ca
        loaded = library->Attach(config.module.descriptor, requirements);
      }
 diff --git a/tools/netplay_session.cpp b/tools/netplay_session.cpp
-index 7ef27ba7d4de410388d57c91168bf35913ea95ad..84912237a6d2c3b80ed702c6281ab486f3be9ccc 100644
+index 7ef27ba7d4de410388d57c91168bf35913ea95ad..78074c81e1b33903e23d1664a8afbc67d6437b38 100644
 --- a/tools/netplay_session.cpp
 +++ b/tools/netplay_session.cpp
 @@ -1,6 +1,7 @@
@@ -4835,7 +6593,27 @@ index 7ef27ba7d4de410388d57c91168bf35913ea95ad..84912237a6d2c3b80ed702c6281ab486
  
  #include "Core/Boot/Boot.h"
  #include "Core/Config/MainSettings.h"
-@@ -381,7 +382,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+@@ -35,6 +36,10 @@
+ #include <utility>
+ #include <vector>
+ 
++#ifndef MODERNGEKKO_FRONTEND_NAME
++#define MODERNGEKKO_FRONTEND_NAME "Digimon World 4 PC"
++#endif
++
+ namespace fs = std::filesystem;
+ 
+ namespace moderngekko::frontend {
+@@ -275,7 +280,7 @@ public:
+       return false;
+     const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+     m_window = SDL_CreateWindow(
+-        "KirbyRecomp Netplay Lobby", static_cast<int>(820 * scale),
++        MODERNGEKKO_FRONTEND_NAME " - Online lobby", static_cast<int>(820 * scale),
+         static_cast<int>(600 * scale),
+         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+     if (!m_window)
+@@ -381,7 +386,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
      }
  
      if (ui.TakeStartRequest())
@@ -4844,16 +6622,27 @@ index 7ef27ba7d4de410388d57c91168bf35913ea95ad..84912237a6d2c3b80ed702c6281ab486
      auto boot_data = ui.TakeBootData();
      if (boot_data) {
        detail::SetBootSessionData(std::move(boot_data));
-@@ -519,7 +520,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+@@ -392,7 +397,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+     const ImGuiViewport *viewport = ImGui::GetMainViewport();
+     ImGui::SetNextWindowPos(viewport->WorkPos);
+     ImGui::SetNextWindowSize(viewport->WorkSize);
+-    ImGui::Begin("KirbyRecomp Netplay", nullptr,
++    ImGui::Begin(MODERNGEKKO_FRONTEND_NAME " - Online play", nullptr,
+                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_NoSavedSettings);
+     ImGui::TextUnformatted(server ? "Hosting direct-IP netplay"
+@@ -518,8 +523,8 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+   if (options.controllers.empty())
      return static_cast<int>(NetplayExitCode::InvalidConfiguration);
  
-   std::cerr << "netplay: initializing Dolphin services\n";
+-  std::cerr << "netplay: initializing Dolphin services\n";
 -  UICommon::SetUserDirectory(runtime_config.user_directory.string());
++  std::cerr << "netplay: initializing game services\n";
 +  UICommon::SetUserDirectory(PathToString(runtime_config.user_directory));
    UICommon::Init();
    detail::SetExternalUICommon(true);
  
-@@ -534,7 +535,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+@@ -534,7 +539,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
    Config::SetBase(Config::NETPLAY_USE_INDEX, false);
  
    auto game = std::make_shared<UICommon::GameFile>(
@@ -4862,3 +6651,419 @@ index 7ef27ba7d4de410388d57c91168bf35913ea95ad..84912237a6d2c3b80ed702c6281ab486
    if (!game->IsValid()) {
      detail::SetExternalUICommon(false);
      UICommon::Shutdown();
+diff --git a/tools/portable_profile.hpp b/tools/portable_profile.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..e037ffc51b60f510e8140f36804166aa3081caa7
+--- /dev/null
++++ b/tools/portable_profile.hpp
+@@ -0,0 +1,295 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Copyright (c) 2026 DW4_PC contributors
++#pragma once
++
++#include <array>
++#include <atomic>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++#include <filesystem>
++#include <new>
++#include <string>
++#include <system_error>
++#include <vector>
++
++#if defined(_WIN32)
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
++namespace moderngekko::frontend {
++namespace portable_profile_detail {
++inline constexpr std::uint64_t kMaximumConfigBytes = 4u * 1024u * 1024u;
++
++inline std::string PathText(const std::filesystem::path& path) {
++  const auto utf8 = path.u8string();
++  return {reinterpret_cast<const char*>(utf8.data()), utf8.size()};
++}
++
++inline bool Fail(std::string* error, const std::string& message) {
++  if (error)
++    *error = message;
++  return false;
++}
++
++#if defined(_WIN32)
++class Handle {
++public:
++  explicit Handle(HANDLE value = INVALID_HANDLE_VALUE) : value_(value) {}
++  ~Handle() { if (value_ != INVALID_HANDLE_VALUE) CloseHandle(value_); }
++  Handle(const Handle&) = delete;
++  Handle& operator=(const Handle&) = delete;
++  HANDLE get() const { return value_; }
++  explicit operator bool() const { return value_ != INVALID_HANDLE_VALUE; }
++private:
++  HANDLE value_;
++};
++
++inline bool WindowsFailure(std::string* error, const char* operation,
++                           const std::filesystem::path& path, DWORD code) {
++  return Fail(error, std::string(operation) + " '" + PathText(path) +
++      "' (Windows error " + std::to_string(code) + ": " +
++      std::system_category().message(static_cast<int>(code)) +
++      "). Check profile permissions and close programs editing its configuration, then retry. "
++      "The legacy file and saves have not been changed.");
++}
++
++enum class FileState { Missing, Regular, Invalid, Failed };
++
++inline FileState InspectFile(const std::filesystem::path& path, std::string* error) {
++  const Handle file(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
++      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
++      FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr));
++  if (!file) {
++    const DWORD code = GetLastError();
++    if (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND)
++      return FileState::Missing;
++    WindowsFailure(error, "Cannot inspect configuration", path, code);
++    return FileState::Failed;
++  }
++  BY_HANDLE_FILE_INFORMATION info{};
++  if (!GetFileInformationByHandle(file.get(), &info)) {
++    WindowsFailure(error, "Cannot inspect configuration", path, GetLastError());
++    return FileState::Failed;
++  }
++  if ((info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0 ||
++      GetFileType(file.get()) != FILE_TYPE_DISK) {
++    Fail(error, "Configuration must be a regular file, not a directory or symbolic link: '" +
++        PathText(path) + "'. Move the invalid entry aside and retry; it has not been changed.");
++    return FileState::Invalid;
++  }
++  return FileState::Regular;
++}
++
++// Cleanup names the opened file object, never a pathname another process could
++// replace. Successful publication disarms cleanup before this handle closes.
++class TemporaryFile {
++public:
++  explicit TemporaryFile(HANDLE value) : handle_(value) {}
++  ~TemporaryFile() {
++    if (!published_) {
++      FILE_DISPOSITION_INFO disposition{};
++      disposition.DeleteFile = TRUE;
++      SetFileInformationByHandle(handle_.get(), FileDispositionInfo, &disposition,
++                                sizeof(disposition));
++    }
++  }
++  HANDLE get() const { return handle_.get(); }
++  void Published() { published_ = true; }
++private:
++  Handle handle_;
++  bool published_ = false;
++};
++
++inline bool CopyLegacy(const std::filesystem::path& config_directory,
++                       const std::filesystem::path& legacy,
++                       const std::filesystem::path& destination,
++                       std::string* error) {
++  // Holding the directory without delete sharing prevents its rename/replacement
++  // during creation and publication. Reparse-point directories are rejected.
++  const Handle directory(CreateFileW(config_directory.c_str(), FILE_READ_ATTRIBUTES,
++      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
++      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
++  if (!directory)
++    return WindowsFailure(error, "Cannot open configuration directory", config_directory, GetLastError());
++  BY_HANDLE_FILE_INFORMATION directory_info{};
++  if (!GetFileInformationByHandle(directory.get(), &directory_info))
++    return WindowsFailure(error, "Cannot inspect configuration directory", config_directory, GetLastError());
++  if ((directory_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
++      (directory_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
++    return Fail(error, "Configuration directory must be a real directory, not a symbolic link: '" +
++                       PathText(config_directory) + "'. No files were changed.");
++
++  // Deny concurrent writes and deletion for the complete read. OPEN_REPARSE_POINT
++  // plus handle inspection also closes the source symlink check/open race.
++  const Handle source(CreateFileW(legacy.c_str(), GENERIC_READ, FILE_SHARE_READ,
++      nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN |
++      FILE_FLAG_BACKUP_SEMANTICS, nullptr));
++  if (!source)
++    return WindowsFailure(error, "Cannot safely read legacy configuration", legacy, GetLastError());
++  BY_HANDLE_FILE_INFORMATION source_info{};
++  if (!GetFileInformationByHandle(source.get(), &source_info))
++    return WindowsFailure(error, "Cannot inspect legacy configuration", legacy, GetLastError());
++  if ((source_info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0 ||
++      GetFileType(source.get()) != FILE_TYPE_DISK)
++    return Fail(error, "Legacy configuration must be a regular file, not a directory or symbolic link: '" +
++                       PathText(legacy) + "'. No files were changed.");
++  const std::uint64_t size = (static_cast<std::uint64_t>(source_info.nFileSizeHigh) << 32) |
++      source_info.nFileSizeLow;
++  if (size > kMaximumConfigBytes)
++    return Fail(error, "Legacy configuration exceeds the 4 MiB migration limit: '" +
++                       PathText(legacy) + "'. Review its contents before retrying; no files were changed.");
++
++  static std::atomic<std::uint64_t> sequence{0};
++  HANDLE created = INVALID_HANDLE_VALUE;
++  std::filesystem::path temporary_path;
++  for (unsigned attempt = 0; attempt < 64; ++attempt) {
++    temporary_path = config_directory / (L".Runtime.ini.migrate-" +
++        std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()) +
++        L"-" + std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed)) + L".tmp");
++    created = CreateFileW(temporary_path.c_str(), GENERIC_WRITE | DELETE,
++        0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
++    if (created != INVALID_HANDLE_VALUE)
++      break;
++    const DWORD code = GetLastError();
++    if (code != ERROR_FILE_EXISTS && code != ERROR_ALREADY_EXISTS)
++      return WindowsFailure(error, "Cannot create migration temporary file", temporary_path, code);
++  }
++  if (created == INVALID_HANDLE_VALUE)
++    return Fail(error, "Cannot allocate a unique configuration migration file in '" +
++                       PathText(config_directory) + "'. Close other migration attempts and retry.");
++  TemporaryFile temporary(created);
++  std::array<unsigned char, 64u * 1024u> buffer{};
++  std::uint64_t copied = 0;
++  while (copied < size) {
++    const DWORD requested = static_cast<DWORD>((size - copied) < buffer.size() ?
++        size - copied : buffer.size());
++    DWORD received = 0;
++    if (!ReadFile(source.get(), buffer.data(), requested, &received, nullptr))
++      return WindowsFailure(error, "Cannot read legacy configuration", legacy, GetLastError());
++    if (received == 0 || received > requested)
++      return Fail(error, "Legacy configuration changed or ended during migration: '" +
++                         PathText(legacy) + "'. Close programs editing it and retry.");
++    DWORD offset = 0;
++    while (offset < received) {
++      DWORD written = 0;
++      if (!WriteFile(temporary.get(), buffer.data() + offset, received - offset, &written, nullptr))
++        return WindowsFailure(error, "Cannot write migrated configuration", temporary_path, GetLastError());
++      if (written == 0 || written > received - offset)
++        return WindowsFailure(error, "Cannot complete migrated configuration", temporary_path, ERROR_WRITE_FAULT);
++      offset += written;
++    }
++    copied += received;
++  }
++  DWORD extra = 0;
++  if (!ReadFile(source.get(), buffer.data(), 1, &extra, nullptr))
++    return WindowsFailure(error, "Cannot finish reading legacy configuration", legacy, GetLastError());
++  if (extra != 0)
++    return Fail(error, "Legacy configuration grew during migration: '" + PathText(legacy) +
++                       "'. Close programs editing it and retry.");
++  if (!FlushFileBuffers(temporary.get()))
++    return WindowsFailure(error, "Cannot flush migrated configuration", temporary_path, GetLastError());
++
++  // FileRenameInfo with ReplaceIfExists=FALSE atomically publishes the complete
++  // opened file, or fails without replacing a racing destination. Keeping the
++  // handle avoids a temporary-path substitution race. See Microsoft's
++  // FILE_RENAME_INFO documentation for the no-replace contract.
++  const std::wstring name = destination.wstring();
++  if (name.size() > 32767)
++    return Fail(error, "Runtime configuration path exceeds the Windows path limit. Choose a shorter user directory.");
++  const std::size_t name_bytes = name.size() * sizeof(wchar_t);
++  const std::size_t rename_bytes = offsetof(FILE_RENAME_INFO, FileName) + name_bytes + sizeof(wchar_t);
++  static_assert(alignof(std::uint64_t) >= alignof(FILE_RENAME_INFO));
++  std::vector<std::uint64_t> rename_storage((rename_bytes + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
++  auto* rename = new (rename_storage.data()) FILE_RENAME_INFO{};
++  rename->ReplaceIfExists = FALSE;
++  rename->RootDirectory = nullptr;
++  rename->FileNameLength = static_cast<DWORD>(name_bytes);
++  std::memcpy(reinterpret_cast<unsigned char*>(rename_storage.data()) + offsetof(FILE_RENAME_INFO, FileName),
++              name.c_str(), name_bytes + sizeof(wchar_t));
++  if (!SetFileInformationByHandle(temporary.get(), FileRenameInfo, rename,
++                                 static_cast<DWORD>(rename_bytes))) {
++    const DWORD code = GetLastError();
++    // Another process may already have installed a configuration. Preserve it
++    // and treat the migration as complete only after checking its file type.
++    const FileState state = InspectFile(destination, error);
++    if (state == FileState::Regular)
++      return true;
++    if (state == FileState::Invalid || state == FileState::Failed)
++      return false;
++    return WindowsFailure(error, "Cannot publish migrated configuration", destination, code);
++  }
++  temporary.Published();
++  return true;
++}
++#endif
++} // namespace portable_profile_detail
++
++// Preserve every existing current configuration and every legacy/save file.
++// Copy bytes without parsing: malformed INI text remains available for the
++// normal configuration loader to diagnose, with the original retained.
++inline bool MigrateLegacyRuntimeConfig(const std::filesystem::path& user_directory,
++                                      std::string* error) {
++  using namespace portable_profile_detail;
++  if (error)
++    error->clear();
++  try {
++    if (user_directory.empty())
++      return Fail(error, "Cannot migrate configuration without a user directory.");
++    const auto config_directory = std::filesystem::absolute(user_directory) / "Config";
++    const auto destination = config_directory / "Runtime.ini";
++    const auto legacy = config_directory / "Dolphin.ini";
++#if defined(_WIN32)
++    const FileState current = InspectFile(destination, error);
++    if (current == FileState::Regular)
++      return true;
++    if (current != FileState::Missing)
++      return false;
++    const DWORD directory_attributes = GetFileAttributesW(config_directory.c_str());
++    if (directory_attributes == INVALID_FILE_ATTRIBUTES) {
++      const DWORD code = GetLastError();
++      if (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND)
++        return true;
++      return WindowsFailure(error, "Cannot inspect configuration directory", config_directory, code);
++    }
++    if ((directory_attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
++        (directory_attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
++      return Fail(error, "Configuration path must be a real directory: '" + PathText(config_directory) +
++                         "'. Move the invalid entry aside and retry; no files were changed.");
++    const FileState old = InspectFile(legacy, error);
++    if (old == FileState::Missing)
++      return true;
++    if (old != FileState::Regular)
++      return false;
++    return CopyLegacy(config_directory, legacy, destination, error);
++#else
++    std::error_code status_error;
++    const auto current = std::filesystem::symlink_status(destination, status_error);
++    if (!status_error && std::filesystem::is_regular_file(current))
++      return true;
++    if (!status_error && std::filesystem::exists(current))
++      return Fail(error, "Runtime.ini must be a regular file, not a directory or symbolic link.");
++    if (status_error && status_error != std::errc::no_such_file_or_directory)
++      return Fail(error, "Cannot inspect Runtime.ini: " + status_error.message());
++    status_error.clear();
++    const auto old = std::filesystem::symlink_status(legacy, status_error);
++    if (status_error == std::errc::no_such_file_or_directory ||
++        (!status_error && !std::filesystem::exists(old)))
++      return true;
++    if (status_error)
++      return Fail(error, "Cannot inspect Dolphin.ini: " + status_error.message());
++    return Fail(error, "Automatic legacy configuration migration requires Windows. Close the application, "
++                       "copy Config/Dolphin.ini to Config/Runtime.ini without replacing an existing file, then retry.");
++#endif
++  } catch (const std::exception& exception) {
++    return Fail(error, std::string("Cannot safely migrate runtime configuration: ") + exception.what() +
++                       ". Check the user directory and retry; the legacy file and saves were not changed.");
++  }
++}
++} // namespace moderngekko::frontend
+diff --git a/tools/test_embed_system_resources.py b/tools/test_embed_system_resources.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..39471c3624c39cd3f7c300b3e1aeca1f5330d4c7
+--- /dev/null
++++ b/tools/test_embed_system_resources.py
+@@ -0,0 +1,109 @@
++#!/usr/bin/env python3
++"""Bounded resource-generation and byte-identity checks; never builds or launches a game."""
++
++import hashlib
++import json
++from pathlib import Path
++import re
++import tempfile
++import unittest
++
++import embed_system_resources as embed
++
++
++def decode_generated(path):
++    text = path.read_text(encoding="utf-8")
++    arrays = {}
++    for match in re.finditer(r"system_resource_(\d+)\[\] = \{(.*?)\};", text, re.S):
++        arrays[match[1]] = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-f]{2})", match[2]))
++    return {name: arrays[index] for name, index in
++            re.findall(r'\{"([^"]+)", system_resource_(\d+)\}', text)}
++
++
++class EmbeddingTests(unittest.TestCase):
++    def setUp(self):
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.root = Path(self.temporary.name) / "Sys"
++        for index, name in enumerate(embed.REQUIRED_RESOURCES):
++            size = 4096 if name.endswith("dsp_coef.bin") else 8192 if name.endswith("dsp_rom.bin") else 37
++            path = self.root / name
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_bytes(bytes((index + offset) % 256 for offset in range(size)))
++        self.output = Path(self.temporary.name) / "out" / "resources.inc"
++        self.manifest = self.output.with_suffix(".json")
++
++    def test_exact_bytes_and_only_allowlisted_files(self):
++        (self.root / "main.dol").write_bytes(b"must not be embedded")
++        (self.root / "GameSettings" / "OTHER.ini").write_text("must not be embedded")
++        embed.generate(self.root, self.output, self.manifest)
++        decoded = decode_generated(self.output)
++        self.assertEqual(set(decoded), set(embed.REQUIRED_RESOURCES))
++        for name, data in decoded.items():
++            self.assertEqual(data, (self.root / name).read_bytes())
++        for record in json.loads(self.manifest.read_text())["resources"]:
++            self.assertEqual(record["bytes"], len(decoded[record["path"]]))
++            self.assertEqual(record["sha256"], hashlib.sha256(decoded[record["path"]]).hexdigest())
++
++    def test_prefix_revision_and_override_selection(self):
++        for name in ("G.ini", "GDJ.ini", "GDJEB2r0.ini", "GDJEB2r12.ini", "GDJEB2random.ini"):
++            (self.root / "GameSettings" / name).write_text(name)
++        override = Path(self.temporary.name) / "GDJEB2.ini"
++        override.write_text("[Core]\nCPUThread = False\n")
++        result = dict(embed.collect_resources(self.root, override))
++        self.assertEqual(result["GameSettings/GDJEB2.ini"], override.read_bytes())
++        self.assertIn("GameSettings/GDJ.ini", result)
++        self.assertIn("GameSettings/G.ini", result)
++        self.assertIn("GameSettings/GDJEB2r12.ini", result)
++        self.assertNotIn("GameSettings/GDJEB2random.ini", result)
++
++    def test_wrong_override_name_rejected(self):
++        override = Path(self.temporary.name) / "other.ini"
++        override.write_text("[Core]")
++        with self.assertRaisesRegex(ValueError, "GDJEB2.ini"):
++            embed.collect_resources(self.root, override)
++
++    def test_missing_required_resource_rejected(self):
++        (self.root / "GC/dsp_rom.bin").unlink()
++        with self.assertRaises(FileNotFoundError):
++            embed.collect_resources(self.root)
++
++    def test_wrong_dsp_size_rejected(self):
++        (self.root / "GC/dsp_coef.bin").write_bytes(b"invalid")
++        with self.assertRaisesRegex(ValueError, "4096"):
++            embed.collect_resources(self.root)
++
++    def test_empty_or_oversized_resource_rejected(self):
++        font = self.root / "Resources/OSD_Font.ttf"
++        font.write_bytes(b"")
++        with self.assertRaisesRegex(ValueError, "invalid size"):
++            embed.collect_resources(self.root)
++        with font.open("wb") as stream:
++            stream.truncate(embed.MAX_RESOURCE_BYTES + 1)
++        with self.assertRaisesRegex(ValueError, "invalid size"):
++            embed.collect_resources(self.root)
++
++    def test_output_is_deterministic(self):
++        embed.generate(self.root, self.output, self.manifest)
++        first = (self.output.read_bytes(), self.manifest.read_bytes())
++        embed.generate(self.root, self.output, self.manifest)
++        self.assertEqual(first, (self.output.read_bytes(), self.manifest.read_bytes()))
++
++
++class SuppliedServiceResourceTests(unittest.TestCase):
++    def test_generated_payloads_match_actual_service_files(self):
++        root = Path(__file__).resolve().parents[1] / "vendor/dolphin/Data/Sys"
++        with tempfile.TemporaryDirectory() as directory:
++            output = Path(directory) / "resources.inc"
++            manifest = Path(directory) / "resources.json"
++            records = embed.generate(root, output, manifest)
++            decoded = decode_generated(output)
++            self.assertGreater(len(records), 0)
++            for record in records:
++                original = (root / record["path"]).read_bytes()
++                self.assertEqual(decoded[record["path"]], original)
++                self.assertEqual(hashlib.sha256(original).hexdigest(), record["sha256"])
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)

@@ -134,7 +134,8 @@ original order and expressions. This change does not alter guest timing or
 replace the movie conversion algorithm.
 
 `scripts/test-recomp-quantizer.ps1` extracts the actual pinned and changed
-helpers from `GXRuntime/src/core/cpu.c` and compiles them separately as C with
+helpers from the pinned `GXRuntime/src/core/cpu.c` and the current shared
+`GXRuntime/include/core/cpu.h` helper, and compiles them separately as C with
 MSVC x64 `/O2 /fp:strict`, the actual GXRuntime types and no link-time
 optimization. The local result has zero differences across **876,544 comparisons
 of returned integers and all six MXCSR sticky exception flags**, plus **1,024
@@ -152,6 +153,21 @@ This verifies helper equivalence for the tested compiler and corpus. The game
 module was subsequently rebuilt and passed bounded original startup. The
 comparison below measures the combined build; it does not isolate a quantizer
 FPS gain from the accompanying dispatch-probe isolation change.
+
+The type-4 unsigned-byte paired store now has a guarded header path using the
+same quantizer. It retains byte writes, callback order, live GQR selection,
+reservation effects and the existing slow path for unsupported cases. The
+whole-store checker compares actual pinned/current functions, including CPU,
+memory, MXCSR and callback mutations: 8,650,752 cases and 17,301,504 comparisons
+passed without differences. The quantizer-only corpus also passed after the
+helper moved to the header. See
+[the store checker](../tools/recomp_psq_store_check/README.md).
+
+MSVC retained a call to the header helper at the inspected constant timing site;
+caller-boundary removal is not established. Synthetic timing was deferred while
+the owner's interactive game was open. These checks establish numerical and
+state equivalence for the tested inputs, not a frame-rate improvement. The
+later PC-packaging/keyboard build requires separate original-game acceptance.
 
 ## Module source identity for the next build
 

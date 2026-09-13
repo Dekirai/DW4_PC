@@ -8,8 +8,9 @@ objects, executable, logs, and JSON evidence stay in ignored
 
 The wrapper extracts `psq_quantize_int` from the nested Dolphin repository at
 commit `55c7b023fa0f4eba1cf3fdbbb25b1c5ec468d5ac` and from the current
-`GXRuntime/src/core/cpu.c`. The helpers retain their original bodies, with only
-their names/linkage changed. Each is compiled as C with the actual GXRuntime
+`GXRuntime/include/core/cpu.h`, where the inline and out-of-line stores share
+the helper. The helpers retain their original bodies, with only their
+names/linkage changed. Each is compiled as C with the actual GXRuntime
 `core/types.h`, `/O2 /fp:strict`, and no link-time optimization. Independent
 factor checks use the extracted expressions with volatile inputs.
 

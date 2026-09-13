@@ -149,6 +149,22 @@ the quantizer change remain unverified. See
 [the checker notes](../tools/recomp_quantizer_check/README.md) and
 [performance evidence](../docs/RECOMP_PERFORMANCE.md#exact-paired-single-quantizer-factor).
 
+The subsequent PC application integration embeds an allowlisted set of service
+resources, omits the loose upstream `Sys` tree from new packages, supplies
+DW4-specific setup/error text, and preserves component attribution in licenses.
+The shared INI parser can consume embedded defaults with the same merge order.
+Portable runtime settings use `Runtime.ini`; checked legacy migration preserves
+existing settings and saves. The keyboard editor updates actual controller
+expressions through the F1 menu, with checked persistence and the existing game
+input gate. Legacy native-window speed/display hotkeys are disabled when the
+integrated UI owns application controls. See [PC_APPLICATION.md](../docs/PC_APPLICATION.md)
+for scope and validation evidence.
+
+The type-4 paired-store path shares the exact quantizer in `cpu.h`. Its whole
+store checker verifies 17,301,504 baseline comparisons including memory,
+exceptions, reservations and callback mutation/order; this is not evidence of
+an original-game FPS gain.
+
 The affected Dolphin runtime files identify their license as GPL-2.0-or-later;
 GXRuntime's `cpu.c` identifies its license as GPL-3.0-or-later. These adaptations
 retain their respective upstream licenses, separately from this repository's

@@ -32,12 +32,12 @@ foreach ($inputParameter in @('PressStartAtSeconds','SecondStartPressAtSeconds')
     $inputParam = @($inputAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq $inputParameter })
     Check-Input ($inputParam.Count -eq 1 -and $inputParam[0].DefaultValue.Value -eq 0) 'Controlled input must default to disabled.'
 }
-foreach ($inputCase in @(@(0,0,30),@(5,0,30),@(5,10,30),@(80,85,90),@(25,0,30))) {
+foreach ($inputCase in @(@(0,0,30),@(5,0,30),@(5,10,30),@(80,85,90),@(25,0,30),@(80,105,120),@(85,115,120))) {
     & $validateInput -Module synthetic -ExtractedRoot synthetic -PressStartAtSeconds $inputCase[0] `
         -SecondStartPressAtSeconds $inputCase[1] -TimeoutSeconds $inputCase[2]
     Check-Input $true 'A valid input schedule was rejected.'
 }
-foreach ($inputCase in @(@(0,10,30),@(5,9,30),@(10,5,30),@(5,26,30),@(26,0,30),@(80,85,89),@(5,-1,30),@(5,86,90))) {
+foreach ($inputCase in @(@(0,10,30),@(5,9,30),@(10,5,30),@(5,26,30),@(26,0,30),@(80,85,89),@(5,-1,30),@(5,86,90),@(85,116,120),@(85,115,119),@(0,0,121),@(0,0,0))) {
     $inputRejected = $false
     try {
         & $validateInput -Module synthetic -ExtractedRoot synthetic -PressStartAtSeconds $inputCase[0] `

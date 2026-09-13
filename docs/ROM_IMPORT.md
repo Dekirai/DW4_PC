@@ -8,9 +8,10 @@ extraction is part of this packaged launcher workflow.
 
 The application hosts the original-game session in its own process. No
 `moderngekko-run.exe` is included or required by the package. The compiled
-game module, `Sys` resources and matching x64 Microsoft Visual C++ runtime
-DLLs remain adjacent dependencies; keep the whole package together. Static
-module/resource integration is still required for the final single-file
+game module in `data/game.dll` and matching x64 Microsoft Visual C++ runtime
+DLLs remain dependencies; keep the whole package together. New builds embed
+the selected service resources and omit the loose `Sys` tree. Static module
+and library integration is still required for the final single-file
 binary distribution. Original disc content is supplied locally and is never
 included in the package or repository.
 

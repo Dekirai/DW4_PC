@@ -14,12 +14,12 @@ param(
     [switch]$Screenshot,
     [int[]]$ScreenshotAtSeconds = @(),
     [ValidateRange(0,85)][int]$PressStartAtSeconds = 0,
-    [ValidateRange(0,85)][int]$SecondStartPressAtSeconds = 0,
+    [ValidateRange(0,115)][int]$SecondStartPressAtSeconds = 0,
     [ValidateRange(0,30)][int]$CpuProfileSeconds = 0,
     [ValidateRange(0,85)][int]$CpuProfileAtSeconds = 0,
     [ValidateRange(0,30)][int]$InProcessCpuProbeSeconds = 0,
     [ValidateRange(0,85)][int]$InProcessCpuProbeAtSeconds = 0,
-    [ValidateRange(1,90)][int]$TimeoutSeconds = 30,
+    [ValidateRange(1,120)][int]$TimeoutSeconds = 30,
     [ValidateRange(2,10)][int]$ShutdownGraceSeconds = 5
 )
 $ErrorActionPreference = 'Stop'
@@ -116,8 +116,15 @@ if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4Cach
 if ($InProcessCpuProbeSeconds -gt 0 -and -not [IO.File]::ReadAllText($chassisPatchPath).Contains('cpu-probe:')) {
     throw 'The in-process CPU probe requires a matching rebuilt runtime with probe support.'
 }
+$packagedModuleRelativePath = 'gGDJEB2_recomp.dll'
+if ($buildRecord.PSObject.Properties['packaged_module_relative_path']) {
+    if ($buildRecord.packaged_module_relative_path -ne 'data/game.dll') {
+        throw 'The build record contains an unsupported packaged module location.'
+    }
+    $packagedModuleRelativePath = 'data/game.dll'
+}
 $expectedModulePath = if ($UseBundledModule) {
-    Join-Path (Split-Path -Parent $Runner) 'gGDJEB2_recomp.dll'
+    Join-Path (Split-Path -Parent $Runner) $packagedModuleRelativePath
 } else { [IO.Path]::GetFullPath($buildRecord.module_path) }
 if ($buildRecord.module_built -isnot [bool] -or -not $buildRecord.module_built -or
     -not $Module.Equals($expectedModulePath,[StringComparison]::OrdinalIgnoreCase) -or
@@ -167,7 +174,14 @@ $utf8 = [Text.UTF8Encoding]::new($false)
     "[Video]`nresolution=$Resolution`nbackend=Vulkan`nfullscreen=false`nshow_fps_in_title=false`n",$utf8)
 # The CLI explicitly selects the requested backend. Frontend config accepts only
 # Vulkan/OpenGL labels. Keep alerts enabled for the patched headless log handler.
-[IO.File]::WriteAllText((Join-Path $profileRoot 'Config/Dolphin.ini'),
+$runtimeConfigFilename = 'Dolphin.ini'
+if ($buildRecord.PSObject.Properties['runtime_config_filename']) {
+    if ($buildRecord.runtime_config_filename -ne 'Runtime.ini') {
+        throw 'The build record contains an unsupported runtime configuration filename.'
+    }
+    $runtimeConfigFilename = 'Runtime.ini'
+}
+[IO.File]::WriteAllText((Join-Path $profileRoot ('Config/' + $runtimeConfigFilename)),
     ("[Interface]`nUsePanicHandlers=True`n[Core]`nStaticRecompFallbackRanges=`nStaticRecompIdlePC=0`nStaticRecompDw4Idle=" +
         $(if ($IdleMode -eq 'Enabled') { 'True' } else { 'False' }) + "`nStaticRecompDw4CacheBatch=" +
         $(if ($CacheMode -eq 'Enabled') { 'True' } else { 'False' }) +

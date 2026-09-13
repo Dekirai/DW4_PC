@@ -52,14 +52,18 @@ launch the game automatically. See [ROM_IMPORT.md](docs/ROM_IMPORT.md).
 
 The application now hosts the game in-process; the package no longer includes
 or requires `moderngekko-run.exe`. The default `savedata` directory sits beside
-the actual EXE. Earlier AppData/Documents profiles are preserved. The game DLL,
-`Sys` resources and Visual C++ runtime DLLs remain dependencies while work
-continues toward a single-file application. F1 now opens an in-game ImGui menu
+the actual EXE. Earlier AppData/Documents profiles are preserved. New builds
+embed the required service resources and omit the upstream `Sys` tree. The
+game module in `data/game.dll` and Visual C++ runtime DLLs remain dependencies
+while work continues toward a single-file application. F1 opens an in-game ImGui menu
 with pause/resume, save-state actions, mute, fullscreen and live graphics controls;
 the old native File/View menu is removed. Graphics changes currently apply only
 to the running session. See [RECOMP_INGAME_MENU.md](docs/RECOMP_INGAME_MENU.md)
-for the implemented controls and bounded validation. The revised internal save
-layout remains pending.
+for the implemented controls and bounded validation. The keyboard editor adds
+saved per-player key bindings alongside existing gamepad controls. Packaging,
+resource embedding and legacy configuration migration are described in
+[PC_APPLICATION.md](docs/PC_APPLICATION.md), including validation boundaries.
+The revised internal save layout remains pending.
 
 The [language-data audit](docs/LOCALIZATION.md) found that the French, German,
 Italian and Spanish named text packs duplicate English in the supplied USA

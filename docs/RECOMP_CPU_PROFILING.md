@@ -147,7 +147,7 @@ $package = (Get-Content 'work/recomp-unified-package-path.txt' -Raw).Trim()
 ./scripts/test-recomp-startup.ps1 `
   -Runner (Join-Path $package 'DW4_PC.exe') `
   -UnifiedExecutable -UseBundledModule `
-  -Module (Join-Path $package 'gGDJEB2_recomp.dll') `
+  -Module (Join-Path $package 'data/game.dll') `
   -ExtractedRoot 'E:/Games/Emulator/Dolphin-x64/Games/Digimon World 4 - Extracted' `
   -Graphics Vulkan -Resolution 1920x1080 -Audio Cubeb `
   -IdleMode Enabled -CacheMode Enabled `

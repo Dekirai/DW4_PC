@@ -194,6 +194,7 @@ $env:PATH = (Split-Path -Parent $python) + ';' + $env:PATH
 $env:MODERNGEKKO_BUILD_JOBS = [string]$Jobs
 $configure = @('-S',$runtimeSource,'-B',$runtimeBuild,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
     '-DBUILD_TESTING=OFF','-DDOLRECOMP_ENABLE_LLVM=OFF','-DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON',
+    '-DMODERNGEKKO_EMBED_SYSTEM_RESOURCES=ON',
     '-DMODERNGEKKO_FRONTEND_NAME=Digimon World 4 PC','-DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=DW4_PC',
     '-DMODERNGEKKO_USER_DIRECTORY_NAME=DW4_PC','-DMODERNGEKKO_REQUIRED_DISC_ID=GDJEB2',
     '-DMODERNGEKKO_LOG_FILENAME=DW4_PC.log','-DMODERNGEKKO_DEFAULT_WINDOW_TITLE=Digimon World 4 PC',
@@ -203,11 +204,19 @@ $configure = @('-S',$runtimeSource,'-B',$runtimeBuild,'-G','Ninja','-DCMAKE_BUIL
     '-DCMAKE_C_COMPILER=cl','-DCMAKE_CXX_COMPILER=cl',"-DCMAKE_MAKE_PROGRAM=$ninja")
 Invoke-Checked $cmake $configure (Join-Path $workRoot 'recomp-configure.log')
 Invoke-Checked $cmake @('--build',$runtimeBuild,'--target','moderngekko-port','moderngekko-launcher','--parallel',[string]$Jobs) (Join-Path $workRoot 'recomp-runtime-build.log')
+$resourceManifestPath = Join-Path $runtimeBuild 'generated/system-resources/system-resources.json'
+if (-not (Test-Path -LiteralPath $resourceManifestPath -PathType Leaf)) {
+    throw 'The embedded system resource build manifest is missing.'
+}
 $port = Join-Path $runtimeBuild 'moderngekko-port.exe'
 if (-not (Test-Path -LiteralPath $port -PathType Leaf)) { throw 'The runtime build did not produce moderngekko-port.exe.' }
 $record = [ordered]@{
     runtime_revision=$runtimeRevision; dolrecomp_source=$DolRecompSource; template_source=$TemplateSource;
     chassis_revision=$chassisRevision;
+    embedded_system_resources=$true; packaged_module_relative_path='data/game.dll';
+    runtime_config_filename='Runtime.ini';
+    embedded_resource_manifest_path=$resourceManifestPath;
+    embedded_resource_manifest_sha256=(Get-FileHash -LiteralPath $resourceManifestPath -Algorithm SHA256).Hash;
     extracted_root=$ExtractedRoot; jobs=$Jobs; module_opt_level=$OptLevel; compiler_installation=$vsRoot;
     cmake=$cmake; ninja=$ninja; python=$python; generated_root=$workRoot;
     runtime_patch_sha256=(Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash;

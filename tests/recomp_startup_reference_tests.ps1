@@ -44,4 +44,36 @@ Check-Reference ($abiReportPath -eq (Join-Path $ReferenceBuildDirectory 'abi.jso
 $ReferenceBuildDirectory=''
 . $selectAbi
 Check-Reference ($abiReportPath -eq $buildRecord.abi_report_path) 'Ordinary runs must keep the current build ABI report.'
+
+# Evaluate the actual layout selectors for preserved and current build records.
+# Unknown paths must fail before launching or writing a profile.
+function Select-LayoutStatements([string]$Variable,[string]$Property) {
+    $nodes = @($referenceAst.EndBlock.Statements | Where-Object {
+        ($_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -eq $Variable) -or
+        ($_ -is [Management.Automation.Language.IfStatementAst] -and
+          $_.Extent.Text.StartsWith('if ($buildRecord.PSObject.Properties[' + "'$Property'" + '])'))
+    })
+    Check-Reference ($nodes.Count -eq 2) "Expected one initializer and one guard for $Property."
+    return [scriptblock]::Create(($nodes | ForEach-Object { $_.Extent.Text }) -join "`n")
+}
+$moduleLayout = Select-LayoutStatements '$packagedModuleRelativePath' 'packaged_module_relative_path'
+$configLayout = Select-LayoutStatements '$runtimeConfigFilename' 'runtime_config_filename'
+$buildRecord = [pscustomobject]@{}
+. $moduleLayout
+. $configLayout
+Check-Reference ($packagedModuleRelativePath -eq 'gGDJEB2_recomp.dll') 'Preserved module layout changed.'
+Check-Reference ($runtimeConfigFilename -eq 'Dolphin.ini') 'Preserved profile filename changed.'
+$buildRecord = [pscustomobject]@{packaged_module_relative_path='data/game.dll';runtime_config_filename='Runtime.ini'}
+. $moduleLayout
+. $configLayout
+Check-Reference ($packagedModuleRelativePath -eq 'data/game.dll') 'Current package module was not selected.'
+Check-Reference ($runtimeConfigFilename -eq 'Runtime.ini') 'Current profile filename was not selected.'
+foreach ($invalid in @('../outside.dll','C:/outside.dll','', $null)) {
+    $buildRecord = [pscustomobject]@{packaged_module_relative_path=$invalid;runtime_config_filename=$invalid}
+    foreach ($selector in @($moduleLayout,$configLayout)) {
+        $rejected=$false
+        try { & $selector } catch { $rejected=$true }
+        Check-Reference $rejected 'Unknown layout fields must be rejected, not combined with trusted roots.'
+    }
+}
 Write-Host "Reference startup path checks passed: $script:referenceChecks"
