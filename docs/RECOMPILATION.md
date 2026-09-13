@@ -15,6 +15,8 @@ online four-player co-op. The final frontend should accept a user-provided ROM
 and prepare the required assets automatically through a simple EXE entry point.
 These are future acceptance gates in [ROADMAP.md](ROADMAP.md), not capabilities
 established by translation or the current developer launcher.
+The supplied USA data's actual language content and remaining selector/font
+checks are documented in [LOCALIZATION.md](LOCALIZATION.md).
 
 ## Local source inputs
 
@@ -50,6 +52,8 @@ builds the runtime and game module. It rejects unexpected checkout changes
 instead of resetting them. `-Jobs 4` is the default parallelism. `-OptLevel 2`
 builds optimized game code for manual testing; `-OptLevel 0` is available only
 as a slower diagnostic profile. Use `-RuntimeOnly` to build just the runtime.
+The build also produces the branded `DW4_PC.exe` frontend. Local packaging and
+automatic ROM-import checks are documented in [ROM_IMPORT.md](ROM_IMPORT.md).
 Compiler optimization does not replace behavior/performance validation.
 No build option launches the game.
 
@@ -102,6 +106,21 @@ checks run without game data or a runtime launch:
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/recomp_startup_metrics_tests.ps1
 ```
 
+Each frame window also records process CPU time using its own observation
+duration, average busy cores and CPU milliseconds per unique-frame advance.
+Busy cores are total process CPU seconds divided by elapsed seconds, not a
+machine-wide utilization percentage. Invalid or nonmonotonic samples produce
+an unavailable result. `-IdleMode Enabled` and `-IdleMode Disabled` select the
+guarded DW4 scheduler optimization in a fresh profile for a same-binary A/B
+comparison; the generic `StaticRecompIdlePC` remains zero.
+
+For package acceptance, `-UseBundledModule` requires `-Module` to identify the
+hash-matched `gGDJEB2_recomp.dll` beside the selected `-Runner`. It omits the
+runner's explicit module argument so the real executable-relative discovery
+path is exercised. All build, ABI and content checks remain active; the child
+receives no inherited module override. The imported game folder may be supplied
+as `-ExtractedRoot`. This verifies package startup without opening a game window.
+
 This check exercises original CPU execution and runtime startup. Null graphics
 does not validate rendered pixels; audio, controls, saves and playable game
 behavior require separate acceptance. The runtime's reported interpreter
@@ -113,6 +132,14 @@ It queues a late screenshot after frame progression, requires the processed
 command and a PNG header, and records the image path/hash. Decode and inspect
 that image before claiming visual acceptance. Vulkan headless mode creates
 real GPU resources without a render window, surface or swapchain.
+
+The hidden test deliberately uses 640x528 at 1x EFB and NullSound. NullSound
+sets output sample rate to zero, so these measurements exclude host audio
+queuing, resampling and device callbacks. The current separate manual profile
+uses the 1920x1080 option, which maps to 3x EFB, and ordinarily selects Cubeb
+audio. Normal runtime speed defaults to 1.0. These differences limit comparisons
+with the owner's main-menu report: its exact executable identity was not
+recorded, and no hidden-test result establishes that audible stutter is fixed.
 
 ## Responsibilities
 
@@ -282,6 +309,13 @@ acceptance. Preserve these conditions when comparing compiler profiles.
 
 ## Next PC integration boundaries
 
+The packaged build now also passes a same-runner comparison of the guarded
+DW4 scheduler optimization and automatic bundled-module discovery. It lowers
+measured process CPU cost per boot frame-counter advance by about 46% while
+retaining original speed and the same visible boot image. This is separate
+from the historical compiler-profile comparison above. See
+[RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md) for exact conditions and limits.
+
 Keep `EmulationSpeed=1.0` during performance work. The runtime's zero/unlimited
 setting removes guest-clock throttling; CPU/VI overclock settings also change
 console timing. Neither implements 300 FPS presentation at unchanged game speed.
@@ -301,7 +335,8 @@ The pinned runtime already contains useful implementation foundations:
   A DW4 in-game menu requires video-thread drawing, input capture and safe CPU
   commands; four GameCube player mappings and multi-machine behavior require
   their own integration. The existing tools do not establish working DW4 online
-  co-op or the final no-toolchain EXE experience.
+  co-op. The local automatic-ROM package now passes its import/startup checks;
+  complete release acceptance remains separate.
 
 Use those runtime foundations selectively instead of reconstructing equivalent
 services in the manual core. Preserve native-code verification, original timing,

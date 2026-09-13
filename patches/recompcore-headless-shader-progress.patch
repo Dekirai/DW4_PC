@@ -1,5 +1,311 @@
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.cpp b/Source/Core/Core/Config/StaticRecompSettings.cpp
+index 653deacf5809cd43ab5cb7789b51b5d0d26daea0..402945782c7babed922c1483a3556e963ad50968 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.cpp
++++ b/Source/Core/Core/Config/StaticRecompSettings.cpp
+@@ -6,6 +6,7 @@ namespace Config
+ {
+ const Info<bool> MAIN_STATICRECOMP_MODULE{{System::Main, "Core", "StaticRecompModule"}, true};
+ const Info<u32> MAIN_STATICRECOMP_IDLE_PC{{System::Main, "Core", "StaticRecompIdlePC"}, 0};
++const Info<bool> MAIN_STATICRECOMP_DW4_IDLE{{System::Main, "Core", "StaticRecompDw4Idle"}, true};
+ const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES{
+     {System::Main, "Core", "StaticRecompFallbackRanges"}, ""};
+ }  // namespace Config
+diff --git a/Source/Core/Core/Config/StaticRecompSettings.h b/Source/Core/Core/Config/StaticRecompSettings.h
+index fbfccca11151a408c4c278d817d216ed87197a20..5e284240bc156cf578693f28cef00acb0fa99bf5 100644
+--- a/Source/Core/Core/Config/StaticRecompSettings.h
++++ b/Source/Core/Core/Config/StaticRecompSettings.h
+@@ -7,5 +7,6 @@ namespace Config
+ {
+ extern const Info<bool> MAIN_STATICRECOMP_MODULE;
+ extern const Info<u32> MAIN_STATICRECOMP_IDLE_PC;
++extern const Info<bool> MAIN_STATICRECOMP_DW4_IDLE;
+ extern const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES;
+ }  // namespace Config
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+index e3581cc9386ed6e9485993b7f7231f65a0cd239b..a89202a88b1ed51bfcbd2ca0d81905f26686f97e 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -182,6 +182,7 @@ void StaticRecompCore::Init()
+ 
+   LoadModule();
+   m_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_PC);
++  m_dw4_idle_enabled = Config::Get(Config::MAIN_STATICRECOMP_DW4_IDLE);
+   m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
+   m_lockstep_verifier->Init();
+ 
+@@ -211,6 +212,15 @@ void StaticRecompCore::Shutdown()
+                (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
+   std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
+                                                     m_dispatch_samples.end());
++  std::fprintf(stderr,
++               "[staticrecomp] dw4_idle: enabled=%u candidates=%llu accepted=%llu rejected=%llu "
++               "quanta=%llu cycles=%llu\n",
++               m_dw4_idle_enabled ? 1u : 0u,
++               static_cast<unsigned long long>(m_dw4_idle_candidates),
++               static_cast<unsigned long long>(m_dw4_idle_accepted),
++               static_cast<unsigned long long>(m_dw4_idle_candidates - m_dw4_idle_accepted),
++               static_cast<unsigned long long>(m_dw4_idle_extra_cycles / 258),
++               static_cast<unsigned long long>(m_dw4_idle_extra_cycles));
+   std::sort(dispatch_samples.begin(), dispatch_samples.end(),
+             [](const auto& left, const auto& right) { return left.second > right.second; });
+   for (std::size_t i = 0; i < std::min<std::size_t>(dispatch_samples.size(), 16); ++i)
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+index d084fea634a662590dda61faed30b0a1523771bb..a2ebb62bcefc8d9afc11d66e76b97ede3e1c10f1 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -177,6 +177,9 @@ private:
+   std::unordered_map<u32, u64> m_dispatch_samples;
+   u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
+   u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
++  u64 m_dw4_idle_candidates = 0;
++  u64 m_dw4_idle_accepted = 0;
++  u64 m_dw4_idle_extra_cycles = 0;
+ 
+   // D4 guard state: parallel to m_module->chunk_ranges.
+   std::vector<u8> m_chunk_state;
+@@ -212,6 +215,7 @@ private:
+   bool m_collect_dispatch_samples = false;
+   bool m_has_rel_modules = false;
+   u32 m_idle_pc = 0;
++  bool m_dw4_idle_enabled = false;
+ };
+ 
+ extern StaticRecompCore* g_static_recomp_core;
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..f651cc51c81c462ff874243c40704ad01abb5e2d 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -6,11 +6,13 @@
+ #include "Core/PowerPC/PowerPC.h"
+ #include "Core/PowerPC/Interpreter/Interpreter.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
++#include "Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h"
+ #include "Core/CoreTiming.h"
+ #include "Core/HW/CPU.h"
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Config/ConfigManager.h"
+ #include "Core/HW/SystemTimers.h"
++#include "VideoCommon/Fifo.h"
+ 
+ #include <cstdio>
+ #include <cstdlib>
+@@ -172,7 +174,44 @@ void StaticRecompCore::Run()
+           // dispatcher back-edge timing check — CoreTiming regains control
+           // with at least CachedInterpreter's per-block frequency, so
+           // external-interrupt latency matches stock.
+-          const s64 charge = -m_guest.downcount;
++          s64 charge = -m_guest.downcount;
++          if (m_dw4_idle_enabled && runtime_dispatch_address == StaticRecompDw4Idle::LOOP_PC)
++          {
++            ++m_dw4_idle_candidates;
++            // Revalidate module/chunk and live scheduler facts after the real
++            // load/compare/back-edge. No cached permission survives reloads.
++            const auto read_extra_charge = [&]() -> u64 {
++              const int chunk = m_dw4_idle_enabled ? ChunkIndexOf(runtime_dispatch_address) : -1;
++              const std::string candidate_game_id = SConfig::GetInstance().GetGameID();
++              StaticRecompDw4Idle::Environment idle;
++              idle.enabled = m_dw4_idle_enabled;
++              idle.module_active = m_module_active && !m_has_rel_modules;
++              idle.running = *state_ptr == CPU::State::Running;
++              idle.lockstep = lockstep_enabled;
++              idle.chunk_verified = chunk >= 0 && static_cast<std::size_t>(chunk) < m_chunk_state.size() &&
++                                    m_chunk_state[chunk] == CHUNK_VERIFIED;
++              idle.chunk_has_hooks = chunk >= 0 && ChunkContainsHostCall(static_cast<u32>(chunk));
++              idle.forced_fallback = !m_forced_fallback_ranges.empty();
++              idle.pending_exceptions = ppc.Exceptions;
++              idle.generic_idle_pc = m_idle_pc;
++              idle.dispatch_address = runtime_dispatch_address;
++              idle.dispatch_charge = charge;
++              idle.downcount = ppc.downcount;
++              idle.game_id = candidate_game_id;
++              idle.module = m_module;
++              idle.chunk_index = chunk >= 0 ? static_cast<u32>(chunk) : 0;
++              return StaticRecompDw4Idle::ExtraCycles(m_guest, idle);
++            };
++            const u64 extra = StaticRecompDw4Idle::SynchronizedExtraCycles(
++                core_timing.UseSyncOnSkipIdle(), read_extra_charge,
++                [&]() { m_system.GetFifo().FlushGpu(); });
++            if (extra != 0)
++            {
++              ++m_dw4_idle_accepted;
++              m_dw4_idle_extra_cycles += extra;
++              charge += static_cast<s64>(extra);
++            }
++          }
+           m_guest.downcount = 0;
+           const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
+           ppc.downcount -= static_cast<int>(effective_charge);
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..0f1b0020976c3a2a4c8c3eec5e15344352d49ac0
+--- /dev/null
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h
+@@ -0,0 +1,110 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <string_view>
++
++#include "Core/PowerPC/StaticRecomp/StaticRecompABI.h"
++
++namespace StaticRecompDw4Idle
++{
++constexpr u32 LOOP_PC = 0x80261558u;
++constexpr u32 CHUNK_START = 0x80260160u;
++constexpr u32 CHUNK_END = 0x80264160u;
++constexpr u64 CHUNK_HASH = 0x00d854460830c5b1ull;
++constexpr s64 QUANTUM = 258;
++
++// All host facts are checked anew at a completed native dispatch. In particular,
++// a previous verification must not survive an SMC invalidation or state load.
++struct Environment
++{
++  bool enabled = false;
++  bool module_active = false;
++  bool running = false;
++  bool lockstep = false;
++  bool chunk_verified = false;
++  bool chunk_has_hooks = false;
++  bool forced_fallback = false;
++  u32 pending_exceptions = 0;
++  u32 generic_idle_pc = 0;
++  u32 dispatch_address = 0;
++  s64 dispatch_charge = 0;
++  s32 downcount = 0;
++  std::string_view game_id;
++  const StaticRecompModuleDesc* module = nullptr;
++  u32 chunk_index = 0;
++};
++
++inline u32 ReadWord(const CPUState& cpu, u32 address)
++{
++  const u8* p = cpu.ram + (address - 0x80000000u);
++  return (static_cast<u32>(p[0]) << 24) | (static_cast<u32>(p[1]) << 16) |
++         (static_cast<u32>(p[2]) << 8) | p[3];
++}
++
++// This returns an additional cycle charge, never a fabricated CPU state. The
++// normal dispatcher remains responsible for downcount/timebase accounting.
++inline u64 ExtraCycles(const CPUState& cpu, const Environment& env)
++{
++  if (!env.enabled || !env.module_active || !env.running || env.lockstep ||
++      !env.chunk_verified || env.chunk_has_hooks || env.forced_fallback ||
++      env.pending_exceptions != 0 || env.generic_idle_pc != 0 ||
++      env.game_id != "GDJEB2" || env.dispatch_address != LOOP_PC || cpu.pc != LOOP_PC ||
++      env.dispatch_charge != QUANTUM || cpu.downcount != -QUANTUM ||
++      env.downcount <= QUANTUM * 2 || cpu.exception != 0 || cpu.program_exception != 0)
++    return 0;
++
++  const auto* module = env.module;
++  if (!module || std::string_view(module->game_id, 7) != std::string_view("GDJEB2\0", 7) ||
++      module->entry_point != 0x80005240u || module->num_rel_modules != 0 ||
++      !module->chunk_ranges || !module->chunk_hashes || env.chunk_index >= module->num_chunk_ranges ||
++      module->chunk_ranges[env.chunk_index].start != CHUNK_START ||
++      module->chunk_ranges[env.chunk_index].end != CHUNK_END ||
++      module->chunk_hashes[env.chunk_index] != CHUNK_HASH)
++    return 0;
++
++  // The original privileged, big-endian idle context has interrupts and address
++  // translation enabled. Debug tracing, power management and pending exceptions
++  // are outside this optimization's supported execution profile.
++  constexpr u32 required_msr = PPC_MSR_EE | PPC_MSR_IR | PPC_MSR_DR;
++  constexpr u32 excluded_msr = PPC_MSR_POW | PPC_MSR_ILE | PPC_MSR_PR | PPC_MSR_SE |
++                               PPC_MSR_BE | PPC_MSR_IP | PPC_MSR_PM | PPC_MSR_LE;
++  if ((cpu.msr & required_msr) != required_msr || (cpu.msr & excluded_msr) != 0 ||
++      cpu.gpr[0] != 0 || cpu.gpr[13] != 0x80564f00u || cpu.gpr[30] != 0x80000000u ||
++      cpu.gpr[31] != 0x80514db8u || cpu.lr != LOOP_PC ||
++      (cpu.cr >> 28) != (2u | (cpu.xer >> 31)) ||
++      !cpu.ram || cpu.ram_size < 0x00565f14u)
++    return 0;
++
++  // Fresh physical memory reads: original instructions, ready mask, current
++  // thread, and both effective/physical OS context slots. A first return from
++  // OSEnableInterrupts does not pass the dispatch-address/charge gates above.
++  if (ReadWord(cpu, LOOP_PC) != 0x800d1010u ||
++      ReadWord(cpu, LOOP_PC + 4) != 0x28000000u ||
++      ReadWord(cpu, LOOP_PC + 8) != 0x4182fff8u ||
++      ReadWord(cpu, 0x80565f10u) != 0 || ReadWord(cpu, 0x800000e4u) != 0 ||
++      ReadWord(cpu, 0x800000d4u) != 0x805154e8u ||
++      ReadWord(cpu, 0x800000c0u) != 0x005154e8u)
++    return 0;
++
++  // The emitted loop returns after 86 three-instruction passes, charging 258.
++  // Elide only whole repetitions and leave 1..258 cycles for one final REAL
++  // dispatch. Its rounded overshoot and the next CoreTiming::Advance therefore
++  // match the unoptimized dispatcher, including nonmultiple slice lengths.
++  const s64 remaining = static_cast<s64>(env.downcount) - QUANTUM;
++  return static_cast<u64>(((remaining - 1) / QUANTUM) * QUANTUM);
++}
++
++// Synchronization may publish work or change the remaining timing slice. Never
++// reuse a pre-wait permission or charge; the reader must reconstruct live facts.
++template <typename Reader, typename Synchronize>
++u64 SynchronizedExtraCycles(bool sync_required, Reader&& read, Synchronize&& synchronize)
++{
++  const u64 initial = read();
++  if (initial != 0 && sync_required)
++  {
++    synchronize();
++    return read();
++  }
++  return initial;
++}
++}  // namespace StaticRecompDw4Idle
+diff --git a/Source/Core/DiscIO/FileSystemGCWii.cpp b/Source/Core/DiscIO/FileSystemGCWii.cpp
+index 2dca65cf7365ec7b13ffafbbbc7edb78be8b6756..2cbbab42178b922936d0b61b13554eb47e7e7b82 100644
+--- a/Source/Core/DiscIO/FileSystemGCWii.cpp
++++ b/Source/Core/DiscIO/FileSystemGCWii.cpp
+@@ -179,8 +179,16 @@ std::string FileInfoGCWii::GetPath() const
+   }
+ }
+ 
+-bool FileInfoGCWii::IsValid(u64 fst_size, const FileInfoGCWii& parent_directory) const
++bool FileInfoGCWii::IsValid(u64 fst_size, const FileInfoGCWii& parent_directory, u32 depth) const
+ {
++  // Validate before descending: VolumeGC parses the FST during construction,
++  // before a frontend can inspect the tree or apply its own import limits.
++  if (depth > 64)
++  {
++    ERROR_LOG_FMT(DISCIO, "Excessive directory depth in file system");
++    return false;
++  }
++
+   if (GetNameOffset() >= fst_size)
+   {
+     ERROR_LOG_FMT(DISCIO, "Impossibly large name offset in file system");
+@@ -211,7 +219,7 @@ bool FileInfoGCWii::IsValid(u64 fst_size, const FileInfoGCWii& parent_directory)
+ 
+     for (const FileInfo& child : *this)
+     {
+-      if (!static_cast<const FileInfoGCWii&>(child).IsValid(fst_size, *this))
++      if (!static_cast<const FileInfoGCWii&>(child).IsValid(fst_size, *this, depth + 1))
+         return false;
+     }
+   }
+@@ -269,7 +277,7 @@ FileSystemGCWii::FileSystemGCWii(const VolumeDisc* volume, const Partition& part
+     return;
+   }
+ 
+-  if (FST_ENTRY_SIZE * m_root.GetSize() > *fst_size)
++  if (m_root.GetSize() == 0 || static_cast<u64>(FST_ENTRY_SIZE) * m_root.GetSize() > *fst_size)
+   {
+     ERROR_LOG_FMT(DISCIO, "File system has too many entries for its size");
+     return;
+diff --git a/Source/Core/DiscIO/FileSystemGCWii.h b/Source/Core/DiscIO/FileSystemGCWii.h
+index 48b122a7072388fece1f1df84747c2c14968532f..9bab243767918d4295a811de5faa0e443db7c157 100644
+--- a/Source/Core/DiscIO/FileSystemGCWii.h
++++ b/Source/Core/DiscIO/FileSystemGCWii.h
+@@ -46,7 +46,7 @@ public:
+   bool NameCaseInsensitiveEquals(std::string_view other) const override;
+   std::string GetPath() const override;
+ 
+-  bool IsValid(u64 fst_size, const FileInfoGCWii& parent_directory) const;
++  bool IsValid(u64 fst_size, const FileInfoGCWii& parent_directory, u32 depth = 0) const;
+ 
+ protected:
+   uintptr_t GetAddress() const override;
 diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
-index 565e4f42f8..f3415cfa67 100644
+index 565e4f42f8d641858b755cda66e3a0633c0d7c9a..f3415cfa67d8f119d462725e92a7ed95e35a50ee 100644
 --- a/Source/Core/VideoCommon/ShaderCache.cpp
 +++ b/Source/Core/VideoCommon/ShaderCache.cpp
 @@ -171,6 +171,11 @@ void ShaderCache::WaitForAsyncCompiler()

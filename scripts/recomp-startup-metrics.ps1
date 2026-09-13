@@ -1,4 +1,29 @@
-# Counter timing only. This helper never launches a runtime or changes pass criteria.
+# Owned-process sampling and counter timing only; no launches or pass criteria.
+function Get-RecompProcessSample {
+    param([Diagnostics.Process]$Process, [Diagnostics.Stopwatch]$Clock)
+    $begin = $Clock.Elapsed.TotalSeconds
+    $cpu = $null
+    $observed = $null
+    $working = $null
+    $peak = $null
+    $private = $null
+    $errorText = $null
+    try {
+        $Process.Refresh()
+        $cpu = $Process.TotalProcessorTime.TotalSeconds
+        $observed = $Clock.Elapsed.TotalSeconds
+        $working = $Process.WorkingSet64
+        $peak = $Process.PeakWorkingSet64
+        $private = $Process.PrivateMemorySize64
+    } catch { $errorText = $_.Exception.Message }
+    [pscustomobject]@{
+        cpu_observed_seconds=$observed; total_cpu_seconds=$cpu;
+        working_set_bytes=$working; peak_working_set_bytes=$peak; private_bytes=$private;
+        measurement_begin_seconds=$begin; measurement_end_seconds=$Clock.Elapsed.TotalSeconds;
+        error=$errorText
+    }
+}
+
 function Get-RecompStartupFrameMetrics {
     param([object[]]$Samples, [double]$ObservationEndSeconds)
     if ([double]::IsNaN($ObservationEndSeconds) -or [double]::IsInfinity($ObservationEndSeconds) -or $ObservationEndSeconds -lt 0) {
@@ -34,7 +59,26 @@ function Get-RecompStartupFrameMetrics {
             $valid.Clear()
             ++$resets
         }
-        $valid.Add([pscustomobject]@{ time=$time; frames=$frames; presents=$presents; speed=$(if ($hasSpeed) { $speed } else { $null }) })
+        $cpu = $null
+        $cpuTime = $null
+        if ($sample.PSObject.Properties['process'] -and $null -ne $sample.process) {
+            $process = $sample.process
+            $parsedCpu = 0.0
+            $parsedTime = 0.0
+            if ($process.PSObject.Properties['total_cpu_seconds'] -and $process.PSObject.Properties['cpu_observed_seconds'] -and
+                [double]::TryParse([string]$process.total_cpu_seconds,[Globalization.NumberStyles]::Float,$culture,[ref]$parsedCpu) -and
+                [double]::TryParse([string]$process.cpu_observed_seconds,[Globalization.NumberStyles]::Float,$culture,[ref]$parsedTime) -and
+                -not [double]::IsNaN($parsedCpu) -and -not [double]::IsInfinity($parsedCpu) -and $parsedCpu -ge 0 -and
+                -not [double]::IsNaN($parsedTime) -and -not [double]::IsInfinity($parsedTime) -and $parsedTime -ge 0 -and
+                $parsedTime -le $ObservationEndSeconds) {
+                $cpu = $parsedCpu
+                $cpuTime = $parsedTime
+            }
+        }
+        $valid.Add([pscustomobject]@{
+            time=$time; frames=$frames; presents=$presents;
+            speed=$(if ($hasSpeed) { $speed } else { $null }); cpu=$cpu; cpu_time=$cpuTime
+        })
     }
     $windows = @()
     foreach ($requested in @(5,10)) {
@@ -44,7 +88,11 @@ function Get-RecompStartupFrameMetrics {
             frame_advances=$null; present_advances=$null;
             frame_advances_per_second=$null; present_advances_per_second=$null;
             reported_speed_first=$null; reported_speed_last=$null;
-            reported_speed_min=$null; reported_speed_max=$null
+            reported_speed_min=$null; reported_speed_max=$null;
+            process_cpu_available=$false; process_cpu_unavailable_reason='Insufficient active observations.';
+            process_cpu_start_seconds=$null; process_cpu_end_seconds=$null;
+            process_cpu_observation_seconds=$null; process_cpu_seconds=$null;
+            process_average_busy_cores=$null; process_cpu_milliseconds_per_frame=$null
         }
         if ($valid.Count) {
             $end = $valid[$valid.Count-1]
@@ -72,13 +120,44 @@ function Get-RecompStartupFrameMetrics {
                 $window.reported_speed_min = $measured.Minimum
                 $window.reported_speed_max = $measured.Maximum
             }
+            $cpuValid = $true
+            $priorCpu = -1.0
+            $priorCpuTime = -1.0
+            foreach ($entry in $valid.GetRange($beginIndex,$valid.Count-$beginIndex)) {
+                if ($null -eq $entry.cpu -or $null -eq $entry.cpu_time) {
+                    $cpuValid = $false
+                    $window.process_cpu_unavailable_reason = 'Missing or invalid process CPU observation in this window.'
+                    break
+                }
+                if ($entry.cpu -lt $priorCpu -or $entry.cpu_time -le $priorCpuTime) {
+                    $cpuValid = $false
+                    $window.process_cpu_unavailable_reason = 'Nonmonotonic process CPU counter or observation timestamp.'
+                    break
+                }
+                $priorCpu = $entry.cpu
+                $priorCpuTime = $entry.cpu_time
+            }
+            if ($cpuValid -and $window.sample_count -ge 2 -and $end.cpu_time -gt $begin.cpu_time) {
+                $window.process_cpu_available = $true
+                $window.process_cpu_unavailable_reason = $null
+                $window.process_cpu_start_seconds = $begin.cpu_time
+                $window.process_cpu_end_seconds = $end.cpu_time
+                $window.process_cpu_observation_seconds = $end.cpu_time-$begin.cpu_time
+                $window.process_cpu_seconds = $end.cpu-$begin.cpu
+                $window.process_average_busy_cores = $window.process_cpu_seconds/$window.process_cpu_observation_seconds
+                if ($window.frame_advances -gt 0) {
+                    $window.process_cpu_milliseconds_per_frame = 1000*$window.process_cpu_seconds/$window.frame_advances
+                }
+            }
         }
         $windows += [pscustomobject]$window
     }
     [pscustomobject]@{
         scope='Observed headless frame/present counter deltas over actual time; not monitor FPS or audio-output proof.';
+        process_cpu_scope='Owned runtime process user+kernel CPU time across all its threads; average busy cores=CPU seconds/actual observation seconds, not machine-wide percent. Frame counters and CPU reads are nearby observations, not an atomic renderer sample.';
         selection='Final contiguous booted/running segment before stop; invalid and non-increasing timestamp samples excluded; counter reset starts a new segment.';
         observation_end_seconds=$ObservationEndSeconds; active_samples=$valid.Count;
+        latest_active_sample_age_seconds=$(if ($valid.Count) { $ObservationEndSeconds-$valid[$valid.Count-1].time } else { $null });
         invalid_samples=$invalid; counter_resets=$resets; windows=$windows
     }
 }

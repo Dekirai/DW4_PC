@@ -45,7 +45,8 @@ Write-Host "Settings and saves: $profile"
 $previousStatic = [Environment]::GetEnvironmentVariable('MODERNGEKKO_STATICRECOMP','Process')
 try {
     [Environment]::SetEnvironmentVariable('MODERNGEKKO_STATICRECOMP','1','Process')
-    & $runner --game $build.extracted_root --module $build.module_path --user-dir $profile --no-mods --title 'Digimon World 4 PC - Experimental Recompilation'
+    # Piping a GUI executable makes Windows PowerShell wait for its real exit.
+    & $runner --game $build.extracted_root --module $build.module_path --user-dir $profile --no-mods --title 'Digimon World 4 PC - Experimental Recompilation' | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "The runtime exited with code $LASTEXITCODE." }
 } finally {
     [Environment]::SetEnvironmentVariable('MODERNGEKKO_STATICRECOMP',$previousStatic,'Process')

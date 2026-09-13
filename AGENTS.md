@@ -20,6 +20,10 @@ speed up simulation or audio. Verify game timing before uncapping presentation;
 a frame-limit setting alone is not high-frame-rate support. Keep 16:9, higher
 render resolution, HD texture replacements, an ImGui menu for graphics, cheats,
 save states and other QoL, content mods, and online four-player co-op in scope.
+Expose the languages actually supported by the supplied game data through the
+ImGui menu after verifying text/font coverage and the original language selector.
+Do not infer complete language support from filenames alone. Source, README and
+development documentation stay in English; in-game localization is intentional.
 The final distribution should have one simple EXE entry point: the user supplies
 their ROM and the application validates and prepares its required assets without
 requiring a developer toolchain or manual extraction. These are acceptance

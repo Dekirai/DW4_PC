@@ -34,4 +34,48 @@ Check ($empty.active_samples -eq 0 -and $null -eq $empty.windows[0].elapsed_seco
 $rejected = $false
 try { Get-RecompStartupFrameMetrics @() ([double]::NaN) | Out-Null } catch { $rejected = $true }
 Check $rejected 'Invalid observation end was accepted.'
+function CpuSample($Time,$Frames,$Cpu,$CpuTime=$Time,$State='running') {
+    $sample = Sample $Time $Frames ($Frames*2) 1 $State
+    $sample | Add-Member -NotePropertyName process -NotePropertyValue ([pscustomobject]@{
+        total_cpu_seconds=$Cpu; cpu_observed_seconds=$CpuTime
+    })
+    return $sample
+}
+$cpu = Get-RecompStartupFrameMetrics @((CpuSample 1 0 2 0.9),(CpuSample 2.2 60 4.4 2.1),(CpuSample 4.2 180 8.2 4.0)) 5
+Check $cpu.windows[0].process_cpu_available 'Valid CPU observations were rejected.'
+Check ([math]::Abs($cpu.windows[0].process_cpu_seconds-6.2) -lt 0.000001) 'Cumulative CPU values were not subtracted.'
+Check ([math]::Abs($cpu.windows[0].process_cpu_observation_seconds-3.1) -lt 0.000001) 'CPU measurement did not use its own observed timestamps.'
+Check ([math]::Abs($cpu.windows[0].process_average_busy_cores-2) -lt 0.000001) 'Two busy cores were clamped or divided by machine cores.'
+Check ([math]::Abs($cpu.windows[0].process_cpu_milliseconds_per_frame-(6200.0/180)) -lt 0.000001) 'CPU time per frame differs.'
+Check ([math]::Abs($cpu.windows[0].frame_advances_per_second-56.25) -lt 0.000001) 'CPU sampling changed existing frame timing.'
+$cpuZero = Get-RecompStartupFrameMetrics @((CpuSample 1 1 5),(CpuSample 3 1 5)) 4
+Check ($cpuZero.windows[0].process_cpu_available -and $cpuZero.windows[0].process_average_busy_cores -eq 0) 'Zero CPU delta was treated as missing.'
+Check ($cpuZero.latest_active_sample_age_seconds -eq 1) 'The active-window age was not retained.'
+Check ($null -eq $cpuZero.windows[0].process_cpu_milliseconds_per_frame) 'A zero-frame window divided CPU time by zero.'
+Check (-not $result.windows[0].process_cpu_available -and $null -eq $result.windows[0].process_cpu_seconds) 'Legacy status history fabricated CPU metrics.'
+$cpuMissing = Get-RecompStartupFrameMetrics @((CpuSample 1 1 1),(Sample 2 2 4),(CpuSample 3 3 3)) 4
+Check (-not $cpuMissing.windows[0].process_cpu_available -and $cpuMissing.windows[0].frame_advances -eq 2) 'Missing intermediate CPU data changed or fabricated a full-window measurement.'
+$cpuInvalid = Get-RecompStartupFrameMetrics @((CpuSample 1 1 'NaN'),(CpuSample 2 2 2)) 3
+Check (-not $cpuInvalid.windows[0].process_cpu_available) 'Nonfinite CPU data was accepted.'
+$cpuReset = Get-RecompStartupFrameMetrics @((CpuSample 1 1 5),(CpuSample 2 2 4),(CpuSample 3 3 6)) 4
+Check (-not $cpuReset.windows[0].process_cpu_available -and $cpuReset.windows[0].frame_advances -eq 2) 'A CPU counter reversal was hidden by positive endpoint subtraction.'
+$cpuTimeReset = Get-RecompStartupFrameMetrics @((CpuSample 1 1 1 1),(CpuSample 2 2 2 1),(CpuSample 3 3 3 3)) 4
+Check (-not $cpuTimeReset.windows[0].process_cpu_available) 'Duplicate CPU observation timestamps were accepted.'
+$cpuAfterStop = Get-RecompStartupFrameMetrics @((CpuSample 1 1 1),(CpuSample 2 2 2 4)) 3
+Check (-not $cpuAfterStop.windows[0].process_cpu_available) 'A CPU read beyond the captured observation endpoint entered the window.'
+$cpuPause = Get-RecompStartupFrameMetrics @((CpuSample 1 1 1),(CpuSample 2 2 99 2 'paused'),(CpuSample 3 3 100),(CpuSample 4 4 101)) 5
+Check ($cpuPause.windows[0].process_cpu_available -and $cpuPause.windows[0].process_cpu_seconds -eq 1) 'CPU measurement crossed a paused segment.'
+$selfClock = [Diagnostics.Stopwatch]::StartNew()
+$selfProcess = [Diagnostics.Process]::GetCurrentProcess()
+try {
+    $selfSample = Get-RecompProcessSample -Process $selfProcess -Clock $selfClock
+    Check ($null -eq $selfSample.error -and $null -ne $selfSample.total_cpu_seconds -and $selfSample.total_cpu_seconds -ge 0) 'Owned Process CPU sampling failed.'
+    Check ($selfSample.working_set_bytes -gt 0 -and $selfSample.peak_working_set_bytes -ge $selfSample.working_set_bytes) 'Owned Process memory counters are invalid.'
+    Check ($selfSample.measurement_begin_seconds -le $selfSample.cpu_observed_seconds -and $selfSample.cpu_observed_seconds -le $selfSample.measurement_end_seconds) 'CPU sampling timestamps are not bracketed.'
+} finally { $selfProcess.Dispose() }
+$unstartedProcess = [Diagnostics.Process]::new()
+try {
+    $missingSample = Get-RecompProcessSample -Process $unstartedProcess -Clock $selfClock
+    Check ($null -ne $missingSample.error -and $null -eq $missingSample.total_cpu_seconds) 'Unavailable Process CPU time was replaced with zero.'
+} finally { $unstartedProcess.Dispose() }
 Write-Output "$script:checks startup frame-metric checks passed. No runtime was launched."

@@ -2,7 +2,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Module,
     [Parameter(Mandatory=$true)][string]$ExtractedRoot,
     [string]$Runner = '',
+    [switch]$UseBundledModule,
     [ValidateSet('Null','Vulkan')][string]$Graphics = 'Null',
+    [ValidateSet('Enabled','Disabled')][string]$IdleMode = 'Enabled',
     [switch]$Screenshot,
     [ValidateRange(1,30)][int]$TimeoutSeconds = 30,
     [ValidateRange(2,10)][int]$ShutdownGraceSeconds = 5
@@ -47,8 +49,14 @@ if ($buildRecord.runner_binary_sha256 -ne $runnerHash -or $buildRecord.runtime_p
 if ($buildRecord.chassis_patch_sha256 -ne $chassisPatchHash) {
     throw 'The runner/build record does not match the headless shader-progress patch. Rebuild with scripts/build-recomp.ps1 before testing.'
 }
+if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4Idle')) {
+    throw 'This CPU comparison requires a rebuilt runner with the guarded DW4 idle option.'
+}
+$expectedModulePath = if ($UseBundledModule) {
+    Join-Path (Split-Path -Parent $Runner) 'gGDJEB2_recomp.dll'
+} else { [IO.Path]::GetFullPath($buildRecord.module_path) }
 if ($buildRecord.module_built -isnot [bool] -or -not $buildRecord.module_built -or
-    -not $Module.Equals([IO.Path]::GetFullPath($buildRecord.module_path),[StringComparison]::OrdinalIgnoreCase) -or
+    -not $Module.Equals($expectedModulePath,[StringComparison]::OrdinalIgnoreCase) -or
     $buildRecord.module_sha256 -ne $moduleHash) {
     throw 'The requested module does not match the completed build record. Finish scripts/build-recomp.ps1 before testing.'
 }
@@ -73,7 +81,8 @@ if ($boot.Length -lt 6 -or [Text.Encoding]::ASCII.GetString($boot,0,6) -ne 'GDJE
 # Nothing is removed from an earlier run or from the user's Dolphin profile.
 $runName = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
 $runRoot = Join-Path $repoRoot "work/recomp-startup/$runName"
-$profileRoot = Join-Path $runRoot 'user'
+# Exercise the real runtime's Unicode user-directory boundary in both A/B modes.
+$profileRoot = Join-Path $runRoot ('user-' + [char]0x00fc + [char]0x65e5 + [char]0x672c)
 $automationRoot = Join-Path $runRoot 'automation'
 $commandRoot = Join-Path $automationRoot 'commands'
 $tempRoot = Join-Path $runRoot 'temp'
@@ -87,7 +96,8 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 # The CLI explicitly selects the requested backend. Frontend config accepts only
 # Vulkan/OpenGL labels. Keep alerts enabled for the patched headless log handler.
 [IO.File]::WriteAllText((Join-Path $profileRoot 'Config/Dolphin.ini'),
-    "[Interface]`nUsePanicHandlers=True`n[Core]`nStaticRecompFallbackRanges=`nStaticRecompIdlePC=0`n",$utf8)
+    ("[Interface]`nUsePanicHandlers=True`n[Core]`nStaticRecompFallbackRanges=`nStaticRecompIdlePC=0`nStaticRecompDw4Idle=" +
+        $(if ($IdleMode -eq 'Enabled') { 'True' } else { 'False' }) + "`n"),$utf8)
 
 function Quote-NativeArgument([string]$Value) {
     # Windows CRT quoting, without a shell or PowerShell command interpolation.
@@ -136,7 +146,11 @@ function Read-Status {
     $script:maxFrames = [Math]::Max($script:maxFrames,$frames)
     $script:maxPresents = [Math]::Max($script:maxPresents,$presents)
     $script:sawRunning = $script:sawRunning -or ($values['booted'] -eq '1' -and $values['state'] -eq 'running')
-    $sample = [ordered]@{ observed_at_utc=[DateTime]::UtcNow.ToString('o'); elapsed_seconds=$watch.Elapsed.TotalSeconds; status=$values }
+    $processSample = if ($processStarted) { Get-RecompProcessSample -Process $taskProcess -Clock $watch } else { $null }
+    $sample = [ordered]@{
+        observed_at_utc=[DateTime]::UtcNow.ToString('o'); elapsed_seconds=$watch.Elapsed.TotalSeconds;
+        status=$values; process=$processSample
+    }
     [IO.File]::AppendAllText((Join-Path $runRoot 'status-history.jsonl'),
         ($sample | ConvertTo-Json -Depth 5 -Compress) + "`n",$utf8)
 }
@@ -174,8 +188,9 @@ function Stop-OwnedProcessTree {
     } finally { $current.Dispose() }
 }
 
-$arguments = @('--game',$ExtractedRoot,'--module',$Module,'--user-dir',$profileRoot,
+$arguments = @('--game',$ExtractedRoot,'--user-dir',$profileRoot,
     '--automation-dir',$automationRoot,'--headless','--graphics',$Graphics,'--no-mods','--mute')
+if (-not $UseBundledModule) { $arguments += @('--module',$Module) }
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = $Runner
 $start.Arguments = ($arguments | ForEach-Object { Quote-NativeArgument $_ }) -join ' '
@@ -208,13 +223,16 @@ $start.EnvironmentVariables['STATICRECOMP_TRACE_FILE'] = Join-Path $runRoot 'dis
 $record = [ordered]@{
     schema_version=1; scope='Bounded hidden startup; an optional Vulkan screenshot verifies one output image, not audio or complete gameplay';
     started_at_utc=[DateTime]::UtcNow.ToString('o'); runner=$Runner; module=$Module; extracted_root=$ExtractedRoot;
+    bundled_module_discovery=[bool]$UseBundledModule;
     runner_sha256=$runnerHash; runtime_patch_sha256=$patchHash; chassis_patch_sha256=$chassisPatchHash;
     runtime_build_record=$buildRecordPath;
     module_sha256=$moduleHash; abi_report_path=$abiReportPath; abi_report_sha256=$buildRecord.abi_report_sha256;
     main_dol_sha256=$dolHash; arguments=$arguments; working_directory=$start.WorkingDirectory;
     user_directory=$profileRoot; automation_directory=$automationRoot;
     timeout_seconds=$TimeoutSeconds; shutdown_grace_seconds=$ShutdownGraceSeconds; run_directory=$runRoot;
-    graphics_backend=$Graphics; screenshot_requested=[bool]$Screenshot
+    graphics_backend=$Graphics; screenshot_requested=[bool]$Screenshot; dw4_idle_mode=$IdleMode;
+    dw4_idle_config=[ordered]@{section='Core'; key='StaticRecompDw4Idle'; value=($IdleMode -eq 'Enabled')};
+    process_sampling_scope='Retained owned runtime Process only; user+kernel CPU across all threads, plus working/private/peak working-set bytes. No machine-wide utilization or child-process totals.'
 }
 [IO.File]::WriteAllText((Join-Path $runRoot 'invocation.json'),($record | ConvertTo-Json -Depth 5),$utf8)
 Write-Host "Hidden recompilation startup check: $runRoot"
@@ -232,6 +250,7 @@ $script:lastPresentProgressSeconds = -1.0
 $script:frameProgressSamples = 0
 $script:sawRunning = $false
 $observationEndSeconds = 0.0
+$observationProcessSample = $null
 $observationFrameProgressSeconds = -1.0
 $observationPresentProgressSeconds = -1.0
 $observationFrameProgressSamples = 0
@@ -262,7 +281,7 @@ try {
         Read-Status
         if ($Screenshot -and -not $screenshotCommandQueued -and $script:sawRunning -and
             $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
-            $watch.Elapsed.TotalSeconds -ge 0.7*$TimeoutSeconds -and
+            $watch.Elapsed.TotalSeconds -ge 0.9*$TimeoutSeconds -and
             $watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
             # The command only queues an asynchronous renderer capture. Its
             # processed file alone is not evidence that a PNG was written.
@@ -273,6 +292,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     Read-Status
+    $observationProcessSample = Get-RecompProcessSample -Process $taskProcess -Clock $watch
     $observationEndSeconds = $watch.Elapsed.TotalSeconds
     $observationFrameProgressSeconds = $script:lastFrameProgressSeconds
     $observationPresentProgressSeconds = $script:lastPresentProgressSeconds
@@ -395,6 +415,7 @@ $record['saw_running_status'] = $script:sawRunning
 $record['maximum_frame_count'] = $script:maxFrames
 $record['maximum_present_count'] = $script:maxPresents
 $record['observation_end_seconds'] = $observationEndSeconds
+$record['process_at_observation_end'] = $observationProcessSample
 $record['last_observation_frame_progress_seconds'] = $observationFrameProgressSeconds
 $record['last_observation_present_progress_seconds'] = $observationPresentProgressSeconds
 $record['observation_frame_progress_samples'] = $observationFrameProgressSamples

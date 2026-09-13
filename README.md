@@ -16,6 +16,9 @@ the owner reports audio stutter at the main menu. The optimized build now
 advances about 60 unique-frame counter steps per second at normal simulation
 speed in a bounded boot test, compared with about 40 in the diagnostic build.
 This does not yet validate gameplay performance or audible output.
+The guarded scheduler optimization also reduces measured boot CPU cost by
+about 46% per frame-counter advance in the final package comparison, at normal
+simulation speed. See [RECOMP_PERFORMANCE.md](docs/RECOMP_PERFORMANCE.md).
 The PC target includes at
 least 60 FPS on measured hardware, presentation options up to 300 FPS without
 faster gameplay, 16:9, higher render resolution, HD textures and an ImGui menu
@@ -24,11 +27,18 @@ four-player co-op remain planned. These features are not established by the
 existing walking preview's settings. [The roadmap](docs/ROADMAP.md) separates
 the active acceptance gates from earlier manual-engine work.
 
-The eventual release should start through a simple EXE, accept the user's ROM
-and prepare its required game files automatically. The current experimental
-build still uses developer scripts and locally extracted data. After a verified
-build, run `scripts/start-recomp.ps1` yourself to open it; builds never launch
-the game automatically.
+The local experimental package now starts through `DW4_PC.exe`, accepts the
+user's USA GameCube ROM and prepares its required files automatically. Its
+imported files match the independent extracted reference; original assets are
+not bundled. End users need no compiler or manual disc extraction. Developers
+can create a package with `scripts/package-recomp.ps1` after building, or use
+`scripts/start-recomp.ps1` for the separate developer profile. Builds never
+launch the game automatically. See [ROM_IMPORT.md](docs/ROM_IMPORT.md).
+
+The [language-data audit](docs/LOCALIZATION.md) found that the French, German,
+Italian and Spanish named text packs duplicate English in the supplied USA
+data. Japanese is a candidate requiring runtime validation. An in-game language
+selector remains planned; pack names alone do not establish translated modes.
 
 ## Retained manual core and walking preview
 

@@ -24,11 +24,20 @@ information. See [RECOMPILATION.md](docs/RECOMPILATION.md) for integration scope
 
 `patches/moderngekko-local-runtime.patch` retains the
 [ModernGekko GPL version 3 license](licenses/ModernGekko-GPL-3.0.txt).
-`patches/recompcore-headless-shader-progress.patch` adapts `ShaderCache.cpp`,
-Copyright 2018 Dolphin Emulator Project, identified upstream as
-`GPL-2.0-or-later`. Its [upstream license text](licenses/RecompCore-GPL-2.0-or-later.txt)
+`patches/recompcore-headless-shader-progress.patch` adapts Dolphin/RecompCore
+files, including `ShaderCache.cpp` (Copyright 2018 Dolphin Emulator Project)
+and the GameCube/Wii file-system parser (Copyright 2008 Dolphin Emulator
+Project), identified upstream as `GPL-2.0-or-later`. Its
+[upstream license text](licenses/RecompCore-GPL-2.0-or-later.txt)
 is retained separately. Neither patch is relicensed under this repository's MIT
 license.
+
+Local Windows packages include compiler-matched x64 Microsoft Visual C++
+redistributable runtime DLLs. Their names, versions and hashes are recorded in
+the package manifest, and the installed redistribution notice is retained
+under `licenses/Microsoft-Visual-Cpp-Redist.txt` inside the package. These DLLs
+are Microsoft components, not covered by the project's MIT license, and are
+not committed to this repository.
 
 The native application builds these pinned dependencies using CMake:
 

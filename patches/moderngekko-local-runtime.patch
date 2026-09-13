@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fa2503d..ae872cc 100644
+index fa2503deacb130d62bcc9902f6f741b51079e42b..f809899a0a31e9ae86aad921e22d0d937c1f2af4 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -144,10 +144,13 @@ else()
@@ -18,7 +18,19 @@ index fa2503d..ae872cc 100644
  endif()
  
  add_library(moderngekko_abi INTERFACE)
-@@ -608,6 +611,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -541,6 +544,11 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+     endif()
+     set_target_properties(moderngekko-launcher PROPERTIES
+         OUTPUT_NAME "${MODERNGEKKO_LAUNCHER_OUTPUT_NAME}")
++    if(WIN32)
++        # SDL_main supplies GUI entry points while retaining inherited diagnostic
++        # pipes and normal wait/exit-code behavior for both processes.
++        set_target_properties(moderngekko-run moderngekko-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
++    endif()
+     target_compile_definitions(moderngekko-launcher PRIVATE
+         MODERNGEKKO_FRONTEND_NAME="${MODERNGEKKO_FRONTEND_NAME}"
+         MODERNGEKKO_RUNNER_FILENAME="${MODERNGEKKO_RUNNER_OUTPUT_NAME}"
+@@ -608,6 +616,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          "${CMAKE_CURRENT_SOURCE_DIR}/tools")
      target_compile_definitions(moderngekko-port PRIVATE
          MODERNGEKKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -29,7 +41,7 @@ index fa2503d..ae872cc 100644
          target_compile_definitions(moderngekko-port PRIVATE
              MODERNGEKKO_DOLRECOMP_LLVM=1)
 diff --git a/include/moderngekko/cpu_state.h b/include/moderngekko/cpu_state.h
-index 24fb92a..6c67fc0 100644
+index 24fb92afdbb1f089d87a9eb29d0d1fee5457ed80..6c67fc031d237d5d0b9b53d27d3005420c6a9d42 100644
 --- a/include/moderngekko/cpu_state.h
 +++ b/include/moderngekko/cpu_state.h
 @@ -8,7 +8,9 @@
@@ -51,8 +63,875 @@ index 24fb92a..6c67fc0 100644
      uint8_t* exram;
      uint32_t exram_size;
      PPCSPRRead spr_read;
+diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
+index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffad88ed77d 100644
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -218,7 +218,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
+ std::filesystem::path NormalizeScreenshotPath(const std::filesystem::path& path)
+ {
+   if (!path.has_extension())
+-    return path.string() + ".png";
++  {
++    auto result = path;
++    result += ".png";
++    return result;
++  }
+   return path;
+ }
+ 
+@@ -228,7 +232,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
+   std::filesystem::create_directories(path.parent_path(), ec);
+   const Core::CPUThreadGuard guard(Core::System::GetInstance());
+   if (g_frame_dumper)
+-    g_frame_dumper->SaveScreenshot(path.string());
++    g_frame_dumper->SaveScreenshot(PathToString(path));
+ }
+ 
+ std::optional<RuntimeError> ReadAutomationMemory(const std::filesystem::path& path, u32 address,
+@@ -327,10 +331,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
+     break;
+   case automation::CommandType::SaveState:
+     std::filesystem::create_directories(command.path.parent_path());
+-    State::SaveAs(system, command.path.string());
++    State::SaveAs(system, PathToString(command.path));
+     break;
+   case automation::CommandType::LoadState:
+-    State::LoadAs(system, command.path.string());
++    State::LoadAs(system, PathToString(command.path));
+     break;
+   case automation::CommandType::Screenshot:
+     SaveAutomationScreenshot(NormalizeScreenshotPath(command.path));
+@@ -463,7 +467,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
+       if (!automation::ParseCommandFile(command_path, &command, &error))
+       {
+         SetAutomationError(impl.automation_state,
+-                           command_path.filename().string() + ": " + error);
++                           PathToString(command_path.filename()) + ": " + error);
+         MoveAutomationCommand(command_path, root, "failed");
+         continue;
+       }
+@@ -565,7 +569,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   ModuleLoadResult module_result{};
+   if (config.module.kind == ModuleSource::Kind::DynamicPath)
+     module_result =
+-        validation_library.Open(config.module.path.string(), requirements);
++        validation_library.Open(PathToString(config.module.path), requirements);
+   else if (config.module.kind == ModuleSource::Kind::AttachedDescriptor)
+     module_result =
+         validation_library.Attach(config.module.descriptor, requirements);
+@@ -608,7 +612,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+                  mod.version.c_str());
+ 
+   if (!s_external_ui_common) {
+-    UICommon::SetUserDirectory(impl->config.user_directory.string());
++    UICommon::SetUserDirectory(PathToString(impl->config.user_directory));
+     UICommon::Init();
+     impl->ui_initialized = true;
+   }
+@@ -695,7 +699,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   StaticRecompModuleSource recomp_source;
+   if (impl->config.module.kind == ModuleSource::Kind::DynamicPath)
+     recomp_source =
+-        StaticRecompModuleSource::Dynamic(impl->config.module.path.string());
++        StaticRecompModuleSource::Dynamic(PathToString(impl->config.module.path));
+   else if (impl->config.module.kind == ModuleSource::Kind::AttachedDescriptor)
+     recomp_source = StaticRecompModuleSource::Attached(
+         reinterpret_cast<const StaticRecompModuleDesc *>(
+diff --git a/src/runtime/mod_loader.cpp b/src/runtime/mod_loader.cpp
+index 4b2345f412c0591e945a2b54b90262b7b1c1ad54..5221f2446a177afb9249b7444f56500f1d7e80da 100644
+--- a/src/runtime/mod_loader.cpp
++++ b/src/runtime/mod_loader.cpp
+@@ -16,6 +16,11 @@
+ 
+ namespace moderngekko {
+ namespace {
++std::string PathText(const std::filesystem::path &path) {
++  const std::u8string encoded = path.u8string();
++  return {encoded.begin(), encoded.end()};
++}
++
+ constexpr std::uint32_t MAX_ITEMS = 1u << 20;
+ 
+ struct Version {
+@@ -96,7 +101,7 @@ bool EndsWith(const std::string &text, const std::string &suffix) {
+ }
+ 
+ bool IsPackagedLibrary(const std::filesystem::path &path) {
+-  return EndsWith(path.filename().string(), ".mgm" + LibrarySuffix());
++  return EndsWith(PathText(path.filename()), ".mgm" + LibrarySuffix());
+ }
+ }
+ 
+@@ -197,7 +202,7 @@ ModLoadReport ModManager::Load(const std::vector<ModSource> &sources,
+     const ModSource &source = sources[index];
+     auto mod = std::make_unique<Impl::Mod>();
+     mod->source = source.kind == ModSource::Kind::DynamicPath
+-                      ? source.path.string()
++                      ? PathText(source.path)
+                       : source.label;
+     if (mod->source.empty())
+       mod->source = "attached:" + std::to_string(index);
+@@ -206,7 +211,7 @@ ModLoadReport ModManager::Load(const std::vector<ModSource> &sources,
+     } else {
+ #if defined(MODERNGEKKO_ENABLE_DYNAMIC_MODULES)
+       mod->library = std::make_unique<Common::DynamicLibrary>();
+-      if (!mod->library->Open(source.path.string().c_str())) {
++      if (!mod->library->Open(PathText(source.path).c_str())) {
+         issue(mod->source, "could not open the mod library");
+         continue;
+       }
+@@ -491,7 +496,7 @@ DiscoverModSources(const std::vector<std::filesystem::path> &directories,
+   const auto issue = [&](const std::filesystem::path &path,
+                          std::string message) {
+     if (issues)
+-      issues->push_back({path.string(), std::move(message)});
++      issues->push_back({PathText(path), std::move(message)});
+   };
+   for (const auto &directory : directories) {
+     std::error_code ec;
+diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
+index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e284793afc6 100644
+--- a/tools/frontend_config.cpp
++++ b/tools/frontend_config.cpp
+@@ -10,6 +10,11 @@ namespace fs = std::filesystem;
+ 
+ namespace moderngekko::frontend {
+ namespace {
++std::string PathText(const fs::path &path) {
++  const std::u8string encoded = path.u8string();
++  return {encoded.begin(), encoded.end()};
++}
++
+ std::string Trim(std::string value) {
+   const auto not_space = [](unsigned char c) { return !std::isspace(c); };
+   value.erase(value.begin(),
+@@ -102,7 +107,7 @@ ConfigResult LoadConfig(const fs::path &user_directory,
+ 
+   std::ifstream file(path);
+   if (!file)
+-    return {.error = "can't open " + path.string()};
++    return {.error = "can't open " + PathText(path)};
+ 
+   ConfigResult config;
+   std::string line;
+@@ -245,7 +250,7 @@ bool SaveConfig(const fs::path &user_directory, const ConfigResult &config,
+   std::ofstream file(user_directory / "config.ini", std::ios::trunc);
+   if (!file) {
+     if (error)
+-      *error = "can't write " + (user_directory / "config.ini").string();
++      *error = "can't write " + PathText(user_directory / "config.ini");
+     return false;
+   }
+   file << "# ModernGekko frontend settings\n"
+@@ -364,7 +369,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
+   std::ofstream output(destination, std::ios::trunc);
+   if (!output) {
+     if (message)
+-      *message = "can't write " + destination.string();
++      *message = "can't write " + PathText(destination);
+     return false;
+   }
+   for (std::size_t i = 0; i < 4; ++i) {
+@@ -455,7 +460,7 @@ bool GenerateControllerConfig(const fs::path &user_directory,
+ #endif
+   if (!output) {
+     if (message)
+-      *message = "can't write " + destination.string();
++      *message = "can't write " + PathText(destination);
+     return false;
+   }
+   if (message)
+diff --git a/tools/frontend_config.hpp b/tools/frontend_config.hpp
+index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..a6ce1a5641985a6346ed541fd048b02f4d590d68 100644
+--- a/tools/frontend_config.hpp
++++ b/tools/frontend_config.hpp
+@@ -8,6 +8,27 @@
+ #include <vector>
+ 
+ namespace moderngekko::frontend {
++// Disc names become host path components during import. Keep the supported
++// Windows name rules explicit before any file is exported.
++inline bool SafeImportComponent(std::string_view name) {
++  if (name.empty() || name.size() > 255 || name == "." || name == ".." ||
++      name.back() == '.' || name.back() == ' ')
++    return false;
++  std::string stem;
++  for (unsigned char c : name) {
++    if (c < 32 || c >= 127 || std::string_view("<>:\"/\\|?*").find(c) != std::string_view::npos)
++      return false;
++    stem.push_back(c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : static_cast<char>(c));
++  }
++  stem.resize(stem.find('.') == std::string::npos ? stem.size() : stem.find('.'));
++  if (!stem.empty() && stem.back() == ' ')
++    return false;
++  return stem != "CON" && stem != "PRN" && stem != "AUX" && stem != "NUL" &&
++         stem != "CONIN$" && stem != "CONOUT$" &&
++         !(stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) &&
++           stem[3] >= '1' && stem[3] <= '9');
++}
++
+ struct ResolutionOption {
+   const char *text;
+   int dolphin_scale;
+diff --git a/tools/moderngekko_launcher.cpp b/tools/moderngekko_launcher.cpp
+index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029ae547c39 100644
+--- a/tools/moderngekko_launcher.cpp
++++ b/tools/moderngekko_launcher.cpp
+@@ -3,12 +3,14 @@
+ #include "launcher_savestates.hpp"
+ #include "moderngekko/game.hpp"
+ #include "netplay_session.hpp"
++#include "Common/MsgHandler.h"
+ 
+ #include "DiscIO/DiscExtractor.h"
+ #include "DiscIO/Filesystem.h"
+ #include "DiscIO/Volume.h"
+ 
+ #include <SDL3/SDL.h>
++#include <SDL3/SDL_main.h>
+ #include <imgui.h>
+ #include <imgui_impl_sdl3.h>
+ #include <imgui_impl_sdlrenderer3.h>
+@@ -16,6 +18,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <atomic>
++#include <chrono>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <filesystem>
+@@ -26,12 +29,14 @@
+ #include <string>
+ #include <thread>
+ #include <unordered_map>
++#include <unordered_set>
+ #include <vector>
+ 
+ namespace fs = std::filesystem;
+ 
+ namespace
+ {
++using moderngekko::frontend::PathText;
+ #ifndef MODERNGEKKO_FRONTEND_NAME
+ #define MODERNGEKKO_FRONTEND_NAME "ModernGekko"
+ #endif
+@@ -50,10 +55,8 @@ namespace
+ 
+ #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
+ constexpr std::string_view CONTROLLER_PROFILE_NAME = "GCPadNew.ini";
+-constexpr std::string_view GENERATED_PROFILE_LABEL = "GameCube profile";
+ #else
+ constexpr std::string_view CONTROLLER_PROFILE_NAME = "WiimoteNew.ini";
+-constexpr std::string_view GENERATED_PROFILE_LABEL = "sideways profile";
+ #endif
+ 
+ struct ExtractionState
+@@ -136,36 +139,38 @@ fs::path DefaultUserDirectory()
+ {
+ #ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
+ #if defined(_WIN32)
+-  if (const char* user_profile = std::getenv("USERPROFILE"))
+-    return fs::path(user_profile) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char* user_profile = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "USERPROFILE"))
++    return fs::u8path(user_profile) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+-  if (const char* home = std::getenv("HOME"))
+-    return fs::path(home) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char* home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
++    return fs::u8path(home) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+ #if defined(_WIN32)
+-  if (const char* local_app_data = std::getenv("LOCALAPPDATA"))
+-    return fs::path(local_app_data) / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char* local_app_data = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "LOCALAPPDATA"))
++    return fs::u8path(local_app_data) / MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+-  if (const char* xdg = std::getenv("XDG_DATA_HOME"))
+-    return fs::path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
+-  if (const char* home = std::getenv("HOME"))
+-    return fs::path(home) / ".local/share" / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char* xdg = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "XDG_DATA_HOME"))
++    return fs::u8path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char* home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
++    return fs::u8path(home) / ".local/share" / MODERNGEKKO_USER_DIRECTORY_NAME;
+   return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
+ }
+ 
+ fs::path DocumentsDirectory()
+ {
+ #if defined(_WIN32)
+-  if (const char* user_profile = std::getenv("USERPROFILE"))
+-    return fs::path(user_profile) / "Documents";
++  if (const char* user_profile = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "USERPROFILE"))
++    return fs::u8path(user_profile) / "Documents";
+ #endif
+-  if (const char* home = std::getenv("HOME"))
+-    return fs::path(home) / "Documents";
++  if (const char* home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
++    return fs::u8path(home) / "Documents";
+   return fs::current_path();
+ }
+ 
+ fs::path ExecutableDirectory(const char* argv0)
+ {
++  if (const char* base = SDL_GetBasePath(); base && *base)
++    return fs::u8path(base).lexically_normal();
+   std::error_code ec;
+ #if defined(__linux__)
+   const fs::path proc_executable = fs::read_symlink("/proc/self/exe", ec);
+@@ -173,7 +178,7 @@ fs::path ExecutableDirectory(const char* argv0)
+     return proc_executable.parent_path();
+   ec.clear();
+ #endif
+-  const fs::path executable = fs::weakly_canonical(argv0, ec);
++  const fs::path executable = fs::weakly_canonical(fs::u8path(argv0), ec);
+   return ec ? fs::current_path() : executable.parent_path();
+ }
+ 
+@@ -182,8 +187,8 @@ fs::path SiblingExecutable(const fs::path& release_directory, std::string name)
+ #if defined(_WIN32)
+   name += ".exe";
+ #endif
+-  const fs::path sibling = release_directory / name;
+-  return fs::is_regular_file(sibling) ? sibling : fs::path(name);
++  const fs::path sibling = release_directory / fs::u8path(name);
++  return fs::is_regular_file(sibling) ? sibling : fs::u8path(name);
+ }
+ 
+ bool ApplyBundledDolPatch(const fs::path& game_root, const fs::path& release_directory,
+@@ -220,7 +225,7 @@ fs::path ReadDefaultGame(const fs::path& user_directory, const fs::path& release
+   std::getline(file, value);
+   if (!value.empty() && value.back() == '\r')
+     value.pop_back();
+-  fs::path game(value);
++  fs::path game = fs::u8path(value);
+   if (game.is_relative())
+     game = release_directory / game;
+   return game;
+@@ -245,7 +250,7 @@ bool WriteDefaultGame(const fs::path& user_directory, const fs::path& release_di
+   if (!ec && !relative.empty())
+     stored = relative;
+ #endif
+-  file << stored.string() << '\n';
++  file << PathText(stored) << '\n';
+   return true;
+ }
+ 
+@@ -265,7 +270,7 @@ std::vector<fs::path> FindDiscImages()
+       iterator.disable_recursion_pending();
+     if (iterator->is_regular_file(ec))
+     {
+-      std::string extension = iterator->path().extension().string();
++      std::string extension = PathText(iterator->path().extension());
+       std::ranges::transform(extension, extension.begin(),
+                              [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+       if (extension == ".wbfs" || extension == ".iso" || extension == ".rvz")
+@@ -283,7 +288,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+                                     const fs::path& release_directory, ExtractionState* state,
+                                     std::string* error)
+ {
+-  std::unique_ptr<DiscIO::Volume> source = DiscIO::CreateVolume(image.string());
++  std::unique_ptr<DiscIO::Volume> source = DiscIO::CreateVolume(PathText(image));
+   if (!source)
+   {
+     *error = "Dolphin rejected the selected disc image";
+@@ -317,7 +322,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+   const fs::path preparer =
+       SiblingExecutable(release_directory, MODERNGEKKO_DISC_PREPARER_FILENAME);
+   const std::array<std::string, 5> storage = {
+-      preparer.string(), "--input", image.string(), "--output", output.string()};
++      PathText(preparer), "--input", PathText(image), "--output", PathText(output)};
+   std::array<const char*, 6> arguments{};
+   for (std::size_t i = 0; i < storage.size(); ++i)
+     arguments[i] = storage[i].c_str();
+@@ -337,11 +342,82 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+   }
+   return output;
+ #else
+-  *error = "this disc is not the pinned patched release";
++#ifdef MODERNGEKKO_REQUIRED_DISC_ID
++  *error = "this frontend requires disc ID " MODERNGEKKO_REQUIRED_DISC_ID "; selected " + source_id;
++#else
++  *error = "this frontend does not support the selected disc";
++#endif
+   return std::nullopt;
+ #endif
+ }
+ 
++bool ValidateImportTree(const DiscIO::FileInfo& directory, unsigned depth,
++                        std::uint64_t* entries, std::uint64_t* bytes, std::string* error)
++{
++  if (depth > 32)
++  {
++    *error = "disc directory nesting exceeds the supported limit";
++    return false;
++  }
++  std::unordered_set<std::string> names;
++  for (const auto& entry : directory)
++  {
++    const std::string name = entry.GetName();
++    std::string folded = name;
++    std::ranges::transform(folded, folded.begin(), [](unsigned char c) {
++      return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
++    });
++    if (!moderngekko::frontend::SafeImportComponent(name) || !names.insert(folded).second)
++    {
++      *error = "disc contains an unsafe or duplicate host filename";
++      return false;
++    }
++    if (++*entries > 100000)
++    {
++      *error = "disc file count exceeds the supported limit";
++      return false;
++    }
++    if (entry.IsDirectory())
++    {
++      if (!ValidateImportTree(entry, depth + 1, entries, bytes, error))
++        return false;
++    }
++    else if ((*bytes += entry.GetSize()) > 4ull * 1024 * 1024 * 1024)
++    {
++      *error = "disc file sizes exceed the supported import limit";
++      return false;
++    }
++  }
++  return true;
++}
++
++bool ExportImportTree(const DiscIO::Volume& volume, const DiscIO::Partition& partition,
++                      const DiscIO::FileInfo& directory, const fs::path& output,
++                      ExtractionState* state)
++{
++  for (const auto& entry : directory)
++  {
++    const fs::path destination = output / entry.GetName();
++    {
++      std::lock_guard lock(state->mutex);
++      state->status = "Extracting " + entry.GetPath();
++    }
++    if (entry.IsDirectory())
++    {
++      std::error_code ec;
++      if (!fs::create_directory(destination, ec) || ec ||
++          !ExportImportTree(volume, partition, entry, destination, state))
++        return false;
++    }
++    else if (!DiscIO::ExportFile(volume, partition, &entry, PathText(destination)))
++    {
++      return false;
++    }
++    ++state->completed;
++  }
++  return true;
++}
++
+ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+                  const fs::path& release_directory, ExtractionState* state)
+ {
+@@ -355,14 +431,14 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+ 
+   {
+     std::lock_guard lock(state->mutex);
+-    state->status = "Opening " + image.filename().string();
++    state->status = "Opening " + PathText(image.filename());
+   }
+   std::string preparation_error;
+   const std::optional<fs::path> prepared =
+       PrepareDisc(image, user_directory, release_directory, state, &preparation_error);
+   if (!prepared)
+     return fail(std::move(preparation_error));
+-  std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(prepared->string());
++  std::unique_ptr<DiscIO::Volume> volume = DiscIO::CreateVolume(PathText(*prepared));
+   if (!volume)
+     return fail("Dolphin rejected the prepared disc image");
+ 
+@@ -371,6 +447,12 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+   if (!filesystem || !filesystem->IsValid())
+     return fail("Dolphin could not read the game partition filesystem");
+ 
++  std::uint64_t import_entries = 0;
++  std::uint64_t import_bytes = 0;
++  std::string tree_error;
++  if (!ValidateImportTree(filesystem->GetRoot(), 0, &import_entries, &import_bytes, &tree_error))
++    return fail(tree_error);
++
+   std::string disc_id = volume->GetGameID(partition);
+   if (disc_id.size() != 6)
+     return fail("the selected image has an invalid disc ID");
+@@ -407,60 +489,79 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+     return true;
+   }
+ 
+-  const fs::path staging = games_directory / (disc_id + ".extracting");
+-  fs::remove_all(staging, ec);
+-  fs::create_directories(staging / "files", ec);
++  if (fs::exists(output, ec) || ec)
++    return fail("an existing game folder could not be validated; it has been preserved: " + PathText(output));
++  fs::create_directories(games_directory, ec);
++  if (ec)
++    return fail("can't create games directory: " + ec.message());
++  const fs::path canonical_games = fs::canonical(games_directory, ec);
+   if (ec)
++    return fail("can't resolve games directory: " + ec.message());
++  const fs::path staging = canonical_games / (disc_id + ".extracting-" +
++      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
++  // Never reuse or recursively remove an earlier import or an existing game.
++  if (!fs::create_directory(staging, ec) || ec)
++    return fail("can't create a new import staging directory");
++  const auto discard_staging = [&] {
++    std::error_code cleanup_error;
++    const auto resolved = fs::canonical(staging, cleanup_error);
++    if (!cleanup_error && resolved == staging && resolved.parent_path() == canonical_games)
++      fs::remove_all(staging, cleanup_error);
++  };
++  fs::create_directory(staging / "files", ec);
++  if (ec)
++  {
++    discard_staging();
+     return fail("can't create extraction directory: " + ec.message());
++  }
+ 
+   {
+     std::lock_guard lock(state->mutex);
+     state->status = "Extracting system data";
+   }
+-  if (!DiscIO::ExportSystemData(*volume, partition, staging.string()))
++  if (!DiscIO::ExportSystemData(*volume, partition, PathText(staging)))
+   {
+-    fs::remove_all(staging, ec);
++    discard_staging();
+     return fail("Dolphin failed while extracting the disc system data");
+   }
+ 
+-  state->total = std::max(1u, filesystem->GetRoot().GetTotalChildren());
++  state->total = std::max(1u, static_cast<unsigned>(import_entries));
+   {
+     std::lock_guard lock(state->mutex);
+     state->status = "Extracting game files";
+   }
+-  DiscIO::ExportDirectory(*volume, partition, filesystem->GetRoot(), true, "",
+-                          (staging / "files").string(),
+-                          [state](const std::string& path)
+-                          {
+-                            ++state->completed;
+-                            std::lock_guard lock(state->mutex);
+-                            state->status = "Extracting " + path;
+-                            return false;
+-                          });
++  if (!ExportImportTree(*volume, partition, filesystem->GetRoot(), staging / "files", state))
++  {
++    discard_staging();
++    return fail("a game file could not be exported completely");
++  }
+ 
+   bool dol_changed = false;
+   std::string dol_patch_error;
+   if (!ApplyBundledDolPatch(staging, release_directory, &dol_changed, &dol_patch_error))
+   {
+-    fs::remove_all(staging, ec);
++    discard_staging();
+     return fail("extracted DOL patching failed: " + dol_patch_error);
+   }
+ 
+   const auto inspected = moderngekko::InspectGame(staging);
+   if (!inspected)
+   {
+-    fs::remove_all(staging, ec);
++    discard_staging();
+     return fail("extracted game validation failed: " + inspected.error);
+   }
+   if (const std::string identity_error = RequiredGameError(*inspected.metadata);
+       !identity_error.empty())
+   {
+-    fs::remove_all(staging, ec);
++    discard_staging();
+     return fail("extracted game validation failed: " + identity_error);
+   }
+ 
+-  fs::remove_all(output, ec);
+-  ec.clear();
++  if (fs::exists(output, ec) || ec)
++  {
++    discard_staging();
++    return fail("the destination appeared during import and has been preserved");
++  }
+   fs::rename(staging, output, ec);
+   if (ec)
+     return fail("can't publish extracted game: " + ec.message());
+@@ -484,18 +585,16 @@ void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int
+   if (!filelist)
+     state->error = SDL_GetError();
+   else if (filelist[0])
+-    state->selected = filelist[0];
++    state->selected = fs::u8path(filelist[0]);
+ }
+ 
+ fs::path SiblingRunner(const char* argv0)
+ {
+-  std::error_code ec;
+-  const fs::path self = fs::weakly_canonical(argv0, ec);
+   fs::path runner = MODERNGEKKO_RUNNER_FILENAME;
+ #if defined(_WIN32)
+   runner += ".exe";
+ #endif
+-  const fs::path sibling = self.parent_path() / runner;
++  const fs::path sibling = ExecutableDirectory(argv0) / runner;
+   return fs::is_regular_file(sibling) ? sibling : runner;
+ }
+ } // namespace
+@@ -504,6 +603,9 @@ int main(int argc, char** argv)
+ {
+   bool use_wayland = false;
+   std::optional<fs::path> extract_only;
++  std::optional<fs::path> validate_only;
++  std::optional<fs::path> user_override;
++  std::optional<fs::path> smoke_screenshot;
+   for (int i = 1; i < argc; ++i)
+   {
+     if (std::string_view(argv[i]) == "-X11" || std::string_view(argv[i]) == "--x11")
+@@ -511,11 +613,51 @@ int main(int argc, char** argv)
+     else if (std::string_view(argv[i]) == "--wayland")
+       use_wayland = true;
+     else if (std::string_view(argv[i]) == "--extract" && i + 1 < argc)
+-      extract_only = argv[++i];
++      extract_only = fs::u8path(argv[++i]);
++    else if (std::string_view(argv[i]) == "--validate-game" && i + 1 < argc)
++      validate_only = fs::u8path(argv[++i]);
++    else if (std::string_view(argv[i]) == "--user-dir" && i + 1 < argc)
++      user_override = fs::u8path(argv[++i]);
++    else if (std::string_view(argv[i]) == "--smoke-test" && i + 1 < argc)
++      smoke_screenshot = fs::u8path(argv[++i]);
++    else
++    {
++      std::cerr << "Usage: " MODERNGEKKO_FRONTEND_NAME
++                   " [--user-dir <directory>] [--extract <ROM> | --validate-game <directory>"
++                   " | --smoke-test <PNG>] [--x11 | --wayland]\n";
++      return std::string_view(argv[i]) == "--help" ? 0 : 2;
++    }
+   }
+ 
+-  const fs::path user_directory = DefaultUserDirectory();
++  if ((extract_only.has_value() + validate_only.has_value() + smoke_screenshot.has_value()) > 1 ||
++      (smoke_screenshot && !user_override))
++  {
++    std::cerr << "Choose one diagnostic mode; smoke tests require an explicit isolated --user-dir.\n";
++    return 2;
++  }
++  const fs::path user_directory = fs::absolute(user_override.value_or(DefaultUserDirectory()));
+   const fs::path release_directory = ExecutableDirectory(argv[0]);
++  if (extract_only || validate_only || smoke_screenshot)
++  {
++    Common::RegisterMsgAlertHandler([](const char* caption, const char* text, bool, Common::MsgType) {
++      std::fprintf(stderr, "[launcher diagnostic alert] %s: %s\n", caption, text);
++      return false;
++    });
++  }
++  if (validate_only)
++  {
++    const auto inspected = moderngekko::InspectGame(*validate_only);
++    const std::string error = inspected ? RequiredGameError(*inspected.metadata) : inspected.error;
++    if (!error.empty())
++    {
++      std::cerr << "game validation failed: " << error << '\n';
++      return 1;
++    }
++    std::cout << "Validated " << inspected.metadata->disc_id << '\n'
++              << "DOL SHA256: " << inspected.metadata->dol_sha256 << '\n'
++              << "Assets SHA256: " << inspected.metadata->assets_sha256 << '\n';
++    return 0;
++  }
+   if (extract_only)
+   {
+     ExtractionState extraction;
+@@ -526,13 +668,18 @@ int main(int argc, char** argv)
+     if (!success)
+       std::cerr << "extraction failed: " << extraction.error << '\n';
+     else
+-      std::cout << extraction.status << ": " << *extraction.finished_game << '\n';
++      std::cout << extraction.status << ": " << PathText(*extraction.finished_game) << '\n';
+     return success ? 0 : 1;
+   }
+ 
+   auto config = moderngekko::frontend::LoadConfig(user_directory, true);
+   if (!config)
+   {
++    if (smoke_screenshot)
++    {
++      std::cerr << "invalid smoke-test config: " << config.error << '\n';
++      return 2;
++    }
+     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
+                              "Invalid " MODERNGEKKO_FRONTEND_NAME " config.ini",
+                              config.error.c_str(), nullptr);
+@@ -549,7 +696,8 @@ int main(int argc, char** argv)
+   const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+   SDL_Window* window = SDL_CreateWindow(MODERNGEKKO_FRONTEND_NAME, static_cast<int>(820 * scale),
+                                         static_cast<int>(700 * scale),
+-                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
++                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
++                                        (smoke_screenshot ? SDL_WINDOW_HIDDEN : 0));
+   if (!window)
+   {
+     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
+@@ -579,7 +727,8 @@ int main(int argc, char** argv)
+   ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+   ImGui_ImplSDLRenderer3_Init(renderer);
+ 
+-  std::vector<fs::path> images = FindDiscImages();
++  // Start immediately; the user chooses their ROM instead of scanning Documents.
++  std::vector<fs::path> images;
+   std::optional<fs::path> selected_image = images.empty() ? std::nullopt : std::optional(images[0]);
+   fs::path current_game = ReadDefaultGame(user_directory, release_directory);
+   bool current_dol_changed = false;
+@@ -683,7 +832,7 @@ int main(int argc, char** argv)
+       }
+       selected_controller = configured_controllers.front();
+       controller_index = FindController(controllers, selected_controller);
+-      controller_status = "Using existing " + std::string(CONTROLLER_PROFILE_NAME);
++      controller_status = "Using saved controller bindings";
+       return true;
+     }
+     if (controller_index < 0)
+@@ -712,7 +861,7 @@ int main(int argc, char** argv)
+     }
+     else
+     {
+-      controller_status = "Using existing " + std::string(CONTROLLER_PROFILE_NAME);
++      controller_status = "Using saved controller bindings";
+     }
+   };
+   refresh_controllers();
+@@ -726,6 +875,8 @@ int main(int argc, char** argv)
+     Join,
+   };
+   bool done = false;
++  unsigned smoke_frames = 0;
++  int smoke_result = 0;
+   LaunchMode launch_mode = LaunchMode::None;
+   while (!done)
+   {
+@@ -887,7 +1038,7 @@ int main(int argc, char** argv)
+     }
+     else
+     {
+-      ImGui::TextUnformatted("No extracted game is configured yet.");
++      ImGui::TextUnformatted("Select your game disc image to get started.");
+     }
+ 
+     ImGui::Spacing();
+@@ -940,7 +1091,7 @@ int main(int argc, char** argv)
+       }
+     }
+     ImGui::Spacing();
+-    ImGui::TextUnformatted("Internal resolution (Dolphin EFB upscale)");
++    ImGui::TextUnformatted("Render resolution");
+     if (ImGui::BeginCombo("##resolution", resolutions[resolution_index].text))
+     {
+       for (std::size_t i = 0; i < resolutions.size(); ++i)
+@@ -1006,13 +1157,11 @@ int main(int argc, char** argv)
+       ImGui::EndCombo();
+     }
+     ImGui::BeginDisabled(controller_index < 0);
+-    const std::string replace_profile =
+-        "Replace with generated " + std::string(GENERATED_PROFILE_LABEL);
+-    if (ImGui::Button(replace_profile.c_str()))
++    if (ImGui::Button("Use selected controller"))
+       select_controller(controller_index);
+     ImGui::EndDisabled();
+     ImGui::Spacing();
+-    ImGui::TextUnformatted("Netplay");
++    ImGui::TextUnformatted("Netplay (experimental)");
+     ImGui::SetNextItemWidth(220 * scale);
+     ImGui::InputText("Nickname", netplay_nickname.data(), netplay_nickname.size());
+     ImGui::SetNextItemWidth(220 * scale);
+@@ -1029,7 +1178,7 @@ int main(int argc, char** argv)
+     ImGui::Spacing();
+     ImGui::TextUnformatted("Game disc image");
+     if (selected_image)
+-      ImGui::TextWrapped("%s", selected_image->string().c_str());
++      ImGui::TextWrapped("%s", PathText(*selected_image).c_str());
+     else
+       ImGui::TextDisabled("No ISO, WBFS, or RVZ selected");
+ 
+@@ -1042,7 +1191,7 @@ int main(int argc, char** argv)
+             {"ISO", "iso"},
+             {"WBFS", "wbfs"},
+             {"RVZ", "rvz"}};
+-        const std::string documents = DocumentsDirectory().string();
++        const std::string documents = PathText(DocumentsDirectory());
+         SDL_ShowOpenFileDialog(FileDialogCallback, &dialog, window, filters,
+                                static_cast<int>(std::size(filters)), documents.c_str(), false);
+       }
+@@ -1097,13 +1246,25 @@ int main(int argc, char** argv)
+     SDL_SetRenderDrawColor(renderer, 18, 20, 28, 255);
+     SDL_RenderClear(renderer);
+     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
++    if (smoke_screenshot && ++smoke_frames == 2)
++    {
++      SDL_Surface* surface = SDL_RenderReadPixels(renderer, nullptr);
++      if (!surface || !SDL_SavePNG(surface, PathText(*smoke_screenshot).c_str()))
++      {
++        std::cerr << "launcher screenshot failed: " << SDL_GetError() << '\n';
++        smoke_result = 1;
++      }
++      if (surface)
++        SDL_DestroySurface(surface);
++      done = true;
++    }
+     SDL_RenderPresent(renderer);
+   }
+ 
+   if (extraction_thread.joinable())
+     extraction_thread.join();
+ 
+-  int result = 0;
++  int result = smoke_result;
+   if (launch_mode != LaunchMode::None)
+   {
+     std::string launch_error;
+@@ -1115,9 +1276,9 @@ int main(int argc, char** argv)
+     }
+     else
+     {
+-      std::vector<std::string> argument_storage = {SiblingRunner(argv[0]).string(), "--game",
+-                                                   current_game.string(), "--user-dir",
+-                                                   user_directory.string()};
++      std::vector<std::string> argument_storage = {PathText(SiblingRunner(argv[0])), "--game",
++                                                   PathText(current_game), "--user-dir",
++                                                   PathText(user_directory)};
+       // Solo only: see the note by the dropdown.
+       if (launch_mode == LaunchMode::Solo && selected_savestate >= 0 &&
+           static_cast<std::size_t>(selected_savestate) < launcher_savestates.size())
+@@ -1164,7 +1325,7 @@ int main(int argc, char** argv)
+       std::error_code log_error;
+       std::filesystem::create_directories(log_path.parent_path(), log_error);
+       SDL_IOStream* log_stream =
+-          log_error ? nullptr : SDL_IOFromFile(log_path.string().c_str(), "w");
++          log_error ? nullptr : SDL_IOFromFile(PathText(log_path).c_str(), "w");
+       SDL_Process* process = nullptr;
+       std::string process_error;
+       if (log_stream)
+@@ -1194,7 +1355,7 @@ int main(int argc, char** argv)
+       }
+       if (!process)
+       {
+-        launch_error = "Could not start " + SiblingRunner(argv[0]).string() + ": " + process_error;
++        launch_error = "Could not start " + PathText(SiblingRunner(argv[0])) + ": " + process_error;
+         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(),
+                                  window);
+         result = 1;
+@@ -1254,7 +1415,7 @@ int main(int argc, char** argv)
+             launch_error = "The game process exited with code " + std::to_string(exit_code) + ".";
+           }
+           if (!log_error)
+-            launch_error += "\n\nDetails were written to:\n" + log_path.string();
++            launch_error += "\n\nDetails were written to:\n" + PathText(log_path);
+           SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Session failed", launch_error.c_str(),
+                                    window);
+           result = 1;
 diff --git a/tools/moderngekko_port.cpp b/tools/moderngekko_port.cpp
-index af1c2a5..94941f5 100644
+index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0ce9aa11a7 100644
 --- a/tools/moderngekko_port.cpp
 +++ b/tools/moderngekko_port.cpp
 @@ -18,6 +18,7 @@
@@ -116,18 +995,140 @@ index af1c2a5..94941f5 100644
        Quote(source_root / "vendor/dolphin/module-template") +
        " -B " + Quote(module_build) + " -G Ninja -DCMAKE_BUILD_TYPE=Release" +
 diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
-index d6b3569..007333f 100644
+index d6b3569e85cc19bdb42ef66fb23fa2d1fcc7d9a0..5503b69bded1d9a1401d33b676fe81553170ed98 100644
 --- a/tools/moderngekko_run.cpp
 +++ b/tools/moderngekko_run.cpp
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,10 @@
  #include "netplay_session.hpp"
  
  #include "Common/StringUtil.h"
 +#include "Common/MsgHandler.h"
++
++#include <SDL3/SDL.h>
++#include <SDL3/SDL_main.h>
  
  #include <charconv>
  #include <chrono>
-@@ -229,6 +230,13 @@ int RunMain(int argc, char **argv) {
+@@ -23,8 +27,12 @@
+ // For the affinity/priority setup in main(). WIN32_LEAN_AND_MEAN keeps the
+ // winsock and GDI surface out of a translation unit that only needs the
+ // processor-topology and process calls.
++#ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
+ #define NOMINMAX
++#endif
+ #include <windows.h>
+ #endif
+ 
+@@ -71,7 +79,7 @@ ReadDefaultGame(const std::filesystem::path &user_directory,
+   std::getline(file, path);
+   if (!path.empty() && path.back() == '\r')
+     path.pop_back();
+-  std::filesystem::path result(path);
++  std::filesystem::path result = StringToPath(path);
+   if (result.is_relative())
+     result = executable_directory / result;
+   return result;
+@@ -80,23 +88,23 @@ ReadDefaultGame(const std::filesystem::path &user_directory,
+ std::filesystem::path DefaultUserDirectory() {
+ #ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
+ #if defined(_WIN32)
+-  if (const char *user_profile = std::getenv("USERPROFILE"))
+-    return std::filesystem::path(user_profile) / "Documents" /
++  if (const char *user_profile = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "USERPROFILE"))
++    return StringToPath(user_profile) / "Documents" /
+            MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+-  if (const char *home = std::getenv("HOME"))
+-    return std::filesystem::path(home) / "Documents" /
++  if (const char *home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
++    return StringToPath(home) / "Documents" /
+            MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+ #if defined(_WIN32)
+-  if (const char *local_app_data = std::getenv("LOCALAPPDATA"))
+-    return std::filesystem::path(local_app_data) /
++  if (const char *local_app_data = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "LOCALAPPDATA"))
++    return StringToPath(local_app_data) /
+            MODERNGEKKO_USER_DIRECTORY_NAME;
+ #endif
+-  if (const char *xdg = std::getenv("XDG_DATA_HOME"))
+-    return std::filesystem::path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
+-  if (const char *home = std::getenv("HOME"))
+-    return std::filesystem::path(home) / ".local" / "share" /
++  if (const char *xdg = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "XDG_DATA_HOME"))
++    return StringToPath(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
++  if (const char *home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
++    return StringToPath(home) / ".local" / "share" /
+            MODERNGEKKO_USER_DIRECTORY_NAME;
+   return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
+ }
+@@ -112,6 +120,8 @@ std::string LibrarySuffix() {
+ }
+ 
+ std::filesystem::path ExecutableDirectory(const char *argv0) {
++  if (const char *base = SDL_GetBasePath(); base && *base)
++    return StringToPath(base).lexically_normal();
+   std::error_code ec;
+ #if defined(__linux__)
+   const std::filesystem::path proc_executable =
+@@ -121,18 +131,13 @@ std::filesystem::path ExecutableDirectory(const char *argv0) {
+   ec.clear();
+ #endif
+   const std::filesystem::path executable =
+-      std::filesystem::weakly_canonical(argv0, ec);
++      std::filesystem::weakly_canonical(StringToPath(argv0), ec);
+   return ec ? std::filesystem::current_path() : executable.parent_path();
+ }
+ } // namespace
+ 
+ int RunMain(int argc, char **argv) {
+-#if defined(_WIN32)
+-  if (!std::getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"))
+-    _putenv_s("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1");
+-#else
+-  setenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0);
+-#endif
++  SDL_setenv_unsafe("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0);
+   moderngekko::RuntimeConfig config;
+   config.user_directory = DefaultUserDirectory();
+   const std::filesystem::path executable_directory =
+@@ -158,11 +163,11 @@ int RunMain(int argc, char **argv) {
+       return argv[++i];
+     };
+     if (arg == "--game")
+-      config.game_root = value("--game");
++      config.game_root = StringToPath(value("--game"));
+     else if (arg == "--module")
+-      module_path = value("--module");
++      module_path = StringToPath(value("--module"));
+     else if (arg == "--user-dir")
+-      config.user_directory = value("--user-dir");
++      config.user_directory = StringToPath(value("--user-dir"));
+     else if (arg == "--title")
+       config.window_title = value("--title");
+     else if (arg == "--load-state")
+@@ -182,7 +187,7 @@ int RunMain(int argc, char **argv) {
+     else if (arg == "--audio")
+       config.audio.backend = value("--audio");
+     else if (arg == "--mods")
+-      config.mod_directories.emplace_back(value("--mods"));
++      config.mod_directories.emplace_back(StringToPath(value("--mods")));
+     else if (arg == "--no-mods")
+       use_default_mods = false;
+     else if (arg == "-X11" || arg == "--x11")
+@@ -192,7 +197,7 @@ int RunMain(int argc, char **argv) {
+     else if (arg == "--mute")
+       config.audio.mute = true;
+     else if (arg == "--automation-dir")
+-      config.automation.directory = value("--automation-dir");
++      config.automation.directory = StringToPath(value("--automation-dir"));
+     else if (arg == "--headless")
+       config.headless = true;
+     else if (arg == "--allow-interpreter")
+@@ -229,12 +234,19 @@ int RunMain(int argc, char **argv) {
        return 2;
      }
    }
@@ -141,3 +1142,21 @@ index d6b3569..007333f 100644
    if (config.game_root.empty())
      config.game_root =
          ReadDefaultGame(config.user_directory, executable_directory);
+   if (config.game_root.empty()) {
+     std::cerr << "no game configured; use --game once or create "
+-              << (config.user_directory / "default-game.txt") << '\n';
++              << PathToString(config.user_directory / "default-game.txt") << '\n';
+     Usage();
+     return 2;
+   }
+@@ -315,8 +327,8 @@ int RunMain(int argc, char **argv) {
+ 
+   // Compatibility discovery belongs to the runner, never the runtime library.
+   if (module_path.empty()) {
+-    if (const char *env = std::getenv("STATICRECOMP_MODULE"))
+-      module_path = env;
++    if (const char *env = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "STATICRECOMP_MODULE"))
++      module_path = StringToPath(env);
+     else {
+       const std::string module_name =
+           "g" + inspected.metadata->disc_id + "_recomp" + LibrarySuffix();

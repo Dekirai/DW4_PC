@@ -20,9 +20,11 @@ gates in [ROADMAP.md](ROADMAP.md).
 The release entry point should be a simple EXE that accepts the user's ROM,
 validates the supported revision and prepares local game data automatically.
 It must not require the end user to install a compiler or manually extract the
-disc. The current developer scripts and local module cache are not that release
-experience. Distribution contains the port and dependency notices, with original
-game content supplied locally by each user.
+disc. The local experimental package now supplies that launcher/import boundary;
+its actual ROM export matches the independent extracted reference. Developer
+scripts and the local module cache remain a separate build workflow. See
+[ROM_IMPORT.md](ROM_IMPORT.md). Distribution contains the port and dependency
+notices, with original game content supplied locally by each user.
 
 The manually recovered engine below remains a separate reference core. Its
 checked helpers and original-asset walking preview do not establish correctness

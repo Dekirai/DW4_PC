@@ -16,6 +16,7 @@ $moduleOutput = Join-Path $workRoot 'recomp-modules'
 $runtimeRevision = '5417826c31187d4dadf8588c7aa25bf107782936'
 $chassisRevision = '55c7b023fa0f4eba1cf3fdbbb25b1c5ec468d5ac'
 $expectedDolSha256 = 'EC61C010477C844781763A3041922E38719B3CED3B74BE5CE71D778CE458E471'
+$expectedAssetsSha256 = '8b415a50951a40dac2ae1945fed8377dd0218617eb2703aef5a8b75f4503e5fe'
 $runtimeUrl = 'https://github.com/ExpansionPak/ModernGekko.git'
 $patchPath = Join-Path $repoRoot 'patches/moderngekko-local-runtime.patch'
 $chassisPatchPath = Join-Path $repoRoot 'patches/recompcore-headless-shader-progress.patch'
@@ -47,8 +48,17 @@ function Assert-SourcePatch([string]$Source, [string]$ExpectedPatch, [bool]$Allo
     if ($LASTEXITCODE -ne 0 -or $untracked) { throw "The source has untracked or unreadable files: $Source" }
     # Nested repositories are checked separately; their known patches must not
     # hide an unrelated change in either parent or descendant source.
-    $sourceDiff = (& $git -C $Source diff --binary --ignore-submodules=all) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "Could not inspect source changes: $Source" }
+    # Native stdout in Windows PowerShell 5.1 can decode UTF-8 patch context
+    # using the console code page. Read Git's file output explicitly instead.
+    # Full object IDs also keep patch metadata independent of repository size.
+    $diffPath = Join-Path $workRoot ('source-inspection-' + [guid]::NewGuid().ToString('N') + '.patch')
+    try {
+        & $git -C $Source diff --binary --full-index --ignore-submodules=all "--output=$diffPath"
+        if ($LASTEXITCODE -ne 0) { throw "Could not inspect source changes: $Source" }
+        $sourceDiff = [IO.File]::ReadAllText($diffPath, [Text.Encoding]::UTF8)
+    } finally {
+        if (Test-Path -LiteralPath $diffPath -PathType Leaf) { Remove-Item -LiteralPath $diffPath }
+    }
     if ((Normalize-Patch $sourceDiff) -ne (Normalize-Patch $ExpectedPatch) -and
         -not ($AllowClean -and -not $sourceDiff)) {
         throw "The source has changes beyond its supported patch; this build does not reset them: $Source"
@@ -130,8 +140,8 @@ $actualRevision = [string](& $git -C $runtimeSource rev-parse HEAD)
 if ($LASTEXITCODE -ne 0 -or $actualRevision.Trim() -ne $runtimeRevision) {
     throw "Runtime revision differs from the pinned source. Preserve/reconcile the existing checkout manually: $runtimeSource"
 }
-$patch = Get-Content -LiteralPath $patchPath -Raw
-$chassisPatch = Get-Content -LiteralPath $chassisPatchPath -Raw
+$patch = [IO.File]::ReadAllText($patchPath, [Text.Encoding]::UTF8)
+$chassisPatch = [IO.File]::ReadAllText($chassisPatchPath, [Text.Encoding]::UTF8)
 if (-not (Assert-SourcePatch $runtimeSource $patch $true)) {
     Invoke-Checked $git @('-C',$runtimeSource,'apply','--check',$patchPath) ''
     Invoke-Checked $git @('-C',$runtimeSource,'apply',$patchPath) ''
@@ -151,7 +161,9 @@ if ($LASTEXITCODE -ne 0 -or $actualChassisRevision.Trim() -ne $chassisRevision) 
 }
 if (-not (Assert-SourcePatch $chassisSource $chassisPatch $true)) {
     Invoke-Checked $git @('-C',$chassisSource,'apply','--check',$chassisPatchPath) ''
-    Invoke-Checked $git @('-C',$chassisSource,'apply',$chassisPatchPath) ''
+    # Intent-to-add lets the exact patch diff include its new policy header,
+    # without staging content or allowing unrelated untracked source files.
+    Invoke-Checked $git @('-C',$chassisSource,'apply','--intent-to-add',$chassisPatchPath) ''
 }
 Assert-SourcePatch $runtimeSource $patch $false | Out-Null
 Assert-DependencySources $dependencyPins $false
@@ -182,10 +194,15 @@ $env:PATH = (Split-Path -Parent $python) + ';' + $env:PATH
 $env:MODERNGEKKO_BUILD_JOBS = [string]$Jobs
 $configure = @('-S',$runtimeSource,'-B',$runtimeBuild,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
     '-DBUILD_TESTING=OFF','-DDOLRECOMP_ENABLE_LLVM=OFF','-DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON',
+    '-DMODERNGEKKO_FRONTEND_NAME=Digimon World 4 PC','-DMODERNGEKKO_LAUNCHER_OUTPUT_NAME=DW4_PC',
+    '-DMODERNGEKKO_USER_DIRECTORY_NAME=DW4_PC','-DMODERNGEKKO_REQUIRED_DISC_ID=GDJEB2',
+    '-DMODERNGEKKO_LOG_FILENAME=DW4_PC.log','-DMODERNGEKKO_DEFAULT_WINDOW_TITLE=Digimon World 4 PC',
+    "-DMODERNGEKKO_REQUIRED_DOL_SHA256=$($inputDolSha256.ToLowerInvariant())",
+    "-DMODERNGEKKO_REQUIRED_ASSETS_SHA256=$expectedAssetsSha256",
     "-DMODERNGEKKO_DOLRECOMP_SOURCE_DIR=$DolRecompSource","-DPython3_EXECUTABLE=$python",
     '-DCMAKE_C_COMPILER=cl','-DCMAKE_CXX_COMPILER=cl',"-DCMAKE_MAKE_PROGRAM=$ninja")
 Invoke-Checked $cmake $configure (Join-Path $workRoot 'recomp-configure.log')
-Invoke-Checked $cmake @('--build',$runtimeBuild,'--target','moderngekko-port','--parallel',[string]$Jobs) (Join-Path $workRoot 'recomp-runtime-build.log')
+Invoke-Checked $cmake @('--build',$runtimeBuild,'--target','moderngekko-port','moderngekko-launcher','--parallel',[string]$Jobs) (Join-Path $workRoot 'recomp-runtime-build.log')
 $port = Join-Path $runtimeBuild 'moderngekko-port.exe'
 if (-not (Test-Path -LiteralPath $port -PathType Leaf)) { throw 'The runtime build did not produce moderngekko-port.exe.' }
 $record = [ordered]@{
@@ -198,9 +215,11 @@ $record = [ordered]@{
     template_readme_sha256=(Get-FileHash -LiteralPath (Join-Path $TemplateSource 'README.md') -Algorithm SHA256).Hash;
     template_makefile_sha256=(Get-FileHash -LiteralPath (Join-Path $TemplateSource 'Makefile') -Algorithm SHA256).Hash;
     main_dol_sha256=$inputDolSha256;
+    required_assets_sha256=$expectedAssetsSha256;
     dolrecomp_binary_sha256=(Get-FileHash -LiteralPath (Join-Path $runtimeBuild 'dolrecomp.exe') -Algorithm SHA256).Hash;
     port_binary_sha256=(Get-FileHash -LiteralPath $port -Algorithm SHA256).Hash;
     runner_binary_sha256=(Get-FileHash -LiteralPath (Join-Path $runtimeBuild 'moderngekko-run.exe') -Algorithm SHA256).Hash;
+    launcher_binary_sha256=(Get-FileHash -LiteralPath (Join-Path $runtimeBuild 'DW4_PC.exe') -Algorithm SHA256).Hash;
     dependency_pins=@($dependencyPins); built_at_utc=[DateTime]::UtcNow.ToString('o'); module_built=$false
 }
 $recordPath = Join-Path $workRoot 'recomp-build-record.json'
