@@ -2,6 +2,10 @@
 
 ## Selected recompilation path
 
+The [September 13 project review and migration plan](PORTING_STRATEGY.md)
+maps both build targets and defines the boundary between static CPU
+recompilation, source recovery and replacement PC services.
+
 The owner selected DolRecomp and the ModernGekko template as the next path to
 the complete original game. DolRecomp translates original CPU code; ModernGekko
 supplies a Dolphin-derived runtime for graphics, audio and console services.

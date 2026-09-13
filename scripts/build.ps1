@@ -1,7 +1,8 @@
 param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo')][string]$Configuration = 'Release',
     [switch]$CoreOnly,
-    [switch]$Package
+    [switch]$Package,
+    [ValidateRange(1,64)][int]$Jobs = 4
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -30,7 +31,7 @@ $buildDirectory = Join-Path $projectRoot "build\$Configuration"
 $buildApp = if ($CoreOnly) { 'OFF' } else { 'ON' }
 & $cmakeExe -S $projectRoot -B $buildDirectory -G Ninja "-DCMAKE_BUILD_TYPE=$Configuration" "-DDW4_BUILD_APP=$buildApp"
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
-& $cmakeExe --build $buildDirectory --parallel
+& $cmakeExe --build $buildDirectory --parallel $Jobs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 & $ctestExe --test-dir $buildDirectory --output-on-failure
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }

@@ -37,6 +37,11 @@ for every device or scene.
 
 ## Next acceptance gate
 
+The [project review](PORTING_STRATEGY.md#ordered-continuation-plan) turns this
+gate into ordered implementation checkpoints. Retain the working recompilation
+baseline while recovering selected functions and qualifying native service
+replacements; an Aurora migration is not yet implemented or validated.
+
 The immediate gate is correcting the owner's low-FPS/audio-stutter report in
 the **DolRecomp + ModernGekko** build. The optimized module passes its equivalent
 bounded logo comparison at original speed, but longer tests expose an opening

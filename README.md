@@ -11,6 +11,14 @@ complete gameplay, audio, saves and controller validation remain in progress. Se
 [RECOMPILATION.md](docs/RECOMPILATION.md) for the tool inputs and measured results.
 Builds and tests run locally; GitHub Actions is disabled.
 
+See [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md) for the September 13 project
+review, retained work, tool comparison and concrete migration checkpoints.
+`Play-Recompiled-DW4.cmd` starts the verified developer recompilation with its
+separate `work/recomp-user` profile. Existing `Play-DW4-PC.cmd` and
+`Start-DW4-PC.cmd` start the older manual walking preview/workbench.
+To keep using a packaged preview's imported data and saves, launch that
+package's `DW4_PC.exe` directly.
+
 The current priority is performance: the first diagnostic build was slow and
 the owner reports audio stutter at the main menu. The optimized build now
 advances about 60 unique-frame counter steps per second at normal simulation
