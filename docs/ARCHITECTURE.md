@@ -26,6 +26,17 @@ scripts and the local module cache remain a separate build workflow. See
 [ROM_IMPORT.md](ROM_IMPORT.md). Distribution contains the port and dependency
 notices, with original game content supplied locally by each user.
 
+The owner now requires that entry point to host the game directly, with no
+separate runner executable, an in-game F1 ImGui menu replacing the File/View
+menus, and portable save data alongside the EXE. The shared frontend session
+now runs inside `DW4_PC.exe` after destroying the launcher's SDL/ImGui resources;
+the packaged application has no runner process. The default profile is
+`savedata` beside the actual EXE. The game DLL, resource files and internal
+console-style save layout remain transitional. Runtime integration must
+preserve the original game/service state and existing saves;
+moving the PC-facing interface does not by itself remove Dolphin-derived
+graphics, audio and console-service implementations.
+
 The manually recovered engine below remains a separate reference core. Its
 checked helpers and original-asset walking preview do not establish correctness
 of the recompilation runtime. Original game behavior must be validated there,

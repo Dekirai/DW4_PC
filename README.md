@@ -19,6 +19,15 @@ This does not yet validate gameplay performance or audible output.
 The guarded scheduler optimization also reduces measured boot CPU cost by
 about 46% per frame-counter advance in the final package comparison, at normal
 simulation speed. See [RECOMP_PERFORMANCE.md](docs/RECOMP_PERFORMANCE.md).
+Real-device audio diagnostics now distinguish source activity, mixer gaps and
+Cubeb callback timing during finite hidden tests at zero device volume. See
+[RECOMP_AUDIO.md](docs/RECOMP_AUDIO.md) for the method and its limits.
+The longer opening-movie test exposes a later slowdown to approximately 30%
+simulation speed at both 1x and 3x EFB, with repeated audio-buffer replay.
+The earlier logo performance does not establish smooth movie or menu playback.
+A controlled intro skip reaches the original "PRESS START" title screen, where
+the bounded test runs near normal simulation speed. Some audio FIFO replay
+remains; audible quality and subsequent menus/gameplay are still unverified.
 The PC target includes at
 least 60 FPS on measured hardware, presentation options up to 300 FPS without
 faster gameplay, 16:9, higher render resolution, HD textures and an ImGui menu
@@ -34,6 +43,13 @@ not bundled. End users need no compiler or manual disc extraction. Developers
 can create a package with `scripts/package-recomp.ps1` after building, or use
 `scripts/start-recomp.ps1` for the separate developer profile. Builds never
 launch the game automatically. See [ROM_IMPORT.md](docs/ROM_IMPORT.md).
+
+The application now hosts the game in-process; the package no longer includes
+or requires `moderngekko-run.exe`. The default `savedata` directory sits beside
+the actual EXE. Earlier AppData/Documents profiles are preserved. The game DLL,
+`Sys` resources and Visual C++ runtime DLLs remain dependencies while work
+continues toward a single-file application. The F1 in-game menu and revised
+internal save layout remain pending.
 
 The [language-data audit](docs/LOCALIZATION.md) found that the French, German,
 Italian and Spanish named text packs duplicate English in the supplied USA

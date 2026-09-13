@@ -133,13 +133,22 @@ command and a PNG header, and records the image path/hash. Decode and inspect
 that image before claiming visual acceptance. Vulkan headless mode creates
 real GPU resources without a render window, surface or swapchain.
 
-The hidden test deliberately uses 640x528 at 1x EFB and NullSound. NullSound
+By default, the hidden test uses 640x528 at 1x EFB and NullSound. NullSound
 sets output sample rate to zero, so these measurements exclude host audio
 queuing, resampling and device callbacks. The current separate manual profile
 uses the 1920x1080 option, which maps to 3x EFB, and ordinarily selects Cubeb
 audio. Normal runtime speed defaults to 1.0. These differences limit comparisons
 with the owner's main-menu report: its exact executable identity was not
 recorded, and no hidden-test result establishes that audible stutter is fixed.
+
+For longer silent real-device diagnostics, use `-Audio Cubeb -Resolution
+1920x1080 -TimeoutSeconds 90`. Optional `-ScreenshotAtSeconds 35,50,70` with
+`-Screenshot -Graphics Vulkan` records several startup images. Actual Cubeb
+initialization, successful zero-volume application and advancing callbacks
+are required; a fallback to NullSound is a test failure. `audio_timing`
+preserves source activity, mixer queue observations, callback timing and
+throttle-excluded speed estimates. See [RECOMP_AUDIO.md](RECOMP_AUDIO.md) for
+the observed opening-movie slowdown and interpretation limits.
 
 ## Responsibilities
 
@@ -331,7 +340,14 @@ The pinned runtime already contains useful implementation foundations:
 - ModernGekko provides state-save/load commands and native mod ABI hooks. State
   compatibility and a real restore roundtrip remain required before claiming
   reliable save states or modded gameplay.
-- Its separate SDL/ImGui launcher contains a DiscIO importer and NetPlay tools.
+- Its SDL/ImGui launcher contains a DiscIO importer and NetPlay tools. The
+  launcher now starts a shared game session inside `DW4_PC.exe`; an optional
+  developer runner uses the same session function. The package omits that
+  runner, and `DW4_PC.exe --run` exposes the session's diagnostic CLI. Use
+  `-UnifiedExecutable` in the startup harness to test that binary; combine
+  `-UseBundledModule` with `-UsePortableProfile` only on a fresh explicit package
+  to verify its adjacent default profile from another working directory.
+  Existing `savedata` is refused by that diagnostic option.
   A DW4 in-game menu requires video-thread drawing, input capture and safe CPU
   commands; four GameCube player mappings and multi-machine behavior require
   their own integration. The existing tools do not establish working DW4 online

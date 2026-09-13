@@ -1,39 +1,802 @@
+diff --git a/Source/Core/AudioCommon/AudioTelemetry.h b/Source/Core/AudioCommon/AudioTelemetry.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..0236a70db0d65c0b7af562e877075b46815d7f55
+--- /dev/null
++++ b/Source/Core/AudioCommon/AudioTelemetry.h
+@@ -0,0 +1,338 @@
++// Copyright 2026 Dolphin Emulator Project
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#pragma once
++
++#include <atomic>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++#include <memory>
++#include <mutex>
++
++namespace AudioCommon
++{
++// Diagnostics only: these counters never participate in audio or save-state decisions.
++// Fields in a snapshot are nearby relaxed observations, not one atomic transaction.
++inline constexpr std::uint64_t AUDIO_ACTIVITY_WINDOW_NS = 250'000'000;
++
++template <typename Sample>
++std::uint64_t CountNonzeroAudioFrames(const Sample* samples, std::size_t frames,
++                                    std::size_t channels)
++{
++  std::uint64_t nonzero_frames = 0;
++  for (std::size_t frame = 0; frame < frames; ++frame)
++  {
++    bool nonzero = false;
++    for (std::size_t channel = 0; channel < channels; ++channel)
++      nonzero |= samples[frame * channels + channel] != Sample{};
++    nonzero_frames += nonzero;
++  }
++  return nonzero_frames;
++}
++
++inline std::uint64_t AudioTelemetryNowNs()
++{
++  return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++      std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++
++inline void AudioTelemetryMax(std::atomic<std::uint64_t>& counter, std::uint64_t value)
++{
++  auto old = counter.load(std::memory_order_relaxed);
++  while (old < value && !counter.compare_exchange_weak(old, value, std::memory_order_relaxed))
++  {
++  }
++}
++
++struct MixerSourceTelemetrySnapshot
++{
++  std::uint64_t push_calls = 0;
++  std::uint64_t pushed_frames = 0;
++  std::uint64_t pushed_nonzero_frames = 0;
++  std::uint64_t accepted_frames = 0;
++  std::uint64_t enqueued_granules = 0;
++  std::uint64_t queue_full_dropped_granules = 0;
++  std::uint64_t queue_trimmed_granules = 0;
++  std::uint64_t active_empty_events = 0;
++  std::uint64_t active_replay_events = 0;
++  std::uint64_t active_fade_events = 0;
++  std::uint64_t active_mixed_output_frames = 0;
++  std::uint64_t active_faded_output_frames = 0;
++  std::uint64_t last_push_age_ns = 0;
++  std::uint32_t sample_rate_dividend = 0;
++  std::uint32_t sample_rate_divisor = 0;
++  bool recently_active = false;
++};
++
++class MixerSourceTelemetry final
++{
++public:
++  void RecordPush(std::uint64_t frames, std::uint64_t nonzero_frames, bool accepted,
++                  std::uint32_t dividend, std::uint32_t divisor, std::uint64_t now)
++  {
++    push_calls.fetch_add(1, std::memory_order_relaxed);
++    pushed_frames.fetch_add(frames, std::memory_order_relaxed);
++    pushed_nonzero_frames.fetch_add(nonzero_frames, std::memory_order_relaxed);
++    sample_rate_dividend.store(dividend, std::memory_order_relaxed);
++    sample_rate_divisor.store(divisor, std::memory_order_relaxed);
++    if (frames != 0)
++      last_push_ns.store(now, std::memory_order_relaxed);
++    if (accepted)
++    {
++      accepted_frames.fetch_add(frames, std::memory_order_relaxed);
++      if (nonzero_frames != 0)
++        last_signal_ns.store(now, std::memory_order_relaxed);
++    }
++  }
++
++  // DTK feeds silent blocks even when it is stopped. Never treat those blocks,
++  // never-fed sources, or paused execution as evidence of audible starvation.
++  // This explicit recent-signal window is not a game's logical stream state.
++  bool IsActive(std::uint64_t now, bool running) const
++  {
++    const auto signal = last_signal_ns.load(std::memory_order_relaxed);
++    return running && signal != 0 && now >= signal && now - signal <= AUDIO_ACTIVITY_WINDOW_NS;
++  }
++
++  void RecordEmpty(bool active, bool replay, bool fade)
++  {
++    if (!active)
++      return;
++    active_empty_events.fetch_add(1, std::memory_order_relaxed);
++    if (replay)
++      active_replay_events.fetch_add(1, std::memory_order_relaxed);
++    if (fade)
++      active_fade_events.fetch_add(1, std::memory_order_relaxed);
++  }
++
++  MixerSourceTelemetrySnapshot Snapshot(std::uint64_t now) const
++  {
++    MixerSourceTelemetrySnapshot result;
++    result.push_calls = push_calls.load(std::memory_order_relaxed);
++    result.pushed_frames = pushed_frames.load(std::memory_order_relaxed);
++    result.pushed_nonzero_frames = pushed_nonzero_frames.load(std::memory_order_relaxed);
++    result.accepted_frames = accepted_frames.load(std::memory_order_relaxed);
++    result.enqueued_granules = enqueued_granules.load(std::memory_order_relaxed);
++    result.queue_full_dropped_granules = queue_full_dropped_granules.load(std::memory_order_relaxed);
++    result.queue_trimmed_granules = queue_trimmed_granules.load(std::memory_order_relaxed);
++    result.active_empty_events = active_empty_events.load(std::memory_order_relaxed);
++    result.active_replay_events = active_replay_events.load(std::memory_order_relaxed);
++    result.active_fade_events = active_fade_events.load(std::memory_order_relaxed);
++    result.active_mixed_output_frames = active_mixed_output_frames.load(std::memory_order_relaxed);
++    result.active_faded_output_frames = active_faded_output_frames.load(std::memory_order_relaxed);
++    const auto push = last_push_ns.load(std::memory_order_relaxed);
++    result.last_push_age_ns = push != 0 && now >= push ? now - push : 0;
++    result.sample_rate_dividend = sample_rate_dividend.load(std::memory_order_relaxed);
++    result.sample_rate_divisor = sample_rate_divisor.load(std::memory_order_relaxed);
++    result.recently_active = IsActive(now, true);
++    return result;
++  }
++
++  std::atomic<std::uint64_t> enqueued_granules{0};
++  std::atomic<std::uint64_t> queue_full_dropped_granules{0};
++  std::atomic<std::uint64_t> queue_trimmed_granules{0};
++  std::atomic<std::uint64_t> active_mixed_output_frames{0};
++  std::atomic<std::uint64_t> active_faded_output_frames{0};
++
++private:
++  std::atomic<std::uint64_t> push_calls{0}, pushed_frames{0}, pushed_nonzero_frames{0};
++  std::atomic<std::uint64_t> accepted_frames{0}, last_push_ns{0}, last_signal_ns{0};
++  std::atomic<std::uint64_t> active_empty_events{0}, active_replay_events{0}, active_fade_events{0};
++  std::atomic<std::uint32_t> sample_rate_dividend{0}, sample_rate_divisor{0};
++};
++
++enum class AudioTelemetryBackend : std::uint32_t
++{
++  Unknown = 0,
++  Cubeb = 1,
++  Null = 2,
++};
++
++struct DeviceTelemetrySnapshot
++{
++  AudioTelemetryBackend backend = AudioTelemetryBackend::Unknown;
++  bool init_complete = false;
++  bool init_succeeded = false;
++  bool start_complete = false;
++  bool start_succeeded = false;
++  bool running_requested = false;
++  bool volume_apply_complete = false;
++  bool volume_apply_succeeded = false;
++  std::uint32_t sample_rate = 0, channels = 0, sample_bits = 0;
++  std::int32_t requested_volume_percent = 100;
++  std::int32_t last_state = -1;
++  std::uint64_t callbacks = 0, callback_frames = 0, nonzero_output_frames = 0;
++  std::uint64_t callback_interval_count = 0, callback_interval_sum_ns = 0;
++  std::uint64_t callback_interval_max_ns = 0, callback_work_sum_ns = 0, callback_work_max_ns = 0;
++  std::uint64_t callback_gaps_over_two_periods = 0, callback_work_over_period = 0;
++  std::uint64_t state_started = 0, state_stopped = 0, state_drained = 0, state_errors = 0;
++  std::uint64_t operation_errors = 0;
++};
++
++class DeviceTelemetry final
++{
++public:
++  bool CanStart(bool require_silent) const
++  {
++    return !require_silent || (volume_apply_complete.load(std::memory_order_acquire) &&
++                              volume_apply_succeeded.load(std::memory_order_relaxed) &&
++                              requested_volume_percent.load(std::memory_order_relaxed) == 0);
++  }
++
++  // Cubeb serializes data callbacks for a stream. Only this method accesses the
++  // previous-callback fields; start/stop requests invalidate them via an epoch.
++  void RecordCallback(std::uint64_t begin, std::uint64_t end, std::uint64_t frames,
++                      std::uint64_t nonzero_frames, std::uint64_t epoch)
++  {
++    const auto rate = sample_rate.load(std::memory_order_relaxed);
++    if (previous_begin != 0 && previous_epoch == epoch && begin >= previous_begin)
++    {
++      const auto interval = begin - previous_begin;
++      callback_interval_count.fetch_add(1, std::memory_order_relaxed);
++      callback_interval_sum_ns.fetch_add(interval, std::memory_order_relaxed);
++      AudioTelemetryMax(callback_interval_max_ns, interval);
++      if (rate != 0 && previous_frames != 0 && interval > previous_frames * 2'000'000'000 / rate)
++        callback_gaps_over_two_periods.fetch_add(1, std::memory_order_relaxed);
++    }
++    const auto work = end >= begin ? end - begin : 0;
++    callback_work_sum_ns.fetch_add(work, std::memory_order_relaxed);
++    AudioTelemetryMax(callback_work_max_ns, work);
++    if (rate != 0 && frames != 0 && work > frames * 1'000'000'000 / rate)
++      callback_work_over_period.fetch_add(1, std::memory_order_relaxed);
++    callbacks.fetch_add(1, std::memory_order_relaxed);
++    callback_frames.fetch_add(frames, std::memory_order_relaxed);
++    nonzero_output_frames.fetch_add(nonzero_frames, std::memory_order_relaxed);
++    previous_begin = begin;
++    previous_frames = frames;
++    previous_epoch = epoch;
++  }
++
++  DeviceTelemetrySnapshot Snapshot() const
++  {
++    DeviceTelemetrySnapshot result;
++    result.init_complete = init_complete.load(std::memory_order_acquire);
++    // Init publishes the selected backend before its release store. Acquire
++    // completion first so a completed stream cannot retain a stale backend.
++    result.backend = backend.load(std::memory_order_relaxed);
++    result.init_succeeded = init_succeeded.load(std::memory_order_relaxed);
++    result.start_complete = start_complete.load(std::memory_order_acquire);
++    result.start_succeeded = start_succeeded.load(std::memory_order_relaxed);
++    result.running_requested = running_requested.load(std::memory_order_relaxed);
++    result.volume_apply_complete = volume_apply_complete.load(std::memory_order_acquire);
++    result.volume_apply_succeeded = volume_apply_succeeded.load(std::memory_order_relaxed);
++    result.sample_rate = sample_rate.load(std::memory_order_relaxed);
++    result.channels = channels.load(std::memory_order_relaxed);
++    result.sample_bits = sample_bits.load(std::memory_order_relaxed);
++    result.requested_volume_percent = requested_volume_percent.load(std::memory_order_relaxed);
++    result.last_state = last_state.load(std::memory_order_relaxed);
++    result.callbacks = callbacks.load(std::memory_order_relaxed);
++    result.callback_frames = callback_frames.load(std::memory_order_relaxed);
++    result.nonzero_output_frames = nonzero_output_frames.load(std::memory_order_relaxed);
++    result.callback_interval_count = callback_interval_count.load(std::memory_order_relaxed);
++    result.callback_interval_sum_ns = callback_interval_sum_ns.load(std::memory_order_relaxed);
++    result.callback_interval_max_ns = callback_interval_max_ns.load(std::memory_order_relaxed);
++    result.callback_work_sum_ns = callback_work_sum_ns.load(std::memory_order_relaxed);
++    result.callback_work_max_ns = callback_work_max_ns.load(std::memory_order_relaxed);
++    result.callback_gaps_over_two_periods = callback_gaps_over_two_periods.load(std::memory_order_relaxed);
++    result.callback_work_over_period = callback_work_over_period.load(std::memory_order_relaxed);
++    result.state_started = state_started.load(std::memory_order_relaxed);
++    result.state_stopped = state_stopped.load(std::memory_order_relaxed);
++    result.state_drained = state_drained.load(std::memory_order_relaxed);
++    result.state_errors = state_errors.load(std::memory_order_relaxed);
++    result.operation_errors = operation_errors.load(std::memory_order_relaxed);
++    return result;
++  }
++
++  std::atomic<AudioTelemetryBackend> backend{AudioTelemetryBackend::Unknown};
++  std::atomic<bool> init_complete{false}, init_succeeded{false};
++  std::atomic<bool> start_complete{false}, start_succeeded{false}, running_requested{false};
++  std::atomic<bool> volume_apply_complete{false}, volume_apply_succeeded{false};
++  std::atomic<std::uint32_t> sample_rate{0}, channels{0}, sample_bits{0};
++  std::atomic<std::int32_t> requested_volume_percent{100}, last_state{-1};
++  std::atomic<std::uint64_t> state_started{0}, state_stopped{0}, state_drained{0}, state_errors{0};
++  std::atomic<std::uint64_t> operation_errors{0}, timing_epoch{0};
++
++private:
++  std::atomic<std::uint64_t> callbacks{0}, callback_frames{0}, nonzero_output_frames{0};
++  std::atomic<std::uint64_t> callback_interval_count{0}, callback_interval_sum_ns{0};
++  std::atomic<std::uint64_t> callback_interval_max_ns{0}, callback_work_sum_ns{0}, callback_work_max_ns{0};
++  std::atomic<std::uint64_t> callback_gaps_over_two_periods{0}, callback_work_over_period{0};
++  std::uint64_t previous_begin = 0, previous_frames = 0, previous_epoch = 0;
++};
++
++struct MixerTelemetrySnapshot
++{
++  MixerSourceTelemetrySnapshot dma, dtk;
++  std::uint32_t output_sample_rate = 0;
++};
++
++struct AudioTelemetrySnapshot
++{
++  bool available = false, stream_alive = false;
++  std::uint64_t generation = 0;
++  MixerTelemetrySnapshot mixer;
++  DeviceTelemetrySnapshot device;
++};
++
++struct AudioTelemetryCounters final
++{
++  MixerSourceTelemetry dma, dtk;
++  DeviceTelemetry device;
++  std::atomic<std::uint32_t> output_sample_rate{0};
++  std::atomic<bool> stream_alive{false};
++  std::uint64_t generation = 0;
++
++  AudioTelemetrySnapshot Snapshot() const
++  {
++    const auto now = AudioTelemetryNowNs();
++    AudioTelemetrySnapshot result;
++    result.available = true;
++    result.stream_alive = stream_alive.load(std::memory_order_relaxed);
++    result.generation = generation;
++    result.mixer = {dma.Snapshot(now), dtk.Snapshot(now), output_sample_rate.load(std::memory_order_relaxed)};
++    result.device = device.Snapshot();
++    return result;
++  }
++};
++
++namespace detail
++{
++inline std::mutex audio_telemetry_mutex;
++inline std::shared_ptr<AudioTelemetryCounters> audio_telemetry;
++inline std::uint64_t audio_telemetry_generation = 0;
++inline std::atomic<bool> require_silent_audio_start{false};
++}  // namespace detail
++
++// An explicit silent device diagnostic may fail closed before playback starts.
++// The frontend scopes this opt-in to one run; ordinary audio remains unchanged.
++inline void SetRequireSilentAudioStart(bool required)
++{
++  detail::require_silent_audio_start.store(required, std::memory_order_relaxed);
++}
++
++inline bool IsSilentAudioStartRequired()
++{
++  return detail::require_silent_audio_start.load(std::memory_order_relaxed);
++}
++
++inline void RegisterAudioTelemetry(const std::shared_ptr<AudioTelemetryCounters>& telemetry)
++{
++  std::lock_guard lock(detail::audio_telemetry_mutex);
++  telemetry->generation = ++detail::audio_telemetry_generation;
++  telemetry->stream_alive.store(true, std::memory_order_relaxed);
++  detail::audio_telemetry = telemetry;
++}
++
++// Retain diagnostics after stream destruction. Readers copy this shared owner,
++// never a SoundStream/Mixer pointer; callbacks never acquire the registry mutex.
++inline AudioTelemetrySnapshot GetAudioTelemetrySnapshot()
++{
++  std::shared_ptr<AudioTelemetryCounters> telemetry;
++  {
++    std::lock_guard lock(detail::audio_telemetry_mutex);
++    telemetry = detail::audio_telemetry;
++  }
++  return telemetry ? telemetry->Snapshot() : AudioTelemetrySnapshot{};
++}
++}  // namespace AudioCommon
+diff --git a/Source/Core/AudioCommon/CubebStream.cpp b/Source/Core/AudioCommon/CubebStream.cpp
+index 0cdf7f3b99983dbcda7b40c6f5662d7559911cd2..c6c0bc93a261e9c40f819fc9638f2a15988c6580 100644
+--- a/Source/Core/AudioCommon/CubebStream.cpp
++++ b/Source/Core/AudioCommon/CubebStream.cpp
+@@ -22,17 +22,46 @@ long CubebStream::DataCallback(cubeb_stream* stream, void* user_data, const void
+                                void* output_buffer, long num_frames)
+ {
+   const auto* const self = static_cast<CubebStream*>(user_data);
++  auto& telemetry = self->m_mixer->GetTelemetryOwner()->device;
++  const auto begin = AudioCommon::AudioTelemetryNowNs();
++  const auto epoch = telemetry.timing_epoch.load(std::memory_order_relaxed);
+ 
+   if (self->m_stereo)
+     self->m_mixer->Mix(static_cast<short*>(output_buffer), num_frames);
+   else
+     self->m_mixer->MixSurround(static_cast<float*>(output_buffer), num_frames);
+ 
++  // Cubeb applies stream volume after this callback. Observe signal before a
++  // diagnostic device mute, without altering any mixed samples or gain.
++  const auto frames = num_frames > 0 ? static_cast<std::size_t>(num_frames) : 0;
++  const auto nonzero_frames = self->m_stereo ?
++      AudioCommon::CountNonzeroAudioFrames(static_cast<const short*>(output_buffer), frames, 2) :
++      AudioCommon::CountNonzeroAudioFrames(static_cast<const float*>(output_buffer), frames, 6);
++  telemetry.RecordCallback(begin, AudioCommon::AudioTelemetryNowNs(),
++                           frames, nonzero_frames, epoch);
+   return num_frames;
+ }
+ 
+ void CubebStream::StateCallback(cubeb_stream* stream, void* user_data, cubeb_state state)
+ {
++  const auto* const self = static_cast<CubebStream*>(user_data);
++  auto& telemetry = self->m_mixer->GetTelemetryOwner()->device;
++  telemetry.last_state.store(static_cast<std::int32_t>(state), std::memory_order_relaxed);
++  switch (state)
++  {
++  case CUBEB_STATE_STARTED:
++    telemetry.state_started.fetch_add(1, std::memory_order_relaxed);
++    break;
++  case CUBEB_STATE_STOPPED:
++    telemetry.state_stopped.fetch_add(1, std::memory_order_relaxed);
++    break;
++  case CUBEB_STATE_DRAINED:
++    telemetry.state_drained.fetch_add(1, std::memory_order_relaxed);
++    break;
++  case CUBEB_STATE_ERROR:
++    telemetry.state_errors.fetch_add(1, std::memory_order_relaxed);
++    break;
++  }
+ }
+ 
+ long CubebStream::WiimoteDataCallback(cubeb_stream* stream, void* user_data,
+@@ -66,11 +95,19 @@ CubebStream::CubebStream()
+ bool CubebStream::Init()
+ {
+   bool return_value = false;
++  auto& telemetry = m_mixer->GetTelemetryOwner()->device;
++  telemetry.backend.store(AudioCommon::AudioTelemetryBackend::Cubeb, std::memory_order_relaxed);
++  telemetry.init_complete.store(false, std::memory_order_relaxed);
+ 
+ #ifdef _WIN32
+   if (!m_coinit_success)
++  {
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++    telemetry.init_succeeded.store(false, std::memory_order_relaxed);
++    telemetry.init_complete.store(true, std::memory_order_release);
+     return false;
+-  m_work_queue.PushBlocking([this, &return_value] {
++  }
++  m_work_queue.PushBlocking([this, &return_value, &telemetry] {
+ #endif
+     m_ctx = CubebUtils::GetContext();
+     if (m_ctx)
+@@ -91,6 +128,9 @@ bool CubebStream::Init()
+         params.format = CUBEB_SAMPLE_FLOAT32NE;
+         params.layout = CUBEB_LAYOUT_3F2_LFE;
+       }
++      telemetry.sample_rate.store(params.rate, std::memory_order_relaxed);
++      telemetry.channels.store(params.channels, std::memory_order_relaxed);
++      telemetry.sample_bits.store(m_stereo ? 16 : 32, std::memory_order_relaxed);
+ 
+       u32 minimum_latency = 0;
+       if (cubeb_get_min_latency(m_ctx.get(), &params, &minimum_latency) != CUBEB_OK)
+@@ -151,16 +191,40 @@ bool CubebStream::Init()
+   });
+ #endif
+ 
++  if (!return_value)
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++  telemetry.init_succeeded.store(return_value, std::memory_order_relaxed);
++  telemetry.init_complete.store(true, std::memory_order_release);
+   return return_value;
+ }
+ 
+ bool CubebStream::SetRunning(bool running)
+ {
+   bool return_value = false;
++  auto& telemetry = m_mixer->GetTelemetryOwner()->device;
++  telemetry.running_requested.store(running, std::memory_order_relaxed);
++  telemetry.timing_epoch.fetch_add(1, std::memory_order_relaxed);
++  if (running)
++    telemetry.start_complete.store(false, std::memory_order_relaxed);
++  if (running && !telemetry.CanStart(AudioCommon::IsSilentAudioStartRequired()))
++  {
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++    telemetry.start_succeeded.store(false, std::memory_order_relaxed);
++    telemetry.start_complete.store(true, std::memory_order_release);
++    return false;
++  }
+ 
+ #ifdef _WIN32
+   if (!m_coinit_success)
++  {
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++    if (running)
++    {
++      telemetry.start_succeeded.store(false, std::memory_order_relaxed);
++      telemetry.start_complete.store(true, std::memory_order_release);
++    }
+     return false;
++  }
+   m_work_queue.PushBlocking([this, running, &return_value] {
+ #endif
+     if (running)
+@@ -185,11 +249,21 @@ bool CubebStream::SetRunning(bool running)
+   });
+ #endif
+ 
++  if (!return_value)
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++  if (running)
++  {
++    telemetry.start_succeeded.store(return_value, std::memory_order_relaxed);
++    telemetry.start_complete.store(true, std::memory_order_release);
++  }
+   return return_value;
+ }
+ 
+ CubebStream::~CubebStream()
+ {
++  auto& telemetry = m_mixer->GetTelemetryOwner()->device;
++  telemetry.running_requested.store(false, std::memory_order_relaxed);
++  telemetry.timing_epoch.fetch_add(1, std::memory_order_relaxed);
+ #ifdef _WIN32
+   m_work_queue.PushBlocking([this] {
+ #endif
+@@ -218,12 +292,24 @@ CubebStream::~CubebStream()
+ 
+ void CubebStream::SetVolume(int volume)
+ {
++  auto& telemetry = m_mixer->GetTelemetryOwner()->device;
++  telemetry.volume_apply_complete.store(false, std::memory_order_relaxed);
++  telemetry.requested_volume_percent.store(volume, std::memory_order_relaxed);
+ #ifdef _WIN32
+   if (!m_coinit_success)
++  {
++    telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++    telemetry.volume_apply_succeeded.store(false, std::memory_order_relaxed);
++    telemetry.volume_apply_complete.store(true, std::memory_order_release);
+     return;
+-  m_work_queue.PushBlocking([this, volume] {
++  }
++  m_work_queue.PushBlocking([this, volume, &telemetry] {
+ #endif
+-    cubeb_stream_set_volume(m_stream, volume / 100.0f);
++    const bool succeeded = cubeb_stream_set_volume(m_stream, volume / 100.0f) == CUBEB_OK;
++    if (!succeeded)
++      telemetry.operation_errors.fetch_add(1, std::memory_order_relaxed);
++    telemetry.volume_apply_succeeded.store(succeeded, std::memory_order_relaxed);
++    telemetry.volume_apply_complete.store(true, std::memory_order_release);
+ #ifdef _WIN32
+   });
+ #endif
+diff --git a/Source/Core/AudioCommon/Mixer.cpp b/Source/Core/AudioCommon/Mixer.cpp
+index a57b6024b7fcccf51c5b2462c75c68a46bb50a9b..4a4327614140faad9aea533acc33dfc791dad9bf 100644
+--- a/Source/Core/AudioCommon/Mixer.cpp
++++ b/Source/Core/AudioCommon/Mixer.cpp
+@@ -38,6 +38,7 @@ Mixer::Mixer(u32 BackendSampleRate)
+       m_surround_decoder(BackendSampleRate,
+                          DPL2QualityToFrameBlockSize(Config::Get(Config::MAIN_DPL2_QUALITY)))
+ {
++  m_telemetry->output_sample_rate.store(BackendSampleRate, std::memory_order_relaxed);
+   m_config_changed_callback_id = Config::AddConfigChangedCallback([this] { RefreshConfig(); });
+   RefreshConfig();
+ 
+@@ -95,6 +96,11 @@ void Mixer::MixerFifo::Mix(s16* samples, std::size_t num_samples)
+                  static_cast<std::size_t>(MAX_GRANULE_QUEUE_SIZE));
+ 
+   bool fade_audio = m_queue_fading.load(std::memory_order_relaxed);
++  const bool telemetry_active =
++      m_telemetry && m_telemetry->IsActive(AudioCommon::AudioTelemetryNowNs(), true) &&
++      Core::GetState(Core::System::GetInstance()) == Core::State::Running;
++  const std::size_t requested_samples = num_samples;
++  std::uint64_t faded_samples = 0;
+ 
+   m_granule_queue_size.store(buffer_size_granules, std::memory_order_relaxed);
+ 
+@@ -109,9 +115,9 @@ void Mixer::MixerFifo::Mix(s16* samples, std::size_t num_samples)
+     // If either index is less than the index jump, that means we reached
+     // the end of the of the buffer and need to load the next granule.
+     if (front_index < index_jump)
+-      fade_audio = Dequeue(&m_front);
++      fade_audio = Dequeue(&m_front, telemetry_active);
+     else if (back_index < index_jump)
+-      fade_audio = Dequeue(&m_back);
++      fade_audio = Dequeue(&m_back, telemetry_active);
+ 
+     // The Granules are pre-windowed, so we can just add them together
+     const std::size_t ft = front_index >> GRANULE_FRAC_BITS;
+@@ -140,6 +146,8 @@ void Mixer::MixerFifo::Mix(s16* samples, std::size_t num_samples)
+                          s5 * StereoPair{(+0.0f + 0.0f * t1 + 1.0f * t2 - 1.0f * t3) / 12.0f});
+ 
+     // Apply Fade In / Fade Out depending on if we are looping
++    if (telemetry_active && fade_audio)
++      ++faded_samples;
+     if (fade_audio)
+       m_fade_volume += fade_out_mul * (0.0f - m_fade_volume);
+     else
+@@ -159,6 +167,11 @@ void Mixer::MixerFifo::Mix(s16* samples, std::size_t num_samples)
+ 
+     samples += 2;
+   }
++  if (telemetry_active)
++  {
++    m_telemetry->active_mixed_output_frames.fetch_add(requested_samples, std::memory_order_relaxed);
++    m_telemetry->active_faded_output_frames.fetch_add(faded_samples, std::memory_order_relaxed);
++  }
+ }
+ 
+ std::size_t Mixer::Mix(s16* samples, std::size_t num_samples)
+@@ -215,6 +228,12 @@ std::size_t Mixer::MixSurround(float* samples, std::size_t num_samples)
+ 
+ void Mixer::PushSamples(const s16* samples, std::size_t num_samples)
+ {
++  const auto nonzero_frames = IsOutputSampleRateValid() ?
++      AudioCommon::CountNonzeroAudioFrames(samples, num_samples, 2) : 0;
++  m_telemetry->dma.RecordPush(num_samples, nonzero_frames, IsOutputSampleRateValid(),
++                              m_dma_mixer.GetInputSampleRateDividend(),
++                              m_dma_mixer.GetInputSampleRateDivisor(),
++                              AudioCommon::AudioTelemetryNowNs());
+   if (IsOutputSampleRateValid())
+   {
+     // Big-endian RL-orderered stereo samples.
+@@ -238,6 +257,12 @@ void Mixer::PushSamples(const s16* samples, std::size_t num_samples)
+ 
+ void Mixer::PushStreamingSamples(const s16* samples, std::size_t num_samples)
+ {
++  const auto nonzero_frames = IsOutputSampleRateValid() ?
++      AudioCommon::CountNonzeroAudioFrames(samples, num_samples, 2) : 0;
++  m_telemetry->dtk.RecordPush(num_samples, nonzero_frames, IsOutputSampleRateValid(),
++                              m_streaming_mixer.GetInputSampleRateDividend(),
++                              m_streaming_mixer.GetInputSampleRateDivisor(),
++                              AudioCommon::AudioTelemetryNowNs());
+   if (IsOutputSampleRateValid())
+   {
+     // Big-endian RL-orderered stereo samples.
+@@ -533,6 +558,9 @@ void Mixer::MixerFifo::Enqueue()
+   const std::size_t next_head = (head + 1) & GRANULE_QUEUE_MASK;
+   if (next_head == m_queue_tail.load(std::memory_order_acquire))
+   {
++    if (m_telemetry && m_telemetry->IsActive(AudioCommon::AudioTelemetryNowNs(), true) &&
++        Core::GetState(Core::System::GetInstance()) == Core::State::Running)
++      m_telemetry->queue_full_dropped_granules.fetch_add(1, std::memory_order_relaxed);
+     WARN_LOG_FMT(AUDIO,
+                  "Granule Queue has completely filled and audio samples are being dropped. "
+                  "This should not happen unless the audio backend has stopped requesting audio.");
+@@ -546,11 +574,13 @@ void Mixer::MixerFifo::Enqueue()
+     m_queue[head][i] = m_next_buffer[(i + start_index) & GRANULE_MASK] * GRANULE_WINDOW[i];
+ 
+   m_queue_head.store(next_head, std::memory_order_release);
++  if (m_telemetry)
++    m_telemetry->enqueued_granules.fetch_add(1, std::memory_order_relaxed);
+   m_queue_fading.store(false, std::memory_order_relaxed);
+   m_queue_looping.store(false, std::memory_order_relaxed);
+ }
+ 
+-bool Mixer::MixerFifo::Dequeue(Granule* granule)
++bool Mixer::MixerFifo::Dequeue(Granule* granule, bool telemetry_active)
+ {
+   const std::size_t granule_queue_size = m_granule_queue_size.load(std::memory_order_relaxed);
+   const std::size_t head = m_queue_head.load(std::memory_order_acquire);
+@@ -561,6 +591,9 @@ bool Mixer::MixerFifo::Dequeue(Granule* granule)
+   {
+     // Jump the playhead to half the queue size behind the head.
+     const std::size_t gap = (granule_queue_size >> 1) + 1;
++    if (telemetry_active)
++      m_telemetry->queue_trimmed_granules.fetch_add(
++          ((head - tail) & GRANULE_QUEUE_MASK) - gap, std::memory_order_relaxed);
+     tail = (head - gap) & GRANULE_QUEUE_MASK;
+   }
+ 
+@@ -578,11 +611,15 @@ bool Mixer::MixerFifo::Dequeue(Granule* granule)
+       next_tail = (head - gap) & GRANULE_QUEUE_MASK;
+ 
+       bool looping = m_queue_looping.load(std::memory_order_relaxed);
++      if (m_telemetry)
++        m_telemetry->RecordEmpty(telemetry_active, true, looping);
+       m_queue_fading.store(looping, std::memory_order_relaxed);
+       m_queue_looping.store(true, std::memory_order_relaxed);
+     }
+     else
+     {
++      if (m_telemetry)
++        m_telemetry->RecordEmpty(telemetry_active, false, false);
+       std::fill(granule->begin(), granule->end(), StereoPair{0.0f, 0.0f});
+       m_queue_fading.store(false, std::memory_order_relaxed);
+       m_queue_looping.store(false, std::memory_order_relaxed);
+diff --git a/Source/Core/AudioCommon/Mixer.h b/Source/Core/AudioCommon/Mixer.h
+index aca334bcf83831427b6c18eb691cc7741b73f455..1bb2dbc181b9d1dfa08ec1309fdf907b41586fea 100644
+--- a/Source/Core/AudioCommon/Mixer.h
++++ b/Source/Core/AudioCommon/Mixer.h
+@@ -7,6 +7,7 @@
+ #include <atomic>
+ #include <bit>
+ 
++#include "AudioCommon/AudioTelemetry.h"
+ #include "AudioCommon/SurroundDecoder.h"
+ #include "AudioCommon/WaveFile.h"
+ #include "Common/CommonTypes.h"
+@@ -36,7 +37,24 @@ public:
+   void PushGBASamples(std::size_t device_number, const s16* samples, std::size_t num_samples);
+ 
+   u32 GetSampleRate() const { return m_output_sample_rate; }
+-  void SetSampleRate(u32 output_sample_rate) { m_output_sample_rate = output_sample_rate; }
++  void SetSampleRate(u32 output_sample_rate)
++  {
++    m_output_sample_rate = output_sample_rate;
++    m_telemetry->output_sample_rate.store(output_sample_rate, std::memory_order_relaxed);
++    if (output_sample_rate == 0)
++    {
++      // NullSound::Init identifies the actual fallback without touching device audio.
++      m_telemetry->device.backend.store(AudioCommon::AudioTelemetryBackend::Null,
++                                       std::memory_order_relaxed);
++      m_telemetry->device.init_succeeded.store(true, std::memory_order_relaxed);
++      m_telemetry->device.init_complete.store(true, std::memory_order_release);
++    }
++  }
++  const std::shared_ptr<AudioCommon::AudioTelemetryCounters>& GetTelemetryOwner() const
++  {
++    return m_telemetry;
++  }
++  AudioCommon::MixerTelemetrySnapshot GetTelemetry() const { return m_telemetry->Snapshot().mixer; }
+ 
+   // Note: NullSoundStream sets the sample rate to 0.
+   bool IsOutputSampleRateValid() const { return m_output_sample_rate != 0; }
+@@ -103,9 +121,10 @@ private:
+ 
+   public:
+     MixerFifo(Mixer* mixer, u32 sample_rate_divisor,
+-              u32 sample_rate_dividend = FIXED_SAMPLE_RATE_DIVIDEND)
++              u32 sample_rate_dividend = FIXED_SAMPLE_RATE_DIVIDEND,
++              AudioCommon::MixerSourceTelemetry* telemetry = nullptr)
+         : m_mixer(mixer), m_input_sample_rate_dividend(sample_rate_dividend),
+-          m_input_sample_rate_divisor(sample_rate_divisor)
++          m_input_sample_rate_divisor(sample_rate_divisor), m_telemetry(telemetry)
+     {
+     }
+     void DoState(PointerWrap& p);
+@@ -138,6 +157,7 @@ private:
+     // All non-GBA MixerFifo instances use FIXED_SAMPLE_RATE_DIVIDEND.
+     u32 m_input_sample_rate_dividend;
+     u32 m_input_sample_rate_divisor;
++    AudioCommon::MixerSourceTelemetry* m_telemetry;
+ 
+     Granule m_next_buffer{};
+     std::size_t m_next_buffer_index = 0;
+@@ -154,7 +174,7 @@ private:
+     float m_fade_volume = 1.0;
+ 
+     void Enqueue();
+-    bool Dequeue(Granule* granule);
++    bool Dequeue(Granule* granule, bool telemetry_active);
+ 
+     // Volume ranges from 0-256
+     std::atomic<s32> m_LVolume{256};
+@@ -165,8 +185,12 @@ private:
+ 
+   void RefreshConfig();
+ 
+-  MixerFifo m_dma_mixer{this, FIXED_SAMPLE_RATE_DIVIDEND / 32000};
+-  MixerFifo m_streaming_mixer{this, FIXED_SAMPLE_RATE_DIVIDEND / 48000};
++  std::shared_ptr<AudioCommon::AudioTelemetryCounters> m_telemetry =
++      std::make_shared<AudioCommon::AudioTelemetryCounters>();
++  MixerFifo m_dma_mixer{this, FIXED_SAMPLE_RATE_DIVIDEND / 32000,
++                        FIXED_SAMPLE_RATE_DIVIDEND, &m_telemetry->dma};
++  MixerFifo m_streaming_mixer{this, FIXED_SAMPLE_RATE_DIVIDEND / 48000,
++                              FIXED_SAMPLE_RATE_DIVIDEND, &m_telemetry->dtk};
+   std::array<MixerFifo, 4> m_wiimote_speaker_mixers{
+       MixerFifo{this, FIXED_SAMPLE_RATE_DIVIDEND / 3000},
+       MixerFifo{this, FIXED_SAMPLE_RATE_DIVIDEND / 3000},
+diff --git a/Source/Core/AudioCommon/SoundStream.h b/Source/Core/AudioCommon/SoundStream.h
+index 9e1be0d33fb020fb476e3858edc6dfb063176bc8..864b3593522a407c80d01fd72e879508847b8d70 100644
+--- a/Source/Core/AudioCommon/SoundStream.h
++++ b/Source/Core/AudioCommon/SoundStream.h
+@@ -14,10 +14,20 @@ protected:
+   std::unique_ptr<Mixer> m_mixer;
+ 
+ public:
+-  SoundStream() : m_mixer(new Mixer(48000)) {}
+-  virtual ~SoundStream() {}
++  SoundStream() : m_mixer(new Mixer(48000))
++  {
++    AudioCommon::RegisterAudioTelemetry(m_mixer->GetTelemetryOwner());
++  }
++  virtual ~SoundStream()
++  {
++    m_mixer->GetTelemetryOwner()->stream_alive.store(false, std::memory_order_relaxed);
++  }
+   static bool IsValid() { return false; }
+   Mixer* GetMixer() const { return m_mixer.get(); }
++  AudioCommon::AudioTelemetrySnapshot GetAudioTelemetry() const
++  {
++    return m_mixer->GetTelemetryOwner()->Snapshot();
++  }
+   virtual bool Init() { return false; }
+   virtual void SetVolume(int) {}
+   // Returns true if successful.
 diff --git a/Source/Core/Core/Config/StaticRecompSettings.cpp b/Source/Core/Core/Config/StaticRecompSettings.cpp
-index 653deacf5809cd43ab5cb7789b51b5d0d26daea0..402945782c7babed922c1483a3556e963ad50968 100644
+index 653deacf5809cd43ab5cb7789b51b5d0d26daea0..f32b083f15050746c52bd9b8988f65e5af9045c3 100644
 --- a/Source/Core/Core/Config/StaticRecompSettings.cpp
 +++ b/Source/Core/Core/Config/StaticRecompSettings.cpp
-@@ -6,6 +6,7 @@ namespace Config
+@@ -6,6 +6,8 @@ namespace Config
  {
  const Info<bool> MAIN_STATICRECOMP_MODULE{{System::Main, "Core", "StaticRecompModule"}, true};
  const Info<u32> MAIN_STATICRECOMP_IDLE_PC{{System::Main, "Core", "StaticRecompIdlePC"}, 0};
 +const Info<bool> MAIN_STATICRECOMP_DW4_IDLE{{System::Main, "Core", "StaticRecompDw4Idle"}, true};
++const Info<bool> MAIN_STATICRECOMP_DW4_CACHE_BATCH{{System::Main, "Core", "StaticRecompDw4CacheBatch"}, true};
  const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES{
      {System::Main, "Core", "StaticRecompFallbackRanges"}, ""};
  }  // namespace Config
 diff --git a/Source/Core/Core/Config/StaticRecompSettings.h b/Source/Core/Core/Config/StaticRecompSettings.h
-index fbfccca11151a408c4c278d817d216ed87197a20..5e284240bc156cf578693f28cef00acb0fa99bf5 100644
+index fbfccca11151a408c4c278d817d216ed87197a20..e8b0954b4a75403442d6628b1ecb3aa628382bd4 100644
 --- a/Source/Core/Core/Config/StaticRecompSettings.h
 +++ b/Source/Core/Core/Config/StaticRecompSettings.h
-@@ -7,5 +7,6 @@ namespace Config
+@@ -7,5 +7,7 @@ namespace Config
  {
  extern const Info<bool> MAIN_STATICRECOMP_MODULE;
  extern const Info<u32> MAIN_STATICRECOMP_IDLE_PC;
 +extern const Info<bool> MAIN_STATICRECOMP_DW4_IDLE;
++extern const Info<bool> MAIN_STATICRECOMP_DW4_CACHE_BATCH;
  extern const Info<std::string> MAIN_STATICRECOMP_FALLBACK_RANGES;
  }  // namespace Config
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
-index e3581cc9386ed6e9485993b7f7231f65a0cd239b..a89202a88b1ed51bfcbd2ca0d81905f26686f97e 100644
+index e3581cc9386ed6e9485993b7f7231f65a0cd239b..52120a0addd208dcecc3857867f9394d3cffafd3 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
-@@ -182,6 +182,7 @@ void StaticRecompCore::Init()
+@@ -182,6 +182,8 @@ void StaticRecompCore::Init()
  
    LoadModule();
    m_idle_pc = Config::Get(Config::MAIN_STATICRECOMP_IDLE_PC);
 +  m_dw4_idle_enabled = Config::Get(Config::MAIN_STATICRECOMP_DW4_IDLE);
++  m_dw4_cache_enabled = Config::Get(Config::MAIN_STATICRECOMP_DW4_CACHE_BATCH);
    m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
    m_lockstep_verifier->Init();
  
-@@ -211,6 +212,15 @@ void StaticRecompCore::Shutdown()
+@@ -211,6 +213,25 @@ void StaticRecompCore::Shutdown()
                 (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
    std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
                                                      m_dispatch_samples.end());
@@ -46,40 +809,57 @@ index e3581cc9386ed6e9485993b7f7231f65a0cd239b..a89202a88b1ed51bfcbd2ca0d81905f2
 +               static_cast<unsigned long long>(m_dw4_idle_candidates - m_dw4_idle_accepted),
 +               static_cast<unsigned long long>(m_dw4_idle_extra_cycles / 258),
 +               static_cast<unsigned long long>(m_dw4_idle_extra_cycles));
++  std::fprintf(stderr,
++               "[staticrecomp] dw4_cache: enabled=%u candidates=%llu accepted=%llu rejected=%llu "
++               "lines=%llu native_cycles=%llu hook_cycles=%llu\n",
++               m_dw4_cache_enabled ? 1u : 0u,
++               static_cast<unsigned long long>(m_dw4_cache_candidates),
++               static_cast<unsigned long long>(m_dw4_cache_accepted),
++               static_cast<unsigned long long>(m_dw4_cache_candidates - m_dw4_cache_accepted),
++               static_cast<unsigned long long>(m_dw4_cache_lines),
++               static_cast<unsigned long long>(2 * m_dw4_cache_lines),
++               static_cast<unsigned long long>(5 * m_dw4_cache_lines));
    std::sort(dispatch_samples.begin(), dispatch_samples.end(),
              [](const auto& left, const auto& right) { return left.second > right.second; });
    for (std::size_t i = 0; i < std::min<std::size_t>(dispatch_samples.size(), 16); ++i)
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-index d084fea634a662590dda61faed30b0a1523771bb..a2ebb62bcefc8d9afc11d66e76b97ede3e1c10f1 100644
+index d084fea634a662590dda61faed30b0a1523771bb..63e1c87ae4b89255a9fdba647ad01f5bdea0016a 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-@@ -177,6 +177,9 @@ private:
+@@ -177,6 +177,12 @@ private:
    std::unordered_map<u32, u64> m_dispatch_samples;
    u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
    u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
 +  u64 m_dw4_idle_candidates = 0;
 +  u64 m_dw4_idle_accepted = 0;
 +  u64 m_dw4_idle_extra_cycles = 0;
++  u64 m_dw4_cache_candidates = 0;
++  u64 m_dw4_cache_accepted = 0;
++  u64 m_dw4_cache_lines = 0;
  
    // D4 guard state: parallel to m_module->chunk_ranges.
    std::vector<u8> m_chunk_state;
-@@ -212,6 +215,7 @@ private:
+@@ -212,6 +218,8 @@ private:
    bool m_collect_dispatch_samples = false;
    bool m_has_rel_modules = false;
    u32 m_idle_pc = 0;
 +  bool m_dw4_idle_enabled = false;
++  bool m_dw4_cache_enabled = false;
  };
  
  extern StaticRecompCore* g_static_recomp_core;
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
-index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..f651cc51c81c462ff874243c40704ad01abb5e2d 100644
+index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..4877ff67d2d821ad097517aec9343480e873a9d9 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
-@@ -6,11 +6,13 @@
+@@ -6,11 +6,16 @@
  #include "Core/PowerPC/PowerPC.h"
  #include "Core/PowerPC/Interpreter/Interpreter.h"
  #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
 +#include "Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h"
++#include "Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h"
++#include "Core/PowerPC/MMU.h"
++#include "Core/PowerPC/JitInterface.h"
  #include "Core/CoreTiming.h"
  #include "Core/HW/CPU.h"
  #include "Core/Config/MainSettings.h"
@@ -89,12 +869,77 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..f651cc51c81c462ff874243c40704ad0
  
  #include <cstdio>
  #include <cstdlib>
-@@ -172,7 +174,44 @@ void StaticRecompCore::Run()
+@@ -151,6 +156,11 @@ void StaticRecompCore::Run()
+           if (m_collect_dispatch_samples && (m_native_dispatches & 4095u) == 0)
+             ++m_dispatch_samples[m_guest.pc];
+           const u32 runtime_dispatch_address = m_guest.pc;
++          const bool cache_candidate = m_dw4_cache_enabled &&
++                                       runtime_dispatch_address == StaticRecompDw4Cache::LOOP_PC;
++          const u32 cache_start_r3 = cache_candidate ? m_guest.gpr[3] : 0;
++          const u32 cache_start_ctr = cache_candidate ? m_guest.ctr : 0;
++          const u64 cache_start_hooks = cache_candidate ? m_hook_fallback_instructions : 0;
+           u32 linked_dispatch_address = runtime_dispatch_address;
+           if (m_has_rel_modules)
+             ResolveNativeAddress(runtime_dispatch_address, &linked_dispatch_address, nullptr);
+@@ -172,7 +182,97 @@ void StaticRecompCore::Run()
            // dispatcher back-edge timing check — CoreTiming regains control
            // with at least CachedInterpreter's per-block frequency, so
            // external-interrupt latency matches stock.
 -          const s64 charge = -m_guest.downcount;
 +          s64 charge = -m_guest.downcount;
++          bool cache_chunk_retired = false;
++          if (cache_candidate)
++          {
++            ++m_dw4_cache_candidates;
++            const int chunk = ChunkIndexOf(runtime_dispatch_address);
++            const std::string candidate_game_id = SConfig::GetInstance().GetGameID();
++            StaticRecompDw4Cache::Environment cache;
++            cache.enabled = m_dw4_cache_enabled;
++            cache.module_active = m_module_active && !m_has_rel_modules;
++            cache.running = *state_ptr == CPU::State::Running;
++            cache.lockstep = lockstep_enabled;
++            cache.chunk_verified = chunk >= 0 && static_cast<std::size_t>(chunk) < m_chunk_state.size() &&
++                                   m_chunk_state[chunk] == CHUNK_VERIFIED &&
++                                   static_cast<std::size_t>(chunk) < m_effective_chunk_hashes.size() &&
++                                   m_effective_chunk_hashes[chunk] == StaticRecompDw4Cache::CHUNK_HASH;
++            cache.chunk_has_hooks = chunk >= 0 && ChunkContainsHostCall(static_cast<u32>(chunk));
++            cache.forced_fallback = !m_forced_fallback_ranges.empty();
++            cache.dcache_enabled = ppc.m_enable_dcache;
++            cache.pending_exceptions = ppc.Exceptions;
++            cache.generic_idle_pc = m_idle_pc;
++            cache.ppc_msr = ppc.msr.Hex;
++            cache.dispatch_address = runtime_dispatch_address;
++            cache.dispatch_r3 = cache_start_r3;
++            cache.dispatch_ctr = cache_start_ctr;
++            cache.completed_hooks = m_hook_fallback_instructions - cache_start_hooks;
++            cache.dispatch_charge = charge;
++            cache.downcount = ppc.downcount;
++            cache.game_id = candidate_game_id;
++            cache.module = m_module;
++            cache.chunk_index = chunk >= 0 ? static_cast<u32>(chunk) : 0;
++            const auto batch = StaticRecompDw4Cache::Prepare(m_guest, cache);
++            // Reject unfamiliar translation without invoking a page-table walk.
++            // Prepare bounded both endpoints to this same IBAT table entry.
++            const bool mapped_bat = batch.lines != 0 &&
++                (m_system.GetMMU().GetIBATTable()[batch.address >> PowerPC::BAT_INDEX_SHIFT] &
++                 PowerPC::BAT_MAPPED_BIT) != 0;
++            if (mapped_bat && StaticRecompDw4Cache::HasIdentityMapping(batch, [&](u32 address) {
++                  return m_system.GetMMU().JitCache_TranslateAddress(address);
++                }))
++            {
++              // Keep the actual fallback-JIT and native SMC invalidation path.
++              // Range invalidation can conservatively discard more JIT metadata
++              // than individual cache lines; no guest memory write is invented.
++              m_system.GetJitInterface().InvalidateICacheLines(batch.address, batch.lines);
++              StaticRecompDw4Cache::Commit(m_guest, ppc.downcount, charge, batch);
++              ++m_dw4_cache_accepted;
++              m_dw4_cache_lines += batch.lines;
++              // An unexpected retirement still keeps the already completed
++              // invalidation/register/cycle prefix, then exits the native burst.
++              cache_chunk_retired = m_chunk_state[chunk] != CHUNK_VERIFIED ||
++                                    m_effective_chunk_hashes[chunk] != StaticRecompDw4Cache::CHUNK_HASH;
++            }
++          }
 +          if (m_dw4_idle_enabled && runtime_dispatch_address == StaticRecompDw4Idle::LOOP_PC)
 +          {
 +            ++m_dw4_idle_candidates;
@@ -135,6 +980,163 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..f651cc51c81c462ff874243c40704ad0
            m_guest.downcount = 0;
            const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
            ppc.downcount -= static_cast<int>(effective_charge);
+@@ -198,7 +298,7 @@ void StaticRecompCore::Run()
+             m_guest.program_exception = 0;
+             ++m_native_exceptions;
+           }
+-          if ((ppc.Exceptions & SYNC_EXCEPTION_MASK) != 0)
++          if (cache_chunk_retired || (ppc.Exceptions & SYNC_EXCEPTION_MASK) != 0)
+             break;  // Hook-raised synchronous exception: deliver via Dolphin below.
+           if ((ppc.Exceptions & EXCEPTION_EXTERNAL_INT) != 0 &&
+               (m_guest.msr & 0x8000u) != 0 && after_mtmsr(m_guest.pc))
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d98928133b
+--- /dev/null
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h
+@@ -0,0 +1,142 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++#pragma once
++
++#include <algorithm>
++#include <string_view>
++
++#include "Core/PowerPC/StaticRecomp/StaticRecompABI.h"
++
++namespace StaticRecompDw4Cache
++{
++constexpr u32 LOOP_PC = 0x8025d3a4u;
++constexpr u32 CHUNK_START = 0x8025c160u;
++constexpr u32 CHUNK_END = 0x80260160u;
++constexpr u64 CHUNK_HASH = 0x350b8c917f12ea10ull;
++constexpr u32 MAX_LINES = 256;
++constexpr u32 BAT_BYTES = 0x20000;
++
++struct Environment
++{
++  bool enabled = false;
++  bool module_active = false;
++  bool running = false;
++  bool lockstep = false;
++  bool chunk_verified = false;
++  bool chunk_has_hooks = false;
++  bool forced_fallback = false;
++  bool dcache_enabled = false;
++  u32 pending_exceptions = 0;
++  u32 generic_idle_pc = 0;
++  u32 ppc_msr = 0;
++  u32 dispatch_address = 0;
++  u32 dispatch_r3 = 0;
++  u32 dispatch_ctr = 0;
++  u64 completed_hooks = 0;
++  s64 dispatch_charge = 0;
++  s32 downcount = 0;
++  std::string_view game_id;
++  const StaticRecompModuleDesc* module = nullptr;
++  u32 chunk_index = 0;
++};
++
++struct Batch
++{
++  u32 address = 0;  // Aligned effective address of the NEXT dcbst.
++  u32 lines = 0;
++};
++
++inline u32 ReadWord(const CPUState& cpu, u32 address)
++{
++  const u8* p = cpu.ram + (address - 0x80000000u);
++  return (static_cast<u32>(p[0]) << 24) | (static_cast<u32>(p[1]) << 16) |
++         (static_cast<u32>(p[2]) << 8) | p[3];
++}
++
++// This policy describes additional complete A4 -> A4 dispatches AFTER one
++// genuine addi/bdnz/dcbst dispatch. It never consumes the final loop exit.
++inline Batch Prepare(const CPUState& cpu, const Environment& env)
++{
++  if (!env.enabled || !env.module_active || !env.running || env.lockstep ||
++      !env.chunk_verified || env.chunk_has_hooks || env.forced_fallback ||
++      env.dcache_enabled || env.pending_exceptions != 0 || env.generic_idle_pc != 0 ||
++      env.game_id != "GDJEB2" ||
++      env.dispatch_address != LOOP_PC || cpu.pc != LOOP_PC || env.dispatch_charge != 2 ||
++      cpu.downcount != -2 || env.completed_hooks != 1 || env.dispatch_ctr <= 1 ||
++      cpu.ctr != env.dispatch_ctr - 1 || cpu.ctr <= 1 ||
++      static_cast<u64>(env.dispatch_r3) + 32 != cpu.gpr[3] ||
++      cpu.exception != 0 || cpu.program_exception != 0 || cpu.msr != env.ppc_msr)
++    return {};
++
++  const auto* module = env.module;
++  if (!module || std::string_view(module->game_id, 7) != std::string_view("GDJEB2\0", 7) ||
++      module->entry_point != 0x80005240u || module->num_rel_modules != 0 ||
++      !module->chunk_ranges || !module->chunk_hashes || env.chunk_index >= module->num_chunk_ranges ||
++      module->chunk_ranges[env.chunk_index].start != CHUNK_START ||
++      module->chunk_ranges[env.chunk_index].end != CHUNK_END ||
++      module->chunk_hashes[env.chunk_index] != CHUNK_HASH ||
++      !module->code_ranges || module->num_code_ranges == 0)
++    return {};
++
++  constexpr u32 required_msr = PPC_MSR_EE | PPC_MSR_IR | PPC_MSR_DR;
++  constexpr u32 excluded_msr = PPC_MSR_POW | PPC_MSR_ILE | PPC_MSR_PR | PPC_MSR_SE |
++                               PPC_MSR_BE | PPC_MSR_IP | PPC_MSR_PM | PPC_MSR_LE;
++  if ((cpu.msr & required_msr) != required_msr || (cpu.msr & excluded_msr) != 0 ||
++      !cpu.ram || cpu.ram_size < CHUNK_END - 0x80000000u ||
++      ReadWord(cpu, LOOP_PC - 4) != 0x7c00186cu ||
++      ReadWord(cpu, LOOP_PC) != 0x38630020u || ReadWord(cpu, LOOP_PC + 4) != 0x4200fff8u)
++    return {};
++
++  // The real dcbst has already charged five PPC cycles. Its pending two native
++  // cycles still need flushing. Leave a positive slice for a final REAL dispatch;
++  // preserve its usual 7-cycle overshoot (or 3-cycle terminal addi/bdnz/blr).
++  const s64 remaining = static_cast<s64>(env.downcount) - 2;
++  if (remaining <= 7)
++    return {};
++  u32 lines = std::min({cpu.ctr - 1, static_cast<u32>((remaining - 1) / 7), MAX_LINES});
++  const u64 next_r3 = static_cast<u64>(cpu.gpr[3]) + 32;
++  if (next_r3 < 0x80000000ull || next_r3 >= 0x81800000ull)
++    return {};
++  const u32 address = static_cast<u32>(next_r3) & ~31u;
++  // Keep one BAT index: the integration verifies both endpoints against the
++  // actual instruction-translation API (IR), never assumes a DR mapping.
++  lines = std::min(lines, (BAT_BYTES - (address & (BAT_BYTES - 1))) / 32);
++  const u64 end = static_cast<u64>(address) + static_cast<u64>(lines) * 32;
++  if (lines == 0 || end > 0x81800000ull || end - 0x80000000ull > cpu.ram_size ||
++      static_cast<u64>(cpu.gpr[3]) + static_cast<u64>(lines) * 32 >= 0x81800000ull)
++    return {};
++  // No native code range may be invalidated early. This includes the executing
++  // chunk, whose normal per-dispatch SMC revalidation must never be skipped.
++  for (u32 i = 0; i < module->num_code_ranges; ++i)
++  {
++    const auto& code = module->code_ranges[i];
++    if (code.end <= code.start || (address < code.end && end > code.start))
++      return {};
++  }
++  return {address, lines};
++}
++
++template <typename Translate>
++bool HasIdentityMapping(const Batch& batch, Translate&& translate)
++{
++  if (batch.lines == 0)
++    return false;
++  for (const u32 address : {batch.address, batch.address + batch.lines * 32 - 1})
++  {
++    const auto mapped = translate(address);
++    if (!mapped.valid || !mapped.translated || !mapped.from_bat ||
++        mapped.address != address - 0x80000000u)
++      return false;
++  }
++  return true;
++}
++
++// Apply only after real InvalidateICacheLines has completed. Native and hook
++// costs intentionally remain separate, matching the existing chassis path.
++inline void Commit(CPUState& cpu, s32& downcount, s64& charge, const Batch& batch)
++{
++  cpu.gpr[3] += 32 * batch.lines;
++  cpu.ctr -= batch.lines;
++  downcount -= static_cast<s32>(5 * batch.lines);
++  charge += 2 * batch.lines;
++}
++}  // namespace StaticRecompDw4Cache
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Idle.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..0f1b0020976c3a2a4c8c3eec5e15344352d49ac0
@@ -304,6 +1306,34 @@ index 48b122a7072388fece1f1df84747c2c14968532f..9bab243767918d4295a811de5faa0e44
  
  protected:
    uintptr_t GetAddress() const override;
+diff --git a/Source/Core/VideoBackends/Vulkan/VKMain.cpp b/Source/Core/VideoBackends/Vulkan/VKMain.cpp
+index 6338e52e3d703ed40ada916d44e6a1fbc1f309e0..04cc2fb13814dc15f71019ac4b9d7a98e4b5942d 100644
+--- a/Source/Core/VideoBackends/Vulkan/VKMain.cpp
++++ b/Source/Core/VideoBackends/Vulkan/VKMain.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoBackends/Vulkan/VideoBackend.h"
+ 
++#include <cstdio>
++
+ #include "Common/Logging/LogManager.h"
+ #include "Common/MsgHandler.h"
+ 
+@@ -176,6 +178,14 @@ bool VideoBackend::Initialize(const WindowSystemInfo& wsi)
+     return false;
+   }
+ 
++  if (wsi.type == WindowSystemType::Headless)
++  {
++    // Record the actual initialized device, not the machine's adapter inventory.
++    const auto& device = g_vulkan_context->GetDeviceInfo();
++    std::fprintf(stderr, "[headless graphics] Vulkan adapter=%zu name=%.256s\n",
++                 selected_adapter_index, device.deviceName);
++  }
++
+   // Since VulkanContext maintains a copy of the device features and properties, we can use this
+   // to initialize the backend information, so that we don't need to enumerate everything again.
+   VulkanContext::PopulateBackendInfoFeatures(&g_backend_info, g_vulkan_context->GetPhysicalDevice(),
 diff --git a/Source/Core/VideoCommon/ShaderCache.cpp b/Source/Core/VideoCommon/ShaderCache.cpp
 index 565e4f42f8d641858b755cda66e3a0633c0d7c9a..f3415cfa67d8f119d462725e92a7ed95e35a50ee 100644
 --- a/Source/Core/VideoCommon/ShaderCache.cpp

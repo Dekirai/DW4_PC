@@ -6,9 +6,11 @@ directory, validates the executable and game-file identities, and publishes
 the prepared folder only after validation passes. No compiler or manual disc
 extraction is part of this packaged launcher workflow.
 
-The entry point still requires its adjacent runtime EXE, compiled module,
-`Sys` resources and matching x64 Microsoft Visual C++ runtime DLLs. Keep the
-whole package together. This is one application entry point, not a single-file
+The application hosts the original-game session in its own process. No
+`moderngekko-run.exe` is included or required by the package. The compiled
+game module, `Sys` resources and matching x64 Microsoft Visual C++ runtime
+DLLs remain adjacent dependencies; keep the whole package together. Static
+module/resource integration is still required for the final single-file
 binary distribution. Original disc content is supplied locally and is never
 included in the package or repository.
 
@@ -27,13 +29,40 @@ The package includes dependency notices, source pins, local runtime patches,
 and a manifest of binary identities. Existing packages are preserved. Packaging
 does not open the launcher or import any game content.
 
-The default user profile is `%LOCALAPPDATA%/DW4_PC`; settings, memory cards,
-states and imported game data live there. The developer-script profile under
-`work/recomp-user` is separate. A valid existing import is reused. An invalid
+The default user profile is `savedata` beside the actual executable, independent
+of the working directory. Settings, memory cards, states and imported game data
+live there. Earlier AppData/Documents profiles are preserved; automatic save
+migration and a revised internal storage layout remain pending. The
+developer-script profile under `work/recomp-user` is separate. A valid existing
+import is reused. An invalid
 existing destination is preserved and reported; the importer does not silently
 replace it. Diagnostic runs use an explicit isolated `--user-dir`.
 
 ## Validation boundaries
+
+The integrated package passed the import checks and a 70-second hidden original
+startup with its adjacent game DLL and no runner EXE present. The run used the
+new default profile without `--user-dir`, from a different working directory;
+the runtime wrote its graphics configuration in the expected adjacent
+`savedata`. Its input profile was neutral and its real Cubeb device was verified
+at zero volume. The temporary test profile was archived with the evidence so
+the packaged application retains its ordinary first-run defaults.
+
+This establishes the integrated command-line session and default path, not an
+interactive Play-button or netplay acceptance test. Separate hidden launcher
+images verify the import UI before and after the actual ROM import. The
+opening movie still slows to approximately 30% simulation speed. Save/load
+roundtrips, the F1 menu, full gameplay and single-file distribution remain
+pending. Evidence stays local under `work/recomp-import/20260913-073647-debed570`
+and `work/recomp-startup/20260913-073751-6e84201c`.
+
+The current package additionally passes a 90-second integrated session with a
+controlled intro skip and controller-state synchronization. Both input commands
+are acknowledged before shutdown, and captures show the original "PRESS START"
+title screen. The game remains in the single EXE process with its adjacent game
+module, using the portable default profile. This profile was also archived after
+the test. See `work/recomp-startup/20260913-074432-035d0acd` and
+[RECOMP_AUDIO.md](RECOMP_AUDIO.md) for the remaining audio/performance limits.
 
 The baseline DOL SHA256 is
 `ec61c010477c844781763a3041922e38719b3ced3b74be5ce71d778ce458e471`.

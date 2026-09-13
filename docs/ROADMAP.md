@@ -15,6 +15,17 @@ features, modding, online co-op and a simple ROM-driven release experience.
 | 6 | Simple EXE release | User selects their ROM; supported revision is validated and required assets prepared automatically, without a compiler or manual extraction; repeat launches reuse validated local data | Local DW4_PC.exe package imports the actual USA ISO; all nine files match the extracted reference, repeat import reuses data and invalid existing folders are preserved. Unicode/hidden frontend checks pass; broader release and clean-machine acceptance remain pending. |
 
 Gate order sets the immediate queue, not an excuse to design out later features.
+The owner has tightened the application target: one integrated `DW4_PC.exe`
+with user-provided assets, no separate `moderngekko-run.exe` process needed for
+play, and portable save data beside the executable. The in-game ImGui menu
+must open with **F1**, receive the current File/View commands, and apply
+supported settings while playing. The current package hosts the game directly
+inside `DW4_PC.exe` and defaults to adjacent `savedata`. The external game DLL,
+resource files, internal console-style profile and missing in-game menu still
+leave the final target incomplete. Integrate the runtime,
+module and PC-facing storage/UI boundaries; renaming the runner or hiding a
+second executable does not satisfy it. Existing saves must remain preserved.
+
 Keep rendering enhancements separate from simulation speed; a speed multiplier,
 duplicated presents or an FPS slider alone cannot satisfy the 300 FPS target.
 Higher internal render resolution and higher-resolution texture content also
@@ -26,7 +37,10 @@ for every device or scene.
 
 The immediate gate is correcting the owner's low-FPS/audio-stutter report in
 the **DolRecomp + ModernGekko** build. The optimized module passes its equivalent
-bounded startup comparison at original speed. Next check real audible output
+bounded logo comparison at original speed, but longer tests expose an opening
+movie at approximately 30% speed. A controlled skip reaches the "PRESS START"
+title screen near normal speed; audio replay remains and later menus/gameplay
+are unverified. See [RECOMP_AUDIO.md](RECOMP_AUDIO.md). Next check real audible output
 and gameplay, and establish a repeatable in-game benchmark. Headless frame
 progress alone does not verify
 host audio or actual monitor FPS. Continue with profiling measured bottlenecks,

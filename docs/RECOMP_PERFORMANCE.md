@@ -4,6 +4,17 @@ The guarded idle optimization reduces CPU work during the verified original
 boot sequence while preserving the compiled loop's timing. It does not uncap
 presentation or validate the owner's reported main-menu audio stutter.
 
+The subsequent 90-second real-device tests expose a later opening-movie
+slowdown that these logo measurements did not cover. See
+[RECOMP_AUDIO.md](RECOMP_AUDIO.md) for the 1x/3x comparison and source-starvation
+evidence. The measurements below remain scoped to the earlier boot logo.
+
+The later guarded cache batching comparison uses matching binaries and explicit
+neutral controller profiles. It confirms that batching executes and preserves
+the isolated instruction/timing tests, but shows no clear frame-rate gain in
+the opening movie. See the [neutral-input cache measurements](RECOMP_AUDIO.md#neutral-input-cache-batching-comparison)
+for source-audio observations and the startup/scene alignment limitations.
+
 ## Method and result
 
 The final comparison used the same packaged runner and unchanged `/O2 /fp:strict`

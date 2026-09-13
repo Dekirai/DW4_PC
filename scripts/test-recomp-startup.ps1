@@ -2,24 +2,46 @@ param(
     [Parameter(Mandatory=$true)][string]$Module,
     [Parameter(Mandatory=$true)][string]$ExtractedRoot,
     [string]$Runner = '',
+    [switch]$UnifiedExecutable,
     [switch]$UseBundledModule,
+    [switch]$UsePortableProfile,
     [ValidateSet('Null','Vulkan')][string]$Graphics = 'Null',
     [ValidateSet('Enabled','Disabled')][string]$IdleMode = 'Enabled',
+    [ValidateSet('Enabled','Disabled')][string]$CacheMode = 'Enabled',
+    [ValidateSet('Null','Cubeb')][string]$Audio = 'Null',
+    [ValidateSet('640x528','1280x720','1920x1080','2560x1440','3840x2160')][string]$Resolution = '640x528',
     [switch]$Screenshot,
-    [ValidateRange(1,30)][int]$TimeoutSeconds = 30,
+    [int[]]$ScreenshotAtSeconds = @(),
+    [ValidateRange(0,85)][int]$PressStartAtSeconds = 0,
+    [ValidateRange(1,90)][int]$TimeoutSeconds = 30,
     [ValidateRange(2,10)][int]$ShutdownGraceSeconds = 5
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'recomp-startup-metrics.ps1')
+. (Join-Path $PSScriptRoot 'recomp-audio-metrics.ps1')
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'This startup harness currently requires Windows.'
+}
+if ($UsePortableProfile -and (-not $UnifiedExecutable -or -not $UseBundledModule -or -not $Runner)) {
+    throw 'Portable-profile verification requires an explicit packaged unified EXE and its bundled module.'
 }
 if ($Screenshot -and $Graphics -ne 'Vulkan') {
     throw 'A meaningful screenshot requires the headless Vulkan backend, not Null.'
 }
+if ($ScreenshotAtSeconds.Count -gt 0 -and -not $Screenshot) { throw 'ScreenshotAtSeconds requires Screenshot.' }
+if ($PressStartAtSeconds -gt 0 -and $PressStartAtSeconds -gt $TimeoutSeconds-5) {
+    throw 'The controlled Start press must leave at least five seconds for release before shutdown.'
+}
+if ($ScreenshotAtSeconds.Count -gt 8 -or @($ScreenshotAtSeconds | Where-Object { $_ -lt 1 -or $_ -ge $TimeoutSeconds-1 }).Count) {
+    throw 'Request at most eight screenshots, each at least one second before the test ends.'
+}
+$screenshotSchedule = @(if ($ScreenshotAtSeconds.Count) { $ScreenshotAtSeconds | Sort-Object -Unique } else { 0.9*$TimeoutSeconds })
+$resolutionScales = @{ '640x528'=1; '1280x720'=2; '1920x1080'=3; '2560x1440'=4; '3840x2160'=6 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
-if (-not $Runner) { $Runner = Join-Path $repoRoot 'work/moderngekko-build/moderngekko-run.exe' }
+if (-not $Runner) {
+    $Runner = Join-Path $repoRoot $(if ($UnifiedExecutable) { 'work/moderngekko-build/DW4_PC.exe' } else { 'work/moderngekko-build/moderngekko-run.exe' })
+}
 foreach ($inputFile in @($Runner,$Module,(Join-Path $ExtractedRoot 'sys/main.dol'),(Join-Path $ExtractedRoot 'sys/boot.bin'))) {
     if (-not (Test-Path -LiteralPath $inputFile -PathType Leaf)) { throw "Required input is missing: $inputFile" }
 }
@@ -33,16 +55,18 @@ foreach ($required in @($buildRecordPath,$runtimePatchPath,$chassisPatchPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Rebuild the patched runtime before this hidden test; missing: $required" }
 }
 $buildRecord = Get-Content -LiteralPath $buildRecordPath -Raw | ConvertFrom-Json
+$binaryHashField = if ($UnifiedExecutable) { 'launcher_binary_sha256' } else { 'runner_binary_sha256' }
 foreach ($field in @('runner_binary_sha256','runtime_patch_sha256','chassis_patch_sha256','module_built','module_path',
     'module_sha256','abi_report_path','abi_report_sha256')) {
     if (-not $buildRecord.PSObject.Properties[$field]) { throw "The runtime build record is missing $field; rebuild before testing." }
 }
+if (-not $buildRecord.PSObject.Properties[$binaryHashField]) { throw "The runtime build record is missing $binaryHashField; rebuild before testing." }
 $runnerHash = (Get-FileHash -LiteralPath $Runner -Algorithm SHA256).Hash
 $moduleHash = (Get-FileHash -LiteralPath $Module -Algorithm SHA256).Hash
 $patchHash = (Get-FileHash -LiteralPath $runtimePatchPath -Algorithm SHA256).Hash
 $chassisPatchHash = (Get-FileHash -LiteralPath $chassisPatchPath -Algorithm SHA256).Hash
 $patchText = [IO.File]::ReadAllText($runtimePatchPath)
-if ($buildRecord.runner_binary_sha256 -ne $runnerHash -or $buildRecord.runtime_patch_sha256 -ne $patchHash -or
+if ($buildRecord.PSObject.Properties[$binaryHashField].Value -ne $runnerHash -or $buildRecord.runtime_patch_sha256 -ne $patchHash -or
     -not $patchText.Contains('Common::RegisterMsgAlertHandler') -or -not $patchText.Contains('[headless alert]')) {
     throw 'The runner/build record does not match the current headless-alert patch. Rebuild with scripts/build-recomp.ps1 before testing.'
 }
@@ -51,6 +75,9 @@ if ($buildRecord.chassis_patch_sha256 -ne $chassisPatchHash) {
 }
 if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4Idle')) {
     throw 'This CPU comparison requires a rebuilt runner with the guarded DW4 idle option.'
+}
+if (-not [IO.File]::ReadAllText($chassisPatchPath).Contains('StaticRecompDw4CacheBatch')) {
+    throw 'This startup comparison requires a rebuilt runner with the guarded DW4 cache-batch option.'
 }
 $expectedModulePath = if ($UseBundledModule) {
     Join-Path (Split-Path -Parent $Runner) 'gGDJEB2_recomp.dll'
@@ -83,6 +110,12 @@ $runName = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGui
 $runRoot = Join-Path $repoRoot "work/recomp-startup/$runName"
 # Exercise the real runtime's Unicode user-directory boundary in both A/B modes.
 $profileRoot = Join-Path $runRoot ('user-' + [char]0x00fc + [char]0x65e5 + [char]0x672c)
+if ($UsePortableProfile) {
+    $profileRoot = Join-Path (Split-Path -Parent $Runner) 'savedata'
+    if (Test-Path -LiteralPath $profileRoot) {
+        throw 'Portable-profile verification requires a fresh package without savedata; existing data was preserved.'
+    }
+}
 $automationRoot = Join-Path $runRoot 'automation'
 $commandRoot = Join-Path $automationRoot 'commands'
 $tempRoot = Join-Path $runRoot 'temp'
@@ -92,12 +125,20 @@ foreach ($directory in @($runRoot,$profileRoot,$automationRoot,$commandRoot,$tem
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
 [IO.File]::WriteAllText((Join-Path $profileRoot 'config.ini'),
-    "[Video]`nresolution=640x528`nbackend=Vulkan`nfullscreen=false`nshow_fps_in_title=false`n",$utf8)
+    "[Video]`nresolution=$Resolution`nbackend=Vulkan`nfullscreen=false`nshow_fps_in_title=false`n",$utf8)
 # The CLI explicitly selects the requested backend. Frontend config accepts only
 # Vulkan/OpenGL labels. Keep alerts enabled for the patched headless log handler.
 [IO.File]::WriteAllText((Join-Path $profileRoot 'Config/Dolphin.ini'),
     ("[Interface]`nUsePanicHandlers=True`n[Core]`nStaticRecompFallbackRanges=`nStaticRecompIdlePC=0`nStaticRecompDw4Idle=" +
-        $(if ($IdleMode -eq 'Enabled') { 'True' } else { 'False' }) + "`n"),$utf8)
+        $(if ($IdleMode -eq 'Enabled') { 'True' } else { 'False' }) + "`nStaticRecompDw4CacheBatch=" +
+        $(if ($CacheMode -eq 'Enabled') { 'True' } else { 'False' }) +
+        "`nSIDevice0=6`nSIDevice1=0`nSIDevice2=0`nSIDevice3=0`n"),$utf8)
+# A missing/empty pad file loads keyboard defaults (including RETURN=Start).
+# Explicit sections instead load empty control expressions; keep emulated pad 0
+# connected without reading the user's keyboard, gamepads or hardware adapter.
+$padConfigPath = Join-Path $profileRoot 'Config/GCPadNew.ini'
+[IO.File]::WriteAllText($padConfigPath,
+    "[GCPad1]`nDevice =`nOptions/Always Connected = True`n[GCPad2]`nDevice =`n[GCPad3]`nDevice =`n[GCPad4]`nDevice =`n",$utf8)
 
 function Quote-NativeArgument([string]$Value) {
     # Windows CRT quoting, without a shell or PowerShell command interpolation.
@@ -107,15 +148,24 @@ function Quote-NativeArgument([string]$Value) {
 function Publish-Stop([int]$Sequence) {
     # All files in commands/ are parsed, irrespective of extension. Construct
     # the complete file outside that directory before the same-volume rename.
-    $name = '000-stop-{0:D2}.txt' -f $Sequence
+    # A controlled-input probe must process any queued press/release before stop.
+    $name = $(if ($PressStartAtSeconds -gt 0) { '099-stop-{0:D2}.txt' } else { '000-stop-{0:D2}.txt' }) -f $Sequence
     $pending = Join-Path $automationRoot ($name + '.pending')
     [IO.File]::WriteAllText($pending,"command=stop`n",$utf8)
     [IO.File]::Move($pending,(Join-Path $commandRoot $name))
 }
-function Publish-Screenshot {
-    $pending = Join-Path $automationRoot '050-screenshot.txt.pending'
-    [IO.File]::WriteAllText($pending,"command=screenshot`npath=$screenshotPath`n",$utf8)
-    [IO.File]::Move($pending,(Join-Path $commandRoot '050-screenshot.txt'))
+function Publish-Screenshot([string]$Name,[string]$Path) {
+    $pending = Join-Path $automationRoot ($Name + '.pending')
+    [IO.File]::WriteAllText($pending,"command=screenshot`npath=$Path`n",$utf8)
+    [IO.File]::Move($pending,(Join-Path $commandRoot $Name))
+}
+function Publish-StartInput([bool]$Pressed) {
+    # Nonblocking pad commands keep status and shutdown responsive if frames stall.
+    $name = if ($Pressed) { '020-start-press.txt' } else { '021-start-release.txt' }
+    $body = if ($Pressed) { "command=pad`nport=0`nstart=1`n" } else { "command=clear_pad`nport=0`n" }
+    $pending = Join-Path $automationRoot ($name + '.pending')
+    [IO.File]::WriteAllText($pending,$body,$utf8)
+    [IO.File]::Move($pending,(Join-Path $commandRoot $name))
 }
 function Read-Status {
     $path = Join-Path $automationRoot 'status.txt'
@@ -188,13 +238,17 @@ function Stop-OwnedProcessTree {
     } finally { $current.Dispose() }
 }
 
-$arguments = @('--game',$ExtractedRoot,'--user-dir',$profileRoot,
+$arguments = @('--game',$ExtractedRoot,
     '--automation-dir',$automationRoot,'--headless','--graphics',$Graphics,'--no-mods','--mute')
+if (-not $UsePortableProfile) { $arguments += @('--user-dir',$profileRoot) }
 if (-not $UseBundledModule) { $arguments += @('--module',$Module) }
+if ($Audio -eq 'Cubeb') { $arguments += @('--headless-audio','--audio','Cubeb') }
+if ($UnifiedExecutable) { $arguments = @('--run') + $arguments }
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = $Runner
 $start.Arguments = ($arguments | ForEach-Object { Quote-NativeArgument $_ }) -join ' '
 $start.WorkingDirectory = Split-Path -Parent $Runner
+if ($UsePortableProfile) { $start.WorkingDirectory = $runRoot }
 $start.UseShellExecute = $false
 $start.CreateNoWindow = $true
 $start.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
@@ -221,9 +275,11 @@ $start.EnvironmentVariables['STATICRECOMP_DISPATCH_SAMPLES'] = '1'
 $start.EnvironmentVariables['STATICRECOMP_TRACE_FILE'] = Join-Path $runRoot 'dispatch.csv'
 
 $record = [ordered]@{
-    schema_version=1; scope='Bounded hidden startup; an optional Vulkan screenshot verifies one output image, not audio or complete gameplay';
+    schema_version=2; scope='Bounded hidden startup with optional Vulkan images and silent real-device audio diagnostics; not audible quality or complete gameplay validation';
     started_at_utc=[DateTime]::UtcNow.ToString('o'); runner=$Runner; module=$Module; extracted_root=$ExtractedRoot;
     bundled_module_discovery=[bool]$UseBundledModule;
+    portable_profile_default=[bool]$UsePortableProfile;
+    unified_executable=[bool]$UnifiedExecutable; executable_hash_field=$binaryHashField;
     runner_sha256=$runnerHash; runtime_patch_sha256=$patchHash; chassis_patch_sha256=$chassisPatchHash;
     runtime_build_record=$buildRecordPath;
     module_sha256=$moduleHash; abi_report_path=$abiReportPath; abi_report_sha256=$buildRecord.abi_report_sha256;
@@ -231,7 +287,17 @@ $record = [ordered]@{
     user_directory=$profileRoot; automation_directory=$automationRoot;
     timeout_seconds=$TimeoutSeconds; shutdown_grace_seconds=$ShutdownGraceSeconds; run_directory=$runRoot;
     graphics_backend=$Graphics; screenshot_requested=[bool]$Screenshot; dw4_idle_mode=$IdleMode;
+    dw4_cache_mode=$CacheMode;
+    resolution_label=$Resolution; efb_scale=$resolutionScales[$Resolution];
+    resolution_scope='Frontend label selects an integer EFB scale, not an exact offscreen PNG size or verified widescreen output.';
+    audio_backend_requested=$Audio; audio_volume_percent=0;
+    audio_scope='Cubeb explicitly opts into real device callbacks with volume zero; Null uses no output device. Source and callback counters do not prove audible quality.';
+    input_scope='Emulated GameCube port 0 always connected with explicit empty bindings; other ports disconnected. Physical keyboard/gamepad/adapter input is excluded.';
+    start_press_requested_seconds=$PressStartAtSeconds;
+    pad_config_path=$padConfigPath; initial_pad_config_sha256=(Get-FileHash -LiteralPath $padConfigPath -Algorithm SHA256).Hash;
+    screenshot_schedule_seconds=$(if ($Screenshot) { $screenshotSchedule } else { @() });
     dw4_idle_config=[ordered]@{section='Core'; key='StaticRecompDw4Idle'; value=($IdleMode -eq 'Enabled')};
+    dw4_cache_config=[ordered]@{section='Core'; key='StaticRecompDw4CacheBatch'; value=($CacheMode -eq 'Enabled')};
     process_sampling_scope='Retained owned runtime Process only; user+kernel CPU across all threads, plus working/private/peak working-set bytes. No machine-wide utilization or child-process totals.'
 }
 [IO.File]::WriteAllText((Join-Path $runRoot 'invocation.json'),($record | ConvertTo-Json -Depth 5),$utf8)
@@ -267,6 +333,12 @@ $logsComplete = $false
 $screenshotPath = Join-Path $runRoot 'screenshot.png'
 $screenshotCommandQueued = $false
 $screenshotQueuedSeconds = $null
+$screenshotCaptures = [Collections.Generic.List[object]]::new()
+$screenshotIndex = 0
+$startPressQueuedSeconds = $null
+$startPressAcknowledgedSeconds = $null
+$startReleaseQueuedSeconds = $null
+$startReleaseAcknowledgedSeconds = $null
 try {
     $stdoutFile = [IO.File]::Open((Join-Path $runRoot 'stdout.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     $stderrFile = [IO.File]::Open((Join-Path $runRoot 'stderr.log'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
@@ -279,15 +351,49 @@ try {
     $stderrCopy = $taskProcess.StandardError.BaseStream.CopyToAsync($stderrFile)
     while (-not $taskProcess.HasExited -and $watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         Read-Status
-        if ($Screenshot -and -not $screenshotCommandQueued -and $script:sawRunning -and
+        if ($PressStartAtSeconds -gt 0 -and $null -eq $startPressQueuedSeconds -and
+            $watch.Elapsed.TotalSeconds -ge $PressStartAtSeconds -and
+            $watch.Elapsed.TotalSeconds -le $TimeoutSeconds-5 -and $script:sawRunning -and
             $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
-            $watch.Elapsed.TotalSeconds -ge 0.9*$TimeoutSeconds -and
+            $watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
+            Publish-StartInput $true
+            $startPressQueuedSeconds = $watch.Elapsed.TotalSeconds
+        }
+        if ($null -ne $startPressQueuedSeconds) {
+            if ($null -eq $startPressAcknowledgedSeconds -and
+                [IO.File]::Exists((Join-Path $automationRoot 'processed/020-start-press.txt'))) {
+                $startPressAcknowledgedSeconds = $watch.Elapsed.TotalSeconds
+            }
+            if ($null -eq $startReleaseQueuedSeconds -and
+                (($null -ne $startPressAcknowledgedSeconds -and $watch.Elapsed.TotalSeconds - $startPressAcknowledgedSeconds -ge 0.5) -or
+                 $watch.Elapsed.TotalSeconds - $startPressQueuedSeconds -ge 2)) {
+                Publish-StartInput $false
+                $startReleaseQueuedSeconds = $watch.Elapsed.TotalSeconds
+            }
+            if ($null -ne $startReleaseQueuedSeconds -and $null -eq $startReleaseAcknowledgedSeconds -and
+                [IO.File]::Exists((Join-Path $automationRoot 'processed/021-start-release.txt'))) {
+                $startReleaseAcknowledgedSeconds = $watch.Elapsed.TotalSeconds
+            }
+        }
+        if ($Screenshot -and $screenshotIndex -lt $screenshotSchedule.Count -and $script:sawRunning -and
+            $script:lastStatus['state'] -eq 'running' -and $script:frameProgressSamples -ge 2 -and
+            $watch.Elapsed.TotalSeconds -ge $screenshotSchedule[$screenshotIndex] -and
             $watch.Elapsed.TotalSeconds - $script:lastFrameProgressSeconds -le 2) {
             # The command only queues an asynchronous renderer capture. Its
             # processed file alone is not evidence that a PNG was written.
-            Publish-Screenshot
-            $screenshotCommandQueued = $true
-            $screenshotQueuedSeconds = $watch.Elapsed.TotalSeconds
+            $isLast = $screenshotIndex -eq $screenshotSchedule.Count-1
+            $captureName = if ($isLast) { '050-screenshot.txt' } else { '040-screenshot-{0:D2}.txt' -f $screenshotIndex }
+            $capturePath = if ($isLast) { $screenshotPath } else { Join-Path $runRoot ('screenshot-{0:D2}.png' -f $screenshotIndex) }
+            Publish-Screenshot $captureName $capturePath
+            $screenshotCaptures.Add([pscustomobject]@{
+                requested_seconds=$screenshotSchedule[$screenshotIndex]; queued_seconds=$watch.Elapsed.TotalSeconds;
+                command_name=$captureName; path=$capturePath
+            })
+            if ($isLast) {
+                $screenshotCommandQueued = $true
+                $screenshotQueuedSeconds = $watch.Elapsed.TotalSeconds
+            }
+            ++$screenshotIndex
         }
         Start-Sleep -Milliseconds 100
     }
@@ -298,6 +404,10 @@ try {
     $observationPresentProgressSeconds = $script:lastPresentProgressSeconds
     $observationFrameProgressSamples = $script:frameProgressSamples
     if (-not $taskProcess.HasExited) {
+        if ($null -ne $startPressQueuedSeconds -and $null -eq $startReleaseQueuedSeconds) {
+            Publish-StartInput $false
+            $startReleaseQueuedSeconds = $watch.Elapsed.TotalSeconds
+        }
         Publish-Stop 1
         $stopRequested = $true
         $grace = [Diagnostics.Stopwatch]::StartNew()
@@ -411,6 +521,25 @@ $record['harness_error'] = $harnessError
 $record['runtime_error_lines'] = $runtimeErrors
 $record['log_capture_complete'] = $logsComplete
 $record['inputs_unchanged'] = $inputUnchanged
+$record['final_pad_config_sha256'] = if (Test-Path -LiteralPath $padConfigPath -PathType Leaf) { (Get-FileHash -LiteralPath $padConfigPath -Algorithm SHA256).Hash } else { $null }
+$record['start_probe'] = [ordered]@{
+    press_queued_seconds=$startPressQueuedSeconds; press_acknowledged_seconds=$startPressAcknowledgedSeconds;
+    release_queued_seconds=$startReleaseQueuedSeconds; release_acknowledged_seconds=$startReleaseAcknowledgedSeconds;
+    scope='One nonblocking Start press on port 0, cleared after 0.5 seconds from observed acknowledgment (two-second fallback). Acknowledgment proves publication, not that the game consumed Start or reached a menu.'
+}
+if ($PressStartAtSeconds -gt 0 -and $classification -eq 'passed_startup' -and
+    ($null -eq $startPressAcknowledgedSeconds -or $null -eq $startReleaseAcknowledgedSeconds -or
+     $null -eq $startReleaseQueuedSeconds -or
+     $startReleaseQueuedSeconds - $startPressAcknowledgedSeconds -lt 0.5 -or
+     $startReleaseAcknowledgedSeconds -le $startReleaseQueuedSeconds)) {
+    $classification = 'start_input_unverified'
+    $record['classification'] = $classification
+}
+$record['runtime_graphics_config_written'] = Test-Path -LiteralPath (Join-Path $profileRoot 'Config/GFX.ini') -PathType Leaf
+if ($UsePortableProfile -and -not $record['runtime_graphics_config_written']) {
+    if ($classification -eq 'passed_startup') { $classification = 'portable_profile_unverified' }
+    $record['classification'] = $classification
+}
 $record['saw_running_status'] = $script:sawRunning
 $record['maximum_frame_count'] = $script:maxFrames
 $record['maximum_present_count'] = $script:maxPresents
@@ -424,8 +553,18 @@ $record['last_status'] = $script:lastStatus
 $record['loaded_modules'] = $loadedModules
 $record['headless_alerts'] = $headlessAlerts
 $record['headless_alerts_need_review'] = $alertsNeedReview
+$record['initialized_vulkan_adapters'] = @([regex]::Matches($stderr,'(?m)^\[headless graphics\] Vulkan adapter=(\d+) name=([^\r\n]+)') |
+    ForEach-Object { [pscustomobject]@{ index=[int]$_.Groups[1].Value; name=$_.Groups[2].Value } })
 $record['shutdown_counters'] = $shutdowns
 $record['shutdown_counters_available'] = $shutdowns.Count -gt 0
+$record['cache_batch_counters'] = @([regex]::Matches($stderr,'(?m)^\[staticrecomp\] dw4_cache: ([^\r\n]+)') |
+    ForEach-Object {
+        $counters = [ordered]@{}
+        foreach ($metric in [regex]::Matches($_.Groups[1].Value,'([a-z_]+)=(\d+)')) {
+            $counters[$metric.Groups[1].Value] = [UInt64]::Parse($metric.Groups[2].Value)
+        }
+        [pscustomobject]$counters
+    })
 $record['reported_native_dispatches_total'] = $nativeTotal
 $record['reported_interpreter_fallback_steps_total'] = $fallbackTotal
 $record['fallback_counter_scope'] = 'The runtime counter excludes fallback-JIT execution; zero does not prove wholly native execution.'
@@ -445,6 +584,14 @@ $record['screenshot_sha256'] = $screenshotHash
 $record['screenshot_width'] = $screenshotWidth
 $record['screenshot_height'] = $screenshotHeight
 $record['screenshot_scope'] = 'The PNG must also be decoded and visually inspected; file/header checks alone do not validate graphics or gameplay.'
+$record['screenshot_captures'] = @($screenshotCaptures.ToArray() | ForEach-Object {
+    [pscustomobject]@{
+        requested_seconds=$_.requested_seconds; queued_seconds=$_.queued_seconds; path=$_.path;
+        processed=[IO.File]::Exists((Join-Path $automationRoot ('processed/' + $_.command_name)));
+        file_exists=[IO.File]::Exists($_.path);
+        sha256=$(if ([IO.File]::Exists($_.path)) { (Get-FileHash -LiteralPath $_.path -Algorithm SHA256).Hash } else { $null })
+    }
+})
 $timingSamples = [Collections.Generic.List[object]]::new()
 $statusHistoryPath = Join-Path $runRoot 'status-history.jsonl'
 if ([IO.File]::Exists($statusHistoryPath)) {
@@ -454,6 +601,30 @@ if ([IO.File]::Exists($statusHistoryPath)) {
     }
 }
 $record['frame_timing'] = Get-RecompStartupFrameMetrics -Samples ($timingSamples.ToArray()) -ObservationEndSeconds $observationEndSeconds
+$record['audio_timing'] = Get-RecompAudioMetrics -Samples ($timingSamples.ToArray()) -ObservationEndSeconds $observationEndSeconds
+$audioDeviceExercised = $false
+$audioWindow = $record['audio_timing'].windows[0]
+if ($audioWindow.audio_available -and $audioWindow.device_output_observed) {
+    # Use validated context, not unchecked properties from partially written JSON.
+    $audioContext = $audioWindow.audio_context_last
+    $audioDeviceExercised = $record['audio_timing'].latest_active_sample_age_seconds -le 2 -and
+        $audioContext.audio_device_requested_volume_percent -eq 0 -and
+        $audioContext.audio_device_volume_apply_complete -eq '1' -and
+        $audioContext.audio_device_volume_apply_succeeded -eq '1' -and
+        $audioWindow.device_error_totals.operation_errors -eq 0 -and
+        $audioWindow.device_error_totals.state_errors -eq 0
+}
+$record['muted_real_device_exercised'] = $audioDeviceExercised
+if ($Audio -eq 'Cubeb' -and -not $audioDeviceExercised -and $classification -eq 'passed_startup') {
+    $classification = 'audio_device_unverified'
+    $record['classification'] = $classification
+}
+$allCapturesPresent = $screenshotCaptures.Count -eq $screenshotSchedule.Count -and
+    @($record['screenshot_captures'] | Where-Object { -not $_.processed -or -not $_.file_exists }).Count -eq 0
+if ($Screenshot -and -not $allCapturesPresent -and $classification -eq 'passed_startup') {
+    $classification = 'screenshot_missing'
+    $record['classification'] = $classification
+}
 $record['finished_at_utc'] = [DateTime]::UtcNow.ToString('o')
 $summaryPath = Join-Path $runRoot 'summary.json'
 [IO.File]::WriteAllText($summaryPath,($record | ConvertTo-Json -Depth 8),$utf8)

@@ -27,7 +27,6 @@ $destination = Join-Path $repoRoot ('dist/DW4_Recomp/PC-Preview-' + [DateTime]::
 if (Test-Path -LiteralPath $destination) { throw 'The package destination already exists; no files were replaced.' }
 New-Item -ItemType Directory -Path $destination | Out-Null
 Copy-Item -LiteralPath $launcher -Destination (Join-Path $destination 'DW4_PC.exe')
-Copy-Item -LiteralPath (Join-Path $runtimeBuild 'moderngekko-run.exe') -Destination (Join-Path $destination 'moderngekko-run.exe')
 Copy-Item -LiteralPath $record.module_path -Destination (Join-Path $destination 'gGDJEB2_recomp.dll')
 Copy-Item -LiteralPath (Join-Path $runtimeBuild 'Sys') -Destination (Join-Path $destination 'Sys') -Recurse
 Copy-Item -LiteralPath (Join-Path $repoRoot 'licenses') -Destination (Join-Path $destination 'licenses') -Recurse
@@ -47,12 +46,15 @@ Digimon World 4 PC - experimental local preview
 
 Open DW4_PC.exe and select your Digimon World 4 USA GameCube ROM.
 The launcher validates and imports the game files automatically. No compiler
-or manual disc extraction is used by this packaged launcher. Keep the EXE,
-runtime DLL and Sys folder together.
+or manual disc extraction is used by this packaged application. The game runs
+inside DW4_PC.exe; no separate runner executable is needed. Keep the EXE,
+game module DLL and Sys folder together.
 The matching x64 Microsoft Visual C++ runtime DLLs are included beside the EXE.
 
-Settings, saves and imported data use %LOCALAPPDATA%\DW4_PC. The separate
-developer-script preview uses its own profile under the repository's work/.
+Settings, saves and imported data use the savedata folder beside DW4_PC.exe.
+Keep this folder when updating the application. Existing profiles in AppData
+or Documents are left untouched; automatic save migration is not implemented.
+The developer-script preview uses its own profile under the repository's work/.
 Existing invalid import folders are preserved rather than replaced.
 
 Original game assets are not included. This is an experimental local build;
@@ -67,7 +69,8 @@ Dependency revisions and local runtime patches are included in this folder.
 $manifest = [ordered]@{
     game_id='GDJEB2'; entrypoint='DW4_PC.exe'; original_asset_files_included=$false;
     main_dol_sha256=$record.main_dol_sha256; required_assets_sha256=$record.required_assets_sha256;
-    module_sha256=$record.module_sha256; runner_sha256=$record.runner_binary_sha256;
+    module_sha256=$record.module_sha256; game_session='in_process';
+    separate_runner_included=$false; default_user_directory='savedata';
     launcher_sha256=$record.launcher_binary_sha256;
     visual_cpp_redist_version=$redistVersion; visual_cpp_runtime_files=$crtManifest;
     runtime_revision=$record.runtime_revision; chassis_revision=$record.chassis_revision;

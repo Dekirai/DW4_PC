@@ -9,17 +9,17 @@ if (-not (Test-Path -LiteralPath $recordPath -PathType Leaf)) {
 }
 $build = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
 foreach ($field in @('module_built','module_path','module_sha256','extracted_root',
-    'runner_binary_sha256','runtime_patch_sha256','chassis_patch_sha256',
+    'launcher_binary_sha256','runtime_patch_sha256','chassis_patch_sha256',
     'abi_report_path','abi_report_sha256','main_dol_sha256')) {
     if (-not $build.PSObject.Properties[$field]) { throw "Incomplete build record: $field. Rebuild before starting." }
 }
 if ($build.module_built -isnot [bool] -or -not $build.module_built) {
     throw 'The latest module build is incomplete. Rebuild before starting.'
 }
-$runner = Join-Path $repoRoot 'work/moderngekko-build/moderngekko-run.exe'
+$runner = Join-Path $repoRoot 'work/moderngekko-build/DW4_PC.exe'
 $patch = Join-Path $repoRoot 'patches/moderngekko-local-runtime.patch'
 $checks = @(
-    @($runner,$build.runner_binary_sha256),
+    @($runner,$build.launcher_binary_sha256),
     @($patch,$build.runtime_patch_sha256),
     @((Join-Path $repoRoot 'patches/recompcore-headless-shader-progress.patch'),$build.chassis_patch_sha256),
     @($build.module_path,$build.module_sha256),
@@ -46,7 +46,7 @@ $previousStatic = [Environment]::GetEnvironmentVariable('MODERNGEKKO_STATICRECOM
 try {
     [Environment]::SetEnvironmentVariable('MODERNGEKKO_STATICRECOMP','1','Process')
     # Piping a GUI executable makes Windows PowerShell wait for its real exit.
-    & $runner --game $build.extracted_root --module $build.module_path --user-dir $profile --no-mods --title 'Digimon World 4 PC - Experimental Recompilation' | Out-Host
+    & $runner --run --game $build.extracted_root --module $build.module_path --user-dir $profile --no-mods --title 'Digimon World 4 PC - Experimental Recompilation' | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "The runtime exited with code $LASTEXITCODE." }
 } finally {
     [Environment]::SetEnvironmentVariable('MODERNGEKKO_STATICRECOMP',$previousStatic,'Process')

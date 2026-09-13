@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fa2503deacb130d62bcc9902f6f741b51079e42b..f809899a0a31e9ae86aad921e22d0d937c1f2af4 100644
+index fa2503deacb130d62bcc9902f6f741b51079e42b..1fa3df7d0e97c01183cc0224c0722820d65bf96c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -144,10 +144,13 @@ else()
@@ -18,19 +18,160 @@ index fa2503deacb130d62bcc9902f6f741b51079e42b..f809899a0a31e9ae86aad921e22d0d93
  endif()
  
  add_library(moderngekko_abi INTERFACE)
-@@ -541,6 +544,11 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+@@ -415,6 +418,7 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+     endif()
+     add_executable(moderngekko-run
+         tools/moderngekko_run.cpp
++        tools/frontend_session.cpp
+         tools/netplay_compatibility.cpp
+         tools/netplay_session.cpp
+         tools/frontend_config.cpp
+@@ -492,41 +496,35 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+         target_compile_definitions(moderngekko-run PRIVATE
+             MODERNGEKKO_DOL_PATCH_MANIFEST="patches/${_moderngekko_dol_patch_name}")
+     endif()
+-    add_custom_command(TARGET moderngekko-run POST_BUILD
+-        COMMAND ${CMAKE_COMMAND} -E copy_directory
+-                "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Data/Sys"
+-                "$<TARGET_FILE_DIR:moderngekko-run>/Sys")
+-    if(MODERNGEKKO_DOL_PATCH_MANIFEST)
+-        add_custom_command(TARGET moderngekko-run POST_BUILD
+-            COMMAND ${CMAKE_COMMAND} -E make_directory
+-                    "$<TARGET_FILE_DIR:moderngekko-run>/patches"
+-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+-                    "${MODERNGEKKO_DOL_PATCH_MANIFEST}"
+-                    "$<TARGET_FILE_DIR:moderngekko-run>/patches/${_moderngekko_dol_patch_name}")
+-    endif()
+-    if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE)
+-        get_filename_component(_moderngekko_settings_name
+-            "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}" NAME)
+-        add_custom_command(TARGET moderngekko-run POST_BUILD
+-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+-                    "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}"
+-                    "$<TARGET_FILE_DIR:moderngekko-run>/Sys/GameSettings/${_moderngekko_settings_name}")
+-    endif()
+-
+     add_executable(moderngekko-launcher
+         tools/moderngekko_launcher.cpp
++        tools/frontend_session.cpp
++        tools/netplay_compatibility.cpp
++        tools/netplay_session.cpp
+         tools/frontend_config.cpp
+         tools/dol_patch.cpp
+         vendor/dolphin/Externals/imgui/imgui/backends/imgui_impl_sdl3.cpp
+         vendor/dolphin/Externals/imgui/imgui/backends/imgui_impl_sdlrenderer3.cpp)
+     target_include_directories(moderngekko-launcher PRIVATE
+         "${CMAKE_CURRENT_SOURCE_DIR}/tools"
++        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Source/Core"
++        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/GXRuntime/include"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Externals/imgui/imgui/backends")
+-    # The launcher only calls the game-inspection surface directly, but the
+-    # Dolphin static libraries still require the Host_* callbacks implemented
+-    # in the runtime object. Keep that object from being discarded by the
+-    # static linker.
++    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
++        target_compile_definitions(moderngekko-launcher PRIVATE _ARCH_64=1)
++    else()
++        target_compile_definitions(moderngekko-launcher PRIVATE _ARCH_32=1)
++    endif()
++    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x64|x86_64|amd64|AMD64")
++        target_compile_definitions(moderngekko-launcher PRIVATE _M_X86_64=1)
++    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
++        target_compile_definitions(moderngekko-launcher PRIVATE _M_ARM_64=1)
++    else()
++        target_compile_definitions(moderngekko-launcher PRIVATE _M_GENERIC=1)
++    endif()
++    # Retain the runtime's Host_* callbacks for both the interactive session
++    # and the launcher's asset-only diagnostic entry paths.
+     if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+         target_link_libraries(moderngekko-launcher PRIVATE
+             "$<LINK_LIBRARY:WHOLE_ARCHIVE,moderngekko>"
+@@ -541,11 +539,20 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
      endif()
      set_target_properties(moderngekko-launcher PROPERTIES
          OUTPUT_NAME "${MODERNGEKKO_LAUNCHER_OUTPUT_NAME}")
 +    if(WIN32)
 +        # SDL_main supplies GUI entry points while retaining inherited diagnostic
-+        # pipes and normal wait/exit-code behavior for both processes.
++        # pipes and normal wait/exit-code behavior for both entry points.
 +        set_target_properties(moderngekko-run moderngekko-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
 +    endif()
      target_compile_definitions(moderngekko-launcher PRIVATE
          MODERNGEKKO_FRONTEND_NAME="${MODERNGEKKO_FRONTEND_NAME}"
-         MODERNGEKKO_RUNNER_FILENAME="${MODERNGEKKO_RUNNER_OUTPUT_NAME}"
-@@ -608,6 +616,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+-        MODERNGEKKO_RUNNER_FILENAME="${MODERNGEKKO_RUNNER_OUTPUT_NAME}"
++        MODERNGEKKO_RUNNER_NAME="${MODERNGEKKO_LAUNCHER_OUTPUT_NAME} --run"
+         MODERNGEKKO_USER_DIRECTORY_NAME="${MODERNGEKKO_USER_DIRECTORY_NAME}"
+         MODERNGEKKO_LOG_FILENAME="${MODERNGEKKO_LOG_FILENAME}")
++    if(MODERNGEKKO_DEFAULT_WINDOW_TITLE)
++        target_compile_definitions(moderngekko-launcher PRIVATE
++            MODERNGEKKO_DEFAULT_WINDOW_TITLE="${MODERNGEKKO_DEFAULT_WINDOW_TITLE}")
++    endif()
+     if(MODERNGEKKO_REQUIRED_DISC_ID)
+         target_compile_definitions(moderngekko-launcher PRIVATE
+             MODERNGEKKO_REQUIRED_DISC_ID="${MODERNGEKKO_REQUIRED_DISC_ID}")
+@@ -598,8 +605,59 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
+         set_target_properties(moderngekko-run moderngekko-launcher PROPERTIES
+             INSTALL_RPATH "$ORIGIN/lib")
+     endif()
+-    add_dependencies(moderngekko-launcher moderngekko-run)
+-
++    # One writer stages shared resources before either frontend links. Separate
++    # POST_BUILD copies race when both executables share an output directory.
++    # Looking up a target directory must not create a dependency on its binary.
++    cmake_policy(PUSH)
++    if(POLICY CMP0112)
++        cmake_policy(SET CMP0112 NEW)
++    endif()
++    set(_moderngekko_resource_commands)
++    if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE)
++        get_filename_component(_moderngekko_settings_name
++            "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}" NAME)
++    endif()
++    foreach(_moderngekko_frontend IN ITEMS moderngekko-run moderngekko-launcher)
++        if(POLICY CMP0112)
++            set(_moderngekko_resource_directory "$<TARGET_FILE_DIR:${_moderngekko_frontend}>")
++        else()
++            # CMake 3.16-3.18 add a target dependency for TARGET_FILE_DIR. The
++            # frontends have no per-target output override, so use CMake's
++            # configured default directly on those versions.
++            set(_moderngekko_resource_directory "${CMAKE_CURRENT_BINARY_DIR}")
++            if(CMAKE_RUNTIME_OUTPUT_DIRECTORY)
++                set(_moderngekko_resource_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
++            endif()
++            if(CMAKE_CONFIGURATION_TYPES AND NOT _moderngekko_resource_directory MATCHES "\\$<")
++                string(APPEND _moderngekko_resource_directory "/$<CONFIG>")
++            endif()
++        endif()
++        list(APPEND _moderngekko_resource_commands
++            COMMAND "${CMAKE_COMMAND}" -E copy_directory
++                    "${CMAKE_CURRENT_SOURCE_DIR}/vendor/dolphin/Data/Sys"
++                    "${_moderngekko_resource_directory}/Sys")
++        if(MODERNGEKKO_DOL_PATCH_MANIFEST)
++            list(APPEND _moderngekko_resource_commands
++                COMMAND "${CMAKE_COMMAND}" -E make_directory
++                        "${_moderngekko_resource_directory}/patches"
++                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
++                        "${MODERNGEKKO_DOL_PATCH_MANIFEST}"
++                        "${_moderngekko_resource_directory}/patches/${_moderngekko_dol_patch_name}")
++        endif()
++        if(MODERNGEKKO_GAME_SETTINGS_OVERRIDE)
++            list(APPEND _moderngekko_resource_commands
++                COMMAND "${CMAKE_COMMAND}" -E copy_if_different
++                        "${MODERNGEKKO_GAME_SETTINGS_OVERRIDE}"
++                        "${_moderngekko_resource_directory}/Sys/GameSettings/${_moderngekko_settings_name}")
++        endif()
++    endforeach()
++    add_custom_target(moderngekko-frontend-resources
++        ${_moderngekko_resource_commands}
++        COMMENT "Staging frontend system resources"
++        VERBATIM)
++    cmake_policy(POP)
++    add_dependencies(moderngekko-run moderngekko-frontend-resources)
++    add_dependencies(moderngekko-launcher moderngekko-frontend-resources)
+     add_executable(moderngekko-port
+         tools/moderngekko_port.cpp
+         tools/pgo_support.cpp)
+@@ -608,6 +666,9 @@ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
          "${CMAKE_CURRENT_SOURCE_DIR}/tools")
      target_compile_definitions(moderngekko-port PRIVATE
          MODERNGEKKO_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -63,11 +204,60 @@ index 24fb92afdbb1f089d87a9eb29d0d1fee5457ed80..6c67fc031d237d5d0b9b53d27d300542
      uint8_t* exram;
      uint32_t exram_size;
      PPCSPRRead spr_read;
+diff --git a/include/moderngekko/runtime.hpp b/include/moderngekko/runtime.hpp
+index 0adc8556c94577a0c95ba197cd66cc7898551151..f67519beec25f2c95affd943354dc172019ee306 100644
+--- a/include/moderngekko/runtime.hpp
++++ b/include/moderngekko/runtime.hpp
+@@ -38,6 +38,9 @@ struct AudioSettings
+ {
+   std::string backend;
+   bool mute = false;
++  // Diagnostic opt-in: headless runs normally use NullSound. Device audio must
++  // be requested explicitly and its actual initialization must succeed.
++  bool headless_device_audio = false;
+ };
+ 
+ struct InputSettings
 diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
-index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffad88ed77d 100644
+index f9b5405c4579172a68a4e7e58b5b34843de50f51..5be56b71b0bec50623546010d5b7e798a0799455 100644
 --- a/src/runtime/dolphin_runtime.cpp
 +++ b/src/runtime/dolphin_runtime.cpp
-@@ -218,7 +218,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
+@@ -3,6 +3,7 @@
+ #include "AudioCommon/AudioCommon.h"
+ #include "Common/Config/Config.h"
+ #include "Common/HookableEvent.h"
++#include "Common/ScopeGuard.h"
+ #include "Common/StringUtil.h"
+ #include "Core/Boot/Boot.h"
+ #include "Core/Boot/BootManager.h"
+@@ -19,6 +20,7 @@
+ #include "Core/State.h"
+ #include "Core/System.h"
+ #include "DolphinNoGUI/Platform.h"
++#include "InputCommon/ControllerEmu/ControllerEmu.h"
+ #include "InputCommon/ControllerInterface/Touch/InputOverrider.h"
+ #include "UICommon/UICommon.h"
+ #include "VideoCommon/FrameDumper.h"
+@@ -193,6 +195,8 @@ void MarkAutomationCommand(RuntimeAutomationState& state, std::string command_na
+ 
+ void ClearAutomationPad(int port)
+ {
++  // GCPad/Wiimote readers hold this same recursive controller-state lock.
++  const auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
+   for (int control = static_cast<int>(ciface::Touch::FIRST_GC_CONTROL);
+        control <= static_cast<int>(ciface::Touch::LAST_WII_CONTROL); ++control)
+   {
+@@ -203,6 +207,9 @@ void ClearAutomationPad(int port)
+ 
+ void ApplyAutomationPad(const automation::PadState& pad)
+ {
++  // Publish one complete pad state. ClearAutomationPad may acquire this
++  // recursive lock again; no reader can observe the intermediate clear.
++  const auto state_lock = ControllerEmu::EmulatedController::GetStateLock();
+   ClearAutomationPad(pad.port);
+   for (std::size_t index = 0; index < pad.controls.size(); ++index)
+   {
+@@ -218,7 +225,11 @@ void ApplyAutomationPad(const automation::PadState& pad)
  std::filesystem::path NormalizeScreenshotPath(const std::filesystem::path& path)
  {
    if (!path.has_extension())
@@ -80,7 +270,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
    return path;
  }
  
-@@ -228,7 +232,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
+@@ -228,7 +239,7 @@ void SaveAutomationScreenshot(const std::filesystem::path& path)
    std::filesystem::create_directories(path.parent_path(), ec);
    const Core::CPUThreadGuard guard(Core::System::GetInstance());
    if (g_frame_dumper)
@@ -89,7 +279,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
  }
  
  std::optional<RuntimeError> ReadAutomationMemory(const std::filesystem::path& path, u32 address,
-@@ -327,10 +331,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
+@@ -327,10 +338,10 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
      break;
    case automation::CommandType::SaveState:
      std::filesystem::create_directories(command.path.parent_path());
@@ -102,7 +292,25 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
      break;
    case automation::CommandType::Screenshot:
      SaveAutomationScreenshot(NormalizeScreenshotPath(command.path));
-@@ -463,7 +467,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
+@@ -410,12 +421,17 @@ void WriteAutomationStatus(const std::filesystem::path& root, ImplT& impl)
+   status.title = impl.title;
+   status.game_id = impl.metadata.disc_id;
+   status.game_name = impl.metadata.game_name;
++  status.audio = AudioCommon::GetAudioTelemetrySnapshot();
++  status.audio_requested_backend = impl.config.audio.backend;
++  status.audio_headless_device = impl.config.audio.headless_device_audio;
++  status.audio_muted = impl.config.audio.mute;
+   if (impl.booted)
+   {
+     const auto& perf = Core::System::GetInstance().GetPerfMetrics();
+     status.fps = perf.GetFPS();
+     status.vps = perf.GetVPS();
+     status.speed = perf.GetSpeed();
++    status.max_speed = perf.GetMaxSpeed();
+   }
+   status.frame_count =
+       impl.automation_state.frame_count.load(std::memory_order_relaxed);
+@@ -463,7 +479,7 @@ void AutomationLoop(Runtime& runtime, ImplT& impl, std::stop_token stop_token)
        if (!automation::ParseCommandFile(command_path, &command, &error))
        {
          SetAutomationError(impl.automation_state,
@@ -111,7 +319,23 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
          MoveAutomationCommand(command_path, root, "failed");
          continue;
        }
-@@ -565,7 +569,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -554,6 +570,15 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+         RuntimeError{RuntimeErrorCode::AlreadyActive,
+                      "only one ModernGekko runtime may be active per process"}};
+ 
++  if (config.audio.headless_device_audio &&
++      (!config.headless || config.audio.backend != BACKEND_CUBEB))
++    return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed,
++                             "headless device audio diagnostics require headless mode and an explicit Cubeb backend"}};
++  if (config.audio.headless_device_audio &&
++      !std::ranges::contains(AudioCommon::GetSoundBackends(), config.audio.backend))
++    return {{}, RuntimeError{RuntimeErrorCode::InitializationFailed,
++                             "the explicitly requested headless audio backend is unavailable"}};
++
+   GameInspectResult inspected = InspectGame(config.game_root);
+   if (!inspected)
+     return {{}, RuntimeError{RuntimeErrorCode::InvalidGame, inspected.error}};
+@@ -565,7 +590,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    ModuleLoadResult module_result{};
    if (config.module.kind == ModuleSource::Kind::DynamicPath)
      module_result =
@@ -120,7 +344,7 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
    else if (config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      module_result =
          validation_library.Attach(config.module.descriptor, requirements);
-@@ -608,7 +612,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -608,7 +633,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
                   mod.version.c_str());
  
    if (!s_external_ui_common) {
@@ -129,7 +353,24 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
      UICommon::Init();
      impl->ui_initialized = true;
    }
-@@ -695,7 +699,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+@@ -644,6 +669,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   impl->controllers_initialized = true;
+   EnsureAutomationDirectories(impl->config.automation.directory);
+   if (!impl->config.automation.directory.empty()) {
++    // Register and initialize before BootCore starts emulated input readers.
+     for (int port = 0; port < 4; ++port)
+     {
+       ciface::Touch::RegisterGameCubeInputOverrider(port);
+@@ -671,7 +697,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
+   Config::SetBase(Config::GFX_WAIT_FOR_SHADERS_BEFORE_STARTING, true);
+   const std::vector<std::string> audio_backends =
+       AudioCommon::GetSoundBackends();
+-  if (impl->config.headless) {
++  if (impl->config.headless && !impl->config.audio.headless_device_audio) {
+     impl->config.audio.backend = BACKEND_NULLSOUND;
+   } else if (impl->config.audio.backend.empty() ||
+              !std::ranges::contains(audio_backends,
+@@ -695,7 +721,7 @@ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
    StaticRecompModuleSource recomp_source;
    if (impl->config.module.kind == ModuleSource::Kind::DynamicPath)
      recomp_source =
@@ -138,6 +379,141 @@ index f9b5405c4579172a68a4e7e58b5b34843de50f51..eae8c996c32acce68fce7d6967bd6ffa
    else if (impl->config.module.kind == ModuleSource::Kind::AttachedDescriptor)
      recomp_source = StaticRecompModuleSource::Attached(
          reinterpret_cast<const StaticRecompModuleDesc *>(
+@@ -722,6 +748,7 @@ Runtime::~Runtime() {
+     Core::Shutdown(Core::System::GetInstance());
+   }
+   if (m_impl->automation_registered) {
++    // Automation is joined and emulated input readers have stopped above.
+     for (int port = 0; port < 4; ++port)
+     {
+       ciface::Touch::UnregisterGameCubeInputOverrider(port);
+@@ -755,6 +782,8 @@ RuntimeRunResult Runtime::Run() {
+             RuntimeError{RuntimeErrorCode::InvalidState,
+                          "runtime is already running"}};
+ 
++  const auto previous_audio_generation = AudioCommon::GetAudioTelemetrySnapshot().generation;
++
+   std::unique_ptr<BootParameters> boot;
+   {
+     std::lock_guard lock(s_runtime_mutex);
+@@ -782,6 +811,9 @@ RuntimeRunResult Runtime::Run() {
+         if (state == Core::State::Uninitialized && m_impl->platform)
+           m_impl->platform->Stop();
+       });
++  AudioCommon::SetRequireSilentAudioStart(m_impl->config.audio.headless_device_audio &&
++                                          m_impl->config.audio.mute);
++  Common::ScopeGuard silent_audio_guard([] { AudioCommon::SetRequireSilentAudioStart(false); });
+   if (!BootManager::BootCore(Core::System::GetInstance(), std::move(boot),
+                              m_impl->platform->GetWindowSystemInfo())) {
+     m_impl->running = false;
+@@ -813,7 +845,46 @@ RuntimeRunResult Runtime::Run() {
+       }
+     });
+   }
++  std::optional<RuntimeError> audio_error;
++  bool audio_confirmed = false;
++  std::jthread audio_monitor;
++  if (m_impl->config.audio.headless_device_audio) {
++    audio_monitor = std::jthread([&](std::stop_token stop_token) {
++      while (!stop_token.stop_requested()) {
++        const auto audio = AudioCommon::GetAudioTelemetrySnapshot();
++        const auto check = detail::CheckHeadlessAudio(audio, previous_audio_generation,
++                                                    m_impl->config.audio.mute);
++        if (check.failure) {
++          audio_error = RuntimeError{RuntimeErrorCode::BootFailed, check.failure};
++          std::fprintf(stderr, "[audio] diagnostic failure: %s\n", check.failure);
++          SetAutomationError(m_impl->automation_state, check.failure);
++          // This is a fatal host diagnostic, not the guest's optional power
++          // button event. Headless Platform::Stop clears its atomic run flag.
++          m_impl->platform->Stop();
++          return;
++        }
++        if (check.ready && !audio_confirmed) {
++          audio_confirmed = true;
++          std::fprintf(stderr, "[audio] actual_backend=Cubeb initialized=1 started=1 volume=%d\n",
++                       audio.device.requested_volume_percent);
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(50));
++      }
++    });
++  }
+   m_impl->platform->MainLoop();
++  audio_monitor.request_stop();
++  if (audio_monitor.joinable())
++    audio_monitor.join();
++  if (m_impl->config.audio.headless_device_audio && !audio_error) {
++    const auto check = detail::CheckHeadlessAudio(AudioCommon::GetAudioTelemetrySnapshot(),
++                                                previous_audio_generation, m_impl->config.audio.mute);
++    if (check.failure)
++      audio_error = RuntimeError{RuntimeErrorCode::BootFailed, check.failure};
++    else if (!audio_confirmed && !check.ready)
++      audio_error = RuntimeError{RuntimeErrorCode::BootFailed,
++                                 "headless Cubeb audio never completed initialization and start"};
++  }
+   title_thread.request_stop();
+   if (title_thread.joinable())
+     title_thread.join();
+@@ -823,6 +894,8 @@ RuntimeRunResult Runtime::Run() {
+   Core::Shutdown(Core::System::GetInstance());
+   m_impl->booted = false;
+   m_impl->running = false;
++  if (audio_error)
++    return {RuntimeExitReason::BootFailed, std::move(audio_error)};
+   return {};
+ }
+ 
+diff --git a/src/runtime/dolphin_runtime_internal.hpp b/src/runtime/dolphin_runtime_internal.hpp
+index fb4b07c971f2e55d9dbb93ca35a2d42306289b3d..a6615f350792c65524b39feb4ebf655bddc58474 100644
+--- a/src/runtime/dolphin_runtime_internal.hpp
++++ b/src/runtime/dolphin_runtime_internal.hpp
+@@ -2,9 +2,47 @@
+ 
+ #include <memory>
+ 
++#include "AudioCommon/AudioTelemetry.h"
++
+ class BootSessionData;
+ 
+ namespace moderngekko::detail {
+ void SetExternalUICommon(bool external);
+ void SetBootSessionData(std::unique_ptr<BootSessionData> boot_session_data);
++
++struct HeadlessAudioCheck
++{
++  bool ready = false;
++  const char* failure = nullptr;
++};
++
++// Asynchronous boot must confirm a newly registered real stream, not a selected
++// config string or a retained snapshot from the previous runtime instance.
++inline HeadlessAudioCheck CheckHeadlessAudio(const AudioCommon::AudioTelemetrySnapshot& audio,
++                                           std::uint64_t previous_generation,
++                                           bool require_silent = false)
++{
++  if (!audio.available || audio.generation <= previous_generation)
++    return {};
++  const auto& device = audio.device;
++  if (device.backend == AudioCommon::AudioTelemetryBackend::Null)
++    return {false, "requested headless Cubeb audio fell back to NullSound"};
++  if (device.init_complete && !device.init_succeeded)
++    return {false, "requested headless Cubeb audio failed to initialize"};
++  if (device.start_complete && !device.start_succeeded)
++    return {false, "requested headless Cubeb audio failed to start"};
++  if (require_silent && device.volume_apply_complete && !device.volume_apply_succeeded)
++    return {false, "headless Cubeb audio could not apply zero device volume"};
++  if (require_silent && device.start_complete && device.start_succeeded &&
++      (!device.volume_apply_complete || device.requested_volume_percent != 0))
++    return {false, "headless Cubeb audio did not confirm silent device output"};
++  if (device.operation_errors != 0 || device.state_errors != 0)
++    return {false, "requested headless Cubeb audio reported a device error"};
++  if (device.init_complete && device.backend != AudioCommon::AudioTelemetryBackend::Cubeb)
++    return {false, "requested headless Cubeb audio initialized a different backend"};
++  return {audio.stream_alive && device.init_complete && device.init_succeeded &&
++              device.start_complete && device.start_succeeded &&
++              device.backend == AudioCommon::AudioTelemetryBackend::Cubeb,
++          nullptr};
++}
+ } // namespace moderngekko::detail
 diff --git a/src/runtime/mod_loader.cpp b/src/runtime/mod_loader.cpp
 index 4b2345f412c0591e945a2b54b90262b7b1c1ad54..5221f2446a177afb9249b7444f56500f1d7e80da 100644
 --- a/src/runtime/mod_loader.cpp
@@ -190,6 +566,102 @@ index 4b2345f412c0591e945a2b54b90262b7b1c1ad54..5221f2446a177afb9249b7444f56500f
    };
    for (const auto &directory : directories) {
      std::error_code ec;
+diff --git a/tools/automation_protocol.cpp b/tools/automation_protocol.cpp
+index 25f4167becb549ce8fd9091cc483baca9542283c..a1f72bc3b6bbb38b43309ca65c84fedcd70d2ef9 100644
+--- a/tools/automation_protocol.cpp
++++ b/tools/automation_protocol.cpp
+@@ -517,6 +517,67 @@ std::string FormatStatus(const Status& status)
+   output << "fps=" << status.fps << '\n';
+   output << "vps=" << status.vps << '\n';
+   output << "speed=" << status.speed << '\n';
++  output << "max_speed=" << status.max_speed << '\n';
++  output << "audio_available=" << status.audio.available << '\n';
++  output << "audio_stream_alive=" << status.audio.stream_alive << '\n';
++  output << "audio_generation=" << status.audio.generation << '\n';
++  output << "audio_requested_backend=" << status.audio_requested_backend << '\n';
++  output << "audio_headless_device=" << status.audio_headless_device << '\n';
++  output << "audio_muted=" << status.audio_muted << '\n';
++  output << "audio_activity_window_ns=" << AudioCommon::AUDIO_ACTIVITY_WINDOW_NS << '\n';
++  output << "audio_mixer_output_sample_rate=" << status.audio.mixer.output_sample_rate << '\n';
++  const char* backend = status.audio.device.backend == AudioCommon::AudioTelemetryBackend::Cubeb
++                            ? "Cubeb"
++                            : (status.audio.device.backend == AudioCommon::AudioTelemetryBackend::Null
++                                   ? "Null" : "Unknown");
++  output << "audio_device_backend=" << backend << '\n';
++  output << "audio_device_init_complete=" << status.audio.device.init_complete << '\n';
++  output << "audio_device_init_succeeded=" << status.audio.device.init_succeeded << '\n';
++  output << "audio_device_start_complete=" << status.audio.device.start_complete << '\n';
++  output << "audio_device_start_succeeded=" << status.audio.device.start_succeeded << '\n';
++  output << "audio_device_running_requested=" << status.audio.device.running_requested << '\n';
++  output << "audio_device_volume_apply_complete=" << status.audio.device.volume_apply_complete << '\n';
++  output << "audio_device_volume_apply_succeeded=" << status.audio.device.volume_apply_succeeded << '\n';
++  output << "audio_device_sample_rate=" << status.audio.device.sample_rate << '\n';
++  output << "audio_device_channels=" << status.audio.device.channels << '\n';
++  output << "audio_device_sample_bits=" << status.audio.device.sample_bits << '\n';
++  output << "audio_device_requested_volume_percent=" << status.audio.device.requested_volume_percent << '\n';
++  output << "audio_device_last_state=" << status.audio.device.last_state << '\n';
++  output << "audio_device_callbacks=" << status.audio.device.callbacks << '\n';
++  output << "audio_device_callback_frames=" << status.audio.device.callback_frames << '\n';
++  output << "audio_device_nonzero_output_frames=" << status.audio.device.nonzero_output_frames << '\n';
++  output << "audio_device_callback_interval_count=" << status.audio.device.callback_interval_count << '\n';
++  output << "audio_device_callback_interval_sum_ns=" << status.audio.device.callback_interval_sum_ns << '\n';
++  output << "audio_device_callback_interval_max_ns=" << status.audio.device.callback_interval_max_ns << '\n';
++  output << "audio_device_callback_work_sum_ns=" << status.audio.device.callback_work_sum_ns << '\n';
++  output << "audio_device_callback_work_max_ns=" << status.audio.device.callback_work_max_ns << '\n';
++  output << "audio_device_callback_gaps_over_two_periods=" << status.audio.device.callback_gaps_over_two_periods << '\n';
++  output << "audio_device_callback_work_over_period=" << status.audio.device.callback_work_over_period << '\n';
++  output << "audio_device_state_started=" << status.audio.device.state_started << '\n';
++  output << "audio_device_state_stopped=" << status.audio.device.state_stopped << '\n';
++  output << "audio_device_state_drained=" << status.audio.device.state_drained << '\n';
++  output << "audio_device_state_errors=" << status.audio.device.state_errors << '\n';
++  output << "audio_device_operation_errors=" << status.audio.device.operation_errors << '\n';
++  const auto source = [&](const char* prefix, const AudioCommon::MixerSourceTelemetrySnapshot& data) {
++    output << prefix << "push_calls=" << data.push_calls << '\n';
++    output << prefix << "pushed_frames=" << data.pushed_frames << '\n';
++    output << prefix << "pushed_nonzero_frames=" << data.pushed_nonzero_frames << '\n';
++    output << prefix << "accepted_frames=" << data.accepted_frames << '\n';
++    output << prefix << "enqueued_granules=" << data.enqueued_granules << '\n';
++    output << prefix << "queue_full_dropped_granules=" << data.queue_full_dropped_granules << '\n';
++    output << prefix << "queue_trimmed_granules=" << data.queue_trimmed_granules << '\n';
++    output << prefix << "active_empty_events=" << data.active_empty_events << '\n';
++    output << prefix << "active_replay_events=" << data.active_replay_events << '\n';
++    output << prefix << "active_fade_events=" << data.active_fade_events << '\n';
++    output << prefix << "active_mixed_output_frames=" << data.active_mixed_output_frames << '\n';
++    output << prefix << "active_faded_output_frames=" << data.active_faded_output_frames << '\n';
++    output << prefix << "last_push_age_ns=" << data.last_push_age_ns << '\n';
++    output << prefix << "sample_rate_dividend=" << data.sample_rate_dividend << '\n';
++    output << prefix << "sample_rate_divisor=" << data.sample_rate_divisor << '\n';
++    output << prefix << "recently_active=" << data.recently_active << '\n';
++  };
++  source("audio_dma_", status.audio.mixer.dma);
++  source("audio_dtk_", status.audio.mixer.dtk);
+   output << "frame_count=" << status.frame_count << '\n';
+   output << "present_count=" << status.present_count << '\n';
+   output << "title=" << status.title << '\n';
+diff --git a/tools/automation_protocol.hpp b/tools/automation_protocol.hpp
+index 2396f01ac78611962839aa6aaf76fd87bf2a6a31..b20ba2df5b50cc5ee16efe4b3b7a8a33193dc5e6 100644
+--- a/tools/automation_protocol.hpp
++++ b/tools/automation_protocol.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include "InputCommon/ControllerInterface/Touch/InputOverrider.h"
++#include "AudioCommon/AudioTelemetry.h"
+ 
+ #include <array>
+ #include <cstdint>
+@@ -52,6 +53,11 @@ struct Status
+   double fps = 0.0;
+   double vps = 0.0;
+   double speed = 0.0;
++  double max_speed = 0.0;
++  AudioCommon::AudioTelemetrySnapshot audio;
++  std::string audio_requested_backend;
++  bool audio_headless_device = false;
++  bool audio_muted = false;
+   std::uint64_t frame_count = 0;
+   std::uint64_t present_count = 0;
+   std::string title;
 diff --git a/tools/frontend_config.cpp b/tools/frontend_config.cpp
 index 03740d416f07ca0d20a99c78a54d9ffb5950cdd1..8f3277749268ea0133ce533dac670e284793afc6 100644
 --- a/tools/frontend_config.cpp
@@ -274,11 +746,503 @@ index 3b18d05cc59ea3e15696ff0b212415ff5c6d26c6..a6ce1a5641985a6346ed541fd048b02f
  struct ResolutionOption {
    const char *text;
    int dolphin_scale;
+diff --git a/tools/frontend_session.cpp b/tools/frontend_session.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..c39323af8882b3922dcb67b6fed972d8c7a285d2
+--- /dev/null
++++ b/tools/frontend_session.cpp
+@@ -0,0 +1,467 @@
++#include "frontend_session.hpp"
++#include "cache_affinity.hpp"
++#include "frontend_config.hpp"
++#include "dol_patch.hpp"
++#include "moderngekko/game.hpp"
++#include "moderngekko/runtime.hpp"
++#include "netplay_session.hpp"
++
++#include "Common/StringUtil.h"
++#include "Common/MsgHandler.h"
++#include "Common/ScopeGuard.h"
++
++#include <SDL3/SDL.h>
++
++
++#include <charconv>
++#include <chrono>
++#include <csignal>
++#include <cstdlib>
++#include <exception>
++#include <filesystem>
++#include <fstream>
++#include <iostream>
++#include <stdexcept>
++#include <string>
++#include <thread>
++#include <vector>
++
++#if defined(_WIN32)
++// For the affinity setup at session entry. WIN32_LEAN_AND_MEAN keeps the
++// winsock and GDI surface out of a translation unit that only needs the
++// processor-topology and process calls.
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
++namespace moderngekko::frontend {
++namespace {
++#ifndef MODERNGEKKO_RUNNER_NAME
++#define MODERNGEKKO_RUNNER_NAME "moderngekko-run"
++#endif
++
++#ifndef MODERNGEKKO_USER_DIRECTORY_NAME
++#define MODERNGEKKO_USER_DIRECTORY_NAME "moderngekko"
++#endif
++
++volatile std::sig_atomic_t s_stop_requested = 0;
++
++void HandleStopSignal(int) { s_stop_requested = 1; }
++
++void Usage() {
++  std::cerr << "usage: " MODERNGEKKO_RUNNER_NAME
++               " [--game <extracted-root>] [--module <path>]\n"
++               "       [--user-dir <path>] [--title <text>] [--load-state <path>]\n"
++               "       [--graphics <backend>] [--audio <backend>]\n"
++               "       [--headless-audio --audio Cubeb --mute] (requires --headless)\n"
++               "       [--mods <directory>] [--no-mods]\n"
++               "       [--wayland] [-X11] [--headless] [--allow-interpreter]\n"
++               "       [--netplay-host | --netplay-join <host>] "
++               "[--netplay-port <port>]\n"
++               "       [--nickname <name>] [--buffer <auto|1-20>] "
++               "[--controller <device>]...\n"
++               "       With no --game, boots the path in "
++               "<user-dir>/default-game.txt.\n";
++}
++
++std::filesystem::path
++ReadDefaultGame(const std::filesystem::path &user_directory,
++                const std::filesystem::path &executable_directory) {
++#ifdef MODERNGEKKO_PORTABLE_DEFAULT_GAME
++  const std::filesystem::path default_file =
++      executable_directory / "default-game.txt";
++#else
++  const std::filesystem::path default_file =
++      user_directory / "default-game.txt";
++#endif
++  std::ifstream file(default_file);
++  std::string path;
++  std::getline(file, path);
++  if (!path.empty() && path.back() == '\r')
++    path.pop_back();
++  std::filesystem::path result = StringToPath(path);
++  if (result.is_relative())
++    result = executable_directory / result;
++  return result;
++}
++
++std::string LibrarySuffix() {
++#if defined(_WIN32)
++  return ".dll";
++#elif defined(__APPLE__)
++  return ".dylib";
++#else
++  return ".so";
++#endif
++}
++
++std::filesystem::path ExecutableDirectory() {
++  if (const char* base = SDL_GetBasePath(); base && *base)
++    return StringToPath(base).lexically_normal();
++  throw std::runtime_error("cannot locate the executable directory: " + std::string(SDL_GetError()));
++}
++
++int RunMain(int argc, char **argv) {
++  SDL_setenv_unsafe("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0);
++  moderngekko::RuntimeConfig config;
++  const std::filesystem::path executable_directory =
++      ExecutableDirectory();
++  config.user_directory = executable_directory / "savedata";
++#ifdef MODERNGEKKO_DEFAULT_WINDOW_TITLE
++  config.window_title = MODERNGEKKO_DEFAULT_WINDOW_TITLE;
++#endif
++  std::filesystem::path module_path;
++  bool use_default_mods = true;
++  std::optional<moderngekko::frontend::NetplayRole> netplay_role;
++  std::string netplay_address;
++  std::optional<std::uint16_t> netplay_port;
++  std::string netplay_nickname;
++  std::string netplay_buffer;
++  std::vector<std::string> netplay_controllers;
++  for (int i = 1; i < argc; ++i) {
++    const std::string arg = argv[i];
++    const auto value = [&](const char *option) -> const char * {
++      if (i + 1 >= argc) {
++        throw std::invalid_argument(std::string(option) + " requires a value");
++      }
++      return argv[++i];
++    };
++    if (arg == "--game")
++      config.game_root = StringToPath(value("--game"));
++    else if (arg == "--module")
++      module_path = StringToPath(value("--module"));
++    else if (arg == "--user-dir")
++      config.user_directory = StringToPath(value("--user-dir"));
++    else if (arg == "--title")
++      config.window_title = value("--title");
++    else if (arg == "--load-state")
++    {
++      // Checked here rather than left to the boot path: a state that is not
++      // there would otherwise boot to the title screen and look like it worked.
++      std::filesystem::path state = StringToPath(value("--load-state"));
++      if (!std::filesystem::is_regular_file(state))
++      {
++        std::cerr << "savestate not found: " << PathToString(state) << '\n';
++        return 2;
++      }
++      config.load_state_path = std::move(state);
++    }
++    else if (arg == "--graphics")
++      config.graphics.backend = value("--graphics");
++    else if (arg == "--audio")
++      config.audio.backend = value("--audio");
++    else if (arg == "--mods")
++      config.mod_directories.emplace_back(StringToPath(value("--mods")));
++    else if (arg == "--no-mods")
++      use_default_mods = false;
++    else if (arg == "-X11" || arg == "--x11")
++      config.window_system = moderngekko::WindowSystem::X11;
++    else if (arg == "--wayland")
++      config.window_system = moderngekko::WindowSystem::Wayland;
++    else if (arg == "--mute")
++      config.audio.mute = true;
++    else if (arg == "--automation-dir")
++      config.automation.directory = StringToPath(value("--automation-dir"));
++    else if (arg == "--headless")
++      config.headless = true;
++    else if (arg == "--headless-audio")
++      config.audio.headless_device_audio = true;
++    else if (arg == "--allow-interpreter")
++      config.allow_interpreter = true;
++    else if (arg == "--netplay-host")
++      netplay_role = moderngekko::frontend::NetplayRole::Host;
++    else if (arg == "--netplay-join") {
++      netplay_role = moderngekko::frontend::NetplayRole::Join;
++      netplay_address = value("--netplay-join");
++    } else if (arg == "--netplay-port") {
++      const std::string port_value = value("--netplay-port");
++      unsigned int port = 0;
++      const auto parsed = std::from_chars(
++          port_value.data(), port_value.data() + port_value.size(), port);
++      if (parsed.ec != std::errc{} ||
++          parsed.ptr != port_value.data() + port_value.size() || port == 0 ||
++          port > 65535) {
++        std::cerr << "--netplay-port must be between 1 and 65535\n";
++        return 2;
++      }
++      netplay_port = static_cast<std::uint16_t>(port);
++    } else if (arg == "--nickname")
++      netplay_nickname = value("--nickname");
++    else if (arg == "--buffer")
++      netplay_buffer = value("--buffer");
++    else if (arg == "--controller")
++      netplay_controllers.emplace_back(value("--controller"));
++    else if (arg == "--help" || arg == "-h") {
++      Usage();
++      return 0;
++    } else {
++      std::cerr << "unknown option: " << arg << '\n';
++      Usage();
++      return 2;
++    }
++  }
++  if (config.headless) {
++    Common::RegisterMsgAlertHandler([](const char* caption, const char* text, bool, Common::MsgType) {
++      std::cerr << "[headless alert] " << (caption ? caption : "") << ": "
++                << (text ? text : "") << '\n';
++      return false;
++    });
++  }
++  if (config.game_root.empty())
++    config.game_root =
++        ReadDefaultGame(config.user_directory, executable_directory);
++  if (config.game_root.empty()) {
++    std::cerr << "no game configured; use --game once or create "
++              << PathToString(config.user_directory / "default-game.txt") << '\n';
++    Usage();
++    return 2;
++  }
++
++  auto frontend_config =
++      moderngekko::frontend::LoadConfig(config.user_directory, true);
++  if (!frontend_config) {
++    std::cerr << "invalid config.ini: " << frontend_config.error << '\n';
++    return 2;
++  }
++  config.graphics.internal_resolution_scale = frontend_config.dolphin_scale;
++  if (config.graphics.backend.empty())
++    config.graphics.backend = frontend_config.graphics_backend;
++  config.fullscreen = frontend_config.fullscreen;
++  config.show_fps_in_title = frontend_config.show_fps_in_title;
++  if (use_default_mods) {
++    config.mod_directories.push_back(executable_directory / "Mods");
++    config.mod_directories.push_back(config.user_directory / "Mods");
++  }
++
++  if (!netplay_role && !frontend_config.controller.empty()) {
++    std::string controller_message;
++    if (!moderngekko::frontend::EnsureControllerConfig(
++            config.user_directory, frontend_config.controller,
++            &controller_message)) {
++      std::cerr << "controller configuration: " << controller_message << '\n';
++      return 2;
++    }
++    std::cout << "controller configuration: " << controller_message << '\n';
++  }
++
++#ifdef MODERNGEKKO_DOL_PATCH_MANIFEST
++  bool dol_changed = false;
++  std::string dol_patch_error;
++  if (!moderngekko::frontend::ApplyDolPatchManifest(
++          config.game_root / "sys" / "main.dol",
++          executable_directory / MODERNGEKKO_DOL_PATCH_MANIFEST, &dol_changed,
++          &dol_patch_error)) {
++    std::cerr << "DOL patching failed: " << dol_patch_error << '\n';
++    return 2;
++  }
++  if (dol_changed)
++    std::cout << "Applied native DOL patches\n";
++#endif
++  const auto inspected = moderngekko::InspectGame(config.game_root);
++  if (!inspected) {
++    std::cerr << "invalid game: " << inspected.error << '\n';
++    return 2;
++  }
++
++#ifdef MODERNGEKKO_REQUIRED_DISC_ID
++  if (inspected.metadata->disc_id != MODERNGEKKO_REQUIRED_DISC_ID) {
++    std::cerr << "unsupported disc ID: expected "
++              << MODERNGEKKO_REQUIRED_DISC_ID << ", got "
++              << inspected.metadata->disc_id << '\n';
++    return 2;
++  }
++#endif
++#ifdef MODERNGEKKO_REQUIRED_DOL_SHA256
++  if (inspected.metadata->dol_sha256 != MODERNGEKKO_REQUIRED_DOL_SHA256) {
++    std::cerr << "unsupported main DOL: this release requires its pinned game build\n";
++    return 2;
++  }
++#endif
++#ifdef MODERNGEKKO_REQUIRED_REL_SHA256
++  if (inspected.metadata->rel_sha256 != MODERNGEKKO_REQUIRED_REL_SHA256) {
++    std::cerr << "unsupported _Main.rel: this release requires its pinned game build\n";
++    return 2;
++  }
++#endif
++#ifdef MODERNGEKKO_REQUIRED_ASSETS_SHA256
++  if (inspected.metadata->assets_sha256 !=
++      MODERNGEKKO_REQUIRED_ASSETS_SHA256) {
++    std::cerr << "unsupported game assets: this release requires its pinned game build\n";
++    return 2;
++  }
++#endif
++
++  // Compatibility discovery belongs to the frontend, never the runtime library.
++  if (module_path.empty()) {
++    if (const char *env = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "STATICRECOMP_MODULE"))
++      module_path = StringToPath(env);
++    else {
++      const std::string module_name =
++          "g" + inspected.metadata->disc_id + "_recomp" + LibrarySuffix();
++      const auto bundled = executable_directory / module_name;
++      const auto user_module =
++          config.user_directory / "StaticRecompModules" / module_name;
++      if (std::filesystem::is_regular_file(bundled))
++        module_path = bundled;
++      else if (std::filesystem::is_regular_file(user_module))
++        module_path = user_module;
++    }
++  }
++  if (!module_path.empty())
++    config.module =
++        moderngekko::ModuleSource::DynamicPath(std::move(module_path));
++
++#if defined(__linux__) || defined(_WIN32)
++  if (!config.headless && config.graphics.backend.empty())
++    config.graphics.backend = "Vulkan";
++#endif
++
++  if (netplay_role) {
++    moderngekko::frontend::NetplayOptions options;
++    options.role = *netplay_role;
++    options.address = netplay_address.empty() ? frontend_config.netplay_address
++                                              : netplay_address;
++    options.port = netplay_port.value_or(frontend_config.netplay_port);
++    options.nickname = netplay_nickname.empty()
++                           ? frontend_config.netplay_nickname
++                           : netplay_nickname;
++    options.buffer = netplay_buffer.empty() ? frontend_config.netplay_buffer
++                                            : netplay_buffer;
++    const std::vector<std::string> configured_controllers =
++        moderngekko::frontend::ReadConfiguredControllers(config.user_directory);
++    options.controllers =
++        netplay_controllers.empty()
++            ? (configured_controllers.empty() ? frontend_config.controllers
++                                              : configured_controllers)
++            : netplay_controllers;
++    if (options.controllers.empty() && !frontend_config.controller.empty())
++      options.controllers.push_back(frontend_config.controller);
++    if (options.controllers.empty()) {
++      std::cerr << "netplay requires at least one selected controller\n";
++      return 2;
++    }
++    frontend_config.netplay_address = options.address;
++    frontend_config.netplay_port = options.port;
++    frontend_config.netplay_nickname = options.nickname;
++    frontend_config.netplay_buffer = options.buffer;
++    frontend_config.controllers = options.controllers;
++    frontend_config.controller = options.controllers.front();
++    std::string controller_message;
++    if (!moderngekko::frontend::EnsureControllerConfig(
++            config.user_directory, options.controllers, &controller_message)) {
++      std::cerr << "controller configuration: " << controller_message << '\n';
++      return 2;
++    }
++    std::string save_error;
++    if (!moderngekko::frontend::SaveConfig(config.user_directory,
++                                           frontend_config, &save_error)) {
++      std::cerr << "configuration: " << save_error << '\n';
++      return 2;
++    }
++    std::cerr << "netplay: session started\n";
++    return moderngekko::frontend::RunNetplayLobby(
++        std::move(config), std::move(frontend_config), std::move(options));
++  }
++
++  auto created = moderngekko::Runtime::Create(std::move(config));
++  if (!created) {
++    std::cerr << "initialization failed: " << created.error->message << '\n';
++    return 1;
++  }
++  std::cout << "requested audio backend: " << created.runtime->GetConfig().audio.backend
++            << '\n';
++
++  s_stop_requested = 0;
++  const auto previous_interrupt = std::signal(SIGINT, HandleStopSignal);
++  const auto previous_terminate = std::signal(SIGTERM, HandleStopSignal);
++  Common::ScopeGuard restore_signals([&] {
++    if (previous_interrupt != SIG_ERR)
++      std::signal(SIGINT, previous_interrupt);
++    if (previous_terminate != SIG_ERR)
++      std::signal(SIGTERM, previous_terminate);
++  });
++  std::jthread signal_watcher([&](std::stop_token stop_token) {
++    while (!stop_token.stop_requested()) {
++      if (s_stop_requested) {
++        s_stop_requested = 0;
++        created.runtime->RequestStop();
++        return;
++      }
++      std::this_thread::sleep_for(std::chrono::milliseconds(50));
++    }
++  });
++  const moderngekko::RuntimeRunResult result = created.runtime->Run();
++  signal_watcher.request_stop();
++  if (result.error) {
++    std::cerr << "runtime failed: " << result.error->message << '\n';
++    return 1;
++  }
++  return 0;
++}
++
++#if defined(_WIN32)
++// Optionally confine the process to the cores that share the largest L3.
++//
++// The emulated CPU is a single serial instruction stream, so nothing here is
++// about parallelism -- core usage stays at 1.00 either way. It is about cache
++// residency. A recompiled module is one dispatch switch spanning the whole
++// game, which lives or dies on staying in L3, and on a chip with 3D V-Cache on
++// one CCD only, Windows migrating the thread between dies makes it repeatedly
++// lose its working set. Measured on a 9950X3D: 55.41 -> 70.42 fps, +27%.
++//
++// This applies to every Dolphin thread, not only the emulated CPU thread, so it
++// is opt-in. Set MODERNGEKKO_CACHE_AFFINITY=1 to enable it after benchmarking
++// the target machine.
++void PinProcessToLargestCache() {
++  if (!moderngekko::frontend::AffinityEnabled(
++          std::getenv("MODERNGEKKO_CACHE_AFFINITY")))
++    return;
++
++  DWORD length = 0;
++  GetLogicalProcessorInformationEx(RelationCache, nullptr, &length);
++  if (length == 0)
++    return;
++  std::vector<char> buffer(length);
++  if (!GetLogicalProcessorInformationEx(
++          RelationCache,
++          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &length))
++    return;
++
++  const moderngekko::frontend::CacheDomain domain =
++      moderngekko::frontend::LargestSharedCache(buffer.data(), length);
++  if (!domain)
++    return;
++
++  if (moderngekko::frontend::ApplyCacheDomain(GetCurrentProcess(), domain).affinity_set) {
++    std::cout << "[perf] pinned to the cores sharing the largest L3 (" << (domain.size >> 20)
++              << " MB), mask 0x" << std::hex << static_cast<unsigned long long>(domain.mask)
++              << std::dec << '\n';
++  }
++}
++#endif
++
++} // namespace
++
++int RunFrontendSession(int argc, char **argv) {
++  try {
++#if defined(_WIN32)
++    PinProcessToLargestCache();
++#endif
++    return RunMain(argc, argv);
++  } catch (const std::invalid_argument &error) {
++    std::cerr << "invalid session arguments: " << error.what() << '\n';
++    return 2;
++  } catch (const std::exception &error) {
++    std::cerr << "fatal error: " << error.what() << '\n';
++  } catch (...) {
++    std::cerr << "fatal error: unknown exception\n";
++  }
++  return 1;
++}
++
++} // namespace moderngekko::frontend
+diff --git a/tools/frontend_session.hpp b/tools/frontend_session.hpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..159cb60dd01abc3712a8ecf65e0b19a3c15c785e
+--- /dev/null
++++ b/tools/frontend_session.hpp
+@@ -0,0 +1,10 @@
++#pragma once
++
++namespace moderngekko::frontend {
++// Runs one session in the calling process, including module validation and
++// optional netplay. Call on the host thread after closing any frontend ImGui
++// context. The function returns only after the runtime and its threads stop.
++// argv[0] identifies the application; remaining arguments use the runner CLI.
++// Output stays on the caller's stdout/stderr, including headless diagnostics.
++int RunFrontendSession(int argc, char** argv);
++} // namespace moderngekko::frontend
 diff --git a/tools/moderngekko_launcher.cpp b/tools/moderngekko_launcher.cpp
-index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029ae547c39 100644
+index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..6e4cb79741cdf833aa0d7073d0fe51d1df128da1 100644
 --- a/tools/moderngekko_launcher.cpp
 +++ b/tools/moderngekko_launcher.cpp
-@@ -3,12 +3,14 @@
+@@ -1,14 +1,17 @@
+ #include "frontend_config.hpp"
++#include "frontend_session.hpp"
+ #include "dol_patch.hpp"
  #include "launcher_savestates.hpp"
  #include "moderngekko/game.hpp"
  #include "netplay_session.hpp"
@@ -293,7 +1257,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  #include <imgui.h>
  #include <imgui_impl_sdl3.h>
  #include <imgui_impl_sdlrenderer3.h>
-@@ -16,6 +18,7 @@
+@@ -16,6 +19,7 @@
  #include <algorithm>
  #include <array>
  #include <atomic>
@@ -301,13 +1265,19 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  #include <cstdio>
  #include <cstdlib>
  #include <filesystem>
-@@ -26,12 +29,14 @@
+@@ -26,20 +30,24 @@
  #include <string>
  #include <thread>
  #include <unordered_map>
 +#include <unordered_set>
  #include <vector>
  
++#if defined(_WIN32)
++#include <io.h>
++#else
++#include <unistd.h>
++#endif
++
  namespace fs = std::filesystem;
  
  namespace
@@ -316,7 +1286,15 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  #ifndef MODERNGEKKO_FRONTEND_NAME
  #define MODERNGEKKO_FRONTEND_NAME "ModernGekko"
  #endif
-@@ -50,10 +55,8 @@ namespace
+ 
+-#ifndef MODERNGEKKO_RUNNER_FILENAME
+-#define MODERNGEKKO_RUNNER_FILENAME "moderngekko-run"
+-#endif
+-
+ #ifndef MODERNGEKKO_USER_DIRECTORY_NAME
+ #define MODERNGEKKO_USER_DIRECTORY_NAME "moderngekko"
+ #endif
+@@ -50,10 +58,8 @@ namespace
  
  #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
  constexpr std::string_view CONTROLLER_PROFILE_NAME = "GCPadNew.ini";
@@ -327,37 +1305,31 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  #endif
  
  struct ExtractionState
-@@ -136,36 +139,38 @@ fs::path DefaultUserDirectory()
- {
- #ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
- #if defined(_WIN32)
+@@ -132,58 +138,30 @@ int FindController(const std::vector<ControllerOption>& controllers, std::string
+   return found == controllers.end() ? -1 : static_cast<int>(found - controllers.begin());
+ }
+ 
+-fs::path DefaultUserDirectory()
+-{
+-#ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
+-#if defined(_WIN32)
 -  if (const char* user_profile = std::getenv("USERPROFILE"))
 -    return fs::path(user_profile) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char* user_profile = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "USERPROFILE"))
-+    return fs::u8path(user_profile) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
+-#endif
 -  if (const char* home = std::getenv("HOME"))
 -    return fs::path(home) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char* home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
-+    return fs::u8path(home) / "Documents" / MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
- #if defined(_WIN32)
+-#endif
+-#if defined(_WIN32)
 -  if (const char* local_app_data = std::getenv("LOCALAPPDATA"))
 -    return fs::path(local_app_data) / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char* local_app_data = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "LOCALAPPDATA"))
-+    return fs::u8path(local_app_data) / MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
+-#endif
 -  if (const char* xdg = std::getenv("XDG_DATA_HOME"))
 -    return fs::path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
 -  if (const char* home = std::getenv("HOME"))
 -    return fs::path(home) / ".local/share" / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char* xdg = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "XDG_DATA_HOME"))
-+    return fs::u8path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char* home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
-+    return fs::u8path(home) / ".local/share" / MODERNGEKKO_USER_DIRECTORY_NAME;
-   return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
- }
- 
+-  return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
+-}
+-
  fs::path DocumentsDirectory()
  {
  #if defined(_WIN32)
@@ -373,23 +1345,25 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    return fs::current_path();
  }
  
- fs::path ExecutableDirectory(const char* argv0)
+-fs::path ExecutableDirectory(const char* argv0)
++fs::path ExecutableDirectory()
  {
+-  std::error_code ec;
+-#if defined(__linux__)
+-  const fs::path proc_executable = fs::read_symlink("/proc/self/exe", ec);
+-  if (!ec)
+-    return proc_executable.parent_path();
+-  ec.clear();
+-#endif
+-  const fs::path executable = fs::weakly_canonical(argv0, ec);
+-  return ec ? fs::current_path() : executable.parent_path();
 +  if (const char* base = SDL_GetBasePath(); base && *base)
 +    return fs::u8path(base).lexically_normal();
-   std::error_code ec;
- #if defined(__linux__)
-   const fs::path proc_executable = fs::read_symlink("/proc/self/exe", ec);
-@@ -173,7 +178,7 @@ fs::path ExecutableDirectory(const char* argv0)
-     return proc_executable.parent_path();
-   ec.clear();
- #endif
--  const fs::path executable = fs::weakly_canonical(argv0, ec);
-+  const fs::path executable = fs::weakly_canonical(fs::u8path(argv0), ec);
-   return ec ? fs::current_path() : executable.parent_path();
++  return {};
  }
- 
-@@ -182,8 +187,8 @@ fs::path SiblingExecutable(const fs::path& release_directory, std::string name)
+-
+ fs::path SiblingExecutable(const fs::path& release_directory, std::string name)
+ {
  #if defined(_WIN32)
    name += ".exe";
  #endif
@@ -400,7 +1374,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  }
  
  bool ApplyBundledDolPatch(const fs::path& game_root, const fs::path& release_directory,
-@@ -220,7 +225,7 @@ fs::path ReadDefaultGame(const fs::path& user_directory, const fs::path& release
+@@ -220,7 +198,7 @@ fs::path ReadDefaultGame(const fs::path& user_directory, const fs::path& release
    std::getline(file, value);
    if (!value.empty() && value.back() == '\r')
      value.pop_back();
@@ -409,7 +1383,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    if (game.is_relative())
      game = release_directory / game;
    return game;
-@@ -245,7 +250,7 @@ bool WriteDefaultGame(const fs::path& user_directory, const fs::path& release_di
+@@ -245,7 +223,7 @@ bool WriteDefaultGame(const fs::path& user_directory, const fs::path& release_di
    if (!ec && !relative.empty())
      stored = relative;
  #endif
@@ -418,7 +1392,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    return true;
  }
  
-@@ -265,7 +270,7 @@ std::vector<fs::path> FindDiscImages()
+@@ -265,7 +243,7 @@ std::vector<fs::path> FindDiscImages()
        iterator.disable_recursion_pending();
      if (iterator->is_regular_file(ec))
      {
@@ -427,7 +1401,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
        std::ranges::transform(extension, extension.begin(),
                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
        if (extension == ".wbfs" || extension == ".iso" || extension == ".rvz")
-@@ -283,7 +288,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+@@ -283,7 +261,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
                                      const fs::path& release_directory, ExtractionState* state,
                                      std::string* error)
  {
@@ -436,7 +1410,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    if (!source)
    {
      *error = "Dolphin rejected the selected disc image";
-@@ -317,7 +322,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+@@ -317,7 +295,7 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
    const fs::path preparer =
        SiblingExecutable(release_directory, MODERNGEKKO_DISC_PREPARER_FILENAME);
    const std::array<std::string, 5> storage = {
@@ -445,7 +1419,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    std::array<const char*, 6> arguments{};
    for (std::size_t i = 0; i < storage.size(); ++i)
      arguments[i] = storage[i].c_str();
-@@ -337,11 +342,82 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
+@@ -337,11 +315,82 @@ std::optional<fs::path> PrepareDisc(const fs::path& image, const fs::path& user_
    }
    return output;
  #else
@@ -529,7 +1503,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
  bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
                   const fs::path& release_directory, ExtractionState* state)
  {
-@@ -355,14 +431,14 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+@@ -355,14 +404,14 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
  
    {
      std::lock_guard lock(state->mutex);
@@ -546,7 +1520,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    if (!volume)
      return fail("Dolphin rejected the prepared disc image");
  
-@@ -371,6 +447,12 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+@@ -371,6 +420,12 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
    if (!filesystem || !filesystem->IsValid())
      return fail("Dolphin could not read the game partition filesystem");
  
@@ -559,7 +1533,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    std::string disc_id = volume->GetGameID(partition);
    if (disc_id.size() != 6)
      return fail("the selected image has an invalid disc ID");
-@@ -407,60 +489,79 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
+@@ -407,60 +462,79 @@ bool ExtractDisc(const fs::path& image, const fs::path& user_directory,
      return true;
    }
  
@@ -572,7 +1546,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
 +  if (ec)
 +    return fail("can't create games directory: " + ec.message());
 +  const fs::path canonical_games = fs::canonical(games_directory, ec);
-   if (ec)
++  if (ec)
 +    return fail("can't resolve games directory: " + ec.message());
 +  const fs::path staging = canonical_games / (disc_id + ".extracting-" +
 +      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -586,7 +1560,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
 +      fs::remove_all(staging, cleanup_error);
 +  };
 +  fs::create_directory(staging / "files", ec);
-+  if (ec)
+   if (ec)
 +  {
 +    discard_staging();
      return fail("can't create extraction directory: " + ec.message());
@@ -659,7 +1633,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    fs::rename(staging, output, ec);
    if (ec)
      return fail("can't publish extracted game: " + ec.message());
-@@ -484,18 +585,16 @@ void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int
+@@ -484,26 +558,57 @@ void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int
    if (!filelist)
      state->error = SDL_GetError();
    else if (filelist[0])
@@ -667,21 +1641,55 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
 +    state->selected = fs::u8path(filelist[0]);
  }
  
- fs::path SiblingRunner(const char* argv0)
+-fs::path SiblingRunner(const char* argv0)
++// Graphical sessions finish this process when they return. Redirect both CRT
++// streams to one shared file position so C and C++ runtime diagnostics survive
++// without a child process. The --run CLI keeps its inherited pipes instead.
++bool RedirectSessionLog(const fs::path& log_path)
  {
--  std::error_code ec;
+   std::error_code ec;
 -  const fs::path self = fs::weakly_canonical(argv0, ec);
-   fs::path runner = MODERNGEKKO_RUNNER_FILENAME;
+-  fs::path runner = MODERNGEKKO_RUNNER_FILENAME;
++  fs::create_directories(log_path.parent_path(), ec);
++  if (ec)
++    return false;
++  std::cout.flush();
++  std::cerr.flush();
++  std::fflush(nullptr);
  #if defined(_WIN32)
-   runner += ".exe";
+-  runner += ".exe";
++  FILE* redirected = nullptr;
++  // Initialize stderr even for a GUI process without inherited CRT streams.
++  // Opening the log twice can fail under the CRT's file sharing rules.
++  if (_wfreopen_s(&redirected, log_path.c_str(), L"w", stdout) != 0 ||
++      _wfreopen_s(&redirected, L"NUL", L"w", stderr) != 0 ||
++      _dup2(_fileno(stdout), _fileno(stderr)) != 0)
++    return false;
++#else
++  if (!std::freopen(log_path.c_str(), "w", stdout) ||
++      !std::freopen("/dev/null", "w", stderr) ||
++      dup2(fileno(stdout), fileno(stderr)) < 0)
++    return false;
  #endif
 -  const fs::path sibling = self.parent_path() / runner;
-+  const fs::path sibling = ExecutableDirectory(argv0) / runner;
-   return fs::is_regular_file(sibling) ? sibling : runner;
+-  return fs::is_regular_file(sibling) ? sibling : runner;
++  std::cout.clear();
++  std::cerr.clear();
++  return true;
  }
  } // namespace
-@@ -504,6 +603,9 @@ int main(int argc, char** argv)
+ 
+ int main(int argc, char** argv)
  {
++  // Exercise the exact integrated session path without opening the launcher.
++  // Diagnostic options, output pipes and exit codes remain the runner's CLI.
++  if (argc > 1 && std::string_view(argv[1]) == "--run")
++  {
++    std::vector<char*> session_arguments{argv[0]};
++    session_arguments.insert(session_arguments.end(), argv + 2, argv + argc);
++    session_arguments.push_back(nullptr);
++    return moderngekko::frontend::RunFrontendSession(argc - 1, session_arguments.data());
++  }
    bool use_wayland = false;
    std::optional<fs::path> extract_only;
 +  std::optional<fs::path> validate_only;
@@ -690,7 +1698,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    for (int i = 1; i < argc; ++i)
    {
      if (std::string_view(argv[i]) == "-X11" || std::string_view(argv[i]) == "--x11")
-@@ -511,11 +613,51 @@ int main(int argc, char** argv)
+@@ -511,11 +616,58 @@ int main(int argc, char** argv)
      else if (std::string_view(argv[i]) == "--wayland")
        use_wayland = true;
      else if (std::string_view(argv[i]) == "--extract" && i + 1 < argc)
@@ -707,19 +1715,27 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
 +      std::cerr << "Usage: " MODERNGEKKO_FRONTEND_NAME
 +                   " [--user-dir <directory>] [--extract <ROM> | --validate-game <directory>"
 +                   " | --smoke-test <PNG>] [--x11 | --wayland]\n";
++      std::cerr << "       " MODERNGEKKO_FRONTEND_NAME " --run [runtime options; --help for details]\n";
 +      return std::string_view(argv[i]) == "--help" ? 0 : 2;
 +    }
    }
  
 -  const fs::path user_directory = DefaultUserDirectory();
+-  const fs::path release_directory = ExecutableDirectory(argv[0]);
 +  if ((extract_only.has_value() + validate_only.has_value() + smoke_screenshot.has_value()) > 1 ||
 +      (smoke_screenshot && !user_override))
 +  {
 +    std::cerr << "Choose one diagnostic mode; smoke tests require an explicit isolated --user-dir.\n";
 +    return 2;
 +  }
-+  const fs::path user_directory = fs::absolute(user_override.value_or(DefaultUserDirectory()));
-   const fs::path release_directory = ExecutableDirectory(argv[0]);
++  const fs::path release_directory = ExecutableDirectory();
++  if (release_directory.empty())
++  {
++    std::cerr << "cannot locate the executable directory: " << SDL_GetError() << '\n';
++    return 1;
++  }
++  // Preserve explicit development profiles and all legacy user folders.
++  const fs::path user_directory = fs::absolute(user_override.value_or(release_directory / "savedata"));
 +  if (extract_only || validate_only || smoke_screenshot)
 +  {
 +    Common::RegisterMsgAlertHandler([](const char* caption, const char* text, bool, Common::MsgType) {
@@ -744,7 +1760,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    if (extract_only)
    {
      ExtractionState extraction;
-@@ -526,13 +668,18 @@ int main(int argc, char** argv)
+@@ -526,13 +678,18 @@ int main(int argc, char** argv)
      if (!success)
        std::cerr << "extraction failed: " << extraction.error << '\n';
      else
@@ -764,7 +1780,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,
                               "Invalid " MODERNGEKKO_FRONTEND_NAME " config.ini",
                               config.error.c_str(), nullptr);
-@@ -549,7 +696,8 @@ int main(int argc, char** argv)
+@@ -549,7 +706,8 @@ int main(int argc, char** argv)
    const float scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
    SDL_Window* window = SDL_CreateWindow(MODERNGEKKO_FRONTEND_NAME, static_cast<int>(820 * scale),
                                          static_cast<int>(700 * scale),
@@ -774,7 +1790,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    if (!window)
    {
      SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
-@@ -579,7 +727,8 @@ int main(int argc, char** argv)
+@@ -579,7 +737,8 @@ int main(int argc, char** argv)
    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
    ImGui_ImplSDLRenderer3_Init(renderer);
  
@@ -784,7 +1800,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    std::optional<fs::path> selected_image = images.empty() ? std::nullopt : std::optional(images[0]);
    fs::path current_game = ReadDefaultGame(user_directory, release_directory);
    bool current_dol_changed = false;
-@@ -683,7 +832,7 @@ int main(int argc, char** argv)
+@@ -683,7 +842,7 @@ int main(int argc, char** argv)
        }
        selected_controller = configured_controllers.front();
        controller_index = FindController(controllers, selected_controller);
@@ -793,7 +1809,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
        return true;
      }
      if (controller_index < 0)
-@@ -712,7 +861,7 @@ int main(int argc, char** argv)
+@@ -712,7 +871,7 @@ int main(int argc, char** argv)
      }
      else
      {
@@ -802,7 +1818,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      }
    };
    refresh_controllers();
-@@ -726,6 +875,8 @@ int main(int argc, char** argv)
+@@ -726,6 +885,8 @@ int main(int argc, char** argv)
      Join,
    };
    bool done = false;
@@ -811,7 +1827,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
    LaunchMode launch_mode = LaunchMode::None;
    while (!done)
    {
-@@ -887,7 +1038,7 @@ int main(int argc, char** argv)
+@@ -887,7 +1048,7 @@ int main(int argc, char** argv)
      }
      else
      {
@@ -820,7 +1836,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      }
  
      ImGui::Spacing();
-@@ -940,7 +1091,7 @@ int main(int argc, char** argv)
+@@ -940,7 +1101,7 @@ int main(int argc, char** argv)
        }
      }
      ImGui::Spacing();
@@ -829,7 +1845,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      if (ImGui::BeginCombo("##resolution", resolutions[resolution_index].text))
      {
        for (std::size_t i = 0; i < resolutions.size(); ++i)
-@@ -1006,13 +1157,11 @@ int main(int argc, char** argv)
+@@ -1006,13 +1167,11 @@ int main(int argc, char** argv)
        ImGui::EndCombo();
      }
      ImGui::BeginDisabled(controller_index < 0);
@@ -845,7 +1861,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      ImGui::SetNextItemWidth(220 * scale);
      ImGui::InputText("Nickname", netplay_nickname.data(), netplay_nickname.size());
      ImGui::SetNextItemWidth(220 * scale);
-@@ -1029,7 +1178,7 @@ int main(int argc, char** argv)
+@@ -1029,7 +1188,7 @@ int main(int argc, char** argv)
      ImGui::Spacing();
      ImGui::TextUnformatted("Game disc image");
      if (selected_image)
@@ -854,7 +1870,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      else
        ImGui::TextDisabled("No ISO, WBFS, or RVZ selected");
  
-@@ -1042,7 +1191,7 @@ int main(int argc, char** argv)
+@@ -1042,7 +1201,7 @@ int main(int argc, char** argv)
              {"ISO", "iso"},
              {"WBFS", "wbfs"},
              {"RVZ", "rvz"}};
@@ -863,7 +1879,7 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
          SDL_ShowOpenFileDialog(FileDialogCallback, &dialog, window, filters,
                                 static_cast<int>(std::size(filters)), documents.c_str(), false);
        }
-@@ -1097,13 +1246,25 @@ int main(int argc, char** argv)
+@@ -1097,177 +1256,128 @@ int main(int argc, char** argv)
      SDL_SetRenderDrawColor(renderer, 18, 20, 28, 255);
      SDL_RenderClear(renderer);
      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
@@ -886,50 +1902,272 @@ index 7699c3deb5f7a3fd0526dfe4397300e0056da5b3..ce9828696de6145e67153a77c3c91029
      extraction_thread.join();
  
 -  int result = 0;
-+  int result = smoke_result;
-   if (launch_mode != LaunchMode::None)
+-  if (launch_mode != LaunchMode::None)
++  // Both the runtime renderer and the netplay lobby own an ImGui context.
++  // Finish every launcher resource before either starts in this process.
++  ImGui_ImplSDLRenderer3_Shutdown();
++  ImGui_ImplSDL3_Shutdown();
++  ImGui::DestroyContext();
++  SDL_DestroyRenderer(renderer);
++  SDL_DestroyWindow(window);
++  SDL_Quit();
++
++  if (launch_mode == LaunchMode::None)
++    return smoke_result;
++
++  std::string launch_error;
++  if (!WriteDefaultGame(user_directory, release_directory, current_game, &launch_error))
++  {
++    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(), nullptr);
++    return 1;
++  }
++
++  std::vector<std::string> argument_storage = {
++      argv[0], "--game", PathText(current_game), "--user-dir", PathText(user_directory)};
++  // Solo only: see the note by the dropdown.
++  if (launch_mode == LaunchMode::Solo && selected_savestate >= 0 &&
++      static_cast<std::size_t>(selected_savestate) < launcher_savestates.size())
++  {
++    argument_storage.emplace_back("--load-state");
++    argument_storage.emplace_back(PathText(launcher_savestates[static_cast<std::size_t>(selected_savestate)]));
++  }
++  if (launch_mode == LaunchMode::Host)
++    argument_storage.emplace_back("--netplay-host");
++  else if (launch_mode == LaunchMode::Join)
++  {
++    argument_storage.emplace_back("--netplay-join");
++    argument_storage.emplace_back(config.netplay_address);
++  }
++  if (launch_mode == LaunchMode::Host || launch_mode == LaunchMode::Join)
    {
-     std::string launch_error;
-@@ -1115,9 +1276,9 @@ int main(int argc, char** argv)
-     }
-     else
+-    std::string launch_error;
+-    if (!WriteDefaultGame(user_directory, release_directory, current_game,
+-                          &launch_error))
++    argument_storage.emplace_back("--netplay-port");
++    argument_storage.emplace_back(std::to_string(config.netplay_port));
++    argument_storage.emplace_back("--nickname");
++    argument_storage.emplace_back(config.netplay_nickname);
++    argument_storage.emplace_back("--buffer");
++    argument_storage.emplace_back(config.netplay_buffer);
++    for (const std::string& controller : config.controllers)
      {
+-      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(), window);
+-      result = 1;
++      argument_storage.emplace_back("--controller");
++      argument_storage.emplace_back(controller);
+     }
+-    else
+-    {
 -      std::vector<std::string> argument_storage = {SiblingRunner(argv[0]).string(), "--game",
 -                                                   current_game.string(), "--user-dir",
 -                                                   user_directory.string()};
-+      std::vector<std::string> argument_storage = {PathText(SiblingRunner(argv[0])), "--game",
-+                                                   PathText(current_game), "--user-dir",
-+                                                   PathText(user_directory)};
-       // Solo only: see the note by the dropdown.
-       if (launch_mode == LaunchMode::Solo && selected_savestate >= 0 &&
-           static_cast<std::size_t>(selected_savestate) < launcher_savestates.size())
-@@ -1164,7 +1325,7 @@ int main(int argc, char** argv)
-       std::error_code log_error;
-       std::filesystem::create_directories(log_path.parent_path(), log_error);
-       SDL_IOStream* log_stream =
+-      // Solo only: see the note by the dropdown.
+-      if (launch_mode == LaunchMode::Solo && selected_savestate >= 0 &&
+-          static_cast<std::size_t>(selected_savestate) < launcher_savestates.size())
+-      {
+-        argument_storage.emplace_back("--load-state");
+-        argument_storage.emplace_back(
+-            moderngekko::frontend::PathText(
+-                launcher_savestates[static_cast<std::size_t>(selected_savestate)]));
+-      }
+-      if (launch_mode == LaunchMode::Host)
+-        argument_storage.emplace_back("--netplay-host");
+-      else if (launch_mode == LaunchMode::Join)
+-      {
+-        argument_storage.emplace_back("--netplay-join");
+-        argument_storage.emplace_back(config.netplay_address);
+-      }
+-      if (launch_mode == LaunchMode::Host || launch_mode == LaunchMode::Join)
+-      {
+-        argument_storage.emplace_back("--netplay-port");
+-        argument_storage.emplace_back(std::to_string(config.netplay_port));
+-        argument_storage.emplace_back("--nickname");
+-        argument_storage.emplace_back(config.netplay_nickname);
+-        argument_storage.emplace_back("--buffer");
+-        argument_storage.emplace_back(config.netplay_buffer);
+-        for (const std::string& controller : config.controllers)
+-        {
+-          argument_storage.emplace_back("--controller");
+-          argument_storage.emplace_back(controller);
+-        }
+-      }
+-      if (use_wayland)
+-        argument_storage.emplace_back("--wayland");
++  }
++  if (use_wayland)
++    argument_storage.emplace_back("--wayland");
+ #if defined(__linux__)
+-      else
+-        argument_storage.emplace_back("-X11");
++  else
++    argument_storage.emplace_back("-X11");
+ #endif
+-      std::vector<const char*> arguments;
+-      arguments.reserve(argument_storage.size() + 1);
+-      for (const std::string& argument : argument_storage)
+-        arguments.push_back(argument.c_str());
+-      arguments.push_back(nullptr);
+-      const std::filesystem::path log_path =
+-          user_directory / "Logs" / MODERNGEKKO_LOG_FILENAME;
+-      std::error_code log_error;
+-      std::filesystem::create_directories(log_path.parent_path(), log_error);
+-      SDL_IOStream* log_stream =
 -          log_error ? nullptr : SDL_IOFromFile(log_path.string().c_str(), "w");
-+          log_error ? nullptr : SDL_IOFromFile(PathText(log_path).c_str(), "w");
-       SDL_Process* process = nullptr;
-       std::string process_error;
-       if (log_stream)
-@@ -1194,7 +1355,7 @@ int main(int argc, char** argv)
-       }
-       if (!process)
-       {
+-      SDL_Process* process = nullptr;
+-      std::string process_error;
+-      if (log_stream)
+-      {
+-        const SDL_PropertiesID properties = SDL_CreateProperties();
+-        if (properties)
+-        {
+-          SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_ARGS_POINTER,
+-                                 arguments.data());
+-          SDL_SetNumberProperty(properties, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER,
+-                                SDL_PROCESS_STDIO_REDIRECT);
+-          SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_STDOUT_POINTER, log_stream);
+-          SDL_SetBooleanProperty(properties, SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN,
+-                                 true);
+-          process = SDL_CreateProcessWithProperties(properties);
+-          SDL_DestroyProperties(properties);
+-        }
+-        if (!process)
+-          process_error = SDL_GetError();
+-        SDL_CloseIO(log_stream);
+-      }
+-      else
+-      {
+-        process = SDL_CreateProcess(arguments.data(), false);
+-        if (!process)
+-          process_error = SDL_GetError();
+-      }
+-      if (!process)
+-      {
 -        launch_error = "Could not start " + SiblingRunner(argv[0]).string() + ": " + process_error;
-+        launch_error = "Could not start " + PathText(SiblingRunner(argv[0])) + ": " + process_error;
-         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(),
-                                  window);
-         result = 1;
-@@ -1254,7 +1415,7 @@ int main(int argc, char** argv)
-             launch_error = "The game process exited with code " + std::to_string(exit_code) + ".";
-           }
-           if (!log_error)
+-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Launch failed", launch_error.c_str(),
+-                                 window);
+-        result = 1;
+-      }
+-      else
+-      {
+-        SDL_HideWindow(window);
+-        int exit_code = 1;
+-        const bool waited = SDL_WaitProcess(process, true, &exit_code);
+-        SDL_DestroyProcess(process);
+-        if (!waited || exit_code != 0)
+-        {
+-          SDL_ShowWindow(window);
+-          if (!waited)
+-          {
+-            launch_error =
+-                "The game process could not be monitored: " + std::string(SDL_GetError());
+-          }
+-          else if (launch_mode == LaunchMode::Join)
+-          {
+-            switch (static_cast<moderngekko::frontend::NetplayExitCode>(exit_code))
+-            {
+-            case moderngekko::frontend::NetplayExitCode::VersionMismatch:
+-              launch_error = "The host is running an incompatible netplay build. Both "
+-                             "players must use the same release.";
+-              break;
+-            case moderngekko::frontend::NetplayExitCode::CompatibilityMismatch:
+-              launch_error = "The extracted game or recomp module does not match the "
+-                             "host. Both players need the same game revision and "
+-                             "release.";
+-              break;
+-            case moderngekko::frontend::NetplayExitCode::RoomFull:
+-              launch_error = "All four controller slots are already occupied.";
+-              break;
+-            case moderngekko::frontend::NetplayExitCode::GameRunning:
+-              launch_error = "The host has already started the game.";
+-              break;
+-            case moderngekko::frontend::NetplayExitCode::ServerFull:
+-              launch_error = "The netplay server is full.";
+-              break;
+-            case moderngekko::frontend::NetplayExitCode::NicknameRejected:
+-              launch_error = "The nickname was rejected by the host.";
+-              break;
+-            default:
+-              launch_error = "Could not reach the netplay host. Check the host name, UDP "
+-                             "port, and firewall.";
+-              break;
+-            }
+-          }
+-          else if (launch_mode == LaunchMode::Host)
+-          {
+-            launch_error = "Could not create the netplay session. Check the UDP port "
+-                           "and firewall settings.";
+-          }
+-          else
+-          {
+-            launch_error = "The game process exited with code " + std::to_string(exit_code) + ".";
+-          }
+-          if (!log_error)
 -            launch_error += "\n\nDetails were written to:\n" + log_path.string();
-+            launch_error += "\n\nDetails were written to:\n" + PathText(log_path);
-           SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Session failed", launch_error.c_str(),
-                                    window);
-           result = 1;
+-          SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Session failed", launch_error.c_str(),
+-                                   window);
+-          result = 1;
+-        }
+-      }
++  std::vector<char*> arguments;
++  arguments.reserve(argument_storage.size() + 1);
++  for (std::string& argument : argument_storage)
++    arguments.push_back(argument.data());
++  arguments.push_back(nullptr);
++
++  const fs::path log_path = user_directory / "Logs" / MODERNGEKKO_LOG_FILENAME;
++  const bool logging = RedirectSessionLog(log_path);
++  const int exit_code = moderngekko::frontend::RunFrontendSession(
++      static_cast<int>(argument_storage.size()), arguments.data());
++  std::cout.flush();
++  std::cerr.flush();
++  std::fflush(nullptr);
++  if (exit_code == 0)
++    return 0;
++
++  if (launch_mode == LaunchMode::Join)
++  {
++    switch (static_cast<moderngekko::frontend::NetplayExitCode>(exit_code))
++    {
++    case moderngekko::frontend::NetplayExitCode::VersionMismatch:
++      launch_error = "The host is running an incompatible netplay build. Both players must use the same release.";
++      break;
++    case moderngekko::frontend::NetplayExitCode::CompatibilityMismatch:
++      launch_error = "The extracted game or recomp module does not match the host. Both players need the same game revision and release.";
++      break;
++    case moderngekko::frontend::NetplayExitCode::RoomFull:
++      launch_error = "All four controller slots are already occupied.";
++      break;
++    case moderngekko::frontend::NetplayExitCode::GameRunning:
++      launch_error = "The host has already started the game.";
++      break;
++    case moderngekko::frontend::NetplayExitCode::ServerFull:
++      launch_error = "The netplay server is full.";
++      break;
++    case moderngekko::frontend::NetplayExitCode::NicknameRejected:
++      launch_error = "The nickname was rejected by the host.";
++      break;
++    default:
++      launch_error = "Could not reach the netplay host. Check the host name, UDP port, and firewall.";
++      break;
+     }
+   }
+-
+-  ImGui_ImplSDLRenderer3_Shutdown();
+-  ImGui_ImplSDL3_Shutdown();
+-  ImGui::DestroyContext();
+-  SDL_DestroyRenderer(renderer);
+-  SDL_DestroyWindow(window);
+-  SDL_Quit();
+-  return result;
++  else if (launch_mode == LaunchMode::Host)
++    launch_error = "Could not create the netplay session. Check the UDP port and firewall settings.";
++  else
++    launch_error = "The game session exited with code " + std::to_string(exit_code) + ".";
++  if (logging)
++    launch_error += "\n\nDetails were written to:\n" + PathText(log_path);
++  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Session failed", launch_error.c_str(), nullptr);
++  return 1;
+ }
 diff --git a/tools/moderngekko_port.cpp b/tools/moderngekko_port.cpp
 index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0ce9aa11a7 100644
 --- a/tools/moderngekko_port.cpp
@@ -995,168 +2233,553 @@ index af1c2a5a109ae8d4447b4187ec654a315fce3747..94941f58f27143c2ecafac0eb4065f0c
        Quote(source_root / "vendor/dolphin/module-template") +
        " -B " + Quote(module_build) + " -G Ninja -DCMAKE_BUILD_TYPE=Release" +
 diff --git a/tools/moderngekko_run.cpp b/tools/moderngekko_run.cpp
-index d6b3569e85cc19bdb42ef66fb23fa2d1fcc7d9a0..5503b69bded1d9a1401d33b676fe81553170ed98 100644
+index d6b3569e85cc19bdb42ef66fb23fa2d1fcc7d9a0..3303498427f6e4917f18d952d559a9ace9ceecac 100644
 --- a/tools/moderngekko_run.cpp
 +++ b/tools/moderngekko_run.cpp
-@@ -6,6 +6,10 @@
- #include "netplay_session.hpp"
+@@ -1,470 +1,10 @@
+-#include "cache_affinity.hpp"
+-#include "frontend_config.hpp"
+-#include "dol_patch.hpp"
+-#include "moderngekko/game.hpp"
+-#include "moderngekko/runtime.hpp"
+-#include "netplay_session.hpp"
++#include "frontend_session.hpp"
  
- #include "Common/StringUtil.h"
-+#include "Common/MsgHandler.h"
-+
+-#include "Common/StringUtil.h"
 +#include <SDL3/SDL.h>
 +#include <SDL3/SDL_main.h>
  
- #include <charconv>
- #include <chrono>
-@@ -23,8 +27,12 @@
- // For the affinity/priority setup in main(). WIN32_LEAN_AND_MEAN keeps the
- // winsock and GDI surface out of a translation unit that only needs the
- // processor-topology and process calls.
-+#ifndef WIN32_LEAN_AND_MEAN
- #define WIN32_LEAN_AND_MEAN
-+#endif
-+#ifndef NOMINMAX
- #define NOMINMAX
-+#endif
- #include <windows.h>
- #endif
- 
-@@ -71,7 +79,7 @@ ReadDefaultGame(const std::filesystem::path &user_directory,
-   std::getline(file, path);
-   if (!path.empty() && path.back() == '\r')
-     path.pop_back();
+-#include <charconv>
+-#include <chrono>
+-#include <csignal>
+-#include <cstdlib>
+-#include <exception>
+-#include <filesystem>
+-#include <fstream>
+-#include <iostream>
+-#include <string>
+-#include <thread>
+-#include <vector>
+-
+-#if defined(_WIN32)
+-// For the affinity/priority setup in main(). WIN32_LEAN_AND_MEAN keeps the
+-// winsock and GDI surface out of a translation unit that only needs the
+-// processor-topology and process calls.
+-#define WIN32_LEAN_AND_MEAN
+-#define NOMINMAX
+-#include <windows.h>
+-#endif
+-
+-namespace {
+-#ifndef MODERNGEKKO_RUNNER_NAME
+-#define MODERNGEKKO_RUNNER_NAME "moderngekko-run"
+-#endif
+-
+-#ifndef MODERNGEKKO_USER_DIRECTORY_NAME
+-#define MODERNGEKKO_USER_DIRECTORY_NAME "moderngekko"
+-#endif
+-
+-volatile std::sig_atomic_t s_stop_requested = 0;
+-
+-void HandleStopSignal(int) { s_stop_requested = 1; }
+-
+-void Usage() {
+-  std::cerr << "usage: " MODERNGEKKO_RUNNER_NAME
+-               " [--game <extracted-root>] [--module <path>]\n"
+-               "       [--user-dir <path>] [--title <text>] [--load-state <path>]\n"
+-               "       [--graphics <backend>] [--audio <backend>]\n"
+-               "       [--mods <directory>] [--no-mods]\n"
+-               "       [--wayland] [-X11] [--headless] [--allow-interpreter]\n"
+-               "       [--netplay-host | --netplay-join <host>] "
+-               "[--netplay-port <port>]\n"
+-               "       [--nickname <name>] [--buffer <auto|1-20>] "
+-               "[--controller <device>]...\n"
+-               "       With no --game, boots the path in "
+-               "<user-dir>/default-game.txt.\n";
+-}
+-
+-std::filesystem::path
+-ReadDefaultGame(const std::filesystem::path &user_directory,
+-                const std::filesystem::path &executable_directory) {
+-#ifdef MODERNGEKKO_PORTABLE_DEFAULT_GAME
+-  const std::filesystem::path default_file =
+-      executable_directory / "default-game.txt";
+-#else
+-  const std::filesystem::path default_file =
+-      user_directory / "default-game.txt";
+-#endif
+-  std::ifstream file(default_file);
+-  std::string path;
+-  std::getline(file, path);
+-  if (!path.empty() && path.back() == '\r')
+-    path.pop_back();
 -  std::filesystem::path result(path);
-+  std::filesystem::path result = StringToPath(path);
-   if (result.is_relative())
-     result = executable_directory / result;
-   return result;
-@@ -80,23 +88,23 @@ ReadDefaultGame(const std::filesystem::path &user_directory,
- std::filesystem::path DefaultUserDirectory() {
- #ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
- #if defined(_WIN32)
+-  if (result.is_relative())
+-    result = executable_directory / result;
+-  return result;
+-}
+-
+-std::filesystem::path DefaultUserDirectory() {
+-#ifdef MODERNGEKKO_USER_DIRECTORY_IN_DOCUMENTS
+-#if defined(_WIN32)
 -  if (const char *user_profile = std::getenv("USERPROFILE"))
 -    return std::filesystem::path(user_profile) / "Documents" /
-+  if (const char *user_profile = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "USERPROFILE"))
-+    return StringToPath(user_profile) / "Documents" /
-            MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
+-           MODERNGEKKO_USER_DIRECTORY_NAME;
+-#endif
 -  if (const char *home = std::getenv("HOME"))
 -    return std::filesystem::path(home) / "Documents" /
-+  if (const char *home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
-+    return StringToPath(home) / "Documents" /
-            MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
- #if defined(_WIN32)
+-           MODERNGEKKO_USER_DIRECTORY_NAME;
+-#endif
+-#if defined(_WIN32)
 -  if (const char *local_app_data = std::getenv("LOCALAPPDATA"))
 -    return std::filesystem::path(local_app_data) /
-+  if (const char *local_app_data = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "LOCALAPPDATA"))
-+    return StringToPath(local_app_data) /
-            MODERNGEKKO_USER_DIRECTORY_NAME;
- #endif
+-           MODERNGEKKO_USER_DIRECTORY_NAME;
+-#endif
 -  if (const char *xdg = std::getenv("XDG_DATA_HOME"))
 -    return std::filesystem::path(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
 -  if (const char *home = std::getenv("HOME"))
 -    return std::filesystem::path(home) / ".local" / "share" /
-+  if (const char *xdg = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "XDG_DATA_HOME"))
-+    return StringToPath(xdg) / MODERNGEKKO_USER_DIRECTORY_NAME;
-+  if (const char *home = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "HOME"))
-+    return StringToPath(home) / ".local" / "share" /
-            MODERNGEKKO_USER_DIRECTORY_NAME;
-   return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
- }
-@@ -112,6 +120,8 @@ std::string LibrarySuffix() {
- }
- 
- std::filesystem::path ExecutableDirectory(const char *argv0) {
-+  if (const char *base = SDL_GetBasePath(); base && *base)
-+    return StringToPath(base).lexically_normal();
-   std::error_code ec;
- #if defined(__linux__)
-   const std::filesystem::path proc_executable =
-@@ -121,18 +131,13 @@ std::filesystem::path ExecutableDirectory(const char *argv0) {
-   ec.clear();
- #endif
-   const std::filesystem::path executable =
+-           MODERNGEKKO_USER_DIRECTORY_NAME;
+-  return std::string(MODERNGEKKO_USER_DIRECTORY_NAME) + "-user";
+-}
+-
+-std::string LibrarySuffix() {
+-#if defined(_WIN32)
+-  return ".dll";
+-#elif defined(__APPLE__)
+-  return ".dylib";
+-#else
+-  return ".so";
+-#endif
+-}
+-
+-std::filesystem::path ExecutableDirectory(const char *argv0) {
+-  std::error_code ec;
+-#if defined(__linux__)
+-  const std::filesystem::path proc_executable =
+-      std::filesystem::read_symlink("/proc/self/exe", ec);
+-  if (!ec)
+-    return proc_executable.parent_path();
+-  ec.clear();
+-#endif
+-  const std::filesystem::path executable =
 -      std::filesystem::weakly_canonical(argv0, ec);
-+      std::filesystem::weakly_canonical(StringToPath(argv0), ec);
-   return ec ? std::filesystem::current_path() : executable.parent_path();
- }
- } // namespace
- 
- int RunMain(int argc, char **argv) {
+-  return ec ? std::filesystem::current_path() : executable.parent_path();
+-}
+-} // namespace
+-
+-int RunMain(int argc, char **argv) {
 -#if defined(_WIN32)
 -  if (!std::getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD"))
 -    _putenv_s("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1");
 -#else
 -  setenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0);
 -#endif
-+  SDL_setenv_unsafe("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", "1", 0);
-   moderngekko::RuntimeConfig config;
-   config.user_directory = DefaultUserDirectory();
-   const std::filesystem::path executable_directory =
-@@ -158,11 +163,11 @@ int RunMain(int argc, char **argv) {
-       return argv[++i];
-     };
-     if (arg == "--game")
+-  moderngekko::RuntimeConfig config;
+-  config.user_directory = DefaultUserDirectory();
+-  const std::filesystem::path executable_directory =
+-      ExecutableDirectory(argv[0]);
+-#ifdef MODERNGEKKO_DEFAULT_WINDOW_TITLE
+-  config.window_title = MODERNGEKKO_DEFAULT_WINDOW_TITLE;
+-#endif
+-  std::filesystem::path module_path;
+-  bool use_default_mods = true;
+-  std::optional<moderngekko::frontend::NetplayRole> netplay_role;
+-  std::string netplay_address;
+-  std::optional<std::uint16_t> netplay_port;
+-  std::string netplay_nickname;
+-  std::string netplay_buffer;
+-  std::vector<std::string> netplay_controllers;
+-  for (int i = 1; i < argc; ++i) {
+-    const std::string arg = argv[i];
+-    const auto value = [&](const char *option) -> const char * {
+-      if (i + 1 >= argc) {
+-        std::cerr << option << " requires a value\n";
+-        std::exit(2);
+-      }
+-      return argv[++i];
+-    };
+-    if (arg == "--game")
 -      config.game_root = value("--game");
-+      config.game_root = StringToPath(value("--game"));
-     else if (arg == "--module")
+-    else if (arg == "--module")
 -      module_path = value("--module");
-+      module_path = StringToPath(value("--module"));
-     else if (arg == "--user-dir")
+-    else if (arg == "--user-dir")
 -      config.user_directory = value("--user-dir");
-+      config.user_directory = StringToPath(value("--user-dir"));
-     else if (arg == "--title")
-       config.window_title = value("--title");
-     else if (arg == "--load-state")
-@@ -182,7 +187,7 @@ int RunMain(int argc, char **argv) {
-     else if (arg == "--audio")
-       config.audio.backend = value("--audio");
-     else if (arg == "--mods")
+-    else if (arg == "--title")
+-      config.window_title = value("--title");
+-    else if (arg == "--load-state")
+-    {
+-      // Checked here rather than left to the boot path: a state that is not
+-      // there would otherwise boot to the title screen and look like it worked.
+-      std::filesystem::path state = StringToPath(value("--load-state"));
+-      if (!std::filesystem::is_regular_file(state))
+-      {
+-        std::cerr << "savestate not found: " << PathToString(state) << '\n';
+-        return 2;
+-      }
+-      config.load_state_path = std::move(state);
+-    }
+-    else if (arg == "--graphics")
+-      config.graphics.backend = value("--graphics");
+-    else if (arg == "--audio")
+-      config.audio.backend = value("--audio");
+-    else if (arg == "--mods")
 -      config.mod_directories.emplace_back(value("--mods"));
-+      config.mod_directories.emplace_back(StringToPath(value("--mods")));
-     else if (arg == "--no-mods")
-       use_default_mods = false;
-     else if (arg == "-X11" || arg == "--x11")
-@@ -192,7 +197,7 @@ int RunMain(int argc, char **argv) {
-     else if (arg == "--mute")
-       config.audio.mute = true;
-     else if (arg == "--automation-dir")
+-    else if (arg == "--no-mods")
+-      use_default_mods = false;
+-    else if (arg == "-X11" || arg == "--x11")
+-      config.window_system = moderngekko::WindowSystem::X11;
+-    else if (arg == "--wayland")
+-      config.window_system = moderngekko::WindowSystem::Wayland;
+-    else if (arg == "--mute")
+-      config.audio.mute = true;
+-    else if (arg == "--automation-dir")
 -      config.automation.directory = value("--automation-dir");
-+      config.automation.directory = StringToPath(value("--automation-dir"));
-     else if (arg == "--headless")
-       config.headless = true;
-     else if (arg == "--allow-interpreter")
-@@ -229,12 +234,19 @@ int RunMain(int argc, char **argv) {
-       return 2;
-     }
-   }
-+  if (config.headless) {
-+    Common::RegisterMsgAlertHandler([](const char* caption, const char* text, bool, Common::MsgType) {
-+      std::cerr << "[headless alert] " << (caption ? caption : "") << ": "
-+                << (text ? text : "") << '\n';
-+      return false;
-+    });
-+  }
-   if (config.game_root.empty())
-     config.game_root =
-         ReadDefaultGame(config.user_directory, executable_directory);
-   if (config.game_root.empty()) {
-     std::cerr << "no game configured; use --game once or create "
+-    else if (arg == "--headless")
+-      config.headless = true;
+-    else if (arg == "--allow-interpreter")
+-      config.allow_interpreter = true;
+-    else if (arg == "--netplay-host")
+-      netplay_role = moderngekko::frontend::NetplayRole::Host;
+-    else if (arg == "--netplay-join") {
+-      netplay_role = moderngekko::frontend::NetplayRole::Join;
+-      netplay_address = value("--netplay-join");
+-    } else if (arg == "--netplay-port") {
+-      const std::string port_value = value("--netplay-port");
+-      unsigned int port = 0;
+-      const auto parsed = std::from_chars(
+-          port_value.data(), port_value.data() + port_value.size(), port);
+-      if (parsed.ec != std::errc{} ||
+-          parsed.ptr != port_value.data() + port_value.size() || port == 0 ||
+-          port > 65535) {
+-        std::cerr << "--netplay-port must be between 1 and 65535\n";
+-        return 2;
+-      }
+-      netplay_port = static_cast<std::uint16_t>(port);
+-    } else if (arg == "--nickname")
+-      netplay_nickname = value("--nickname");
+-    else if (arg == "--buffer")
+-      netplay_buffer = value("--buffer");
+-    else if (arg == "--controller")
+-      netplay_controllers.emplace_back(value("--controller"));
+-    else if (arg == "--help" || arg == "-h") {
+-      Usage();
+-      return 0;
+-    } else {
+-      std::cerr << "unknown option: " << arg << '\n';
+-      Usage();
+-      return 2;
+-    }
+-  }
+-  if (config.game_root.empty())
+-    config.game_root =
+-        ReadDefaultGame(config.user_directory, executable_directory);
+-  if (config.game_root.empty()) {
+-    std::cerr << "no game configured; use --game once or create "
 -              << (config.user_directory / "default-game.txt") << '\n';
-+              << PathToString(config.user_directory / "default-game.txt") << '\n';
-     Usage();
-     return 2;
-   }
-@@ -315,8 +327,8 @@ int RunMain(int argc, char **argv) {
- 
-   // Compatibility discovery belongs to the runner, never the runtime library.
-   if (module_path.empty()) {
+-    Usage();
+-    return 2;
+-  }
+-
+-  auto frontend_config =
+-      moderngekko::frontend::LoadConfig(config.user_directory, true);
+-  if (!frontend_config) {
+-    std::cerr << "invalid config.ini: " << frontend_config.error << '\n';
+-    return 2;
+-  }
+-  config.graphics.internal_resolution_scale = frontend_config.dolphin_scale;
+-  if (config.graphics.backend.empty())
+-    config.graphics.backend = frontend_config.graphics_backend;
+-  config.fullscreen = frontend_config.fullscreen;
+-  config.show_fps_in_title = frontend_config.show_fps_in_title;
+-  if (use_default_mods) {
+-    config.mod_directories.push_back(executable_directory / "Mods");
+-    config.mod_directories.push_back(config.user_directory / "Mods");
+-  }
+-
+-  if (!netplay_role && !frontend_config.controller.empty()) {
+-    std::string controller_message;
+-    if (!moderngekko::frontend::EnsureControllerConfig(
+-            config.user_directory, frontend_config.controller,
+-            &controller_message)) {
+-      std::cerr << "controller configuration: " << controller_message << '\n';
+-      return 2;
+-    }
+-    std::cout << "controller configuration: " << controller_message << '\n';
+-  }
+-
+-#ifdef MODERNGEKKO_DOL_PATCH_MANIFEST
+-  bool dol_changed = false;
+-  std::string dol_patch_error;
+-  if (!moderngekko::frontend::ApplyDolPatchManifest(
+-          config.game_root / "sys" / "main.dol",
+-          executable_directory / MODERNGEKKO_DOL_PATCH_MANIFEST, &dol_changed,
+-          &dol_patch_error)) {
+-    std::cerr << "DOL patching failed: " << dol_patch_error << '\n';
+-    return 2;
+-  }
+-  if (dol_changed)
+-    std::cout << "Applied native DOL patches\n";
+-#endif
+-  const auto inspected = moderngekko::InspectGame(config.game_root);
+-  if (!inspected) {
+-    std::cerr << "invalid game: " << inspected.error << '\n';
+-    return 2;
+-  }
+-
+-#ifdef MODERNGEKKO_REQUIRED_DISC_ID
+-  if (inspected.metadata->disc_id != MODERNGEKKO_REQUIRED_DISC_ID) {
+-    std::cerr << "unsupported disc ID: expected "
+-              << MODERNGEKKO_REQUIRED_DISC_ID << ", got "
+-              << inspected.metadata->disc_id << '\n';
+-    return 2;
+-  }
+-#endif
+-#ifdef MODERNGEKKO_REQUIRED_DOL_SHA256
+-  if (inspected.metadata->dol_sha256 != MODERNGEKKO_REQUIRED_DOL_SHA256) {
+-    std::cerr << "unsupported main DOL: this release requires its pinned game build\n";
+-    return 2;
+-  }
+-#endif
+-#ifdef MODERNGEKKO_REQUIRED_REL_SHA256
+-  if (inspected.metadata->rel_sha256 != MODERNGEKKO_REQUIRED_REL_SHA256) {
+-    std::cerr << "unsupported _Main.rel: this release requires its pinned game build\n";
+-    return 2;
+-  }
+-#endif
+-#ifdef MODERNGEKKO_REQUIRED_ASSETS_SHA256
+-  if (inspected.metadata->assets_sha256 !=
+-      MODERNGEKKO_REQUIRED_ASSETS_SHA256) {
+-    std::cerr << "unsupported game assets: this release requires its pinned game build\n";
+-    return 2;
+-  }
+-#endif
+-
+-  // Compatibility discovery belongs to the runner, never the runtime library.
+-  if (module_path.empty()) {
 -    if (const char *env = std::getenv("STATICRECOMP_MODULE"))
 -      module_path = env;
-+    if (const char *env = SDL_GetEnvironmentVariable(SDL_GetEnvironment(), "STATICRECOMP_MODULE"))
-+      module_path = StringToPath(env);
-     else {
-       const std::string module_name =
-           "g" + inspected.metadata->disc_id + "_recomp" + LibrarySuffix();
+-    else {
+-      const std::string module_name =
+-          "g" + inspected.metadata->disc_id + "_recomp" + LibrarySuffix();
+-      const auto bundled = executable_directory / module_name;
+-      const auto user_module =
+-          config.user_directory / "StaticRecompModules" / module_name;
+-      if (std::filesystem::is_regular_file(bundled))
+-        module_path = bundled;
+-      else if (std::filesystem::is_regular_file(user_module))
+-        module_path = user_module;
+-    }
+-  }
+-  if (!module_path.empty())
+-    config.module =
+-        moderngekko::ModuleSource::DynamicPath(std::move(module_path));
+-
+-#if defined(__linux__) || defined(_WIN32)
+-  if (!config.headless && config.graphics.backend.empty())
+-    config.graphics.backend = "Vulkan";
+-#endif
+-
+-  if (netplay_role) {
+-    moderngekko::frontend::NetplayOptions options;
+-    options.role = *netplay_role;
+-    options.address = netplay_address.empty() ? frontend_config.netplay_address
+-                                              : netplay_address;
+-    options.port = netplay_port.value_or(frontend_config.netplay_port);
+-    options.nickname = netplay_nickname.empty()
+-                           ? frontend_config.netplay_nickname
+-                           : netplay_nickname;
+-    options.buffer = netplay_buffer.empty() ? frontend_config.netplay_buffer
+-                                            : netplay_buffer;
+-    const std::vector<std::string> configured_controllers =
+-        moderngekko::frontend::ReadConfiguredControllers(config.user_directory);
+-    options.controllers =
+-        netplay_controllers.empty()
+-            ? (configured_controllers.empty() ? frontend_config.controllers
+-                                              : configured_controllers)
+-            : netplay_controllers;
+-    if (options.controllers.empty() && !frontend_config.controller.empty())
+-      options.controllers.push_back(frontend_config.controller);
+-    if (options.controllers.empty()) {
+-      std::cerr << "netplay requires at least one selected controller\n";
+-      return 2;
+-    }
+-    frontend_config.netplay_address = options.address;
+-    frontend_config.netplay_port = options.port;
+-    frontend_config.netplay_nickname = options.nickname;
+-    frontend_config.netplay_buffer = options.buffer;
+-    frontend_config.controllers = options.controllers;
+-    frontend_config.controller = options.controllers.front();
+-    std::string controller_message;
+-    if (!moderngekko::frontend::EnsureControllerConfig(
+-            config.user_directory, options.controllers, &controller_message)) {
+-      std::cerr << "controller configuration: " << controller_message << '\n';
+-      return 2;
+-    }
+-    std::string save_error;
+-    if (!moderngekko::frontend::SaveConfig(config.user_directory,
+-                                           frontend_config, &save_error)) {
+-      std::cerr << "configuration: " << save_error << '\n';
+-      return 2;
+-    }
+-    std::cerr << "netplay: runner started\n";
+-    return moderngekko::frontend::RunNetplayLobby(
+-        std::move(config), std::move(frontend_config), std::move(options));
+-  }
+-
+-  auto created = moderngekko::Runtime::Create(std::move(config));
+-  if (!created) {
+-    std::cerr << "initialization failed: " << created.error->message << '\n';
+-    return 1;
+-  }
+-  std::cout << "audio backend: " << created.runtime->GetConfig().audio.backend
+-            << '\n';
+-
+-  std::signal(SIGINT, HandleStopSignal);
+-  std::signal(SIGTERM, HandleStopSignal);
+-  std::jthread signal_watcher([&](std::stop_token stop_token) {
+-    while (!stop_token.stop_requested()) {
+-      if (s_stop_requested) {
+-        s_stop_requested = 0;
+-        created.runtime->RequestStop();
+-        return;
+-      }
+-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+-    }
+-  });
+-  const moderngekko::RuntimeRunResult result = created.runtime->Run();
+-  signal_watcher.request_stop();
+-  if (result.error) {
+-    std::cerr << "runtime failed: " << result.error->message << '\n';
+-    return 1;
+-  }
+-  return 0;
+-}
+-
+-#if defined(_WIN32)
+-// Optionally confine the process to the cores that share the largest L3.
+-//
+-// The emulated CPU is a single serial instruction stream, so nothing here is
+-// about parallelism -- core usage stays at 1.00 either way. It is about cache
+-// residency. A recompiled module is one dispatch switch spanning the whole
+-// game, which lives or dies on staying in L3, and on a chip with 3D V-Cache on
+-// one CCD only, Windows migrating the thread between dies makes it repeatedly
+-// lose its working set. Measured on a 9950X3D: 55.41 -> 70.42 fps, +27%.
+-//
+-// This applies to every Dolphin thread, not only the emulated CPU thread, so it
+-// is opt-in. Set MODERNGEKKO_CACHE_AFFINITY=1 to enable it after benchmarking
+-// the target machine.
+-void PinProcessToLargestCache() {
+-  if (!moderngekko::frontend::AffinityEnabled(
+-          std::getenv("MODERNGEKKO_CACHE_AFFINITY")))
+-    return;
+-
+-  DWORD length = 0;
+-  GetLogicalProcessorInformationEx(RelationCache, nullptr, &length);
+-  if (length == 0)
+-    return;
+-  std::vector<char> buffer(length);
+-  if (!GetLogicalProcessorInformationEx(
+-          RelationCache,
+-          reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &length))
+-    return;
+-
+-  const moderngekko::frontend::CacheDomain domain =
+-      moderngekko::frontend::LargestSharedCache(buffer.data(), length);
+-  if (!domain)
+-    return;
+-
+-  if (moderngekko::frontend::ApplyCacheDomain(GetCurrentProcess(), domain).affinity_set) {
+-    std::cout << "[perf] pinned to the cores sharing the largest L3 (" << (domain.size >> 20)
+-              << " MB), mask 0x" << std::hex << static_cast<unsigned long long>(domain.mask)
+-              << std::dec << '\n';
+-  }
+-}
+-#endif
+-
+-int main(int argc, char **argv) {
+-  try {
+-#if defined(_WIN32)
+-    PinProcessToLargestCache();
+-#endif
+-    return RunMain(argc, argv);
+-  } catch (const std::exception &error) {
+-    std::cerr << "fatal error: " << error.what() << '\n';
+-  } catch (...) {
+-    std::cerr << "fatal error: unknown exception\n";
+-  }
+-  return 1;
++// Optional developer entry point. The packaged frontend calls this same
++// session implementation directly and does not need a runner executable.
++int main(int argc, char** argv) {
++  return moderngekko::frontend::RunFrontendSession(argc, argv);
+ }
+diff --git a/tools/netplay_compatibility.cpp b/tools/netplay_compatibility.cpp
+index 54e16406a8a5851a82ccad4dd1ac9c148132c647..8c02904852df33bd9573c90e8f5202ca54359dbd 100644
+--- a/tools/netplay_compatibility.cpp
++++ b/tools/netplay_compatibility.cpp
+@@ -1,6 +1,7 @@
+ #include "netplay_compatibility.hpp"
+ 
+ #include "Common/Crypto/SHA1.h"
++#include "Common/StringUtil.h"
+ #include "Common/Version.h"
+ #include "moderngekko/cpu_state.h"
+ #include "moderngekko/mod_loader.hpp"
+@@ -60,7 +61,7 @@ std::string ModsFingerprint(const RuntimeConfig &config) {
+   for (const ModSource &source : sources) {
+     if (source.kind != ModSource::Kind::DynamicPath)
+       return "attached";
+-    HashString(*context, source.path.filename().string());
++    HashString(*context, PathToString(source.path.filename()));
+     std::ifstream file(source.path, std::ios::binary);
+     if (!file)
+       return "rejected";
+@@ -127,7 +128,7 @@ std::string CompatibilityFingerprint(const RuntimeConfig &config,
+     auto library = std::make_unique<ModuleLibrary>();
+     ModuleLoadResult loaded;
+     if (config.module.kind == ModuleSource::Kind::DynamicPath) {
+-      loaded = library->Open(config.module.path.string(), requirements);
++      loaded = library->Open(PathToString(config.module.path), requirements);
+     } else {
+       loaded = library->Attach(config.module.descriptor, requirements);
+     }
+diff --git a/tools/netplay_session.cpp b/tools/netplay_session.cpp
+index 7ef27ba7d4de410388d57c91168bf35913ea95ad..84912237a6d2c3b80ed702c6281ab486f3be9ccc 100644
+--- a/tools/netplay_session.cpp
++++ b/tools/netplay_session.cpp
+@@ -1,6 +1,7 @@
+ #include "netplay_session.hpp"
+ 
+ #include "netplay_compatibility.hpp"
++#include "Common/StringUtil.h"
+ 
+ #include "Core/Boot/Boot.h"
+ #include "Core/Config/MainSettings.h"
+@@ -381,7 +382,7 @@ bool RunLobbyWindow(RuntimeConfig &runtime_config,
+     }
+ 
+     if (ui.TakeStartRequest())
+-      client.StartGame(runtime_config.game_root.string() + "/sys/main.dol");
++      client.StartGame(PathToString(runtime_config.game_root / "sys/main.dol"));
+     auto boot_data = ui.TakeBootData();
+     if (boot_data) {
+       detail::SetBootSessionData(std::move(boot_data));
+@@ -519,7 +520,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+     return static_cast<int>(NetplayExitCode::InvalidConfiguration);
+ 
+   std::cerr << "netplay: initializing Dolphin services\n";
+-  UICommon::SetUserDirectory(runtime_config.user_directory.string());
++  UICommon::SetUserDirectory(PathToString(runtime_config.user_directory));
+   UICommon::Init();
+   detail::SetExternalUICommon(true);
+ 
+@@ -534,7 +535,7 @@ int RunNetplayLobby(RuntimeConfig runtime_config, ConfigResult frontend_config,
+   Config::SetBase(Config::NETPLAY_USE_INDEX, false);
+ 
+   auto game = std::make_shared<UICommon::GameFile>(
+-      (runtime_config.game_root / "sys/main.dol").string());
++      PathToString(runtime_config.game_root / "sys/main.dol"));
+   if (!game->IsValid()) {
+     detail::SetExternalUICommon(false);
+     UICommon::Shutdown();

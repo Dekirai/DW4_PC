@@ -14,12 +14,29 @@ For explicit headless runs, the runner registers a stderr alert handler before
 frontend/core initialization; questions return no instead of opening Windows
 message boxes. Ordinary windowed behavior is unchanged.
 
+Explicit `--headless-audio --audio Cubeb` diagnostics preserve real device
+mixing in an otherwise headless run. A fresh stream generation must confirm
+actual Cubeb initialization/start; fallback and device failures stop the host
+loop. With `--mute`, successful zero-volume application is required before
+playback. Ordinary headless runs retain NullSound. Automation reports audio
+counters and the existing performance headroom estimate.
+
 The frontend adaptations add a branded GUI entry point, explicit ROM import
 and validation diagnostics, a hidden two-frame image check, and bounded import
-paths with checked export failures and preservation of existing folders. Both
-Windows executables use SDL GUI entry points and consistent UTF-8 path
-boundaries. The manual PowerShell launcher still waits for the actual runner
-exit. See [ROM_IMPORT.md](../docs/ROM_IMPORT.md) for packaging and test scope.
+paths with checked export failures and preservation of existing folders.
+The launcher and optional developer runner share `RunFrontendSession`.
+Graphical Play destroys launcher SDL/ImGui resources before starting the game
+in-process, with a shared diagnostic log; `DW4_PC.exe --run` keeps inherited
+output pipes. The default profile is `savedata` beside the actual EXE, while
+explicit profile paths and legacy data remain supported/preserved. Both
+Windows entry points use SDL's GUI startup and UTF-8 path boundaries. The
+manual PowerShell launcher waits for the integrated game's exit. See
+[ROM_IMPORT.md](../docs/ROM_IMPORT.md) for packaging and test scope.
+
+Automation applies and clears each complete pad state while holding the same
+recursive controller-state lock as the input readers. The lock is released
+before waits, acknowledgments or host callbacks; this prevents a reader from
+observing an intermediate clear during publication.
 
 The pinned runtime's public CPU declaration also differed from its own embedded
 RecompCore chassis and module template: it advertised ABI 4 and inserted an
@@ -50,6 +67,12 @@ must not read ImGui state in that mode. The patch skips only that visual
 callback body. Shader compilation, waiting and result retrieval remain active;
 ordinary windowed progress rendering is unchanged.
 
+The audio diagnostics retain separate host counter ownership across stream
+shutdown and observe DMA/DTK activity, mixer queue events and Cubeb callback
+timing. Resampling, buffering and simulation defaults are unchanged. A
+headless-only Vulkan log identifies the actual initialized adapter. See
+[RECOMP_AUDIO.md](../docs/RECOMP_AUDIO.md) for interpretation and test scope.
+
 The same patch bounds file-system-table recursion before a disc constructor
 traverses untrusted directory entries, rejects zero entry counts, and uses a
 64-bit table-size product. Frontend validation happens after disc construction
@@ -72,6 +95,24 @@ emitted C loop and an independent original-opcode execution. Its fixtures and
 generated code remain ignored. State/timing equivalence is separate from CPU
 performance: use paired hidden runs with `-IdleMode Disabled` and `Enabled` to
 measure actual process CPU cost while checking frame progress and images.
+
+`StaticRecompDw4CacheBatch` targets the verified USA `DCStoreRangeNoSync`
+continuation at `0x8025D3A4`, which appears frequently in the slow opening-movie
+trace. After one real loop-back it combines at most 256 additional cache lines,
+within the same timing slice and one identity-mapped MEM1 BAT region. The real
+`InvalidateICacheLines` path retains native SMC and fallback-JIT invalidation.
+Every original code range is excluded from the batched target, and changed or
+hooked loop code, enabled data-cache emulation, pending exceptions, generic
+idle overrides, REL modules and unsupported mappings reject batching.
+
+The final loop exit remains a real generated dispatch. Native two-cycle charges
+and direct five-cycle cache-hook charges remain separate, matching the current
+generated/runtime path and its timebase residue. Actual dispatch and hook
+counters do not include batched repetitions; the separate `dw4_cache` shutdown
+line reports their count and cycle components. `-CacheMode Disabled` and
+`Enabled` select the option in the startup harness for a same-binary comparison.
+`scripts/test-recomp-cache.ps1` compares the actual emitted loop, independent
+original instruction execution and the policy's register/address/timing effects.
 
 The affected upstream files identify their license as GPL-2.0-or-later. This
 upstream-derived patch retains that license, separately from this

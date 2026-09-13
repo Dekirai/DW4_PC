@@ -31,6 +31,17 @@ targets, not implemented claims. Preserve mod and multiplayer compatibility
 while optimizing; do not remove validation or change gameplay merely for speed.
 The walking preview's host movement, camera and timing do not satisfy this goal.
 
+The owner further requires an integrated PC application: one DW4_PC.exe entry
+point with the original game assets, no separate moderngekko-run.exe process
+required to play, portable save data beside the executable, and an in-game
+ImGui menu opened with F1. Move the current File/View commands into that menu
+and apply supported settings during play. Do not satisfy this by renaming the
+runner or concealing another executable. The Dolphin-derived service/runtime
+dependency and the user-facing PC integration are different concerns; explain
+remaining dependencies accurately. Preserve existing saves while introducing
+the portable layout. ROM selection and automatic asset preparation remain
+required, as do modding, local/online co-op and all earlier acceptance targets.
+
 The owner selected DolRecomp and the recommended ModernGekko template as the
 next implementation path. Prioritize building and validating the original DW4
 recompilation pipeline, using the owner's local tool sources. Keep the existing
