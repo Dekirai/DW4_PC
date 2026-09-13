@@ -25,6 +25,9 @@ remain in `licenses/`. This changes the product's packaging and interface;
 the application still uses a Dolphin-derived runtime for graphics, audio and
 console services. The external game module and Visual C++ libraries also remain,
 so this is not yet a single-file distribution or an emulation-free engine.
+The [built-in module design](RECOMP_BUILTIN_MODULE.md) describes the next step
+for linking the generated game into the EXE while preserving dynamic mods.
+It is design work only; the current package still requires `data/game.dll`.
 
 ## Portable settings
 
@@ -148,3 +151,15 @@ Logs are in `work/recomp-controller-merge-check-e6427a3c/`.
 These checks establish the tested configuration and menu behavior; they do not
 establish physical-key delivery, complete gameplay or independent multiplayer.
 Builds and tests use no GitHub Actions.
+
+### Subsequent cache-policy build
+
+`dist/DW4_Recomp/PC-Preview-20260913-122547/` retains the same integrated keyboard
+editor, embedded resources and external `data/game.dll`, with no `Sys` tree or
+original assets included. Its updated runtime passes the expanded cache-policy
+state/timing checks and bounded original movie/main-menu startup. The final
+short 1x menu window runs near 60 frame-counter advances/s at original speed
+without audio-source replay, while the movie remains slow. See
+[RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md#rebuilt-policy-measurement) for
+the exact hashes, measurements and limitations. This update does not establish
+physical keyboard gameplay or remove the remaining runtime dependencies.

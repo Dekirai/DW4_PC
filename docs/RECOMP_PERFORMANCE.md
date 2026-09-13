@@ -167,7 +167,11 @@ MSVC retained a call to the header helper at the inspected constant timing site;
 caller-boundary removal is not established. Synthetic timing was deferred while
 the owner's interactive game was open. These checks establish numerical and
 state equivalence for the tested inputs, not a frame-rate improvement. The
-later PC-packaging/keyboard build requires separate original-game acceptance.
+later PC-packaging/keyboard build passed a separate Sys-free bundled-module
+startup and reached the original main menu. The owner opened an interactive
+instance during that acceptance period, so it is not an isolated performance
+comparison. See [PC_APPLICATION.md](PC_APPLICATION.md) for the exact package,
+hashes and keyboard/resource checks.
 
 ## Module source identity for the next build
 
@@ -242,3 +246,116 @@ be presented as a same-scene comparison. Neither package sustains original
 movie speed, and audio-source replay remains. Muted device telemetry cannot
 establish audible quality. Evidence and the exact selected samples are retained
 under `work/recomp-startup/` and in `work/recomp-quantizer-comparison.json`.
+
+## Additional guarded cache loops
+
+The cache policy now recognizes the exact `dcbf` reentry at `8025d318` and
+`dcbi` reentry at `8025d2ec`, alongside the original `dcbst` loop at
+`8025d3a4`. With data-cache emulation disabled, the actual Interpreter and
+existing native fallback hook route all three operations through JIT cache
+invalidation and charge five guest cycles per line. The extension retains
+the verified USA module/chunk identity, live instruction checks, supervisor
+mode, exception and lockstep exclusions, code-range exclusions, canonical
+MEM1 bounds and identity IBAT checks. It uses the existing enable switch and
+diagnostic counters.
+
+Each accepted additional line avoids one native dispatch, generated fallback
+call and per-line invalidation entry. The existing range invalidation still
+performs real fallback-JIT and native SMC invalidation. Native and hook cycle
+charges stay separate. Every batch leaves the final loop reentry for real
+execution: `dcbst` and `dcbi` exit through a three-cycle return; `dcbf` takes
+its four-cycle `addi/bdnz/sc` path, raising the system-call exception with
+`SRR0=8025d324`. This is a reduction in host work, not removed guest timing.
+
+`scripts/test-recomp-cache.ps1` extracts all three loops from the actual generated
+module and checks their original DOL instructions and full chunk hash. Its
+independent instruction reference executes the actual Interpreter cache-function
+bodies against synthetic service journals. The emitted paths use the actual
+GXRuntime system-call and exception helpers. The expanded checker records
+155,620,608 checks before its final report-close check, across 73,728 equivalence
+cases, 441,744 timing boundaries, 36,759,072 batched lines and 24,576 terminal system calls,
+with no state, timing or ordered cache-line differences. Each loop also repeats
+the full rejection suite, including data-cache emulation, the `dcbi` privilege
+trap, changed code, exceptions, unsupported mappings and address boundaries.
+Evidence is in `work/recomp-cache/latest.json` and `invocation.json`; the latter
+records the generated source, Interpreter, exception-helper and checker hashes.
+
+The first 90-second comparison of this extension did not show a clear speed
+gain. The new loops produced 15,527,326 candidates but only 184,274 accepted
+batches, compared with 575,033 candidates and 182,262 accepted batches in the
+old build. Counter-aligned CPU costs changed from 69.91/81.47/90.47 to
+68.91/83.02/92.20 ms per advance in the three inspected movie intervals. Both
+runs used the unchanged `0F7C3DA7…` module, 1x Vulkan, neutral controls and Cubeb
+at zero volume. Evidence: `20260913-120413-b5a1e958` and
+`20260913-121230-ff7587c2` under `work/recomp-startup/`.
+
+A subsequent [bounded guard diagnostic](RECOMP_CPU_PROFILING.md#cache-guard-snapshots)
+found EE clear and guest/PPC MSR differences restricted to EE/RI in sampled
+rejected calls. The final policy therefore permits EE clear and only EE/RI
+differences between guest and chassis MSR. The actual cache hook and identity
+IBAT invalidation path do not read these bits. `SyncOut` still publishes guest
+MSR before timing-boundary interrupt delivery, and the final real syscall
+still saves the guest's actual MSR. No MSR bit is changed by batching.
+
+All 16 independent guest/PPC EE/RI combinations are covered by the expanded
+three-loop suite above. IR/DR, every mismatch outside EE/RI, forbidden modes
+and every pending-exception bit remain guarded. These isolated checks do not
+start a game or exercise live JIT metadata, GPU behavior or audio. The earlier
+measurements in this document describe their recorded binaries and must not
+be attributed to the final policy.
+
+### Rebuilt policy measurement
+
+The final local build finished at 12:25:46 UTC on 2026-09-13, with an actual
+module cache hit and all 49 CPU-field/16 descriptor-field ABI checks passing.
+Package `dist/DW4_Recomp/PC-Preview-20260913-122547/` has EXE SHA256
+`1B260DB7F3CDA0F0C80893B40E5E9A83EB2B8B2732DED280860C18374EEAB1CF` and the unchanged
+module SHA256 `0F7C3DA7896E1A076E6672D664023DF92DDE131533C3A4096C490D63D94804E1`.
+The chassis patch SHA256 is
+`8411EF37BCE4D8AF67ED6D2EDBEE8C2CA8DD541430FC0BCA4E1731C1262CD9B7`.
+The final expanded checker passed under PowerShell 7 and Windows PowerShell 5.1.
+
+The final 90-second movie run is
+`work/recomp-startup/20260913-122616-0470c89c/`. It uses the same 1x Vulkan
+settings, observed RTX 5070 Ti, Ryzen 7 7800X3D/32 GB host, fresh neutral profile
+and pre-start Cubeb zero volume as the earlier `120413-b5a1e958` reference.
+No compiler, other test or additional game instance was observed during these
+runs. The CPU probe and cache snapshots were disabled. Both runs exited normally,
+reported zero failed SMC chunks, and rendered the original movie. Original
+input hashes remained unchanged. Actual nearby counter bounds are explicit:
+
+| Reference / final counter bounds | Reference / final advances per second | Reference / final CPU ms per advance |
+| --- | ---: | ---: |
+| 1153–1250 / 1153–1251 | 14.45 / 14.30 | 69.91 / 71.75 |
+| 1302–1400 / 1302–1401 | 12.29 / 12.12 | 81.47 / 83.02 |
+| 1500–1600 / 1501–1601 | 11.07 / 11.00 | 90.47 / 92.34 |
+
+This comparison does **not** demonstrate a frame-rate or process-CPU improvement.
+The small observed regression has not been separated from run-to-run variation.
+DMA replay events in those intervals were 96/129/156 in the reference and
+102/134/161 in the final run, with zero reported device gaps or device errors.
+The movie and its source-audio starvation remain unresolved.
+
+The extension does execute: the final run accepts 266,435 batches covering
+58,050,555 lines, compared with 182,262 batches/42,438,713 lines in the reference.
+Reported native calls fall from 96,361,645 to 79,422,112 and instruction-hook
+calls from 17,411,216 to 1,227,561; the full runs end at different counters
+(1759 and 1751), so these are workload observations rather than a speedup ratio.
+Correctness and reduced call counts alone do not establish the performance gate.
+The measured original movie conversion block remains the next candidate.
+
+The local `work/recomp-expanded-cache-comparison.json` retains all three runs,
+source/binary identities, actual observation bounds and audio/CPU deltas.
+`work/compare-cache-loop-runs.py` only reads those reports; it launches no game.
+Build evidence is `work/recomp-cache-msr-build.log`. Earlier packages, including
+the owner's imported data and saves, remain untouched.
+
+A separate final-package 90-second test used controlled Start presses at 60 and
+80 seconds and visually reached the original Game Start / Option menu. Its
+last 10.0103-second window has 598 frame-counter advances (59.7385/s), reported
+simulation speed 0.997842–1.00274, and 7.0809 process CPU ms per advance. That
+window has no DMA replay/fade, device gaps or device errors. The runtime exits
+normally with unchanged original inputs and no failed SMC chunks. Evidence is
+`work/recomp-startup/20260913-122845-d45261d1/`. This is short 1x main-menu
+acceptance with muted real-device telemetry, not proof of audible quality,
+gameplay, higher-resolution performance or the 60–300 FPS target.

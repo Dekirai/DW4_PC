@@ -1423,7 +1423,7 @@ index e3581cc9386ed6e9485993b7f7231f65a0cd239b..99ec97150130d77e90e5c73b802e80f6
              [](const auto& left, const auto& right) { return left.second > right.second; });
    for (std::size_t i = 0; i < std::min<std::size_t>(dispatch_samples.size(), 16); ++i)
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-index d084fea634a662590dda61faed30b0a1523771bb..c301f655ab9e09ba99f8dcdec767fb9246fe7df4 100644
+index d084fea634a662590dda61faed30b0a1523771bb..9b4e39df7e98ed451ec73372fed5fc6a391e33db 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
 @@ -13,6 +13,7 @@
@@ -1434,7 +1434,7 @@ index d084fea634a662590dda61faed30b0a1523771bb..c301f655ab9e09ba99f8dcdec767fb92
  #include "Core/PowerPC/StaticRecomp/StaticRecompModuleSource.h"
  
  namespace Core
-@@ -177,6 +178,12 @@ private:
+@@ -177,6 +178,13 @@ private:
    std::unordered_map<u32, u64> m_dispatch_samples;
    u64 m_bursts = 0;          // SyncIn..SyncOut native runs (diagnostic)
    u64 m_charged_cycles = 0;  // cycles flushed from module charges (diagnostic)
@@ -1444,10 +1444,11 @@ index d084fea634a662590dda61faed30b0a1523771bb..c301f655ab9e09ba99f8dcdec767fb92
 +  u64 m_dw4_cache_candidates = 0;
 +  u64 m_dw4_cache_accepted = 0;
 +  u64 m_dw4_cache_lines = 0;
++  u32 m_dw4_cache_probe_samples = 0;
  
    // D4 guard state: parallel to m_module->chunk_ranges.
    std::vector<u8> m_chunk_state;
-@@ -210,8 +217,15 @@ private:
+@@ -210,8 +218,15 @@ private:
    mutable u32 m_last_chunk_index = 0;
  
    bool m_collect_dispatch_samples = false;
@@ -1464,7 +1465,7 @@ index d084fea634a662590dda61faed30b0a1523771bb..c301f655ab9e09ba99f8dcdec767fb92
  
  extern StaticRecompCore* g_static_recomp_core;
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
-index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb17bbe3b4 100644
+index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..98cdc75503edf1534283de3dd2cdc6025175a4f3 100644
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
 @@ -6,11 +6,16 @@
@@ -1529,7 +1530,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
              ++m_dispatch_samples[m_guest.pc];
            const u32 runtime_dispatch_address = m_guest.pc;
 +          const bool cache_candidate = m_dw4_cache_enabled &&
-+                                       runtime_dispatch_address == StaticRecompDw4Cache::LOOP_PC;
++                                       StaticRecompDw4Cache::FindLoop(runtime_dispatch_address);
 +          const u32 cache_start_r3 = cache_candidate ? m_guest.gpr[3] : 0;
 +          const u32 cache_start_ctr = cache_candidate ? m_guest.ctr : 0;
 +          const u64 cache_start_hooks = cache_candidate ? m_hook_fallback_instructions : 0;
@@ -1544,7 +1545,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
            if (m_has_rel_modules)
              m_guest.pc = TranslateRelAddress(m_guest.pc);
            ++m_native_dispatches;
-@@ -172,7 +203,105 @@ void StaticRecompCore::Run()
+@@ -172,7 +203,131 @@ void StaticRecompCore::Run()
            // dispatcher back-edge timing check — CoreTiming regains control
            // with at least CachedInterpreter's per-block frequency, so
            // external-interrupt latency matches stock.
@@ -1586,6 +1587,32 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
 +            const bool mapped_bat = batch.lines != 0 &&
 +                (m_system.GetMMU().GetIBATTable()[batch.address >> PowerPC::BAT_INDEX_SHIFT] &
 +                 PowerPC::BAT_MAPPED_BIT) != 0;
++            if constexpr (CollectProbe)
++            {
++              // Bounded guard snapshots belong only to an active diagnostic
++              // window. The ordinary RunImpl<false> has no sampling or I/O.
++              if (m_dispatch_probe.IsActive() && m_dw4_cache_probe_samples < 64 &&
++                  (m_dw4_cache_candidates & 65535u) == 0)
++              {
++                ++m_dw4_cache_probe_samples;
++                const u32 flags = (cache.module_active ? 1u : 0u) |
++                    (cache.running ? 2u : 0u) | (cache.lockstep ? 4u : 0u) |
++                    (cache.chunk_verified ? 8u : 0u) | (cache.chunk_has_hooks ? 16u : 0u) |
++                    (cache.forced_fallback ? 32u : 0u) | (cache.dcache_enabled ? 64u : 0u);
++                std::fprintf(stderr,
++                    "[staticrecomp] cache-probe: pc=%08x next=%08x r3=%08x start_r3=%08x "
++                    "ctr=%08x start_ctr=%08x msr=%08x ppc_msr=%08x pending=%08x "
++                    "exception=%08x program=%08x charge=%lld guest_downcount=%lld "
++                    "downcount=%d hooks=%llu flags=%02x idle=%08x lines=%u mapped_bat=%u\n",
++                    runtime_dispatch_address, m_guest.pc, m_guest.gpr[3], cache_start_r3,
++                    m_guest.ctr, cache_start_ctr, m_guest.msr, cache.ppc_msr,
++                    cache.pending_exceptions, m_guest.exception, m_guest.program_exception,
++                    static_cast<long long>(charge), static_cast<long long>(m_guest.downcount),
++                    cache.downcount,
++                    static_cast<unsigned long long>(cache.completed_hooks), flags,
++                    cache.generic_idle_pc, batch.lines, mapped_bat ? 1u : 0u);
++              }
++            }
 +            if (mapped_bat && StaticRecompDw4Cache::HasIdentityMapping(batch, [&](u32 address) {
 +                  return m_system.GetMMU().JitCache_TranslateAddress(address);
 +                }))
@@ -1651,7 +1678,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
            m_guest.downcount = 0;
            const u64 effective_charge = static_cast<u64>(charge > 0 ? charge : 1);
            ppc.downcount -= static_cast<int>(effective_charge);
-@@ -198,7 +327,7 @@ void StaticRecompCore::Run()
+@@ -198,7 +353,7 @@ void StaticRecompCore::Run()
              m_guest.program_exception = 0;
              ++m_native_exceptions;
            }
@@ -1660,7 +1687,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
              break;  // Hook-raised synchronous exception: deliver via Dolphin below.
            if ((ppc.Exceptions & EXCEPTION_EXTERNAL_INT) != 0 &&
                (m_guest.msr & 0x8000u) != 0 && after_mtmsr(m_guest.pc))
-@@ -218,9 +347,12 @@ void StaticRecompCore::Run()
+@@ -218,9 +373,12 @@ void StaticRecompCore::Run()
          if (m_guest.host_call && IsHostCallAddress(ppc.pc))
          {
            SyncIn();
@@ -1673,7 +1700,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
            if (m_fallback_jit && IsHostCallAddress(m_guest.lr))
              m_fallback_jit->GetBlockCache()->InvalidateICache(m_guest.lr, 4, true);
            if (handled)
-@@ -244,15 +376,22 @@ void StaticRecompCore::Run()
+@@ -244,15 +402,22 @@ void StaticRecompCore::Run()
          // interrupts are delivered at slice start, as in Interpreter::Run.
          if (m_module_active && IsForcedFallbackAddress(ppc.pc))
          {
@@ -1696,7 +1723,7 @@ index d91ec2dc1985c9aaa7e29ff2b99e01120caf4b7e..21ea125248b3fcf4ece362d0ef435beb
            do
            {
              ppc.downcount -= interpreter.SingleStepInner();
-@@ -260,6 +399,8 @@ void StaticRecompCore::Run()
+@@ -260,6 +425,8 @@ void StaticRecompCore::Run()
            } while (!(m_module_active && DispatchableAt(ppc.pc)) &&
                     !IsHostCallAddress(ppc.pc) && ppc.downcount > 0 &&
                     *state_ptr == CPU::State::Running);
@@ -2210,21 +2237,39 @@ index 0000000000000000000000000000000000000000..6bb737a06b099798c7dfe7859d695da5
 +} // namespace StaticRecompDispatchProbe
 diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d98928133b
+index 0000000000000000000000000000000000000000..515f007105a848eeb0d43aa2eb73f2e2962af7d5
 --- /dev/null
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompDw4Cache.h
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,170 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +#pragma once
 +
 +#include <algorithm>
++#include <array>
 +#include <string_view>
 +
 +#include "Core/PowerPC/StaticRecomp/StaticRecompABI.h"
 +
 +namespace StaticRecompDw4Cache
 +{
-+constexpr u32 LOOP_PC = 0x8025d3a4u;
++struct Loop
++{
++  u32 pc;  // addi reentry after the real cache instruction.
++  u32 instruction;
++};
++inline constexpr std::array<Loop, 3> LOOPS{{
++    {0x8025d3a4u, 0x7c00186cu},  // dcbst, terminal blr
++    {0x8025d318u, 0x7c0018acu},  // dcbf, terminal sc
++    {0x8025d2ecu, 0x7c001bacu},  // dcbi, terminal blr
++}};
++
++inline const Loop* FindLoop(u32 pc)
++{
++  for (const auto& loop : LOOPS)
++    if (loop.pc == pc)
++      return &loop;
++  return nullptr;
++}
 +constexpr u32 CHUNK_START = 0x8025c160u;
 +constexpr u32 CHUNK_END = 0x80260160u;
 +constexpr u64 CHUNK_HASH = 0x350b8c917f12ea10ull;
@@ -2257,7 +2302,7 @@ index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d9
 +
 +struct Batch
 +{
-+  u32 address = 0;  // Aligned effective address of the NEXT dcbst.
++  u32 address = 0;  // Aligned effective address of the NEXT cache instruction.
 +  u32 lines = 0;
 +};
 +
@@ -2268,19 +2313,27 @@ index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d9
 +         (static_cast<u32>(p[2]) << 8) | p[3];
 +}
 +
-+// This policy describes additional complete A4 -> A4 dispatches AFTER one
-+// genuine addi/bdnz/dcbst dispatch. It never consumes the final loop exit.
++// This policy describes additional complete loop reentries AFTER one genuine
++// addi/bdnz/cache dispatch. It never consumes the final blr or dcbf's sc exit.
 +inline Batch Prepare(const CPUState& cpu, const Environment& env)
 +{
++  const Loop* loop = FindLoop(env.dispatch_address);
++  // The real dcb* hook and identity-IBAT invalidation path consult neither EE
++  // nor RI. Native MSR changes can leave these two chassis bits stale until
++  // SyncOut; preserve that state rather than synchronizing or changing it here.
++  // All other MSR bits must agree. Pending exceptions still reject batching,
++  // and the same timing endpoint/final real dispatch preserves their delivery.
++  constexpr u32 deferred_msr_bits = PPC_MSR_EE | PPC_MSR_RI;
 +  if (!env.enabled || !env.module_active || !env.running || env.lockstep ||
 +      !env.chunk_verified || env.chunk_has_hooks || env.forced_fallback ||
 +      env.dcache_enabled || env.pending_exceptions != 0 || env.generic_idle_pc != 0 ||
 +      env.game_id != "GDJEB2" ||
-+      env.dispatch_address != LOOP_PC || cpu.pc != LOOP_PC || env.dispatch_charge != 2 ||
++      !loop || cpu.pc != loop->pc || env.dispatch_charge != 2 ||
 +      cpu.downcount != -2 || env.completed_hooks != 1 || env.dispatch_ctr <= 1 ||
 +      cpu.ctr != env.dispatch_ctr - 1 || cpu.ctr <= 1 ||
 +      static_cast<u64>(env.dispatch_r3) + 32 != cpu.gpr[3] ||
-+      cpu.exception != 0 || cpu.program_exception != 0 || cpu.msr != env.ppc_msr)
++      cpu.exception != 0 || cpu.program_exception != 0 ||
++      ((cpu.msr ^ env.ppc_msr) & ~deferred_msr_bits) != 0)
 +    return {};
 +
 +  const auto* module = env.module;
@@ -2293,18 +2346,20 @@ index 0000000000000000000000000000000000000000..ee7ca8fb244360fd460d1ed406d573d9
 +      !module->code_ranges || module->num_code_ranges == 0)
 +    return {};
 +
-+  constexpr u32 required_msr = PPC_MSR_EE | PPC_MSR_IR | PPC_MSR_DR;
++  constexpr u32 required_msr = PPC_MSR_IR | PPC_MSR_DR;
 +  constexpr u32 excluded_msr = PPC_MSR_POW | PPC_MSR_ILE | PPC_MSR_PR | PPC_MSR_SE |
 +                               PPC_MSR_BE | PPC_MSR_IP | PPC_MSR_PM | PPC_MSR_LE;
 +  if ((cpu.msr & required_msr) != required_msr || (cpu.msr & excluded_msr) != 0 ||
 +      !cpu.ram || cpu.ram_size < CHUNK_END - 0x80000000u ||
-+      ReadWord(cpu, LOOP_PC - 4) != 0x7c00186cu ||
-+      ReadWord(cpu, LOOP_PC) != 0x38630020u || ReadWord(cpu, LOOP_PC + 4) != 0x4200fff8u)
++      ReadWord(cpu, loop->pc - 4) != loop->instruction ||
++      ReadWord(cpu, loop->pc) != 0x38630020u ||
++      ReadWord(cpu, loop->pc + 4) != 0x4200fff8u)
 +    return {};
 +
-+  // The real dcbst has already charged five PPC cycles. Its pending two native
++  // The real cache instruction already charged five PPC cycles. Its two native
 +  // cycles still need flushing. Leave a positive slice for a final REAL dispatch;
-+  // preserve its usual 7-cycle overshoot (or 3-cycle terminal addi/bdnz/blr).
++  // preserve its usual 7-cycle overshoot, 3-cycle terminal addi/bdnz/blr, or
++  // 4-cycle addi/bdnz/sc with the actual system-call exception untouched.
 +  const s64 remaining = static_cast<s64>(env.downcount) - 2;
 +  if (remaining <= 7)
 +    return {};

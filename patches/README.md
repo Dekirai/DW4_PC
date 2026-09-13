@@ -116,23 +116,31 @@ generated code remain ignored. State/timing equivalence is separate from CPU
 performance: use paired hidden runs with `-IdleMode Disabled` and `Enabled` to
 measure actual process CPU cost while checking frame progress and images.
 
-`StaticRecompDw4CacheBatch` targets the verified USA `DCStoreRangeNoSync`
-continuation at `0x8025D3A4`, which appears frequently in the slow opening-movie
-trace. After one real loop-back it combines at most 256 additional cache lines,
+`StaticRecompDw4CacheBatch` targets the verified USA cache continuations at
+`0x8025D3A4` (`dcbst`), `0x8025D318` (`dcbf`) and `0x8025D2EC` (`dcbi`).
+After one real loop-back it combines at most 256 additional cache lines,
 within the same timing slice and one identity-mapped MEM1 BAT region. The real
 `InvalidateICacheLines` path retains native SMC and fallback-JIT invalidation.
 Every original code range is excluded from the batched target, and changed or
 hooked loop code, enabled data-cache emulation, pending exceptions, generic
 idle overrides, REL modules and unsupported mappings reject batching.
 
-The final loop exit remains a real generated dispatch. Native two-cycle charges
+The final loop exit remains a real generated dispatch, including `dcbf`'s
+four-cycle system-call path. EE may be clear and guest/PPC MSR may differ only
+in EE/RI, which the guarded invalidation path does not consult. Other MSR
+guards and pending-exception rejection remain. Native two-cycle charges
 and direct five-cycle cache-hook charges remain separate, matching the current
 generated/runtime path and its timebase residue. Actual dispatch and hook
 counters do not include batched repetitions; the separate `dw4_cache` shutdown
 line reports their count and cycle components. `-CacheMode Disabled` and
 `Enabled` select the option in the startup harness for a same-binary comparison.
 `scripts/test-recomp-cache.ps1` compares the actual emitted loop, independent
-original instruction execution and the policy's register/address/timing effects.
+original instruction execution and the policy's register/address/timing effects,
+including all 16 independent guest/PPC EE/RI combinations. The expanded check
+passes 73,728 cases without differences. Bounded optional cache-guard snapshots
+exist only in the active diagnostic probe; ordinary execution does not sample
+or log them. Actual movie measurements have not established a frame-rate gain;
+see [RECOMP_PERFORMANCE.md](../docs/RECOMP_PERFORMANCE.md).
 
 The GXRuntime `psq_quantize_int` helper now constructs its power-of-two factor
 directly as `f32_value((u32)(scale + 127) << 23)` instead of

@@ -138,6 +138,39 @@ current repository build. The preserved pre-quantizer reference is
 `work/recomp-reference-builds/20260913-090202/`, paired with package
 `dist/DW4_Recomp/PC-Preview-20260913-090536/`.
 
+### Cache guard snapshots
+
+An enabled in-process probe can also record up to 64 cache-guard snapshots
+per CPU-core lifetime, at every 65,536th candidate while the probe window is
+active. These bounded stderr records show the live guest/PPC MSR, registers,
+exceptions, dispatch charge, hook count and prepared line count. They are
+compiled only into `RunImpl<true>`; ordinary execution has no snapshot sampling
+or logging. They use the existing probe option and introduce no external
+collector. Diagnostic I/O can perturb that diagnostic run, so its timing is
+not a performance comparison.
+
+The `flags` mask records module-active (1), running (2), lockstep (4), verified
+chunk (8), host hooks (16), forced fallback (32) and enabled data cache (64).
+`lines=0` means preparation rejected the candidate; `mapped_bat=0` in that case
+does not establish a translation failure because the mapping test was skipped.
+
+The 65-second local diagnostic at
+`work/recomp-startup/20260913-121947-52c5c74c/` completed the requested 25–40-second
+probe window and exited normally. Its 37 guard snapshots include 33 with guest
+EE clear, 17 with guest/PPC MSR differences confined to EE/RI, and one with a
+pending exception. None prepared a batch. The source used the earlier guard
+that required EE and exact guest/PPC MSR equality. These are sampled guard
+facts, not exhaustive percentages of all rejected calls. The derived records
+remain in `work/recomp-cache-probe-guards.json`.
+
+That diagnostic EXE SHA256 was
+`4195B4DA1F727C89EFBF3B3FDC7538DDF03E6E2807CE0A64EE85F2E997AEE0C2`;
+the unchanged module was `0F7C3DA7…`. Actual Cubeb initialization/start and zero
+volume were observed. The CPU probe recorded 4,015 samples without failures or
+table overflow; `8040154c` remained the largest raw accumulated sampled-cycle
+site. See [RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md#additional-guarded-cache-loops)
+for the subsequent policy change and its validation.
+
 ## Usage
 
 After resolving the residual session, an example from the repository root is:
