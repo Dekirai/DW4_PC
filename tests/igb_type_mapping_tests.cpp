@@ -6,6 +6,7 @@
 #include "dw4/loader_dependency.hpp"
 #include "dw4/igb_string_pool.hpp"
 #include "dw4/igb_file_factory.hpp"
+#include "dw4/igb_registration_callbacks.hpp"
 
 #include <algorithm>
 #include <array>
@@ -396,8 +397,31 @@ void original_prefix(const std::filesystem::path& supplied) {
     check(f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0 &&
         state->dependencies->body && !state->dependencies->body->released,
         "Native factory wrapper prematurely consumed dependency data or published completion.");
+    const auto registrations=std::make_shared<IgbRegistrationCallbacksServices>();
+    registrations->runtime=bootstrap.type_services();
+    registrations->prerequisites=std::make_shared<IgbRegistrationPrerequisitesState>();
+    const auto type_registration=std::make_shared<IgbTypeRegistrationServices>();
+    type_registration->runtime=bootstrap.type_services();std::uint32_t missing_registration{};
+    registrations->factory=make_native_igb_registration_function_factory(file_factory,type_registration,registrations,
+        [&missing_registration](const IgbRegistrationCallbacksCall& call)->std::shared_ptr<IgbRegistrationCallbacksOperation>{
+            if(call.kind==IgbRegistrationCallbacksServiceKind::invoke_function)missing_registration=call.function;return {};
+        });
+    file_factory->factory=make_native_igb_file_registration_factory(registrations);
+    const auto unknown_prerequisites=invocation.resume(services);
+    check(!unknown_prerequisites.completed && missing_registration==0 && !registrations->prerequisites->initialized,
+        "File registration inferred unrepresented prerequisite state.");
+    // Explicit cold-state inputs for the once guard, alongside the prior
+    // prepared loader/metadata profile. No prerequisite class body is supplied.
+    registrations->prerequisites->initialized=0;registrations->prerequisites->started=0;
+    const auto first_class=invocation.resume(services);
+    check(!first_class.completed && missing_registration==0x800238a8 && registrations->prerequisites->initialized==1 &&
+        registrations->prerequisites->started==1 && !file_factory->file_metadata,
+        "Native prerequisite registration skipped the first required thread-manager class or invented file metadata.");
+    check(!invocation.resume(services).completed && missing_registration==0x800238a8 && allocations==1 && samples==1 &&
+        f.trace.size()==calls && f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0,
+        "Pending prerequisite callback replayed the original decoder prefix or bypassed its selected function.");
     std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched.\n";
-    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native getter/path interning/synchronous request/file wrapper reached registration8002F178.\n";
+    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native file registration/callback runner/once guard reached thread-manager registration800238A8.\n";
 }
 }
 int main(int argc,char** argv) {

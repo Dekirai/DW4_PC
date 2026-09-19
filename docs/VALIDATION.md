@@ -1,5 +1,66 @@
 # Local validation
 
+## Native type registration, callbacks and scalar defaults
+
+Validated locally on 2026-09-19. Native `80066204` type registration now
+composes the actual deferred callback-list constructor and append. The file
+registration entry uses its original argument identities and canonical metadata
+cell, actual callback runner and prerequisite once guard. Exact int/bool field
+virtuals now perform original default-byte copying inside the object initializer.
+See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 151/151 CTest suites passed locally with four jobs; no compiler warnings |
+| Generic type registration | 132 checks covering all low flag combinations, initial pool/cache order, metadata publication, abstract-byte truncation, full-word release, fresh filter/layout state, native callback-list construction/append, suspension, nested registration and retained failures |
+| Callback lists and prerequisites | 338 checks for constructor/append, captured count/live backing, nonlinear capacity growth, physical failure prefixes, callback cleanup, all nonzero once-byte values, exact file arguments, ownership and native adapters |
+| Scalar field defaults | 96 checks for exact int/bool bindings, physical byte copies, overlapping ranges, captured fields, missing/null/released state, header aliases, and actual initializer composition writing cookie `0xFADA` and a Boolean default |
+| Original decoder prefix | 392 original-inclusive / 107 synthetic checks; actual file registration/runner/once guard reaches missing thread-manager registration `800238A8`, retaining cursor 5,381, dependency body 2,453 bytes, loading=1 and succeeded=0 |
+| Player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Registrar instruction comparison | 1,662 cases, 226,700 original instructions at 285 addresses, zero differences, including 501 bounded failure prefixes; separate 31-instruction `8002F1A0` argument/metadata-cell alias proof matched |
+| Scalar instruction comparison | 1,544 cases, 196,106 original instructions at 51 addresses, zero differences, including 320 initial null-read failures |
+| Guard/runner instruction comparison | 677 cases, 15,794 original instructions at 93 addresses, zero differences, including 467 callback/null failure prefixes |
+
+The registrar corpus executes actual `80066204`, its stack string preparation,
+callback-list constructor and append. Parent linkage, names, metadata allocation,
+registry publication, layout, filter operations and allocator callbacks remain
+explicit prepared endpoints. Callback backing allocations have explicit physical
+ranges: malformed writes beyond them compare the reached count-publication and
+bounded failure prefix, not hypothetical original heap contents or hardware
+exception behavior. The direct file argument proof isolates its prerequisite
+and generic-registration call boundaries.
+
+The scalar corpus executes original copy wrappers, byte-copy body and verified
+leaves without prepared internal callees. Whole-range validation is the native
+profile; it does not qualify partial malformed copies across missing storage.
+The guard/runner corpus executes actual `80066188`, `8003E85C`, `80021B94` and
+`8003E848`, with target callbacks and physical free operations prepared. Both
+oracles and production ordering received independent source review.
+
+The original-data prefix keeps its earlier prepared metadata/list, loader,
+timer and string-pool allocation state. It additionally supplies explicit cold
+prerequisite bytes after verifying that missing state remains pending. Native
+code sets the once flags before entering the first thread-manager registration.
+It does not provide a successful prerequisite body or manufacture file metadata.
+This is not completed dependency decoding, full registration or original boot.
+Actual prerequisite and parent metadata construction, field registration/layout,
+reference handlers, automatically constructed directory lists and complete
+loader/decoder lifecycle remain required.
+
+Final core SHA256:
+`B545577505570763D8F046AF9646536D51A1E7633999591894DF66646C5C146D`.
+Ignored build/integration evidence: `work/native-registration-final-build.log`,
+`work/native-registration-prefix.log`, `work/native-registration-player.log`
+and `work/native-registration-verifier.log`. Original comparison reports retain
+their final driver, production-library and covered-source hashes in
+`work/native-type-registration-result.json`,
+`work/native-scalar-field-defaults-result.json` and
+`work/native-registration-callbacks-result.json`. No interactive preview or
+GitHub Actions ran; the walking preview is unchanged.
+
 ## Native reflected file construction and post-default pools
 
 Validated locally on 2026-09-19. Native file factory `8002EBEC` now enters the

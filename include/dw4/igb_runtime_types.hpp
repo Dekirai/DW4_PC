@@ -15,6 +15,10 @@ struct IgbRuntimeNameSource {std::shared_ptr<IgbScratchBuffer> buffer;std::uint3
 SystemStageString igb_runtime_read_name(const IgbRuntimeNameSource& source);
 
 // Canonical runtime field instances, not serialized IgbFieldType records.
+struct IgbRuntimeFieldDefaultSource {
+    std::shared_ptr<IgbScratchBuffer> buffer;
+    std::uint32_t offset{};
+};
 struct IgbDecodeRuntimeField {
     std::shared_ptr<ModelSceneObject> owner;
     std::uint32_t offset{}; // +08.
@@ -24,6 +28,9 @@ struct IgbDecodeRuntimeField {
     std::uint32_t reference_word{1};
     std::uint8_t flag_25{}; // Zero is counted by original8006603C.
     std::optional<std::uint8_t> default_mode; // Signed byte+24, read by80063DD0.
+    std::optional<std::uint32_t> vtable_word; // Physical descriptor+00.
+    // Descriptor+20 pointer. Absence is unknown; a null buffer is known null.
+    std::optional<IgbRuntimeFieldDefaultSource> default_bytes;
 };
 struct IgbDecodeFieldRegistry {
     using Storage=std::vector<std::shared_ptr<IgbDecodeRuntimeField>>;
@@ -50,6 +57,8 @@ struct IgbRuntimeMetaType {
     std::optional<std::uint32_t> type_word; // +5C, published through ArkCore+394.
     std::optional<std::uint32_t> instance_count; // +2C, wrapping live count.
     std::optional<std::shared_ptr<IgbObjectInstanceList>> instances; // +30.
+    std::optional<std::uint32_t> post_layout_callback; // +4C, zero is a null function.
+    std::optional<std::uint32_t> field_callback; // +54, assigned by80066204.
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 
@@ -68,6 +77,10 @@ struct IgbRuntimeTypeRegistry {
     std::optional<std::shared_ptr<SystemStageLoader>> loader;
     std::optional<std::uint32_t> vtable_offset; // +394, captured by800667F4.
     std::optional<std::uint8_t> field_initialization_enabled; // +14 gate in80066F40.
+    std::optional<std::shared_ptr<ModelSceneObject>> registration_callback_pool; // +34, callback-list backing allocation.
+    std::optional<std::shared_ptr<ModelSceneObject>> registration_filter_pool; // +60.
+    std::optional<std::int32_t> registration_filter_enabled; // +64.
+    std::optional<std::shared_ptr<ModelSceneObject>> registration_filter_names; // +68.
 };
 struct IgbRuntimeNameField {
     std::uint32_t offset{0x1c}; // Descriptor8056176C +08, registered _name.

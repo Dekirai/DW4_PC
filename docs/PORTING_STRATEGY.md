@@ -137,6 +137,16 @@ retains explicit pool preparation. Actual file/parent metadata registration,
 field defaults, pool initialization/allocation/release and complete dependency
 decoding still need connection. See [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
 [IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+The actual registration runner/once guard now reaches prerequisite thread-manager
+registration `800238A8` with explicit cold flag inputs. The generic type registrar
+and callback-list constructor/append preserve original flag and publication
+order. Concrete int/bool default handlers copy verified physical bytes inside
+initialization. Continue through prerequisite registration, actual parent/field
+construction and reference-driven directory list allocation; do not substitute
+name-only metadata or null pointers for those constructed owners. See
+[IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
 Reuse existing document decoders and
 canonical native owners where their behavior agrees; parsing alone must not
 set the original ready/success fields. Pool/factory operations, loader lifecycle,

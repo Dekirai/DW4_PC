@@ -97,11 +97,16 @@ Directory-path preparation and dependency-table processing now connect native
 ArkCore loader access, string-table interning and synchronous dependency requests.
 With explicitly prepared loader/string-pool allocation state, the supplied prefix
 enters the native `igIGBFile` factory `8002EBEC` and reaches its required class
-registration `8002F178`. Reflected allocation, header/field-pass orchestration
+registration `8002F178`. The actual runner and prerequisite once guard now
+reach thread-manager registration `800238A8` with explicit cold flag inputs.
+Generic type registration and callback-list operations are reconstructed;
+their remaining parent, field, registry and layout bodies stay explicit.
+Concrete int/bool field defaults now write through the native initializer.
+Reflected allocation, header/field-pass orchestration
 and the concrete file post-default pool assignments are reconstructed, with
 prepared metadata and allocator/field endpoints in focused tests. One serialized
 field class remains unmatched; loading is unfinished. Continue through actual
-file and parent class registration, their reached field defaults and pool
+prerequisite classes, file and parent class registration, their reached field defaults and pool
 allocation, complete runtime factories, string-pool
 initialization/arena allocation/release, object population and post-load callbacks, plus decoder
 cleanup and loader queue/lifecycle work. Reuse the existing checked asset
@@ -112,6 +117,10 @@ with a successful parse. See [LOADER_REQUEST.md](LOADER_REQUEST.md),
 The new construction boundaries and evidence are documented in
 [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
 [IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+Continue the documented registration and reference/list construction work in
+[IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
 
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining

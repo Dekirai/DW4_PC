@@ -11,9 +11,12 @@ The file wrapper captures its incoming pool, calls `8002F178`, then reloads the
 canonical `igIGBFile` metadata global `80561A04`. The registration wrapper
 enters `80066188(8002F1A0)`: it invokes that callback, and if a callback list is
 returned, calls its captured logical prefix through live physical backing and
-releases the list. Registration remains an explicit endpoint here. The presence
-of a metadata global does not establish that the registration operation can be
-skipped.
+releases the list. The native registration adapter now connects this runner,
+the prerequisite once guard, and the generic type-registration caller. Actual
+prerequisite/parent/field registration bodies remain reached boundaries. The
+presence of a metadata global does not establish that registration can be skipped.
+See [IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md).
 
 The reflected caller shares `IgbRuntimeMetaType` with the runtime type registry.
 Its newly represented factory fields are optional: absent means unrecovered

@@ -81,8 +81,9 @@ ArkCore owner `80562100` field `+40`, separately from direct loader global
 `80562104`. Native interning preserves ordered table search/insertion, live mutex
 selection and full-word string references. With explicitly prepared loader and
 string-pool allocation state, the original prefix enters file factory
-`8002EBEC` and reaches class registration `8002F178`; it has not loaded all 223
-dependencies. The reflected factory now owns original redirect/pool/allocation
+`8002EBEC`, its `8002F178` registration runner and prerequisite once guard. With
+explicit cold prerequisite flags it reaches missing thread-manager registration
+`800238A8`; it has not loaded all 223 dependencies. The reflected factory now owns original redirect/pool/allocation
 selection and calls the reconstructed object initializer. Explicit physical
 storage and typed bindings preserve header writes, fresh metadata/virtual reads,
 three captured field ranges and instance-count publication. Concrete file
@@ -91,6 +92,15 @@ manager pool lookup. Registration, field defaults and allocation services remain
 explicit; a prepared empty field list does not establish original construction.
 See [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
 [IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+The generic `80066204` registrar now shares the file's canonical metadata cell,
+preserves original busy/parent/configuration/finalization flags and connects the
+actual deferred callback-list constructor and append. Parent metadata linkage,
+field registration, registry publication and layout remain reached operations.
+Concrete int/bool field virtuals copy physical default bytes, including overlap,
+inside the actual initializer; serialized names do not select these handlers.
+See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
 Pool-name table `80052554` uses the recovered memory-manager selection
 and original 46-name lookup to obtain numeric handles, with list construction
 and allocation still explicit.

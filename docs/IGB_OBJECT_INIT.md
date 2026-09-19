@@ -5,6 +5,9 @@
 dispatcher `80063DD0`. It initializes an explicitly represented allocation and
 typed file binding. The binding describes storage, not a successfully
 constructed original object. Concrete field bodies remain separate operations.
+Verified integer and boolean bodies are now available through
+[IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md); reference/list handlers and the
+file's actual descriptor/default storage still require reconstruction.
 
 ## Header and allocation ownership
 

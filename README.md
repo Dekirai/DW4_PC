@@ -82,12 +82,17 @@ directory-path and dependency-table processing. The supplied-data prefix reads
 the dependency block, resolves the canonical ArkCore loader, interns its base
 path and enters the original synchronous dependency request. With explicitly
 prepared loader/string-pool allocation state, it enters the native `igIGBFile`
-factory and stops at its required class registration `8002F178`; one unsupported
-serialized field class remains null. The reflected allocation caller, object
+factory and its registration wrapper. With explicit cold prerequisite flags,
+the callback runner and once guard reach thread-manager registration `800238A8`;
+one unsupported serialized field class remains null. The reflected allocation caller, object
 header initialization, three field-pass callers and concrete file post-default
 pool assignments are now reconstructed. Their focused tests use explicit
 metadata, allocator and field bodies; actual class registration and concrete
 field defaults remain required before this original dependency can be created.
+The generic type registrar now preserves original parent/default/registry/layout
+ordering and deferred callback lists. Concrete integer and boolean field
+handlers perform the original default-byte copies inside the object initializer;
+reference fields and automatically constructed directory lists remain required.
 The separate native pool-name table and
 original 46-name lookup are also implemented. Loading is still incomplete.
 Full runtime initialization, concrete factories,
@@ -102,6 +107,9 @@ object population, post-load work and cleanup remain required. See
 [IGB_FILE_FACTORY.md](docs/IGB_FILE_FACTORY.md),
 [IGB_OBJECT_INIT.md](docs/IGB_OBJECT_INIT.md),
 [IGB_FILE_POOLS.md](docs/IGB_FILE_POOLS.md),
+[IGB_TYPE_REGISTRATION.md](docs/IGB_TYPE_REGISTRATION.md),
+[IGB_REGISTRATION_CALLBACKS.md](docs/IGB_REGISTRATION_CALLBACKS.md),
+[IGB_FIELD_DEFAULTS.md](docs/IGB_FIELD_DEFAULTS.md),
 [NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md) and
 [IGB_DECODE.md](docs/IGB_DECODE.md).
 The specialized camera view-inverse helper is also recovered; complete camera
