@@ -43,8 +43,10 @@ struct IgbDecodeFieldRegistry {
     // Physical pointer storage is independent of a bound field-owner mapping.
     std::shared_ptr<IgbScratchBuffer> backing_bytes;
     std::uint32_t backing_address{};
+    std::uint32_t backing_offset{};
 private:
     friend class IgbFieldRegistryConstructorInvocation;
+    friend class IgbPointerListInvocation;
     std::vector<std::shared_ptr<void>> retained_backings_;
     std::weak_ptr<void> construction_active_;
     bool construction_fault_{};
@@ -93,6 +95,15 @@ struct IgbRuntimeTypeList {
     using Storage=std::vector<std::shared_ptr<IgbRuntimeMetaType>>;
     std::int32_t count{},capacity{}; // Count +0C; capacity is not read by lookup.
     std::shared_ptr<Storage> backing; // +08, reloaded at each original read site.
+    std::uint32_t reference_word{1};
+    std::shared_ptr<IgbScratchBuffer> backing_bytes;
+    std::uint32_t backing_address{},backing_offset{};
+private:
+    friend class IgbTypeListConstructorInvocation;
+    friend class IgbPointerListInvocation;
+    std::vector<std::shared_ptr<void>> retained_backings_;
+    std::weak_ptr<void> construction_active_;
+    bool construction_fault_{};
 };
 struct IgbRuntimeTypeRegistry {
     std::uint8_t enabled{}; // Singleton80562100 +00.

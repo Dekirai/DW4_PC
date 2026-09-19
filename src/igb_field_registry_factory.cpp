@@ -88,7 +88,7 @@ MessengerCallResult IgbFieldRegistryConstructorInvocation::resume(std::shared_pt
         s.base.reset();check();igb_bootstrap_write_word(s.object,0,0x80475c54);s.phase=P::clear_backing;break;
     }
     case P::clear_backing:
-        igb_bootstrap_write_word(s.object,8,0);retain_backing();s.fields->backing.reset();s.fields->backing_bytes.reset();s.fields->backing_address=0;
+        igb_bootstrap_write_word(s.object,8,0);retain_backing();s.fields->backing.reset();s.fields->backing_bytes.reset();s.fields->backing_address=0;s.fields->backing_offset=0;
         s.phase=P::clear_count;break;
     case P::clear_count:
         igb_bootstrap_write_word(s.object,12,0);s.fields->count=0;
@@ -104,6 +104,7 @@ MessengerCallResult IgbFieldRegistryConstructorInvocation::resume(std::shared_pt
         s.fields->backing_address=address;
         s.fields->backing=address?s.incoming.fields:nullptr;
         s.fields->backing_bytes=address && s.incoming.allocation.storage?s.incoming.allocation.storage->bytes:nullptr;
+        s.fields->backing_offset=address?s.incoming.allocation.offset:0;
         s.incoming={};s.phase=P::finish;break;
     }
     case P::finish:

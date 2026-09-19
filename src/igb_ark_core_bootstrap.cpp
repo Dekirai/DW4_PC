@@ -148,7 +148,8 @@ MessengerCallResult IgbArkCoreBootstrapInvocation::resume(std::shared_ptr<IgbArk
     }
     case P::capacity:
         s.types=s.object.core->types;if(!s.types)fail("ArkCore bootstrap dereferences a null main type list.");
-        if(const auto backing=s.types->backing){auto& call=select(K::backing_size,P::after_size);call.types=s.types;call.type_backing=backing;}
+        if(s.types->backing_address || s.types->backing){auto& call=select(K::backing_size,P::after_size);call.types=s.types;call.type_backing=s.types->backing;
+            call.type_backing_bytes=s.types->backing_bytes;call.type_backing_address=s.types->backing_address;call.type_backing_offset=s.types->backing_offset;}
         else{s.returned=0;s.phase=P::after_size;}break;
     case P::after_size:
         clear();s.phase=(s.returned>>2u)>1024u?P::after_reserve:P::reserve;break;

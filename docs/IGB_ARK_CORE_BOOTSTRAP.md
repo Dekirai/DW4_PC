@@ -65,3 +65,17 @@ registration wrappers and callback runner execute. Registration bodies return
 explicitly prepared null callback lists; manager/list/allocator/platform and
 final metadata-getter endpoints remain prepared. This establishes caller
 ordering and failure prefixes within that profile, not complete registration.
+
+A subsequent integration now binds actual metadata-element list factories and
+native pointer-list capacity/reserve operations. Both initial lists are
+constructed physically; the first grows from four to 1,536 pointer slots for
+the original reserve request 1,024. Byte-only backing with no typed pointer
+mapping still triggers the original capacity query. The selected size call
+captures backing bytes/address/offset independently of later list replacement.
+The test reaches required `8002A0D0` while ArkCore remains disabled; platform,
+manager, pool/allocation and callback allocation endpoints remain prepared.
+Separate metadata integration enters that real registration and reaches
+specialized `igObject` defaults. See [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
+[IGB_POINTER_LIST.md](IGB_POINTER_LIST.md),
+[IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md) and
+[VALIDATION.md](VALIDATION.md) for current evidence and remaining boundaries.

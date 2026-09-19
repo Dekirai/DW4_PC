@@ -102,10 +102,17 @@ complete cold startup or switch the supplied-data test to a different runtime mo
 The actual cold ArkCore constructor and bootstrap caller now preserve the original
 disabled initialization phase. A separate composed test enters real metadata
 registration and direct constructors, publishes the canonical busy metadata,
-and reaches the missing `igObject` parent registration before enabling reflection.
-Parent-field inheritance and metadata-name assignment are also reconstructed.
-Initial core-list allocation/reserve, allocator services and remaining class
-registrations are still explicit; this is not a complete native game boot. See
+and now enters actual `igObject` parent registration, name interning and layout
+probe before reaching missing specialized field defaults `80066B7C`. Parent-field
+inheritance and metadata-name assignment are also reconstructed. Native typed
+list factories and raw append/reserve preserve allocator queries, physical
+zeroing, pointer publication and count order. A separate cold integration uses
+actual initial list construction and reserve before metadata registration.
+Allocator services and remaining field/class registrations are still explicit;
+this is not a complete native game boot. See
+[IGB_OBJECT_REGISTRATION.md](docs/IGB_OBJECT_REGISTRATION.md),
+[IGB_TYPE_LIST_FACTORY.md](docs/IGB_TYPE_LIST_FACTORY.md),
+[IGB_POINTER_LIST.md](docs/IGB_POINTER_LIST.md),
 [IGB_ARK_CORE_BOOTSTRAP.md](docs/IGB_ARK_CORE_BOOTSTRAP.md),
 [IGB_METADATA_REGISTRATION.md](docs/IGB_METADATA_REGISTRATION.md) and
 [IGB_METADATA_OPERATIONS.md](docs/IGB_METADATA_OPERATIONS.md).

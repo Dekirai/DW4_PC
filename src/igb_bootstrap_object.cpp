@@ -24,13 +24,14 @@ void synchronize_reference(const IgbBootstrapPointer& pointer,std::uint32_t rela
         if(binding.file)binding.file->reference_word=word;
         if(binding.metadata)binding.metadata->reference_word=word;
         if(binding.fields)binding.fields->reference_word=word;
+        if(binding.types)binding.types->reference_word=word;
     }
 }
 template<class T,class Get> std::shared_ptr<T> bound(const IgbBootstrapPointer& pointer,Get get) {
     if(!pointer.storage || igb_bootstrap_address(pointer)==0)fail("Bootstrap object requires an explicit typed allocation binding.");
     std::shared_ptr<T> result;unsigned selected_kind{};
     for(const auto& binding:pointer.storage->bindings)if(binding.offset==pointer.offset) {
-        const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u);
+        const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u)|(binding.types?8u:0u);
         if((kind && (kind&(kind-1u))) || (kind && selected_kind && kind!=selected_kind))
             fail("Bootstrap allocation has conflicting object kinds at one offset.");
         if(kind)selected_kind=kind;
@@ -89,6 +90,9 @@ std::shared_ptr<IgbRuntimeMetaType> igb_bootstrap_metadata(const IgbBootstrapPoi
 }
 std::shared_ptr<IgbDecodeFieldRegistry> igb_bootstrap_fields(const IgbBootstrapPointer& pointer){
     return bound<IgbDecodeFieldRegistry>(pointer,[](const IgbObjectBinding& b){return b.fields;});
+}
+std::shared_ptr<IgbRuntimeTypeList> igb_bootstrap_types(const IgbBootstrapPointer& pointer){
+    return bound<IgbRuntimeTypeList>(pointer,[](const IgbObjectBinding& b){return b.types;});
 }
 
 struct IgbRawAllocationInvocation::Impl {

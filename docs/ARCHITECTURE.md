@@ -98,7 +98,8 @@ The generic `80066204` registrar now shares the file's canonical metadata cell,
 preserves original busy/parent/configuration/finalization flags and connects the
 actual deferred callback-list constructor and append. Native parent metadata
 linkage preserves child publication, live layout reads and inherited field
-retains; raw list append/growth remains explicit. Native name assignment shares
+retains; native raw list append/growth now preserves physical pointer and count
+publication with explicit allocator endpoints. Native name assignment shares
 the canonical string pool and preserves interning, release and publication order.
 Field registration, registry publication and layout remain reached operations.
 Concrete int/bool field virtuals copy physical default bytes, including overlap,
@@ -113,12 +114,20 @@ registration uses the same native manager access with its captured handle.
 ArkCore construction `8003D234` and bootstrap caller `8003D2F8` now preserve
 physical stores and the actual disabled-to-enabled transition. The canonical
 `igMetaObject` wrapper/getters compose with the registrar and direct constructors;
-a cold integration reaches missing parent registration `80066B08` with busy
-metadata published and reflection still disabled. The existing enabled decoder
+a cold integration now constructs distinct `igMetaObject` and `igObject`
+metadata, enters actual root-parent registration, naming and layout probe, then
+reaches specialized defaults `80066B7C` with reflection still disabled.
+Native typed list factories and raw append/reserve share canonical metadata or
+field owners without reinterpreting their types. A separate cold prefix composes
+actual initial list constructors and reserve, including physical backing with
+no typed pointer mapping. The existing enabled decoder
 fixture remains separate. An enabled core with a null fundamental metadata cache
 recurses before publication; the adapter reports that invalid-startup cycle
-instead of manufacturing metadata. Initial core lists/reserve, manager/platform
-operations, field descriptors and later registrations remain explicit. See
+instead of manufacturing metadata. Allocator and manager/platform operations,
+field descriptors and later registrations remain explicit. See
+[IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md),
+[IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
+[IGB_POINTER_LIST.md](IGB_POINTER_LIST.md),
 [IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),
 [IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md) and
 [IGB_METADATA_OPERATIONS.md](IGB_METADATA_OPERATIONS.md).

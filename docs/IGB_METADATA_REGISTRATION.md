@@ -103,10 +103,13 @@ are recorded separately in [VALIDATION.md](VALIDATION.md).
 A composed cold-start fixture runs the actual ArkCore constructor and bootstrap
 caller into the native registration runner, registrar, disabled metadata factory,
 metadata constructor and internal-field-list constructor. It suspends first at
-a prepared physical backing allocator, then reaches the real missing `igObject`
-parent registration `80066B08`. The canonical metadata is constructed and
-published with busy flag `8`, while ArkCore remains disabled and later type-count
-snapshots remain unwritten. Platform/manager work, initial ArkCore list owners,
-their reserve operation and physical allocation endpoints are explicitly
-prepared. No ready metadata
-seed, registration-success callback or premature enabled store is used.
+a prepared physical backing allocator, then enters the actual `igObject`
+parent registration `80066B08`. A distinct second metadata/list pair is
+constructed, the real root callback list is initialized, and native string
+interning and the base-object probe run. It reaches the specialized descriptor
+defaults `80066B7C`, with `igMetaObject` busy flag `8` and `igObject` flags `9`.
+ArkCore remains disabled and later type-count snapshots remain unwritten.
+Platform/manager work, initial ArkCore list owners, their reserve operation,
+physical allocation and string-arena allocation endpoints are explicitly
+prepared. No ready metadata seed, registration-success callback or premature
+enabled store is used. See [IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md).

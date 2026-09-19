@@ -22,7 +22,9 @@ iteration reloads the original parent's current field backing through
 fields skip that retain but still reach raw append. A failing or suspended
 append does not roll back the increment or earlier parent/layout publication.
 
-Child-list construction and raw list append/growth remain explicit services.
+Child-list construction and raw list append/growth can now bind the actual
+native implementations in [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md)
+and [IGB_POINTER_LIST.md](IGB_POINTER_LIST.md); allocator services remain explicit.
 An empty native vector is not an implementation of their allocation, capacity
 or initialized-pointer requirements. The pool adapter composes the actual
 manager lookup and preserves the distinction between absent and null state.
@@ -68,5 +70,5 @@ See [VALIDATION.md](VALIDATION.md) for the qualified library identity and report
 
 These operations replace required registration endpoints. They do not establish
 complete field descriptor construction, type publication/layout, an implemented
-list allocator or full engine startup. The cold ArkCore bootstrap must register
+pool allocator or full engine startup. The cold ArkCore bootstrap must register
 the fundamental metadata classes before enabling reflected construction.

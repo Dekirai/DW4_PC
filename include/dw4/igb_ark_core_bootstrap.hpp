@@ -33,6 +33,8 @@ struct IgbArkCoreCall {
     std::shared_ptr<ModelSceneObject> pool;
     std::shared_ptr<IgbRuntimeTypeList> types;
     std::shared_ptr<IgbRuntimeTypeList::Storage> type_backing;
+    std::shared_ptr<IgbScratchBuffer> type_backing_bytes;
+    std::uint32_t type_backing_address{},type_backing_offset{};
     std::uint32_t bytes{},virtual_slot{},argument{};
 };
 struct IgbArkCoreOperation {

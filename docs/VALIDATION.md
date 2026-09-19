@@ -1,5 +1,69 @@
 # Local validation
 
+## Native igObject registration and typed list construction/growth
+
+Validated locally on 2026-09-19. The cold metadata chain now enters actual
+`igObject` parent registration, root callback-list construction, native name
+interning and its local layout probe before reaching specialized field defaults
+`80066B7C`. Typed metadata-list factories and raw pointer-list append/reserve
+also replace their prior caller endpoints. See
+[IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md),
+[IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md) and
+[IGB_POINTER_LIST.md](IGB_POINTER_LIST.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 161/161 CTest suites passed locally with four jobs; no compiler warnings |
+| igObject registration | 75 checks for canonical argument/getter identities, actual root-parent allocation/constructor ordering, retained calls, local probe, pending defaults, weak adapters and recursive failure |
+| Cold metadata integration | 140 metadata-registration checks; distinct constructed `igMetaObject`/`igObject` owners remain busy with flags 8/9, actual interning publishes one string header, and core stays disabled at `80066B7C` |
+| Raw pointer lists | 48 checks for nonlinear capacity growth, fresh size/live count reads, captured store across missing mappings, wrapped negative indices, null publication, byte/word clear failure prefixes, retained owners and actual parent field-retain/append composition |
+| Typed list factories and bootstrap integration | 12,417 checks including represented allocation bytes: two factories/three constructor entries, typed alias conflicts, physical suballocations, actual bootstrap list construction and reserve to 1,536 slots, byte-only backing and pending registration |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate prepared enabled-runtime fixture still reaches `8002A0A8`, cursor 5,381, dependency body 2,453 bytes, loading=1 and succeeded=0 |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Pointer-list instruction comparison | 1,679 cases, 162,732 original instructions at 189 addresses, zero differences, including 863 bounded failure prefixes |
+| Typed factory instruction comparison | 1,393 cases, 79,230 original instructions at 250 addresses, zero differences, including 788 bounded failure prefixes |
+| igObject caller/probe comparison | 467 cases, 8,423 original instructions at 83 addresses, zero differences |
+
+The two cold integrations are complementary. Metadata integration prepares
+initial core-list owners/reserve and physical/string-arena endpoints, then
+executes actual metadata/object registration and construction. List integration
+executes actual initial list constructors, three allocation-size calls and
+reserve/zeroing before missing metadata registration, with platform/manager,
+pool/allocation and callback-allocation endpoints prepared. Neither fixture
+seeds ready metadata or enables reflection before required registration returns.
+They do not establish full cold startup or completion of the decoder fixture.
+
+Pointer-list comparisons execute `80053BC0`, `8005383C`, `8005641C`, `800682A4`,
+`80068430` and original memset. Allocation-owner/tagged-pool lookup and pool
+size/reallocation virtuals remain prepared. The corpus compares represented
+backing bytes, pointer/count/reference state and ordered calls; physical bounds
+exclude unrepresented wrapped addresses. It does not qualify a general MMU or
+arbitrary malformed allocation contents. Permanent tests separately cover
+partial byte/word clear prefixes and late typed binding without store redirection.
+Typed-factory comparisons execute both factories, all direct constructor/reset
+entries, raw/base allocation helpers and verified no-op virtuals. Registration,
+reflected construction, allocator lookup/allocation/tag services remain prepared.
+The igObject comparison executes the local probe/base reset for aligned offsets
+zero/four and null core, raw getters, and root-parent callback-list constructor.
+Pool/allocation endpoints are prepared. Its `80066B08` case compares exact
+arguments captured at `80066204` against the native argument helper; the full
+generic-registration composition is covered by permanent tests, not claimed
+as a new full-body differential proof. Sources and proof scopes received
+independent review.
+
+Final core SHA256:
+`933F6F5349751611AA86CB73DEA028096B84EB91E39246E0E4A4E53BC0C7EEAA`.
+Ignored local evidence: `work/native-object-lists-final-build.log`,
+`work/native-object-lists-prefix.log`, `work/native-object-lists-player.log`,
+`work/native-object-lists-verifier.log`,
+`work/native-typed-pointer-list-result.json`,
+`work/native-type-list-factory-result.json` and
+`work/native-object-registration-result.json`. The reports record matching
+library/driver identities and covered source hashes. No GitHub Actions or
+interactive preview ran. The walking preview is unchanged; complete field
+descriptors, registry/layout, allocator services and game startup remain required.
+
 ## Native cold ArkCore startup and metadata registration
 
 Validated locally on 2026-09-19. The native ArkCore constructor and bootstrap

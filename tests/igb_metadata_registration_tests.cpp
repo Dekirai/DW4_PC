@@ -1,6 +1,9 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_ark_core_bootstrap.hpp"
+#include "dw4/igb_object_registration.hpp"
+#include "dw4/igb_metadata_operations.hpp"
+#include "dw4/igb_string_pool.hpp"
 
 #include <iostream>
 
@@ -260,6 +263,72 @@ void actual_cold_bootstrap_prefix(){
     for(const auto initialized:backing.storage->bytes->initialized)check(initialized==0,"Empty native list fabricated initialized spare pointer words.");
     check(igb_bootstrap_read_word(ark.allocation,4)==0xcccccccc && igb_bootstrap_read_word(ark.allocation,8)==0xcccccccc,"Incomplete bootstrap published future type-count snapshots.");
     check(!call.resume(bootstrap).completed && f.allocations==2 && prefix.size()==prefix_count,"Repeated parent suspension replayed completed cold startup work.");
+
+    // Continue the same suspended cold chain. The second metadata/list pair
+    // receives distinct physical allocations; neither canonical global is
+    // seeded with a ready type. Arena allocation stays explicitly prepared.
+    auto object_services=std::make_shared<IgbObjectRegistrationServices>();
+    object_services->metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_services->types=f.services->types;object_services->pools=f.services->pools;object_services->callbacks=f.services->callbacks;
+    f.services->metadata->bootstrap->object_metadata=object_services->metadata;
+    auto object_type=meta(0);auto object_fields=std::make_shared<IgbDecodeFieldRegistry>();
+    auto object_allocation=allocation(0x700000,0x64);object_allocation.storage->bindings.push_back({0,{},object_type,{}});
+    auto fields_allocation=allocation(0x710000,16);fields_allocation.storage->bindings.push_back({0,{},{},object_fields});
+    auto fields_backing=allocation(0x720000,16);fields_backing.storage->bytes->initialized.assign(16,0);
+    f.services->metadata->bootstrap->factory=make_native_igb_bootstrap_pool_factory(f.services->pools,[&](const IgbBootstrapCall& c){
+        if(c.kind!=BK::pool_allocate)return std::shared_ptr<IgbBootstrapOperation>{};
+        auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,c,out=op.get()]{
+            check(f.core->enabled==0 && c.pool==f.pool,"igObject physical allocation changed the cold gate or selected pool.");++f.allocations;
+            if(c.bytes==0x64)out->allocation_result=object_allocation;
+            else if(c.bytes==16)out->allocation_result=fields_allocation;
+            else throw std::runtime_error("Unexpected igObject allocation size");return MessengerCallResult{true,0,{}};};return op;
+    });
+    fields_services->factory=[&](const IgbFieldRegistryCall& c){
+        if(c.kind!=FK::object_pool && c.kind!=FK::allocate_backing)return std::shared_ptr<IgbFieldRegistryOperation>{};
+        auto op=std::make_shared<IgbFieldRegistryOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==FK::object_pool){++object_pool_calls;check(c.handle==0,"igObject field registry did not use reset pool tag zero.");out->pool_result=f.pool;}
+            else{++backing_selections;++backing_polls;check(c.pool==f.pool && c.bytes==16,"igObject field backing allocation changed arguments.");out->backing_result={fields_backing,{}};}
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    auto native_strings=std::make_shared<IgbStringPoolServices>();native_strings->mutex=std::shared_ptr<LoaderDirectoryMutex>{};
+    auto string_state=std::make_shared<IgbStringPoolState>();string_state->table=std::make_shared<IgbStringTable>();
+    string_state->table->capacity=4;string_state->table->storage=std::make_shared<IgbStringTable::Storage>(4);string_state->arena=f.pool;
+    igb_bind_string_pool(native_strings,f.pool,string_state);unsigned string_allocations{};
+    native_strings->factory=[&](const IgbStringPoolCall& c){
+        check(c.kind==IgbStringPoolServiceKind::allocate_string && c.arena==f.pool,"Cold name interning reached an unexpected arena operation.");
+        auto op=std::make_shared<IgbStringPoolOperation>();op->resume=[&,c,out=op.get()]{
+            ++string_allocations;out->entry_result=std::make_shared<IgbStringEntry>();out->entry_result->owner=std::make_shared<IgbInternedString>();
+            out->entry_result->bytes.buffer=std::make_shared<IgbScratchBuffer>();out->entry_result->bytes.buffer->bytes.resize(c.bytes+4);
+            out->entry_result->bytes.buffer->initialized.assign(c.bytes+4,0);out->container_result=f.pool;
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    f.services->metadata->dependencies->strings=native_strings->strings;
+    f.services->metadata->dependencies->factory=make_native_igb_string_factory(native_strings);
+    auto metadata_ops=std::make_shared<IgbMetadataOperationsServices>();metadata_ops->types=f.services->types;
+    metadata_ops->dependencies=f.services->metadata->dependencies;
+    std::vector<IgbTypeRegistrationCall> remaining_calls;
+    std::shared_ptr<IgbRegistrationCallbackList> root_callbacks;
+    f.remaining=make_native_igb_object_registration_type_factory(object_services,
+        make_native_igb_metadata_operations_factory(metadata_ops,[&](const IgbTypeRegistrationCall& c){
+            remaining_calls.push_back(c);if(c.kind!=TK::create_callbacks)return std::shared_ptr<IgbTypeRegistrationOperation>{};
+            check(c.bytes==12 && c.pool==f.pool,"Real root parent changed its callback allocation arguments.");
+            auto op=std::make_shared<IgbTypeRegistrationOperation>();op->resume=[&,out=op.get()]{
+                root_callbacks=std::make_shared<IgbRegistrationCallbackList>();root_callbacks->count=31;root_callbacks->capacity=37;
+                out->callbacks_result=root_callbacks;return MessengerCallResult{true,0,{}};};return op;
+        }));
+    const auto defaults=call.resume(bootstrap);
+    check(!defaults.completed && !call.faulted(),"Unrecovered igObject descriptor defaults were reported as complete.");
+    check(*object_services->metadata==object_type && object_type!=f.constructed && object_type->class_flags==9,"Real igObject registration did not construct and publish its distinct busy metadata.");
+    check(f.constructed->class_flags==8 && f.services->metadata->metadata==f.constructed && f.core->enabled==0,"Parent suspension completed its child or enabled reflection early.");
+    check(object_type->fields==object_fields && object_type->native_size==8 && object_type->field_callback==0x80066b74 && object_type->type_word==0x804717f0,"Actual parent registration/probe lost its canonical schema prefix.");
+    check(object_type->name && *object_type->name=="igObject" && string_allocations==1 && string_state->table->count==1 &&
+        native_strings->strings->owners.size()==1 && native_strings->strings->owners[0]->references==1,"Cold metadata naming did not execute real string interning with one retained header.");
+    check(root_callbacks && root_callbacks->count==0 && root_callbacks->capacity==0 && !root_callbacks->backing,"Root parent callback list did not execute its actual constructor.");
+    check(!remaining_calls.empty() && remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80066b7c,"Cold composition stopped at a substituted igObject defaults endpoint.");
+    check(f.allocations==4 && object_pool_calls==2 && backing_selections==2 && backing_polls==3 && prefix.size()==prefix_count,"Extending the native parent chain replayed completed allocations or bootstrap calls.");
+    check(igb_bootstrap_read_word(object_allocation,0)==0x804761d8 && igb_bootstrap_read_word(fields_allocation,0)==0x80475cb0 &&
+        igb_bootstrap_read_word(fields_allocation,8)==0x720000,"Second metadata and internal list were replaced by prepared completed objects.");
+    check(!call.resume(bootstrap).completed && f.allocations==4 && string_allocations==1 && prefix.size()==prefix_count,"Pending descriptor defaults replayed earlier native construction or interning.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

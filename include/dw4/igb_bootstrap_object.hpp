@@ -20,6 +20,7 @@ void igb_bootstrap_write_halfword(const IgbBootstrapPointer&,std::uint32_t relat
 void igb_bootstrap_write_byte(const IgbBootstrapPointer&,std::uint32_t relative,std::uint8_t value);
 std::shared_ptr<IgbRuntimeMetaType> igb_bootstrap_metadata(const IgbBootstrapPointer&);
 std::shared_ptr<IgbDecodeFieldRegistry> igb_bootstrap_fields(const IgbBootstrapPointer&);
+std::shared_ptr<IgbRuntimeTypeList> igb_bootstrap_types(const IgbBootstrapPointer&);
 
 enum class IgbBootstrapServiceKind {
     pool_for_handle, // Actual800607F4, default handle805621E0.
