@@ -112,6 +112,10 @@ public:
     void set_player_creation_services(ModelPlayerCreateServices);
     const ModelPlayerCreateServices& player_creation_services() const;
     void set_model_frame_services(std::shared_ptr<ModelFrameServices>);
+    // Bind this manager's actual player virtual+84 to fresh retained native
+    // ModelFrameInvocation calls. Does not activate or register the manager,
+    // replace its info list, or supply missing downstream services.
+    void bind_player_frame_update();
     std::shared_ptr<ModelFrameInvocation> begin_model_frame(ControllerObjectId);
     MessengerCallResult resume(ModelFrameInvocation&);
     std::shared_ptr<ModelPlayerWork> model_work(ControllerObjectId id);

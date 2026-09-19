@@ -2,6 +2,8 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/action_dispatch.hpp"
 #include "dw4/model_frame.hpp"
+#include "dw4/model_manager_frame.hpp"
+#include "dw4/serial_scheduler.hpp"
 #include "dw4/model_subcommand_update.hpp"
 #include "dw4/model_movement_collision.hpp"
 #include "dw4/hitland_wall.hpp"
@@ -640,10 +642,97 @@ void original(const std::filesystem::path& root) {
         check(position!=before_series[slot],"A prepared original player never moved during the repeated directional samples.");
     }
     std::cout<<"Original repeated player frames completed="<<repeated_frames<<" (six directional and six released samples per slot)\n";
+
+    // Prepare the original manager's actual info owner and activation bytes.
+    // The scheduler and virtual+74/+84 bodies below are native recovered code;
+    // registry construction, clock samples and device data remain explicit.
+    const auto manager=events.model_manager();
+    check(manager->infos && manager->infos->count==0 && manager->update_enabled==0 && system->is_active==0,
+        "Earlier per-RAM tests silently supplied original manager startup.");
+    const auto authored_values=info->rams->values();
+    const std::vector<std::shared_ptr<ModelSceneObject>> authored_rams(authored_values.begin(),authored_values.end());
+    check(authored_rams.size()==rams.size() && std::equal(authored_rams.begin(),authored_rams.end(),rams.begin()),
+        "Scheduled original player work does not use the canonical authored RAM order.");
+    manager->infos->append(info);manager->update_enabled=1;system->is_active=1;
+    events.bind_player_frame_update();
+    const auto player_update=manager->ram_frame_factory;
+    std::vector<std::shared_ptr<ModelSceneObject>> visited;
+    manager->ram_frame_factory=[&visited,player_update](const auto& owner,const auto& ram) {
+        visited.push_back(ram);return player_update(owner,ram);
+    };
+    const auto scheduled=std::make_shared<SerialSchedulerState>();
+    const auto scheduled_manager=std::make_shared<SerialSchedulerManager>(make_model_manager_update(manager));
+    scheduled->registered->entries->append(scheduled_manager);
+
+    // Complete slot zero, then pause inside slot one's directional input. A
+    // retry must retain both scheduler/manager loops and that actual RAM frame.
+    manager->viewer.reset();
+    for(std::size_t slot=0;slot<rams.size();++slot) {
+        const auto pad=pads->data->backing->at(slot);
+        pad->direction=slot==0 ? 0:directions[slot];
+        pad->left_x=slot==0 ? 0:stick_x[slot];pad->left_y=slot==0 ? 0:stick_y[slot];
+    }
+    context->world_time+=16666667;publish_system_frame_time(*system);
+    SerialSchedulerInvocation pending_batch(scheduled);const auto pending_result=pending_batch.resume();
+    const auto slot_zero_commands=command_state(0),slot_two_commands=command_state(2),slot_three_commands=command_state(3);
+    check(!pending_result.completed && pending_result.diagnostic.find("original camera matrix owner")!=std::string::npos &&
+        visited==std::vector<std::shared_ptr<ModelSceneObject>>{rams[0],rams[1]} && scheduled->cache->count==1 &&
+        slot_zero_commands.size()==1 && slot_zero_commands.front().second==7 &&
+        slot_two_commands.size()==1 && slot_two_commands.front().second==6 &&
+        slot_three_commands.size()==1 && slot_three_commands.front().second==6,
+        "Original scheduled manager did not finish only the first RAM before retaining the second input boundary.");
+    const auto first_commands=command_state(0);
+    const auto first_position=*find_model_one(*rams[0])->node->matrix_owner();
+    const auto pending_history=*events.model_work(ids[1])->turn_attack_timers;
+    const auto pending_retry=pending_batch.resume();
+    check(!pending_retry.completed && pending_retry.diagnostic==pending_result.diagnostic && visited.size()==2 &&
+        command_state(0)==first_commands && *find_model_one(*rams[0])->node->matrix_owner()==first_position &&
+        *events.model_work(ids[1])->turn_attack_timers==pending_history,
+        "Retrying a scheduled player boundary repeated the earlier RAM or the current input prefix.");
+    manager->viewer=viewer;const auto resumed_batch=pending_batch.resume();
+    if(!resumed_batch.completed)throw std::runtime_error("Original scheduled player resume: "+resumed_batch.diagnostic);
+    check(pending_batch.completed() && visited==authored_rams && scheduled->cache->count==0 &&
+        command_state(0)==first_commands && *find_model_one(*rams[0])->node->matrix_owner()==first_position &&
+        collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+        "Original scheduler-to-manager-to-player continuation failed to retain its completed prefix or clear its batch.");
+    check(pending_batch.resume().completed && visited==authored_rams && command_state(0)==first_commands,
+        "A completed scheduled batch reentered the native player manager.");
+
+    std::size_t scheduled_frames=visited.size();
+    for(unsigned tick=0;tick<6;++tick) {
+        visited.clear();context->world_time+=16666667;publish_system_frame_time(*system);
+        for(std::size_t slot=0;slot<rams.size();++slot) {
+            const auto pad=pads->data->backing->at(slot);pad->direction=tick<3 ? directions[slot]:0;
+            pad->left_x=tick<3 ? stick_x[slot]:0;pad->left_y=tick<3 ? stick_y[slot]:0;
+        }
+        SerialSchedulerInvocation batch(scheduled);const auto result=batch.resume();
+        if(!result.completed)throw std::runtime_error("Original scheduled tick "+std::to_string(tick)+": "+result.diagnostic);
+        check(visited==authored_rams && scheduled->cache->count==0 &&
+            collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+            "Scheduled original manager lost authored RAM order, cleanup or balanced native collision.");
+        for(std::size_t slot=0;slot<rams.size();++slot) {
+            const auto work=events.model_work(ids[slot]);const auto queue=work->subcommands->list_owner();
+            check(work->sequence.name==(tick<3 ? "SQ_WALK":"SQ_WAIT") &&
+                actions[slot]->current_action()==(tick<3 ? "RUNND1":"WAITD1") && work->key_input==(tick<3 ? 1:0),
+                "Scheduled player input lost the original walk/release sequence or ACTION transition.");
+            if(tick<3)check(queue->empty(),"Scheduled walking retained a delayed SQ_WAIT effect.");
+            else {
+                const auto effect=queue->size()==1 ? std::get_if<ModelEffectSubcommandState>(&queue->front().value):nullptr;
+                check(effect && effect->command.sequence_name=="SQ_OPENP"+std::to_string(slot) &&
+                    queue->front().elapsed==static_cast<float>(tick-2) && !queue->front().started,
+                    "Scheduled release lost independent player callback payloads or consumed system time more than once.");
+            }
+        }
+        check(batch.resume().completed && visited==authored_rams,
+            "Retrying a completed scheduled sample duplicated its physical RAM visits.");
+        scheduled_frames+=visited.size();
+    }
+    std::cout<<"Original scheduled player frames completed="<<scheduled_frames
+        <<" across seven actual serial batches, including a retained second-RAM input boundary\n";
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
         "four prepared neutral per-RAM frames complete shared-node HITLANDDELIVER and native collision with all five stage infos registered; "
-        "complete startup, device assignment, scheduling and full gameplay remain required\n";
+        "complete startup, device assignment, other scheduled managers and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

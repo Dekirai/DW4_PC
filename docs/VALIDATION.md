@@ -1,5 +1,58 @@
 # Local validation
 
+## Original manager traversal, scheduled players and camera inverse
+
+Validated locally on 2026-09-19. The recovered serial scheduler now reaches
+the common manager `+74` traversal and actual player `+84` operation through
+canonical info/RAM lists. The specialized camera view inverse is separately
+implemented with original overlapping-buffer and arithmetic behavior. See
+[MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md),
+[MODEL_FRAME.md](MODEL_FRAME.md) and [CAMERA_MATH.md](CAMERA_MATH.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 126/126 CTest suites passed locally with four build jobs; no compiler warnings in the final build |
+| Common manager traversal | 315 checks for exact default/gate bytes, signed captured counts, live list/backing/virtual reloads, pending targets, reached failures, ownership and serial-scheduler binding |
+| Actual player frame and adapter | 50 checks, including retained runtime binding, duplicate RAM occurrences, new batch operations, invalid owner/type and destroyed-facade boundaries |
+| Original player integration | 445 original-inclusive / 62 synthetic checks; existing 48 held/released per-RAM calls plus 28 calls through seven actual serial-scheduler/manager batches |
+| Manager instruction comparison | 4,096 fixtures, 448,733 original instructions at 58 addresses, 18,045 prepared RAM calls; zero mismatches against the final production core |
+| Camera numerical helper | 20 permanent checks for overlap, store order, original rounding, signed zero and partial publication on reached arithmetic failure |
+| Camera instruction comparison | 15,474 cases, 730,725 original instructions across all 51 addresses; zero mismatches against the final production core |
+
+The original integration prepares one player-manager registry entry and its
+canonical four-RAM info list. In its first serial batch, RAM zero completes
+before RAM one suspends at the unrepresented viewer owner. Retrying does not
+repeat either the completed player or the reached input prefix. Supplying the
+viewer resumes the same scheduler, manager and player operations, finishes
+the remaining authored RAMs and clears the actual scheduler cache. Six more
+batches cover three held and three released samples for each player. They
+preserve SQ_WALK/RUNND1 and SQ_WAIT/WAITD1 transitions, per-player delayed
+number effects, original collision and completed-batch nonreplay.
+
+The manager comparison executes original caller/gate instructions with
+explicit prepared RAM endpoint mutations; the actual player body is exercised
+separately by the original-data integration. The camera corpus compares
+11,646 completed calculations and 3,828 reached finite-profile boundaries,
+including every whole-float overlap from -16 through +16. Its matrix-only
+API excludes the original metadata-wrapper store and all camera mode/graph
+and viewer publication operations. Both comparison drivers link only the
+final production core, SHA256:
+`9E14F061A9039399B6C215A2F446773E8BA495E7759DE45ECA0CEC544542D838`.
+
+Independent review caught an initial test-only vector/span comparison that
+did not compile. The expected authored order is now an owned vector snapshot.
+New queue assertions guard size before inspecting the first entry so a
+lifecycle regression produces a test failure instead of an invalid access.
+No original engine behavior was altered to accommodate those test fixes.
+
+Complete startup/registration, remaining scheduled managers, device polling,
+active camera, rendering, audio and full gameplay remain required. The test
+still supplies context samples, gate activation and initial viewer state.
+The walking preview is unchanged; no interactive preview or GitHub Actions
+was launched. Local ignored evidence is in `work/native-manager-camera-*`,
+`work/native-manager-player-original.log`, `work/native-manager-frame-*` and
+`work/native-camera-math-*`.
+
 ## Native viewer ownership, repeated player updates and serial scheduling
 
 Validated locally on 2026-09-19. The original player input now resolves its

@@ -1228,6 +1228,24 @@ const ModelPlayerCreateServices& ActionEventRuntime::player_creation_services() 
 void ActionEventRuntime::set_model_frame_services(std::shared_ptr<ModelFrameServices> services) {
     impl_->frame_services=std::move(services);
 }
+void ActionEventRuntime::bind_player_frame_update() {
+    const std::weak_ptr<Impl> weak=impl_;
+    impl_->ram_frame_factory=[weak](const std::shared_ptr<ModelSceneManager>& owner,
+        const std::shared_ptr<ModelSceneObject>& object)->ModelManagerRamCall {
+        const auto manager=weak.lock();
+        if(!manager || !manager->facade_attached || manager!=owner)
+            fail("Player manager frame binding requires its original live runtime owner.");
+        const auto ram=std::dynamic_pointer_cast<ModelSceneRam>(object);
+        if(!ram)fail("Player virtual+84 requires its reached nonnull actual RAM type.");
+        const auto frame=std::make_shared<ModelFrameInvocation>(ram);
+        return [weak,frame] {
+            const auto live=weak.lock();
+            if(!live || !live->facade_attached)
+                fail("A retained player manager frame outlived its runtime facade.");
+            return frame->resume(live->messenger,live->events_runtime,live->frame_services);
+        };
+    };
+}
 std::shared_ptr<ModelFrameInvocation> ActionEventRuntime::begin_model_frame(ControllerObjectId id) {
     return std::make_shared<ModelFrameInvocation>(model_ram(id));
 }

@@ -98,10 +98,14 @@ held movement and release for four independent slots, original SQ_WALK/RUNND1
 and SQ_WAIT/WAITD1 transitions, system time and actual collision. Viewer setup
 is explicit initial-state preparation, not active camera selection/publication.
 The application update publishes its time prefix before the dispatcher and
-scheduler. Its serial scheduler batch is now recovered with original live list
-reloads and pending manager ownership. Original manager registration, concrete
-manager update bodies, complete startup and active camera publication remain
-required. See [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
+scheduler. Its serial scheduler now reaches the original common manager
+info/RAM traversal and the actual player-frame binding. Seven prepared batches
+exercise all four authored player occurrences, including retained second-RAM
+suspension. The camera's specialized view inverse is recovered independently.
+Original manager registration, other manager bodies, complete startup and
+active camera publication remain required. See
+[MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md), [CAMERA_MATH.md](CAMERA_MATH.md),
+[VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
 [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and [PLAYER_INPUT.md](PLAYER_INPUT.md).
 
 ## Recovery tools and platform choices
@@ -147,14 +151,16 @@ output cannot establish its full original behavior.
    motion, collision, waits and script effects execute together through the
    recovered frame, with compared state and call order. Four prepared neutral
    frames, the first directional frame and 48 repeated held/released per-RAM
-   updates now complete. Next connect the actual manager traversal and active
-   camera publication, then qualify additional movement/combat paths. Do not replace the
+   updates now complete. The actual manager traversal and serial scheduler
+   also complete seven prepared four-player batches. Next connect active
+   camera publication and qualify additional movement/combat paths. Do not replace the
    preview controller until the original path actually supplies its behavior.
 3. **Recover startup and the game scheduler.** Implement the reached manager,
    sound, layer/text and later startup-script services. Connect actual manager
    registration, device polling, time advancement, ACTION traversal, camera,
    HUD and rendering. The application timing prefix and serial manager batch
-   are available; registered order and each actual manager body remain required.
+   and common player-manager traversal are available; registered order and
+   the remaining actual manager bodies still require recovery.
    Acceptance: an authored native boot-to-game path using
    original assets, original player creation and actual scheduled frames; no
    prepared test provider standing in for a required game operation.

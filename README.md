@@ -58,10 +58,15 @@ Supplying the explicitly prepared native viewer owner now resumes a directional
 frame through original SQ_WALK/RUNND1, motion and collision. Another 48 prepared
 per-RAM frames cover six held and six released samples for each of four slots,
 including return to SQ_WAIT/WAITD1 and independent node/subcommand state.
-The recovered serial scheduler executes its actual cached manager-update
-ordering and can bind to the native application entry. Original registration,
-manager update bodies, dispatcher and active camera publication still need
-integration. See [VIEWER.md](docs/VIEWER.md),
+The recovered serial scheduler now calls the original manager info/RAM
+traversal and its actual player update binding. A prepared original-data test
+follows all four authored RAM occurrences through seven serial batches,
+including suspension inside the second player without replaying the first.
+The specialized camera view-inverse helper is also recovered; complete camera
+mode evaluation and publication remain required. Original registration, other
+manager bodies and the dispatcher still need integration. See
+[MODEL_MANAGER_FRAME.md](docs/MODEL_MANAGER_FRAME.md),
+[CAMERA_MATH.md](docs/CAMERA_MATH.md), [VIEWER.md](docs/VIEWER.md),
 [SERIAL_SCHEDULER.md](docs/SERIAL_SCHEDULER.md),
 [APPLICATION_FRAME.md](docs/APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](docs/PLAYER_INPUT_MATH.md).

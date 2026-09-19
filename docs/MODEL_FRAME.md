@@ -124,6 +124,16 @@ do not repeat motion or command time. Viewer matrix defaults remain the actual
 zero factory state. These are prepared consumer integrations, not active camera
 updates, device polling or the enclosing manager scheduler.
 
+A later integration now enters the recovered enclosing manager traversal
+through the actual serial scheduler. `bind_player_frame_update` installs a
+fresh operation for each reached physical RAM and retains it across pending
+service calls. Seven prepared original batches complete 28 player calls in
+authored list order. Suspension inside the second RAM retains the first RAM's
+completed effects; six further batches exercise held/released transitions and
+independent delayed number effects. Registry setup, device samples, initial
+viewer state and context ticks remain explicit preparation. See
+[MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md).
+
 The checked player-controller profile does not yet dispatch different NPC or
 enemy virtual implementations, remaining position-lock/ride, dynamic query or
 CHECKWALLFULL operations, active camera publication, full manager scheduling

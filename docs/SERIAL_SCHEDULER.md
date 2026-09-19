@@ -141,10 +141,10 @@ growth and failure prefixes have separate permanent tests and instruction
 review. Local evidence is in `work/native-serial-scheduler-result.json` and
 `work/native-serial-scheduler-review.md`.
 
-## Next original manager connection
+## Original player-manager connection
 
-The next connection for MODELCTRL/player managers is virtual `+74` at
-`802F28F8`, before their already represented per-RAM virtual `+84` at
+The implemented connection for MODELCTRL/player managers is virtual `+74` at
+`802F28F8`, before their per-RAM virtual `+84` at
 `8030CB2C`. It gates on the manager's system through `80316808`, the manager's
 byte `+1C`, and the system's byte `+2E`. The system leaf returns true only when
 byte `+2D` is zero and bit zero of byte `+2C` is set; it is not a generic
@@ -155,8 +155,13 @@ captures that occurrence's `+18` RAM list and its count, and reloads the
 captured RAM list's backing before each virtual `+84` call. Both loop counts
 are signed. The manager virtual target is reloaded for each call.
 
-A faithful connection therefore needs the actual manager and system owners,
-ordered info/RAM lists, these gates, and retained per-RAM calls. A fixed loop
-over four players would omit this original traversal. Startup registration
-order and other manager implementations still need their own recovered
-bindings before the scheduler can represent a complete application update.
+`make_model_manager_update` supplies this exact common traversal, and
+`ActionEventRuntime::bind_player_frame_update` supplies a fresh retained
+actual player operation for each reached RAM. Original-data integration
+executes seven prepared batches through this chain and all four authored
+RAMs. A suspension inside the second RAM preserves the first RAM's completed
+effects and the scheduler's pending cache. See
+[MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md).
+Startup registration/order and other manager implementations still need
+their own recovered bindings before the scheduler can represent a complete
+application update.

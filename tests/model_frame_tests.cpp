@@ -1,5 +1,6 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/model_frame.hpp"
+#include "dw4/model_manager_frame.hpp"
 #include "dw4/model_wait_actual.hpp"
 #include "dw4/model_subcommand_update.hpp"
 #include "player_runtime_binding_fixture.hpp"
@@ -191,12 +192,78 @@ void pending_frame_excludes_unrelated_execution() {
     check(unrelated->resume(f.events).completed && f.work->control.mode==4,
         "A completed owning frame did not release its execution gate for a later command loop.");
 }
+void actual_manager_binding_and_retained_player() {
+    Fixture f;const auto owner=f.events.model_manager();
+    f.events.bind_player_frame_update();
+    check(owner->ram_frame_factory && owner->update_enabled==0 && owner->system->is_active==0 && owner->infos->count==0,
+        "Binding player virtual+84 invented manager activation or registration.");
+    owner->update_enabled=1;owner->system->is_active=1;owner->infos->append(f.info);
+    f.info->rams=std::make_shared<ModelSceneList>();f.info->rams->append(f.ram);
+    f.pending_sound();f.work->key_input=7;
+    ModelManagerFrameInvocation frame(owner);
+    check(!frame.resume().completed && f.work->key_input==0,
+        "The manager binding did not enter the actual player frame and suspend at its subcommand service.");
+    f.work->key_input=5;unsigned replacement_calls{};
+    const auto replacement=std::make_shared<ModelSceneRam>();
+    (*f.info->rams->backing)[0]=replacement;
+    owner->ram_frame_factory=[&](const auto&,const auto& ram) {
+        check(ram==replacement,"The next manager frame did not select its current physical RAM.");
+        return [&] {++replacement_calls;return MessengerCallResult{true,0,{}};};
+    };
+    f.complete_sound();
+    check(frame.resume().completed && f.work->key_input==5 && replacement_calls==0,
+        "Manager resumption retargeted its selected player operation or replayed the input reset.");
+    check(frame.resume().completed && replacement_calls==0,
+        "A completed manager invocation reentered a player frame.");
+    ModelManagerFrameInvocation next(owner);
+    check(next.resume().completed && replacement_calls==1,
+        "A fresh manager invocation failed to select the replacement virtual implementation.");
+
+    Fixture repeated;const auto current=repeated.events.model_manager();
+    current->system->is_active=1;current->update_enabled=1;current->infos->append(repeated.info);
+    repeated.info->rams=std::make_shared<ModelSceneList>();
+    repeated.info->rams->append(repeated.ram);repeated.info->rams->append(repeated.ram);
+    ModelSubcommandQueue queue(repeated.work->subcommands);queue.append_sound(100,"delayed-frame-sound");
+    repeated.events.bind_player_frame_update();const auto update=make_model_manager_update(current);
+    check(update().completed && repeated.work->subcommands->list_owner()->size()==1 &&
+        repeated.work->subcommands->list_owner()->front().elapsed==2,
+        "Duplicate physical RAM occurrences reused one completed player operation.");
+    check(update().completed && repeated.work->subcommands->list_owner()->size()==1 &&
+        repeated.work->subcommands->list_owner()->front().elapsed==4,
+        "The reusable manager binding did not create fresh per-occurrence player frames for its next batch.");
+}
+void player_manager_binding_lifetime_and_types() {
+    Fixture f;f.events.bind_player_frame_update();const auto owner=f.events.model_manager();
+    const auto factory=owner->ram_frame_factory;
+    rejects([&] {factory(std::make_shared<ModelSceneManager>(),f.ram);},
+        "A player implementation was rebound to a different manager owner.");
+    rejects([&] {factory(owner,nullptr);},"Player virtual+84 accepted a null physical RAM.");
+    rejects([&] {factory(owner,std::make_shared<ModelSceneData>());},
+        "Player virtual+84 accepted an unrelated physical object type.");
+    ModelManagerRamCall retained;
+    std::shared_ptr<ModelSceneManager> detached;
+    {
+        Fixture temporary;temporary.events.bind_player_frame_update();detached=temporary.events.model_manager();
+        retained=detached->ram_frame_factory(detached,temporary.ram);
+    }
+    rejects([&] {retained();},"A retained player operation dereferenced its destroyed runtime facade.");
+    rejects([&] {detached->ram_frame_factory(detached,f.ram);},
+        "A detached manager created a player operation through a destroyed runtime facade.");
+    ModelManagerRamFactory weak_factory;std::weak_ptr<ModelSceneManager> weak_owner;
+    {
+        Fixture temporary;temporary.events.bind_player_frame_update();
+        weak_owner=temporary.events.model_manager();weak_factory=temporary.events.model_manager()->ram_frame_factory;
+    }
+    check(weak_owner.expired(),"Installing player virtual+84 created a manager ownership cycle.");
+    rejects([&] {weak_factory({},f.ram);},"An expired player binding accepted a new invocation.");
+}
 }
 int main() {
     try {
         original_capture_and_early_gates();prefix_and_retained_helper_boundaries();
         actual_input_and_replacement_scopes();wait_resume_and_failure_prefixes();frame_exclusivity_and_abandonment();
         pending_frame_excludes_unrelated_execution();
+        actual_manager_binding_and_retained_player();player_manager_binding_lifetime_and_types();
         std::cout<<"Actual model frame checks: "<<checks<<'\n';return 0;
     }catch(const std::exception& error){std::cerr<<"Actual frame after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

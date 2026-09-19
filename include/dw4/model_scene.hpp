@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -131,16 +132,28 @@ public:
 };
 struct ModelPadManager;
 struct ViewerSceneInfoManager;
+struct ModelSceneManager;
+struct ModelManagerFrameExecutionState;
+struct MessengerCallResult;
+using ModelManagerRamCall=std::function<MessengerCallResult()>;
+using ModelManagerRamFactory=std::function<ModelManagerRamCall(
+    const std::shared_ptr<ModelSceneManager>&,const std::shared_ptr<ModelSceneObject>&)>;
 struct ModelSceneContext { std::uint64_t world_time{}; };
 struct ModelSceneSystem {
     float frame_time_f{1}; // +28, explicit beSystem metadata default.
     std::uint64_t saved_world_time{},frame_time{}; // +18/+20.
     std::shared_ptr<ModelSceneContext> context; // Inherited manager +0C.
+    std::uint8_t is_active{},is_first_time{},is_frame_skip{}; // +2C/+2D/+2E, reflected zero defaults.
 };
 struct ModelSceneManager {
     virtual ~ModelSceneManager()=default;
     std::shared_ptr<ModelSceneContext> context;
     std::shared_ptr<ModelSceneSystem> system; // Manager +10, system +28 cached uncapped frame delta.
+    std::shared_ptr<ModelSceneList> infos=std::make_shared<ModelSceneList>("beBaseInfoList"); // +18 reflected owner.
+    std::uint8_t update_enabled{}; // +1C _isUpdateRun, reflected zero default.
+    ModelManagerRamFactory ram_frame_factory; // Actual virtual+84 binding; selected per reached RAM.
+    // Native continuation state only, separate from the original manager fields.
+    std::shared_ptr<ModelManagerFrameExecutionState> manager_frame_execution;
     std::shared_ptr<ModelPadManager> pads; // Player manager +30, read at each reached pad lookup.
     // Player +2C. Disengaged means setup is not represented; engaged null is
     // an actual null pointer and fails if the original input path reaches it.

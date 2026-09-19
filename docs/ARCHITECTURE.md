@@ -33,9 +33,18 @@ temporary layout probe's identity values. The separate original camera mode
 and view-model publication remain required.
 The serial scheduler reconstructs the captured-count copy/update/clear sequence
 with its original live pointer reloads and retained pending manager callback.
-It binds to the application entry without inventing registration order or
-missing manager behavior. See [VIEWER.md](VIEWER.md) and
+The common manager virtual `+74` now connects that batch to ordered info/RAM
+traversal and the player's actual `+84` frame. Each occurrence selects a fresh
+operation; a pending operation retains its selected RAM and runtime. System
+and manager gate bytes retain their original zero defaults, so installing the
+binding does not invent startup activation or registration. Prepared original
+integration crosses both loops with all four authored player RAMs. See
+[MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md), [VIEWER.md](VIEWER.md) and
 [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md).
+The specialized camera inverse preserves original aliasing, arithmetic and
+partial publication into the separate view-model matrix. It does not replace
+the required camera mode, graph sampling, Euler rebuild or viewer publication.
+See [CAMERA_MATH.md](CAMERA_MATH.md).
 See [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
 

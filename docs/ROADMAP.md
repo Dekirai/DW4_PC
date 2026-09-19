@@ -66,9 +66,13 @@ slots, actual system-time consumption, SQ_WAIT/WAITD1 return and independent
 node/subcommand changes. The viewer's proven initial matrix defaults are zero;
 these tests do not select or publish an active original camera.
 The application time prefix, system time leaf and concrete serial scheduler
-batch are recovered. Original registration/order, dispatcher and actual manager
-update bodies still need connection; explicit callbacks do not close those
-integrations. See [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
+batch are recovered. The common manager traversal now invokes the actual
+player frame through its authored info/RAM lists; seven prepared serial
+batches complete 28 player calls, including suspension inside the second RAM.
+The camera's specialized view inverse is available separately. Original
+registration/order, dispatcher, other manager bodies and complete camera
+publication still need connection. See [MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FRAME.md),
+[CAMERA_MATH.md](CAMERA_MATH.md), [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
 [PLAYER_INPUT.md](PLAYER_INPUT.md) and [APPLICATION_FRAME.md](APPLICATION_FRAME.md).
 
 After completing the query responses, connect that core lifecycle to original
