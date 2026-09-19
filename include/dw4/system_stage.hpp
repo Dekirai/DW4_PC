@@ -26,6 +26,7 @@ private:
     bool claim_fault_{};
 };
 struct SystemStageLoader {
+    std::uint32_t reference_word{1}; // Constructed +04; high byte selects its allocation pool.
     SystemStageString primary_prefix,secondary_prefix; // +14/+18, nullable C strings.
     std::uint8_t option_08{},async_1c{},initialize_after_load_34{},format_44{};
     std::uint32_t option_48{};
@@ -36,6 +37,9 @@ struct SystemStageLoader {
 private:
     friend class LoaderDirectoryReleaseInvocation;
     friend class LoaderDirectoryRequestInvocation;
+    friend class LoaderDependencyInvocation;
+    std::vector<std::shared_ptr<void>> unreleased_dependency_;
+    std::vector<SystemStageString> unreleased_dependency_strings_;
     std::weak_ptr<void> active_request_;
     bool request_fault_{};
     std::vector<std::shared_ptr<ModelSceneObject>> unpublished_request_objects_;

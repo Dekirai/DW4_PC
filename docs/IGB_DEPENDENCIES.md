@@ -39,7 +39,9 @@ dependency module does not create a competing loader field. The mutable path
 at `+C8` is shared through `IgbLoadingPathsState::directory_path`.
 
 A null file loader reaches the actual getter `8007042C` and publishes its
-result. Getter setup is explicit, including the possibility of a null result;
+result. The native getter reads the canonical ArkCore global `80562100` and
+its captured `+40` field, separately from direct loader global `80562104`.
+Getter setup is explicit, including the possibility of a null result;
 the caller does not manufacture an initialized loader. Expired represented
 nonnull loader owners fail at their reached use.
 
@@ -50,6 +52,8 @@ a full 32-bit reference count at data minus four. `IgbInternedString` represents
 these separately from the host string allocation. `IgbInternedStringRegistry`
 maps the existing canonical `SystemStageString` allocation to that explicit
 reference owner, keeping the loader's existing path consumers compatible.
+Native interning also retains a lazy physical name; saved-prefix restoration
+uses those bytes instead of validating or replacing them with the host cache.
 Equal text in a different allocation is not interchangeable ownership.
 
 Intern operations use the existing `SystemStageServices::string_pool` singleton
@@ -78,16 +82,18 @@ already acquired incoming owner; it never invents a reference count.
 
 The name-source variant distinguishes a null pointer, an existing canonical
 string and a lazy scratch-buffer pointer. Capturing a scratch pointer does not
-read its bytes. The explicit intern/load endpoint uses `igb_dependency_name`
-only when it consumes the name. This retains byte changes made while a reached
-operation is pending and avoids validating unread suffixes prematurely.
+read its bytes. Prepared endpoints can materialize a string through
+`igb_dependency_name` when needed; native interning and dependency lookup perform
+their reached byte/word comparisons directly. This retains byte changes made
+while an operation is pending and avoids validating unread suffixes prematurely.
 
 ## Requests, append and restoration
 
 Each loop iteration captures the live file loader and the current name pointer
 for synchronous request `8006FA6C`. This is distinct from the previously
-implemented `8006FD34` request path; its unrecovered factory/load behavior
-remains an explicit named operation. A parsed filename or a null result is not
+implemented `8006FD34` request path. Its native caller is documented in
+[LOADER_DEPENDENCY.md](LOADER_DEPENDENCY.md); unrecovered factory/load behavior
+remains explicit. A parsed filename or a null result is not
 replaced with a fabricated loaded directory.
 
 After the request returns, the caller loads the live dependency list and
@@ -118,7 +124,11 @@ New bytes start unknown and become initialized through actual byte reads.
 Free invalidates the captured allocation for later alias reads. Unbound pools
 delegate or remain pending. The loader getter, string-pool allocation/init,
 interning, final string release, synchronous dependency request and list
-allocation are separately selected operations.
+allocation are separately selected operations. Concrete getter, intern and
+synchronous-request callers now compose through
+`make_native_loader_globals_factory`, `make_native_igb_string_factory` and
+`make_native_loader_dependency_factory`. This does not supply their missing
+initializers, allocators, reflected factories or final destructors.
 
 Pending operations retain their factory, callback and argument owners.
 Completed operations do not replay. Initial singleton null-test decisions and
@@ -141,7 +151,7 @@ do not establish their original bodies or complete game startup. Current
 suite counts, comparison scope and original-data stopping points are recorded
 in [VALIDATION.md](VALIDATION.md).
 
-Final validation passed 179 permanent dependency checks and all 142 core CTest
+The initial dependency-table checkpoint passed 179 permanent checks and all 142 core CTest
 suites. An independent final-core comparison found zero differences in 1,103
 cases, including 104 matching reached faults, across 154,934 original
 instructions and 311 addresses. It executes the actual `800521EC`, byte-swap,

@@ -36,6 +36,7 @@ struct LoaderDirectoryLookupInvocation::Impl {
     enum class Phase {entry,field,root,done};
     std::shared_ptr<SystemStageLoader> loader;
     SystemStageString filename;
+    NameComparison compare;
     std::shared_ptr<LoaderDirectoryList> list;
     std::shared_ptr<SystemStageDirectory> result;
     decltype(LoaderDirectoryServices::root_directory) factory;
@@ -49,6 +50,10 @@ LoaderDirectoryLookupInvocation::LoaderDirectoryLookupInvocation(std::shared_ptr
     impl_->loader=std::move(loader);impl_->filename=std::move(filename);
 }
 LoaderDirectoryLookupInvocation::~LoaderDirectoryLookupInvocation()=default;
+LoaderDirectoryLookupInvocation::LoaderDirectoryLookupInvocation(std::shared_ptr<SystemStageLoader> loader,
+    NameComparison compare,LazyNameTag):impl_(std::make_unique<Impl>()) {
+    impl_->loader=std::move(loader);impl_->compare=std::move(compare);
+}
 bool LoaderDirectoryLookupInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
 bool LoaderDirectoryLookupInvocation::faulted() const noexcept {return impl_->fault;}
 std::shared_ptr<SystemStageDirectory> LoaderDirectoryLookupInvocation::result() const {
@@ -63,8 +68,10 @@ MessengerCallResult LoaderDirectoryLookupInvocation::resume(std::shared_ptr<Load
     const auto check=[&] {if(s.fault)fail("The retained directory lookup was invalidated.");};
     try {
         if(s.phase==Impl::Phase::entry) {
-            if(!s.filename)fail("Original directory lookup compares a null filename.");
-            const bool root=std::strcmp(s.filename->c_str(),"igImageDirectory")==0;
+            if(!s.filename && !s.compare)fail("Original directory lookup compares a null filename.");
+            const bool root=s.compare?s.compare(std::make_shared<const std::string>("igImageDirectory"),true):
+                std::strcmp(s.filename->c_str(),"igImageDirectory")==0;
+            check();
             if(!s.loader)fail("Original directory lookup dereferences a null loader.");
             if(root)s.phase=Impl::Phase::root;
             else {s.list=s.loader->directories;s.phase=Impl::Phase::field;}
@@ -82,7 +89,10 @@ MessengerCallResult LoaderDirectoryLookupInvocation::resume(std::shared_ptr<Load
                     if(!directory)fail("Original named directory lookup dereferences a null row.");
                     if(offset!=0x14)fail("Directory filename metadata selects an unrepresented field.");
                     const auto filename=directory->filename;
-                    if(filename && std::strcmp(filename->c_str(),s.filename->c_str())==0) {
+                    const bool matched=filename && (s.compare?s.compare(filename,false):
+                        std::strcmp(filename->c_str(),s.filename->c_str())==0);
+                    check();
+                    if(matched) {
                         s.result=directory;break;
                     }
                 }

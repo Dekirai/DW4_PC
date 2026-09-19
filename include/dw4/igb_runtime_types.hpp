@@ -6,6 +6,7 @@
 
 namespace dw4 {
 struct IgbScratchBuffer;
+struct SystemStageLoader;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 // Captured original C-string pointer into a live, initialized scratch allocation.
 // Capturing this source does not read any byte or manufacture a host string.
@@ -52,6 +53,10 @@ struct IgbRuntimeTypeList {
 struct IgbRuntimeTypeRegistry {
     std::uint8_t enabled{}; // Singleton80562100 +00.
     std::shared_ptr<IgbRuntimeTypeList> types; // +18.
+    // The same igArkCore owner also stores the resource loader at +40.
+    // Its constructor does not initialize this field. Absence is therefore
+    // unrepresented state; an engaged null is a represented null pointer.
+    std::optional<std::shared_ptr<SystemStageLoader>> loader;
 };
 struct IgbRuntimeNameField {
     std::uint32_t offset{0x1c}; // Descriptor8056176C +08, registered _name.

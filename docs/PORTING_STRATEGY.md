@@ -127,8 +127,11 @@ The bounded bootstrap metadata profile recovers twenty object layouts and
 forty-seven field-class identities from original registrations. List factories,
 full global initialization, object population and post-load effects remain
 required. Directory-path preparation `800505E0`, dependency-table caller
-`800521EC` and pool-name table `80052554` are now native; actual dependency loads,
-string-pool operations and remaining factories still need connection. Reuse existing document decoders and
+`800521EC` and pool-name table `80052554` are now native. Native ArkCore loader
+access, string-table interning and synchronous request `8006FA6C` now lead to
+the first required file factory `8002EBEC` in the prepared original-data prefix.
+Concrete factories, pool initialization/allocation/release and complete dependency
+decoding still need connection. Reuse existing document decoders and
 canonical native owners where their behavior agrees; parsing alone must not
 set the original ready/success fields. Pool/factory operations, loader lifecycle,
 queue execution, manager registration and remaining concrete info handlers

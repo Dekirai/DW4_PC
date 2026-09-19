@@ -35,6 +35,9 @@ public:
     const std::string& type() const noexcept { return type_; }
     bool is_a(std::string_view type) const;
     std::optional<std::string> name;
+    // Explicit packed +04 of a represented constructed owner. This is not a
+    // factory implementation and does not track host shared_ptr references.
+    std::uint32_t reference_word{1};
 protected:
     explicit ModelSceneObject(std::string type):type_(std::move(type)) {}
 private:

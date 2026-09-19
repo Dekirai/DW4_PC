@@ -79,8 +79,11 @@ opening/header processing and three early runtime table helpers. Supplied
 object layouts, forty-seven registered field-class identities and explicit
 prepared list endpoints. Sixty inherited field mappings lead into native
 directory-path and dependency-table processing. The supplied-data prefix reads
-the dependency block and stops at the required loader operation; one unsupported
-serialized field class remains null. The separate native pool-name table and
+the dependency block, resolves the canonical ArkCore loader, interns its base
+path and enters the original synchronous dependency request. With explicitly
+prepared loader/string-pool allocation state, it stops at the first required
+`igIGBFile` factory; one unsupported serialized field class remains null.
+The separate native pool-name table and
 original 46-name lookup are also implemented. Loading is still incomplete.
 Full runtime initialization, concrete factories,
 object population, post-load work and cleanup remain required. See
@@ -88,6 +91,9 @@ object population, post-load work and cleanup remain required. See
 [IGB_RUNTIME_BOOTSTRAP.md](docs/IGB_RUNTIME_BOOTSTRAP.md),
 [IGB_LOADING_PATHS.md](docs/IGB_LOADING_PATHS.md),
 [IGB_DEPENDENCIES.md](docs/IGB_DEPENDENCIES.md),
+[LOADER_GLOBALS.md](docs/LOADER_GLOBALS.md),
+[LOADER_DEPENDENCY.md](docs/LOADER_DEPENDENCY.md),
+[IGB_STRING_POOL.md](docs/IGB_STRING_POOL.md),
 [NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md) and
 [IGB_DECODE.md](docs/IGB_DECODE.md).
 The specialized camera view-inverse helper is also recovered; complete camera

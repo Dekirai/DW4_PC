@@ -2,6 +2,9 @@
 #include "dw4/igb_runtime_bootstrap.hpp"
 #include "dw4/igb_decode.hpp"
 #include "dw4/igb.hpp"
+#include "dw4/loader_globals.hpp"
+#include "dw4/loader_dependency.hpp"
+#include "dw4/igb_string_pool.hpp"
 
 #include <algorithm>
 #include <array>
@@ -300,7 +303,11 @@ void original_prefix(const std::filesystem::path& supplied) {
     const auto calls=f.trace.size();check(!invocation.resume(services).completed && samples==1 && f.trace.size()==calls,
         "Pending directory-path preparation replayed completed original mappings.");
     services->paths=std::make_shared<IgbLoadingPathsServices>();services->paths->factory=make_native_igb_path_pool_factory();
-    services->dependencies=std::make_shared<IgbDependenciesServices>();services->dependencies->factory=make_native_igb_dependency_pool_factory();
+    services->dependencies=std::make_shared<IgbDependenciesServices>();
+    const auto dependency_bridge=std::make_shared<IgbDependenciesFactory>();
+    services->dependencies->factory=make_native_igb_dependency_pool_factory([dependency_bridge](const IgbDependenciesCall& request) {
+        return *dependency_bridge?(*dependency_bridge)(request):nullptr;
+    });
     const auto dependencies=invocation.resume(services);
     check(!dependencies.completed && dependencies.diagnostic.find("8007042C")!=std::string::npos,
         "Original directory-path/dependency prefix did not reach the actual loader singleton operation.");
@@ -311,8 +318,71 @@ void original_prefix(const std::filesystem::path& supplied) {
         "Original dependency table was misread, freed before dependency requests or reported fully loaded.");
     check(!invocation.resume(services).completed && f.io->stream->position==5381 && samples==1 && f.trace.size()==calls,
         "Pending dependency loading replayed the completed native header/types/path prefix.");
+    auto native_strings=std::make_shared<IgbStringPoolServices>();
+    native_strings->strings=services->dependencies->strings;native_strings->mutex=std::shared_ptr<LoaderDirectoryMutex>{};
+    auto dependency_services=std::make_shared<LoaderDependencyServices>();
+    dependency_services->directory=std::make_shared<LoaderDirectoryServices>();
+    dependency_services->directory->filename_field=std::make_shared<LoaderDirectoryNameField>();
+    services->dependencies->globals=std::make_shared<SystemStageServices>();
+    dependency_services->globals=services->dependencies->globals;dependency_services->strings=services->dependencies->strings;
+    const auto strings_factory=make_native_igb_string_factory(native_strings);
+    dependency_services->factory=make_loader_dependency_string_factory(strings_factory);
+    const auto prepared_pool_factory=std::make_shared<IgbDependenciesFactory>();
+    const auto prepared_pool_bridge=[prepared_pool_factory](const IgbDependenciesCall& request) {
+        return *prepared_pool_factory?(*prepared_pool_factory)(request):nullptr;
+    };
+    *dependency_bridge=make_native_loader_globals_factory(bootstrap.type_services(),
+        make_native_igb_string_factory(native_strings,make_native_loader_dependency_factory(dependency_services,prepared_pool_bridge)));
+    check(!invocation.resume(services).completed && !f.file->loader.lock(),
+        "Native loader getter invented an unrepresented ArkCore loader field.");
+    // This prepared igResource owner is an integration input, not proof of its
+    // reflected factory or surrounding ArkCore startup. The getter must use it
+    // instead of the distinct direct global80562104.
+    auto loader=std::make_shared<SystemStageLoader>();loader->directories=std::make_shared<LoaderDirectoryList>();
+    loader->pool_38=f.file->pool_118;(*bootstrap.type_services()->singleton)->loader=loader;
+    services->dependencies->globals->loader=std::make_shared<SystemStageLoader>();
+    const auto uninitialized_pool=invocation.resume(services);
+    check(!uninitialized_pool.completed && uninitialized_pool.diagnostic.find("80054140")!=std::string::npos &&
+        f.file->loader.lock()==loader,"Recovered loader getter used the wrong global or skipped actual string-pool construction.");
+    // The already-selected missing pool constructor cannot be bypassed by
+    // changing its singleton. Supply its explicitly prepared allocation/init
+    // endpoints while native code owns both interning table operations.
+    auto pool_owner=std::make_shared<ModelSceneData>();auto pool=std::make_shared<IgbStringPoolState>();
+    pool->table=std::make_shared<IgbStringTable>();pool->table->capacity=4;
+    pool->table->storage=std::make_shared<IgbStringTable::Storage>(4);pool->arena=f.file->pool_118;
+    igb_bind_string_pool(native_strings,pool_owner,pool);
+    unsigned allocations{};
+    native_strings->factory=[&allocations](const IgbStringPoolCall& request) {
+        if(request.kind!=IgbStringPoolServiceKind::allocate_string)throw std::runtime_error("Original prefix unexpectedly grew its prepared string table.");
+        auto operation=std::make_shared<IgbStringPoolOperation>();const auto weak=std::weak_ptr(operation);
+        operation->resume=[&allocations,request,weak] {
+            ++allocations;const auto out=weak.lock();out->entry_result=std::make_shared<IgbStringEntry>();
+            out->entry_result->owner=std::make_shared<IgbInternedString>();
+            out->entry_result->bytes.buffer=std::make_shared<IgbScratchBuffer>();
+            out->entry_result->bytes.buffer->bytes.resize(request.bytes+4);
+            out->entry_result->bytes.buffer->initialized.assign(request.bytes+4,1);
+            out->container_result=request.arena;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto prepare_pool=[pool_owner](const IgbDependenciesCall& request)->std::shared_ptr<IgbDependenciesOperation> {
+        if(request.kind!=IgbDependenciesServiceKind::create_string_pool && request.kind!=IgbDependenciesServiceKind::initialize_string_pool)return {};
+        auto operation=std::make_shared<IgbDependenciesOperation>();const auto weak=std::weak_ptr(operation);
+        operation->resume=[pool_owner,weak] {weak.lock()->pool_result=pool_owner;return MessengerCallResult{true,0,{}};};return operation;
+    };
+    *prepared_pool_factory=prepare_pool;
+    const auto first_dependency=invocation.resume(services);
+    check(!first_dependency.completed && first_dependency.diagnostic.find("8002EBEC")!=std::string::npos,
+        "Original dependency name did not reach the actual synchronous file factory.");
+    check(loader->primary_prefix && loader->primary_prefix->empty() && pool->table->count==1 && allocations==1 &&
+        services->dependencies->strings->owners.size()==1 && services->dependencies->strings->owners[0]->references==1,
+        "Original path interning did not preserve its single native allocation and header identity.");
+    check(f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0 &&
+        state->dependencies->body && !state->dependencies->body->released,
+        "First dependency factory boundary consumed later tables or invented complete loading.");
+    check(!invocation.resume(services).completed && allocations==1 && samples==1 && f.trace.size()==calls,
+        "Pending dependency factory replayed completed metadata or string interning.");
     std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched.\n";
-    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; pending loader8007042C.\n";
+    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native getter/path interning/synchronous request reached file factory8002EBEC.\n";
 }
 }
 int main(int argc,char** argv) {

@@ -37,6 +37,12 @@ struct LoaderDirectoryServices {
 class LoaderDirectoryLookupInvocation {
 public:
     LoaderDirectoryLookupInvocation(std::shared_ptr<SystemStageLoader>,SystemStageString);
+    // A captured original pointer may refer to mutable scratch bytes. Compare
+    // only at each original read site; request_first is true for the initial
+    // literal comparison and false for each stored filename comparison.
+    using NameComparison=std::function<bool(const SystemStageString&,bool request_first)>;
+    struct LazyNameTag {};
+    LoaderDirectoryLookupInvocation(std::shared_ptr<SystemStageLoader>,NameComparison,LazyNameTag);
     ~LoaderDirectoryLookupInvocation();
     LoaderDirectoryLookupInvocation(const LoaderDirectoryLookupInvocation&)=delete;
     LoaderDirectoryLookupInvocation& operator=(const LoaderDirectoryLookupInvocation&)=delete;

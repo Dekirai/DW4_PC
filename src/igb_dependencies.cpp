@@ -58,6 +58,11 @@ SystemStageString igb_dependency_name(const IgbDependencyName& name) {
         }else return igb_runtime_read_name(source);
     },name);
 }
+IgbDependencyName igb_interned_string_name(const std::shared_ptr<IgbInternedString>& owner) {
+    if(!owner)return {};
+    if(owner->native_name)return *owner->native_name;
+    return name_pointer(owner->value);
+}
 IgbDependenciesFactory make_native_igb_dependency_pool_factory(IgbDependenciesFactory remaining) {
     return [remaining=std::move(remaining)](const IgbDependenciesCall& request)->std::shared_ptr<IgbDependenciesOperation> {
         using K=IgbDependenciesServiceKind;
@@ -272,7 +277,7 @@ MessengerCallResult IgbDependenciesInvocation::resume(std::shared_ptr<IgbDepende
         case P::restore_capture:
             if(!services || !services->globals)return pending("IGB dependency restore requires string-pool global storage before saved-prefix capture.");
             {const bool missing=!services->globals->string_pool;
-                start_string(T::restore,s.state->saved_prefix?IgbDependencyName(s.state->saved_prefix->value):IgbDependencyName{},missing);}
+                start_string(T::restore,igb_interned_string_name(s.state->saved_prefix),missing);}
             break;
         case P::clear_prefix:
             if(!services || !services->globals)return pending("IGB dependency clear requires string-pool global storage.");

@@ -75,9 +75,13 @@ forty-seven field-class identities recovered from original registration/default
 routines. Supplied `ndmw.igb` with explicit list allocation endpoints resolves
 twenty types and sixty field mappings. Native directory-path preparation
 `800505E0` and dependency-table processing `800521EC` now read the dependency
-block before reaching the required loader operation. Interned path transactions
-preserve explicit full-word string references and the existing loader's canonical
-prefix. Pool-name table `80052554` uses the recovered memory-manager selection
+block before entering native getter `8007042C`, string interning `80054094`
+and synchronous dependency request `8006FA6C`. The getter reads the canonical
+ArkCore owner `80562100` field `+40`, separately from direct loader global
+`80562104`. Native interning preserves ordered table search/insertion, live mutex
+selection and full-word string references. With explicitly prepared loader and
+string-pool allocation state, the original prefix reaches file factory
+`8002EBEC`; it has not loaded all 223 dependencies. Pool-name table `80052554` uses the recovered memory-manager selection
 and original 46-name lookup to obtain numeric handles, with list construction
 and allocation still explicit.
 The unsupported serialized shader field remains null, and loading is unfinished.
@@ -88,6 +92,8 @@ and loader preparation/cleanup still require their reached implementations. See
 [IGB_TYPE_MAPPING.md](IGB_TYPE_MAPPING.md),
 [IGB_RUNTIME_BOOTSTRAP.md](IGB_RUNTIME_BOOTSTRAP.md),
 [IGB_LOADING_PATHS.md](IGB_LOADING_PATHS.md), [IGB_DEPENDENCIES.md](IGB_DEPENDENCIES.md),
+[LOADER_GLOBALS.md](LOADER_GLOBALS.md), [LOADER_DEPENDENCY.md](LOADER_DEPENDENCY.md),
+[IGB_STRING_POOL.md](IGB_STRING_POOL.md),
 [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
 [LOADER_REQUEST.md](LOADER_REQUEST.md), [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md)
 and [CONTEXT_INFO.md](CONTEXT_INFO.md).

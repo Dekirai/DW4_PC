@@ -1,5 +1,61 @@
 # Local validation
 
+## Native loader access, synchronous dependencies and string interning
+
+Validated locally on 2026-09-19. The dependency-table caller now composes original
+loader getter `8007042C`, interning `80054094` with concrete ordered string-table
+operations, and synchronous dependency request `8006FA6C`. The getter reads the
+same canonical ArkCore owner used by runtime metadata; its `+40` loader remains
+distinct from direct global `80562104`. See [LOADER_GLOBALS.md](LOADER_GLOBALS.md),
+[LOADER_DEPENDENCY.md](LOADER_DEPENDENCY.md) and
+[IGB_STRING_POOL.md](IGB_STRING_POOL.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 145/145 CTest suites passed locally with four jobs; no compiler warnings |
+| Canonical loader getter | 21 permanent checks for shared ArkCore identity, separate direct global, missing/null state, captured owners and adapter composition |
+| Synchronous dependency request | 136 checks for independent pool fallbacks, packed references, cache claims, full-word string ownership, live names, nested loads, retries, suspension, destruction and abandoned-owner retention |
+| String pool | 145 checks for sorted insertion, cache identity, empty/case-sensitive names, reference wrapping, aligned physical reads, mutable names, mutex captures, duplicate second searches, nested allocation, copy aliasing and failure prefixes |
+| Original decoder prefix | 386 original-inclusive / 107 synthetic type-mapping checks; `ndmw.igb` resolves 20 types and 60 field maps, reads its 2,453-byte dependency body, resolves ArkCore's loader and interns the base path before the first synchronous request reaches file factory `8002EBEC`; cursor 5,381, loading=1, succeeded=0 |
+| Player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released player frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Loader getter instruction comparison | 128 cases, 374 original instructions at 3 addresses, zero differences, including 10 reached null-core faults |
+| Synchronous loader instruction comparison | 2,225 cases, 785,153 original instructions at 512 addresses, zero differences; 2,011 ordinary returns and 214 matching reached faults |
+| String interner instruction comparison | 1,104 cases, 375,246 original instructions at 334 addresses, zero differences |
+
+The getter evidence separately executes four original constructor profiles that
+leave `+40` unchanged, and four bounded startup publication profiles that write
+the core field before the distinct direct global. These do not establish the
+resource factory or complete ArkCore startup.
+
+The synchronous-loader corpus executes actual request, directory lookup,
+`strcmp`, object-pool byte selection, loading claim, append/growth and prefix
+retry bodies. Numeric pool resolution, reflected file construction, destructors,
+string operations, mutexes, list reserve and decoder endpoints are prepared.
+The string corpus separately executes actual interning, lookup and insertion
+wrappers, both searches, insertion, `strcmp`, `strlen`, byte copy and bounded
+`memmove`. Arena allocation, realloc and mutex endpoints are prepared. It does
+not qualify pool construction, final release or partial malformed copies across
+distinct host allocations; the latter use an explicit complete-range profile.
+
+The original-data prefix retains native stream reads, recovered metadata and
+existing prepared list/timer endpoints. It additionally supplies an explicitly
+prepared `igResource` owner, string-pool allocation/initialization and arena
+storage. Native code owns actual getter reads, path interning and the first
+synchronous request; no dependency file factory or decoder success is supplied.
+The body remains retained at cursor 5,381. This is not evidence that all 223
+dependencies loaded or that native boot/gameplay is complete. Concrete file and
+pool factories, arena/reallocation/release services, graph construction and the
+remaining startup path are still required.
+
+Final core SHA256:
+`5C672E23F1BDDA08E6CD86281B6D0C41D2AB7C6892AE578F4D70A40BDD7147C7`.
+Ignored evidence: `work/native-loader-intern-build.log`,
+`work/native-loader-intern-prefix.log`, `work/native-loader-intern-player.log`,
+`work/native-loader-intern-verifier.log`, `work/native-loader-globals-result.json`,
+`work/native-loader-sync-result.json` and `work/native-string-intern-result.json`.
+No interactive preview or GitHub Actions ran. The walking preview is unchanged.
+
 ## Native loading paths, dependency tables and pool names
 
 Validated locally on 2026-09-19. Native decoder stages now implement directory

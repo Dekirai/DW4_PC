@@ -5,7 +5,7 @@
 actual stream opening, header processing, the first three table helpers,
 runtime type/slot reconciliation, directory-path preparation, dependency tables
 and memory-pool names. It is not yet a complete deserializer: reached
-type/list factories, dependency requests, string-pool operations, object population, activation,
+type/list factories, complete dependency decoding, string-pool initialization/allocation/release, object population, activation,
 postprocessing and cleanup still have explicit reached
 operations. A pending operation leaves the original published prefix intact.
 
@@ -120,7 +120,9 @@ derived from original registration/default routines rather than serialized
 counts; it does not establish full engine initialization. With those records
 and prepared list allocation endpoints, supplied `ndmw.igb` now continues through
 directory-path preparation `800505E0` and the dependency header/body read before
-the required loader operation. The former provisional label of `800505E0` as
+native ArkCore loader access, path interning and synchronous dependency request
+control flow. With explicitly prepared loader and string-pool allocation state,
+the prefix reaches its first required `igIGBFile` factory `8002EBEC`. The former provisional label of `800505E0` as
 type/field preparation was corrected after inspecting its body. Dependency
 loading and pool-name handling are documented in [IGB_DEPENDENCIES.md](IGB_DEPENDENCIES.md)
 and [IGB_LOADING_PATHS.md](IGB_LOADING_PATHS.md). This must lead to real

@@ -93,11 +93,13 @@ new-file boot acceptance. The `800528DC` caller now connects actual stream/heade
 the first three tables and `8004FC94` runtime type/slot reconciliation. With
 twenty recovered object layouts, forty-seven field-class identities and prepared
 list endpoints, original `ndmw.igb` resolves twenty types and sixty fields.
-Directory-path preparation and dependency-table processing now advance to the
-required loader operation after reading the dependency body. One serialized
-field class remains unmatched; loading is unfinished. Continue through actual
-dependency requests, interned path ownership, complete runtime registration and factories, actual
-`igIGBFile` creation, object population and post-load callbacks, plus decoder
+Directory-path preparation and dependency-table processing now connect native
+ArkCore loader access, string-table interning and synchronous dependency requests.
+With explicitly prepared loader/string-pool allocation state, the supplied prefix
+reaches the first required `igIGBFile` factory `8002EBEC`. One serialized field
+class remains unmatched; loading is unfinished. Continue through complete
+runtime registration and factories, actual `igIGBFile` creation, string-pool
+initialization/arena allocation/release, object population and post-load callbacks, plus decoder
 cleanup and loader queue/lifecycle work. Reuse the existing checked asset
 and document readers where qualified; do not replace required initialization
 with a successful parse. See [LOADER_REQUEST.md](LOADER_REQUEST.md),

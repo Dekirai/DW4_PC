@@ -11,6 +11,9 @@ class IgbDependenciesError : public std::runtime_error {public: using std::runti
 // reference count at data-4. Host string lifetime is not that reference count.
 struct IgbInternedString {
     SystemStageString value;
+    // Native interning keeps the original character allocation authoritative.
+    // value is its host identity/cache and must not validate bytes eagerly.
+    std::optional<IgbRuntimeNameSource> native_name;
     std::shared_ptr<ModelSceneObject> container;
     std::uint32_t references{1};
     bool released{};
@@ -22,6 +25,7 @@ void igb_bind_interned_string(const std::shared_ptr<IgbInternedStringRegistry>&,
 // pointer without eagerly reading its C string.
 using IgbDependencyName=std::variant<std::monostate,SystemStageString,IgbRuntimeNameSource>;
 SystemStageString igb_dependency_name(const IgbDependencyName&);
+IgbDependencyName igb_interned_string_name(const std::shared_ptr<IgbInternedString>&);
 
 struct IgbDependenciesState {
     std::shared_ptr<IgbScratchBuffer> body; // +E0.
@@ -39,7 +43,7 @@ private:
 enum class IgbDependenciesServiceKind {
     allocate_body,       // Selected pool virtual+DC(body bytes,alignment16).
     free_body,           // Selected pool virtual+108(body).
-    loader,              // Actual singleton getter8007042C, only for null file+20.
+    loader,              // Actual ArkCore+40 getter8007042C, only for null file+20.
     create_string_pool,  // 80054140(16), result published after conditional init.
     initialize_string_pool, // 80053F28(nonnull factory result).
     intern_name,         // 80054094(captured pool,captured C-string pointer).
