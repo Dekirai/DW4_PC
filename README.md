@@ -54,6 +54,12 @@ correction. Native geometry responses reach the existing HITFLOOR/HITWALL
 consumers through registered receivers. The recovered global clock and actual
 null-input transform updates now let all four prepared original player slots
 finish one neutral frame each, with all five stage collision infos registered.
+The next directional frame reaches the original viewer-matrix owner boundary.
+Native input now uses the recovered camera inverse and original finite heading
+math; the application time prefix and system frame-time publication are also
+recovered. Dispatcher, scheduler and camera producers still need integration.
+See [APPLICATION_FRAME.md](docs/APPLICATION_FRAME.md) and
+[PLAYER_INPUT_MATH.md](docs/PLAYER_INPUT_MATH.md).
 Nonnull transform inputs,
 missing bounds, CHECKWALLFULL and startup remain required. See
 [GAME_CLOCK.md](docs/GAME_CLOCK.md), [ACTOR_TRANSFORM.md](docs/ACTOR_TRANSFORM.md),

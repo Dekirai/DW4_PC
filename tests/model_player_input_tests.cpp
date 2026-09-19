@@ -74,7 +74,8 @@ void movement_captures_and_services() {
         ++captures;check(&owner==f.events.model_manager().get(),"Camera read changed the original controller.");
         f.one->work=next;f.ram->parent.reset();f.ram->number=3;return matrix;
     };
-    check(!f.run(call).completed && captures==1,"Missing inverse did not retain the captured camera owner.");
+    f.services.inverse_camera=[](const AnimationMatrix&)->std::optional<AnimationMatrix>{return {};};
+    check(!f.run(call).completed && captures==1,"Pending inverse override did not retain the captured camera owner.");
     f.services.camera_matrix={};
     f.services.inverse_camera=[&](const AnimationMatrix& value)->std::optional<AnimationMatrix> {
         ++inversions;check(&value==matrix.get(),"Camera inverse lost captured matrix identity.");
@@ -90,6 +91,24 @@ void movement_captures_and_services() {
     check(partial.faulted() && (*invalid.work->turn_attack_timers)[0]==29,"Short history failure rolled back the initial write/decrement.");
     Fixture idle;idle.pad->left_x=std::numeric_limits<float>::quiet_NaN();idle.work->turn_attack_timers.reset();
     ModelPlayerInputInvocation unused(idle.ram);check(idle.run(unused).completed,"Stationary input consumed unused history or stick arithmetic.");
+}
+void native_camera_inverse() {
+    Fixture f;f.pad->direction=1;f.pad->left_y=-1;
+    const AnimationMatrix view{0,0,1,0,0,1,0,0,-1,0,0,0,3,4,5,1};
+    const auto owner=std::make_shared<AnimationMatrix>(view);
+    f.services.camera_matrix=[owner](const auto&){return owner;};
+    ModelPlayerInputInvocation rotated(f.ram);
+    check(f.run(rotated).completed && f.work->key_input==1 && f.work->motion.turn.desired[1]==0x1.921fb6p+0f,
+        "Native camera inversion did not transform +Z through the real view matrix.");
+    check(*owner==view,"Native player camera inversion changed its retained source owner.");
+    *owner=AnimationMatrix{};
+    ModelPlayerInputInvocation singular(f.ram);
+    check(f.run(singular).completed && f.work->key_input==1 && f.work->motion.turn.desired[1]==0,
+        "Singular camera did not preserve the original caller's identity-initialized inverse destination.");
+    owner->at(0)=std::numeric_limits<float>::infinity();
+    ModelPlayerInputInvocation invalid(f.ram);
+    rejects([&]{f.run(invalid);},"Nonfinite camera escaped the native inverse's explicit arithmetic boundary.");
+    check(invalid.faulted(),"A failed native inverse did not fault the input continuation.");
 }
 void body_attack_policy() {
     Fixture f;f.pad->held=pad_button::b;f.pad->trigger=pad_button::b;f.work->body_attack_timer=4;
@@ -312,7 +331,7 @@ void spin_and_remaining_boundaries() {
 }
 int main() {
     try {
-        physical_pad_selection();movement_captures_and_services();body_attack_policy();actual_body_frame_time();panels_and_opaque_work();
+        physical_pad_selection();movement_captures_and_services();native_camera_inverse();body_attack_policy();actual_body_frame_time();panels_and_opaque_work();
         attack_timer_and_live_data();status_and_failure_prefixes();spin_and_remaining_boundaries();
         std::cout<<"Model player input tests passed: "<<checks<<" checks.\n";return 0;
     }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}

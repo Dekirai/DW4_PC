@@ -39,9 +39,11 @@ spin-attack path. Stationary input does not access this list or camera data.
 
 Movement computes the desired Y heading from the original camera inverse's
 transformed +Z and the captured stick direction, then sets the input byte. It
-preserves the original zero products and fused transform operations. The two
-atan2 results use the existing finite native math profile, without a claim of
-bit-identical PowerPC libm behavior at every boundary.
+preserves the original zero products and fused transform operations. The native
+heading helper reconstructs the reached finite MSL atan2/atan paths, including
+the original single-precision narrowings and tiny-result flushes. See
+[PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md) for its explicit numerical profile
+and independent original-instruction comparison.
 
 Outside the main lobby, B trigger requests `SQ_GUARD` unless currently jumping.
 Held B runs the four-state body-attack policy, including the 15-frame direction
@@ -87,11 +89,17 @@ timer starts, and packet identities survive a missing-service pause.
 `ModelPlayerInputServices` supplies original operations whose surrounding
 owners/producers are not yet connected here, plus an optional frame-time override:
 
-- `camera_matrix` returns the actual matrix at controller camera-manager
-  `+2C -> work+14 -> matrix+6C`. The returned owner is retained before inversion.
-- `inverse_camera` performs original `8012A92C`. There is no identity or host
-  orbit-camera fallback. A missing provider or unavailable result suspends
-  after the completed movement-counter prefix.
+- `camera_matrix` returns the actual matrix at controller viewer-manager
+  `+2C -> parameters+14 -> viewMatrix+6C`. The registered manager type is
+  `igViewerSceneInfoManager`; its parameters are `igViewerParameters`. The
+  returned matrix owner is retained before inversion. An absent provider
+  suspends after the completed movement-counter prefix; a returned null fails.
+- `inverse_camera` optionally overrides original `8012A92C`. Without an
+  override, the recovered native inverse runs on the retained actual matrix.
+  The caller initializes its destination to identity at `8034C65C`, then calls
+  the inverse at `8034C678` and ignores its status. A singular source therefore
+  leaves that initialized destination. This does not supply a missing camera.
+  An installed override returning `nullopt` still suspends.
 - `frame_delta` optionally overrides the original system frame-time read for
   instrumentation or an explicit service boundary. Without an override, the
   callback reads the invoking controller's current `system->frame_time_f`
@@ -133,8 +141,13 @@ pickup/attack timer ordering, the spin path, lobby hitbox fields, status/sound
 packets, and reached malformed-data and recursion failures. Synthetic providers
 are declared fixtures and do not stand in for completed original gameplay.
 
-The initial focused build passed 72 checks with `/W4` clean compilation against
-the refreshed native core. This is native synthetic verification and local
-original-instruction review, not a new instruction-oracle comparison or
-physical-console test. Camera inversion, manager/device production, and the
-remaining original frame services retain their explicit integration boundaries.
+The initial focused build passed 72 checks. Later checks exercise the native
+camera inverse, singular-source behavior, preserved source ownership and reached
+nonfinite failures. The heading helper has a separate original-instruction
+comparison. Current measured results are in [VALIDATION.md](VALIDATION.md).
+
+The supplied-data player test now also enters a directional update using its
+actual captured player work and selected pad. It reaches the missing viewer
+matrix owner after publishing turn-history value29. Retrying retains that
+prefix. Viewer startup, selected/following camera publication, device production
+and remaining original frame services are still explicit integration boundaries.

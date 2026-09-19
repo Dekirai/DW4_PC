@@ -131,7 +131,11 @@ public:
 };
 struct ModelPadManager;
 struct ModelSceneContext { std::uint64_t world_time{}; };
-struct ModelSceneSystem {float frame_time_f{};};
+struct ModelSceneSystem {
+    float frame_time_f{1}; // +28, explicit beSystem metadata default.
+    std::uint64_t saved_world_time{},frame_time{}; // +18/+20.
+    std::shared_ptr<ModelSceneContext> context; // Inherited manager +0C.
+};
 struct ModelSceneManager {
     virtual ~ModelSceneManager()=default;
     std::shared_ptr<ModelSceneContext> context;

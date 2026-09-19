@@ -92,6 +92,15 @@ providers and completed prepared neutral frames do not establish a gameplay sess
 connected local multiplayer. See [MODEL_FRAME.md](MODEL_FRAME.md),
 [MODEL_DISPATCH.md](MODEL_DISPATCH.md) and [VALIDATION.md](VALIDATION.md).
 
+The next prepared directional update reaches the original viewer matrix owner.
+Input now uses the recovered native inverse and finite MSL heading operations.
+The recovered application update publishes its time prefix before explicit
+dispatcher and scheduler boundaries; its distinct application timer is shared
+through the actual context world-time field, and the system timing leaf consumes
+that field. These are focused native operations, not completed startup or an
+active camera/scheduler. See [APPLICATION_FRAME.md](APPLICATION_FRAME.md),
+[PLAYER_INPUT.md](PLAYER_INPUT.md) and [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
+
 ## Recovery tools and platform choices
 
 These tool descriptions retain the upstream sources consulted for the September

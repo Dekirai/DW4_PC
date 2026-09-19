@@ -524,6 +524,23 @@ void original(const std::filesystem::path& root) {
             collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
             "An original prepared player slot failed to finish its own neutral frame and native collision.");
     }
+    // Follow a real nonneutral per-slot sample to its reached native boundary.
+    // Device polling remains a separate producer; do not substitute a preview
+    // camera for the original controller's camera work.
+    const auto moving_pad=pads->data->backing->at(0);
+    moving_pad->direction=1;moving_pad->left_y=-1;
+    auto moving_frame=events.begin_model_frame(ids[0]);const auto moving_result=events.resume(*moving_frame);
+    std::cout<<"Original directional frame: completed="<<moving_result.completed
+        <<", sequence="<<created->sequence.name.value_or("<null>")
+        <<", mode="<<created->control.mode<<", diagnostic="<<moving_result.diagnostic<<'\n';
+    check(!moving_result.completed && moving_result.diagnostic.find("original camera matrix owner")!=std::string::npos &&
+        moving_frame->input() && moving_frame->input()->captured_pad()==moving_pad &&
+        created->turn_attack_timers && created->turn_attack_timers->at(0)==29,
+        "Original directional frame did not retain its actual pad and history prefix at the camera boundary.");
+    const auto moving_retry=events.resume(*moving_frame);
+    check(!moving_retry.completed && moving_retry.diagnostic==moving_result.diagnostic &&
+        created->turn_attack_timers->at(0)==29,
+        "Retrying directional input repeated its turn-attack history prefix.");
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
         "four prepared neutral per-RAM frames complete shared-node HITLANDDELIVER and native collision with all five stage infos registered; "

@@ -21,6 +21,15 @@ dynamic operations and CHECKWALLFULL remain required. Startup, the actual outer
 frame scheduler, assigned input, camera, audio, combat and persistence must be connected
 without substituting the walking preview's provisional controller or camera.
 
+`ApplicationFrameState` shares its context world-time field with model managers.
+Its separately owned timer advances the recovered application time prefix before
+the dispatcher and scheduler boundaries. `publish_system_frame_time` implements
+the reached system timing leaf on that same context, without claiming complete
+system startup or scheduling. Player input uses the native matrix inverse and
+recovered finite MSL heading math, retaining its actual camera-provider boundary.
+See [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and
+[PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
+
 The release must preserve original gameplay and local one-to-four-player input,
 provide one `DW4_PC.exe` entry point, import the user's supported ROM without a
 compiler or manual extraction, and keep portable saves beside the executable.

@@ -1,5 +1,55 @@
 # Local validation
 
+## Native application timing and directional player input
+
+Validated locally on 2026-09-19. Player input now calls the recovered native
+matrix inverse with its original identity-initialized destination and ignored
+singular status. Its heading calculation reconstructs the reached finite MSL
+operations and original single-precision rounding. The new application entry
+publishes its time prefix before explicit dispatcher and scheduler boundaries;
+the recovered system timing leaf consumes the same shared context owner.
+See [APPLICATION_FRAME.md](APPLICATION_FRAME.md),
+[PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md) and [PLAYER_INPUT.md](PLAYER_INPUT.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 122/122 CTest suites passed locally with four build jobs; no compiler warnings |
+| Application timing | 45 checks covering fixed-point wrap, original defaults, publication order, current context, live fields, retained callbacks, recursion, competing frames and abandonment |
+| Heading math | 37 numerical checks covering original instruction goldens, quadrants, reduction regions, tiny results, signed zeros and reached/unused nonfinite fields |
+| Player input | 88 checks, including native camera inversion, singular destination behavior, source identity and retained override suspension |
+| Original player integration | 169 original-inclusive / 62 synthetic checks; four prepared neutral frames still complete; the next directional frame retains its selected pad and turn-history prefix at the required original viewer-matrix owner |
+| Application instruction comparison | 11,296 cases, 587,392 original instructions and 52 instruction addresses; zero mismatches against the final production-core test executable |
+| Heading instruction comparison | 71,162 cases: 70,934 exact numerical results and 228 checked finite-profile boundaries; 17,011,398 original instructions and 283 instruction addresses; zero mismatches against the final production core |
+
+The original directional frame reaches its camera boundary in `SQ_WAIT`, mode2,
+after its selected turn-history counter becomes29. Retrying the same pending
+frame leaves that value unchanged. Its pad sample is explicitly prepared;
+device polling and active camera selection are not implemented by this test.
+The camera owner chain is the original `igViewerSceneInfoManager` parameters,
+not the walking preview's camera. No replacement camera is supplied here.
+
+Application comparisons execute the original producer instructions with
+prepared timer-return, dispatcher and scheduler endpoints. They validate the
+producer and callback ordering, not the bodies of those endpoints. The
+application timer is distinct from the global collision timer. The system
+timing helper represents only its reached time-publication leaf, not the
+surrounding complete system update or application startup.
+
+The heading corpus includes every signed-byte stick pair after division by74,
+578 camera/stick boundary cases, 5,000 arbitrary word profiles and 48
+reached/unused nonfinite placements. Its expected values come from decoded
+original instructions with integer-controlled rounding, not host trig or the
+native helper. The final driver links the production core without substitute
+objects. These finite profiles do not claim hardware FPSCR exception behavior.
+Final core SHA256:
+`01175E8AE07403326A4C7F22F63F41B49C2D672B171E738694E417E4F958F2C8`.
+
+The visible preview is unchanged. Complete startup, manager scheduling, camera
+publication, repeated original gameplay and connected controllers remain open.
+No interactive preview or GitHub Actions was started. Ignored local logs are
+`work/native-player-timing-*`, `work/native-application-frame-*` and
+`work/native-player-input-math-*`.
+
 ## Native game clock and completed prepared player frames
 
 Validated locally on 2026-09-19. The native global long timer and verified

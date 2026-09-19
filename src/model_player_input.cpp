@@ -3,6 +3,8 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/model_scene.hpp"
 #include "dw4/model_timer.hpp"
+#include "dw4/matrix_inverse.hpp"
+#include "dw4/player_input_math.hpp"
 #include "dw4/pad.hpp"
 
 #include <algorithm>
@@ -134,22 +136,19 @@ MessengerCallResult ModelPlayerInputInvocation::resume(NativeMessenger& messenge
             if(!state.camera)fail("Player input dereferences its current null camera matrix owner.");
             state.phase=Phase::camera_inverse;break;
         case Phase::camera_inverse: {
-            if(!services.inverse_camera)return need("Player input requires original camera inversion 8012A92C.");
-            const auto inverse=services.inverse_camera(*state.camera);check();
-            if(!inverse)return need("Player input awaits original camera inversion 8012A92C.");
-            // C68C: transform +Z including the original zero products.
-            std::array<float,3> forward;
-            for(std::size_t axis=0;axis<3;++axis) {
-                const float y=0.0f*(*inverse)[4+axis];
-                const float xy=std::fma(0.0f,(*inverse)[axis],y);
-                forward[axis]=std::fma(1.0f,(*inverse)[8+axis],xy);
+            std::optional<AnimationMatrix> inverse;
+            if(services.inverse_camera) {
+                inverse=services.inverse_camera(*state.camera);check();
+                if(!inverse)return need("Player input awaits original camera inversion 8012A92C.");
+            }else {
+                // 8034C65C first calls 801285A0 on the local destination, then
+                // C678 calls the inverse and ignores its success register.
+                // A singular camera therefore retains this initialized matrix.
+                inverse=AnimationMatrix{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+                original_matrix_inverse(*state.camera,*inverse);
             }
-            if(!std::isfinite(forward[0]) || !std::isfinite(forward[2]) ||
-                !std::isfinite(state.left_x) || !std::isfinite(state.left_y))
-                fail("Player input heading exceeds the finite native atan2 profile.");
-            const float camera_heading=static_cast<float>(std::atan2(static_cast<double>(forward[0]),static_cast<double>(forward[2])));
-            const float pad_heading=static_cast<float>(std::atan2(static_cast<double>(state.left_x),-static_cast<double>(state.left_y)));
-            state.work->motion.turn.desired[1]=camera_heading+pad_heading;
+            state.work->motion.turn.desired[1]=original_player_input_heading(
+                *inverse,state.left_x,state.left_y);
             state.work->key_input=1;state.phase=Phase::buttons;break;
         }
         case Phase::buttons: {

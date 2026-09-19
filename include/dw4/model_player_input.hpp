@@ -15,11 +15,13 @@ class ModelPlayerWork;
 struct ModelSceneManager;
 
 struct ModelPlayerInputServices {
-    // Original controller+2C -> work+14 -> matrix+6C. Missing provider pauses;
+    // Original controller+2C -> viewer parameters+14 -> view matrix+6C.
+    // The owner type is igViewerSceneInfoManager. Missing provider pauses;
     // a returned null owner is the distinct reached null pointer failure.
     std::function<std::shared_ptr<AnimationMatrix>(const ModelSceneManager&)> camera_matrix;
-    // 8012A92C, called on that retained matrix owner. No host orbit camera or
-    // identity substitution. Nullopt means the real inverse service is absent.
+    // Override for 8012A92C on the retained camera owner. Nullopt suspends.
+    // Without an override, use the recovered native inverse and the original
+    // caller's identity-initialized destination; singular status is ignored.
     std::function<std::optional<AnimationMatrix>(const AnimationMatrix&)> inverse_camera;
     // Optional override for controller+10 -> system+28, reached only for a
     // positive body timer while B is held. Without an override, read the fixed

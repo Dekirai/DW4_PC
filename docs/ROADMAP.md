@@ -59,6 +59,15 @@ Four original Agumon GENERATE calls and the prepared neutral frame form the loca
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).
 
+The next prepared directional frame now identifies the original viewer-matrix
+owner as its boundary and preserves its completed turn-history prefix on retry.
+The native camera inverse, original finite heading calculation, application
+time prefix and system time publication are recovered. The actual viewer,
+dispatcher and scheduler producers remain required; prepared callbacks do not
+close those integrations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),
+[PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md) and
+[APPLICATION_FRAME.md](APPLICATION_FRAME.md).
+
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining
 position-lock/ride operations, camera and rendering. Complete original manager
