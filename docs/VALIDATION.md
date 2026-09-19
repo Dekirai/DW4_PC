@@ -1,5 +1,45 @@
 # Local validation
 
+## Native CHECKWALL and original player-frame integration
+
+Validated locally on 2026-09-19. Native CHECKWALL now executes the original
+three-pass wall query and correction, with retained messenger delivery and
+original wall-enabled state. Static geometry responses reach HITWALL and update
+its shared node. The original player-frame integration now reaches the dynamic
+transform's required global clock instead of stopping at missing HITLANDMODEL
+registration. See [HITLAND_WALL.md](HITLAND_WALL.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 118/118 CTest suites passed; four build jobs; no compiler warnings in the final build |
+| Wall invocation tests | 131 synthetic checks: three passes, exact prepared endpoints, first-minimum ties, per-pass query retention, packet changes during suspension, metadata prefixes, disabled-wall gates and numerical instruction goldens |
+| Real synthetic wall | Actual mapped vertical triangle, original default rotation, native query receiver and existing HITWALL node adjustment; balanced vertex map/unmap |
+| Supplied-data wall integration | 163 original-inclusive checks: 15 stage-179 wall-center queries produce 14 corrections; a registered HITWALL call recomputes and applies a selected response |
+| Original player lifecycle | 159 original-inclusive / 62 synthetic checks: four prepared original GENERATE calls, all five stage collision info occurrences, actual HITWALL/CHECKWALL entry and dynamic global-clock boundary; retry preserves query, traversal and earlier player-frame effects |
+| Independent helper comparison | 5,089 cases: 4,604 exact outputs and 485 checked arithmetic boundaries; 272,900 original instruction steps, 530 addresses; zero mismatches |
+| Original MSL and reset matrix | Actual acos/cos/sin and their reached kernels, 17 ratio inputs, both narrowings and all 16 reset-matrix words independently checked; no host trig reference hooks |
+| Positive-length and ratio verification | 33,554,432 representative sqrt comparisons with zero mismatches, covering both exponent parities and extremal exponents; 8,196 independent integer-instruction crosschecks |
+
+The final numerical driver links only the final production core, with no
+replacement source objects. Core SHA256:
+`95FF5788F3BAAAD27849ED8C1489E4D28825D827933B498D040AF7957597C853`.
+The numerical profile and exponent-scaling justification are documented in
+HITLAND_WALL.md; it does not establish physical Gekko/FPSCR behavior or arbitrary
+nonfinite recovery.
+
+The original frame stops at `global clock virtual+68` before the current dynamic
+node's path/matrix push. The fixture initially expected an already-pushed path;
+that assertion was corrected to match the original dispatch order. No fake clock
+or update provider was installed. A separate compile correction made the test's
+recursive registration accept const child owners. Dynamic services, missing
+bounds, CHECKWALLFULL, startup and complete scheduling remain unfinished.
+
+Ignored evidence: `work/native-checkwall-verified-build.log`,
+`work/native-checkwall-original.log`, `work/native-checkwall-player-frame.log`,
+`work/native-checkwall-oracle-report.md` and
+`work/native-checkwall-oracle-final-report.json`. No preview was launched,
+original data was unchanged and GitHub Actions remained disabled.
+
 ## Native CHECKLAND floor delivery
 
 Validated locally on 2026-09-19. Native CHECKLAND now prepares the original four

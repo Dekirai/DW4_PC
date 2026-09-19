@@ -22,10 +22,13 @@ struct HitLandTraversalScratch {
     std::shared_ptr<HitLandIndexList> indices; // Original scratch +10.
 };
 struct HitLandTraversalManager {
+    HitLandTraversalManager();
     std::shared_ptr<ModelSceneList> infos; // +18, ordered actual info occurrences.
     std::shared_ptr<HitLandQuery> query; // +20; a caller may retain an older query.
     std::shared_ptr<HitLandIntersectionVisitor> visitor; // +24.
     std::shared_ptr<HitLandTraversalScratch> scratch; // +28.
+    std::uint8_t wall_enabled{1}; // +2C; CHECKLAND is independent of this gate.
+    AnimationMatrix wall_rotation; // +30; original reset Euler (0, float pi/2, 0).
 };
 
 // The exact clear/append sites in 803009D0, including count-before-store and

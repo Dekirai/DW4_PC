@@ -85,5 +85,6 @@ Local evidence is `work/native-inverse-oracle-result.json`,
 and `work/native-source-geometry-original.log`. The full Release core build
 passes 116 CTest suites. No game was launched and no original data was changed.
 CHECKLAND response handling is subsequently implemented and tested separately
-in [HITLAND_FLOOR.md](HITLAND_FLOOR.md). Wall responses, transform updates,
-missing-bound construction and original startup/frame scheduling remain required.
+in [HITLAND_FLOOR.md](HITLAND_FLOOR.md), followed by CHECKWALL in
+[HITLAND_WALL.md](HITLAND_WALL.md). CHECKWALLFULL, transform updates, missing-bound
+construction and original startup/frame scheduling remain required.

@@ -66,8 +66,10 @@ messenger and retries after a fault are rejected.
 Construct `make_hitland_floor_receiver(manager, services)` inside the event
 runtime's manager resolver. The messenger retains that resolved receiver for one
 delivery, including suspension, then resolves a fresh one for the next delivery.
-The helper implements CHECKLAND only; CHECKWALL and CHECKWALLFULL remain explicit
-pending operations. Original manager creation/registration is still required.
+This floor-only helper implements CHECKLAND only. The later
+`make_hitland_query_receiver` in [HITLAND_WALL.md](HITLAND_WALL.md) supports both
+CHECKLAND and CHECKWALL; enabled CHECKWALLFULL remains pending. Original manager
+creation/registration is still required.
 
 ## Evidence and remaining integration
 
@@ -108,7 +110,7 @@ logs. Original DOL SHA256:
 No game assets or original instruction bytes are public repository content.
 
 Dynamic node updates, missing-bound construction, other bound classes, complete
-wall responses and original startup/frame scheduling remain required. The
+CHECKWALLFULL and original startup/frame scheduling remain required. The
 walking preview still uses its provisional controller. See
 [HITLAND_TRAVERSAL.md](HITLAND_TRAVERSAL.md),
 [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),

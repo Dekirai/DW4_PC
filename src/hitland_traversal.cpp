@@ -1,6 +1,7 @@
 #include "dw4/hitland_traversal.hpp"
 #include "dw4/hitland_intersection.hpp"
 #include "dw4/hitland_math.hpp"
+#include "dw4/hitland_wall_math.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -8,6 +9,7 @@
 #include <limits>
 
 namespace dw4 {
+HitLandTraversalManager::HitLandTraversalManager():wall_rotation(original_hitland_wall_rotation()) {}
 namespace {
 [[noreturn]] void fail(const char* reason) {throw ModelSceneError(reason);}
 template<class T> const std::shared_ptr<T>& require(const std::shared_ptr<T>& owner,const char* reason) {

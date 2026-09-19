@@ -4,6 +4,8 @@
 #include "dw4/model_frame.hpp"
 #include "dw4/model_subcommand_update.hpp"
 #include "dw4/model_movement_collision.hpp"
+#include "dw4/hitland_wall.hpp"
+#include "dw4/hitland_node_dispatch.hpp"
 #include "dw4/model_motion_actual.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
@@ -18,6 +20,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <unordered_set>
 
 namespace {
 using namespace dw4;
@@ -441,10 +444,56 @@ void original(const std::filesystem::path& root) {
         created->subcommands->list_owner()->front().elapsed==1 &&
         !created->subcommands->list_owner()->front().started,
         "Original delayed player number effect did not consume the actual system delta exactly once.");
+    // Prepare every collision info occurrence from this original stage's info
+    // list. This is explicit test registration, not recovered manager startup;
+    // dynamic nodes are retained and must reach their real service boundaries.
+    const auto collision=std::make_shared<HitLandTraversalManager>();
+    collision->infos=std::make_shared<ModelSceneList>("igObjectList");
+    collision->query=std::make_shared<HitLandQuery>();
+    collision->visitor=std::make_shared<HitLandIntersectionVisitor>();
+    collision->scratch=std::make_shared<HitLandTraversalScratch>();
+    collision->scratch->segments=std::make_shared<ModelSceneList>("igObjectList");
+    collision->scratch->indices=std::make_shared<HitLandIndexList>();
+    std::unordered_set<std::uint32_t> registered;
+    const std::function<void(const std::shared_ptr<const ActorSceneNode>&)> register_node=[&](const auto& node) {
+        if(!node || !registered.insert(node->reference()).second)return;
+        register_hitland_node_type(collision->visitor,node);
+        for(const auto& child:node->children())register_node(child);
+    };
+    if(!stage->document().info_list_reference)throw std::runtime_error("Original stage lacks its info list.");
+    for(const auto reference:stage->document().object_list(*stage->document().info_list_reference)) {
+        if(!reference || !stage->document().is_a(stage->document().object(*reference),"beHitLandModelInfo"))continue;
+        const auto geometry_info=stage->models().hit_land_geometry_info(*reference);
+        hitland_append_object(collision->infos,geometry_info);
+        register_node(geometry_info->check_switch);
+    }
+    check(collision->infos->count==5,"Original stage collision registration lost an authored info occurrence.");
+    events.register_native_controller(ControllerObjectId::allocate_native(),{
+        []()->std::optional<std::uint8_t>{return 1;},
+        [collision]{return make_hitland_query_receiver(collision);}},"HITLANDMODEL",{},0);
+    const auto with_geometry=events.resume(*frame);
+    check(!with_geometry.completed && with_geometry.diagnostic.find("HITLANDDELIVER/HITWALL")!=std::string::npos &&
+        with_geometry.diagnostic.find("global clock virtual+68")!=std::string::npos &&
+        collision->query->segment_count==3 && collision->visitor->node_path->count==0 &&
+        collision->visitor->matrix_stack->count==1 &&
+        frame->collision() && !frame->collision()->completed(),
+        "Original frame did not reach the actual dynamic-node clock boundary through native CHECKWALL.");
+    const auto retained_query=collision->query;const auto segment_backing=retained_query->segments->backing;
+    const auto path_count=collision->visitor->node_path->count;
+    const auto query_candidates=retained_query->candidate_count;
+    const auto still_pending=events.resume(*frame);
+    check(!still_pending.completed && still_pending.diagnostic==with_geometry.diagnostic &&
+        collision->query==retained_query && retained_query->segments->backing==segment_backing &&
+        retained_query->segment_count==3 && retained_query->candidate_count==query_candidates &&
+        collision->visitor->node_path->count==path_count && frame->captured().work==created &&
+        created->subcommands->list_owner()->front().elapsed==1,
+        "Retrying the original dynamic collision repeated the player frame, query preparation or completed traversal prefix.");
+    std::cout<<"Original frame after native collision registration: completed="<<with_geometry.completed
+        <<", infos="<<collision->infos->count<<", diagnostic="<<with_geometry.diagnostic<<'\n';
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
-        "first neutral actual frame enters its shared-node HITLANDDELIVER and reaches the actual HITLANDMODEL query boundary; "
-        "original query geometry, scheduling and full gameplay remain required\n";
+        "first neutral actual frame enters shared-node HITLANDDELIVER and native CHECKWALL with all five stage collision infos registered; "
+        "dynamic-node clock/update, scheduling and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

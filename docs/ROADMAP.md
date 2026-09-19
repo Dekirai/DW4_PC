@@ -11,7 +11,7 @@ simple ROM-driven release experience remain required.
 
 | Gate | Deliverable | Acceptance | Current evidence |
 | --- | --- | --- | --- |
-| 1 | Complete original native game and source | Recovered game and engine source drives original startup, menus, gameplay, combat, progression, transitions, audio and saves; independent local 1–4-player controls; behavior compared against the original | Selected native player, script, animation and collision operations are connected in the core. Static HITLAND candidates and CHECKLAND floor responses reach HITFLOOR in prepared integrations; complete dynamic collision, wall responses, original startup and outer frame scheduling remain unfinished. The walking preview has provisional movement and camera. |
+| 1 | Complete original native game and source | Recovered game and engine source drives original startup, menus, gameplay, combat, progression, transitions, audio and saves; independent local 1–4-player controls; behavior compared against the original | Native CHECKLAND/CHECKWALL responses reach HITFLOOR/HITWALL in prepared integrations. An original player frame with all five stage collision infos reaches the dynamic-transform global clock. Complete dynamic collision, CHECKWALLFULL, startup and outer scheduling remain unfinished. The walking preview has provisional movement and camera. |
 | 2 | Performance and PC graphics | At least 60 FPS on documented hardware; options up to 300 FPS without faster simulation/audio; validated frame times, 16:9 camera/culling/HUD, 4K, display modes, VSync and MSAA | Original assets render through the SDL/OpenGL preview and prepared draws. Complete original materials, camera, rendering and game timing remain pending; preview frame rates cannot qualify full-game performance. |
 | 3 | ImGui settings and QoL | Working persistent graphics/input controls, freely editable keyboard bindings, optional cheats, save/load states, supported game languages and original/modernized options; applied settings and unsupported combinations visible | The native workbench has ImGui and provisional walking input. The integrated F1 gameplay menu, persistent freely editable bindings, original game input, cheats, states and supported-language selection require native implementation and verification. See [LOCALIZATION.md](LOCALIZATION.md). |
 | 4 | Content modding | HD texture replacements, versioned loader/manifests, custom maps, Digimon and weapons, reproducible randomizers, optional rebalancing and bug fixes | Original asset identities and selected decoders are available. Full native content contracts, loading and gameplay integration remain pending. |
@@ -44,13 +44,14 @@ Aurora remains an optional platform candidate, not an implemented migration.
 Version 0.45 connects actual HITLANDMODEL static geometry selection, typed
 visitor dispatch, mapped primitive enumeration and candidate publication.
 The original player frame still reaches the required HITLANDMODEL recipient
-through its outer wall/floor consumer and HITLANDDELIVER. Completing dynamic
-node updates, missing geometry-bound construction and CHECKWALL's multiple passes
-remains the next collision integration requirement. The September 19 updates
-implement canonical AABox transforms, the original matrix inverse and CHECKLAND
-floor responses through a retained native receiver. See
-[MATRIX_INVERSE.md](MATRIX_INVERSE.md) and [HITLAND_FLOOR.md](HITLAND_FLOOR.md) for
-measured scope.
+through its outer wall/floor consumer and HITLANDDELIVER. The native receiver
+now handles CHECKLAND and CHECKWALL; the original frame reaches the dynamic
+transform's global clock with every stage collision info included. Completing
+that clock/update path, missing geometry bounds and CHECKWALLFULL remains the
+next collision integration requirement. The September 19 updates also implement
+canonical AABox transforms and the original matrix inverse. See
+[HITLAND_WALL.md](HITLAND_WALL.md), [MATRIX_INVERSE.md](MATRIX_INVERSE.md) and
+[HITLAND_FLOOR.md](HITLAND_FLOOR.md) for measured scope.
 Runtime class registration in tests is
 explicit preparation; original manager startup remains required.
 Four original Agumon GENERATE calls and this first frame prefix form the local

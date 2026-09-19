@@ -91,9 +91,17 @@ four completed Agumon GENERATE calls, explicitly supplies neutral pad/system
 owners and follows the first player frame to its actual remaining boundary.
 Exact results belong in [VALIDATION.md](VALIDATION.md).
 
+The September 19 integration registers all five collision info occurrences from
+the original stage, including dynamic geometry. That same first player frame
+enters native CHECKWALL and reaches the required dynamic-transform global clock
+virtual +68 before the current node's path/matrix push. A retry preserves the
+captured query, traversal and earlier player-frame effects. No clock or transform
+update is substituted to force completion. See [HITLAND_WALL.md](HITLAND_WALL.md).
+
 The checked player-controller profile does not yet dispatch different NPC or
-enemy virtual implementations, position-lock/ride and HITLANDMODEL query helpers, the
-original camera inverse, full manager scheduling or connected multiplayer.
+enemy virtual implementations, remaining position-lock/ride, dynamic query or
+CHECKWALLFULL operations, the original camera inverse, full manager scheduling
+or connected multiplayer.
 The status and movement modules also document their bounded list/numeric
 representations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),
 [MODEL_STATUS_UPDATE.md](MODEL_STATUS_UPDATE.md),

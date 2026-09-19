@@ -67,14 +67,16 @@ cursors and callback order. This is part of the original collision pipeline,
 not the walking preview's separate mesh-based solver.
 
 The September 19 extensions implement the original matrix inverse, canonical
-AABox scratch transform and CHECKLAND floor response. Prepared integration now
-passes real native floor geometry through a registered receiver to HITFLOOR.
-See [MATRIX_INVERSE.md](MATRIX_INVERSE.md) and [HITLAND_FLOOR.md](HITLAND_FLOOR.md)
+AABox scratch transform, CHECKLAND floor response and CHECKWALL wall response.
+Prepared native geometry integrations reach HITFLOOR/HITWALL. The original player
+frame now enters CHECKWALL with all five stage collision infos registered and
+reaches the dynamic-transform global-clock virtual +68. See [HITLAND_WALL.md](HITLAND_WALL.md),
+[MATRIX_INVERSE.md](MATRIX_INVERSE.md) and [HITLAND_FLOOR.md](HITLAND_FLOOR.md)
 for original-instruction and supplied-data evidence. The next collision work is
-dynamic node updates, missing geometry-bound construction, other bound classes
-and complete CHECKWALL passes. Deliver those actual responses through
-HITLANDDELIVER to the recovered player frame. Dynamic
-operations are not complete merely because a test provider supplies a matrix.
+the reached dynamic clock/update, missing geometry bounds, other bound classes
+and CHECKWALLFULL. Deliver those actual responses through HITLANDDELIVER to the
+recovered player frame. Dynamic operations are not complete merely because a
+test provider supplies a matrix.
 See [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
 [HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md),
 [HITLAND_QUERY.md](HITLAND_QUERY.md) and [HITLAND_DELIVER.md](HITLAND_DELIVER.md).
@@ -118,9 +120,9 @@ output cannot establish its full original behavior.
 ## Ordered continuation plan
 
 1. **Complete the reached collision operations.** Build on the implemented
-   inverse, AABox transform and CHECKLAND response, preserving arithmetic,
-   type dispatch, ownership and publication order. Recover missing bounds,
-   dynamic node updates and CHECKWALL's complete passes. Acceptance:
+   inverse, AABox transform and CHECKLAND/CHECKWALL responses, preserving
+   arithmetic, type dispatch, ownership and publication order. Recover missing bounds,
+   the reached global clock/dynamic node updates and CHECKWALLFULL. Acceptance:
    focused original-instruction comparisons, meaningful synthetic edge cases,
    and supplied-data queries whose actual responses reach HITLANDDELIVER and
    the player consumer. A static candidate list alone cannot close this step.

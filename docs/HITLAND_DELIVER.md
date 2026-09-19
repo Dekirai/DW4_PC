@@ -110,8 +110,9 @@ The callback supplies actual wall/floor transport and response state updates.
 The September 19 native [CHECKLAND implementation](HITLAND_FLOOR.md) now provides
 the floor query and response through a retained per-delivery receiver. Prepared
 integrations map actual triangle geometry and apply its result through HITFLOOR,
-including supplied map data. Original manager startup, complete dynamic geometry
-and the deeper `HITLANDMODEL/CHECKWALL` and `CHECKWALLFULL` algorithms remain
-required. Existing walking-preview geometry and prepared projectile `CHKBULLET`
-caches do not replace those operations or prove completion of the original
+including supplied map data. Native [CHECKWALL](HITLAND_WALL.md) now supplies
+three-pass wall responses through the shared query receiver, including actual
+HITWALL node adjustment. Original manager startup, complete dynamic geometry
+and the distinct CHECKWALLFULL algorithm remain required. Existing walking-preview
+geometry and prepared projectile `CHKBULLET` caches do not replace those operations or prove completion of the original
 frame or gameplay loop.
