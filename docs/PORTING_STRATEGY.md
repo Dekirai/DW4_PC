@@ -125,8 +125,10 @@ uses these real bodies. The concrete `igIGBFile` decoder `800528DC` now enters
 native stream/header processing, early tables and runtime metatype/slot mapping.
 The bounded bootstrap metadata profile recovers twenty object layouts and
 forty-seven field-class identities from original registrations. List factories,
-full global initialization, type/field preparation `800505E0`, object population
-and post-load effects remain required. Reuse existing document decoders and
+full global initialization, object population and post-load effects remain
+required. Directory-path preparation `800505E0`, dependency-table caller
+`800521EC` and pool-name table `80052554` are now native; actual dependency loads,
+string-pool operations and remaining factories still need connection. Reuse existing document decoders and
 canonical native owners where their behavior agrees; parsing alone must not
 set the original ready/success fields. Pool/factory operations, loader lifecycle,
 queue execution, manager registration and remaining concrete info handlers

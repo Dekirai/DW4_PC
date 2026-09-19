@@ -19,6 +19,7 @@ struct SystemStageDirectory {
     std::weak_ptr<SystemStageLoader> loader; // +20, nonowning parent pointer.
     std::int32_t claim_count{}; // +34, separate from object references.
     std::shared_ptr<LoaderDirectoryMutex> mutex; // +44.
+    std::uint32_t reference_word{1}; // Constructed owner +04, distinct from loading claims.
 private:
     friend class LoaderDirectoryClaimInvocation;
     std::weak_ptr<void> active_claim_;

@@ -1,5 +1,60 @@
 # Local validation
 
+## Native loading paths, dependency tables and pool names
+
+Validated locally on 2026-09-19. Native decoder stages now implement directory
+path `800505E0`, dependency-table caller `800521EC` and pool-name caller
+`80052554`. The concrete memory-manager lookup and its 46-name initialization
+are also reconstructed. The earlier provisional label of `800505E0` as
+type/field preparation was corrected after inspecting its actual body: it
+duplicates the stream filename and truncates the final separator. See
+[IGB_LOADING_PATHS.md](IGB_LOADING_PATHS.md),
+[IGB_DEPENDENCIES.md](IGB_DEPENDENCIES.md) and
+[IGB_MEMORY_POOLS.md](IGB_MEMORY_POOLS.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 142/142 CTest suites passed locally with four build jobs; no compiler warnings |
+| Directory paths / pool-name caller | 62 synthetic / 116 original-inclusive checks; separator handling, retained pool/name inputs, raw path publication, both byte orders, numeric handles, padding, growth mutations and short-read/fault prefixes |
+| Concrete memory-manager lookup | 123 permanent checks for original names, selector/manager captures, exact case/first match, null/empty requests, aligned string reads and reached physical boundaries |
+| Dependency caller | 179 checks for header/body reads, signed counts, four path-string transactions, full-word references, loader/list/name captures, restoration/free order, suspension and faults |
+| Original decoder prefix | 380 original-inclusive / 107 synthetic type-mapping checks; `ndmw.igb` resolves 20 types and 60 field maps, processes its directory path, reads the 2,453-byte dependency body and reaches loader `8007042C` at cursor 5,381; loading=1, succeeded=0 |
+| Separate original pool-name table | Original table at offset 5,381 maps all 46 names to handles 0..45 and frees its temporary buffer; next cursor 5,717 |
+| Player regression | 447 original-inclusive / 62 synthetic checks, including 48 held/released player frames and 28 frames across seven prepared application/system/serial batches |
+| Python asset verifier | 6 synthetic tests passed locally |
+| Path/pool caller instruction comparison | 1,392 cases, 570,062 original instructions at 261 addresses; zero differences, including 78 matching reached faults |
+| Dependency caller instruction comparison | 1,103 cases, 154,934 original instructions at 311 addresses; zero differences, including 104 matching reached faults |
+| Memory lookup instruction comparison | 3,307 cases, 1,209,746 original instructions at 137 addresses; zero differences, including 1,340 matching null/physical-read failures |
+| Memory-manager name initializer | Actual initializer/strncpy execution: 19,464 instructions at 61 addresses; native initialized name bytes match |
+
+The path/pool corpus executes the two actual callers, string length, swaps and
+list growth. The dependency corpus executes its actual caller, swap, pointer
+append and growth. Their stream operations, allocation/free, list constructors,
+string interning/release and dependency loader endpoints remain explicitly
+prepared, including callback mutations and injected failure prefixes. The
+pool-name caller's prepared lookup domain is checked separately from the real
+memory-manager getter/selector/lookup/strcmp corpus. Constructor name-table
+verification does not qualify manager allocation or global activation.
+
+The supplied decoder prefix uses native byte reads, explicitly bound native
+scratch storage and recovered runtime metadata; list allocation and timing
+remain fixture services. It stops before the missing loader singleton operation
+and retains its dependency buffer. The pool-name integration starts separately
+at its independently located table offset; it does not assert the preceding
+223 dependency requests have completed. Native dependency loading, interning,
+object factories, graph population, post-load work, cleanup and complete startup
+remain required. No native boot/gameplay completion follows from these tests.
+
+The final core SHA256 is
+`1DF92583C1BC341DAE9935F7CD15F3CB34076E8B84AB85A3191E719ECC0AEB8E`.
+Ignored evidence includes `work/native-igb-loading-final-build.log`,
+`work/native-igb-loading-prefix.log`, `work/native-igb-loading-pools-original.log`,
+`work/native-igb-loading-player.log`, `work/native-igb-loading-verifier.log`,
+`work/native-igb-loading-paths-result.json`,
+`work/native-igb-loading-dependencies-result.json` and
+`work/native-igb-memory-pools-result.json`.
+The walking preview is unchanged. No interactive preview or GitHub Actions ran.
+
 ## Native runtime types and inherited field mapping
 
 Validated locally on 2026-09-19. The decoder now binds original `8004FC94`
@@ -50,7 +105,8 @@ Its separate registration-facts comparison also verifies the shared identities
 of 47 distinct physical object fields. This is a comparison with independently
 recovered facts, not execution of complete original engine startup.
 
-Remaining work includes type/field preparation `800505E0`, concrete factories,
+At this checkpoint, remaining work included directory-path preparation
+`800505E0` (then provisionally mislabeled type/field preparation), concrete factories,
 object construction/population, original post-load work, cleanup/close, complete
 runtime registration, loader queue execution and startup. The native walking
 preview is unchanged; no interactive preview or GitHub Actions was launched.

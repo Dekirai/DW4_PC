@@ -70,7 +70,7 @@ void success_order_and_live_result() {
     IgbDecodeInvocation invocation(f.file,filename);
     check(invocation.resume(f.services).completed && invocation.value()==-7,"Successful main did not return the live post-log directory count.");
     const std::vector expected{K::open_stream,K::read_header,K::field_types,K::alignments,K::object_type_bytes,
-        K::construct_types,K::prepare_types,K::table_521ec,K::unshared_50f58,K::table_520e8,K::populate_objects,
+        K::construct_types,K::directory_path,K::table_521ec,K::unshared_50f58,K::table_520e8,K::populate_objects,
         K::file_payload,K::final_table,K::export_infos,K::activate_objects,K::postprocess,K::close_stream,K::cleanup,K::timing_log};
     check(f.events==expected,"Version6 nonshared caller order changed.");
     check(saw_open && saw_close && saw_cleanup && saw_log,"Main caller publication/argument order changed.");
@@ -83,7 +83,7 @@ void success_order_and_live_result() {
 }
 void failure_order() {
     const std::vector tested{K::open_stream,K::read_header,K::field_types,K::alignments,K::object_type_bytes,
-        K::construct_types,K::prepare_types,K::table_521ec,K::memory_pool_names,K::shared_509d4,
+        K::construct_types,K::directory_path,K::table_521ec,K::memory_pool_names,K::shared_509d4,
         K::shared_50c68,K::shared_50e80,K::table_520e8,K::populate_objects,K::file_payload,K::final_table,
         K::export_infos,K::postprocess};
     for(const auto failed:tested) {
@@ -125,7 +125,7 @@ void pending_status_and_live_gates() {
     Fixture g;g.services->timing_suppressed=255;g.file->initialize_after_load_115=255;
     g.state->stream->flag_d6=2;g.state->stream->flag_124=255;
     g.hook=[&](const IgbDecodeCall& call) {
-        if(call.kind==K::prepare_types)g.state->stream->version=2;
+        if(call.kind==K::directory_path)g.state->stream->version=2;
         if(call.kind==K::shared_509d4)g.state->stream->flag_d6=0;
         if(call.kind==K::field_types && g.count(K::field_types)==2)g.state->stream->version=4;
         if(call.kind==K::table_520e8)g.state->stream->version=6;

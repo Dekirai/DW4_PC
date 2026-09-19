@@ -119,5 +119,5 @@ or allocation paths.
 The supplied-data decoder-prefix test also uses this metadata set with explicit
 native stream, scratch-pool, list-constructor and timer bindings. It resolves the
 twenty bootstrap object types, preserves the one unmatched field-class entry,
-and reaches the next unrecovered type-preparation operation at `800505E0` without
+and reached the then-unrecovered directory-path operation at `800505E0` without
 claiming file-load completion.

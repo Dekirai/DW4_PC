@@ -270,7 +270,7 @@ void original_prefix(const std::filesystem::path& supplied) {
     services->tables=table_services;services->type_mapping=f.services;unsigned samples{};
     auto timer=std::make_shared<NativeGameClock>([&] {++samples;return std::uint64_t{1000000000};});timer->state().stopped=0;services->clock=timer;
     services->factory=make_native_igb_stage_factory(services);IgbDecodeInvocation invocation(f.file,name);const auto result=invocation.resume(services);
-    check(!result.completed && result.diagnostic.find("800505E0")!=std::string::npos,"Original known metatypes did not reach the next type-preparation boundary.");
+    check(!result.completed && result.diagnostic.find("800505E0")!=std::string::npos,"Original known metatypes did not reach directory-path preparation.");
     check(f.file->loading==1 && f.file->succeeded_31==0 && samples==1 && !invocation.faulted(),"Original mapped types invented decoder completion or repeated timing.");
     check(f.state->types->count==20 && f.state->slot_maps->count==20 && !f.tables->object_type_buffer &&
         f.io->stream->position==serialized.metadata_bytes,"Original type mapping changed count, raw buffer release or stream cursor.");
@@ -298,8 +298,21 @@ void original_prefix(const std::filesystem::path& supplied) {
     }
     check(missing_fields==1 && f.created_types.empty(),"Original registration profile fabricated a missing field class or used dynamic fallback.");
     const auto calls=f.trace.size();check(!invocation.resume(services).completed && samples==1 && f.trace.size()==calls,
-        "Pending type preparation replayed completed original mappings.");
-    std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched; pending800505E0.\n";
+        "Pending directory-path preparation replayed completed original mappings.");
+    services->paths=std::make_shared<IgbLoadingPathsServices>();services->paths->factory=make_native_igb_path_pool_factory();
+    services->dependencies=std::make_shared<IgbDependenciesServices>();services->dependencies->factory=make_native_igb_dependency_pool_factory();
+    const auto dependencies=invocation.resume(services);
+    check(!dependencies.completed && dependencies.diagnostic.find("8007042C")!=std::string::npos,
+        "Original directory-path/dependency prefix did not reach the actual loader singleton operation.");
+    check(state->paths->directory_path && igb_runtime_read_name({state->paths->directory_path,0})->empty(),
+        "Bare original stream filename did not produce an empty dependency base path.");
+    check(f.io->stream->position==5381 && state->dependencies->body_bytes==2453 && state->dependencies->body &&
+        !state->dependencies->body->released && f.file->loading==1 && f.file->succeeded_31==0,
+        "Original dependency table was misread, freed before dependency requests or reported fully loaded.");
+    check(!invocation.resume(services).completed && f.io->stream->position==5381 && samples==1 && f.trace.size()==calls,
+        "Pending dependency loading replayed the completed native header/types/path prefix.");
+    std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched.\n";
+    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; pending loader8007042C.\n";
 }
 }
 int main(int argc,char** argv) {

@@ -2,9 +2,10 @@
 
 `IgbDecodeInvocation` reconstructs the original USA `igIGBFile` read entry
 `800528DC` and failure tail `80052794`. It connects directory path requests to
-actual stream opening, header processing, the first three table helpers and
-runtime type/slot reconciliation. It is not yet a complete deserializer: reached
-type/list factories, field preparation, object population, activation,
+actual stream opening, header processing, the first three table helpers,
+runtime type/slot reconciliation, directory-path preparation, dependency tables
+and memory-pool names. It is not yet a complete deserializer: reached
+type/list factories, dependency requests, string-pool operations, object population, activation,
 postprocessing and cleanup still have explicit reached
 operations. A pending operation leaves the original published prefix intact.
 
@@ -28,7 +29,8 @@ post-default pool setup.
 
 `make_native_igb_loader_factory` binds the existing `decode_igb` request to this
 entry. `make_native_igb_stage_factory` binds `8004F870`, `8004F974`, `800514AC`,
-`80051794`, `8004FBE8` and `8004FC94` to their concrete authored bodies. Remaining operations
+`80051794`, `8004FBE8`, `8004FC94`, `800505E0`, `800521EC` and `80052554`
+to their concrete authored bodies. Remaining operations
 go to an explicitly supplied factory or retain a named pending diagnostic.
 Neither adapter turns a successful document parse into a loaded directory.
 Installed factories use weak service captures; selected operations retain the
@@ -63,7 +65,7 @@ dereference. The initial version is reused for the version-at-least-three gate.
 The ordinary sequence is:
 
 1. Field-type and alignment tables when the captured version is at least three.
-2. Object-type bytes, runtime type construction and type/field preparation.
+2. Object-type bytes, runtime type construction and directory-path preparation.
 3. `800521EC` when the current version is at least five; optional pool names.
 4. Three shared-entry stages, or the separate unshared stage. The selected
    shared branch does not retest its flag between its three calls.
@@ -116,8 +118,12 @@ field slots, retaining individual boundaries for unrecovered constructors and
 field/registry operations. The bounded native bootstrap registration profile is
 derived from original registration/default routines rather than serialized
 counts; it does not establish full engine initialization. With those records
-and prepared list allocation endpoints, supplied `ndmw.igb` can reach the next
-runtime boundary, type/field preparation `800505E0`. This must lead to real
+and prepared list allocation endpoints, supplied `ndmw.igb` now continues through
+directory-path preparation `800505E0` and the dependency header/body read before
+the required loader operation. The former provisional label of `800505E0` as
+type/field preparation was corrected after inspecting its body. Dependency
+loading and pool-name handling are documented in [IGB_DEPENDENCIES.md](IGB_DEPENDENCIES.md)
+and [IGB_LOADING_PATHS.md](IGB_LOADING_PATHS.md). This must lead to real
 object constructors, graph/reference population and original post-load effects.
 Until that chain and startup registration are connected, neither the original
 `ndmw.igb` boot nor complete native gameplay is established.

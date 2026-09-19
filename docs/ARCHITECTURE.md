@@ -72,8 +72,14 @@ The type mapper reconciles known versions and inherited signed slot maps, with
 the dynamic caller retaining explicit constructor/field/registry boundaries.
 A bounded native registration profile supplies twenty object layouts and
 forty-seven field-class identities recovered from original registration/default
-routines. Supplied `ndmw.igb` with explicit list allocation endpoints reaches
-type/field preparation `800505E0`: twenty mapped types and sixty field mappings.
+routines. Supplied `ndmw.igb` with explicit list allocation endpoints resolves
+twenty types and sixty field mappings. Native directory-path preparation
+`800505E0` and dependency-table processing `800521EC` now read the dependency
+block before reaching the required loader operation. Interned path transactions
+preserve explicit full-word string references and the existing loader's canonical
+prefix. Pool-name table `80052554` uses the recovered memory-manager selection
+and original 46-name lookup to obtain numeric handles, with list construction
+and allocation still explicit.
 The unsupported serialized shader field remains null, and loading is unfinished.
 File creation, complete runtime registration, queue execution, remaining IGB
 type/object/post-load bodies, decoder cleanup
@@ -81,6 +87,7 @@ and loader preparation/cleanup still require their reached implementations. See
 [IGB_DECODE.md](IGB_DECODE.md),
 [IGB_TYPE_MAPPING.md](IGB_TYPE_MAPPING.md),
 [IGB_RUNTIME_BOOTSTRAP.md](IGB_RUNTIME_BOOTSTRAP.md),
+[IGB_LOADING_PATHS.md](IGB_LOADING_PATHS.md), [IGB_DEPENDENCIES.md](IGB_DEPENDENCIES.md),
 [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
 [LOADER_REQUEST.md](LOADER_REQUEST.md), [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md)
 and [CONTEXT_INFO.md](CONTEXT_INFO.md).

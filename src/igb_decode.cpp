@@ -15,8 +15,8 @@ const char* boundary(IgbDecodeServiceKind kind) {
     case IgbDecodeServiceKind::alignments:return "IGB decode requires alignment table80051794.";
     case IgbDecodeServiceKind::object_type_bytes:return "IGB decode requires object-type bytes8004FBE8.";
     case IgbDecodeServiceKind::construct_types:return "IGB decode requires runtime metatype construction8004FC94.";
-    case IgbDecodeServiceKind::prepare_types:return "IGB decode requires type/field preparation800505E0.";
-    case IgbDecodeServiceKind::table_521ec:return "IGB decode requires versioned table800521EC.";
+    case IgbDecodeServiceKind::directory_path:return "IGB decode requires directory path preparation800505E0.";
+    case IgbDecodeServiceKind::table_521ec:return "IGB decode requires dependency directories800521EC.";
     case IgbDecodeServiceKind::memory_pool_names:return "IGB decode requires memory-pool names80052554.";
     case IgbDecodeServiceKind::shared_509d4:return "IGB decode requires shared-entry stage800509D4.";
     case IgbDecodeServiceKind::shared_50c68:return "IGB decode requires shared-entry stage80050C68.";
@@ -64,7 +64,7 @@ struct Call {
 struct IgbDecodeInvocation::Impl {
     enum class Phase {
         entry,diagnostic,first_clock,flags,open,header,legacy_gate,warning,warning_result,
-        early_fields_gate,early_fields,early_alignments,type_bytes,construct_types,prepare_types,
+        early_fields_gate,early_fields,early_alignments,type_bytes,construct_types,directory_path,
         early_521ec_gate,early_521ec,pool_gate,pool_names,shared_gate,shared_a,shared_b,shared_c,
         unshared,early_520e8_gate,early_520e8,populate,payload,late_fields_gate,late_fields,
         late_520e8_gate,late_520e8,late_521ec_gate,late_521ec,final_table,infos,activate,
@@ -166,8 +166,8 @@ MessengerCallResult IgbDecodeInvocation::resume(std::shared_ptr<IgbDecodeService
         case P::early_fields:select(K::field_types,P::early_alignments);break;
         case P::early_alignments:select(K::alignments,P::type_bytes);break;
         case P::type_bytes:select(K::object_type_bytes,P::construct_types);break;
-        case P::construct_types:select(K::construct_types,P::prepare_types);break;
-        case P::prepare_types:select(K::prepare_types,P::early_521ec_gate);break;
+        case P::construct_types:select(K::construct_types,P::directory_path);break;
+        case P::directory_path:select(K::directory_path,P::early_521ec_gate);break;
         case P::early_521ec_gate:s.phase=version()>=5 ? P::early_521ec:P::pool_gate;break;
         case P::early_521ec:select(K::table_521ec,P::pool_gate);break;
         case P::pool_gate:s.phase=stream().flag_124!=0 ? P::pool_names:P::shared_gate;break;
@@ -233,7 +233,8 @@ IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices> 
     return [services=std::move(services),remaining=std::move(remaining)](const IgbDecodeCall& request) {
         using K=IgbDecodeServiceKind;
         if(request.kind!=K::open_stream && request.kind!=K::read_header && request.kind!=K::field_types &&
-            request.kind!=K::alignments && request.kind!=K::object_type_bytes && request.kind!=K::construct_types) {
+            request.kind!=K::alignments && request.kind!=K::object_type_bytes && request.kind!=K::construct_types &&
+            request.kind!=K::directory_path && request.kind!=K::table_521ec && request.kind!=K::memory_pool_names) {
             if(remaining)return remaining(request);
             auto operation=std::make_shared<IgbDecodeOperation>();
             operation->resume=[kind=request.kind] {return pending(boundary(kind));};return operation;
@@ -252,6 +253,16 @@ IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices> 
             const auto call=std::make_shared<IgbTypeMappingInvocation>(request.file,request.state->stream,
                 request.state->tables,request.state->type_mapping);
             operation->resume=[call,live] {return call->resume(live->type_mapping);};
+        }else if(request.kind==K::directory_path) {
+            const auto call=std::make_shared<IgbDirectoryPathInvocation>(request.file,request.state->stream,request.state->paths);
+            operation->resume=[call,live] {return call->resume(live->paths);};
+        }else if(request.kind==K::table_521ec) {
+            const auto call=std::make_shared<IgbDependenciesInvocation>(request.file,request.state->stream,
+                request.state->paths,request.state->dependencies);
+            operation->resume=[call,live] {return call->resume(live->dependencies);};
+        }else if(request.kind==K::memory_pool_names) {
+            const auto call=std::make_shared<IgbPoolNamesInvocation>(request.file,request.state->stream,request.state->paths);
+            operation->resume=[call,live] {return call->resume(live->paths);};
         }else {
             const auto kind=request.kind==K::field_types ? IgbDecodeTableKind::field_types:
                 request.kind==K::alignments ? IgbDecodeTableKind::alignments:IgbDecodeTableKind::object_type_bytes;

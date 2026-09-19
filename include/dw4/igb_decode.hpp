@@ -4,6 +4,8 @@
 #include "dw4/igb_decode_tables.hpp"
 #include "dw4/igb_stream.hpp"
 #include "dw4/igb_type_mapping.hpp"
+#include "dw4/igb_loading_paths.hpp"
+#include "dw4/igb_dependencies.hpp"
 
 namespace dw4 {
 class IgbDecodeError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
@@ -15,6 +17,8 @@ struct IgbDecodeState {
     std::shared_ptr<IgbStreamState> stream=std::make_shared<IgbStreamState>();
     std::shared_ptr<IgbDecodeTablesState> tables=std::make_shared<IgbDecodeTablesState>();
     std::shared_ptr<IgbTypeMappingState> type_mapping=std::make_shared<IgbTypeMappingState>();
+    std::shared_ptr<IgbLoadingPathsState> paths=std::make_shared<IgbLoadingPathsState>();
+    std::shared_ptr<IgbDependenciesState> dependencies=std::make_shared<IgbDependenciesState>();
     std::int32_t object_count{}; // Directory +08, distinct from header object count.
     std::uint8_t objects_initialized{}; // Directory +38.
 };
@@ -26,8 +30,8 @@ enum class IgbDecodeServiceKind {
     alignments,           // 80051794.
     object_type_bytes,    // 8004FBE8.
     construct_types,      // 8004FC94: runtime metatypes and slot remapping.
-    prepare_types,        // 800505E0.
-    table_521ec,          // 800521EC, version-dependent position in the stream.
+    directory_path,       // 800505E0: duplicate filename and truncate its last separator.
+    table_521ec,          // 800521EC: dependency directories, version-dependent position.
     memory_pool_names,    // 80052554.
     shared_509d4,         // 800509D4; three separate original shared-entry stages.
     shared_50c68,         // 80050C68.
@@ -58,6 +62,8 @@ struct IgbDecodeServices {
     std::shared_ptr<IgbStreamServices> stream;
     std::shared_ptr<IgbDecodeTablesServices> tables;
     std::shared_ptr<IgbTypeMappingServices> type_mapping;
+    std::shared_ptr<IgbLoadingPathsServices> paths;
+    std::shared_ptr<IgbDependenciesServices> dependencies;
     // Disengaged is unrepresented global setup; engaged null is an actual null
     // global timer and faults when dereferenced. Both samples reload the owner.
     std::optional<std::shared_ptr<NativeGameClock>> clock; // Global805622FC.
@@ -82,7 +88,8 @@ public:
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
 
-// Concrete open/header/three early tables and runtime type mapping. Reached
+// Concrete open/header/early tables, runtime type mapping, directory path,
+// dependency table and pool-name table. Reached
 // type/list factories remain explicit services. Remaining decoder operations
 // require their real implementations; no parser-based success fallback exists.
 IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices>,

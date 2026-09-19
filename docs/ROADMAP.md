@@ -92,9 +92,11 @@ zero-claim cache removal, with a retained pending second handler. This is not a
 new-file boot acceptance. The `800528DC` caller now connects actual stream/header,
 the first three tables and `8004FC94` runtime type/slot reconciliation. With
 twenty recovered object layouts, forty-seven field-class identities and prepared
-list endpoints, original `ndmw.igb` reaches type/field preparation `800505E0`.
-One serialized field class remains unmatched; loading is unfinished. Continue
-through that preparation, complete runtime registration and factories, actual
+list endpoints, original `ndmw.igb` resolves twenty types and sixty fields.
+Directory-path preparation and dependency-table processing now advance to the
+required loader operation after reading the dependency body. One serialized
+field class remains unmatched; loading is unfinished. Continue through actual
+dependency requests, interned path ownership, complete runtime registration and factories, actual
 `igIGBFile` creation, object population and post-load callbacks, plus decoder
 cleanup and loader queue/lifecycle work. Reuse the existing checked asset
 and document readers where qualified; do not replace required initialization
