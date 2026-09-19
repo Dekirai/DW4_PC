@@ -8,6 +8,7 @@ namespace dw4 {
 struct IgbScratchBuffer;
 struct SystemStageLoader;
 struct IgbObjectInstanceList;
+struct IgbInternedString;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 // Captured original C-string pointer into a live, initialized scratch allocation.
 // Capturing this source does not read any byte or manufacture a host string.
@@ -36,6 +37,15 @@ struct IgbDecodeFieldRegistry {
     using Storage=std::vector<std::shared_ptr<IgbDecodeRuntimeField>>;
     std::int32_t count{}; // +0C; distinct from an igDataList count at +08.
     std::shared_ptr<Storage> backing; // +08.
+    std::uint32_t reference_word{1}; // Physical constructed object +04.
+    // Physical pointer storage is independent of a bound field-owner mapping.
+    std::shared_ptr<IgbScratchBuffer> backing_bytes;
+    std::uint32_t backing_address{};
+private:
+    friend class IgbFieldRegistryConstructorInvocation;
+    std::vector<std::shared_ptr<void>> retained_backings_;
+    std::weak_ptr<void> construction_active_;
+    bool construction_fault_{};
 };
 
 // A single runtime metadata identity is shared by field metadata virtual+58
@@ -59,6 +69,18 @@ struct IgbRuntimeMetaType {
     std::optional<std::shared_ptr<IgbObjectInstanceList>> instances; // +30.
     std::optional<std::uint32_t> post_layout_callback; // +4C, zero is a null function.
     std::optional<std::uint32_t> field_callback; // +54, assigned by80066204.
+    // Reached direct-constructor fields. Physical storage remains authoritative
+    // during bootstrap; these views are published at their original stores.
+    std::optional<std::uint32_t> word_08,word_0c,word_34,word_40,word_44,word_50;
+    std::optional<std::uint8_t> flag_18,flag_19;
+    std::optional<std::shared_ptr<IgbRuntimeMetaType>> parent; // +38.
+    std::optional<std::shared_ptr<IgbInternedString>> default_pool_string; // +60 ownership.
+    std::optional<std::uint32_t> default_pool_string_address;
+    // Host retention for raw overwrites; this does not alter guest refcounts.
+    std::vector<std::shared_ptr<void>> overwritten_constructor_owners_;
+    std::vector<SystemStageString> overwritten_constructor_strings_;
+    std::weak_ptr<void> construction_active_;
+    bool construction_fault_{};
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 

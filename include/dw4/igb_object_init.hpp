@@ -8,6 +8,8 @@ class IgbObjectInitError : public std::runtime_error {public: using std::runtime
 struct IgbObjectBinding {
     std::uint32_t offset{};
     std::shared_ptr<LoaderRequestFile> file;
+    std::shared_ptr<IgbRuntimeMetaType> metadata;
+    std::shared_ptr<IgbDecodeFieldRegistry> fields;
 };
 // An explicit native allocation/layout binding. original_address participates
 // only in original 32-bit pointer arithmetic; it is never a host pointer.
@@ -18,6 +20,7 @@ struct IgbObjectStorage {
     bool faulted() const noexcept {return fault_;}
 private:
     friend class IgbObjectInitInvocation;
+    friend class IgbBootstrapBaseInvocation;
     std::weak_ptr<void> active_;
     bool fault_{};
     std::vector<std::shared_ptr<void>> unreleased_;

@@ -82,8 +82,10 @@ ArkCore owner `80562100` field `+40`, separately from direct loader global
 selection and full-word string references. With explicitly prepared loader and
 string-pool allocation state, the original prefix enters file factory
 `8002EBEC`, its `8002F178` registration runner and prerequisite once guard. With
-explicit cold prerequisite flags it reaches missing thread-manager registration
-`800238A8`; it has not loaded all 223 dependencies. The reflected factory now owns original redirect/pool/allocation
+explicit cold prerequisite flags, native ThreadManager registration and actual
+handle-based pool access now enter metadata factory `80029E64`. The canonical
+runtime remains enabled and reaches missing `igMetaObject` registration
+`8002A0A8`; it has not loaded all 223 dependencies. The reflected factory now owns original redirect/pool/allocation
 selection and calls the reconstructed object initializer. Explicit physical
 storage and typed bindings preserve header writes, fresh metadata/virtual reads,
 three captured field ranges and instance-count publication. Concrete file
@@ -98,8 +100,19 @@ actual deferred callback-list constructor and append. Parent metadata linkage,
 field registration, registry publication and layout remain reached operations.
 Concrete int/bool field virtuals copy physical default bytes, including overlap,
 inside the actual initializer; serialized names do not select these handlers.
+Native metadata and internal-field-list factories also distinguish enabled
+reflective construction from disabled bootstrap constructors. Explicit typed
+storage preserves physical header/default writes, live string ownership and
+separate list backing allocation. Allocator, type registration and reflected
+construction endpoints remain required; these bodies do not establish complete
+cold startup. The current-pool wrapper remains fixed at handle two while
+registration uses the same native manager access with its captured handle.
 See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
-[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md),
+[IGB_THREAD_REGISTRATION.md](IGB_THREAD_REGISTRATION.md),
+[IGB_BOOTSTRAP_OBJECT.md](IGB_BOOTSTRAP_OBJECT.md),
+[IGB_FIELD_REGISTRY_FACTORY.md](IGB_FIELD_REGISTRY_FACTORY.md),
+[IGB_METADATA_FACTORY.md](IGB_METADATA_FACTORY.md) and
 [IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
 Pool-name table `80052554` uses the recovered memory-manager selection
 and original 46-name lookup to obtain numeric handles, with list construction

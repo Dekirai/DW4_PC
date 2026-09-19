@@ -6,7 +6,7 @@
 namespace dw4 {
 class IgbFilePoolsError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 enum class IgbFilePoolsServiceKind {
-    pool_virtual,   // Captured manager virtual+5C with handle2, when unbound.
+    pool_virtual,   // Captured manager virtual+5C with the original handle, when unbound.
     prepare_pool,   // Manager+D0=8005E7AC, includes unrecovered pool creation.
     destroy_object //80066E1C after full-word decrement reaches low23 zero.
 };
@@ -24,6 +24,22 @@ using IgbFilePoolsFactory=std::function<std::shared_ptr<IgbFilePoolsOperation>(c
 struct IgbFilePoolsServices {
     std::shared_ptr<IgbMemoryPoolsServices> memory_pools;
     IgbFilePoolsFactory factory;
+};
+
+// Actual800607F4(handle), including concrete8005B060 when the selected
+// manager binding is known. Raw handles are preserved for unknown virtuals;
+// concrete negative/out-of-range handles return null before physical slots.
+class IgbPoolByHandleInvocation {
+public:
+    explicit IgbPoolByHandleInvocation(std::uint32_t handle);
+    ~IgbPoolByHandleInvocation();
+    IgbPoolByHandleInvocation(const IgbPoolByHandleInvocation&)=delete;
+    IgbPoolByHandleInvocation& operator=(const IgbPoolByHandleInvocation&)=delete;
+    MessengerCallResult resume(std::shared_ptr<IgbFilePoolsServices> services={});
+    bool completed() const noexcept;
+    bool faulted() const noexcept;
+    std::shared_ptr<ModelSceneObject> result() const;
+private:struct Impl;std::unique_ptr<Impl> impl_;
 };
 
 // Actual80058C80 ->800607F4(handle2) -> selected manager+5C. Known8005B060

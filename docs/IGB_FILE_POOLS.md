@@ -5,10 +5,11 @@
 pool fields. It does not replace the preceding metadata allocation or reflected
 field initialization with a host default constructor.
 
-## Current-pool lookup
+## Pool lookup by handle
 
-Each of the three assignments calls `80058C80` independently. That wrapper
-passes handle `2` to `800607F4`, obtains the selected memory manager through
+`IgbPoolByHandleInvocation` implements `800607F4` for a captured 32-bit handle.
+`IgbCurrentPoolInvocation` remains the `80058C80` wrapper with fixed handle `2`,
+called independently for each of the three assignments. It obtains the selected memory manager through
 `800607D4 -> 800605E8`, then calls its `+5C` virtual operation. The represented
 globals are shared with the existing `IgbMemoryPoolsServices` name lookup:
 selector `805621DC`, fallback `805621C8`, and three active entries at `804F2294`.
@@ -16,7 +17,14 @@ The initial selector is captured before reading the chosen owner. Invalid
 selectors produce the original null manager and fault at its reached virtual
 dereference. Missing native storage suspends instead of becoming null.
 
-The concrete manager vtable `80471BDC` binds `+5C` to `8005B060`. For handle two,
+The concrete manager vtable `80471BDC` binds `+5C` to `8005B060`. After the
+manager has been selected and dispatched, this body returns null for negative
+handles or handles at least 46, without reading physical slots. An unknown
+manager virtual receives the original handle, including values outside that
+range. Invalid handles do not bypass an earlier null-manager fault.
+
+For a valid handle, the pool pointer is at `+14 + handle * 90` and the flag
+word at `+A0 + handle * 90`. Both use the same retained handle. For handle two,
 the function reads the pool pointer at `+134`. A nonnull pool returns immediately
 without reading flags, names, a success word or another global. Typed pointer
 identities live in the registry's independent optional `pools` slots. The
@@ -77,7 +85,9 @@ and `800667D0`, respectively. Each original target contains only a return
 instruction. These no-op bindings are distinct from the nontrivial `+34` pool
 callback. They do not prove the entire generic object initializer.
 
-Permanent tests cover selector capture and fresh reads, pool-slot availability,
+Permanent tests cover all 46 valid handles, out-of-range concrete handles and
+unknown virtual forwarding, handle-specific lazy flags and fallback, the fixed
+current-pool wrapper, selector capture and fresh reads, pool-slot availability,
 prior-manager aliases and nulls, explicit preparation, callback capture, full
 reference wrapping, low-23-bit destruction, delayed and abandoned publication,
 same-owner assignment and recursive invalidation. The independent ignored
@@ -87,7 +97,7 @@ branches. Unknown manager virtuals, actual pool preparation and final
 destructors are explicitly prepared endpoints. Nonterminating original alias
 cycles are reported separately from the finite comparison corpus.
 
-The final production library matches all 2,092 finite original-instruction
+The original handle-two post-default validation matches all 2,092 finite original-instruction
 cases with zero differences, including 725 reached failure prefixes. This
 corpus executes 294,427 instructions across 177 addresses. Four original alias
 cycles were excluded as nonterminating; the native depth guard is tested

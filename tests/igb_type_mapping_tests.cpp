@@ -7,6 +7,8 @@
 #include "dw4/igb_string_pool.hpp"
 #include "dw4/igb_file_factory.hpp"
 #include "dw4/igb_registration_callbacks.hpp"
+#include "dw4/igb_thread_registration.hpp"
+#include "dw4/igb_metadata_factory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -402,8 +404,10 @@ void original_prefix(const std::filesystem::path& supplied) {
     registrations->prerequisites=std::make_shared<IgbRegistrationPrerequisitesState>();
     const auto type_registration=std::make_shared<IgbTypeRegistrationServices>();
     type_registration->runtime=bootstrap.type_services();std::uint32_t missing_registration{};
+    const auto thread_function_bridge=std::make_shared<IgbRegistrationCallbacksFactory>();
     registrations->factory=make_native_igb_registration_function_factory(file_factory,type_registration,registrations,
-        [&missing_registration](const IgbRegistrationCallbacksCall& call)->std::shared_ptr<IgbRegistrationCallbacksOperation>{
+        [thread_function_bridge,&missing_registration](const IgbRegistrationCallbacksCall& call)->std::shared_ptr<IgbRegistrationCallbacksOperation>{
+            if(*thread_function_bridge)if(auto selected=(*thread_function_bridge)(call))return selected;
             if(call.kind==IgbRegistrationCallbacksServiceKind::invoke_function)missing_registration=call.function;return {};
         });
     file_factory->factory=make_native_igb_file_registration_factory(registrations);
@@ -420,8 +424,69 @@ void original_prefix(const std::filesystem::path& supplied) {
     check(!invocation.resume(services).completed && missing_registration==0x800238a8 && allocations==1 && samples==1 &&
         f.trace.size()==calls && f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0,
         "Pending prerequisite callback replayed the original decoder prefix or bypassed its selected function.");
+    // Resume the retained first prerequisite into its exact native body. The
+    // runtime metadata bootstrap remains enabled; no cold constructor or
+    // metadata object is substituted for the reached reflective branch.
+    const auto thread_state=std::make_shared<IgbThreadRegistrationState>();
+    *thread_function_bridge=make_native_igb_thread_registration_function_factory(thread_state,registrations,type_registration);
+    missing_registration=0;
+    const auto missing_handle=invocation.resume(services);
+    check(!missing_handle.completed && !type_registration->metadata_pool_handle && !thread_state->metadata && missing_registration==0,
+        "Native ThreadManager registration inferred its metadata handle or cache.");
+    publish_original_igb_metadata_pool_handle(*type_registration);
+    const auto registration_pools=std::make_shared<IgbFilePoolsServices>();
+    registration_pools->memory_pools=std::make_shared<IgbMemoryPoolsServices>();
+    const auto registration_remaining=std::make_shared<IgbTypeRegistrationFactory>();
+    std::optional<IgbTypeRegistrationCall> last_registration_call;
+    type_registration->factory=make_native_igb_registration_pool_factory(registration_pools,
+        [registration_remaining,&last_registration_call](const IgbTypeRegistrationCall& request){
+            last_registration_call=request;
+            return *registration_remaining?(*registration_remaining)(request):std::shared_ptr<IgbTypeRegistrationOperation>{};
+        });
+    const auto missing_selector=invocation.resume(services);
+    check(!missing_selector.completed && missing_selector.diagnostic.find("805621DC")!=std::string::npos && !last_registration_call,
+        "Native metadata-pool lookup inferred active manager selection.");
+    // Explicit prepared manager/pool inputs, shared with the earlier fixture
+    // allocation identity. The native getter performs its real physical read.
+    const auto metadata_pools=make_original_igb_memory_pool_registry();metadata_pools->original_pool_access_bound=true;
+    registration_pools->memory_pools->selector=0;registration_pools->memory_pools->fallback=metadata_pools;
+    check(!invocation.resume(services).completed && !last_registration_call,
+        "Native pool getter manufactured the metadata pool slot.");
+    metadata_pools->pools[5]=f.file->pool_118;
+    check(!invocation.resume(services).completed && !thread_state->metadata && !last_registration_call,
+        "ThreadManager metadata cache absence became a constructed object.");
+    thread_state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto metadata_factory=invocation.resume(services);
+    check(!metadata_factory.completed && last_registration_call &&
+        last_registration_call->kind==IgbTypeRegistrationServiceKind::create_metadata &&
+        last_registration_call->pool==f.file->pool_118 &&
+        last_registration_call->allocation_label && *last_registration_call->allocation_label=="igMetaObject: igThreadManager",
+        "ThreadManager registration did not reach its actual metadata factory with the native handle5 result.");
+    check(!invocation.resume(services).completed && allocations==1 && samples==1 && f.trace.size()==calls &&
+        f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0 &&
+        thread_state->metadata && !*thread_state->metadata && !file_factory->file_metadata &&
+        (*bootstrap.type_services()->singleton)->enabled==1,
+        "Pending metadata construction replayed original work or invented completed registration.");
+    const auto native_metadata=std::make_shared<IgbMetadataFactoryServices>();
+    native_metadata->bootstrap=std::make_shared<IgbBootstrapServices>();
+    native_metadata->bootstrap->runtime=bootstrap.type_services();
+    std::optional<IgbMetadataFactoryServiceKind> metadata_boundary;
+    native_metadata->factory=[&metadata_boundary](const IgbMetadataFactoryCall& request){
+        metadata_boundary=request.kind;return std::shared_ptr<IgbMetadataFactoryOperation>{};
+    };
+    *registration_remaining=make_native_igb_metadata_factory(native_metadata);
+    const auto metadata_registration=invocation.resume(services);
+    check(!metadata_registration.completed && metadata_boundary==IgbMetadataFactoryServiceKind::register_type &&
+        !native_metadata->metadata && thread_state->metadata && !*thread_state->metadata,
+        "Original enabled runtime skipped real igMetaObject registration8002A0A8 or invented a metadata instance.");
+    check(!invocation.resume(services).completed && metadata_boundary==IgbMetadataFactoryServiceKind::register_type &&
+        allocations==1 && samples==1 && f.trace.size()==calls && f.io->stream->position==5381 &&
+        f.file->loading==1 && f.file->succeeded_31==0 && !file_factory->file_metadata &&
+        state->dependencies->body && !state->dependencies->body->released &&
+        (*bootstrap.type_services()->singleton)->enabled==1,
+        "Pending native metadata factory replayed the decoder prefix or selected fabricated cold-bootstrap state.");
     std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched.\n";
-    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native file registration/callback runner/once guard reached thread-manager registration800238A8.\n";
+    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native ThreadManager registration, handle5 pool access and metadata factory reached igMetaObject registration8002A0A8.\n";
 }
 }
 int main(int argc,char** argv) {

@@ -1,5 +1,67 @@
 # Local validation
 
+## Native bootstrap metadata and internal-list construction
+
+Validated locally on 2026-09-19. The original ThreadManager registration now
+enters the generic registrar using the actual canonical metadata cell and
+handle-based memory-manager lookup. Metadata factory `80029E64`, direct
+constructors `800651B4`/`80065218`, internal-list factory `8002DB4C` and its
+three direct entries compose native raw allocation and base-header bodies.
+See [IGB_THREAD_REGISTRATION.md](IGB_THREAD_REGISTRATION.md),
+[IGB_BOOTSTRAP_OBJECT.md](IGB_BOOTSTRAP_OBJECT.md),
+[IGB_METADATA_FACTORY.md](IGB_METADATA_FACTORY.md) and
+[IGB_FIELD_REGISTRY_FACTORY.md](IGB_FIELD_REGISTRY_FACTORY.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 155/155 CTest suites passed locally with four jobs; no compiler warnings |
+| Bootstrap allocation and header | 70 checks for heap/pool prefix differences, wrapping arithmetic, physical failure prefixes, retained operations, live metadata, pool tags, teardown order and construction ownership |
+| ThreadManager registration | 59 checks for exact arguments, canonical globals, native handle lookup, recursive prerequisites, lazy metadata reload and adapter lifetime |
+| Internal-list construction | 44 checks for actual object/backing requests, fresh core gate, two base resets, physical backing, unknown pointer entries, null/failure paths and constructor lifetime |
+| Metadata construction | 62 checks for exact stores and preserved padding, lazy strings and live release, retained overwritten string owners, actual internal-list composition, missing/null boundaries, stable results and construction leases |
+| Original decoder prefix | 400 original-inclusive / 107 synthetic checks; native ThreadManager registration, handle 5 selection and metadata factory now reach `igMetaObject` registration `8002A0A8`, retaining cursor 5,381, dependency body 2,453 bytes, loading=1 and succeeded=0 |
+| Player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Metadata instruction comparison | 1,326 cases, 103,331 original instructions at 261 addresses, zero differences, including 671 bounded failure prefixes |
+| Internal-list instruction comparison | 1,312 cases, 72,954 original instructions at 209 addresses, zero differences, including 754 bounded failure prefixes |
+
+The supplied-data prefix preserves its prior prepared loader, string-pool,
+runtime-type and list endpoints. The represented core remains enabled. It does
+not switch to the disabled bootstrap constructor merely to manufacture metadata
+or move the decoder forward. The explicit handle publication represents only
+the verified metadata-handle store, not the full static initialization sequence.
+
+The direct constructor fixtures preserve actual physical headers and typed
+identities. They do not infer initialized field-pointer entries from allocation,
+or complete class registration from a constructed empty internal list. Original
+metadata registration, reflected construction for these typed owners, pool and
+string construction internals, field/default registration, layout and the rest
+of the loader lifecycle remain required. No full dependency load or game boot
+is claimed.
+
+The metadata comparison executes original factory, direct constructor/reset,
+raw allocation and base-header bodies, null-name interning and reached no-op
+virtuals. Registration, reflected allocation, pool lookup/allocation/tag,
+string-pool allocation and construction, internal-list factory and final string
+release are explicitly prepared boundaries in that corpus. The separate
+internal-list comparison executes its factory and all three direct entries,
+including raw allocation and base construction; it prepares registration,
+reflected construction, pool resolution/allocation and selected virtuals.
+Comparisons include complete represented object bytes and ordered callbacks.
+Malformed physical ranges qualify the reached bounded failure prefix, not
+unrepresented heap contents or hardware exception behavior. The permanent
+metadata test separately composes the actual native internal-list factory.
+
+Core SHA256:
+`48F489A9336AE42C8F387617A6394C0510589962AA3C6B8C1BCBF8C556BE0BCA`.
+Ignored local evidence: `work/native-bootstrap-final-build.log`,
+`work/native-bootstrap-prefix.log`, `work/native-bootstrap-player.log` and
+`work/native-bootstrap-verifier.log`. Original comparison reports with library,
+driver and covered-source identities are stored in
+`work/native-metadata-construction-result.json` and
+`work/native-internal-list-result.json`. No GitHub Actions or interactive preview
+ran; the walking preview is unchanged.
+
 ## Native type registration, callbacks and scalar defaults
 
 Validated locally on 2026-09-19. Native `80066204` type registration now

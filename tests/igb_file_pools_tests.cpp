@@ -211,11 +211,58 @@ void completed_call_teardown() {
         fields.file->pool_11c==second && fields.file->pool_120==second && replacement->reference_word==9,
         "Completed destructor callback remained alive across raw publication or the next fresh lookup.");
 }
+void arbitrary_handles() {
+    Fixture f;
+    for(std::uint32_t handle=0;handle<46;++handle){
+        auto pool=object();f.owner->pools[handle]=pool;
+        IgbPoolByHandleInvocation call(handle);
+        check(call.resume(f.services).completed && call.result()==pool && pool->reference_word==1,
+            "General handle selected the wrong physical pool or changed references.");
+    }
+    f.owner->inline_bytes.reset();
+    for(const auto handle:{46u,47u,0x7fffffffu,0x80000000u,0xffffffffu}){
+        IgbPoolByHandleInvocation invalid(handle);
+        check(invalid.resume(f.services).completed && !invalid.result(),"Concrete invalid handle dereferenced a physical slot.");
+    }
+    f.services->memory_pools->fallback=std::shared_ptr<IgbMemoryPoolRegistry>{};
+    IgbPoolByHandleInvocation null_manager(0xffffffffu);
+    rejects([&]{null_manager.resume(f.services);},"Invalid handle bypassed the earlier null-manager virtual dispatch.");
+
+    Fixture virtual_call;virtual_call.owner->original_pool_access_bound=false;const auto result=object();unsigned selected=0,polls=0;
+    virtual_call.services->factory=[&](const IgbFilePoolsCall& request){
+        check(request.kind==IgbFilePoolsServiceKind::pool_virtual && request.handle==0xffffffffu && request.manager==virtual_call.owner,
+            "Unknown manager virtual lost the original out-of-range handle.");
+        ++selected;auto operation=std::make_shared<IgbFilePoolsOperation>();
+        operation->resume=[&,out=operation.get()]{if(++polls==1)return MessengerCallResult{false,0,"prepared virtual"};
+            out->object_result=result;return MessengerCallResult{true,0,{}};};return operation;
+    };
+    IgbPoolByHandleInvocation captured(0xffffffffu);check(!captured.resume(virtual_call.services).completed,"Unknown virtual failed to pause.");
+    virtual_call.services->factory={};virtual_call.services->memory_pools->fallback=manager();
+    check(captured.resume(virtual_call.services).completed && captured.result()==result && selected==1 && polls==2,
+        "General lookup did not retain selected virtual arguments and continuation.");
+
+    Fixture lazy;constexpr std::uint32_t handle=5;const auto offset=0xa0u+handle*0x90u;
+    for(unsigned i=0;i<4;++i)lazy.owner->inline_bytes->bytes[offset+i]=static_cast<std::uint8_t>(i==0?4u:0u);
+    auto later=object();unsigned prepared=0;
+    lazy.services->factory=[&](const IgbFilePoolsCall& request){
+        check(request.kind==IgbFilePoolsServiceKind::prepare_pool && request.handle==5,"Lazy preparation used fixed handle2.");
+        auto operation=std::make_shared<IgbFilePoolsOperation>();operation->object_result=object();
+        operation->resume=[&]{++prepared;lazy.owner->pools[5]=later;return MessengerCallResult{true,0,{}};};return operation;
+    };
+    IgbPoolByHandleInvocation prepare(5);check(prepare.resume(lazy.services).completed && prepare.result()==later && prepared==1,
+        "General handle did not read its own lazy flags or reload its prepared physical slot.");
+    auto previous=manager(),current=manager();previous->pools[5]=later;
+    lazy.services->memory_pools->selector=2;lazy.services->memory_pools->active={previous,current,manager()};
+    IgbPoolByHandleInvocation fallback(5);check(fallback.resume(lazy.services).completed && fallback.result()==later,
+        "Previous-manager fallback changed the handle.");
+    IgbCurrentPoolInvocation fixed;
+    check(fixed.resume(lazy.services).completed && !fixed.result(),"Current-pool wrapper stopped being fixed at handle2.");
+}
 }
 int main(int argc,char**) {
     try {
         if(argc!=1)throw std::runtime_error("Usage: igb_file_pools_tests");
-        selection();fallback_and_flags();virtual_boundaries();publication();destructor_prefixes();abandonment_and_reentry();completed_call_teardown();
+        arbitrary_handles();selection();fallback_and_flags();virtual_boundaries();publication();destructor_prefixes();abandonment_and_reentry();completed_call_teardown();
         std::cout<<"igb_file_pools_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

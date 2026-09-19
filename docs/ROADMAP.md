@@ -98,10 +98,16 @@ ArkCore loader access, string-table interning and synchronous dependency request
 With explicitly prepared loader/string-pool allocation state, the supplied prefix
 enters the native `igIGBFile` factory `8002EBEC` and reaches its required class
 registration `8002F178`. The actual runner and prerequisite once guard now
-reach thread-manager registration `800238A8` with explicit cold flag inputs.
+compose ThreadManager registration `800238A8`, handle-based pool selection
+and metadata factory `80029E64`. With the existing enabled runtime preserved,
+the next reached boundary is `igMetaObject` registration `8002A0A8`.
 Generic type registration and callback-list operations are reconstructed;
 their remaining parent, field, registry and layout bodies stay explicit.
 Concrete int/bool field defaults now write through the native initializer.
+Typed metadata and internal-field-list constructor chains preserve physical
+headers, exact defaults and separate backing allocation; allocator and
+reflective registration endpoints remain explicit. The supplied-data prefix
+does not substitute a completed cold bootstrap for its enabled runtime.
 Reflected allocation, header/field-pass orchestration
 and the concrete file post-default pool assignments are reconstructed, with
 prepared metadata and allocator/field endpoints in focused tests. One serialized
@@ -119,7 +125,11 @@ The new construction boundaries and evidence are documented in
 [IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
 Continue the documented registration and reference/list construction work in
 [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
-[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md) and
+[IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md),
+[IGB_THREAD_REGISTRATION.md](IGB_THREAD_REGISTRATION.md),
+[IGB_BOOTSTRAP_OBJECT.md](IGB_BOOTSTRAP_OBJECT.md),
+[IGB_FIELD_REGISTRY_FACTORY.md](IGB_FIELD_REGISTRY_FACTORY.md),
+[IGB_METADATA_FACTORY.md](IGB_METADATA_FACTORY.md) and
 [IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md).
 
 After completing the query responses, connect that core lifecycle to original

@@ -6,10 +6,11 @@ namespace {
 [[noreturn]] void fail(const char* message) {throw IgbFilePoolsError(message);}
 MessengerCallResult pending(const char* message) {return {false,0,message};}
 }
-struct IgbCurrentPoolInvocation::Impl {
+struct IgbPoolByHandleInvocation::Impl {
     enum class Phase {selector,owner,dispatch,pool,flags,prepare,reload,search_selector,search,previous,call,done};
     Phase phase=Phase::selector;
     std::int32_t selector{},index{};
+    std::uint32_t handle{};
     std::shared_ptr<IgbMemoryPoolRegistry> manager;
     std::vector<std::shared_ptr<IgbMemoryPoolRegistry>> callers;
     std::shared_ptr<ModelSceneObject> result;
@@ -19,19 +20,19 @@ struct IgbCurrentPoolInvocation::Impl {
     std::function<MessengerCallResult()> callback;
     bool running{},fault{};
 };
-IgbCurrentPoolInvocation::IgbCurrentPoolInvocation():impl_(std::make_unique<Impl>()) {}
-IgbCurrentPoolInvocation::~IgbCurrentPoolInvocation()=default;
-bool IgbCurrentPoolInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
-bool IgbCurrentPoolInvocation::faulted() const noexcept {return impl_->fault;}
-std::shared_ptr<ModelSceneObject> IgbCurrentPoolInvocation::result() const {
-    if(!completed() || faulted())fail("Incomplete current-pool lookup has no result.");return impl_->result;
+IgbPoolByHandleInvocation::IgbPoolByHandleInvocation(std::uint32_t handle):impl_(std::make_unique<Impl>()) {impl_->handle=handle;}
+IgbPoolByHandleInvocation::~IgbPoolByHandleInvocation()=default;
+bool IgbPoolByHandleInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
+bool IgbPoolByHandleInvocation::faulted() const noexcept {return impl_->fault;}
+std::shared_ptr<ModelSceneObject> IgbPoolByHandleInvocation::result() const {
+    if(!completed() || faulted())fail("Incomplete pool-by-handle lookup has no result.");return impl_->result;
 }
-MessengerCallResult IgbCurrentPoolInvocation::resume(std::shared_ptr<IgbFilePoolsServices> services) {
+MessengerCallResult IgbPoolByHandleInvocation::resume(std::shared_ptr<IgbFilePoolsServices> services) {
     auto& s=*impl_;using P=Impl::Phase;
-    if(s.running || s.fault) {s.fault=true;fail("Current-pool lookup requires an unfaulted nonrecursive invocation.");}
+    if(s.running || s.fault) {s.fault=true;fail("Pool-by-handle lookup requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     struct Running {bool& v;Running(bool& v):v(v){v=true;}~Running(){v=false;}} running(s.running);
-    const auto check=[&] {if(s.fault)fail("Current-pool continuation was invalidated.");};
+    const auto check=[&] {if(s.fault)fail("Pool-by-handle continuation was invalidated.");};
     const auto active=[&](std::int32_t index)->std::optional<std::shared_ptr<IgbMemoryPoolRegistry>> {
         if(!services || !services->memory_pools || index<0 || index>=3)return {};
         return services->memory_pools->active[static_cast<std::size_t>(index)];
@@ -40,64 +41,65 @@ MessengerCallResult IgbCurrentPoolInvocation::resume(std::shared_ptr<IgbFilePool
         for(;;) {check();switch(s.phase) {
         case P::selector:
             if(!services || !services->memory_pools || !services->memory_pools->selector)
-                return pending("Current-pool lookup requires selector global805621DC.");
+                return pending("Pool-by-handle lookup requires selector global805621DC.");
             s.selector=*services->memory_pools->selector;s.phase=P::owner;break;
         case P::owner:
             if(s.selector==0) {
                 if(!services || !services->memory_pools || !services->memory_pools->fallback)
-                    return pending("Current-pool lookup requires fallback global805621C8.");
+                    return pending("Pool-by-handle lookup requires fallback global805621C8.");
                 s.manager=*services->memory_pools->fallback;
             }else if(s.selector>0 && s.selector<4) {
                 const auto owner=active(s.selector-1);
-                if(!owner)return pending("Current-pool lookup requires its selected804F2294 entry.");
+                if(!owner)return pending("Pool-by-handle lookup requires its selected804F2294 entry.");
                 s.manager=*owner;
             }
             s.phase=P::dispatch;break;
         case P::dispatch:
-            if(!s.manager)fail("Current-pool lookup dereferences a null selected manager.");
+            if(!s.manager)fail("Pool-by-handle lookup dereferences a null selected manager.");
             if(s.manager->original_pool_access_bound)s.phase=P::pool;
             else {
-                s.request={};s.request.kind=IgbFilePoolsServiceKind::pool_virtual;s.request.manager=s.manager;
+                s.request={};s.request.kind=IgbFilePoolsServiceKind::pool_virtual;s.request.manager=s.manager;s.request.handle=s.handle;
                 s.factory=services?services->factory:IgbFilePoolsFactory{};s.phase=P::call;
             }
             break;
         case P::pool:
-            if(!s.manager->pools[2])return pending("Current-pool access requires captured manager slot2 at +134.");
-            s.result=*s.manager->pools[2];s.phase=s.result?P::done:P::flags;break;
+            if(s.handle>=46u){s.result.reset();s.phase=P::done;break;}
+            if(!s.manager->pools[s.handle])return pending("Pool-by-handle access requires its captured physical manager slot.");
+            s.result=*s.manager->pools[s.handle];s.phase=s.result?P::done:P::flags;break;
         case P::flags:
-            s.phase=(igb_buffer_word(s.manager->inline_bytes,0x1c0)&0x04000000u)!=0?P::prepare:P::search_selector;
+            s.phase=(igb_buffer_word(s.manager->inline_bytes,0xa0u+s.handle*0x90u)&0x04000000u)!=0?P::prepare:P::search_selector;
             break;
         case P::prepare:
-            s.request={};s.request.kind=IgbFilePoolsServiceKind::prepare_pool;s.request.manager=s.manager;
+            s.request={};s.request.kind=IgbFilePoolsServiceKind::prepare_pool;s.request.manager=s.manager;s.request.handle=s.handle;
             s.factory=services?services->factory:IgbFilePoolsFactory{};s.phase=P::call;break;
         case P::reload:
-            if(!s.manager->pools[2])return pending("Current-pool access requires the reloaded manager slot2.");
-            s.result=*s.manager->pools[2];s.phase=P::done;break;
+            if(!s.manager->pools[s.handle])return pending("Pool-by-handle access requires its reloaded physical manager slot.");
+            s.result=*s.manager->pools[s.handle];s.phase=P::done;break;
         case P::search_selector:
             if(!services || !services->memory_pools || !services->memory_pools->selector)
-                return pending("Current-pool fallback requires a fresh selector global805621DC.");
+                return pending("Pool-by-handle fallback requires a fresh selector global805621DC.");
             s.selector=*services->memory_pools->selector;
             if(s.selector<=1)s.phase=P::done;
             else {s.index=s.selector-1;s.phase=P::search;}
             break;
         case P::search: {
             const auto candidate=active(s.index);
-            if(!candidate)return pending("Current-pool fallback reaches an unrepresented physical active-manager entry.");
+            if(!candidate)return pending("Pool-by-handle fallback reaches an unrepresented physical active-manager entry.");
             if(*candidate==s.manager) {--s.index;s.phase=s.index<0?P::done:P::previous;}
             else if(--s.index<0)s.phase=P::done;
             break;
         }
         case P::previous: {
             const auto candidate=active(s.index);
-            if(!candidate)return pending("Current-pool fallback requires the preceding active-manager entry.");
+            if(!candidate)return pending("Pool-by-handle fallback requires the preceding active-manager entry.");
             if(*candidate==s.manager) {s.phase=P::done;break;}
-            if(s.callers.size()>=64)fail("Current-pool fallback exceeds the bounded native call depth.");
+            if(s.callers.size()>=64)fail("Pool-by-handle fallback exceeds the bounded native call depth.");
             s.callers.push_back(s.manager);s.manager=*candidate;s.phase=P::dispatch;break;
         }
         case P::call:
             if(!s.factory && services)s.factory=services->factory;
             if(!s.factory)return pending(s.request.kind==IgbFilePoolsServiceKind::prepare_pool?
-                "Current-pool access requires manager+D0 pool preparation8005E7AC.":"Current-pool lookup requires captured manager virtual+5C.");
+                "Pool-by-handle access requires manager+D0 pool preparation8005E7AC.":"Pool-by-handle lookup requires captured manager virtual+5C.");
             if(!s.operation) {s.operation=s.factory(s.request);check();}
             if(!s.operation)return pending("The reached pool-manager operation is not bound.");
             if(!s.callback)s.callback=s.operation->resume;
@@ -115,6 +117,16 @@ MessengerCallResult IgbCurrentPoolInvocation::resume(std::shared_ptr<IgbFilePool
         case P::done:return {true,0,{}};
         }}
     }catch(...) {s.fault=true;throw;}
+}
+
+struct IgbCurrentPoolInvocation::Impl {IgbPoolByHandleInvocation lookup{2};};
+IgbCurrentPoolInvocation::IgbCurrentPoolInvocation():impl_(std::make_unique<Impl>()){}
+IgbCurrentPoolInvocation::~IgbCurrentPoolInvocation()=default;
+bool IgbCurrentPoolInvocation::completed() const noexcept{return impl_->lookup.completed();}
+bool IgbCurrentPoolInvocation::faulted() const noexcept{return impl_->lookup.faulted();}
+std::shared_ptr<ModelSceneObject> IgbCurrentPoolInvocation::result() const{return impl_->lookup.result();}
+MessengerCallResult IgbCurrentPoolInvocation::resume(std::shared_ptr<IgbFilePoolsServices> services){
+    return impl_->lookup.resume(std::move(services));
 }
 
 struct IgbFilePoolsInvocation::Impl {
