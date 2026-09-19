@@ -57,6 +57,17 @@ now enter through the application and scheduled system, replacing their manual
 system timing calls. Prepared samples, registry setup and dispatcher endpoint
 remain explicit. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
 [SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
+The native stage factory connects directory request, claim release and context
+info registration to their recovered implementations. The application's ordered
+manager registry remains distinct from the scheduler's active registry, while
+both may hold the same native manager identities. Directory loading claims are
+separate signed words from object references. Cache lookup/reuse and removal,
+mutex callbacks and new-file request publication preserve their actual order.
+File creation, queue execution, concrete IGB decode/post-load behavior and loader
+preparation/cleanup still require their reached native implementations. See
+[NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
+[LOADER_REQUEST.md](LOADER_REQUEST.md), [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md)
+and [CONTEXT_INFO.md](CONTEXT_INFO.md).
 See [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
 

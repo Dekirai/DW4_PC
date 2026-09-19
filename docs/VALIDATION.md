@@ -1,5 +1,74 @@
 # Local validation
 
+## Native directory requests, loading claims and context info registration
+
+Validated locally on 2026-09-19. The stage factory now enters actual native
+directory request, loading-claim release and application info-registration
+bodies. The connected cache fixture follows request, suspended info delivery,
+remaining export occurrences and zero-claim removal. See
+[NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
+[LOADER_DIRECTORY.md](LOADER_DIRECTORY.md), [LOADER_REQUEST.md](LOADER_REQUEST.md)
+and [CONTEXT_INFO.md](CONTEXT_INFO.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 133/133 CTest suites passed locally with four build jobs; no compiler warnings |
+| Context registration | 77 checks covering live unsigned registry bounds, low-byte acceptance, captured callbacks, nested calls, duplicate/null infos, append growth and retained failure references |
+| Directory lookup and claims | 142 checks for filename metadata, signed claim wrap, refreshed mutex/parent owners, first-pointer removal, root replacement, suspension and abandoned-reference preservation |
+| Directory request and path fallback | 128 checks for cache reuse, new-file publication, exact async-one versus nonzero decisions, captured decode paths, live next attempts, pending operations and failure prefixes |
+| Native stage composition | 10 checks for actual cache request/claim, suspended context registration, duplicate export order, claim-zero removal, missing bindings and absence of a globals/service ownership cycle |
+| Original player regression | 447 original-inclusive / 62 synthetic checks passed; 48 per-RAM held/released calls and 28 calls over seven application/system/serial batches remain qualified |
+| Context instruction comparison | 2,552 cases, 255,829 original instructions at 187 addresses; zero mismatches against the final core, including 1,845 completed cases and 707 matching reached boundaries |
+| Directory instruction comparison | 4,096 cases, 392,355 original instructions at 328 addresses; zero mismatches against the final core |
+| Request/path instruction comparison | 3,072 cases, 408,082 original instructions at 340 addresses; zero mismatches against the final core |
+
+The context corpus executes actual registration, append and capacity-growth
+instructions, including 127 nested registrations. It compares manager traces,
+selected identities/counts, physical pointer-slot contents, incoming retained
+references after invocation destruction and the returned backing identity.
+Manager bodies and reflected type/allocation/copy/free endpoints are explicit
+fixtures. Native retained backing aliases do not prove freed guest-memory reuse
+or the original memcpy body's partial-fault behavior.
+
+The directory corpus executes original lookup/named-list, claim, list-erase and
+filename-release bodies. String comparison, mutex virtuals, memmove and the
+special root-directory accessor are prepared endpoints. It uses valid physical
+ranges and nonfinal reference counts, and compares return words, owner/list
+state and call order. It does not qualify unknown destructors or asynchronous
+loading merely because claim management succeeds.
+
+The request corpus executes the actual directory-request/path bodies, claim
+acquisition, semaphore preparation and fast-append callers. Lookup, factories,
+semaphore virtuals, interning, C formatting, queue execution and the concrete
+decoder are prepared endpoints; the corpus uses existing string-pool state,
+valid backing and nonfinal references. It compares selected published fields,
+path order and endpoint identities. An independent review checked the signed
+positive-result calculation, exact-one/nonzero async decisions and endpoint
+scope; this does not prove decoder or worker internals.
+
+Independent review corrected two request ownership prefixes: an incoming pool
+reference now survives a reached old-field destructor boundary, and a mutex
+published during its factory callback survives the subsequent original raw
+overwrite. A further regression clears all external/cache references while a
+filename-release wrapper is pending; abandoning that wrapper now retains its
+original temporary in loader state instead of releasing it prematurely.
+
+The stage integration explicitly prepares its cached directory, exported
+owners, pool/lifecycle operations and manager acceptance callbacks. Its actual
+native request and claim operations are not a substitute for new-file decoding.
+Concrete igIGBFile factory/decoder `800528DC`, queue execution, loader lifecycle,
+manager construction and remaining handlers still require implementation.
+Complete startup, active camera, rendering, audio, saves and full gameplay
+remain unqualified. No interactive preview or GitHub Actions was launched.
+
+All final comparison drivers link only production `dw4_core.lib`, SHA256:
+`65C56346284A5DAC62019929C029F91B0BEF6FEE011E9F811E1ECF8F0D1585B9`.
+Ignored local evidence includes `work/native-loader-context-final-build.log`,
+`work/native-loader-context-player-original.log`,
+`work/native-context-registration-result.json`,
+`work/native-loader-directory-result.json` and
+`work/native-loader-request-result.json`.
+
 ## Native scheduled system, stage processing and storage-error phases
 
 Validated locally on 2026-09-19. The scheduled `beSystem` update now executes

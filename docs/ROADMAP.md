@@ -85,6 +85,17 @@ prepared tests do not qualify original boot. Continue through that requested
 stage and its actual operations. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
 [SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
 
+Directory lookup, claim acquisition/release, request control flow and context
+info dispatch now have native implementations connected through the stage
+adapter. The prepared cached-directory test reaches real registration and
+zero-claim cache removal, with a retained pending second handler. This is not a
+new-file boot acceptance. Continue through actual `igIGBFile` creation and
+`800528DC` deserialization, including instance construction and post-load
+callbacks, plus loader queue/lifecycle work. Reuse the existing checked asset
+and document readers where qualified; do not replace required initialization
+with a successful parse. See [LOADER_REQUEST.md](LOADER_REQUEST.md),
+[LOADER_DIRECTORY.md](LOADER_DIRECTORY.md) and [CONTEXT_INFO.md](CONTEXT_INFO.md).
+
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining
 position-lock/ride operations, camera and rendering. Complete original manager

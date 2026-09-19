@@ -118,6 +118,17 @@ still request and actually load `ndmw.igb`; a null factory request is not
 completed startup. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
 [SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
 
+The next loader layer is now connected: original name lookup and loading-claim
+operations, new/cached directory requests, synchronous path fallback, and the
+application's live manager info-registration traversal. The native stage adapter
+uses these real bodies. Its prepared cache integration does not execute the
+concrete `igIGBFile` decoder `800528DC`. Recover that function's stream/table,
+object-instantiation and post-load effects using the existing document decoders
+and canonical native owners where their behavior agrees; parsing alone must not
+set the original ready/success fields. Pool/factory operations, loader lifecycle,
+queue execution, manager registration and remaining concrete info handlers
+remain part of original startup. See [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md).
+
 ## Recovery tools and platform choices
 
 These tool descriptions retain the upstream sources consulted for the September

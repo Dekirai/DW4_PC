@@ -6,15 +6,42 @@
 namespace dw4 {
 class SystemStageError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 using SystemStageString=std::shared_ptr<const std::string>;
+struct SystemStageLoader;
+struct LoaderDirectoryMutex;
+struct LoaderDirectoryList;
 
 // Reached igDirectory/igIGBFile fields only, supplied by an actual loader.
 struct SystemStageDirectory {
+    virtual ~SystemStageDirectory()=default;
     SystemStageString filename; // +14.
     std::shared_ptr<ModelSceneList> infos; // +1C, physical ordered exports.
     std::uint8_t loading{}; // +30; 80070130 returns true only for zero.
+    std::weak_ptr<SystemStageLoader> loader; // +20, nonowning parent pointer.
+    std::int32_t claim_count{}; // +34, separate from object references.
+    std::shared_ptr<LoaderDirectoryMutex> mutex; // +44.
+private:
+    friend class LoaderDirectoryClaimInvocation;
+    std::weak_ptr<void> active_claim_;
+    bool claim_fault_{};
 };
 struct SystemStageLoader {
+    SystemStageString primary_prefix,secondary_prefix; // +14/+18, nullable C strings.
+    std::uint8_t option_08{},async_1c{},initialize_after_load_34{},format_44{};
+    std::uint32_t option_48{};
+    std::shared_ptr<ModelSceneObject> pool_38,queue_20;
     std::shared_ptr<ModelSceneObject> pool_3c,pool_40;
+    std::shared_ptr<SystemStageDirectory> root_directory; // +0C, igImageDirectory.
+    std::shared_ptr<LoaderDirectoryList> directories; // +10, ordered physical list.
+private:
+    friend class LoaderDirectoryReleaseInvocation;
+    friend class LoaderDirectoryRequestInvocation;
+    std::weak_ptr<void> active_request_;
+    bool request_fault_{};
+    std::vector<std::shared_ptr<ModelSceneObject>> unpublished_request_objects_;
+    std::vector<std::shared_ptr<LoaderDirectoryMutex>> unpublished_request_mutexes_;
+    std::weak_ptr<void> active_release_;
+    bool release_fault_{};
+    std::vector<std::shared_ptr<SystemStageDirectory>> unreleased_directories_;
 };
 struct SystemStageState {
     SystemStageState()=default;

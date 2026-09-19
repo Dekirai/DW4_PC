@@ -138,7 +138,18 @@ struct MessengerCallResult;
 using ModelManagerRamCall=std::function<MessengerCallResult()>;
 using ModelManagerRamFactory=std::function<ModelManagerRamCall(
     const std::shared_ptr<ModelSceneManager>&,const std::shared_ptr<ModelSceneObject>&)>;
-struct ModelSceneContext { std::uint64_t world_time{}; };
+struct SerialSchedulerRegistry;
+struct ContextInfoReferenceState;
+struct ModelSceneContext {
+    std::uint64_t world_time{};
+    // Application +08/+10, distinct from the scheduler's active-manager list.
+    // Original reflected construction creates these owners; time-only contexts
+    // leave that construction unrepresented rather than invent an empty registry.
+    std::shared_ptr<SerialSchedulerRegistry> managers;
+    std::shared_ptr<ModelSceneList> infos;
+    // Native retained reference prefixes, not an original field or a call lock.
+    std::shared_ptr<ContextInfoReferenceState> info_reference_state;
+};
 struct ModelSceneSystem {
     float frame_time_f{1}; // +28, explicit beSystem metadata default.
     std::uint64_t saved_world_time{},frame_time{}; // +18/+20.

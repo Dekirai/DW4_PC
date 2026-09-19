@@ -6,6 +6,11 @@ actual ordered request/completion state machine; unresolved loader, pool and
 registration operations remain retained service boundaries. It does not mark
 a requested file as loaded because a filename or asset decoder exists.
 
+The [native stage adapter](NATIVE_STAGE_SERVICES.md) now supplies the recovered
+directory request, application info registration and filename claim-release
+bodies. Their concrete decoder, per-manager handlers and other reached
+suboperations retain their separately documented implementation boundaries.
+
 `SystemStageState` can be embedded in the same allocation as the system.
 The invocation accepts shared aliases to that state and `ModelSceneSystem`,
 so registration reads the same live `system.context` field as other modules.

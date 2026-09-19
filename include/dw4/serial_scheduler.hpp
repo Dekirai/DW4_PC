@@ -6,12 +6,16 @@
 namespace dw4 {
 class SerialSchedulerError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 
-// One actual native manager update binding. The callback must perform its
-// represented original virtual+74 operation; absence is a pending boundary.
+// One native manager identity with its represented original virtual bindings.
+// The same owner can occur in the application registry and scheduler list;
+// those lists and their insertion rules remain separate.
 class SerialSchedulerManager final : public ModelSceneObject {
 public:
     explicit SerialSchedulerManager(std::function<MessengerCallResult()> update={});
     std::function<MessengerCallResult()> update;
+    // Virtual+6C selects one retained operation for this physical info argument.
+    // A missing factory suspends; it is not a successful declined registration.
+    std::function<ModelManagerRamCall(const std::shared_ptr<ModelSceneObject>&)> info_factory;
 };
 // scheduler+08 is an ordered-list wrapper; wrapper+08 is its physical list.
 // Registration/sorting are separate operations. Entries preserve caller order.

@@ -69,6 +69,12 @@ remain explicit reached services; prepared clock/reset/storage inputs do not
 establish complete startup. See [SYSTEM_FRAME.md](docs/SYSTEM_FRAME.md),
 [SYSTEM_STAGE.md](docs/SYSTEM_STAGE.md) and
 [SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md).
+The stage adapter now enters actual directory lookup/request, loading-claim
+release and application info-registration bodies. A prepared cached-directory
+integration covers request, suspended registration and cache removal. New-file
+requests retain the original synchronous path search or asynchronous queue
+call; concrete IGB deserialization/post-load work remains an explicit boundary.
+See [NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md).
 The specialized camera view-inverse helper is also recovered; complete camera
 mode evaluation and publication remain required. Original registration, other
 manager bodies and the dispatcher still need integration. See
