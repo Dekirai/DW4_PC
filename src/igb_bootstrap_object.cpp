@@ -15,6 +15,13 @@ std::size_t position(const IgbBootstrapPointer& pointer,std::uint32_t relative,s
     return static_cast<std::size_t>(at);
 }
 void synchronize_reference(const IgbBootstrapPointer& pointer,std::uint32_t relative,std::size_t width) {
+    if(relative<4){const auto at=static_cast<std::size_t>(pointer.offset);const auto& bytes=*pointer.storage->bytes;
+        if(at<=bytes.bytes.size() && bytes.bytes.size()-at>=4 && at<=bytes.initialized.size() && bytes.initialized.size()-at>=4 &&
+            bytes.initialized[at] && bytes.initialized[at+1] && bytes.initialized[at+2] && bytes.initialized[at+3]){
+            const auto word=igb_buffer_word(pointer.storage->bytes,at);
+            for(const auto& binding:pointer.storage->bindings)if(binding.offset==pointer.offset && binding.field)binding.field->vtable_word=word;
+        }
+    }
     if(relative>=8 || static_cast<std::uint64_t>(relative)+width<=4)return;
     const auto& bytes=*pointer.storage->bytes;const auto at=static_cast<std::size_t>(pointer.offset)+4;
     if(at>bytes.bytes.size() || bytes.bytes.size()-at<4 || at>bytes.initialized.size() || bytes.initialized.size()-at<4)return;
@@ -25,13 +32,14 @@ void synchronize_reference(const IgbBootstrapPointer& pointer,std::uint32_t rela
         if(binding.metadata)binding.metadata->reference_word=word;
         if(binding.fields)binding.fields->reference_word=word;
         if(binding.types)binding.types->reference_word=word;
+        if(binding.field)binding.field->reference_word=word;
     }
 }
 template<class T,class Get> std::shared_ptr<T> bound(const IgbBootstrapPointer& pointer,Get get) {
     if(!pointer.storage || igb_bootstrap_address(pointer)==0)fail("Bootstrap object requires an explicit typed allocation binding.");
     std::shared_ptr<T> result;unsigned selected_kind{};
     for(const auto& binding:pointer.storage->bindings)if(binding.offset==pointer.offset) {
-        const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u)|(binding.types?8u:0u);
+        const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u)|(binding.types?8u:0u)|(binding.field?16u:0u);
         if((kind && (kind&(kind-1u))) || (kind && selected_kind && kind!=selected_kind))
             fail("Bootstrap allocation has conflicting object kinds at one offset.");
         if(kind)selected_kind=kind;
@@ -93,6 +101,9 @@ std::shared_ptr<IgbDecodeFieldRegistry> igb_bootstrap_fields(const IgbBootstrapP
 }
 std::shared_ptr<IgbRuntimeTypeList> igb_bootstrap_types(const IgbBootstrapPointer& pointer){
     return bound<IgbRuntimeTypeList>(pointer,[](const IgbObjectBinding& b){return b.types;});
+}
+std::shared_ptr<IgbDecodeRuntimeField> igb_bootstrap_field(const IgbBootstrapPointer& pointer){
+    return bound<IgbDecodeRuntimeField>(pointer,[](const IgbObjectBinding& b){return b.field;});
 }
 
 struct IgbRawAllocationInvocation::Impl {

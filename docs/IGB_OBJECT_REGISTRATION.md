@@ -54,14 +54,16 @@ unrepresented surrounding original stack memory is not synthesized. If the
 captured core's offset is unavailable, resumption reads that same core rather
 than redirecting to a replacement singleton.
 
-## Remaining field registration
+## Field registration and remaining publication
 
-Defaults callback `80066B7C` remains explicit. It creates two specialized
+Native defaults callback `80066B7C` now creates two specialized
 descriptors through `80022A90`, assigning `_refCount` and `_memPoolIndex` at
 object offset four and publishing descriptor globals `805622A8`/`805622AC`.
 It performs real string ownership updates, default-mode/flag stores, descriptor
 finalization and reference-counted append/release operations. These descriptors
-are not replaced with ordinary integer fields or an empty schema.
+are not replaced with ordinary integer fields or an empty schema. The caller
+and real construction/finalization composition are documented in
+[IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md).
 
 The composed cold-start test begins with the actual ArkCore constructor and
 bootstrap, without either canonical metadata owner. It executes native
@@ -69,10 +71,11 @@ bootstrap, without either canonical metadata owner. It executes native
 then this native `igObject` parent registration with distinct allocations.
 The root parent list is initialized natively; actual metadata naming invokes
 native string lookup, copying, header initialization and insertion. The layout
-probe runs before the call suspends at `80066B7C`.
+probe runs before both native descriptors are constructed, named, finalized and
+appended. The call then suspends at runtime type publication `800660AC`.
 
 At that boundary `igMetaObject` remains busy with flag `8`, `igObject` has flags
-`9`, and ArkCore is still disabled. No successful registration or reflective
+`11`, and ArkCore is still disabled. No successful registration or reflective
 enable store has occurred. Platform/manager initialization, initial ArkCore list
 owners/reserve, physical allocation and string-arena allocation are explicitly
 prepared endpoints. This is a composed native prefix, not complete cold startup.
@@ -81,9 +84,9 @@ Permanent tests cover exact argument identities, all getter aliases, captured
 pool/allocator continuations, null allocation, constructor-after-callback order,
 probe offsets and malformed storage, ready/busy registrar gates, unknown defaults,
 weak adapter ownership, selected-operation retention and recursive misuse.
-The local Release build passes 75 module checks; the separate metadata
-registration suite passes 140 checks including the extended cold composition.
-Whole-core validation is recorded in [VALIDATION.md](VALIDATION.md).
+The local Release build passes 75 wrapper module checks. Current composed
+metadata-registration and whole-core validation are recorded in
+[VALIDATION.md](VALIDATION.md).
 
 A bounded independent comparison against the final core passed 467 cases with
 zero differences, executing 8,423 original instructions across 83 addresses.

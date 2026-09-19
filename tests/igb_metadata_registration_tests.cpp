@@ -4,6 +4,7 @@
 #include "dw4/igb_object_registration.hpp"
 #include "dw4/igb_metadata_operations.hpp"
 #include "dw4/igb_string_pool.hpp"
+#include "dw4/igb_object_defaults.hpp"
 
 #include <iostream>
 
@@ -329,6 +330,58 @@ void actual_cold_bootstrap_prefix(){
     check(igb_bootstrap_read_word(object_allocation,0)==0x804761d8 && igb_bootstrap_read_word(fields_allocation,0)==0x80475cb0 &&
         igb_bootstrap_read_word(fields_allocation,8)==0x720000,"Second metadata and internal list were replaced by prepared completed objects.");
     check(!call.resume(bootstrap).completed && f.allocations==4 && string_allocations==1 && prefix.size()==prefix_count,"Pending descriptor defaults replayed earlier native construction or interning.");
+
+    // Supply the recovered specialized descriptor factory and field operations.
+    // Physical allocation and the original null BSS prototype are represented
+    // explicitly; no completed descriptor or field virtual is substituted.
+    auto object_defaults=std::make_shared<IgbObjectDefaultsServices>();object_defaults->object_metadata=object_services->metadata;
+    object_defaults->types=f.services->types;object_defaults->pools=f.services->pools;object_defaults->dependencies=f.services->metadata->dependencies;
+    object_defaults->meta_fields=std::make_shared<IgbMetaFieldFactoryServices>();object_defaults->meta_fields->dependencies=object_defaults->dependencies;
+    object_defaults->meta_fields->bootstrap=std::make_shared<IgbBootstrapServices>();object_defaults->meta_fields->bootstrap->runtime=f.services->types->runtime;
+    object_defaults->meta_fields->bootstrap->object_metadata=object_services->metadata;
+    std::vector<std::shared_ptr<IgbDecodeRuntimeField>> descriptors;std::vector<IgbBootstrapPointer> descriptor_allocations;
+    object_defaults->meta_fields->bootstrap->factory=[&](const IgbBootstrapCall& c){
+        check(c.kind==BK::pool_allocate && c.bytes==0x34 && c.pool==f.pool,"Cold specialized field allocation changed its real request.");
+        auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,out=op.get()]{
+            auto descriptor=std::make_shared<IgbDecodeRuntimeField>();auto physical=allocation(0x730000+static_cast<std::uint32_t>(descriptors.size())*0x100,0x34);
+            physical.storage->bindings.push_back({0,{},{},{},{},descriptor});descriptors.push_back(descriptor);descriptor_allocations.push_back(physical);
+            out->allocation_result=physical;return MessengerCallResult{true,0,{}};};return op;
+    };
+    object_defaults->fields=std::make_shared<IgbFieldOperationsServices>();object_defaults->fields->dependencies=object_defaults->dependencies;
+    object_defaults->fields->unsigned_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    object_defaults->fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+    object_fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(4);
+    unsigned field_size_queries{},default_allocations{};
+    object_defaults->fields->pointer_lists->factory=[&](const IgbPointerListCall& c){
+        auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,out=op.get()]{
+            check(c.backing.address==0x720000 && c.backing.bytes==fields_backing.storage->bytes,"Descriptor append lost its actual field-list allocation.");
+            if(c.kind==IgbPointerListServiceKind::allocation_pool)out->pool_result=f.pool;
+            else if(c.kind==IgbPointerListServiceKind::allocation_size){++field_size_queries;out->size_result=16;}
+            else throw std::runtime_error("Cold descriptor registry unexpectedly grew");return MessengerCallResult{true,0,{}};};return op;
+    };
+    object_defaults->fields->factory=make_native_igb_unsigned_int_field_factory(object_defaults->fields,[&](const IgbFieldOperationCall& c){
+        auto op=std::make_shared<IgbFieldOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbFieldOperationKind::object_pool){check(c.handle==0,"Cold descriptor reset did not clear its pool tag.");out->pool_result=f.pool;}
+            else if(c.kind==IgbFieldOperationKind::allocate_default){
+                check(c.pool==f.pool && c.bytes==4 && c.alignment==1,"Actual unsigned descriptor default request differs.");++default_allocations;
+                auto buffer=std::make_shared<IgbScratchBuffer>();buffer->bytes.assign(4,0);buffer->initialized.assign(4,1);
+                out->buffer_result={buffer,0};out->buffer_address=0x740000+default_allocations*0x100;
+            }else throw std::runtime_error("Prepared service replaced a recovered descriptor virtual");return MessengerCallResult{true,0,{}};};return op;
+    });
+    f.remaining=make_native_igb_object_defaults_factory(object_defaults,f.remaining);
+    const auto published_fields=call.resume(bootstrap);
+    check(!published_fields.completed && !call.faulted(),"Incomplete runtime type publication was reported as complete startup.");
+    check(descriptors.size()==2 && default_allocations==2 && string_allocations==3 && field_size_queries==2,"Native cold descriptor construction/finalization did not run exactly twice.");
+    check(object_type->class_flags==11 && f.constructed->class_flags==8 && f.core->enabled==0 && object_fields->count==2,"Completed defaults skipped schema flag2 or enabled reflection before publication.");
+    check(*object_defaults->ref_count==descriptors[0] && *object_defaults->pool_index==descriptors[1],"Real field finalizers did not publish both canonical descriptor globals.");
+    for(unsigned i=0;i<2;++i){const auto& descriptor=descriptors[i];
+        check(descriptor->vtable_word==0x80476e6c && descriptor->offset==4 && descriptor->size==4 && descriptor->type_ordinal==0xffff &&
+            descriptor->default_mode==3 && descriptor->flag_26==0 && descriptor->reference_word==1,"Cold specialized descriptor schema or ownership differs.");
+        check(descriptor->name && *descriptor->name==(i==0?"_refCount":"_memPoolIndex") && descriptor->name_string && (*descriptor->name_string)->references==1,"Cold descriptor name temporary ownership differs.");
+        check(object_fields->backing->at(i)==descriptor && igb_buffer_word(object_fields->backing_bytes,i*4)==igb_bootstrap_address(descriptor_allocations[i]),"Cold field append did not publish actual allocated identity.");
+    }
+    check(remaining_calls.back().kind==TK::publish_type && remaining_calls.back().metadata==object_type,"Native defaults did not reach the next actual runtime publication boundary.");
+    check(!call.resume(bootstrap).completed && descriptors.size()==2 && default_allocations==2 && string_allocations==3,"Pending publication replayed recovered descriptor defaults.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

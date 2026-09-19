@@ -151,13 +151,18 @@ caller now register fundamental metadata with reflection disabled, enabling it
 only after registration and callback cleanup return. A separate composed test
 enters the real metadata wrapper and direct constructors, publishes busy metadata
 and now executes actual `igObject` parent registration, its root callback-list
-construction, native name interning and layout probe before missing defaults
-`80066B7C`. Native parent inheritance and name assignment compose with raw
+construction, native name interning and layout probe. Defaults `80066B7C` now
+construct `_refCount` and `_memPoolIndex` through the actual specialized factory,
+name setter, unsigned-integer default-buffer preparation, finalization and raw
+append. The cold chain reaches type publication `800660AC` with reflection still
+disabled. See [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
+[IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
+Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in a separate cold-prefix integration;
 allocator virtuals remain explicit. Continue from that cold path through the
-specialized reference-count/pool-tag descriptors, remaining metadata schema,
-layout/publication and the outer
+runtime registry publication, remaining metadata schema, layout and the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

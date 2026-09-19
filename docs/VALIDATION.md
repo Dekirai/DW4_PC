@@ -1,5 +1,67 @@
 # Local validation
 
+## Native igObject specialized fields and finalization
+
+Validated locally on 2026-09-19. The same cold metadata chain now executes
+`80066B7C`: both `_refCount` and `_memPoolIndex` use actual `80022A90`
+construction, native string interning and mutable name assignment, unsigned-int
+default-buffer preparation, field finalization and raw pointer-list append.
+The next boundary is runtime type publication `800660AC`. `igObject` has flags
+11, `igMetaObject` remains busy with 8, and ArkCore remains disabled. Physical
+allocators and initial platform/manager prerequisites remain prepared; the
+unsigned-int prototype is explicitly represented as its original cold BSS null.
+This is not a completed cold startup or a new gameplay preview.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 164/164 CTest suites passed locally with four jobs; no compiler warnings |
+| Specialized field factory | 63 checks for all four constructor/reset entries, complete 0x34-byte results and untouched padding, exact double reset, physical typed identity, enabled registration/reflection boundaries and retained callbacks |
+| Field operations | 58 checks for mutable source cells, wrapping references, callback replacement, acquired/displaced name lifetime, fresh virtual/global reads, signed capacity comparison, live free/allocate arguments and actual raw append |
+| igObject defaults | 126 checks for two actual descriptors, names/default storage, late canonical cells, fresh pool/metadata reads, full-word string counts, packed creator release and retained failure prefixes |
+| Cold metadata integration | 164 metadata-registration checks, including both real field constructors/finalizers and their physical list stores before pending type publication |
+| Global-cell lifetime | Nonowning weak bindings preserve unknown, known-null and expired nonnull states; publication does not introduce a field/cell ownership cycle |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled-runtime fixture still reaches `8002A0A8`, cursor 5,381, dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Two bounded comparisons execute original instructions against the final native
+core using the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Specialized field factory and constructors | 1,453 | 657 | 138,761 | 284 | 0 |
+| Field naming, finalization, buffer preparation and append | 1,360 | 924 | 54,916 | 262 | 0 |
+
+The factory profile includes actual direct allocation/constructor callers,
+both resets, null-name interning and verified return-only virtuals. Pool
+allocation/tag services, enabled registration/reflected construction, string
+pool creation and release remain prepared endpoints. The field-operation
+profile includes concrete unsigned-int virtuals, default-buffer allocation
+wrappers and actual retained/raw pointer-list append; string release, unknown
+virtuals and underlying pool operations remain prepared. Its append cases stay
+inside available physical backing; separate pointer-list evidence covers growth.
+Neither profile claims arbitrary memory-fault equivalence or whole startup.
+The `80066B7C` caller is covered by permanent composition tests and independent
+instruction review, not a new whole-body differential comparison. See
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md),
+[IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md) and
+[IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md).
+
+The first build exposed a test-only trace retaining a descriptor after the test
+released its other owners. Clearing that trace corrected the weak-owner fixture;
+explicit byte-width construction also removed a narrowing warning. The final
+build and comparisons use the corrected source.
+
+Final core SHA256:
+`47535AEED92FC884FD5A9BCE4940F14C270154DAE59E13418AED1A4AE4583A77`.
+Ignored local evidence: `work/native-object-defaults-final-build.log`,
+`work/native-object-defaults-prefix.log`, `work/native-object-defaults-player.log`,
+`work/native-object-defaults-verifier.log`,
+`work/native-meta-field-factory-result.json` and
+`work/native-field-operations-result.json`. No interactive preview or GitHub
+Actions run was launched.
+
 ## Native igObject registration and typed list construction/growth
 
 Validated locally on 2026-09-19. The cold metadata chain now enters actual

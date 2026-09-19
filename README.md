@@ -102,8 +102,14 @@ complete cold startup or switch the supplied-data test to a different runtime mo
 The actual cold ArkCore constructor and bootstrap caller now preserve the original
 disabled initialization phase. A separate composed test enters real metadata
 registration and direct constructors, publishes the canonical busy metadata,
-and now enters actual `igObject` parent registration, name interning and layout
-probe before reaching missing specialized field defaults `80066B7C`. Parent-field
+and now executes actual `igObject` parent registration, name interning, layout
+probe and specialized field defaults `80066B7C`. The `_refCount` and
+`_memPoolIndex` descriptors use the real field constructor, mutable name setter,
+unsigned-integer default-buffer preparation, finalization and raw registry append.
+The cold chain next reaches type publication `800660AC`, with reflection still
+disabled. See [IGB_OBJECT_DEFAULTS.md](docs/IGB_OBJECT_DEFAULTS.md),
+[IGB_META_FIELD_FACTORY.md](docs/IGB_META_FIELD_FACTORY.md) and
+[IGB_FIELD_OPERATIONS.md](docs/IGB_FIELD_OPERATIONS.md). Parent-field
 inheritance and metadata-name assignment are also reconstructed. Native typed
 list factories and raw append/reserve preserve allocator queries, physical
 zeroing, pointer publication and count order. A separate cold integration uses

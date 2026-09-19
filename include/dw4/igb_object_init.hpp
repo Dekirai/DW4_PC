@@ -11,6 +11,7 @@ struct IgbObjectBinding {
     std::shared_ptr<IgbRuntimeMetaType> metadata;
     std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbRuntimeTypeList> types;
+    std::shared_ptr<IgbDecodeRuntimeField> field;
 };
 // An explicit native allocation/layout binding. original_address participates
 // only in original 32-bit pointer arithmetic; it is never a host pointer.

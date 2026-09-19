@@ -115,8 +115,16 @@ ArkCore construction `8003D234` and bootstrap caller `8003D2F8` now preserve
 physical stores and the actual disabled-to-enabled transition. The canonical
 `igMetaObject` wrapper/getters compose with the registrar and direct constructors;
 a cold integration now constructs distinct `igMetaObject` and `igObject`
-metadata, enters actual root-parent registration, naming and layout probe, then
-reaches specialized defaults `80066B7C` with reflection still disabled.
+metadata, executes actual root-parent registration, naming and layout probe,
+then constructs both specialized descriptors through native defaults `80066B7C`.
+Their actual field factory, name setter, unsigned-integer default-buffer virtual,
+finalization and raw append lead to runtime type publication `800660AC`, with
+reflection still disabled. Descriptor-global pointers are weak cell bindings:
+unrepresented, original null and expired nonnull storage remain distinct. Guest
+reference counts remain separate from host ownership. See
+[IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
+[IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
 Native typed list factories and raw append/reserve share canonical metadata or
 field owners without reinterpreting their types. A separate cold prefix composes
 actual initial list constructors and reserve, including physical backing with

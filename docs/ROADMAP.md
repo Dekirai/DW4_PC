@@ -113,12 +113,16 @@ does not substitute a completed cold bootstrap for its enabled runtime.
 The actual ArkCore constructor/bootstrap caller now enters metadata registration
 while disabled. A separate composed test constructs and publishes canonical
 busy metadata, then enters actual `igObject` parent registration, root-parent
-callback construction, native name interning and layout probe. It stops at the
-two specialized field defaults `80066B7C` before enabling reflection. Another
+callback construction, native name interning and layout probe. The two specialized
+field defaults `80066B7C` now execute their real constructor, name assignment,
+default-buffer preparation, finalization and append. The next boundary is type
+publication `800660AC`, with reflection still disabled. Another
 integration now composes actual initial core-list constructors and reserve;
 byte-only backing still reaches the required allocator size query. Continue
-from that cold path: recover the two specialized descriptors/defaults and their
-field finalization, then remaining metadata schema, layout and registry publication.
+from that cold path: recover registry publication, then remaining metadata schema
+and layout. See [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
+[IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
 Complete the outer ArkCore creation/publication wrapper
 and remaining pool/platform services before joining cold startup to the decoder.
 See [IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),

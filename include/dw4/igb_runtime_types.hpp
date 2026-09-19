@@ -9,6 +9,16 @@ struct IgbScratchBuffer;
 struct SystemStageLoader;
 struct IgbObjectInstanceList;
 struct IgbInternedString;
+struct IgbDecodeRuntimeField;
+struct IgbRuntimeMetaType;
+using IgbFieldNameSlot=std::optional<std::shared_ptr<IgbInternedString>>;
+using IgbRuntimeFieldSlot=std::optional<std::shared_ptr<IgbDecodeRuntimeField>>;
+// A global pointer cell is not owned by the descriptor pointing to it. Keep an
+// expired nonnull identity distinct from the original null pointer.
+inline bool igb_field_global_slot_is_null(const std::weak_ptr<IgbRuntimeFieldSlot>& slot) noexcept {
+    const std::weak_ptr<IgbRuntimeFieldSlot> empty;
+    return !slot.owner_before(empty) && !empty.owner_before(slot);
+}
 struct IgbRegistrationCallbackList;
 struct IgbRuntimeTypeList;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
@@ -34,6 +44,22 @@ struct IgbDecodeRuntimeField {
     std::optional<std::uint32_t> vtable_word; // Physical descriptor+00.
     // Descriptor+20 pointer. Absence is unknown; a null buffer is known null.
     std::optional<IgbRuntimeFieldDefaultSource> default_bytes;
+    SystemStageString name; // +0C host identity; name_string owns the header.
+    IgbFieldNameSlot name_string;
+    std::optional<std::uint32_t> name_string_address;
+    std::optional<std::uint16_t> type_ordinal; // +10; distinct from ordinal+12.
+    std::optional<std::shared_ptr<IgbRuntimeMetaType>> declaring_type; // +18.
+    // +1C: absent is unknown, ownerless weak is null, expired owned weak faults
+    // at a reached dereference. Canonical global storage has its own lifetime.
+    std::optional<std::weak_ptr<IgbRuntimeFieldSlot>> global_slot;
+    std::optional<std::uint32_t> global_slot_address,default_bytes_address;
+    std::optional<std::uint8_t> flag_27,flag_28,flag_29,flag_2a,flag_2b,flag_2c;
+    std::optional<std::uint32_t> word_30;
+    // Raw stores preserve displaced host owners without guest retain/release.
+    std::vector<std::shared_ptr<void>> overwritten_constructor_owners_;
+    std::vector<SystemStageString> overwritten_constructor_strings_;
+    std::weak_ptr<void> construction_active_;
+    bool construction_fault_{};
 };
 struct IgbDecodeFieldRegistry {
     using Storage=std::vector<std::shared_ptr<IgbDecodeRuntimeField>>;

@@ -106,8 +106,10 @@ metadata constructor and internal-field-list constructor. It suspends first at
 a prepared physical backing allocator, then enters the actual `igObject`
 parent registration `80066B08`. A distinct second metadata/list pair is
 constructed, the real root callback list is initialized, and native string
-interning and the base-object probe run. It reaches the specialized descriptor
-defaults `80066B7C`, with `igMetaObject` busy flag `8` and `igObject` flags `9`.
+interning and the base-object probe run. Both specialized descriptors then run
+through native `80066B7C`, actual field construction, naming, finalization and
+append. The chain reaches runtime type publication `800660AC`, with
+`igMetaObject` busy flag `8` and `igObject` flags `11`.
 ArkCore remains disabled and later type-count snapshots remain unwritten.
 Platform/manager work, initial ArkCore list owners, their reserve operation,
 physical allocation and string-arena allocation endpoints are explicitly
