@@ -144,6 +144,7 @@ struct ModelSceneSystem {
     std::uint64_t saved_world_time{},frame_time{}; // +18/+20.
     std::shared_ptr<ModelSceneContext> context; // Inherited manager +0C.
     std::uint8_t is_active{},is_first_time{},is_frame_skip{}; // +2C/+2D/+2E, reflected zero defaults.
+    std::uint8_t reset_enabled{1}; // +5F, shared reset/storage-error gate; reflected default one.
 };
 struct ModelSceneManager {
     virtual ~ModelSceneManager()=default;

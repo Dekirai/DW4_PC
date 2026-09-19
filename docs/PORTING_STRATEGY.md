@@ -108,6 +108,16 @@ active camera publication remain required. See
 [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
 [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and [PLAYER_INPUT.md](PLAYER_INPUT.md).
 
+The scheduled system update now coordinates its original reset handling,
+time publication, stage request/completion and storage-error phases. Native
+messenger operations carry the original pad/camera/sound commands; missing
+loader, registry and viewer operations remain retained service boundaries.
+Seven supplied-data player batches now enter through the application and
+system update with prepared platform samples. Original initialization must
+still request and actually load `ndmw.igb`; a null factory request is not
+completed startup. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
+[SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
+
 ## Recovery tools and platform choices
 
 These tool descriptions retain the upstream sources consulted for the September
@@ -161,6 +171,9 @@ output cannot establish its full original behavior.
    HUD and rendering. The application timing prefix and serial manager batch
    and common player-manager traversal are available; registered order and
    the remaining actual manager bodies still require recovery.
+   System update orchestration now uses its concrete stage/storage state
+   machines and native messenger, but their reached loader/scene operations
+   and actual initialization still require connection.
    Acceptance: an authored native boot-to-game path using
    original assets, original player creation and actual scheduled frames; no
    prepared test provider standing in for a required game operation.

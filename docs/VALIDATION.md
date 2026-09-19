@@ -1,5 +1,71 @@
 # Local validation
 
+## Native scheduled system, stage processing and storage-error phases
+
+Validated locally on 2026-09-19. The scheduled `beSystem` update now executes
+its recovered reset prefix, time publication, stage continuation, storage-error
+continuation and first-time tail. The supplied-data player fixture enters
+through the actual application, serial scheduler, system and player-manager
+bodies. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md), [SYSTEM_STAGE.md](SYSTEM_STAGE.md)
+and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 129/129 CTest suites passed locally with four build jobs; no compiler warnings in the final build |
+| Scheduled system update | 109 checks for reset byte/full-word semantics, callback order, time publication, child suspension, first-time gating, ownership and application scheduling |
+| Stage continuation | 376 checks for live pool selection, retained arguments/results, request-versus-completion ordering, signed info traversal, reference publication and reached failures |
+| Storage-error continuation | 195 checks for status classification, native message delivery, pause ownership, phases, captured contexts, suspended operations and reached failures |
+| Original player integration | 447 original-inclusive / 62 synthetic checks; 48 held/released per-RAM calls plus 28 calls through seven application/system/serial/manager batches |
+| Composed system instruction comparison | 9,656 cases, 858,656 original instructions at 174 addresses; zero mismatches against the final production core |
+| Stage instruction comparison | 4,096 cases, 307,993 original instructions at 231 addresses; zero mismatches against the final production core |
+| Storage-error instruction comparison | 1,816 cases, 156,054 original instructions at 392 addresses; zero mismatches against the final production core |
+
+The composed system corpus includes 4,452 reset exits and 5,204 executions of
+the actual timing conversion and storage helper's short paths. It executes
+the original null-stage branch and prepares only reached platform SDK calls.
+The stage corpus separately executes the original stage caller, directory
+readiness and null-string leaf; pool, load, registration, allocation, string
+comparison and cleanup endpoints are explicit prepared services. It compares
+service traces and selected published state with nonfinal reference counts,
+not every memory access or unknown destructor behavior.
+
+The storage corpus executes the actual helper, pause setter and send wrapper.
+It compares selected state, pause anchor, mask choice and ordered message/factor
+effects. SDK status, lookups, message replies, scene changes, mask helpers and
+factor setting are prepared endpoints; the native side uses the production
+messenger with explicitly authored recipients. This qualifies the control flow
+for those fixtures, not the missing error-scene or platform implementations.
+
+The original player integration explicitly supplies clock/reset/storage
+samples, the dispatcher endpoint, registry order, gate activation, initial
+viewer state and device input. A suspended second player preserves the first
+player's completed work, the application sample and the completed system
+prefix. All seven batches perform exactly one reset/status sample, dispatcher
+call and system time publication apiece. Application callback teardown releases
+the fixture's prepared context/registry ownership cycle.
+
+Independent review found and corrected a retained-argument bug: a missing
+operation provider could allow a replacement system context to redirect an
+already selected world-factor call. Factor, messenger and viewer requests now
+capture the context at the original read boundary. Regression checks cover
+replacement while waiting, and captured viewer handles cannot be redirected
+by later changes to their provider wrapper.
+
+The comparison drivers link only the final production core, SHA256:
+`132DA6EB586E321BE5DC20A613373A9625BB55B6BB06B1F78FEC414A3B2610F8`.
+Local ignored evidence includes `work/native-system-final-build.log`,
+`work/native-system-player-original.log`,
+`work/native-system-frame-composed-result.json`,
+`work/native-system-stage-final-report.json` and
+`work/native-system-storage-result.json`.
+
+Actual initialization must still request and load `ndmw.igb` and the error
+scene through the concrete loader, registration and scene operations.
+Factory-default null requests and prepared platform samples do not complete
+startup. Remaining managers, active camera publication, device polling,
+rendering, audio, saves and complete gameplay remain required. The walking
+preview is unchanged; no interactive preview or GitHub Actions was launched.
+
 ## Original manager traversal, scheduled players and camera inverse
 
 Validated locally on 2026-09-19. The recovered serial scheduler now reaches

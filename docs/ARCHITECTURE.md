@@ -45,6 +45,18 @@ The specialized camera inverse preserves original aliasing, arithmetic and
 partial publication into the separate view-model matrix. It does not replace
 the required camera mode, graph sampling, Euler rebuild or viewer publication.
 See [CAMERA_MATH.md](CAMERA_MATH.md).
+`SystemFrameState` now shares its original base timing/gates with those model
+managers and embeds recovered stage/storage fields. The actual system update
+runs reset sampling and possible reset return, timing, stage processing,
+storage-error processing and the first-time tail in original order. Stage
+request/completion remain separate updates; info registration reads live list
+counts/backing and context. Storage phases use actual native messenger sends
+and deferred pause state, with retained explicit scene/manager/loader operations
+where concrete implementations remain missing. Seven original-data batches
+now enter through the application and scheduled system, replacing their manual
+system timing calls. Prepared samples, registry setup and dispatcher endpoint
+remain explicit. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
+[SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
 See [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
 

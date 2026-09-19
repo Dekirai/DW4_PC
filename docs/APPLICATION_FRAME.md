@@ -122,6 +122,15 @@ post-default virtuals `+24/+2C/+34` are inherited no-ops. `ModelSceneSystem`
 now represents these timing fields and the inherited context owner. The
 timing leaf does not bypass or implement the surrounding system update.
 
+The surrounding update is now represented separately by
+[SystemFrameInvocation](SYSTEM_FRAME.md), which calls this leaf after reset
+handling and before stage/storage operations. Its reusable binding can be an
+actual serial scheduler entry. The original-data player fixture now uses
+application-to-system scheduling for its seven later batches; it no longer
+calls the timing leaf manually for those samples. Prepared platform inputs,
+registry order, dispatcher endpoint and initial stage/viewer state remain
+explicit, so this does not establish completed application startup.
+
 ## Validation and remaining integration
 
 Permanent tests cover exact fixed-point word results, shared context/system

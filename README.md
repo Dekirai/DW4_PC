@@ -62,6 +62,13 @@ The recovered serial scheduler now calls the original manager info/RAM
 traversal and its actual player update binding. A prepared original-data test
 follows all four authored RAM occurrences through seven serial batches,
 including suspension inside the second player without replaying the first.
+Those batches now run through the native application and scheduled system:
+reset handling, time publication, stage control flow and storage-error
+orchestration precede the player updates. Original loading and scene operations
+remain explicit reached services; prepared clock/reset/storage inputs do not
+establish complete startup. See [SYSTEM_FRAME.md](docs/SYSTEM_FRAME.md),
+[SYSTEM_STAGE.md](docs/SYSTEM_STAGE.md) and
+[SYSTEM_STORAGE.md](docs/SYSTEM_STORAGE.md).
 The specialized camera view-inverse helper is also recovered; complete camera
 mode evaluation and publication remain required. Original registration, other
 manager bodies and the dispatcher still need integration. See

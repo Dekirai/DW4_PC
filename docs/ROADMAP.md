@@ -75,6 +75,16 @@ publication still need connection. See [MODEL_MANAGER_FRAME.md](MODEL_MANAGER_FR
 [CAMERA_MATH.md](CAMERA_MATH.md), [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
 [PLAYER_INPUT.md](PLAYER_INPUT.md) and [APPLICATION_FRAME.md](APPLICATION_FRAME.md).
 
+The scheduled system now supplies its original reset/time/stage/storage/tail
+orchestration. The same seven four-player batches enter through the application
+and actual system callback; time is published inside that callback, and pending
+player work does not replay it. Concrete loader, context registration, viewer
+error-scene operations and real host storage/reset policy remain required.
+The real initialization requests `ndmw.igb`; null factory stage fields in
+prepared tests do not qualify original boot. Continue through that requested
+stage and its actual operations. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
+[SYSTEM_STAGE.md](SYSTEM_STAGE.md) and [SYSTEM_STORAGE.md](SYSTEM_STORAGE.md).
+
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining
 position-lock/ride operations, camera and rendering. Complete original manager

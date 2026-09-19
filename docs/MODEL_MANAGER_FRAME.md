@@ -157,3 +157,11 @@ number effects, balanced native collision and scheduler cache cleanup.
 Clock samples, device data, initial viewer state and registry construction
 remain explicit. This is not complete boot, active camera publication or
 connected controller gameplay. Exact results are in [VALIDATION.md](VALIDATION.md).
+
+The later system integration runs those same seven batches through
+`ApplicationFrameInvocation` and a preceding native `SystemFrameInvocation`.
+The system publishes elapsed time and clears first-time before the player
+manager's gate. Suspending the second player preserves the already sampled
+application clock, dispatcher and completed system update. Reset/storage
+samples and the dispatcher are still prepared endpoints, and the registry
+order is explicitly supplied. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md).
