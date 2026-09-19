@@ -75,9 +75,14 @@ integration covers request, suspended registration and cache removal. New-file
 requests retain the original synchronous path search or asynchronous queue
 call. The decoder now supplies original load orchestration, concrete byte-stream
 opening/header processing and three early runtime table helpers. Supplied
-`ndmw.igb` reaches metatype construction with explicitly prepared registry/list
-endpoints; loading remains incomplete at that boundary. Real type/object
-construction, post-load work and cleanup remain required. See
+`ndmw.igb` now passes runtime metatype/slot reconciliation using twenty recovered
+object layouts, forty-seven registered field-class identities and explicit
+prepared list endpoints. Sixty inherited field mappings reach type/field
+preparation `800505E0`; one unsupported serialized field class remains null.
+Loading is still incomplete. Full runtime initialization, concrete factories,
+object population, post-load work and cleanup remain required. See
+[IGB_TYPE_MAPPING.md](docs/IGB_TYPE_MAPPING.md),
+[IGB_RUNTIME_BOOTSTRAP.md](docs/IGB_RUNTIME_BOOTSTRAP.md),
 [NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md) and
 [IGB_DECODE.md](docs/IGB_DECODE.md).
 The specialized camera view-inverse helper is also recovered; complete camera

@@ -67,11 +67,20 @@ The IGB decoder now enters actual stream/header and early runtime table bodies
 through the original load orchestration. Its canonical state belongs to the
 loader file, with a weak stream back-reference. Live status words, version gates,
 timing and success/failure tails retain their original publication order.
-Supplied-data early-table integration uses explicitly prepared runtime registry
-and list endpoints and stops at actual metatype construction. File creation,
-queue execution, remaining IGB type/object/post-load bodies, decoder cleanup
+Canonical runtime metadata now serves both field callbacks and type lookup.
+The type mapper reconciles known versions and inherited signed slot maps, with
+the dynamic caller retaining explicit constructor/field/registry boundaries.
+A bounded native registration profile supplies twenty object layouts and
+forty-seven field-class identities recovered from original registration/default
+routines. Supplied `ndmw.igb` with explicit list allocation endpoints reaches
+type/field preparation `800505E0`: twenty mapped types and sixty field mappings.
+The unsupported serialized shader field remains null, and loading is unfinished.
+File creation, complete runtime registration, queue execution, remaining IGB
+type/object/post-load bodies, decoder cleanup
 and loader preparation/cleanup still require their reached implementations. See
 [IGB_DECODE.md](IGB_DECODE.md),
+[IGB_TYPE_MAPPING.md](IGB_TYPE_MAPPING.md),
+[IGB_RUNTIME_BOOTSTRAP.md](IGB_RUNTIME_BOOTSTRAP.md),
 [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
 [LOADER_REQUEST.md](LOADER_REQUEST.md), [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md)
 and [CONTEXT_INFO.md](CONTEXT_INFO.md).

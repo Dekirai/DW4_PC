@@ -89,10 +89,12 @@ Directory lookup, claim acquisition/release, request control flow and context
 info dispatch now have native implementations connected through the stage
 adapter. The prepared cached-directory test reaches real registration and
 zero-claim cache removal, with a retained pending second handler. This is not a
-new-file boot acceptance. The `800528DC` caller now connects actual stream/header
-and the first three table helpers. Original `ndmw.igb` reaches runtime metatype
-construction with explicitly prepared registry/list endpoints; it does not
-finish loading. Continue through `8004FC94` type/slot reconciliation, actual
+new-file boot acceptance. The `800528DC` caller now connects actual stream/header,
+the first three tables and `8004FC94` runtime type/slot reconciliation. With
+twenty recovered object layouts, forty-seven field-class identities and prepared
+list endpoints, original `ndmw.igb` reaches type/field preparation `800505E0`.
+One serialized field class remains unmatched; loading is unfinished. Continue
+through that preparation, complete runtime registration and factories, actual
 `igIGBFile` creation, object population and post-load callbacks, plus decoder
 cleanup and loader queue/lifecycle work. Reuse the existing checked asset
 and document readers where qualified; do not replace required initialization

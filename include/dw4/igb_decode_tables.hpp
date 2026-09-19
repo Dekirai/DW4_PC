@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/loader_request.hpp"
+#include "dw4/igb_runtime_types.hpp"
 
 #include <optional>
 
@@ -12,16 +13,10 @@ class IgbDecodeTablesError : public std::runtime_error {public: using std::runti
 
 // Reached runtime field instances and their metadata, distinct from serialized
 // IgbFieldType records. Metadata virtual+58 is an explicit selected operation.
-struct IgbDecodeRuntimeType {SystemStageString name;};
-struct IgbDecodeRuntimeField {std::shared_ptr<ModelSceneObject> owner;};
 struct IgbDecodeFieldList {
     using Storage=std::vector<std::shared_ptr<IgbDecodeRuntimeField>>;
     std::int32_t count{},capacity{};
     std::shared_ptr<Storage> backing=std::make_shared<Storage>();
-};
-struct IgbDecodeFieldRegistry {
-    std::int32_t count{}; // Original igMetaField registry +0C.
-    std::shared_ptr<IgbDecodeFieldList::Storage> backing; // +08, reloaded per visit.
 };
 struct IgbDecodeWordList {
     using Storage=std::vector<std::uint32_t>;

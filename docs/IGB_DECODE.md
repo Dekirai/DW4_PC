@@ -2,16 +2,18 @@
 
 `IgbDecodeInvocation` reconstructs the original USA `igIGBFile` read entry
 `800528DC` and failure tail `80052794`. It connects directory path requests to
-actual stream opening, header processing and the first three table helpers.
-It is not yet a complete deserializer: runtime metatype construction, object
-population, activation, postprocessing and cleanup still have explicit reached
+actual stream opening, header processing, the first three table helpers and
+runtime type/slot reconciliation. It is not yet a complete deserializer: reached
+type/list factories, field preparation, object population, activation,
+postprocessing and cleanup still have explicit reached
 operations. A pending operation leaves the original published prefix intact.
 
 The supplied original DOL has SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Source is authored from the original
 instruction behavior; original bytes, generated disassembly and local reference
 drivers are not public deliverables. See [IGB_STREAM.md](IGB_STREAM.md),
-[IGB_DECODE_TABLES.md](IGB_DECODE_TABLES.md) and
+[IGB_DECODE_TABLES.md](IGB_DECODE_TABLES.md),
+[IGB_TYPE_MAPPING.md](IGB_TYPE_MAPPING.md) and
 [LOADER_REQUEST.md](LOADER_REQUEST.md) for the connected bodies.
 
 ## Ownership and integration
@@ -26,7 +28,7 @@ post-default pool setup.
 
 `make_native_igb_loader_factory` binds the existing `decode_igb` request to this
 entry. `make_native_igb_stage_factory` binds `8004F870`, `8004F974`, `800514AC`,
-`80051794` and `8004FBE8` to their concrete authored bodies. Remaining operations
+`80051794`, `8004FBE8` and `8004FC94` to their concrete authored bodies. Remaining operations
 go to an explicitly supplied factory or retain a named pending diagnostic.
 Neither adapter turns a successful document parse into a loaded directory.
 Installed factories use weak service captures; selected operations retain the
@@ -109,8 +111,13 @@ Caller tests using prepared remaining helpers qualify their orchestration only.
 Original-data and instruction comparisons are recorded in
 [VALIDATION.md](VALIDATION.md).
 
-The next runtime boundary is `8004FC94`: construct and reconcile metatypes and
-serialized field slots with the actual native registry. This must lead to real
+The type mapper now reconciles registered metatypes and inherited serialized
+field slots, retaining individual boundaries for unrecovered constructors and
+field/registry operations. The bounded native bootstrap registration profile is
+derived from original registration/default routines rather than serialized
+counts; it does not establish full engine initialization. With those records
+and prepared list allocation endpoints, supplied `ndmw.igb` can reach the next
+runtime boundary, type/field preparation `800505E0`. This must lead to real
 object constructors, graph/reference population and original post-load effects.
 Until that chain and startup registration are connected, neither the original
 `ndmw.igb` boot nor complete native gameplay is established.

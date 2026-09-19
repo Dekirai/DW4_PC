@@ -233,7 +233,7 @@ IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices> 
     return [services=std::move(services),remaining=std::move(remaining)](const IgbDecodeCall& request) {
         using K=IgbDecodeServiceKind;
         if(request.kind!=K::open_stream && request.kind!=K::read_header && request.kind!=K::field_types &&
-            request.kind!=K::alignments && request.kind!=K::object_type_bytes) {
+            request.kind!=K::alignments && request.kind!=K::object_type_bytes && request.kind!=K::construct_types) {
             if(remaining)return remaining(request);
             auto operation=std::make_shared<IgbDecodeOperation>();
             operation->resume=[kind=request.kind] {return pending(boundary(kind));};return operation;
@@ -248,6 +248,10 @@ IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices> 
         }else if(request.kind==K::read_header) {
             const auto call=std::make_shared<IgbHeaderInvocation>(request.state->stream);
             operation->resume=[call,live] {return call->resume(live->stream);};
+        }else if(request.kind==K::construct_types) {
+            const auto call=std::make_shared<IgbTypeMappingInvocation>(request.file,request.state->stream,
+                request.state->tables,request.state->type_mapping);
+            operation->resume=[call,live] {return call->resume(live->type_mapping);};
         }else {
             const auto kind=request.kind==K::field_types ? IgbDecodeTableKind::field_types:
                 request.kind==K::alignments ? IgbDecodeTableKind::alignments:IgbDecodeTableKind::object_type_bytes;

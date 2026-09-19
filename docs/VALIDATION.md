@@ -1,5 +1,69 @@
 # Local validation
 
+## Native runtime types and inherited field mapping
+
+Validated locally on 2026-09-19. The decoder now binds original `8004FC94`
+runtime type reconciliation to authored native C++. Canonical metadata serves
+both the existing field-table callback and actual registry lookup, physical
+field access and runtime counts. The bounded bootstrap profile contains twenty
+object layouts and forty-seven field-class identities recovered independently
+from original registration/default routines. See
+[IGB_RUNTIME_TYPES.md](IGB_RUNTIME_TYPES.md),
+[IGB_TYPE_MAPPING.md](IGB_TYPE_MAPPING.md) and
+[IGB_RUNTIME_BOOTSTRAP.md](IGB_RUNTIME_BOOTSTRAP.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 139/139 CTest suites passed locally with four build jobs; no compiler warnings |
+| Runtime metadata helpers | 335 permanent checks, including all enabled/field-flag byte values, lazy name consumption, pending descriptor globals, retained list identity and reached null/physical bounds |
+| Type mapping | 107 synthetic / 376 original-inclusive checks; legacy/current formats, both byte orders, signed inherited slots, status/reference publication, pending final destruction, dynamic gaps/layout, live registration reload, recursion and abandonment |
+| Recovered bootstrap | 276 checks for inherited field sharing, replacements, registered layouts and widths, exact metadata identity and unsupported schema/owner boundaries |
+| Original loading prefix | `ndmw.igb`: 20 runtime types, 60 inherited field mappings, 47 matched field classes and one unmatched class; cursor 2,916, pending `800505E0`, loading=1 and succeeded=0 |
+| Original player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released player frames and 28 frames across seven prepared application/system/serial batches remain successful |
+| Python asset verifier | 6 synthetic tests passed locally |
+| Runtime helper instruction comparison | 4,096 cases, 193,584 original instructions at 108 addresses; zero differences |
+| Type caller instruction comparison | 1,926 cases, 2,216,149 original instructions at 751 addresses; zero mismatches, including 1,719 ordinary returns and 207 matching reached endpoint-failure prefixes |
+| Bootstrap registration facts | 114 records compared against independent original registration/default/vtable evidence; zero differences across 20 object layouts, 47 field-class metadata identities and 47 singleton bindings |
+
+The runtime helper corpus executes the original registry lookup, slot count,
+physical getter and local-field count bodies; only `strcmp` is a prepared C-string
+contract. Its static physical input profile is supplemented by permanent tests
+for missing globals, lazy scratch-name reads, partial strings and ownership.
+
+The type caller corpus executes `8004FC94`, the actual runtime helpers, pointer
+list append/short-list growth and byte swap. Constructors, reserve allocation,
+final list destruction, pool/converter getters, field operations and class
+registration are explicitly prepared endpoints. This includes the full dynamic
+caller sequence and observable reference/count/layout effects, not the original
+bodies of those prepared endpoints. Callback teardown ordering and lazy name
+consumption were corrected during independent review before the final build.
+
+The supplied-data decoder prefix uses recovered registration metadata instead
+of constructing registries from serialized names/counts. List constructors and
+allocators, status words, platform timer and exact-name byte-source binding are
+explicit fixture services. An empty alignment registry still selects default16.
+The unsupported `igVertexBlendShaderCapsInfoMetaField` remains null through the
+ordinary unmatched lookup; no synthetic class or dynamic fallback fills it.
+The runtime registration subset does not establish original global ordering,
+complete singleton initialization, field-class schemas or object factories.
+Its separate registration-facts comparison also verifies the shared identities
+of 47 distinct physical object fields. This is a comparison with independently
+recovered facts, not execution of complete original engine startup.
+
+Remaining work includes type/field preparation `800505E0`, concrete factories,
+object construction/population, original post-load work, cleanup/close, complete
+runtime registration, loader queue execution and startup. The native walking
+preview is unchanged; no interactive preview or GitHub Actions was launched.
+
+Final comparison drivers link production `dw4_core.lib`, SHA256:
+`D36C1EB0444C69D72B90FE4E40BEDD99ADC352CFABD461BD24C297E41FAC5E30`.
+Ignored evidence includes `work/native-igb-mapping-build.log`,
+`work/native-igb-mapping-original.log`, `work/native-igb-mapping-player.log`,
+`work/native-igb-mapping-verifier.log`,
+`work/native-igb-runtime-types-result.json`,
+`work/native-igb-types-result.json` and
+`work/native-igb-registration-result.json`.
+
 ## Native IGB stream, early tables and decoder orchestration
 
 Validated locally on 2026-09-19. The directory loader now has a native adapter

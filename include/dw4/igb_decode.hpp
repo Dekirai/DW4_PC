@@ -3,6 +3,7 @@
 #include "dw4/game_clock.hpp"
 #include "dw4/igb_decode_tables.hpp"
 #include "dw4/igb_stream.hpp"
+#include "dw4/igb_type_mapping.hpp"
 
 namespace dw4 {
 class IgbDecodeError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
@@ -13,6 +14,7 @@ class IgbDecodeError : public std::runtime_error {public: using std::runtime_err
 struct IgbDecodeState {
     std::shared_ptr<IgbStreamState> stream=std::make_shared<IgbStreamState>();
     std::shared_ptr<IgbDecodeTablesState> tables=std::make_shared<IgbDecodeTablesState>();
+    std::shared_ptr<IgbTypeMappingState> type_mapping=std::make_shared<IgbTypeMappingState>();
     std::int32_t object_count{}; // Directory +08, distinct from header object count.
     std::uint8_t objects_initialized{}; // Directory +38.
 };
@@ -55,6 +57,7 @@ using IgbDecodeFactory=std::function<std::shared_ptr<IgbDecodeOperation>(const I
 struct IgbDecodeServices {
     std::shared_ptr<IgbStreamServices> stream;
     std::shared_ptr<IgbDecodeTablesServices> tables;
+    std::shared_ptr<IgbTypeMappingServices> type_mapping;
     // Disengaged is unrepresented global setup; engaged null is an actual null
     // global timer and faults when dereferenced. Both samples reload the owner.
     std::optional<std::shared_ptr<NativeGameClock>> clock; // Global805622FC.
@@ -79,7 +82,8 @@ public:
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
 
-// Concrete open/header/three early table bodies. Remaining reached operations
+// Concrete open/header/three early tables and runtime type mapping. Reached
+// type/list factories remain explicit services. Remaining decoder operations
 // require their real implementations; no parser-based success fallback exists.
 IgbDecodeFactory make_native_igb_stage_factory(std::weak_ptr<IgbDecodeServices>,
     IgbDecodeFactory remaining={});

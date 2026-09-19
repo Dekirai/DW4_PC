@@ -121,10 +121,13 @@ completed startup. See [SYSTEM_FRAME.md](SYSTEM_FRAME.md),
 The next loader layer is now connected: original name lookup and loading-claim
 operations, new/cached directory requests, synchronous path fallback, and the
 application's live manager info-registration traversal. The native stage adapter
-uses these real bodies. Its prepared cache integration does not execute the
-concrete `igIGBFile` decoder `800528DC`. Recover that function's stream/table,
-object-instantiation and post-load effects using the existing document decoders
-and canonical native owners where their behavior agrees; parsing alone must not
+uses these real bodies. The concrete `igIGBFile` decoder `800528DC` now enters
+native stream/header processing, early tables and runtime metatype/slot mapping.
+The bounded bootstrap metadata profile recovers twenty object layouts and
+forty-seven field-class identities from original registrations. List factories,
+full global initialization, type/field preparation `800505E0`, object population
+and post-load effects remain required. Reuse existing document decoders and
+canonical native owners where their behavior agrees; parsing alone must not
 set the original ready/success fields. Pool/factory operations, loader lifecycle,
 queue execution, manager registration and remaining concrete info handlers
 remain part of original startup. See [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md).
