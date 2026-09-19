@@ -110,7 +110,10 @@ prefixes have separate focused tests.
 
 The installed static geometry path with a present bound can enter the concrete
 candidate producer directly. Dynamic time/update services, missing geometry
-bounds, transformed bounds and the remaining query reduction/response paths
+bounds, other bound classes and the remaining query reduction/response paths
 still require their actual operations. This dispatcher does not establish a
 complete original gameplay frame. See [HITLAND_PRIMITIVES.md](HITLAND_PRIMITIVES.md)
 and [VALIDATION.md](VALIDATION.md) for adjacent implementation and validation.
+Canonical AABox transforms and the original inverse now run natively in the
+geometry producer; see [MATRIX_INVERSE.md](MATRIX_INVERSE.md). This does not
+replace the node's still-required dynamic time/update operation.

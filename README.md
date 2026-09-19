@@ -2,92 +2,57 @@
 
 An early native PC port project for **Digimon World 4 (USA, GameCube)**.
 
-The selected implementation path is now **DolRecomp with the ModernGekko
-template**: compiled original PowerPC logic with a Dolphin-derived runtime for
-graphics, audio and console services. The supplied USA executable translates
-to C, and the runtime and complete Windows game module now build locally.
-Bounded original startup and an offscreen original boot image are verified;
-complete gameplay, audio, saves and controller validation remain in progress. See
-[RECOMPILATION.md](docs/RECOMPILATION.md) for the tool inputs and measured results.
-Builds and tests run locally; GitHub Actions is disabled.
+The active path is a **native source port**: recover the original game and
+engine as authored C++20 source, using the existing `dw4_core` and native
+application. The owner selected this direction on September 18, 2026 and set
+the DolRecomp/ModernGekko implementation aside. Builds and tests run locally;
+GitHub Actions is disabled.
 
-See [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md) for the September 13 project
-review, retained work, tool comparison and concrete migration checkpoints.
-`Play-Recompiled-DW4.cmd` starts the verified developer recompilation with its
-separate `work/recomp-user` profile. Existing `Play-DW4-PC.cmd` and
-`Start-DW4-PC.cmd` start the older manual walking preview/workbench.
-To keep using a packaged preview's imported data and saves, launch that
-package's `DW4_PC.exe` directly.
+The native core already reconstructs selected asset, script, animation, actor,
+player and collision operations. The walking preview displays original assets,
+but its movement and camera remain provisional. **It is not yet a complete or
+1:1 playable reconstruction of Digimon World 4.**
 
-The current priority is performance: the first diagnostic build was slow and
-the owner reports audio stutter at the main menu. The optimized build now
-advances about 60 unique-frame counter steps per second at normal simulation
-speed in a bounded boot test, compared with about 40 in the diagnostic build.
-This does not yet validate gameplay performance or audible output.
-The guarded scheduler optimization also reduces measured boot CPU cost by
-about 46% per frame-counter advance in the final package comparison, at normal
-simulation speed. See [RECOMP_PERFORMANCE.md](docs/RECOMP_PERFORMANCE.md).
-Real-device audio diagnostics now distinguish source activity, mixer gaps and
-Cubeb callback timing during finite hidden tests at zero device volume. See
-[RECOMP_AUDIO.md](docs/RECOMP_AUDIO.md) for the method and its limits.
-The longer opening-movie test exposes a later slowdown to approximately 30%
-simulation speed at both 1x and 3x EFB, with repeated audio-buffer replay.
-The earlier logo performance does not establish smooth movie or menu playback.
-An opt-in CPU probe identifies the original movie's pixel-conversion block.
-A rebuilt package reduces CPU cost in one counter-aligned comparison with its
-immediate predecessor, but movie speed and audio-source replay remain inadequate.
-See [RECOMP_CPU_PROFILING.md](docs/RECOMP_CPU_PROFILING.md) and the bounded
-[comparison](docs/RECOMP_PERFORMANCE.md#rebuilt-module-comparison).
-A controlled intro skip and second Start press now reach the original
-"Game Start / Option" main menu. Its short 1x test runs near 60 counter advances/s
-at normal simulation speed, with no audio FIFO replay in the final window.
-Audible quality, higher-resolution menu performance and gameplay remain unverified.
-The PC target includes at
-least 60 FPS on measured hardware, presentation options up to 300 FPS without
-faster gameplay, 16:9, higher render resolution, HD textures and an ImGui menu
-for graphics, cheats, save states and other QoL. Mods, custom content and online
-four-player co-op remain planned. These features are not established by the
-existing walking preview's settings. [The roadmap](docs/ROADMAP.md) separates
-the active acceptance gates from earlier manual-engine work.
+The immediate work is completing the original collision response and connecting
+it to the recovered player frame, startup and scheduler. See
+[PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md) for the continuation plan and
+[ROADMAP.md](docs/ROADMAP.md) for the acceptance gates. Build the active project
+with `scripts/build.ps1 -Jobs 4`; `Play-DW4-PC.cmd` and `Start-DW4-PC.cmd` open
+its walking preview and workbench respectively. Builds do not launch the game.
 
-The local experimental package now starts through `DW4_PC.exe`, accepts the
-user's USA GameCube ROM and prepares its required files automatically. Its
-imported files match the independent extracted reference; original assets are
-not bundled. End users need no compiler or manual disc extraction. Developers
-can create a package with `scripts/package-recomp.ps1` after building, or use
-`scripts/start-recomp.ps1` for the separate developer profile. Builds never
-launch the game automatically. See [ROM_IMPORT.md](docs/ROM_IMPORT.md).
+The complete target includes original gameplay, audio, progression, saves and
+local one-to-four-player play; keyboard play and freely saved bindings; graphics
+settings, 16:9, 4K and presentation up to 300 FPS without faster simulation;
+an F1 ImGui menu, supported languages, HD packs, content mods and online co-op.
+The release should accept the user's ROM, prepare its assets locally, use one
+EXE entry point and preserve portable saves. These are requirements, not
+implemented native-core claims. The [language audit](docs/LOCALIZATION.md) also
+keeps supported translations separate from pack filenames.
 
-The application now hosts the game in-process; the package no longer includes
-or requires `moderngekko-run.exe`. The default `savedata` directory sits beside
-the actual EXE. Earlier AppData/Documents profiles are preserved. New builds
-embed the required service resources and omit the upstream `Sys` tree. The
-game module in `data/game.dll` and Visual C++ runtime DLLs remain dependencies
-while work continues toward a single-file application. F1 opens an in-game ImGui menu
-with pause/resume, save-state actions, mute, fullscreen and live graphics controls;
-the old native File/View menu is removed. Graphics changes currently apply only
-to the running session. See [RECOMP_INGAME_MENU.md](docs/RECOMP_INGAME_MENU.md)
-for the implemented controls and bounded validation. The keyboard editor adds
-saved per-player key bindings alongside existing gamepad controls. Packaging,
-resource embedding and legacy configuration migration are described in
-[PC_APPLICATION.md](docs/PC_APPLICATION.md), including validation boundaries.
-The revised internal save layout remains pending.
+## Set-aside recompilation experiment
 
-The [language-data audit](docs/LOCALIZATION.md) found that the French, German,
-Italian and Spanish named text packs duplicate English in the supplied USA
-data. Japanese is a candidate requiring runtime validation. An in-game language
-selector remains planned; pack names alone do not establish translated modes.
+The prior DolRecomp/ModernGekko work and every existing package, imported asset
+and save are retained. Its CPU translation still uses Dolphin-derived services;
+its boot, performance, audio, import and F1-menu results apply to that separate
+implementation. They do not establish native-core gameplay or UI support.
+See [RECOMPILATION.md](docs/RECOMPILATION.md),
+[PC_APPLICATION.md](docs/PC_APPLICATION.md) and their linked reports for the
+historical evidence. Its scripts remain available for preservation and explicit
+reference work; recompilation optimization and packaging are not the active queue.
+Existing package saves remain beside their own EXE and are not migrated by the
+native workbench.
 
-## Retained manual core and walking preview
+## Active native core and walking preview
 
-The existing manually recovered core remains available for reference and tests.
 Version 0.45 connects original static geometry to the native collision candidate
 pipeline. Canonical vertex/index/group owners feed the original primitive scan,
 typed node dispatch and actual query result storage. Point, segment, matrix and
 triangle operations retain their original arithmetic and publication order.
-Dynamic bound/inverse operations and the complete wall/floor query handlers
-remain required before the original player can consume a complete collision
-response. See [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md),
+The September 19 update adds the original native matrix inverse and canonical
+AABox transforms to this producer, verified against original instructions and
+imported geometry. Dynamic node updates, missing-bound construction and complete
+wall/floor responses remain required. See [MATRIX_INVERSE.md](docs/MATRIX_INVERSE.md),
+[HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md),
 [HITLAND_PRIMITIVES.md](docs/HITLAND_PRIMITIVES.md) and
 [HITLAND_NODE_DISPATCH.md](docs/HITLAND_NODE_DISPATCH.md).
 
@@ -114,7 +79,7 @@ PowerPC `main.dol` is inspected as data and never executed. A bounded native Lua
 boot bytecode with explicitly implemented host methods. This repository does
 not contain game files.
 
-## Manual-core and walking-preview capabilities
+## Native-core and walking-preview capabilities
 
 - Produce original static triangle candidates through canonical
   `beHitLandModelInfo` selection, registered node handlers and live geometry
@@ -294,8 +259,10 @@ not contain game files.
   still uses its provisional controller. See [MODEL_MOTION.md](docs/MODEL_MOTION.md).
 - Decode CTRL/PDMOVE commands, prepare movement timers and heading, and apply
   the original post-input WAIT/WALK request rules. Player turn rates are recovered;
-  the original post-input frame caller remains pending. These core
-  effects do not change the preview. See [MODEL_CONTROL.md](docs/MODEL_CONTROL.md).
+  the recovered player-frame caller consumes these operations in the core.
+  Original device polling and outer frame scheduling remain pending. These core
+  effects do not change the preview. See [MODEL_CONTROL.md](docs/MODEL_CONTROL.md)
+  and [MODEL_FRAME.md](docs/MODEL_FRAME.md).
 - Run supported original sequence commands with retained cursors and label caches.
   Preserve weapon-section boundaries, nested local jumps and sequence-stop motion.
   Actual entries send ACTION messages to retained action runtimes and complete
@@ -393,23 +360,24 @@ You can also build manually in an x64 developer shell:
 
 ```powershell
 cmake -S . -B build/Release -G Ninja -DCMAKE_BUILD_TYPE=Release -DDW4_BUILD_APP=ON
-cmake --build build/Release --parallel
+cmake --build build/Release --parallel 4
 ctest --test-dir build/Release --output-on-failure
 cmake --install build/Release --prefix dist/DW4_PC
 ```
 
-Build only the portable data readers and tests, without dependency downloads:
+Build only the portable core, inspection tools and tests, without application
+dependency downloads:
 
 ```sh
 cmake -S . -B build/core -DDW4_BUILD_APP=OFF
-cmake --build build/core --config Debug
+cmake --build build/core --config Debug --parallel 4
 ctest --test-dir build/core -C Debug --output-on-failure
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 ## Run with your own game data
 
-The expected input is Dolphin's extracted directory layout:
+The current native application expects this extracted GameCube data layout:
 
 ```text
 Digimon World 4 - Extracted/
@@ -621,9 +589,10 @@ explicitly placed animated player visuals. Original `func.lua` and `boot.lua`
 execute natively in the inspection path. Preliminary loading and the first
 controller callbacks now have separate native implementations. Actual player
 construction, ordinary sequence execution and its player callback are connected
-in the core. The next steps are original audio services and manager preparation,
-layer/text state and connecting that lifecycle to `start.lua` and the original
-per-frame input, movement, waits, collision and camera paths.
+in the core. The immediate next steps are the original dynamic collision bounds
+and inverse, complete wall/floor response selection and delivery into the player
+frame. Continue with original manager preparation, audio and layer/text services,
+`start.lua`, device assignment, frame scheduling and camera/render integration.
 Original-reference comparisons and independent controller slots are required
 throughout. Reconstructing
 the missing gameplay and engine logic is the largest remaining part of the project.

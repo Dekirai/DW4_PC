@@ -56,13 +56,17 @@ original-instruction comparisons and integration results are recorded in
 
 ## Remaining original operations
 
+The September 19 native integration now handles canonical AABox scratch copies
+and transforms plus the original `8012A92C` inverse without supplied providers.
+See [MATRIX_INVERSE.md](MATRIX_INVERSE.md) for recovered registration, ownership,
+singular behavior, strict arithmetic and original-data comparison evidence.
+Explicit overrides retain their existing suspension behavior.
+
 The installed static flag-4 path with present bounds and a one-element matrix
 stack requires no geometry service. The following reached operations still
 require their real native providers:
 
-- The bound scratch allocation/copy and typed transform dispatch through
-  `801283DC` when the matrix stack count exceeds one.
-- The original inverse `8012A92C` before transforming segments in that case.
+- Bound types beyond the currently represented canonical `igAABox`.
 - Flag-1 volume tests and flag-2 typed segment-bound tests and their callbacks.
 - An explicitly selected candidate callback other than `802FE1A4`.
 

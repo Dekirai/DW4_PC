@@ -82,6 +82,10 @@ float dot(const Vector& a,const Vector& b) {return fused(a[2],b[2],fused(a[0],b[
 void finite(float value) {if(!std::isfinite(value))fail("Original HITLAND triangle exceeds its finite arithmetic profile.");}
 }
 
+HitLandIntersectionVisitor::HitLandIntersectionVisitor()
+    :transformed_box(std::make_shared<CollisionBox>()),
+     transformed_segment(std::make_shared<HitLandSegment>()) {}
+
 void reset_hitland_intersection(const std::shared_ptr<HitLandIntersectionVisitor>& visitor) {
     if(!visitor)fail("Original HITLAND reset dereferences a null visitor.");
     const auto initial=visitor->matrix_stack;

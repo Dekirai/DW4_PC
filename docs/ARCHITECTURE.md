@@ -1,58 +1,47 @@
 # Native port architecture
 
-## Selected recompilation path
+## Active source-port path
 
-The [September 13 project review and migration plan](PORTING_STRATEGY.md)
-maps both build targets and defines the boundary between static CPU
-recompilation, source recovery and replacement PC services.
+The owner selected a complete native source reconstruction on September 18,
+2026. The active implementation is the authored C++20 `dw4_core` with its native
+SDL/OpenGL application. Recover the original game and engine rather than making
+generated CPU code or an embedded console runtime the final deliverable.
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md) defines the continuation order;
+[ROADMAP.md](ROADMAP.md) defines acceptance for the full game and PC features.
 
-The owner selected DolRecomp and the ModernGekko template as the next path to
-the complete original game. DolRecomp translates original CPU code; ModernGekko
-supplies a Dolphin-derived runtime for graphics, audio and console services.
-Generated code and runtime builds stay in ignored local output directories.
-See [RECOMPILATION.md](RECOMPILATION.md) for source pins, integration evidence
-and the remaining boot/gameplay acceptance steps.
+Original assets and reference instructions supply evidence. Host data structures,
+services and control flow are implemented explicitly, keeping guest addresses
+and serialized layouts distinct from native pointers. The core remains
+independent of SDL and ImGui. DTK, objdiff and Ghidra may assist focused recovery;
+they do not replace native ownership, byte-order or behavior validation.
 
-The current product target adds measured performance optimization, presentation
-up to 300 FPS with unchanged simulation timing, 16:9, higher internal resolution
-and replacement textures. The PC frontend should expose graphics, cheats, save
-states and other optional QoL through ImGui. Mods and online four-player co-op
-remain required future integrations; optimizations must preserve the state,
-input and asset ownership needed by those features. See the active acceptance
-gates in [ROADMAP.md](ROADMAP.md).
+Resume at the existing player-frame/collision boundary below. Static triangle
+candidates are implemented; dynamic operations and complete wall/floor responses
+remain required. Startup, the actual outer frame scheduler, assigned input,
+camera, audio, combat and persistence must be connected without substituting
+the walking preview's provisional controller or camera.
 
-The release entry point should be a simple EXE that accepts the user's ROM,
-validates the supported revision and prepares local game data automatically.
-It must not require the end user to install a compiler or manually extract the
-disc. The local experimental package now supplies that launcher/import boundary;
-its actual ROM export matches the independent extracted reference. Developer
-scripts and the local module cache remain a separate build workflow. See
-[ROM_IMPORT.md](ROM_IMPORT.md). Distribution contains the port and dependency
-notices, with original game content supplied locally by each user.
+The release must preserve original gameplay and local one-to-four-player input,
+provide one `DW4_PC.exe` entry point, import the user's supported ROM without a
+compiler or manual extraction, and keep portable saves beside the executable.
+The F1 ImGui menu must offer working, persistent PC options, including freely
+editable keyboard bindings and independent controller slots. Preserve existing
+saves during any format migration. The native renderer must qualify 16:9 camera,
+culling and HUD, higher resolution, MSAA/VSync and HD textures. Presentation up
+to 300 FPS must not accelerate simulation or audio. Modding, optional modernized
+behavior and online four-player co-op remain part of the full target.
 
-The owner now requires that entry point to host the game directly, with no
-separate runner executable, an in-game F1 ImGui menu replacing the File/View
-menus, and portable save data alongside the EXE. The shared frontend session
-now runs inside `DW4_PC.exe` after destroying the launcher's SDL/ImGui resources;
-the packaged application has no runner process. The default profile is
-`savedata` beside the actual EXE. New builds embed the selected system resources
-instead of shipping a loose `Sys` tree. The game DLL, runtime libraries and
-internal console-style save layout remain transitional. Runtime integration must
-preserve the original game/service state and existing saves;
-moving the PC-facing interface does not by itself remove Dolphin-derived
-graphics, audio and console-service implementations.
-
-The integrated F1 menu now uses the game renderer's ImGui context, a bounded
-native input queue and session-guarded host actions. Paused redraw continues on
-the video owner without advancing the game. Window-title updates also dispatch
-through the host to avoid synchronous cross-thread window calls during shutdown.
-See [RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md) for actual validation and limits.
-
-The manually recovered engine below remains a separate reference core. Its
-checked helpers and original-asset walking preview do not establish correctness
-of the recompilation runtime. Original game behavior must be validated there,
-including rendering, timing, collision, animation, audio, saves and four
-independent local controllers.
+The DolRecomp/ModernGekko experiment is set aside. Preserve its source patches,
+local modules, packages, imported data and saves; do not continue its performance
+or packaging queue unless the owner changes direction. Its CPU translation and
+Dolphin-derived services are separate from `dw4_core`. Its completed import,
+F1 menu and portable-profile work can inform future authored native integration,
+but none of those runtime tests validates the current native engine. Historical
+records remain in [RECOMPILATION.md](RECOMPILATION.md),
+[ROM_IMPORT.md](ROM_IMPORT.md) and [PC_APPLICATION.md](PC_APPLICATION.md).
+Aurora is an optional source-level graphics/platform candidate, not a selected
+backend or an implemented migration. Evaluate a concrete recovered boundary
+before making that dependency decision.
 
 ## Implemented boundary
 
@@ -69,9 +58,11 @@ primitive scan preserves format gates, physical accesses, strip winding,
 cursor publication and unmap order. Candidate production retains captured list
 and matrix owners while reloading the original segment and current callback
 metadata for each hit. A pending callback does not replay its triangle scan.
-The installed static flag-4 profile produces real query candidates; general
-transformed-bound/inverse operations and complete CHECKLAND/CHECKWALL responses
-still need implementation. See [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
+The September 19 extension adds native AABox scratch transforms and the original
+matrix inverse to flag-4 candidate production. Dynamic node updates, other bound
+classes, missing-bound construction and complete CHECKLAND/CHECKWALL responses
+remain required. See [MATRIX_INVERSE.md](MATRIX_INVERSE.md),
+[HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
 [HITLAND_PRIMITIVES.md](HITLAND_PRIMITIVES.md) and
 [HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md).
 
@@ -711,8 +702,9 @@ camera/UI behavior require game-specific work. A borderless window uses the
 desktop display size; selecting 3840×2160 does not change the desktop mode or
 prove a 4K internal renderer exists.
 
-SDL-mapped gamepads can be inspected now. Keyboard/mouse gameplay, Xbox,
-PlayStation and GameCube gameplay mappings remain separate tasks. Native
+The provisional walking preview accepts keyboard and SDL-mapped gamepad input.
+Original-game device assignment, freely editable saved bindings and verified
+Xbox, PlayStation and GameCube gameplay mappings remain separate tasks. Native
 GameCube adapters may require dedicated adapter handling and calibration.
 
 ## Modding and online co-op dependencies

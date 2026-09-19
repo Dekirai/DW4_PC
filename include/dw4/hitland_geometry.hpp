@@ -6,7 +6,8 @@
 
 namespace dw4 {
 
-// Reached operations outside the installed static-geometry profile. Providers
+// Optional overrides and remaining unrecovered operations. Absent overrides
+// use the native AABox scratch transform and original matrix inverse. Providers
 // perform the named original operation and retain any unfinished nested call.
 struct HitLandGeometryServices {
     std::function<MessengerCallResult(const std::shared_ptr<HitLandIntersectionVisitor>&,

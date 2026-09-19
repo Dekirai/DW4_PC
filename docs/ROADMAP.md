@@ -1,32 +1,30 @@
 # Roadmap and acceptance criteria
 
-The selected implementation is DolRecomp with the ModernGekko runtime. A
-successful build or settings control does not establish playable behavior.
-The owner's updated target includes aggressive optimization, the requested PC
-features, modding, online co-op and a simple ROM-driven release experience.
+The selected implementation is a complete native source port: reconstruct the
+original game and engine behavior in authored C++20 using the existing
+`dw4_core` and native application. The owner set DolRecomp/ModernGekko aside on
+September 18, 2026. Its packages, source patches, imported data and saves remain
+preserved, but its tests do not establish features in the native engine.
+A successful build, decoded record or settings control alone does not establish
+playable behavior. The full original game, PC features, modding, online co-op and
+simple ROM-driven release experience remain required.
 
 | Gate | Deliverable | Acceptance | Current evidence |
 | --- | --- | --- | --- |
-| 1 | Reliable optimized game | Sustained original-speed menus and gameplay, smooth audible output, progression, saves and independent local 1–4-player controls | Optimized module and bounded package boot tests pass; original boot images rendered. Owner reports low FPS and audio stutter at the main menu; that tested binary was not identified by hash. |
-| 2 | Performance and PC graphics | At least 60 FPS on documented hardware; options up to 300 FPS without faster simulation/audio; validated frame times, 16:9 camera/culling/HUD, 4K, display modes, VSync and MSAA | Optimized boot counter rate is about 60/s at speed 1.0 versus about 40/s at speed 0.685; gameplay, audible audio and widescreen still unverified. |
-| 3 | ImGui settings and QoL | Working graphics/input controls, optional cheats, save/load states, supported game languages and original/modernized options; applied settings and unsupported combinations visible | Integrated F1 menu, saved per-player keyboard edits, actual Reload/Defaults/Apply actions, input blocking and player-port persistence verified on a hidden native surface. Physical keyboard gameplay, full state round trips and graphics combinations remain unverified. Cheats/languages/gameplay modes pending; see RECOMP_INGAME_MENU.md and LOCALIZATION.md. |
-| 4 | Content modding | HD texture replacements, versioned loader/manifests, custom maps, Digimon and weapons, reproducible randomizers, optional rebalancing and bug fixes | Prior asset analysis retained; recompiled-game integration pending. |
-| 5 | Online four-player co-op | Multi-machine sessions with consistent state, input ownership, latency/disconnect handling, matching mods and clear save ownership | Pending. Preserve the required state/input interfaces during optimization; local play is a prerequisite. |
-| 6 | Simple EXE release | User selects their ROM; supported revision is validated and required assets prepared automatically, without a compiler or manual extraction; repeat launches reuse validated local data | Local DW4_PC.exe package imports the actual USA ISO; all nine files match the extracted reference, repeat import reuses data and invalid existing folders are preserved. Unicode/hidden frontend checks pass; broader release and clean-machine acceptance remain pending. |
+| 1 | Complete original native game and source | Recovered game and engine source drives original startup, menus, gameplay, combat, progression, transitions, audio and saves; independent local 1–4-player controls; behavior compared against the original | Selected native player, script, animation and collision operations are connected in the core. Static HITLAND candidates are implemented; complete dynamic collision, wall/floor responses, original startup and outer frame scheduling remain unfinished. The walking preview has provisional movement and camera. |
+| 2 | Performance and PC graphics | At least 60 FPS on documented hardware; options up to 300 FPS without faster simulation/audio; validated frame times, 16:9 camera/culling/HUD, 4K, display modes, VSync and MSAA | Original assets render through the SDL/OpenGL preview and prepared draws. Complete original materials, camera, rendering and game timing remain pending; preview frame rates cannot qualify full-game performance. |
+| 3 | ImGui settings and QoL | Working persistent graphics/input controls, freely editable keyboard bindings, optional cheats, save/load states, supported game languages and original/modernized options; applied settings and unsupported combinations visible | The native workbench has ImGui and provisional walking input. The integrated F1 gameplay menu, persistent freely editable bindings, original game input, cheats, states and supported-language selection require native implementation and verification. See [LOCALIZATION.md](LOCALIZATION.md). |
+| 4 | Content modding | HD texture replacements, versioned loader/manifests, custom maps, Digimon and weapons, reproducible randomizers, optional rebalancing and bug fixes | Original asset identities and selected decoders are available. Full native content contracts, loading and gameplay integration remain pending. |
+| 5 | Online four-player co-op | Multi-machine sessions with consistent state, input ownership, latency/disconnect handling, matching mods and clear save ownership | Pending. Four separate core player/pad owners are not connected local multiplayer. Verify local play before network integration. |
+| 6 | Simple EXE release | User selects their ROM; supported revision is validated and required assets prepared automatically, without a compiler or manual extraction; repeat launches reuse validated local data; portable saves beside one EXE entry point | The active native application reads supplied extracted data. Automatic ROM preparation, native gameplay save handling and clean-machine release acceptance remain pending. Historical recompilation import/profile tests are reference evidence only. |
 
 Gate order sets the immediate queue, not an excuse to design out later features.
-The owner has tightened the application target: one integrated `DW4_PC.exe`
-with user-provided assets, no separate `moderngekko-run.exe` process needed for
-play, and portable save data beside the executable. The in-game ImGui menu
-must open with **F1**, receive the current File/View commands, and apply
-supported settings while playing. The current package hosts the game directly
-inside `DW4_PC.exe` and defaults to adjacent `savedata`. New builds embed the
-required system resources. The external game DLL, runtime libraries and
-internal console-style profile still leave the final target
-incomplete. The F1 menu now replaces File/View; its graphics settings are
-session-only and broader QoL remains unfinished. Integrate the runtime,
-module and PC-facing storage/UI boundaries; renaming the runner or hiding a
-second executable does not satisfy it. Existing saves must remain preserved.
+The final native application must provide one `DW4_PC.exe` entry point with
+user-provided assets and portable save data beside it. The in-game ImGui menu
+must open with **F1**, receive the current File/View commands and apply supported
+settings while playing. These remain native integration requirements. Do not
+count the set-aside package's menu, import or saved profiles as their completion.
+Preserve every existing save and use explicit migration where formats differ.
 
 Keep rendering enhancements separate from simulation speed; a speed multiplier,
 duplicated presents or an FPS slider alone cannot satisfy the 300 FPS target.
@@ -37,48 +35,29 @@ for every device or scene.
 
 ## Next acceptance gate
 
-The [project review](PORTING_STRATEGY.md#ordered-continuation-plan) turns this
-gate into ordered implementation checkpoints. Retain the working recompilation
-baseline while recovering selected functions and qualifying native service
-replacements; an Aurora migration is not yet implemented or validated.
-
-The immediate gate is correcting the owner's low-FPS/audio-stutter report in
-the **DolRecomp + ModernGekko** build. The optimized module passes its equivalent
-bounded logo comparison at original speed, but longer tests expose an opening
-movie substantially below original speed, with audio replay. Two controlled
-Start presses now reach the first "Game Start / Option" main menu. Its short
-1x Vulkan window runs near 60 counter advances/s at normal speed without replay
-in that window; audible output, higher-resolution menu performance, later
-menus and gameplay remain unverified. See [RECOMP_AUDIO.md](RECOMP_AUDIO.md).
-Next check real audible output
-and gameplay, and establish a repeatable in-game benchmark. Headless frame
-progress alone does not verify
-host audio or actual monitor FPS. Continue with profiling measured bottlenecks,
-the original simulation/render timing and original boot-to-game comparisons.
-Track original behavior in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md). See
-[RECOMPILATION.md](RECOMPILATION.md). Do not launch interactive previews
-automatically; build occasional snapshots for the owner to start manually.
-
-## Retained manual-core reference work
-
-The following manual-engine requirements remain documented for reference.
-They are not the primary implementation queue while validating recompilation.
+The [porting strategy](PORTING_STRATEGY.md#ordered-continuation-plan) turns this
+gate into ordered native implementation checkpoints. Resume the existing
+collision and player-frame integration. Do not return to recompilation
+optimization or packaging as a substitute for recovering original source.
+Aurora remains an optional platform candidate, not an implemented migration.
 
 Version 0.45 connects actual HITLANDMODEL static geometry selection, typed
 visitor dispatch, mapped primitive enumeration and candidate publication.
 The original player frame still reaches the required HITLANDMODEL recipient
 through its outer wall/floor consumer and HITLANDDELIVER. Completing dynamic
-bound transformation, original matrix inversion and missing geometry-bound
-construction, then CHECKLAND reduction and CHECKWALL's multiple passes, is the
-next collision integration requirement. Runtime class registration in tests is
+node updates, missing geometry-bound construction and CHECKLAND reduction with
+CHECKWALL's multiple passes remains the next collision integration requirement.
+The September 19 update implements canonical AABox transforms and the original
+matrix inverse; see [MATRIX_INVERSE.md](MATRIX_INVERSE.md) for measured scope.
+Runtime class registration in tests is
 explicit preparation; original manager startup remains required.
 Four original Agumon GENERATE calls and this first frame prefix form the local
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).
 
-The next gate is to connect that core lifecycle to the original startup and
-per-frame execution order: assigned device input, remaining position-lock/ride
-and HITLANDMODEL wall/land query responses, camera and rendering. Complete original manager
+After completing the query responses, connect that core lifecycle to original
+startup and per-frame execution order: assigned device input, remaining
+position-lock/ride operations, camera and rendering. Complete original manager
 attachment, audio/effect services, HUD traversal, enemies and verified combat
 remain part of that work. The visible walking demo is unchanged and still uses
 its provisional controller and follow camera. Completing GENERATE does not
@@ -91,6 +70,22 @@ timestamp remains an explicit execution profile, separate from MODELCTRL's
 per-helper live context reads. See
 [ARCHITECTURE.md](ARCHITECTURE.md), [MODEL_DISPATCH.md](MODEL_DISPATCH.md) and
 [ACTION_DISPATCH.md](ACTION_DISPATCH.md).
+
+Track original behavior in [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).
+Build and test locally, with occasional preview snapshots for the owner to
+launch manually. Do not open interactive previews automatically.
+
+## Historical recompilation evidence
+
+The earlier DolRecomp/ModernGekko package reached the original main menu and
+implemented its own F1 menu, ROM preparation and portable profiles. Its opening
+movie performance, audible output, gameplay and wider release acceptance
+remained incomplete. Preserve those artifacts and reports in
+[RECOMPILATION.md](RECOMPILATION.md), [RECOMP_AUDIO.md](RECOMP_AUDIO.md),
+[RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md), [ROM_IMPORT.md](ROM_IMPORT.md)
+and [PC_APPLICATION.md](PC_APPLICATION.md). They document the set-aside runtime;
+they are not acceptance evidence for the authored native game. None of its
+unfinished optimization, embedded-module or packaging tasks is the active queue.
 
 ## Earlier milestone acceptance notes
 
@@ -341,12 +336,12 @@ one verified asset profile; it does not mark those startup stages complete.
 | 3840×2160 | Host window preference | Verified 4K scene render target and readable UI |
 | Borderless | Host fullscreen desktop window | Game renderer resizes correctly across monitors |
 | 16:9 | Stored preference only | Camera, culling, HUD and menus adapted |
-| 60–300 FPS | Walking-preview frame pacing is separate; recompilation performance is under measurement | At least 60 FPS on documented hardware and presentation options up to 300 FPS, decoupled from measured original simulation |
+| 60–300 FPS | Provisional walking-preview frame pacing only; original game scheduling remains pending | At least 60 FPS on documented hardware and presentation options up to 300 FPS, decoupled from measured original simulation |
 | VSync Off | Host OpenGL swap-interval request | Validated frame pacing in gameplay |
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
-| Keyboard / Mouse | Tool UI input | Complete bindings and appropriate mouse camera support |
-| Xbox / PlayStation | SDL device inspection | Tested gameplay mappings, hotplug and prompts |
-| GameCube | SDL-mapped devices when available | Original mapping, dead zones and adapter support |
+| Keyboard / Mouse | Tool UI and provisional keyboard walking controls | Original gameplay, freely editable saved bindings and appropriate mouse camera support |
+| Xbox / PlayStation | SDL device inspection and mapped provisional walking input | Tested original gameplay mappings, independent slots, hotplug and prompts |
+| GameCube | SDL-mapped devices when available | Original gameplay mapping, dead zones and adapter support |
 | Original / Modernized | Stored preference only | Original behavior baseline plus explicit optional changes |
 
 ## Requested extensions

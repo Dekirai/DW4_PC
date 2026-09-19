@@ -4,6 +4,7 @@
 #include "dw4/actor_scene.hpp"
 #include "dw4/hitland_primitives.hpp"
 #include "dw4/hitland_traversal.hpp"
+#include "dw4/matrix_inverse.hpp"
 
 #include <bit>
 
@@ -82,10 +83,23 @@ MessengerCallResult HitLandGeometryInvocation::resume(std::shared_ptr<HitLandGeo
             state.phase=state.visitor->matrix_stack->count>1 ? Phase::transform_bound:Phase::volume;break;
         case Phase::transform_bound: {
             const auto provider=available();
-            if(!provider || !provider->transform_bound)return need("HITLAND geometry requires original bound scratch copy and transform dispatch 801283DC.");
-            state.services=provider;
-            const auto result=provider->transform_bound(state.visitor,state.source_bound,state.bound);check();
-            if(!result.completed)return result;
+            if(provider && provider->transform_bound) {
+                state.services=provider;
+                const auto result=provider->transform_bound(state.visitor,state.source_bound,state.bound);check();
+                if(!result.completed)return result;
+            } else {
+                // 801F60B0 captures the typed scratch owner, copies the source,
+                // then reads the current top matrix. 80122AFC registers the
+                // AABox transform thunk 80123840, which calls 80122D04.
+                const auto destination=state.visitor->transformed_box;
+                if(!destination)fail("Original HITLAND AABox copy reaches a null typed scratch owner.");
+                *destination=*state.source_bound;
+                const auto stack=state.visitor->matrix_stack;
+                if(!stack)fail("Original HITLAND bound transform reaches a null matrix stack after copying its bound.");
+                const auto transform=hitland_physical_matrix(stack,previous(stack->count));
+                *destination=original_transform_box(*transform,*destination);
+                state.bound=destination;
+            }
             state.phase=Phase::volume;break;
         }
         case Phase::volume:
@@ -117,11 +131,18 @@ MessengerCallResult HitLandGeometryInvocation::resume(std::shared_ptr<HitLandGeo
             state.phase=state.visitor->matrix_stack->count>1 ? Phase::inverse:Phase::capture_lists;break;
         case Phase::inverse: {
             const auto provider=available();
-            if(!provider || !provider->inverse_matrix)return need("HITLAND geometry requires original matrix inverse 8012A92C.");
-            state.services=provider;
-            const auto result=provider->inverse_matrix(matrix(),state.inverse);check();
-            if(!result.completed)return result;
-            state.inverse_written=true;state.phase=Phase::capture_lists;break;
+            if(provider && provider->inverse_matrix) {
+                state.services=provider;
+                const auto result=provider->inverse_matrix(matrix(),state.inverse);check();
+                if(!result.completed)return result;
+                state.inverse_written=true;
+            } else {
+                // The original ignores the returned status. A singular input
+                // leaves this local inverse unwritten; reject only if a later
+                // segment transform actually reads it, never supply identity.
+                state.inverse_written=original_matrix_inverse(*matrix(),state.inverse);
+            }
+            state.phase=Phase::capture_lists;break;
         }
         case Phase::capture_lists: {
             const auto scratch=state.visitor->scratch;

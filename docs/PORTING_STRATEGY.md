@@ -1,180 +1,193 @@
-# Project review and porting strategy
+# Native source-port strategy
 
-Reviewed 2026-09-13 against repository baseline `16a6360`. This review covers
-tracked source, build scripts, local runtime integration and existing measured
-reports. It does not constitute a new gameplay or audible-audio test.
+Updated 2026-09-19 for the owner's September 18 direction: reconstruct Digimon
+World 4 as a complete native PC game with authored, maintainable source. Resume
+`dw4_core` and the existing native application. Set DolRecomp/ModernGekko aside
+and preserve its work, rather than extending it as the active implementation.
 
-## Decision
+This document supersedes the September 13 continuation plan. It does not claim
+new gameplay, rendering, audio or completed collision acceptance from the change
+of direction. Each implementation still needs its own original-data evidence.
 
-Continue the selected DolRecomp path as the playable original-game baseline.
-Retain the manually recovered core as a source of format knowledge, independently
-checked behavior and potential replacements. Add targeted source recovery to
-this pipeline instead of restarting a complete engine implementation.
+## Decision and deliverable
 
-The current application is **not yet independent of Dolphin-derived services**.
-Its original CPU code is compiled for Windows, but it retains guest CPU state,
-memory addresses, timing hooks and console graphics/audio services. Removing
-filenames, embedding resources or linking the game DLL into the EXE does not
-remove those dependencies. A fully native service implementation requires
-explicit, validated replacements at those boundaries.
+The deliverable is the original game and engine behavior reconstructed in native
+C++20, with explicit PC services and the complete source needed to maintain and
+extend that implementation. Original game assets remain user-supplied data;
+they are not public repository content. Generated PowerPC C, a translated game
+module or an embedded console runtime does not satisfy this source deliverable.
+
+Keep the working native asset, Lua, animation, actor, player and collision code.
+Complete its reached original behavior and connect it to original startup and
+frame scheduling. The original-asset walking preview is useful for inspection,
+but its provisional movement and camera cannot become the fidelity baseline.
+Do not manufacture successful no-ops or skip required effects to reach a visible
+scene. Retain unresolved behavior as an explicit implementation boundary.
+
+The earlier recompilation integration remains historical reference. It compiles
+original CPU code for Windows while retaining guest state, addresses, timing and
+Dolphin-derived services. Packaging or branding changes cannot turn that into
+the requested authored source reconstruction. Do not optimize, rebuild or extend
+that experiment as the active queue unless the owner changes direction.
 
 ## Repository and build inventory
 
-| Location | Role | What it establishes |
+| Location | Active role and evidence boundary |
+| --- | --- |
+| `src/`, `include/dw4/` | Authored C++20 native core and application: assets, Lua 4, animation, actors, scripts, player state and collision. Selected behavior is recovered; the complete game is not. |
+| `tests/`, `tools/` | Synthetic checks, original-data inspectors and focused comparisons with original instructions. A check proves only its stated profile and operations. |
+| Root `CMakeLists.txt` | Version 0.45.0; `dw4_core`, inspection tools and optional `dw4_pc` native SDL/OpenGL application. This is the active build. |
+| `scripts/build.ps1` | Local MSVC/CMake/Ninja build and CTest; optional `dist/DW4_PC` install; four build jobs by default. |
+| `Play-DW4-PC.cmd`, `Start-DW4-PC.cmd` | Native walking-preview and workbench launchers respectively. Neither establishes original gameplay. |
+| `docs/`, `licenses/`, `THIRD_PARTY_NOTICES.md` | Recovery evidence, acceptance requirements and component provenance. Preserve these alongside implementation. |
+| `.github/` | Local validation documentation. No hosted workflows are permitted. |
+| `scripts/*recomp*`, `Play-Recompiled-DW4.cmd`, `patches/` | Set-aside runtime integration and developer tooling, retained for provenance and explicit reference work. Not the active build or acceptance lane. |
+| `work/moderngekko/`, `work/recomp-modules/`, `work/recomp-build-record.json` | Ignored historical source checkouts, generated modules and build identities. Generated code is not recovered game source. |
+| `dist/DW4_Recomp/` | Preserve every existing package, imported asset directory and adjacent save. The native workbench does not migrate these profiles. |
+
+The native core has no SDL or ImGui dependency. Its optional application uses
+SDL3, OpenGL and Dear ImGui; source pins and archive hashes live in CMake.
+Host structures and serialized IGB layouts remain separate. Original addresses
+identify evidence or data locations, never native pointers. Explicit byte order,
+field widths, physical storage, object lifetime and strict arithmetic remain
+part of the reconstruction contract.
+
+Build the active project with `scripts/build.ps1 -Jobs 4`. Use its CTest suite
+and the relevant Python verifiers. Keep original-data integration results
+separate from asset-free tests. Graphics changes require a finite hidden smoke
+run and inspection of an application-rendered image. Build refreshed previews
+occasionally for manual use; do not launch interactive previews automatically.
+
+## Current native boundary
+
+Version 0.45 connects original static HITLAND geometry to canonical attributes,
+vertex/index/group owners, typed node dispatch and actual query candidates.
+The producer retains query segments, matrix elements, path aliases, primitive
+cursors and callback order. This is part of the original collision pipeline,
+not the walking preview's separate mesh-based solver.
+
+The September 19 extension implements the original matrix inverse and canonical
+AABox scratch transform in that producer. See [MATRIX_INVERSE.md](MATRIX_INVERSE.md)
+for original-instruction and supplied-data evidence. The next collision work is
+dynamic node updates, missing geometry-bound construction and other bound classes,
+followed by complete CHECKLAND reduction and CHECKWALL passes. Deliver those
+actual responses through HITLANDDELIVER to the recovered player frame. Dynamic
+operations are not complete merely because a test provider supplies a matrix.
+See [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
+[HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md),
+[HITLAND_QUERY.md](HITLAND_QUERY.md) and [HITLAND_DELIVER.md](HITLAND_DELIVER.md).
+
+The core already owns the player construction/GENERATE continuation, ordinary
+sequence execution, ACTION and selected player-frame operations. Four prepared
+original Agumon slots are integration evidence for those calls. Original device
+assignment, manager attachment, complete startup, frame scheduling, camera,
+rendering, audio, combat, transitions and saves remain required. Prepared
+providers and an executed frame prefix do not establish a gameplay session or
+connected local multiplayer. See [MODEL_FRAME.md](MODEL_FRAME.md),
+[MODEL_DISPATCH.md](MODEL_DISPATCH.md) and [VALIDATION.md](VALIDATION.md).
+
+## Recovery tools and platform choices
+
+These tool descriptions retain the upstream sources consulted for the September
+13 review. They describe possible research aids, not installed or validated DW4
+integrations. Choose tools for a concrete reached function rather than stopping
+native implementation to rebuild the entire toolchain.
+
+| Tool or approach | Role in the active source port | Limit |
 | --- | --- | --- |
-| `src/`, `include/dw4/` | Manually recovered C++20 core: assets, AFS/IGB, Lua 4, animation, actors, scripts, movement and collision | Selected recovered behavior; not a complete original engine |
-| `tests/`, `tools/` | Synthetic checks, inspection tools and targeted instruction/runtime comparisons | Correctness within each check's stated scope |
-| Root `CMakeLists.txt` | Version 0.45.0; `dw4_core`, inspection tools and optional `dw4_pc` SDL/OpenGL workbench | Separate native reference application |
-| `scripts/build.ps1` | MSVC environment, CMake/Ninja, CTest, optional `dist/DW4_PC` install | Manual-core/workbench build; four jobs by default |
-| `scripts/build-recomp.ps1` | Pinned runtime, patched local DolRecomp/template, generated module, ABI and input checks | Original-game recompilation; four jobs by default; no launch |
-| `patches/` | Tracked ModernGekko and runtime integration changes | Reproducible modifications to the external service runtime |
-| `work/moderngekko/`, `work/moderngekko/vendor/dolphin/` | Ignored source checkouts used by the recompilation build | Current frontend and service implementation |
-| `work/recomp-modules/`, `work/recomp-build-record.json` | Ignored generated game C/module and verified build identities | Local build evidence, not redistributable source recovery |
-| `dist/DW4_Recomp/` | Preserved experimental package snapshots | User-facing application with locally supplied assets |
-| `docs/`, `licenses/`, `THIRD_PARTY_NOTICES.md` | Research, acceptance evidence and component provenance | Keep alongside subsequent integrations |
-| `.github/` | Local validation instructions only | No hosted workflows |
+| [decomp-toolkit](https://github.com/encounter/decomp-toolkit) | Analyze the supplied DOL/REL, use identified symbols/relocations, and split original objects for targeted reconstruction. | It does not recover complete portable source automatically. Keep binary inputs and generated objects local. |
+| [objdiff](https://github.com/encounter/objdiff) | Compare a recovered function built for the original target with its original object where suitable compiler/configuration evidence exists. | A matching PowerPC object and correct native x64 behavior require separate evidence. |
+| [Ghidra](https://github.com/NationalSecurityAgency/ghidra) | Investigate instructions, signatures, types, call order and shared state. | Decompiled pseudocode is research input; implement and validate its behavior explicitly. |
+| [Aurora](https://github.com/encounter/aurora) | Optional source-level graphics/platform candidate after a recovered SDK-style boundary is available. | Not a selected backend or implemented migration. Confirm required GX behavior and DW4 platform coverage before adoption. |
+| [DolRecomp](https://github.com/ExpansionPak/DolRecomp) | Preserve the earlier experiment and its recorded observations as reference. | CPU translation is not the requested authored game source. Runtime optimization and packaging are set aside. |
 
-The core deliberately has no SDL/ImGui dependency. Its optional workbench uses
-SDL3 (`fa2c02bb6e21974a89ea9824bc53c9932abe5f9c`), Dear ImGui
-(`f1cc2ae15e53a861a874c3034aae6798fde194ab`) and OpenGL. CMake verifies the
-downloaded source archive hashes. The recompilation is a separate dependency
-tree: ModernGekko `5417826c31187d4dadf8588c7aa25bf107782936`, service chassis
-`55c7b023fa0f4eba1cf3fdbbb25b1c5ec468d5ac`, and their pinned transitive
-dependencies, including graphics backends, Cubeb and ImGui. The local build
-record captures the dependency revisions and patch/module identities.
+The [upstream audit](UPSTREAM_AUDIT.md) examined `ivanno4317/dw4-gc` at
+`794294e17fef0b3ab5eeb15fda9bd57b0dc98a2b`: mostly SDK/library source and
+incomplete Alchemy wrappers, not a complete gameplay reconstruction. Reuse its
+verified symbols, splits and provenance. Its counts and configured matching
+labels are historical evidence, not a fresh matching build or completion rate.
 
-The recompiled game currently **does not call `dw4_core`**. Linking that library
-would not automatically connect recovered functions to the original game.
-Each replacement needs an explicit guest/host adapter and behavior checks.
-Static recompilation also retains runtime fallback machinery. A run reporting
-zero interpreter fallbacks does not prove removal of all JIT or console services.
-
-`Play-DW4-PC.cmd` and `Start-DW4-PC.cmd` retain their manual-preview behavior.
-`Play-Recompiled-DW4.cmd` explicitly selects the original-game developer build,
-validates its recorded identities and uses `work/recomp-user`. Packaged previews
-use their own adjacent `savedata`; launch their EXE to retain that profile.
-The developer launcher is not a save migration tool.
-
-## What existing work remains useful
-
-- Preserve original-data import, exact input identification, ABI checks, guarded
-  module caching, finite diagnostics and all saved comparison reports.
-- Preserve the integrated F1 menu, saved keyboard bindings, controller-profile
-  handling, ROM import, portable saves and selected embedded resources.
-- Retain AFS/IGB parsing, asset identities, texture/mesh/animation interpretation,
-  Lua/action analysis and independent arithmetic checks for targeted recovery
-  and future mod loading. Do not substitute provisional preview movement for
-  original-game behavior.
-- Preserve every older package, imported asset directory and user save. New
-  runtime formats need explicit migration and backward-compatibility checks.
-
-The earlier [upstream audit](UPSTREAM_AUDIT.md) inspected `ivanno4317/dw4-gc` at
-`794294e17fef0b3ab5eeb15fda9bd57b0dc98a2b`. It found mostly SDK/library source
-and incomplete Alchemy wrappers, not complete gameplay source. Its counts are
-historical pinned evidence, not a fresh matching build or completion percentage.
-Its initial asset-viewer recommendation has already been addressed by retained
-work; it is not the next development task. Use its symbol/split/checksum evidence
-without treating arbitrary generated function names as recovered source.
-
-## Tool comparison
-
-Upstream documentation consulted on 2026-09-13. These are tool capabilities;
-integration with DW4 must still be demonstrated.
-
-| Tool or approach | Useful contribution | Required boundary / limitation |
-| --- | --- | --- |
-| [DolRecomp](https://github.com/ExpansionPak/DolRecomp) | Translates original PowerPC CPU code into C; supports hooks/replacements | CPU translation requires a runtime. It does not itself replace GX, audio, OS or saves. Keep the working integration. |
-| [decomp-toolkit](https://github.com/encounter/decomp-toolkit) | DOL/REL analysis, symbols, relocations and splitting into objects for reconstruction | Build a pinned matching-reference lane. Splitting objects does not generate complete portable game source. |
-| [objdiff](https://github.com/encounter/objdiff) | Compare rebuilt objects with original objects while recovering functions | Use a suitable original-target compiler/configuration. Matching PowerPC objects and native x64 behavior are separate checks. |
-| [Ghidra](https://github.com/NationalSecurityAgency/ghidra) | Disassembly, decompiler, type/call-graph investigation and scripting | Recover signatures, aliases and service ownership; pseudocode still needs manual validation and implementation. |
-| [Aurora](https://github.com/encounter/aurora) | Source-level GameCube/Wii compatibility: SDL3, GX through WebGPU/Dawn, PAD, DVD and CARD implementations | Evaluate at recovered SDK-style call boundaries. The current generated guest/MMIO stream is not a drop-in source-level integration. Audio and OS coverage for DW4 require separate investigation. |
-| Full manual source port | Direct control over PC services, data structures and gameplay modifications | Largest recovery effort. Use incremental verified replacements; no need to discard the working original-game baseline first. |
-
-Aurora may reduce graphics/platform implementation effort after suitable source
-boundaries exist. Switching renderers now would combine unresolved game timing,
-guest-memory assumptions and a new graphics integration in one change. First
-prove a narrow boundary with a small comparison, then decide from evidence.
-A complete matching decompilation is useful but is not a prerequisite for every
-native replacement. Conversely, a matching PowerPC function is not automatically
-portable across endianness, pointer width, alignment or floating-point behavior.
+A complete byte-matching PowerPC build is not a prerequisite for each native
+function. Recover the original behavior from sufficient evidence, then verify
+native ownership, byte order, aliasing, arithmetic and effects separately.
+Conversely, compiling a function successfully or producing the same typical
+output cannot establish its full original behavior.
 
 ## Ordered continuation plan
 
-1. **Maintain an identified baseline and reproducible benchmark.** Keep the
-   current package/source/module hashes. Separate boot, movie, main menu and
-   actual gameplay scenes, with scene bounds, resolution, frame times, simulation
-   speed and audio-source/device counters. Continue finite hidden checks; build
-   occasional previews for manual use. Acceptance: a repeatable gameplay scene,
-   verified keyboard play, independent controller slots, save/reload and audible
-   assessment. A short main-menu counter rate alone cannot close this checkpoint.
-2. **Recover the measured movie bottleneck.** Investigate `0x8040154c`, identified
-   by the existing CPU probe as original movie pixel conversion. Confirm its
-   enclosing function, complete callers, buffers and effects before replacing it.
-   Start with the smallest measured conversion/quantization overhead. Preserve
-   strict floating-point behavior, memory bounds, guest-state publication,
-   callback ordering and timing. Compare output/state against the existing
-   implementation, then compare the same movie intervals. Keep a guarded fallback
-   for unsupported inputs or hooks/mods. Acceptance: no state/output regression
-   and a repeatable improvement in CPU/frame time and source-audio continuity.
-3. **Add a targeted recovery workspace.** Pin the existing decomp reference and
-   compatible DTK/compiler versions in an ignored workspace. Validate the DOL
-   checksum before using its symbols/splits. Produce original objects with DTK,
-   configure objdiff for one selected function, and import the same addresses
-   and types into Ghidra. Keep original objects, DOL and generated disassembly
-   local. Track authored source, configuration and provenance only. Acceptance:
-   a reproducible original-target comparison plus a separate native behavioral
-   check for the first function. Matching success must not be invented from
-   configured status labels.
-4. **Qualify one native service slice.** Map actual DVD/PAD/CARD/OS/GX/audio
-   callers and shared state. Begin with a bounded read-only DVD/filesystem
-   operation: define guest-buffer validation, asynchronous completion order,
-   errors and ownership, then compare with the current service. Reuse native
-   asset readers only where their behavior fits that contract. Follow with input
-   and save interfaces, preserving slot ownership and old saves. Acceptance:
-   verified original behavior through a selected PC service and an inventory of
-   remaining console-service calls. Graphics/Aurora gets a separate isolated
-   GX proof with original textures, display lists and shader/material behavior.
-5. **Replace remaining services by vertical slices.** Extend tested adapters to
-   graphics, audio, timers, threading, memory and interrupts as recovered game
-   boundaries permit. Prove actual runtime paths no longer require each removed
-   service before removing it from the build. Acceptance: original gameplay and
-   saves remain correct, with no dependency on the replaced implementation.
-   A fully independent release requires this for every remaining required service.
-6. **Complete PC and content features against the playable baseline.** Validate
-   16:9 camera/culling/HUD, 4K, display modes, VSync/MSAA and persistent settings.
-   Decouple presentation from simulation/audio before offering higher frame
-   rates. Add stable asset IDs and versioned mod contracts; then HD packs, custom
-   maps/Digimon/weapons, randomizers and optional balance/bug fixes. Validate
-   local four-player ownership before networking, including deterministic state,
-   RNG, mod compatibility, disconnects and save ownership. Use the detailed
-   acceptance gates in [ROADMAP.md](ROADMAP.md).
+1. **Complete the reached collision operations.** Build on the checked inverse
+   and AABox transform, preserving arithmetic, type dispatch, ownership and
+   publication order. Recover missing bounds and dynamic node updates, then
+   CHECKLAND candidate reduction and CHECKWALL's complete passes. Acceptance:
+   focused original-instruction comparisons, meaningful synthetic edge cases,
+   and supplied-data queries whose actual responses reach HITLANDDELIVER and
+   the player consumer. A static candidate list alone cannot close this step.
+2. **Connect the original player frame.** Complete the remaining position-lock,
+   ride, wall/floor and script/context operations in their original order.
+   Preserve manager/work captures and completed effects across suspension;
+   retain independent player and pad owners. Acceptance: original input,
+   motion, collision, waits and script effects execute together through the
+   recovered frame, with compared state and call order. Do not replace the
+   preview controller until the original path actually supplies its behavior.
+3. **Recover startup and the game scheduler.** Implement the reached manager,
+   sound, layer/text and later startup-script services. Connect actual manager
+   registration, device polling, time advancement, ACTION traversal, camera,
+   HUD and rendering. Acceptance: an authored native boot-to-game path using
+   original assets, original player creation and actual scheduled frames; no
+   prepared test provider standing in for a required game operation.
+4. **Complete the original playable game.** Reconstruct combat and its damage/
+   status services, enemies, inventory, equipment, progression, scene transitions,
+   original audio and persistence. Qualify every game route and supported player
+   character, including independent local one-to-four-player sessions. Acceptance:
+   compared original behavior and progression through the complete game, plus
+   save/reload, controller ownership and audible output verification. One room,
+   one character or one successful attack is an increment, not completion.
+5. **Qualify native PC presentation and controls.** Integrate persistent F1
+   graphics/input/QoL controls, freely editable keyboard bindings and controller
+   handling into that engine. Verify 16:9 camera/culling/HUD, 4K, display modes,
+   VSync and MSAA. Measure original simulation and audio timing before separating
+   presentation frequency; target at least 60 FPS on documented hardware and
+   options up to 300 FPS without speeding up the game. Acceptance uses actual
+   gameplay frame times, input, applied settings and persistence, not sliders or
+   results from the historical runtime. Confirm supported languages against
+   actual text, fonts and the original selector.
+6. **Complete content extensions and online play.** Build versioned asset/mod
+   contracts around recovered loading and game state. Add HD packs, custom maps,
+   Digimon and weapons, seeded randomizers and optional balance/bug fixes while
+   preserving an original behavior mode. Validate local four-player ownership
+   before networking; verify multi-machine state, RNG, compatible mods, latency,
+   disconnects and save ownership. Acceptance requires the requested extensions
+   operating in the native game, not only recognized manifests.
+7. **Finish the native release path.** Provide one EXE entry point that validates
+   the user's supported ROM and prepares required assets without a developer
+   toolchain or manual extraction. Preserve imported data and portable saves,
+   with explicit versioned migration where needed. Verify repeat launch and a
+   clean-machine release containing the native game, required dependencies and
+   notices, without original game assets in the public repository.
 
-Single-file module integration remains a separate packaging task described in
-[RECOMP_BUILTIN_MODULE.md](RECOMP_BUILTIN_MODULE.md). It is not implemented by
-this review and cannot establish performance or removal of console services.
+These steps define integration order, not a reduction in scope. Preserve later
+requirements in today's ownership, timing and data interfaces. Full acceptance
+remains in [ROADMAP.md](ROADMAP.md) and
+[ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md); none of the above gates is declared
+complete by this document.
 
-## Current evidence and first adjustments
+## Preserved historical evidence
 
-The existing September 13 final-package report reaches the original main menu
-at about 59.74 frame-counter advances/s in a roughly ten-second 1x window,
-near normal simulation speed, without audio replay in that window. Real-device
-telemetry was muted; audible quality and actual gameplay remain unverified.
-The opening movie still falls to roughly 11–14 advances/s in recorded later
-intervals. The latest cache batching change reduced calls but did not establish
-a performance gain. See [RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md) and
-[RECOMP_CPU_PROFILING.md](RECOMP_CPU_PROFILING.md). These are existing results,
-not tests rerun for this architecture review.
+The September 13 project review established two separate builds. The original
+recompiled game did not call `dw4_core`. Its package reached the main menu in a
+short 1x Vulkan window near original speed; later opening-movie intervals still
+ran substantially below original speed, and audible/gameplay acceptance remained
+open. Its F1 controls, ROM import, embedded resources and portable-profile tests
+belong to that runtime only. Preserve their reports and known limitations in
+[RECOMPILATION.md](RECOMPILATION.md),
+[RECOMP_PERFORMANCE.md](RECOMP_PERFORMANCE.md),
+[RECOMP_CPU_PROFILING.md](RECOMP_CPU_PROFILING.md),
+[RECOMP_INGAME_MENU.md](RECOMP_INGAME_MENU.md), [ROM_IMPORT.md](ROM_IMPORT.md)
+and [PC_APPLICATION.md](PC_APPLICATION.md).
 
-This review adds an explicit developer recompilation launcher, distinguishes
-the two local validation paths, and bounds the manual build to four jobs by
-default. It leaves runtime patches, generated modules, assets and saved games
-unchanged. Follow-up optimization and source-recovery integration remain work
-to perform, not completed features. No hosted workflow is introduced.
-
-Review validation: Windows PowerShell parsed the adjusted build script; the
-four-job default and batch launch target were checked without executing a game.
-`scripts/start-recomp.ps1 -ValidateOnly` passed the existing launcher, module,
-patch, DOL and ABI-report identity checks. All 239 local Markdown links in the
-README, architecture, roadmap and this review resolved. No C++ source changed,
-so no full rebuild or gameplay acceptance is claimed for this documentation and
-entry-point update.
+The explicit recompilation launcher, four-job local build default and earlier
+identity checks remain recorded in repository history. The proposed built-in
+module remains a historical packaging design in
+[RECOMP_BUILTIN_MODULE.md](RECOMP_BUILTIN_MODULE.md), not an active implementation
+task. Preserve every package and save; the new direction neither invalidates
+those observations nor transfers their features to the native game.

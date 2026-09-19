@@ -1,8 +1,30 @@
 # Local validation
 
-## Recompilation integration
+## Native source-port resumption and transformed collision
 
-The selected DolRecomp/ModernGekko path has its own evidence and acceptance
+Validated locally on 2026-09-19. The authored native engine is the active path;
+DolRecomp/ModernGekko is set aside with its packages, source patches and saves
+preserved. Native geometry now calls the recovered matrix inverse and canonical
+AABox scratch transform. Full collision responses and the original game loop
+remain unfinished. See [MATRIX_INVERSE.md](MATRIX_INVERSE.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 116/116 CTest suites passed, including 90 permanent inverse checks |
+| Raw original inverse comparison | 7,798 cases; 3,080,642 instructions; 3,899 exact aliases; zero status, output-word or destination-prefix differences in the documented finite NI=1/RN=00 profile |
+| Native transformed geometry | 49 synthetic / 76 original-inclusive checks; rotated/scaled/translated synthetic triangle plus actual stage-179 geometry with a prepared translated matrix |
+| Original common traversal regression | 54 synthetic / 85 original-inclusive checks, retaining twelve floor and fifteen wall node visits |
+| Original-data identity | Supplied DOL SHA256 remains EC61C010477C844781763A3041922E38719B3CED3B74BE5CE71D778CE458E471 |
+
+The first integration test incorrectly expected a normalized transformed
+normal. The recovered original candidate append performs direct multiplication,
+so scale three produces a normal of length three. The test was corrected from
+the existing original instruction evidence; production behavior was retained.
+No preview or interactive game was started and no hosted workflow was used.
+
+## Historical recompilation integration
+
+The set-aside DolRecomp/ModernGekko path has its own evidence and acceptance
 scope in [RECOMPILATION.md](RECOMPILATION.md). The manual-core results below
 do not establish that the recompiled game boots or plays correctly.
 

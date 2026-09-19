@@ -159,23 +159,85 @@ void transform_boundary() {
     Fixture f;f.visitor->matrix_stack->count=2;
     (*f.visitor->matrix_stack->backing)[1]=identity();
     HitLandGeometryInvocation call(f.visitor,f.node);
-    check(!call.resume().completed && f.maps==0,"Transformed geometry silently bypassed original bound scratch dispatch.");
     auto services=std::make_shared<HitLandGeometryServices>();unsigned bound_calls{};
     services->transform_bound=[&](const auto&,const auto& source,auto& result) {
         ++bound_calls;result=source;return MessengerCallResult{true,0,{}};
     };
-    check(!call.resume(services).completed && bound_calls==1 && f.maps==0,"Missing inverse lost its completed transformed-bound prefix.");
-    check(!call.resume(services).completed && bound_calls==1,"Paused inverse replayed bound cloning.");
-    services->inverse_matrix=[](const auto&,auto& output) {output=identity();return MessengerCallResult{true,0,{}};};
-    f.visitor->transformed_segment=std::make_shared<HitLandSegment>();
+    bool ready=false;unsigned inverse_calls{};
+    services->inverse_matrix=[&](const auto&,auto& output) {
+        ++inverse_calls;
+        if(!ready)return MessengerCallResult{false,0,"Retained inverse override."};
+        output=identity();return MessengerCallResult{true,0,{}};
+    };
+    check(!call.resume(services).completed && bound_calls==1 && f.maps==0,"Pending inverse lost its completed transformed-bound prefix.");
+    check(!call.resume(services).completed && bound_calls==1 && inverse_calls==2,"Paused inverse replayed bound cloning.");
+    ready=true;
     check(call.resume(services).completed && f.query->candidate_count==1 && bound_calls==1,
         "Explicit prepared transform operations did not resume the actual segment/primitive producer.");
+}
+void native_transformed_candidate() {
+    Fixture f;
+    const auto source_box=f.node->box_owner();const auto before=*source_box;
+    const auto scratch=f.visitor->transformed_box;
+    // Exact quarter-turn about Y, unequal scale and translation. The same
+    // world ray meets the original local triangle at (0.5, 0, 0.5).
+    AnimationMatrix transform{0,0,-2,0,0,3,0,0,4,0,0,0,10,5,-6,1};
+    hitland_push_transform(f.visitor->matrix_stack,transform);
+    const auto ray=std::dynamic_pointer_cast<HitLandSegment>(hitland_physical_object(f.query->segments,0));
+    ray->origin={12,11,-7};ray->direction={0,-1,0};ray->length=12;
+    register_hitland_node_type(f.visitor,f.node);
+    HitLandIntersectionInvocation call(f.visitor,f.node);
+    check(call.resume().completed && f.query->candidate_count==1,
+        "Native typed geometry dispatch did not produce a transformed triangle candidate.");
+    const auto candidate=std::dynamic_pointer_cast<HitLandCandidate>(hitland_physical_object(f.query->candidates,0));
+    check(candidate && candidate->payload.local_position==std::array<float,3>{0.5f,0,0.5f} &&
+        candidate->payload.position==std::array<float,3>{12,5,-7} && candidate->payload.distance==6 &&
+        candidate->payload.normal==std::array<float,3>{0,3,0},
+        "Native inverse, segment transform or world candidate publication differs from the exact transformed ray.");
+    check(f.visitor->transformed_box==scratch && *scratch==CollisionBox{{-6,-4,-16},{38,23,-2}} && *source_box==before,
+        "Bound transform replaced its reusable scratch owner or modified the canonical local bound.");
+    check(candidate->payload.segment==ray && ray->origin==std::array<float,3>{12,11,-7} && ray->length==12 &&
+        f.visitor->transformed_segment->origin==std::array<float,3>{0.5f,2,0.5f} &&
+        f.visitor->transformed_segment->length==4,
+        "Transformed scratch ray detached the original candidate segment or changed its source.");
+    check(f.visitor->matrix_stack->count==2 && f.visitor->node_path->count==0 && f.maps==2 && f.unmaps==2,
+        "Transformed geometry failed to balance traversal or exhaust its primitive cursor.");
+    HitLandGeometryInvocation repeated(f.visitor,f.node);
+    check(repeated.resume().completed && f.query->candidate_count==2 && f.visitor->transformed_box==scratch &&
+        *scratch==CollisionBox{{-6,-4,-16},{38,23,-2}},
+        "A second node visit compounded the transform instead of copying the original bound into shared scratch.");
+}
+void native_transform_failures() {
+    Fixture missing;hitland_push_transform(missing.visitor->matrix_stack,identity());
+    missing.visitor->transformed_box.reset();
+    HitLandGeometryInvocation no_scratch(missing.visitor,missing.node);
+    rejects([&]{no_scratch.resume();});
+    check(missing.maps==0 && no_scratch.faulted(),"Null typed scratch reached unrelated primitive data.");
+    Fixture matrix;matrix.visitor->matrix_stack->count=2;matrix.visitor->matrix_stack->backing.reset();
+    const auto original=*matrix.node->box_owner();
+    HitLandGeometryInvocation no_matrix(matrix.visitor,matrix.node);
+    rejects([&]{no_matrix.resume();});
+    check(*matrix.visitor->transformed_box==original && matrix.maps==0,
+        "Missing matrix lost the original completed bound-copy prefix.");
+    Fixture singular;auto transform=identity();transform[5]=0;
+    hitland_push_transform(singular.visitor->matrix_stack,transform);
+    HitLandGeometryInvocation unwritten(singular.visitor,singular.node);
+    rejects([&]{unwritten.resume();});
+    check(unwritten.faulted() && singular.maps==0 && singular.query->candidate_count==0 &&
+        singular.visitor->transformed_segment->origin==std::array<float,3>{0.5f,2,0.5f},
+        "Singular inverse supplied a fabricated transform or failed before the original scratch-ray copy.");
+    Fixture unused;hitland_push_transform(unused.visitor->matrix_stack,transform);
+    unused.visitor->scratch->segments->count=0;
+    HitLandGeometryInvocation unused_inverse(unused.visitor,unused.node);
+    check(unused_inverse.resume().completed && unused.maps==0,
+        "Singular matrix with no segments consumed the original unused inverse.");
 }
 void original(const std::filesystem::path& root) {
     auto scene=std::make_shared<ActorSceneResource>(read_igb_document(assets::AfsArchive::open(root/"files/ndmw.afs").read(179)),
         "ndmw.afs[179]",179);
     auto info=scene->models().hit_land_geometry_info(1768);
     unsigned candidates{},nodes{};std::array<float,3> accepted_start{},accepted_end{};
+    std::shared_ptr<const ActorSceneNode> accepted_node;
     for(const auto& node:info->check_switch->children()) {
         if(!node)continue;
         const auto box=node->box_owner();if(!box)continue;
@@ -192,7 +254,9 @@ void original(const std::filesystem::path& root) {
         if(!result.completed)throw std::runtime_error(result.diagnostic);
         check(visitor->node_path->count==0,"Original geometry handler failed to restore its node path.");
         ++nodes;candidates+=static_cast<unsigned>(query->candidate_count);
-        if(query->candidate_count) {accepted_start={x,box->maximum[1]+10,z};accepted_end={x,box->minimum[1]-10,z};}
+        if(query->candidate_count) {
+            accepted_start={x,box->maximum[1]+10,z};accepted_end={x,box->minimum[1]-10,z};accepted_node=node;
+        }
         for(std::int32_t i=0;i<query->candidate_count;++i) {
             const auto candidate=std::dynamic_pointer_cast<HitLandCandidate>(hitland_physical_object(query->candidates,i));
             check(candidate && candidate->payload.segment==hitland_physical_object(query->segments,0) &&
@@ -217,12 +281,34 @@ void original(const std::filesystem::path& root) {
     check(first && first->name==std::optional<std::string>{info->name.value_or(std::string{})} && first->payload.scratch==manager->scratch &&
         first->payload.segment==hitland_physical_object(manager->query->segments,0),
         "Original common traversal lost query name, segment or scratch in the produced result.");
+    // Exercise the real imported vertices through the native transformed path.
+    // The matrix is prepared test state, not a claim of original dynamic-node startup.
+    auto translated_query=std::make_shared<HitLandQuery>();
+    accepted_start[1]+=16;accepted_end[1]+=16;
+    translated_query->append_segment(accepted_start,accepted_end);
+    auto translated_visitor=std::make_shared<HitLandIntersectionVisitor>();reset_hitland_intersection(translated_visitor);
+    translated_visitor->flags=4;translated_visitor->query=translated_query;translated_visitor->query_candidate_callback=true;
+    translated_visitor->scratch=std::make_shared<HitLandTraversalScratch>();
+    translated_visitor->scratch->segments=translated_query->segments;
+    translated_visitor->scratch->indices=std::make_shared<HitLandIndexList>();
+    hitland_append_zero_index(translated_visitor->scratch->indices);
+    auto translation=identity();translation[13]=16;hitland_push_transform(translated_visitor->matrix_stack,translation);
+    register_hitland_node_type(translated_visitor,accepted_node);
+    HitLandIntersectionInvocation translated(translated_visitor,accepted_node);
+    check(translated.resume().completed && translated_query->candidate_count>0,
+        "Actual stage geometry did not traverse the native bound/inverse/primitive transformed path.");
+    const auto translated_candidate=std::dynamic_pointer_cast<HitLandCandidate>(hitland_physical_object(translated_query->candidates,0));
+    check(translated_candidate && translated_candidate->payload.position[1]==translated_candidate->payload.local_position[1]+16 &&
+        translated_candidate->payload.segment==hitland_physical_object(translated_query->segments,0) &&
+        translated_visitor->node_path->count==0 && translated_visitor->matrix_stack->count==2,
+        "Actual transformed stage result lost its world translation, original ray or traversal ownership.");
     std::cout<<"Original stage179: "<<nodes<<" floor geometry queries, "<<candidates<<" triangle candidates.\n";
 }
 }
 int main(int argc,char** argv) {
     try {
         numeric_helpers();static_candidate();reached_gates();retained_callback_and_live_backing();caught_recursion();transform_boundary();
+        native_transformed_candidate();native_transform_failures();
         const auto synthetic=checks;if(argc==2)original(argv[1]);else if(argc!=1)return 2;
         std::cout<<checks<<" HITLAND geometry checks passed (synthetic "<<synthetic<<").\n";return 0;
     }catch(const std::exception& error){std::cerr<<"HITLAND geometry after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}

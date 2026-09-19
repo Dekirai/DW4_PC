@@ -13,6 +13,7 @@ class ActorSceneNode;
 class HitLandQuery;
 class HitLandSegment;
 class ModelSceneObject;
+struct CollisionBox;
 struct HitLandTraversalScratch;
 struct HitLandDispatchTable;
 struct HitLandNodeDispatchServices;
@@ -30,6 +31,7 @@ struct HitLandNodePath {
     std::shared_ptr<std::vector<std::optional<std::shared_ptr<const ActorSceneNode>>>> backing;
 };
 struct HitLandIntersectionVisitor {
+    HitLandIntersectionVisitor();
     std::uint8_t filter_enabled{}; // +08, independent from the filter target.
     std::function<MessengerCallResult(const std::shared_ptr<HitLandIntersectionVisitor>&,
         const std::shared_ptr<const ActorSceneNode>&)> filter; // +0C.
@@ -41,6 +43,9 @@ struct HitLandIntersectionVisitor {
     std::shared_ptr<HitLandTraversalScratch> scratch; // +28, retained.
     std::uint32_t flags{}; // +2C.
     bool query_candidate_callback{}; // +30, known 802FE1A4 adapter only.
+    // AABox entry of the original +34 per-type scratch table. Canonical scene
+    // bounds currently represent igAABox only; other bound classes need owners.
+    std::shared_ptr<CollisionBox> transformed_box;
     std::shared_ptr<HitLandSegment> transformed_segment; // +38, retained transformed ray scratch.
     std::shared_ptr<HitLandQuery> query; // +40, retained.
 };

@@ -12,10 +12,16 @@ Keep the provisional walking preview distinct from the original game baseline;
 do not claim stored preferences implement gameplay. Continue toward the next
 acceptance gate in the roadmap.
 
-The owner's current goal is an optimized DolRecomp-based PC game with correct
-original behavior and local one-to-four-player play using separate controllers.
-Prioritize the reported low frame rate and audio stutter. Target at least 60 FPS
-on documented test hardware, with presentation options up to 300 FPS that do not
+The owner's current goal is a complete native source port: reconstruct the
+original game and engine behavior in authored, maintainable C++ source and set
+the DolRecomp/ModernGekko project aside. Resume the existing dw4_core and native
+application; do not replace this goal with a recompiled or embedded emulated
+game. Preserve the prior recompilation work, packages and saves as historical
+reference, but do not extend its runtime, optimize it or rebuild it as the active
+queue. Generated PowerPC C is not the requested recovered source deliverable.
+Keep correct original behavior and local one-to-four-player play using separate
+controllers. Target at least 60 FPS on documented test hardware, with
+presentation options up to 300 FPS that do not
 speed up simulation or audio. Verify game timing before uncapping presentation;
 a frame-limit setting alone is not high-frame-rate support. Keep 16:9, higher
 render resolution, HD texture replacements, an ImGui menu for graphics, cheats,
@@ -31,14 +37,14 @@ targets, not implemented claims. Preserve mod and multiplayer compatibility
 while optimizing; do not remove validation or change gameplay merely for speed.
 The walking preview's host movement, camera and timing do not satisfy this goal.
 
-The owner further requires an integrated PC application: one DW4_PC.exe entry
-point with the original game assets, no separate moderngekko-run.exe process
-required to play, portable save data beside the executable, and an in-game
-ImGui menu opened with F1. Move the current File/View commands into that menu
-and apply supported settings during play. Do not satisfy this by renaming the
-runner or concealing another executable. The Dolphin-derived service/runtime
-dependency and the user-facing PC integration are different concerns; explain
-remaining dependencies accurately. Preserve existing saves while introducing
+The owner further requires an integrated native PC application: one DW4_PC.exe
+entry point with user-supplied original assets, portable save data beside the
+executable and an in-game ImGui menu opened with F1. Move the current File/View
+commands into that menu and apply supported settings during play. Implement
+these requirements in the authored native engine; the set-aside runner's
+integration is not their completion. The final engine must not depend on the
+DolRecomp/ModernGekko runtime or its Dolphin-derived services. Explain any
+remaining dependencies accurately and preserve existing saves while introducing
 the portable layout. ROM selection and automatic asset preparation remain
 required, as do modding, local/online co-op and all earlier acceptance targets.
 
@@ -51,19 +57,18 @@ Preserve existing controller profiles, independent player slots and input
 blocking while settings are open. Verify actual input and persistence rather
 than storing unused preferences.
 
-The owner selected DolRecomp and the recommended ModernGekko template as the
-next implementation path. Prioritize building and validating the original DW4
-recompilation pipeline, using the owner's local tool sources. Keep the existing
-native core and its tests as reference work. Generated C, a successful compiler
-run or a boot screen does not establish a complete original game. Verify actual
-gameplay, rendering, audio, saves and independent local controllers. See
-docs/RECOMPILATION.md for the current source locations and evidence.
-Use scripts/build-recomp.ps1 for that pipeline. It builds the runtime and
-generated module locally with explicit source pins; it never launches the game.
-Keep the manual-core build and recompilation validation scopes separate.
-The recompiled game does not call the manually recovered engine functions.
-Do not resume a manual full-engine rewrite as the main queue; use existing
-analysis and tests selectively to diagnose observed original-game failures.
+The native core is the active implementation. Resume the original collision and
+player-frame boundary documented in docs/ROADMAP.md and docs/PORTING_STRATEGY.md.
+Recover reached operations from original evidence, retaining ownership, callback
+order, arithmetic and failure behavior. Complete the collision response before
+claiming the existing candidate producer implements original player movement.
+Connect the recovered startup and frame scheduler rather than promoting the
+preview's provisional movement or camera to original behavior. Use DTK, objdiff
+and Ghidra selectively for evidence; a matching-build lane is a research aid, not
+a replacement for the authored native engine. Verify gameplay, rendering, audio,
+saves and independent controllers in that engine. Previous recompilation tests
+prove only their historical implementation; see docs/RECOMPILATION.md for those
+records. Do not transfer their completed-feature claims to the native core.
 
 Use the current repository checkout. Preserve user changes and keep generated
 builds in ignored build/ or dist/. Original game data is supplied outside this
