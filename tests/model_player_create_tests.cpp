@@ -7,6 +7,8 @@
 #include "dw4/hitland_wall.hpp"
 #include "dw4/hitland_node_dispatch.hpp"
 #include "dw4/game_clock.hpp"
+#include "dw4/viewer.hpp"
+#include "dw4/application_frame.hpp"
 #include "dw4/model_motion_actual.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
@@ -541,6 +543,103 @@ void original(const std::filesystem::path& root) {
     check(!moving_retry.completed && moving_retry.diagnostic==moving_result.diagnostic &&
         created->turn_attack_timers->at(0)==29,
         "Retrying directional input repeated its turn-attack history prefix.");
+    // Explicitly prepare the original viewer's verified parameters factory.
+    // Initial view state is not active game-camera selection or following.
+    const auto viewer=std::make_shared<ViewerSceneInfoManager>();
+    viewer->parameters=make_viewer_parameters();events.model_manager()->viewer=viewer;
+    const auto with_viewer=events.resume(*moving_frame);
+    const auto& moved=*generated_one->node->matrix_owner();
+    std::cout<<"Original directional frame with native viewer: completed="<<with_viewer.completed
+        <<", sequence="<<created->sequence.name.value_or("<null>")
+        <<", action="<<actions[0]->current_action()
+        <<", subcommands="<<created->subcommands->list_owner()->size()
+        <<", position="<<moved[12]<<','<<moved[13]<<','<<moved[14]
+        <<", diagnostic="<<with_viewer.diagnostic<<'\n';
+    if(!with_viewer.completed)throw std::runtime_error("Original directional frame after viewer: "+with_viewer.diagnostic);
+    check(moving_frame->completed() && moving_frame->input()->completed() && moving_frame->motion()->completed() &&
+        moving_frame->collision() && moving_frame->collision()->completed() &&
+        created->key_input==1 && created->sequence.name=="SQ_WALK" && actions[0]->current_action()=="RUNND1" &&
+        created->turn_attack_timers->at(0)==29 && created->subcommands->list_owner()->empty() &&
+        moving_frame->motion()->result().channels.translation[2]>0 && moved!=final_matrix &&
+        collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+        "Native viewer input did not resume original walking, ACTION and collision without replaying its prefix.");
+    const auto walking_matrix=moved;
+    check(events.resume(*moving_frame).completed && *generated_one->node->matrix_owner()==walking_matrix &&
+        created->subcommands->list_owner()->empty(),
+        "Completed directional frame replayed movement or subcommand advancement.");
+
+    // Prepared elapsed samples exercise the actual system timing leaf and all
+    // four per-RAM consumers. This does not replace application dispatch,
+    // manager scheduling, device polling or active camera publication.
+    const auto context=events.model_context();const auto system=events.model_manager()->system;
+    system->context=context;system->saved_world_time=context->world_time;
+    constexpr std::array<std::int32_t,4> directions{1,2,4,8};
+    constexpr std::array<float,4> stick_x{0,1,0,-1},stick_y{-1,0,1,0};
+    std::array<AnimationMatrix,4> before_series;
+    for(std::size_t slot=0;slot<4;++slot)before_series[slot]=*find_model_one(*rams[slot])->node->matrix_owner();
+    const auto command_state=[&](std::size_t slot) {
+        std::vector<std::pair<std::uint64_t,float>> result;
+        for(const auto& entry:*events.model_work(ids[slot])->subcommands->list_owner())
+            result.emplace_back(entry.id,entry.elapsed);
+        return result;
+    };
+    std::size_t repeated_frames{};
+    for(unsigned tick=0;tick<12;++tick) {
+        context->world_time+=16666667;publish_system_frame_time(*system);
+        check(system->frame_time_f==1 && system->frame_time==16666667,
+            "Prepared original frame samples did not produce the uncapped system delta through its actual context.");
+        for(std::size_t slot=0;slot<4;++slot) {
+            const auto pad=pads->data->backing->at(slot);
+            pad->direction=tick<6 ? directions[slot]:0;
+            pad->left_x=tick<6 ? stick_x[slot]:0;pad->left_y=tick<6 ? stick_y[slot]:0;
+            pad->held=0;pad->trigger=0;
+            std::array<AnimationMatrix,4> before;
+            std::array<std::vector<std::pair<std::uint64_t,float>>,4> commands;
+            for(std::size_t other=0;other<4;++other) {
+                before[other]=*find_model_one(*rams[other])->node->matrix_owner();
+                commands[other]=command_state(other);
+            }
+            auto next=events.begin_model_frame(ids[slot]);const auto result=events.resume(*next);
+            const auto work=events.model_work(ids[slot]);
+            if(!result.completed)throw std::runtime_error("Original repeated frame tick "+std::to_string(tick)+
+                ", player "+std::to_string(slot)+": "+result.diagnostic);
+            check(next->completed() && next->captured().work==work && next->input() && next->input()->captured_pad()==pad &&
+                work->key_input==(tick<6 ? 1:0) && next->subcommands() && next->subcommands()->completed() &&
+                collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+                "Repeated original frame lost its player/pad identity, actual delta or balanced collision traversal.");
+            bool separate=true;
+            for(std::size_t other=0;other<4;++other)if(other!=slot)
+                separate=separate && *find_model_one(*rams[other])->node->matrix_owner()==before[other] &&
+                    command_state(other)==commands[other];
+            check(separate,"A prepared player's update changed another player's node or subcommand time.");
+            if(tick<6)check(work->sequence.name=="SQ_WALK" && actions[slot]->current_action()=="RUNND1" &&
+                work->subcommands->list_owner()->empty() &&
+                next->motion() && next->motion()->result().channels.translation[2]>0,
+                "Held directional input failed to retain original walking and positive local motion.");
+            else {
+                const auto queue=work->subcommands->list_owner();
+                const auto effect=queue->size()==1 ? std::get_if<ModelEffectSubcommandState>(&queue->front().value):nullptr;
+                check(work->sequence.name=="SQ_WAIT" && actions[slot]->current_action()=="WAITD1" &&
+                    effect && effect->command.model_name=="i_pcnumic" &&
+                    effect->command.sequence_name=="SQ_OPENP"+std::to_string(slot) &&
+                    queue->front().delay==480 && queue->front().elapsed==static_cast<float>(tick-5) && !queue->front().started,
+                    "Released input failed the actual SQ_WAIT entry, player callback or delayed-number-effect timing.");
+            }
+            const auto completed_matrix=*find_model_one(*rams[slot])->node->matrix_owner();
+            const auto completed_commands=command_state(slot);
+            check(events.resume(*next).completed && *find_model_one(*rams[slot])->node->matrix_owner()==completed_matrix &&
+                command_state(slot)==completed_commands,"Retrying a completed repeated frame replayed original movement or command time.");
+            ++repeated_frames;
+        }
+    }
+    for(std::size_t slot=0;slot<4;++slot) {
+        const auto work=events.model_work(ids[slot]);const auto& position=*find_model_one(*rams[slot])->node->matrix_owner();
+        std::cout<<"Original repeated slot "<<slot<<": sequence="<<work->sequence.name.value_or("<null>")
+            <<", action="<<actions[slot]->current_action()<<", position="<<position[12]<<','<<position[13]<<','<<position[14]
+            <<", phase="<<work->control.phase<<", key="<<static_cast<unsigned>(work->key_input)<<'\n';
+        check(position!=before_series[slot],"A prepared original player never moved during the repeated directional samples.");
+    }
+    std::cout<<"Original repeated player frames completed="<<repeated_frames<<" (six directional and six released samples per slot)\n";
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
         "four prepared neutral per-RAM frames complete shared-node HITLANDDELIVER and native collision with all five stage infos registered; "
@@ -548,6 +647,7 @@ void original(const std::filesystem::path& root) {
 }
 }
 int main(int argc,char** argv) {
+    std::cout<<std::unitbuf;
     try {
         retained_actual_owner_scopes();placement_inputs_and_repeated_factory();checked_failure_prefixes();nested_delivery_and_recursive_fault();
         nullable_parent_original_read_site();

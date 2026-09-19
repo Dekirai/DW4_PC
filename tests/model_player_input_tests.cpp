@@ -2,6 +2,7 @@
 #include "dw4/action_event_runtime.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/pad.hpp"
+#include "dw4/viewer.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -109,6 +110,60 @@ void native_camera_inverse() {
     ModelPlayerInputInvocation invalid(f.ram);
     rejects([&]{f.run(invalid);},"Nonfinite camera escaped the native inverse's explicit arithmetic boundary.");
     check(invalid.faulted(),"A failed native inverse did not fault the input continuation.");
+}
+void actual_viewer_owners() {
+    Fixture f;f.pad->direction=1;f.pad->left_y=-1;
+    auto viewer=std::make_shared<ViewerSceneInfoManager>();
+    auto parameters=make_viewer_parameters();
+    parameters->view_matrix={0,0,1,0,0,1,0,0,-1,0,0,0,3,4,5,1};
+    viewer->parameters=parameters;f.events.model_manager()->viewer=viewer;
+    {
+        ModelPlayerInputInvocation call(f.ram);
+        check(f.run(call).completed && f.work->key_input==1 &&
+            f.work->motion.turn.desired[1]==0x1.921fb6p+0f,
+            "Native input did not follow its actual viewer parameters without service overrides.");
+    }
+    std::weak_ptr<ViewerParameters> retained=parameters;
+    const auto selected_matrix=&parameters->view_matrix;
+    f.services.inverse_camera=[](const AnimationMatrix&)->std::optional<AnimationMatrix>{return {};};
+    {
+        ModelPlayerInputInvocation pending(f.ram);
+        check(!f.run(pending).completed,"Explicit inverse boundary did not retain the selected native viewer matrix.");
+        auto replacement=std::make_shared<ViewerSceneInfoManager>();replacement->parameters=make_viewer_parameters();
+        f.events.model_manager()->viewer=replacement;
+        viewer->parameters.reset();parameters.reset();viewer.reset();
+        check(!retained.expired(),"Replacing viewer parameters destroyed the inline matrix of pending input.");
+        f.services.inverse_camera=[&](const AnimationMatrix& source)->std::optional<AnimationMatrix> {
+            check(&source==selected_matrix,"Pending input switched to replacement viewer parameters.");
+            f.pad->trigger=pad_button::x;return identity;
+        };
+        check(f.run(pending).completed && f.work->key_event_name=="SQ_JUMP",
+            "Retained viewer input failed to resume or lost the later live trigger word.");
+    }
+    check(retained.expired(),"Completed input destruction leaked the replaced parameters allocation.");
+
+    for(const bool missing_parameters:{false,true}) {
+        Fixture invalid;invalid.pad->direction=1;invalid.pad->left_y=-1;
+        invalid.events.model_manager()->viewer=missing_parameters ?
+            std::make_shared<ViewerSceneInfoManager>():std::shared_ptr<ViewerSceneInfoManager>{};
+        ModelPlayerInputInvocation call(invalid.ram);
+        rejects([&]{invalid.run(call);},"Represented null viewer state was treated as missing integration or repaired.");
+        check(call.faulted() && invalid.work->turn_attack_timers->at(0)==29 && invalid.work->key_input==0,
+            "Reached viewer failure lost the completed history prefix or published input afterward.");
+    }
+    Fixture idle;idle.events.model_manager()->viewer=std::shared_ptr<ViewerSceneInfoManager>{};
+    ModelPlayerInputInvocation untouched(idle.ram);
+    check(idle.run(untouched).completed,"Stationary input consumed its unused null viewer owner.");
+
+    Fixture overridden;overridden.pad->direction=1;overridden.pad->left_y=-1;
+    overridden.events.model_manager()->viewer=std::shared_ptr<ViewerSceneInfoManager>{};overridden.camera();
+    ModelPlayerInputInvocation external(overridden.ram);
+    check(overridden.run(external).completed,"Explicit camera override lost precedence over native viewer selection.");
+    auto valid=std::make_shared<ViewerSceneInfoManager>();valid->parameters=make_viewer_parameters();
+    overridden.events.model_manager()->viewer=valid;
+    overridden.services.camera_matrix=[](const auto&)->std::shared_ptr<AnimationMatrix>{return {};};
+    ModelPlayerInputInvocation null_override(overridden.ram);
+    rejects([&]{overridden.run(null_override);},"A returned null override incorrectly fell back to native viewer parameters.");
 }
 void body_attack_policy() {
     Fixture f;f.pad->held=pad_button::b;f.pad->trigger=pad_button::b;f.work->body_attack_timer=4;
@@ -331,7 +386,7 @@ void spin_and_remaining_boundaries() {
 }
 int main() {
     try {
-        physical_pad_selection();movement_captures_and_services();native_camera_inverse();body_attack_policy();actual_body_frame_time();panels_and_opaque_work();
+        physical_pad_selection();movement_captures_and_services();native_camera_inverse();actual_viewer_owners();body_attack_policy();actual_body_frame_time();panels_and_opaque_work();
         attack_timer_and_live_data();status_and_failure_prefixes();spin_and_remaining_boundaries();
         std::cout<<"Model player input tests passed: "<<checks<<" checks.\n";return 0;
     }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}

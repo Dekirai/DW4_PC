@@ -5,6 +5,7 @@
 #include "dw4/model_timer.hpp"
 #include "dw4/matrix_inverse.hpp"
 #include "dw4/player_input_math.hpp"
+#include "dw4/viewer.hpp"
 #include "dw4/pad.hpp"
 
 #include <algorithm>
@@ -131,8 +132,12 @@ MessengerCallResult ModelPlayerInputInvocation::resume(NativeMessenger& messenge
             state.spin=active>=8;state.phase=Phase::camera_capture;break;
         }
         case Phase::camera_capture:
-            if(!services.camera_matrix)return need("Player input requires the original camera matrix owner.");
-            state.camera=services.camera_matrix(*manager);check();
+            if(services.camera_matrix) {
+                state.camera=services.camera_matrix(*manager);check();
+            }else {
+                if(!manager->viewer)return need("Player input requires the original camera matrix owner.");
+                state.camera=capture_view_matrix(*manager->viewer);
+            }
             if(!state.camera)fail("Player input dereferences its current null camera matrix owner.");
             state.phase=Phase::camera_inverse;break;
         case Phase::camera_inverse: {

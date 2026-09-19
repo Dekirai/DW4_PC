@@ -59,14 +59,17 @@ Four original Agumon GENERATE calls and the prepared neutral frame form the loca
 original-data acceptance scope. Results and explicitly prepared prerequisites
 are tracked in [VALIDATION.md](VALIDATION.md).
 
-The next prepared directional frame now identifies the original viewer-matrix
-owner as its boundary and preserves its completed turn-history prefix on retry.
-The native camera inverse, original finite heading calculation, application
-time prefix and system time publication are recovered. The actual viewer,
-dispatcher and scheduler producers remain required; prepared callbacks do not
-close those integrations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),
-[PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md) and
-[APPLICATION_FRAME.md](APPLICATION_FRAME.md).
+The prepared directional frame now resumes through SQ_WALK/RUNND1 using the
+native viewer owner, inverse and original finite heading calculation. Another
+48 per-RAM updates qualify held movement and release for all four prepared
+slots, actual system-time consumption, SQ_WAIT/WAITD1 return and independent
+node/subcommand changes. The viewer's proven initial matrix defaults are zero;
+these tests do not select or publish an active original camera.
+The application time prefix, system time leaf and concrete serial scheduler
+batch are recovered. Original registration/order, dispatcher and actual manager
+update bodies still need connection; explicit callbacks do not close those
+integrations. See [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
+[PLAYER_INPUT.md](PLAYER_INPUT.md) and [APPLICATION_FRAME.md](APPLICATION_FRAME.md).
 
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining

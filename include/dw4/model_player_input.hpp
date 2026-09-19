@@ -16,8 +16,9 @@ struct ModelSceneManager;
 
 struct ModelPlayerInputServices {
     // Original controller+2C -> viewer parameters+14 -> view matrix+6C.
-    // The owner type is igViewerSceneInfoManager. Missing provider pauses;
-    // a returned null owner is the distinct reached null pointer failure.
+    // Optional override; otherwise resolve the invoking manager's actual
+    // igViewerSceneInfoManager owner. Unrepresented setup pauses; a represented
+    // null manager/parameters or a returned null override owner fails.
     std::function<std::shared_ptr<AnimationMatrix>(const ModelSceneManager&)> camera_matrix;
     // Override for 8012A92C on the retained camera owner. Nullopt suspends.
     // Without an override, use the recovered native inverse and the original

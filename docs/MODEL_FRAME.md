@@ -7,9 +7,11 @@ through that runtime. It uses the actual registered object; it cannot fall
 back to the walking preview's provisional simulation.
 
 This is one per-RAM consumer. The outer manager traversal at `802F28F8`,
-manager attachment, device polling, system delta production and context time
-advancement remain separate requirements. Explicitly supplying those owners
-does not implement their original producers or establish a gameplay session.
+manager attachment and device polling remain separate requirements. Native
+application time and the reached system timing leaf are available through
+[APPLICATION_FRAME.md](APPLICATION_FRAME.md); their complete startup and ordered
+manager integration remain required. Explicitly supplying those owners does
+not establish a gameplay session.
 
 ## Captures and order
 
@@ -50,7 +52,7 @@ performs its real nested ordinary entry and callback.
 
 ## Time and required services
 
-`ModelSceneManager` has separate current context, system and pad owners. Named
+`ModelSceneManager` has separate current context, system, pad and viewer owners. Named
 timers resolve current RAM.manager/context at each helper. Input's positive
 body-attack timer reads the captured invoking controller's current system.
 Subcommand advancement reads current RAM.manager/system separately for each
@@ -59,8 +61,9 @@ snapshot. An empty subcommand wrapper needs no system or effect provider.
 
 `ModelFrameServices` supplies remaining position-lock, ride and ride-tail
 operations. Its collision service owner supplies remaining WHit/FHit and ride
-effects beneath the actual wall/floor consumer. It also retains input camera
-services, status recipient resolution and subcommand sound/effect/hitbox services. A
+effects beneath the actual wall/floor consumer. Input resolves its native viewer
+parameters and inverse, with optional camera service overrides. The frame also
+retains status recipient resolution and subcommand sound/effect/hitbox services. A
 missing reached service suspends its exact phase; it cannot count as a
 successful no-op. Actual motion, wait and movement-collision consumers run directly.
 
@@ -109,9 +112,21 @@ stacks. Re-entering a completed frame changes neither its node matrix nor its
 subcommand time. This is explicit test order, not the recovered manager scheduler
 or a connected four-controller gameplay session.
 
+The next directional invocation initially pauses at unrepresented viewer setup.
+Binding the prepared native viewer parameters resumes that same invocation
+through SQ_WALK, RUNND1, original motion and collision without replaying history.
+Another 48 per-RAM frames provide six held and six released samples for each
+slot, with manually prepared context ticks consumed by the recovered system
+timing leaf. Each player changes only its own node and subcommand state.
+Release returns to SQ_WAIT/WAITD1 and queues the original delayed player-number
+effect; entering SQ_WALK had cleaned the earlier queue. Completed frame retries
+do not repeat motion or command time. Viewer matrix defaults remain the actual
+zero factory state. These are prepared consumer integrations, not active camera
+updates, device polling or the enclosing manager scheduler.
+
 The checked player-controller profile does not yet dispatch different NPC or
 enemy virtual implementations, remaining position-lock/ride, dynamic query or
-CHECKWALLFULL operations, the original camera inverse, full manager scheduling
+CHECKWALLFULL operations, active camera publication, full manager scheduling
 or connected multiplayer.
 The status and movement modules also document their bounded list/numeric
 representations. See [PLAYER_INPUT.md](PLAYER_INPUT.md),

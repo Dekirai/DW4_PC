@@ -1,5 +1,67 @@
 # Local validation
 
+## Native viewer ownership, repeated player updates and serial scheduling
+
+Validated locally on 2026-09-19. The original player input now resolves its
+native viewer parameters directly and retains their inline matrix through
+suspension. Binding an explicitly prepared viewer resumes the pending
+directional frame to SQ_WALK/RUNND1, real motion and collision. Another 48
+per-RAM calls complete six directional and six released samples for each
+of four original Agumon slots. See [VIEWER.md](VIEWER.md),
+[PLAYER_INPUT.md](PLAYER_INPUT.md) and [MODEL_FRAME.md](MODEL_FRAME.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 124/124 CTest suites passed locally with four build jobs; no compiler warnings |
+| Viewer ownership | 119 checks for exact zero defaults, separate allocations, inline aliases, raw matrix words, null owners, live updates, replacement and final alias lifetime |
+| Player input | 101 checks, including native viewer selection, missing versus represented null setup, retained parameters during inverse suspension, later live buttons and override precedence |
+| Original player integration | 379 original-inclusive / 62 synthetic checks; four neutral frames, one resumed directional frame and 48 further per-RAM frames complete with all five original stage collision infos registered |
+| Serial scheduler | 51 checks for copied-count batching, duplicate order, live source/cache replacement, pending callbacks, physical storage, reference/failure prefixes and application binding |
+| Scheduler instruction comparison | 1,200 cases, 426,861 original instructions and 140 instruction addresses; zero mismatches against a driver linked only to the final production core |
+
+The repeated player fixture advances its prepared shared context by16,666,667
+nanoseconds per sample and calls the actual system timing leaf. Each per-RAM
+update changes only that slot's node and command state. Held samples retain
+SQ_WALK/RUNND1 with positive local movement. Released samples return to
+SQ_WAIT/WAITD1, enqueue the original delayed player-number effect and advance
+its elapsed time from1 through6. Re-entering each completed frame preserves
+the node and complete command list. Traversal stacks remain balanced.
+
+An initial test assumed the startup number-effect entry survived SQ_WALK and
+accessed an empty list. The actual ordinary sequence entry correctly cleans
+that queue; returning to SQ_WAIT correctly creates a new one. The corrected
+test checks those original lifecycle effects and compares complete list
+snapshots rather than dereferencing a permanently assumed first entry.
+
+Factory review also corrected a research assumption: the identity matrices
+in the parameters layout probe are not copied into runtime instances. The
+actual reflected-field factory publishes zero matrices. Native preparation
+uses those zero words. Input's original inverse caller initializes its own
+identity destination and ignores singular status. This qualifies the initial
+viewer owner and that original branch, not active gameplay camera selection.
+The separate igViewModel, camera mode, graph path and later parameters
+publication remain required.
+
+[SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md) records the native batch and its
+supported physical/reference profile. Independent review found a late-copy
+failure path that released an already acquired incoming owner during native
+exception unwinding. It now preserves that original retained-reference prefix,
+with a permanent regression. The original-body comparison executes scheduler
+and resize instructions with explicitly prepared manager and memset endpoints
+in fixed-capacity16 fixtures. It does not compare allocation growth, packed
+reference counts, destructors or the missing game manager bodies.
+Final core SHA256:
+`14AB7E4C79DD264C610E0260AEC7AA92D8AFCC1D1E040FDFF6E64EB85209686E`.
+
+The fixture supplies device samples, initial viewer state and per-RAM order.
+It is not the game's registered manager scheduler or connected controllers.
+The serial batch is separately tested through the native application entry;
+the original dispatcher, registration, manager bodies, camera, rendering/audio
+and complete playable game remain unfinished. The visible walking preview is
+unchanged. No interactive preview or GitHub Actions was launched.
+Ignored evidence is in `work/native-viewer-*`,
+`work/native-serial-scheduler-*` and `work/native-camera-mode-boundary.md`.
+
 ## Native application timing and directional player input
 
 Validated locally on 2026-09-19. Player input now calls the recovered native

@@ -92,14 +92,17 @@ providers and completed prepared neutral frames do not establish a gameplay sess
 connected local multiplayer. See [MODEL_FRAME.md](MODEL_FRAME.md),
 [MODEL_DISPATCH.md](MODEL_DISPATCH.md) and [VALIDATION.md](VALIDATION.md).
 
-The next prepared directional update reaches the original viewer matrix owner.
-Input now uses the recovered native inverse and finite MSL heading operations.
-The recovered application update publishes its time prefix before explicit
-dispatcher and scheduler boundaries; its distinct application timer is shared
-through the actual context world-time field, and the system timing leaf consumes
-that field. These are focused native operations, not completed startup or an
-active camera/scheduler. See [APPLICATION_FRAME.md](APPLICATION_FRAME.md),
-[PLAYER_INPUT.md](PLAYER_INPUT.md) and [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
+The prepared directional update now completes using the native viewer owner,
+inverse and finite MSL heading operations. Another 48 per-RAM updates cover
+held movement and release for four independent slots, original SQ_WALK/RUNND1
+and SQ_WAIT/WAITD1 transitions, system time and actual collision. Viewer setup
+is explicit initial-state preparation, not active camera selection/publication.
+The application update publishes its time prefix before the dispatcher and
+scheduler. Its serial scheduler batch is now recovered with original live list
+reloads and pending manager ownership. Original manager registration, concrete
+manager update bodies, complete startup and active camera publication remain
+required. See [VIEWER.md](VIEWER.md), [SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md),
+[APPLICATION_FRAME.md](APPLICATION_FRAME.md) and [PLAYER_INPUT.md](PLAYER_INPUT.md).
 
 ## Recovery tools and platform choices
 
@@ -143,13 +146,16 @@ output cannot establish its full original behavior.
    retain independent player and pad owners. Acceptance: original input,
    motion, collision, waits and script effects execute together through the
    recovered frame, with compared state and call order. Four prepared neutral
-   per-RAM frames now complete; next qualify nonneutral input and repeated
-   updates, then connect them to the actual outer scheduler. Do not replace the
+   frames, the first directional frame and 48 repeated held/released per-RAM
+   updates now complete. Next connect the actual manager traversal and active
+   camera publication, then qualify additional movement/combat paths. Do not replace the
    preview controller until the original path actually supplies its behavior.
 3. **Recover startup and the game scheduler.** Implement the reached manager,
    sound, layer/text and later startup-script services. Connect actual manager
    registration, device polling, time advancement, ACTION traversal, camera,
-   HUD and rendering. Acceptance: an authored native boot-to-game path using
+   HUD and rendering. The application timing prefix and serial manager batch
+   are available; registered order and each actual manager body remain required.
+   Acceptance: an authored native boot-to-game path using
    original assets, original player creation and actual scheduled frames; no
    prepared test provider standing in for a required game operation.
 4. **Complete the original playable game.** Reconstruct combat and its damage/

@@ -54,11 +54,16 @@ correction. Native geometry responses reach the existing HITFLOOR/HITWALL
 consumers through registered receivers. The recovered global clock and actual
 null-input transform updates now let all four prepared original player slots
 finish one neutral frame each, with all five stage collision infos registered.
-The next directional frame reaches the original viewer-matrix owner boundary.
-Native input now uses the recovered camera inverse and original finite heading
-math; the application time prefix and system frame-time publication are also
-recovered. Dispatcher, scheduler and camera producers still need integration.
-See [APPLICATION_FRAME.md](docs/APPLICATION_FRAME.md) and
+Supplying the explicitly prepared native viewer owner now resumes a directional
+frame through original SQ_WALK/RUNND1, motion and collision. Another 48 prepared
+per-RAM frames cover six held and six released samples for each of four slots,
+including return to SQ_WAIT/WAITD1 and independent node/subcommand state.
+The recovered serial scheduler executes its actual cached manager-update
+ordering and can bind to the native application entry. Original registration,
+manager update bodies, dispatcher and active camera publication still need
+integration. See [VIEWER.md](docs/VIEWER.md),
+[SERIAL_SCHEDULER.md](docs/SERIAL_SCHEDULER.md),
+[APPLICATION_FRAME.md](docs/APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](docs/PLAYER_INPUT_MATH.md).
 Nonnull transform inputs,
 missing bounds, CHECKWALLFULL and startup remain required. See

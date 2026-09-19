@@ -89,11 +89,16 @@ timer starts, and packet identities survive a missing-service pause.
 `ModelPlayerInputServices` supplies original operations whose surrounding
 owners/producers are not yet connected here, plus an optional frame-time override:
 
-- `camera_matrix` returns the actual matrix at controller viewer-manager
+- `camera_matrix` optionally overrides the actual matrix at controller viewer-manager
   `+2C -> parameters+14 -> viewMatrix+6C`. The registered manager type is
   `igViewerSceneInfoManager`; its parameters are `igViewerParameters`. The
-  returned matrix owner is retained before inversion. An absent provider
-  suspends after the completed movement-counter prefix; a returned null fails.
+  returned matrix owner is retained before inversion. Without an override,
+  input follows `ModelSceneManager::viewer` and aliases the parameters' inline
+  `view_matrix`. An unrepresented binding suspends after the completed history
+  prefix. A represented null viewer/parameters owner, or a returned null
+  override, fails. Replacing the manager or its parameters during a paused
+  inverse cannot retarget or destroy the selected allocation. Stationary input
+  never consumes the viewer. See [VIEWER.md](VIEWER.md).
 - `inverse_camera` optionally overrides original `8012A92C`. Without an
   override, the recovered native inverse runs on the retained actual matrix.
   The caller initializes its destination to identity at `8034C65C`, then calls
@@ -146,8 +151,15 @@ camera inverse, singular-source behavior, preserved source ownership and reached
 nonfinite failures. The heading helper has a separate original-instruction
 comparison. Current measured results are in [VALIDATION.md](VALIDATION.md).
 
-The supplied-data player test now also enters a directional update using its
-actual captured player work and selected pad. It reaches the missing viewer
-matrix owner after publishing turn-history value29. Retrying retains that
-prefix. Viewer startup, selected/following camera publication, device production
-and remaining original frame services are still explicit integration boundaries.
+The supplied-data player test also enters a directional update using its actual
+captured player work and selected pad. It first reaches the unrepresented viewer
+binding after publishing turn-history value29. Retrying retains that prefix;
+supplying a native owner allows that same input invocation to continue.
+
+Explicit viewer preparation uses the runtime metadata's zero matrix defaults.
+The identity matrices in the original class-layout probe are not runtime factory
+defaults. For an initially singular view, the original inverse caller still
+retains its independently initialized identity destination. This is an initial
+state test, not active camera selection. Viewer startup, selected/following
+camera publication, device production and remaining original frame services
+are still explicit integration boundaries.

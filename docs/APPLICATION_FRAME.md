@@ -91,10 +91,12 @@ The abstract `igInsightScheduler` factory redirects through `80285BB4` and
 vtable is `804CC018`; virtual `+5C` targets `8028B7B0`. This body copies and
 retains the registered manager list into cached storage, captures its count,
 then calls each cached manager's virtual `+74` in order. The cache is cleared
-afterward. This determines a real scheduler boundary, but does not establish
-the complete game manager registration order or implement all those managers.
-The native application entry requires a service that performs the reached
-work; it does not return success for an absent scheduler.
+afterward. [SerialSchedulerInvocation](SERIAL_SCHEDULER.md) now reconstructs
+that body, including its live source/cache reloads and retained pending manager
+calls. `make_serial_scheduler_update` binds it to the application entry.
+It does not establish the complete game manager registration order or implement
+all those managers. An absent scheduler or required manager implementation does
+not return successful no-op completion.
 
 `beSystem` vtable `804DFB20` supplies update `80316258` at `+74`. The time leaf
 `80316320..64` occurs after reset-button handling and before stage/DVD/freeze

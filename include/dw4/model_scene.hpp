@@ -130,6 +130,7 @@ public:
     std::int32_t kind{}; // +28 _kind; retain every raw bit.
 };
 struct ModelPadManager;
+struct ViewerSceneInfoManager;
 struct ModelSceneContext { std::uint64_t world_time{}; };
 struct ModelSceneSystem {
     float frame_time_f{1}; // +28, explicit beSystem metadata default.
@@ -141,6 +142,9 @@ struct ModelSceneManager {
     std::shared_ptr<ModelSceneContext> context;
     std::shared_ptr<ModelSceneSystem> system; // Manager +10, system +28 cached uncapped frame delta.
     std::shared_ptr<ModelPadManager> pads; // Player manager +30, read at each reached pad lookup.
+    // Player +2C. Disengaged means setup is not represented; engaged null is
+    // an actual null pointer and fails if the original input path reaches it.
+    std::optional<std::shared_ptr<ViewerSceneInfoManager>> viewer;
 };
 class ModelSceneRam final : public ModelSceneObject {
 public:

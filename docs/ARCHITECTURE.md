@@ -26,7 +26,16 @@ Its separately owned timer advances the recovered application time prefix before
 the dispatcher and scheduler boundaries. `publish_system_frame_time` implements
 the reached system timing leaf on that same context, without claiming complete
 system startup or scheduling. Player input uses the native matrix inverse and
-recovered finite MSL heading math, retaining its actual camera-provider boundary.
+recovered finite MSL heading math. Its viewer binding selects and retains the
+actual parameters' inline matrix; unrepresented setup, represented null owners
+and service overrides stay distinct. Runtime matrix defaults are zero, not the
+temporary layout probe's identity values. The separate original camera mode
+and view-model publication remain required.
+The serial scheduler reconstructs the captured-count copy/update/clear sequence
+with its original live pointer reloads and retained pending manager callback.
+It binds to the application entry without inventing registration order or
+missing manager behavior. See [VIEWER.md](VIEWER.md) and
+[SERIAL_SCHEDULER.md](SERIAL_SCHEDULER.md).
 See [APPLICATION_FRAME.md](APPLICATION_FRAME.md) and
 [PLAYER_INPUT_MATH.md](PLAYER_INPUT_MATH.md).
 
