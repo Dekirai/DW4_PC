@@ -7,6 +7,7 @@
 namespace dw4 {
 struct IgbScratchBuffer;
 struct SystemStageLoader;
+struct IgbObjectInstanceList;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 // Captured original C-string pointer into a live, initialized scratch allocation.
 // Capturing this source does not read any byte or manufacture a host string.
@@ -22,6 +23,7 @@ struct IgbDecodeRuntimeField {
     // Independently mutable packed word of a represented constructed owner.
     std::uint32_t reference_word{1};
     std::uint8_t flag_25{}; // Zero is counted by original8006603C.
+    std::optional<std::uint8_t> default_mode; // Signed byte+24, read by80063DD0.
 };
 struct IgbDecodeFieldRegistry {
     using Storage=std::vector<std::shared_ptr<IgbDecodeRuntimeField>>;
@@ -41,6 +43,13 @@ struct IgbRuntimeMetaType {
     std::uint16_t native_alignment{}; // +58.
     // Lookup and slot-count reads do not acquire/release the original owner.
     std::uint32_t reference_word{1};
+    // Factory/instance fields are not inferred from a type-name registration.
+    std::optional<std::uint32_t> allocation_prefix; // +20.
+    std::optional<std::uint32_t> factory_redirect; // +3C, zero is represented null.
+    std::optional<SystemStageString> default_pool_name; // +60.
+    std::optional<std::uint32_t> type_word; // +5C, published through ArkCore+394.
+    std::optional<std::uint32_t> instance_count; // +2C, wrapping live count.
+    std::optional<std::shared_ptr<IgbObjectInstanceList>> instances; // +30.
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 
@@ -57,6 +66,8 @@ struct IgbRuntimeTypeRegistry {
     // Its constructor does not initialize this field. Absence is therefore
     // unrepresented state; an engaged null is a represented null pointer.
     std::optional<std::shared_ptr<SystemStageLoader>> loader;
+    std::optional<std::uint32_t> vtable_offset; // +394, captured by800667F4.
+    std::optional<std::uint8_t> field_initialization_enabled; // +14 gate in80066F40.
 };
 struct IgbRuntimeNameField {
     std::uint32_t offset{0x1c}; // Descriptor8056176C +08, registered _name.

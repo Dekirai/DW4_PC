@@ -5,6 +5,7 @@
 #include "dw4/loader_globals.hpp"
 #include "dw4/loader_dependency.hpp"
 #include "dw4/igb_string_pool.hpp"
+#include "dw4/igb_file_factory.hpp"
 
 #include <algorithm>
 #include <array>
@@ -326,7 +327,9 @@ void original_prefix(const std::filesystem::path& supplied) {
     services->dependencies->globals=std::make_shared<SystemStageServices>();
     dependency_services->globals=services->dependencies->globals;dependency_services->strings=services->dependencies->strings;
     const auto strings_factory=make_native_igb_string_factory(native_strings);
-    dependency_services->factory=make_loader_dependency_string_factory(strings_factory);
+    const auto file_factory_bridge=std::make_shared<LoaderDependencyFactory>();
+    dependency_services->factory=make_loader_dependency_string_factory(strings_factory,
+        [file_factory_bridge](const LoaderDependencyCall& request){return *file_factory_bridge?(*file_factory_bridge)(request):nullptr;});
     const auto prepared_pool_factory=std::make_shared<IgbDependenciesFactory>();
     const auto prepared_pool_bridge=[prepared_pool_factory](const IgbDependenciesCall& request) {
         return *prepared_pool_factory?(*prepared_pool_factory)(request):nullptr;
@@ -381,8 +384,20 @@ void original_prefix(const std::filesystem::path& supplied) {
         "First dependency factory boundary consumed later tables or invented complete loading.");
     check(!invocation.resume(services).completed && allocations==1 && samples==1 && f.trace.size()==calls,
         "Pending dependency factory replayed completed metadata or string interning.");
+    // Enter the actual wrapper without inventing registered igIGBFile metadata,
+    // field defaults, or an already-constructed file as its result.
+    const auto file_factory=std::make_shared<IgbFileFactoryServices>();
+    *file_factory_bridge=make_native_igb_file_factory(file_factory);
+    const auto registration=invocation.resume(services);
+    check(!registration.completed && registration.diagnostic.find("8002F178")!=std::string::npos,
+        "Native file wrapper did not reach the actual metadata registration boundary.");
+    check(!invocation.resume(services).completed && !file_factory->file_metadata && allocations==1 && samples==1 && f.trace.size()==calls,
+        "Pending file registration invented metadata or replayed completed original work.");
+    check(f.io->stream->position==5381 && f.file->loading==1 && f.file->succeeded_31==0 &&
+        state->dependencies->body && !state->dependencies->body->released,
+        "Native factory wrapper prematurely consumed dependency data or published completion.");
     std::cout<<"Original native runtime types: 20 recovered metatypes, "<<mapped_fields<<" inherited field mappings, 47 matched field classes, 1 unmatched.\n";
-    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native getter/path interning/synchronous request reached file factory8002EBEC.\n";
+    std::cout<<"Original directory path/dependency table: cursor5381, body2453 bytes; native getter/path interning/synchronous request/file wrapper reached registration8002F178.\n";
 }
 }
 int main(int argc,char** argv) {

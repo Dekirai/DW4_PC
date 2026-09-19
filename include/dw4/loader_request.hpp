@@ -19,9 +19,12 @@ struct LoaderRequestFile : SystemStageDirectory {
 private:
     friend class LoaderFileLoadInvocation;
     friend class IgbDecodeInvocation;
+    friend class IgbFilePoolsInvocation;
     std::weak_ptr<void> active_load_;
     std::weak_ptr<void> active_decode_;
     bool load_fault_{},decode_fault_{};
+    bool pool_initialization_fault_{};
+    std::vector<std::shared_ptr<ModelSceneObject>> unpublished_pools_;
 };
 
 enum class LoaderRequestServiceKind {

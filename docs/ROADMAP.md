@@ -96,15 +96,22 @@ list endpoints, original `ndmw.igb` resolves twenty types and sixty fields.
 Directory-path preparation and dependency-table processing now connect native
 ArkCore loader access, string-table interning and synchronous dependency requests.
 With explicitly prepared loader/string-pool allocation state, the supplied prefix
-reaches the first required `igIGBFile` factory `8002EBEC`. One serialized field
-class remains unmatched; loading is unfinished. Continue through complete
-runtime registration and factories, actual `igIGBFile` creation, string-pool
+enters the native `igIGBFile` factory `8002EBEC` and reaches its required class
+registration `8002F178`. Reflected allocation, header/field-pass orchestration
+and the concrete file post-default pool assignments are reconstructed, with
+prepared metadata and allocator/field endpoints in focused tests. One serialized
+field class remains unmatched; loading is unfinished. Continue through actual
+file and parent class registration, their reached field defaults and pool
+allocation, complete runtime factories, string-pool
 initialization/arena allocation/release, object population and post-load callbacks, plus decoder
 cleanup and loader queue/lifecycle work. Reuse the existing checked asset
 and document readers where qualified; do not replace required initialization
 with a successful parse. See [LOADER_REQUEST.md](LOADER_REQUEST.md),
 [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md), [IGB_DECODE.md](IGB_DECODE.md) and
 [CONTEXT_INFO.md](CONTEXT_INFO.md).
+The new construction boundaries and evidence are documented in
+[IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
+[IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
 
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining

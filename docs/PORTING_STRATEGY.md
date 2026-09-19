@@ -129,9 +129,15 @@ full global initialization, object population and post-load effects remain
 required. Directory-path preparation `800505E0`, dependency-table caller
 `800521EC` and pool-name table `80052554` are now native. Native ArkCore loader
 access, string-table interning and synchronous request `8006FA6C` now lead to
-the first required file factory `8002EBEC` in the prepared original-data prefix.
-Concrete factories, pool initialization/allocation/release and complete dependency
-decoding still need connection. Reuse existing document decoders and
+the native file factory `8002EBEC` and its required registration `8002F178` in
+the prepared original-data prefix. Reflected allocation and object header/field
+pass orchestration now compose with the file's concrete post-default pool
+assignments. Current-pool lookup shares the canonical manager globals and
+retains explicit pool preparation. Actual file/parent metadata registration,
+field defaults, pool initialization/allocation/release and complete dependency
+decoding still need connection. See [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
+[IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+Reuse existing document decoders and
 canonical native owners where their behavior agrees; parsing alone must not
 set the original ready/success fields. Pool/factory operations, loader lifecycle,
 queue execution, manager registration and remaining concrete info handlers

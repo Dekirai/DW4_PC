@@ -1,5 +1,63 @@
 # Local validation
 
+## Native reflected file construction and post-default pools
+
+Validated locally on 2026-09-19. Native file factory `8002EBEC` now enters the
+reflected allocation caller `8006546C` and object initializer `800667F4`, with
+the actual allocation-base helper, three field-pass callers and default-mode
+dispatcher. Verified file virtuals connect the current metadata getter,
+return-only leaves and post-default pool assignment `80051698`. Current-pool
+lookup uses the canonical memory-manager globals. See
+[IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
+[IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 148/148 CTest suites passed locally with four jobs; no compiler warnings |
+| Object initialization | 143 checks for header publication, physical vtable reads, first-pass gates, signed modes, F0 low-byte results, captured counts/live backing, fresh metadata, packed-header mutations, pending instance append, callback teardown, physical limits and retained failures |
+| File factory | 85 checks for registration/metadata order, redirects, pool selection, wrapping allocation, pending construction, missing state, ownership and ordinary/dependency adapters; composed native file virtuals and current-pool lookup |
+| File post-default pools | 86 checks for selector/fallback state, lazy preparation, fresh assignments, full-word references, low23 destruction, callback teardown, pending owners, alias cycles and abandonment |
+| Original decoder prefix | 389 original-inclusive / 107 synthetic checks; supplied `ndmw.igb` enters the actual file wrapper and stops at required registration `8002F178`, retaining cursor 5,381, dependency body 2,453 bytes, loading=1 and succeeded=0 |
+| Player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Factory/initializer instruction comparison | 1,761 cases, 348,209 original instructions at 330 addresses, zero differences; 1,153 ordinary returns and 608 matching reached failure prefixes |
+| Pool instruction comparison | 2,092 finite cases, 294,427 original instructions at 177 addresses, zero differences, including 725 reached failure prefixes; four nonterminating original alias cycles excluded explicitly |
+
+The combined factory/initializer comparison executes the original wrapper,
+allocation caller, header initialization, allocation-base helper, three field
+loops and signed default-mode dispatch. Registration, redirects, pool selection
+and allocation, virtual implementations, allocation-owner lookup and instance
+append use explicit prepared endpoints. The separate pool comparison executes
+the actual post-default callback, current-pool wrappers, concrete manager getter
+and fallback traversal; pool preparation, unknown manager virtuals and final
+destructors remain prepared endpoints. Original nonterminating alias cycles
+are not counted as equivalent to the native bounded failure.
+
+Permanent tests additionally cover native callback lifetimes across suspension
+and teardown, and the paired physical/typed reference-word mutation contract.
+Prepared zero-field metadata proves factory/initializer composition only.
+It does not supply or prove the original file's complete registered fields,
+field defaults, decoder state or parent-class initialization.
+
+The supplied-data prefix retains its previously documented prepared list,
+loader, timer and string-pool allocation state. It now binds the real file
+wrapper, which reaches missing `8002F178` registration. No synthetic registration
+success, empty metadata or constructed dependency file is supplied. All 223
+dependencies, graph construction, complete startup and gameplay remain unproved.
+Next work is actual file/parent class registration, reached field-default
+implementations and pool construction/allocation, alongside remaining loader
+and decoder lifecycle work.
+
+Final core SHA256:
+`3D13C184E7C3FD4CEC3982E86851ECB4BFF97CFEFBB9DC19CEA553E3FC92A07A`.
+Ignored evidence: `work/native-file-init-build.log`,
+`work/native-file-init-prefix.log`, `work/native-file-init-player.log`,
+`work/native-file-init-verifier.log`, `work/native-igb-factory-init-result.json`,
+`work/native-igb-factory-init-review.md` and
+`work/native-igb-file-pools-result.json`. Both comparison reports record the
+production library, driver and covered source hashes. No GitHub Actions or
+interactive preview ran; the walking preview is unchanged.
+
 ## Native loader access, synchronous dependencies and string interning
 
 Validated locally on 2026-09-19. The dependency-table caller now composes original

@@ -12,6 +12,10 @@ class IgbMemoryPoolsError : public std::runtime_error {public: using std::runtim
 struct IgbMemoryPoolRegistry {
     std::shared_ptr<IgbScratchBuffer> inline_bytes;
     bool original_lookup_bound{}; // Concrete80471BDC+74 ->8005B410.
+    // Typed pointer identities at +14+i*90. Name-only construction does not
+    // establish these owners. Missing and represented null remain distinct.
+    std::array<std::optional<std::shared_ptr<ModelSceneObject>>,46> pools;
+    bool original_pool_access_bound{}; // Concrete80471BDC+5C ->8005B060.
 };
 struct IgbMemoryPoolsServices {
     std::optional<std::int32_t> selector; // Global805621DC, captured once.

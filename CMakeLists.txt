@@ -37,7 +37,8 @@ target_sources(dw4_core PRIVATE src/context_info.cpp src/loader_directory.cpp sr
 target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src/igb_decode.cpp
   src/igb_runtime_types.cpp src/igb_type_mapping.cpp src/igb_runtime_bootstrap.cpp
   src/igb_loading_paths.cpp src/igb_memory_pools.cpp src/igb_dependencies.cpp
-  src/loader_globals.cpp src/loader_dependency.cpp src/igb_string_pool.cpp)
+  src/loader_globals.cpp src/loader_dependency.cpp src/igb_string_pool.cpp
+  src/igb_object_init.cpp src/igb_file_factory.cpp src/igb_file_pools.cpp)
 if(MSVC)
   set_source_files_properties(src/matrix_inverse.cpp src/hitland_floor.cpp src/hitland_wall.cpp src/hitland_wall_math.cpp src/player_input_math.cpp src/camera_math.cpp src/game_clock.cpp src/igb_decode.cpp PROPERTIES COMPILE_OPTIONS /fp:strict)
 else()
@@ -110,7 +111,7 @@ if(BUILD_TESTING)
   add_executable(dw4_model_hit_land_geometry_scene_tests tests/model_hit_land_geometry_scene_tests.cpp)
   target_link_libraries(dw4_model_hit_land_geometry_scene_tests PRIVATE dw4_core)
   add_test(NAME model_hit_land_geometry_scene COMMAND dw4_model_hit_land_geometry_scene_tests)
-  foreach(suite hitland_geometry hitland_primitives hitland_node_dispatch actor_geometry matrix_inverse hitland_floor hitland_wall game_clock actor_transform application_frame player_input_math viewer serial_scheduler model_manager_frame camera_math system_frame system_stage system_storage context_info loader_directory loader_request native_stage_services igb_stream igb_decode_tables igb_decode igb_runtime_types igb_type_mapping igb_runtime_bootstrap igb_loading_paths igb_memory_pools igb_dependencies loader_globals loader_dependency igb_string_pool)
+  foreach(suite hitland_geometry hitland_primitives hitland_node_dispatch actor_geometry matrix_inverse hitland_floor hitland_wall game_clock actor_transform application_frame player_input_math viewer serial_scheduler model_manager_frame camera_math system_frame system_stage system_storage context_info loader_directory loader_request native_stage_services igb_stream igb_decode_tables igb_decode igb_runtime_types igb_type_mapping igb_runtime_bootstrap igb_loading_paths igb_memory_pools igb_dependencies loader_globals loader_dependency igb_string_pool igb_object_init igb_file_factory igb_file_pools)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

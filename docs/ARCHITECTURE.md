@@ -80,8 +80,18 @@ and synchronous dependency request `8006FA6C`. The getter reads the canonical
 ArkCore owner `80562100` field `+40`, separately from direct loader global
 `80562104`. Native interning preserves ordered table search/insertion, live mutex
 selection and full-word string references. With explicitly prepared loader and
-string-pool allocation state, the original prefix reaches file factory
-`8002EBEC`; it has not loaded all 223 dependencies. Pool-name table `80052554` uses the recovered memory-manager selection
+string-pool allocation state, the original prefix enters file factory
+`8002EBEC` and reaches class registration `8002F178`; it has not loaded all 223
+dependencies. The reflected factory now owns original redirect/pool/allocation
+selection and calls the reconstructed object initializer. Explicit physical
+storage and typed bindings preserve header writes, fresh metadata/virtual reads,
+three captured field ranges and instance-count publication. Concrete file
+virtuals connect the actual three post-default pool assignments and selected
+manager pool lookup. Registration, field defaults and allocation services remain
+explicit; a prepared empty field list does not establish original construction.
+See [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
+[IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
+Pool-name table `80052554` uses the recovered memory-manager selection
 and original 46-name lookup to obtain numeric handles, with list construction
 and allocation still explicit.
 The unsupported serialized shader field remains null, and loading is unfinished.
