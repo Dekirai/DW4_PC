@@ -3,6 +3,7 @@
 #include <bit>
 #include <chrono>
 #include <exception>
+#include <limits>
 #include <utility>
 
 namespace dw4 {
@@ -53,6 +54,17 @@ std::uint64_t NativeGameClock::time() {
     // 8009366C..688 reload both fields after the platform call. A getter does
     // not cache the result or modify start/additional time.
     return state_.additional_time+now-state_.start_time;
+}
+double NativeGameClock::time_seconds() {
+    static_assert(std::numeric_limits<double>::is_iec559 && std::numeric_limits<double>::digits==53);
+    const auto nanoseconds=std::bit_cast<std::int64_t>(time());
+    // 800936A0 converts signed remainder and quotient separately. Both fit
+    // exactly in binary64. Preserve the division rounding before the addition;
+    // converting the full nanosecond word first can produce a different result.
+    constexpr std::int64_t scale=1000000000;
+    const auto fraction=static_cast<double>(nanoseconds%scale)/1000000000.0;
+    const auto seconds=static_cast<double>(nanoseconds/scale);
+    return seconds+fraction;
 }
 void NativeGameClock::start() {
     Operation operation(*this);

@@ -13,8 +13,8 @@ player and collision operations. The walking preview displays original assets,
 but its movement and camera remain provisional. **It is not yet a complete or
 1:1 playable reconstruction of Digimon World 4.**
 
-The immediate work is completing the original collision response and connecting
-it to the recovered player frame, startup and scheduler. See
+The immediate work is connecting the original startup loader to runtime object
+construction, alongside the remaining player-frame and collision requirements. See
 [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md) for the continuation plan and
 [ROADMAP.md](docs/ROADMAP.md) for the acceptance gates. Build the active project
 with `scripts/build.ps1 -Jobs 4`; `Play-DW4-PC.cmd` and `Start-DW4-PC.cmd` open
@@ -73,8 +73,13 @@ The stage adapter now enters actual directory lookup/request, loading-claim
 release and application info-registration bodies. A prepared cached-directory
 integration covers request, suspended registration and cache removal. New-file
 requests retain the original synchronous path search or asynchronous queue
-call; concrete IGB deserialization/post-load work remains an explicit boundary.
-See [NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md).
+call. The decoder now supplies original load orchestration, concrete byte-stream
+opening/header processing and three early runtime table helpers. Supplied
+`ndmw.igb` reaches metatype construction with explicitly prepared registry/list
+endpoints; loading remains incomplete at that boundary. Real type/object
+construction, post-load work and cleanup remain required. See
+[NATIVE_STAGE_SERVICES.md](docs/NATIVE_STAGE_SERVICES.md) and
+[IGB_DECODE.md](docs/IGB_DECODE.md).
 The specialized camera view-inverse helper is also recovered; complete camera
 mode evaluation and publication remain required. Original registration, other
 manager bodies and the dispatcher still need integration. See

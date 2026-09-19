@@ -4,6 +4,7 @@
 
 namespace dw4 {
 class LoaderRequestError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
+struct IgbDecodeState;
 
 // Reached igIGBFile fields. This is an owner representation, not an original
 // factory: original reflected defaults and post-default pool initialization
@@ -12,10 +13,15 @@ struct LoaderRequestFile : SystemStageDirectory {
     std::uint8_t format_24{},option_41{},succeeded_31{},initialize_after_load_115{};
     std::uint32_t option_a4{};
     std::shared_ptr<ModelSceneObject> pool_118,pool_11c,pool_120;
+    // Concrete decoder fields, supplied by reflected construction or explicit
+    // preparation. Absence does not imply an initialized empty igIGBFile.
+    std::shared_ptr<IgbDecodeState> igb_decode;
 private:
     friend class LoaderFileLoadInvocation;
+    friend class IgbDecodeInvocation;
     std::weak_ptr<void> active_load_;
-    bool load_fault_{};
+    std::weak_ptr<void> active_decode_;
+    bool load_fault_{},decode_fault_{};
 };
 
 enum class LoaderRequestServiceKind {

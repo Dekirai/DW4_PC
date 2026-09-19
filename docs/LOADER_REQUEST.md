@@ -151,10 +151,13 @@ Existing authored components can support that next implementation:
   registration and claim release through these caller modules. It does not
   supply missing stream, factory, queue, post-load or decoder behavior.
 
-The next decoder increment should connect those components at proven original
-boundaries, retaining the actual document/resource owner through directory
-exports, and qualify its status and cleanup paths against original instructions.
-It must not equate successful document parsing with the decoder's success tail.
+The native decoder adapter now connects the original `800528DC` orchestration
+and failure tail to actual stream/header and early table bodies. Its supplied
+`ndmw.igb` integration reaches runtime metatype construction with explicitly
+prepared registry/list endpoints. Complete type/object construction, canonical
+resource exports and post-load/cleanup effects remain required. See
+[IGB_DECODE.md](IGB_DECODE.md). Successful document parsing is not the decoder's
+success tail.
 
 ## Validation
 

@@ -93,6 +93,34 @@ recursive providers fault it without rolling back an already visible prefix;
 later operations cannot silently retry an incomplete sample. This failure
 handling is a native service contract, not an original hardware exception model.
 
+## Seconds getter
+
+`time_seconds()` implements concrete virtual `+64 / 800936A0`, used by the
+IGB decoder's entry/exit timing. It calls the integer getter exactly once,
+interprets the resulting 64-bit word as signed nanoseconds, and preserves
+the original sequence:
+
+```text
+fraction = double(signed_nanoseconds % 1,000,000,000) / 1,000,000,000.0
+seconds = double(signed_nanoseconds / 1,000,000,000)
+result = seconds + fraction
+```
+
+Signed division truncates toward zero. The original signed remainder
+`800A3D14`, division `800A3AF8` and conversion `800A3E90` execute in that
+order around the binary64 division/addition. Quotient and remainder both fit
+exactly in binary64. Dividing a converted full nanosecond word can round
+differently: input `49F4EABE5EDAC255` produces original result bits
+`41F3DA4425A71355`, while that single-division expression gives
+`41F3DA4425A71356`. The implementation preserves separate arithmetic
+operations under strict floating-point compilation.
+
+The stopped branch uses the stored accumulator without requiring a platform
+source. The running branch retains the integer getter's live-field reads,
+wraparound, one-sample behavior and provider fault/reentry checks. It does not
+change the timer state. This is a double API; the decoder's elapsed subtraction
+also retains double precision.
+
 ## Platform source and numerical comparison
 
 Original `8007734C` calls `OSGetTime` at `80262284`, reads bus frequency from
@@ -135,7 +163,7 @@ with the retained dispatch while a later node input update is pending. A
 completed dispatch does not resample on retry. Absence of a required service
 continues to report the original boundary.
 
-The floating-second wrappers (`+5C`, `+64`, `+80`, `+88`), resolution API,
+The remaining floating-second wrappers (`+5C`, `+80`, `+88`), resolution API,
 whole core startup, frame pacing, scheduler, suspend policy and global pause
 integration remain separate work. The original `+80` setter includes a
 floating conversion through `800A4130`; it is not replaced with a guessed
@@ -143,10 +171,17 @@ host cast. This clock is a recovered native service, not evidence that the
 whole animation or gameplay update pipeline is complete.
 
 The local test suite exercises lifecycle ordering, noncanonical stopped bytes,
-modulo arithmetic, failure prefixes, callback field reloads and the real PC
-monotonic source without sleeps or a strictly increasing-tick assumption.
-The final local build passes 120/120 CTest suites, including 60 clock checks.
-The final production-core comparison covers 4,264 lifecycle cases, 4,001
+modulo arithmetic, failure prefixes, callback field reloads, original seconds
+bit patterns and the real PC monotonic source without sleeps or a strictly
+increasing-tick assumption. Seconds vectors include signed boundaries and
+cases where a single full-word conversion would differ by one binary64 step.
+The earlier integer production-core comparison covers 4,264 lifecycle cases, 4,001
 hardware conversions and 12 forced timebase rollovers with zero mismatches.
-Transform comparison and original player-frame results are recorded in
+The production-core seconds comparison passes 20,032 stopped/running cases
+with zero mismatches. Its oracle executes 16,977,350 original instructions in
+the getter, signed remainder/division and conversion routines, with independently
+rounded binary64 division/addition. Only the running platform nanosecond source
+is a prepared endpoint; no hardware sampling equality is claimed. Current
+production comparisons, transform checks and original
+player-frame results are recorded in
 [VALIDATION.md](VALIDATION.md).

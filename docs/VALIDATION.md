@@ -1,5 +1,79 @@
 # Local validation
 
+## Native IGB stream, early tables and decoder orchestration
+
+Validated locally on 2026-09-19. The directory loader now has a native adapter
+for original decoder `800528DC`, its failure tail, concrete stream/header
+processing and three early table bodies. Original `ndmw.igb` reaches runtime
+metatype construction with explicitly prepared field registry/list endpoints.
+It remains loading at that boundary; complete native boot is not established.
+See [IGB_DECODE.md](IGB_DECODE.md), [IGB_STREAM.md](IGB_STREAM.md) and
+[IGB_DECODE_TABLES.md](IGB_DECODE_TABLES.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 136/136 CTest suites passed locally with four build jobs; no compiler warnings in the final build |
+| Stream/header suite | 258 synthetic / 271 original-inclusive checks; byte order, status/version flags, short and stale reads, pool bindings, retained callbacks and reached ownership failures |
+| Early tables | 57 synthetic / 116 original-inclusive checks; field metadata matching, duplicate calls, null unmatched fields, alignment defaults, physical slots, shared cursor and failure prefixes |
+| Decoder orchestration | 97 checks for original helper order, checked failures, live status/version gates, warning/log rules, timer ordering, suspension, recursion and actual loader/header/table composition |
+| Clock | 104 permanent checks, including binary64 seconds, original rounding, stopped/live behavior and one-sample ownership |
+| Original loading prefix | `ndmw.igb`: 48 prepared runtime field mappings, four default-16 alignments and raw descriptions of 20 types; exact cursor 2,916, pending `8004FC94`, loading=1 and succeeded=0 |
+| Original header integration | Actual `ndmw.igb`, `bectext.igb`, `dng101b1.igb` and `dng101b2.igb` headers agree with the independent metadata reader |
+| Original player regression | 447 original-inclusive / 62 synthetic checks; existing four-player prepared frame coverage remains intact |
+| Python asset verifier | 6 synthetic tests passed locally |
+| Stream/header instruction comparison | 5,120 cases, 1,539,152 original instructions at 370 addresses; zero mismatches against the final core |
+| Decoder caller instruction comparison | 5,457 cases, 4,927,279 instructions at 605 addresses; zero mismatches, including 4,530 normal returns and 927 matching reached endpoint failures |
+| Clock seconds instruction comparison | 20,032 cases, 16,977,350 instructions at 241 addresses; zero mismatches |
+
+The stream corpus executes the actual header, scratch-buffer caller, byte swap,
+opening caller, basename helper and mode setter. Stream reads, pool allocation
+and free, singleton getters, underlying filename dispatch and interning are
+prepared endpoints. It uses bounded valid buffers, full header reads and
+nonfinal guest references. Permanent tests cover additional missing/short data,
+unknown scratch bytes, pending native pool bindings and explicit final-destructor
+boundaries. Neither corpus claims complete original allocator or file-manager
+internals.
+
+The decoder comparison executes original main/failure orchestration and the
+actual timer seconds/getter/signed arithmetic bodies. Every format/table helper,
+activation, cleanup, conditional close, warning and log body is an explicitly
+prepared endpoint in that caller comparison. It compares callback-visible
+prefixes, live status/version/clock changes, exact elapsed binary64 bits and
+failure boundaries. This qualifies the caller, not those prepared helper bodies.
+The separate supplied-data integration does execute concrete open/header and
+all three early table helpers. Its field registry is deliberately prepared from
+independently decoded names, and its empty alignment registry selects default
+16. Those fixtures do not qualify original runtime registration or constructors.
+
+The clock corpus executes `800936A0`, `80093630` and the actual signed
+remainder/division/conversion routines, using independent integer-based binary64
+rounding for division/addition. Only the running platform nanosecond source is
+prepared. It includes signed limits and cases where converting the entire
+nanosecond word before division differs by one binary64 step. Matching supplied
+samples does not claim identical host and console clock sampling.
+
+Independent source review corrected scratch publication after free, explicit
+pool selection, final old-field destructor boundaries and persistent ownership
+of the field-list factory reference. The field table keeps that creator
+reference separately from its published `+BC` reference; this is required by
+the original cleanup's two live releases. The alignment list instead drops its
+temporary creator reference at its actual release site. Cleanup itself remains
+a named implementation boundary. A fresh-file original test also clears the
+direct-table fixture's prepared endian field before running actual header setup.
+
+Remaining work includes concrete file/registry factories, `8004FC94` metatype
+and slot reconciliation, object construction/population, post-load effects,
+cleanup/closing, queue execution and original startup registration. The native
+walking preview is unchanged. No interactive preview or GitHub Actions ran.
+
+All three final comparison drivers link production `dw4_core.lib`, SHA256:
+`09A477BD9A315D82FE9CA4A7CA77ECDCBD7073822F5E2C717DAE25536ECC716A`.
+Ignored evidence includes `work/native-igb-final-build.log`,
+`work/native-igb-stream-original.log`, `work/native-igb-tables-original.log`,
+`work/native-igb-player-original.log`, `work/native-igb-python-verifier.log`,
+`work/native-igb-stream-result.json`, `work/native-igb-decode-main-result.json`
+and `work/native-igb-decode-clock-result.json`.
+
 ## Native directory requests, loading claims and context info registration
 
 Validated locally on 2026-09-19. The stage factory now enters actual native

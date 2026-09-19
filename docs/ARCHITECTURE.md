@@ -63,8 +63,15 @@ manager registry remains distinct from the scheduler's active registry, while
 both may hold the same native manager identities. Directory loading claims are
 separate signed words from object references. Cache lookup/reuse and removal,
 mutex callbacks and new-file request publication preserve their actual order.
-File creation, queue execution, concrete IGB decode/post-load behavior and loader
-preparation/cleanup still require their reached native implementations. See
+The IGB decoder now enters actual stream/header and early runtime table bodies
+through the original load orchestration. Its canonical state belongs to the
+loader file, with a weak stream back-reference. Live status words, version gates,
+timing and success/failure tails retain their original publication order.
+Supplied-data early-table integration uses explicitly prepared runtime registry
+and list endpoints and stops at actual metatype construction. File creation,
+queue execution, remaining IGB type/object/post-load bodies, decoder cleanup
+and loader preparation/cleanup still require their reached implementations. See
+[IGB_DECODE.md](IGB_DECODE.md),
 [NATIVE_STAGE_SERVICES.md](NATIVE_STAGE_SERVICES.md),
 [LOADER_REQUEST.md](LOADER_REQUEST.md), [LOADER_DIRECTORY.md](LOADER_DIRECTORY.md)
 and [CONTEXT_INFO.md](CONTEXT_INFO.md).

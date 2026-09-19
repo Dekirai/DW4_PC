@@ -1,6 +1,7 @@
 #include "dw4/game_clock.hpp"
 
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -68,6 +69,66 @@ void modulo_arithmetic() {
     check(original_gamecube_clock_nanoseconds(max,162000000)==max-23,"Signed wrapped conversion did not truncate toward zero.");
     check(original_gamecube_clock_nanoseconds(max,500000)==max-7999,"Original conversion changed wrapped numerator words.");
     rejects([] {original_gamecube_clock_nanoseconds(1,499999);},"Zero-divisor hardware conversion was accepted.");
+}
+void signed_seconds() {
+    // Original800936A0/800A3D14/800A3AF8/800A3E90 instruction-derived
+    // binary64 results. The final rows distinguish split conversion from a
+    // single double(nanoseconds)/1e9 expression in both rounding directions.
+    struct Case {std::uint64_t nanoseconds,bits;};
+    constexpr std::array cases{
+        Case{0x0000000000000000,0x0000000000000000},
+        Case{0x0000000000000001,0x3e112e0be826d695},
+        Case{0x000000003b9ac9ff,0x3fefffffff768fa1},
+        Case{0x000000003b9aca00,0x3ff0000000000000},
+        Case{0x000000003b9aca01,0x3ff000000044b830},
+        Case{0x00000000ffffffff,0x40112e0be815a889},
+        Case{0x0000000100000000,0x40112e0be826d695},
+        Case{0x001fffffffffffff,0x41612e0be826d694},
+        Case{0x0020000000000001,0x41612e0be826d695},
+        Case{0x7fffffffffffffff,0x42012e0be826d695},
+        Case{0x8000000000000000,0xc2012e0be826d695},
+        Case{0xffffffffffffffff,0xbe112e0be826d695},
+        Case{0xffffffffc4653601,0xbfefffffff768fa1},
+        Case{0xffffffffc4653600,0xbff0000000000000},
+        Case{0xffffffffc46535ff,0xbff000000044b830},
+        Case{0x49f4eabe5edac255,0x41f3da4425a71355},
+        Case{0x8bcb42de1f726300,0xc1ff319dc3863360},
+        Case{0x010bac9562730e76,0x4191f69b6188c33b},
+        Case{0x70f279ae289545ab,0x41fe51ab9d186282}
+    };
+    for(const auto& item:cases) {
+        unsigned samples{};
+        NativeGameClock clock([&] {++samples;return item.nanoseconds-2;});
+        clock.state()={5,item.nanoseconds,11,255};const auto stopped=clock.state();
+        check(std::bit_cast<std::uint64_t>(clock.time_seconds())==item.bits && samples==0 && clock.state()==stopped,
+            "Stopped seconds getter changed original signed conversion, state or sample count.");
+        clock.state()={5,7,11,0};const auto running=clock.state();
+        check(std::bit_cast<std::uint64_t>(clock.time_seconds())==item.bits && samples==1 && clock.state()==running,
+            "Running seconds getter changed wrapped timer words or sampled more than once.");
+    }
+    NativeGameClock* active{};unsigned samples{};
+    NativeGameClock mutated([&] {
+        ++samples;active->state()={30,0x49f4eabe5edac25f,17,255};return std::uint64_t{20};
+    });
+    active=&mutated;mutated.state()={1,2,3,0};
+    check(std::bit_cast<std::uint64_t>(mutated.time_seconds())==0x41f3da4425a71355 && samples==1 &&
+        mutated.state()==GameClockState{30,0x49f4eabe5edac25f,17,255},
+        "Seconds getter failed to use the integer getter's live fields after its one sample.");
+
+    NativeGameClock absent(GameClockSource{});
+    check(absent.time_seconds()==0 && !absent.faulted(),"Stopped seconds getter required an unused source.");
+    absent.state()={10,20,30,0};
+    rejects([&] {absent.time_seconds();},"Running seconds getter fabricated a missing source.");
+    check(absent.faulted() && absent.state()==GameClockState{10,20,30,0},"Seconds source failure changed the timer state.");
+    bool recursive_rejected{};
+    NativeGameClock recursive([&] {
+        try {active->time_seconds();}catch(const GameClockError&) {recursive_rejected=true;}
+        return std::uint64_t{100};
+    });
+    active=&recursive;recursive.state()={10,20,30,0};
+    rejects([&] {recursive.time_seconds();},"Caught recursive seconds sampling completed the outer getter.");
+    check(recursive_rejected && recursive.faulted() && recursive.state()==GameClockState{10,20,30,0},
+        "Seconds recursion did not preserve the integer getter's fault contract.");
 }
 void live_sample_fields() {
     // These are provider contract fixtures. A host callback can alter restored
@@ -143,7 +204,7 @@ void real_monotonic_source() {
 } // namespace
 int main() {
     try {
-        lifecycle();modulo_arithmetic();live_sample_fields();provider_failure_prefixes();real_monotonic_source();
+        lifecycle();modulo_arithmetic();signed_seconds();live_sample_fields();provider_failure_prefixes();real_monotonic_source();
         std::cout<<"Passed "<<checks<<" native game clock checks.\n";
         return 0;
     }catch(const std::exception& error) {

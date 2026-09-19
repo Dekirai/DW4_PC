@@ -29,6 +29,13 @@ adapter supplies no successful placeholder implementation. Likewise, native
 directory request preserves its concrete IGB decoder and asynchronous queue
 boundaries. Parsed assets alone are not a completed runtime scene.
 
+The loader's decoder operation can now be bound through
+`make_native_igb_loader_factory`. That adapter enters original load orchestration
+and concrete stream/header/early-table helpers, retaining pending runtime type
+construction and later lifecycle operations. It does not change the cached-scene
+acceptance scope below or establish complete startup. See
+[IGB_DECODE.md](IGB_DECODE.md).
+
 ## Integration profile
 
 The permanent integration fixture starts with an explicitly prepared cached

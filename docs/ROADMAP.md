@@ -89,12 +89,16 @@ Directory lookup, claim acquisition/release, request control flow and context
 info dispatch now have native implementations connected through the stage
 adapter. The prepared cached-directory test reaches real registration and
 zero-claim cache removal, with a retained pending second handler. This is not a
-new-file boot acceptance. Continue through actual `igIGBFile` creation and
-`800528DC` deserialization, including instance construction and post-load
-callbacks, plus loader queue/lifecycle work. Reuse the existing checked asset
+new-file boot acceptance. The `800528DC` caller now connects actual stream/header
+and the first three table helpers. Original `ndmw.igb` reaches runtime metatype
+construction with explicitly prepared registry/list endpoints; it does not
+finish loading. Continue through `8004FC94` type/slot reconciliation, actual
+`igIGBFile` creation, object population and post-load callbacks, plus decoder
+cleanup and loader queue/lifecycle work. Reuse the existing checked asset
 and document readers where qualified; do not replace required initialization
 with a successful parse. See [LOADER_REQUEST.md](LOADER_REQUEST.md),
-[LOADER_DIRECTORY.md](LOADER_DIRECTORY.md) and [CONTEXT_INFO.md](CONTEXT_INFO.md).
+[LOADER_DIRECTORY.md](LOADER_DIRECTORY.md), [IGB_DECODE.md](IGB_DECODE.md) and
+[CONTEXT_INFO.md](CONTEXT_INFO.md).
 
 After completing the query responses, connect that core lifecycle to original
 startup and per-frame execution order: assigned device input, remaining

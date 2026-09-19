@@ -44,6 +44,7 @@ public:
     const GameClockState& state() const noexcept {return state_;}
 
     std::uint64_t time();      // +68 / 80093630: stopped or live elapsed time.
+    double time_seconds();    // +64 / 800936A0: one signed nanosecond sample, split into seconds and fraction.
     void start();              // +6C / 80093728: resume only if stopped.
     void pause();              // +70 / 8009377C: accumulate then stop.
     void reset();              // +74 / 800937F0: reset amount, preserve stopped.
