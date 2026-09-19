@@ -154,15 +154,20 @@ and now executes actual `igObject` parent registration, its root callback-list
 construction, native name interning and layout probe. Defaults `80066B7C` now
 construct `_refCount` and `_memPoolIndex` through the actual specialized factory,
 name setter, unsigned-integer default-buffer preparation, finalization and raw
-append. The cold chain reaches type publication `800660AC` with reflection still
-disabled. See [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
+append. Type publication `800660AC` and field layout `80065A58` now complete
+`igObject`; actual child-list construction and inherited field append then
+reach the `igMetaObject` constructor probe `80029FFC`, with reflection still
+disabled. See [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
+[IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
 [IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
 Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
-actual ArkCore initial capacity/reserve in a separate cold-prefix integration;
-allocator virtuals remain explicit. Continue from that cold path through the
-runtime registry publication, remaining metadata schema, layout and the outer
+actual ArkCore initial capacity/reserve in this same cold integration, with a
+separate byte-only backing profile. Allocator virtuals remain explicit.
+Continue from the real metadata constructor probe through its descriptor table
+and remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

@@ -72,13 +72,18 @@ then this native `igObject` parent registration with distinct allocations.
 The root parent list is initialized natively; actual metadata naming invokes
 native string lookup, copying, header initialization and insertion. The layout
 probe runs before both native descriptors are constructed, named, finalized and
-appended. The call then suspends at runtime type publication `800660AC`.
+appended. Actual type publication `800660AC` and field layout `80065A58` then
+complete igObject, including the original empty registration-callback dispatch.
+Its inherited child-list construction and field append advance igMetaObject to
+the constructor probe `80029FFC`.
 
-At that boundary `igMetaObject` remains busy with flag `8`, `igObject` has flags
-`11`, and ArkCore is still disabled. No successful registration or reflective
-enable store has occurred. Platform/manager initialization, initial ArkCore list
-owners/reserve, physical allocation and string-arena allocation are explicitly
+At that boundary `igMetaObject` remains busy with flags `9`, `igObject` has
+completed flags `7`, and ArkCore is still disabled. Initial ArkCore list
+construction/reserve also run natively in the same integration. Platform/manager
+initialization, physical allocation and string-arena allocation remain explicitly
 prepared endpoints. This is a composed native prefix, not complete cold startup.
+See [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md) and
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md).
 
 Permanent tests cover exact argument identities, all getter aliases, captured
 pool/allocator continuations, null allocation, constructor-after-callback order,

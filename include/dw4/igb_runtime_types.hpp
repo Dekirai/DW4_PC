@@ -19,6 +19,10 @@ inline bool igb_field_global_slot_is_null(const std::weak_ptr<IgbRuntimeFieldSlo
     const std::weak_ptr<IgbRuntimeFieldSlot> empty;
     return !slot.owner_before(empty) && !empty.owner_before(slot);
 }
+inline bool igb_field_declaring_type_is_null(const std::weak_ptr<IgbRuntimeMetaType>& type) noexcept {
+    const std::weak_ptr<IgbRuntimeMetaType> empty;
+    return !type.owner_before(empty) && !empty.owner_before(type);
+}
 struct IgbRegistrationCallbackList;
 struct IgbRuntimeTypeList;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
@@ -48,7 +52,8 @@ struct IgbDecodeRuntimeField {
     IgbFieldNameSlot name_string;
     std::optional<std::uint32_t> name_string_address;
     std::optional<std::uint16_t> type_ordinal; // +10; distinct from ordinal+12.
-    std::optional<std::shared_ptr<IgbRuntimeMetaType>> declaring_type; // +18.
+    // +18 is a nonowning back-reference into the declaring type's field list.
+    std::optional<std::weak_ptr<IgbRuntimeMetaType>> declaring_type;
     // +1C: absent is unknown, ownerless weak is null, expired owned weak faults
     // at a reached dereference. Canonical global storage has its own lifetime.
     std::optional<std::weak_ptr<IgbRuntimeFieldSlot>> global_slot;

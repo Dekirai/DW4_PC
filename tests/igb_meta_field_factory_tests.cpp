@@ -46,7 +46,7 @@ void exact_constructed_bytes(){
         check(f.object.storage->bytes->bytes==expected,"Descriptor stores or untouched padding differ from the original constructor.");
         check(f.field->vtable_word==vt && f.field->reference_word==1 && f.field->offset==0 && f.field->type_ordinal==0xffff && f.field->ordinal==0 && f.field->size==0,"Descriptor canonical header/layout differs from physical stores.");
         check(f.field->name_string && !*f.field->name_string && f.field->name_string_address==0 && f.field->default_bytes && !f.field->default_bytes->buffer && f.field->default_bytes_address==0,"Descriptor reset invented strings/default allocation.");
-        check(f.field->declaring_type && !*f.field->declaring_type && f.field->global_slot && igb_field_global_slot_is_null(*f.field->global_slot) && f.field->global_slot_address==0,"Descriptor reset failed to establish known null pointer slots.");
+        check(f.field->declaring_type && igb_field_declaring_type_is_null(*f.field->declaring_type) && f.field->global_slot && igb_field_global_slot_is_null(*f.field->global_slot) && f.field->global_slot_address==0,"Descriptor reset failed to establish known null pointer slots.");
         check(f.field->flag_26==1 && f.field->flag_25==0 && f.field->flag_2b==1 && f.field->flag_2c==2 && f.field->default_mode==0 && f.field->word_30==0,"Descriptor flag defaults differ.");
         check(f.strings.empty() && f.calls.empty(),"Original null-name leaf was delegated to a fake interner or descriptor virtual.");
     }
@@ -93,8 +93,11 @@ void injected_name_release_and_owners(){
     Fixture nonowning;auto global=std::make_shared<IgbRuntimeFieldSlot>(nonowning.field);std::weak_ptr<IgbRuntimeFieldSlot> weak_global=global;
     nonowning.field->global_slot=global;nonowning.field->global_slot_address=0x805622a8;global.reset();
     check(weak_global.expired() && !igb_field_global_slot_is_null(*nonowning.field->global_slot),"Descriptor global binding formed an owning cycle or lost expired pointer identity.");
+    auto declaring=std::make_shared<IgbRuntimeMetaType>();nonowning.field->declaring_type=declaring;
+    declaring.reset();check(!igb_field_declaring_type_is_null(*nonowning.field->declaring_type) && nonowning.field->declaring_type->expired(),"Declaring type binding retained its owner or confused expired and null pointers.");
     IgbMetaFieldConstructorInvocation overwrite(nonowning.object,IgbMetaFieldConstructor::reset);
     check(overwrite.resume(nonowning.services).completed && igb_field_global_slot_is_null(*nonowning.field->global_slot),"Raw constructor reset dereferenced or retained a replaced nonowning global cell.");
+    check(igb_field_declaring_type_is_null(*nonowning.field->declaring_type),"Raw constructor reset retained or dereferenced a replaced declaring type.");
 }
 void enabled_branch_and_faults(){
     Fixture enabled;enabled.core->enabled=1;auto first=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();*enabled.services->metadata=first;

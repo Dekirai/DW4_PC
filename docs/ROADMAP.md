@@ -115,12 +115,16 @@ while disabled. A separate composed test constructs and publishes canonical
 busy metadata, then enters actual `igObject` parent registration, root-parent
 callback construction, native name interning and layout probe. The two specialized
 field defaults `80066B7C` now execute their real constructor, name assignment,
-default-buffer preparation, finalization and append. The next boundary is type
-publication `800660AC`, with reflection still disabled. Another
-integration now composes actual initial core-list constructors and reserve;
-byte-only backing still reaches the required allocator size query. Continue
-from that cold path: recover registry publication, then remaining metadata schema
-and layout. See [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
+default-buffer preparation, finalization and append. Actual type publication
+`800660AC` and field layout `80065A58` now complete the base registration; actual
+child-list construction and inherited field append reach the `igMetaObject`
+constructor probe `80029FFC`, with reflection still disabled. Initial core-list
+constructors/reserve now run in this same chain; the separate byte-only backing
+profile remains covered. Continue through that metadata probe and its descriptor
+table, then remaining class registrations. See
+[IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
+[IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
 [IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
 Complete the outer ArkCore creation/publication wrapper

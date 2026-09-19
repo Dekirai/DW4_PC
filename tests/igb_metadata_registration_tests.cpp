@@ -5,6 +5,9 @@
 #include "dw4/igb_metadata_operations.hpp"
 #include "dw4/igb_string_pool.hpp"
 #include "dw4/igb_object_defaults.hpp"
+#include "dw4/igb_type_list_factory.hpp"
+#include "dw4/igb_type_publication.hpp"
+#include "dw4/igb_metadata_layout.hpp"
 
 #include <iostream>
 
@@ -184,10 +187,9 @@ void cycles_and_adapters(){
     c.function=0x8002a0d0;rejects([&]{expired(c);},"Expired adapter selected nonexistent services.");
 }
 void actual_cold_bootstrap_prefix(){
-    // Platform/memory-pool activation, the two initial runtime type-list
-    // owners and their reserve operation are explicit prepared endpoints.
-    // Registration, metadata allocation
-    // orchestration and both concrete object constructors execute natively.
+    // Platform/memory-pool activation and physical allocators remain explicit
+    // prepared endpoints. Initial type-list construction/reserve, registration
+    // and concrete metadata/field constructors all execute natively.
     Fixture f;using AK=IgbArkCoreServiceKind;using FK=IgbFieldRegistryServiceKind;
     IgbArkCoreObject ark{allocation(0x300000,0x3a0),f.core};
     igb_construct_ark_core(ark);
@@ -215,7 +217,7 @@ void actual_cold_bootstrap_prefix(){
             if(c.kind==FK::object_pool){++object_pool_calls;check(c.handle==0,"Actual list base reset did not supply object pool tag zero.");out->pool_result=f.pool;}
             else{++backing_polls;check(c.pool==f.pool && c.bytes==16,"Actual list backing request changed owner or size.");
                 if(!backing_ready)return MessengerCallResult{false,0,"prepared physical backing allocator"};
-                out->backing_result={backing,{}};}
+                out->backing_result={backing,std::make_shared<IgbDecodeFieldRegistry::Storage>(4)};}
             return MessengerCallResult{true,0,{}};};return op;
     };
     auto bootstrap=std::make_shared<IgbArkCoreBootstrapServices>();bootstrap->bootstrap=f.services->metadata->bootstrap;
@@ -223,21 +225,54 @@ void actual_cold_bootstrap_prefix(){
     f.services->callbacks->runtime=f.services->types->runtime;
     std::vector<IgbArkCoreServiceKind> prefix;
     std::vector<std::shared_ptr<IgbRuntimeTypeList>> initial_lists;
+    std::vector<IgbBootstrapPointer> initial_allocations,initial_backings;
     std::vector<std::shared_ptr<IgbRegistrationCallbackList>> initial_callbacks;
-    bootstrap->factory=[&](const IgbArkCoreCall& c){
+    auto native_lists=std::make_shared<IgbTypeListServices>();native_lists->bootstrap=std::make_shared<IgbBootstrapServices>();
+    native_lists->bootstrap->runtime=f.services->types->runtime;
+    native_lists->bootstrap->factory=[&](const IgbBootstrapCall& c){
+        check(c.kind==BK::pool_allocate && c.bytes==16 && c.pool==f.pool,"Cold type-list object allocation changed its actual request.");
+        auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,out=op.get()]{
+            auto list=std::make_shared<IgbRuntimeTypeList>();list->count=23;list->capacity=29;
+            auto physical=allocation(0x500000+static_cast<std::uint32_t>(initial_lists.size())*0x100,16);
+            physical.storage->bindings.push_back({0,{},{},{},list});initial_lists.push_back(list);initial_allocations.push_back(physical);
+            out->allocation_result=physical;return MessengerCallResult{true,0,{}};};return op;
+    };
+    native_lists->factory=[&](const IgbTypeListCall& c){
+        auto op=std::make_shared<IgbTypeListOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbTypeListServiceKind::object_pool){check(c.handle==0,"Cold type-list constructor did not reset its pool tag.");out->pool_result=f.pool;}
+            else if(c.kind==IgbTypeListServiceKind::allocate_backing){
+                check(c.pool==f.pool && c.bytes==16,"Cold type-list backing allocation changed its pool/size.");
+                auto physical=allocation(0x510000+static_cast<std::uint32_t>(initial_backings.size())*0x100,16);
+                physical.storage->bytes->initialized.assign(16,0);initial_backings.push_back(physical);
+                out->backing_result={physical,std::make_shared<IgbRuntimeTypeList::Storage>(4)};
+            }else throw std::runtime_error("Cold type-list construction reached unexpected reflection or virtual work");
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    auto type_pointers=std::make_shared<IgbPointerListServices>();
+    auto grown_types=allocation(0x520000,1536*4);grown_types.storage->bytes->initialized.assign(1536*4,0);
+    auto grown_type_mapping=std::make_shared<IgbRuntimeTypeList::Storage>(1536);unsigned type_size_queries{},type_growths{};
+    type_pointers->factory=[&](const IgbPointerListCall& c){
+        auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,out=op.get()]{
+            switch(c.kind){
+            case IgbPointerListServiceKind::allocation_pool:out->pool_result=f.pool;break;
+            case IgbPointerListServiceKind::allocation_size:
+                ++type_size_queries;check(c.pool==f.pool,"Native type-list query lost its pool.");
+                if(c.backing.address==igb_bootstrap_address(grown_types))out->size_result=1536*4;
+                else{bool found{};for(const auto& value:initial_backings)if(igb_bootstrap_address(value)==c.backing.address){found=true;out->size_result=16;}
+                    check(found,"Native type-list query used unallocated backing.");}break;
+            case IgbPointerListServiceKind::object_pool:check(c.handle==0,"Native list growth lost its live reset pool tag.");out->pool_result=f.pool;break;
+            case IgbPointerListServiceKind::reallocate:
+                check(c.bytes==1536*4 && c.backing.address==0x510000 && type_growths==0,"Native initial reserve changed its growth request.");++type_growths;
+                out->backing_result={grown_types.storage->bytes,igb_bootstrap_address(grown_types),0,grown_type_mapping,{}};break;
+            }return MessengerCallResult{true,0,{}};};return op;
+    };
+    bootstrap->factory=make_native_igb_type_list_bootstrap_factory(native_lists,
+        make_native_igb_pointer_list_bootstrap_factory(type_pointers,[&](const IgbArkCoreCall& c){
         auto op=std::make_shared<IgbArkCoreOperation>();op->resume=[&,c,out=op.get()]{
             prefix.push_back(c.kind);check(f.core->enabled==0,"Prepared bootstrap prefix ran after an invented enable store.");
             switch(c.kind){
             case AK::platform_initialize:break;
             case AK::manager_virtual:check(c.manager==f.manager && c.virtual_slot==0xa8,"Cold bootstrap selected a different manager virtual.");break;
-            case AK::create_type_list:{
-                check(c.pool==f.pool,"Initial runtime list used a different selected pool.");
-                auto list=std::make_shared<IgbRuntimeTypeList>();initial_lists.push_back(list);out->types_result=list;
-                out->allocation_result=allocation(0x500000+static_cast<std::uint32_t>(initial_lists.size())*16,16);break;
-            }
-            case AK::reserve_types:
-                check(c.types==initial_lists.front() && c.argument==1024,"Bootstrap reserve lost its selected type list.");
-                c.types->backing=std::make_shared<IgbRuntimeTypeList::Storage>(1024);break;
             case AK::allocate_callbacks:{
                 check(c.bytes==12,"Bootstrap callback allocation changed size.");
                 auto list=std::make_shared<IgbRegistrationCallbackList>();list->count=17;list->capacity=19;
@@ -247,12 +282,15 @@ void actual_cold_bootstrap_prefix(){
             default:throw std::runtime_error("Cold integration reached an unexpected prepared bootstrap endpoint");
             }
             return MessengerCallResult{true,0,{}};};return op;
-    };
+    }));
     IgbArkCoreBootstrapInvocation call(ark);
     check(!call.resume(bootstrap).completed && !call.faulted(),"Real cold chain did not suspend at physical field-list backing allocation.");
     check(f.services->metadata->metadata && !*f.services->metadata->metadata && f.allocations==2 && f.calls.empty(),"Pending nested list construction prematurely published metadata.");
     check(igb_bootstrap_read_word(f.object,0)==0x804761d8 && igb_bootstrap_read_word(f.object,0x28)==0 && igb_bootstrap_read_word(f.list,0)==0x80475c54,"Native constructor prefixes were replaced by prepared objects.");
     check(initial_lists.size()==2 && initial_callbacks.size()==2 && f.core->types==initial_lists.front() && *f.core->secondary_types==initial_lists.back(),"Bootstrap did not publish both distinct runtime lists.");
+    check(type_growths==1 && type_size_queries==3 && native_lists->completed_allocations.size()==2 && f.core->types->count==0 &&
+        f.core->types->backing_bytes==grown_types.storage->bytes && f.core->types->backing==grown_type_mapping,"Cold metadata chain skipped original initial type-list construction/reserve.");
+    for(const auto& physical:initial_allocations)check(igb_bootstrap_read_word(physical,0)==0x80475cb0 && igb_bootstrap_read_word(physical,4)==1,"Cold type list did not execute its actual derived constructor.");
     for(const auto& callbacks:initial_callbacks)check(callbacks->count==0 && callbacks->capacity==0 && !callbacks->backing,"Actual callback-list initializer did not reset prepared callback header state.");
     const auto prefix_count=prefix.size();backing_ready=true;
     check(!call.resume(bootstrap).completed && !call.faulted(),"Missing igObject registration was treated as a completed cold bootstrap.");
@@ -354,7 +392,8 @@ void actual_cold_bootstrap_prefix(){
     unsigned field_size_queries{},default_allocations{};
     object_defaults->fields->pointer_lists->factory=[&](const IgbPointerListCall& c){
         auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,out=op.get()]{
-            check(c.backing.address==0x720000 && c.backing.bytes==fields_backing.storage->bytes,"Descriptor append lost its actual field-list allocation.");
+            check((c.backing.address==0x720000 && c.backing.bytes==fields_backing.storage->bytes) ||
+                (c.backing.address==0x400000 && c.backing.bytes==backing.storage->bytes),"Descriptor append lost its actual field-list allocation.");
             if(c.kind==IgbPointerListServiceKind::allocation_pool)out->pool_result=f.pool;
             else if(c.kind==IgbPointerListServiceKind::allocation_size){++field_size_queries;out->size_result=16;}
             else throw std::runtime_error("Cold descriptor registry unexpectedly grew");return MessengerCallResult{true,0,{}};};return op;
@@ -382,6 +421,55 @@ void actual_cold_bootstrap_prefix(){
     }
     check(remaining_calls.back().kind==TK::publish_type && remaining_calls.back().metadata==object_type,"Native defaults did not reach the next actual runtime publication boundary.");
     check(!call.resume(bootstrap).completed && descriptors.size()==2 && default_allocations==2 && string_allocations==3,"Pending publication replayed recovered descriptor defaults.");
+
+    auto publication=std::make_shared<IgbTypePublicationServices>();publication->runtime=f.services->types->runtime;
+    publication->pointer_lists=type_pointers;type_pointers->values.push_back({igb_bootstrap_address(object_allocation),object_type,{}});
+    type_pointers->values.push_back({igb_bootstrap_address(f.object),f.constructed,{}});
+    f.remaining=make_native_igb_type_publication_factory(publication,f.remaining);
+    check(!call.resume(bootstrap).completed && !call.faulted(),"Unbound original field layout was skipped.");
+    check(object_type->word_0c==0 && object_type->reference_word==1 && f.core->types->count==1 &&
+        f.core->types->backing->at(0)==object_type && igb_buffer_word(grown_types.storage->bytes,0)==0x700000,
+        "Native class publication did not retain/store the canonical object type and index.");
+    check(object_type->class_flags==11 && remaining_calls.back().kind==TK::compute_layout && remaining_calls.back().metadata==object_type,
+        "Published object type did not reach its actual unimplemented layout boundary.");
+    const auto queries_before_layout=type_size_queries;
+    check(!call.resume(bootstrap).completed && type_size_queries==queries_before_layout && f.core->types->count==1,
+        "Pending layout repeated type publication or its retained append.");
+
+    // Connect the completed base layout to real inheritance: construct the
+    // parent's child list, append the child and retain both inherited fields.
+    const auto append_fields=make_native_igb_pointer_list_metadata_factory(object_defaults->fields->pointer_lists);
+    const auto append_children=make_native_igb_pointer_list_metadata_factory(type_pointers);
+    metadata_ops->factory=make_native_igb_metadata_pool_factory(f.services->pools,
+        make_native_igb_type_list_metadata_factory(native_lists,[append_fields,append_children](const IgbMetadataOperationCall& c){
+            return c.kind==IgbMetadataOperationKind::append_field?append_fields(c):append_children(c);
+        }));
+    auto layout=std::make_shared<IgbMetadataLayoutServices>();layout->runtime=f.services->types->runtime;
+    f.remaining=make_native_igb_metadata_layout_factory(layout,f.remaining);
+    const auto next=call.resume(bootstrap);
+    check(!next.completed && !call.faulted(),"Missing metadata layout probe was treated as completed startup.");
+    check(object_type->class_flags==7 && object_type->native_alignment==4 && object_type->allocation_prefix==0 && object_type->native_size==8,
+        "Base type layout changed its native size or did not complete/clear the busy flag.");
+    check(f.constructed->class_flags==9 && f.constructed->parent==object_type && f.constructed->name && *f.constructed->name=="igMetaObject" &&
+        f.constructed->native_size==0x64 && f.constructed->field_callback==0x8002a144 && f.fields->count==2,
+        "Completed base registration did not feed actual parent attachment and metadata naming.");
+    check(initial_lists.size()==3 && initial_backings.size()==3 && *object_type->children==initial_lists[2] &&
+        initial_lists[2]->count==1 && initial_lists[2]->backing->at(0)==f.constructed &&
+        igb_bootstrap_read_word(initial_allocations[2],0)==0x80475c54 && igb_buffer_word(initial_backings[2].storage->bytes,0)==0x120000,
+        "Native inherited child registration did not construct/store the exact child-list identity.");
+    for(unsigned i=0;i<2;++i){const auto& descriptor=descriptors[i];
+        check(descriptor->ordinal==i && descriptor->declaring_type && descriptor->declaring_type->lock()==object_type &&
+            descriptor->reference_word==2 && f.fields->backing->at(i)==descriptor &&
+            igb_buffer_word(backing.storage->bytes,i*4)==igb_bootstrap_address(descriptor_allocations[i]),
+            "Native layout/inheritance lost declaring identity, field ordinal, retained count or physical pointer.");
+    }
+    check(string_allocations==4 && field_size_queries==4 && type_growths==1 && f.core->types->count==1 && f.core->enabled==0 &&
+        remaining_calls.back().kind==TK::layout_probe && remaining_calls.back().function==0x80029ffc,
+        "Extended cold chain did not stop at the actual metadata constructor probe.");
+    const auto final_type_queries=type_size_queries;
+    check(!call.resume(bootstrap).completed && type_size_queries==final_type_queries && string_allocations==4 && field_size_queries==4 &&
+        initial_lists.size()==3 && f.core->types->count==1 && object_type->reference_word==1,
+        "Pending metadata probe replayed base publication, layout, inheritance or naming.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

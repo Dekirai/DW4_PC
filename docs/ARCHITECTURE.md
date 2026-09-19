@@ -118,17 +118,25 @@ a cold integration now constructs distinct `igMetaObject` and `igObject`
 metadata, executes actual root-parent registration, naming and layout probe,
 then constructs both specialized descriptors through native defaults `80066B7C`.
 Their actual field factory, name setter, unsigned-integer default-buffer virtual,
-finalization and raw append lead to runtime type publication `800660AC`, with
-reflection still disabled. Descriptor-global pointers are weak cell bindings:
+finalization and raw append now feed actual type publication `800660AC` and
+field layout `80065A58`. Pointer-identity lookup, retained insertion and a fresh
+second registry lookup preserve the exact published type index. Layout assigns
+alignment, prefix and field ownership, then sets flag4 before dispatching the
+captured-count registration callbacks; it does not rewrite native size. The
+base registration completes and actual child-list construction/inherited field
+append reach metadata constructor probe `80029FFC`, with reflection still
+disabled. Descriptor-global and declaring-type pointers are weak bindings:
 unrepresented, original null and expired nonnull storage remain distinct. Guest
 reference counts remain separate from host ownership. See
+[IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
 [IGB_FIELD_OPERATIONS.md](IGB_FIELD_OPERATIONS.md).
 Native typed list factories and raw append/reserve share canonical metadata or
-field owners without reinterpreting their types. A separate cold prefix composes
-actual initial list constructors and reserve, including physical backing with
-no typed pointer mapping. The existing enabled decoder
+field owners without reinterpreting their types. The same cold chain now
+composes actual initial list constructors and reserve. A separate profile
+also covers physical backing with no typed pointer mapping. The enabled decoder
 fixture remains separate. An enabled core with a null fundamental metadata cache
 recurses before publication; the adapter reports that invalid-startup cycle
 instead of manufacturing metadata. Allocator and manager/platform operations,

@@ -60,10 +60,14 @@ ArkCore startup, registration and distinct metadata/list constructors, then both
 specialized descriptors, actual string interning, default-buffer preparation,
 field finalization and raw append. The unsigned-integer prototype global is
 explicitly represented as its original cold BSS null. Physical allocators are
-prepared endpoints. At the following runtime type publication boundary
-`800660AC`, igObject has schema flags `11`, igMetaObject remains busy with `8`,
-and ArkCore remains disabled. Complete registration, enabled reflection and
-asset decoding are not implied by this prefix.
+prepared endpoints. Type publication `800660AC` and metadata layout `80065A58`
+now continue this chain: igObject finishes with flags `7`, its fields are
+inherited by igMetaObject, and the latter reaches its constructor probe
+`80029FFC` with flags `9`. Initial type-list construction/reserve and the
+inherited child-list construction also execute natively in the same fixture.
+ArkCore remains disabled; complete runtime registration and asset decoding
+are not implied. See [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md) and
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md).
 
 Permanent tests cover concrete two-field construction and arithmetic identities,
 name/default-buffer suspension, missing global-cell storage, live metadata and

@@ -106,14 +106,19 @@ and now executes actual `igObject` parent registration, name interning, layout
 probe and specialized field defaults `80066B7C`. The `_refCount` and
 `_memPoolIndex` descriptors use the real field constructor, mutable name setter,
 unsigned-integer default-buffer preparation, finalization and raw registry append.
-The cold chain next reaches type publication `800660AC`, with reflection still
-disabled. See [IGB_OBJECT_DEFAULTS.md](docs/IGB_OBJECT_DEFAULTS.md),
+The cold chain now executes type publication `800660AC` and field layout
+`80065A58`, completes `igObject`, and inherits its two fields into `igMetaObject`.
+It reaches the latter's local constructor probe `80029FFC`, with reflection
+still disabled. See [IGB_TYPE_PUBLICATION.md](docs/IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](docs/IGB_METADATA_LAYOUT.md),
+[IGB_OBJECT_DEFAULTS.md](docs/IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](docs/IGB_META_FIELD_FACTORY.md) and
 [IGB_FIELD_OPERATIONS.md](docs/IGB_FIELD_OPERATIONS.md). Parent-field
 inheritance and metadata-name assignment are also reconstructed. Native typed
 list factories and raw append/reserve preserve allocator queries, physical
-zeroing, pointer publication and count order. A separate cold integration uses
-actual initial list construction and reserve before metadata registration.
+zeroing, pointer publication and count order. The same cold integration now uses
+actual initial list construction/reserve and the actual inherited child-list
+constructor. Physical allocators remain explicit endpoints.
 Allocator services and remaining field/class registrations are still explicit;
 this is not a complete native game boot. See
 [IGB_OBJECT_REGISTRATION.md](docs/IGB_OBJECT_REGISTRATION.md),

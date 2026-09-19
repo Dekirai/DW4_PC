@@ -108,10 +108,13 @@ parent registration `80066B08`. A distinct second metadata/list pair is
 constructed, the real root callback list is initialized, and native string
 interning and the base-object probe run. Both specialized descriptors then run
 through native `80066B7C`, actual field construction, naming, finalization and
-append. The chain reaches runtime type publication `800660AC`, with
-`igMetaObject` busy flag `8` and `igObject` flags `11`.
+append. Actual runtime type publication `800660AC` and field layout `80065A58`
+now finish igObject with flags `7`. Native child-list construction and inherited
+field append then reach the igMetaObject constructor probe `80029FFC`, with
+flags `9` and the same two inherited field identities.
 ArkCore remains disabled and later type-count snapshots remain unwritten.
-Platform/manager work, initial ArkCore list owners, their reserve operation,
-physical allocation and string-arena allocation endpoints are explicitly
-prepared. No ready metadata seed, registration-success callback or premature
+Initial ArkCore lists and their reserve operation execute natively in this
+same integration. Platform/manager work, physical allocation and string-arena
+allocation endpoints remain explicitly prepared. No ready metadata seed,
+registration-success callback or premature
 enabled store is used. See [IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md).

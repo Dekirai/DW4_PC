@@ -1,5 +1,75 @@
 # Local validation
 
+## Native type publication and metadata layout
+
+Validated locally on 2026-09-19. Actual type publication `800660AC` and field
+layout `80065A58` now finish `igObject` registration in the cold-bootstrap
+composition. Original initial type-list constructors and reserve are connected
+in that same test, replacing its earlier prepared completed lists. Actual
+child-list construction and inherited field append then reach igMetaObject's
+local constructor probe `80029FFC`.
+
+At the new boundary, igObject has flags 7, registry index 0, reference word 1,
+alignment 4, allocation prefix 0 and unchanged native size 8. Its two fields
+have ordinals 0/1, nonowning declaring-type bindings and reference words 2 after
+inheritance. igMetaObject has flags 9, the same inherited fields and native
+size 0x64. The registry contains exactly one type; ArkCore remains disabled.
+No ready class seed or successful registration callback replaces those bodies.
+Platform/manager work and physical allocation remain explicitly prepared.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 166/166 CTest suites passed locally with four jobs; no compiler warnings |
+| Type publication | 72 checks for identity search, signed counts, missing bindings, full-word wrapping retain, actual append/growth, suspended allocators, fresh registry reload, partial failure and adapter lifetime |
+| Metadata layout | 47 checks for known unsigned-int alignment, special/inherited fields, exact rounding, 16-bit ordinals, captured field count, live parent/list reads, ready-flag publication, callbacks and nonowning declaring-type lifetime |
+| Cold metadata integration | 198 checks including actual initial lists/reserve, complete base registration, child-list construction and inherited physical field stores before pending metadata probe |
+| Specialized field reset regression | 65 checks including expired nonnull declaring-type state and raw null reset without an owning cycle |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled-runtime fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Layout deliberately does not write native size from its computed field extent:
+the original body only publishes alignment, conditional allocation prefix,
+field ordinal/declaring metadata and flag4 before registered callbacks. The
+callback dispatcher captures its initial signed count but reloads the captured
+core's list/backing for each function. Type publication searches by canonical
+pointer identity, stores -1 before retained append when absent, then searches
+the freshly reloaded registry again. Neither operation enables reflection.
+See [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md) and
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md).
+
+Bounded comparisons with the supplied USA DOL (SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`) used the final native core:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Type publication, identity search and retained append | 1,022 | 875 | 51,074 | 253 | 0 |
+| Metadata layout and registered callback dispatch | 1,332 | 1,114 | 110,800 | 159 | 0 |
+
+The publication profile executes actual search, publication, retained/raw
+append, reserve/growth and zeroing; only underlying pool lookup/allocation
+endpoints are prepared. It compares core list pointers, list reference/backing/
+count, backing words and metadata reference/index fields. The layout profile
+executes actual slot helpers, field layout, registered-callback traversal and
+153 calls to the exact unsigned-int alignment leaf. Other alignment virtuals
+and registered callback bodies remain prepared. Both profiles provide explicit
+matching physical pointer-owner mappings and use the unchanged reviewed
+instruction decoder. They do not establish arbitrary allocator/MMU behavior,
+unknown virtual bodies or complete engine startup. Sources and proof scopes
+received independent review; all recorded source hashes match the final tree.
+
+Final core SHA256:
+`933392B281D25E8CB8A7CCC7E8C6781ADF363B54D80DD1C65526358BA6C66931`.
+Ignored local build/integration evidence: `work/native-publication-layout-build.log`,
+`work/native-publication-layout-prefix.log`, `work/native-publication-layout-player.log`
+and `work/native-publication-layout-verifier.log`. Differential reports are
+`work/native-type-publication-result.json` and
+`work/native-metadata-layout-result.json`. No interactive preview or
+GitHub Actions run was launched. The full native game remains incomplete;
+continue through the metadata constructor probe, its field schema and remaining
+runtime registration before claiming complete startup or decoded gameplay.
+
 ## Native igObject specialized fields and finalization
 
 Validated locally on 2026-09-19. The same cold metadata chain now executes

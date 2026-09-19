@@ -74,8 +74,14 @@ mapping still triggers the original capacity query. The selected size call
 captures backing bytes/address/offset independently of later list replacement.
 The test reaches required `8002A0D0` while ArkCore remains disabled; platform,
 manager, pool/allocation and callback allocation endpoints remain prepared.
-Separate metadata integration enters that real registration and reaches
-specialized `igObject` defaults. See [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
+The extended metadata integration now also uses those actual initial list
+constructors and reserve operations. It registers igObject through its real
+specialized fields, type publication, field layout and empty callback dispatch,
+then constructs its child list and inherits both fields into igMetaObject.
+The next boundary is igMetaObject's local constructor probe `80029FFC`; the
+core remains disabled. See [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
+[IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_POINTER_LIST.md](IGB_POINTER_LIST.md),
 [IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md) and
 [VALIDATION.md](VALIDATION.md) for current evidence and remaining boundaries.

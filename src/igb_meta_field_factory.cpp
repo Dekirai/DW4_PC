@@ -143,8 +143,7 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
     case P::publish_name:
         clear();igb_meta_field_set_name(s.object,nullptr,0);s.phase=P::tail_stores;break;
     case P::tail_stores:
-        word(0x18,0);if(s.field->declaring_type && *s.field->declaring_type)s.field->overwritten_constructor_owners_.push_back(*s.field->declaring_type);
-        s.field->declaring_type=std::shared_ptr<IgbRuntimeMetaType>{};word(0x30,0);s.field->word_30=0;
+        word(0x18,0);s.field->declaring_type=std::weak_ptr<IgbRuntimeMetaType>{};word(0x30,0);s.field->word_30=0;
         byte(0x24,0);s.field->default_mode=std::uint8_t{0};
         byte(0x27,0);s.field->flag_27=std::uint8_t{0};byte(0x28,0);s.field->flag_28=std::uint8_t{0};
         byte(0x29,0);s.field->flag_29=std::uint8_t{0};byte(0x2a,0);s.field->flag_2a=std::uint8_t{0};
