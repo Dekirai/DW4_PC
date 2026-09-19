@@ -107,7 +107,11 @@ signed zeros, and caught recursion. Messenger tests verify combined boolean
 publication, aliasing input, other-list/gate preservation and aggregate bounds.
 
 The callback supplies actual wall/floor transport and response state updates.
-The deeper `HITLANDMODEL/CHECKWALL`, `CHECKWALLFULL` and `CHECKLAND` algorithms
-remain required native operations. Existing walking-preview geometry and
-prepared projectile `CHKBULLET` caches do not replace those queries or prove
-completion of the original frame or gameplay loop.
+The September 19 native [CHECKLAND implementation](HITLAND_FLOOR.md) now provides
+the floor query and response through a retained per-delivery receiver. Prepared
+integrations map actual triangle geometry and apply its result through HITFLOOR,
+including supplied map data. Original manager startup, complete dynamic geometry
+and the deeper `HITLANDMODEL/CHECKWALL` and `CHECKWALLFULL` algorithms remain
+required. Existing walking-preview geometry and prepared projectile `CHKBULLET`
+caches do not replace those operations or prove completion of the original
+frame or gameplay loop.

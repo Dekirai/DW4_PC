@@ -16,10 +16,10 @@ independent of SDL and ImGui. DTK, objdiff and Ghidra may assist focused recover
 they do not replace native ownership, byte-order or behavior validation.
 
 Resume at the existing player-frame/collision boundary below. Static triangle
-candidates are implemented; dynamic operations and complete wall/floor responses
-remain required. Startup, the actual outer frame scheduler, assigned input,
-camera, audio, combat and persistence must be connected without substituting
-the walking preview's provisional controller or camera.
+candidates and the CHECKLAND floor response are implemented; dynamic operations
+and complete wall responses remain required. Startup, the actual outer frame
+scheduler, assigned input, camera, audio, combat and persistence must be connected
+without substituting the walking preview's provisional controller or camera.
 
 The release must preserve original gameplay and local one-to-four-player input,
 provide one `DW4_PC.exe` entry point, import the user's supported ROM without a
@@ -58,10 +58,13 @@ primitive scan preserves format gates, physical accesses, strip winding,
 cursor publication and unmap order. Candidate production retains captured list
 and matrix owners while reloading the original segment and current callback
 metadata for each hit. A pending callback does not replay its triangle scan.
-The September 19 extension adds native AABox scratch transforms and the original
-matrix inverse to flag-4 candidate production. Dynamic node updates, other bound
-classes, missing-bound construction and complete CHECKLAND/CHECKWALL responses
-remain required. See [MATRIX_INVERSE.md](MATRIX_INVERSE.md),
+The September 19 extensions add native AABox scratch transforms, the original
+matrix inverse and CHECKLAND's complete four-ray request, candidate selection
+and floor publication. A retained per-delivery receiver connects actual native
+floor geometry to HITFLOOR in prepared integrations. Dynamic node updates, other
+bound classes, missing-bound construction, wall responses and original manager
+startup remain required. See [HITLAND_FLOOR.md](HITLAND_FLOOR.md),
+[MATRIX_INVERSE.md](MATRIX_INVERSE.md),
 [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
 [HITLAND_PRIMITIVES.md](HITLAND_PRIMITIVES.md) and
 [HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md).

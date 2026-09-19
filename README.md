@@ -48,10 +48,12 @@ Version 0.45 connects original static geometry to the native collision candidate
 pipeline. Canonical vertex/index/group owners feed the original primitive scan,
 typed node dispatch and actual query result storage. Point, segment, matrix and
 triangle operations retain their original arithmetic and publication order.
-The September 19 update adds the original native matrix inverse and canonical
-AABox transforms to this producer, verified against original instructions and
-imported geometry. Dynamic node updates, missing-bound construction and complete
-wall/floor responses remain required. See [MATRIX_INVERSE.md](docs/MATRIX_INVERSE.md),
+The September 19 updates add the original native matrix inverse, canonical
+AABox transforms and CHECKLAND floor response. Four-ray geometry queries now
+reach the existing HITFLOOR consumer through a registered native receiver in
+prepared integration tests. Dynamic node updates, missing-bound construction,
+complete wall responses and original manager startup remain required. See
+[HITLAND_FLOOR.md](docs/HITLAND_FLOOR.md), [MATRIX_INVERSE.md](docs/MATRIX_INVERSE.md),
 [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md),
 [HITLAND_PRIMITIVES.md](docs/HITLAND_PRIMITIVES.md) and
 [HITLAND_NODE_DISPATCH.md](docs/HITLAND_NODE_DISPATCH.md).
@@ -85,17 +87,19 @@ not contain game files.
   `beHitLandModelInfo` selection, registered node handlers and live geometry
   attribute/vertex/index owners. Results retain the actual query segment,
   matrix-stack element, node path and original group/stream cursor. Dynamic
-  source matrices still update before broad-phase rejection; complete dynamic
-  geometry operations, CHECKLAND/CHECKWALL response selection and HITLANDMODEL
-  delivery remain required. See [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md).
+  source matrices still update before broad-phase rejection. Native CHECKLAND
+  selection and per-delivery floor responses are implemented; complete dynamic
+  operations, wall responses and original manager startup remain required. See
+  [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md) and
+  [HITLAND_FLOOR.md](docs/HITLAND_FLOOR.md).
 
 - Route original player wall/floor checks through canonical HITLANDDELIVER
   info/RAM records with a distinct manager and shared model nodes. The five
   recipient commands preserve their original query/response and matrix-update
-  order. Original-data integration reaches the actual HITLANDMODEL query
-  boundary; complete triangle traversal and wall/land result selection remain
-  required. Original direction normalization and XZ broad-phase arithmetic
-  have separate instruction comparisons. See
+  order. Prepared native integration now delivers real CHECKLAND floor results
+  through HITFLOOR, including imported map geometry. Wall responses and original
+  startup/frame integration remain required. Direction normalization and XZ
+  broad-phase arithmetic have separate instruction comparisons. See
   [MODEL_MOVEMENT_COLLISION.md](docs/MODEL_MOVEMENT_COLLISION.md),
   [HITLAND_DELIVER.md](docs/HITLAND_DELIVER.md) and
   [HITLAND_MATH.md](docs/HITLAND_MATH.md).

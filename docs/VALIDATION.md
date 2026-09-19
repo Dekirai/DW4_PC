@@ -1,5 +1,41 @@
 # Local validation
 
+## Native CHECKLAND floor delivery
+
+Validated locally on 2026-09-19. Native CHECKLAND now prepares the original four
+vertical rays, executes actual triangle traversal, selects the floor candidate
+and publishes its response through a retained messenger receiver. The existing
+HITFLOOR consumer applies that response to a prepared shared node. Original
+manager startup, full wall responses and the complete player frame remain
+unfinished. See [HITLAND_FLOOR.md](HITLAND_FLOOR.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 117/117 CTest suites passed; four build jobs; no compiler warnings in the final build |
+| Permanent floor tests | 79 synthetic checks: all three selection passes, rounded ties, strict endpoints, physical storage, exact rays, negative width, suspension, packet ownership, nullable metadata and partial publication on capacity failure |
+| Real synthetic geometry | Four distinct corner rays hit an authored mapped triangle at Y 8; registered CHECKLAND delivery reaches HITFLOOR and updates the shared recipient node, with balanced vertex map/unmap and preserved candidate aliases |
+| Supplied-data floor integration | 103 original-inclusive checks: 12 stage-179 floor-center queries produce 7 floor responses within CHECKLAND's fixed Y range; an additional registered HITFLOOR query recomputes and applies one response to a prepared synthetic recipient node |
+| Independent reduction comparison | 7,689 cases; 1,533,032 actual original instruction steps; all 114 addresses in the bounded reduction/empty branch reached; 7,652 exact output comparisons and 37 expected arithmetic-overflow boundaries; zero mismatches |
+| Final production linkage | The final comparison driver links only the freshly built dw4_core.lib, without replacement selector, messenger or candidate-access objects |
+
+The original-map checks use width zero, so their four rays coincide at each
+center. Distinct-corner coverage comes from the synthetic fixture. These are
+complete native floor query/response calls with explicit manager and recipient
+preparation, not original startup or a scheduled gameplay session. The numeric
+comparison covers finite NI=1/RN=00 arithmetic and explicit overflow rejection;
+it does not establish full nonfinite behavior, FPSCR exceptions or physical
+console execution.
+
+The first test build exposed an invalid fixture constructor, and its first run
+exposed missing messenger selection setup. Both were corrected in tests; no
+production behavior was changed to satisfy those failures. The final source
+comparison used core SHA256
+`B067D50668A2A162A269A679730578C199E9F407B1D7BF6C3FEE8224138F9700`.
+Ignored evidence: `work/native-checkland-verified-build.log`,
+`work/native-checkland-original.log`, `work/native-checkland-oracle-result.json`
+and `work/native-checkland-oracle-report.md`. No preview was launched, original
+assets were unchanged and GitHub Actions remained disabled.
+
 ## Native source-port resumption and transformed collision
 
 Validated locally on 2026-09-19. The authored native engine is the active path;
@@ -1565,7 +1601,7 @@ Big-endian IGB metadata and documents were tested synthetically; all recognized
 local game IGB metadata was little-endian. The original data remains outside
 the repository.
 
-GitHub Actions independently builds/tests the portable core on Windows/Linux
-and builds/packages the Windows app. The workflow does not require game files
-and does not perform an original-data or physical-GPU test. The renderer GPU
-test is built there but is run explicitly on a machine with an OpenGL driver.
+Historically, GitHub Actions built/tested the portable core on Windows/Linux
+and built/packaged the Windows app without game files. Hosted workflows are now
+disabled at the owner's request. Current builds, tests and packaging run locally;
+renderer GPU tests require an explicit local run with an OpenGL driver.

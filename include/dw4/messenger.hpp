@@ -40,6 +40,9 @@ public:
     void clear();
     // Original integer-list reset; preserve the other seven typed lists and gate.
     void clear_integers();
+    // Original list-specific resets; preserve all other packet lists and gate.
+    void clear_booleans();
+    void clear_vectors();
     // Combined 8030691C resize + known 803069EC stores with no intervening
     // callbacks. Every published byte is supplied; preserve other lists/gate.
     // This does not expose original uninitialized slots or spare capacity.

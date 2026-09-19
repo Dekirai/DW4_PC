@@ -43,6 +43,16 @@ void MessengerBuffer::clear_integers() {
     entries_-=integers_.size(); bytes_-=integers_.size()*4;
     integers_.clear();
 }
+void MessengerBuffer::clear_booleans() {
+    check_mutation();
+    entries_-=booleans_.size(); bytes_-=booleans_.size();
+    booleans_.clear();
+}
+void MessengerBuffer::clear_vectors() {
+    check_mutation();
+    entries_-=vectors_.size(); bytes_-=vectors_.size()*12;
+    vectors_.clear();
+}
 void MessengerBuffer::replace_booleans(std::span<const std::uint8_t> values) {
     check_mutation();
     const auto other_entries=entries_-booleans_.size();

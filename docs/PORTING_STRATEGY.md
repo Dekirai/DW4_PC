@@ -66,12 +66,14 @@ The producer retains query segments, matrix elements, path aliases, primitive
 cursors and callback order. This is part of the original collision pipeline,
 not the walking preview's separate mesh-based solver.
 
-The September 19 extension implements the original matrix inverse and canonical
-AABox scratch transform in that producer. See [MATRIX_INVERSE.md](MATRIX_INVERSE.md)
+The September 19 extensions implement the original matrix inverse, canonical
+AABox scratch transform and CHECKLAND floor response. Prepared integration now
+passes real native floor geometry through a registered receiver to HITFLOOR.
+See [MATRIX_INVERSE.md](MATRIX_INVERSE.md) and [HITLAND_FLOOR.md](HITLAND_FLOOR.md)
 for original-instruction and supplied-data evidence. The next collision work is
-dynamic node updates, missing geometry-bound construction and other bound classes,
-followed by complete CHECKLAND reduction and CHECKWALL passes. Deliver those
-actual responses through HITLANDDELIVER to the recovered player frame. Dynamic
+dynamic node updates, missing geometry-bound construction, other bound classes
+and complete CHECKWALL passes. Deliver those actual responses through
+HITLANDDELIVER to the recovered player frame. Dynamic
 operations are not complete merely because a test provider supplies a matrix.
 See [HITLAND_GEOMETRY.md](HITLAND_GEOMETRY.md),
 [HITLAND_NODE_DISPATCH.md](HITLAND_NODE_DISPATCH.md),
@@ -115,10 +117,10 @@ output cannot establish its full original behavior.
 
 ## Ordered continuation plan
 
-1. **Complete the reached collision operations.** Build on the checked inverse
-   and AABox transform, preserving arithmetic, type dispatch, ownership and
-   publication order. Recover missing bounds and dynamic node updates, then
-   CHECKLAND candidate reduction and CHECKWALL's complete passes. Acceptance:
+1. **Complete the reached collision operations.** Build on the implemented
+   inverse, AABox transform and CHECKLAND response, preserving arithmetic,
+   type dispatch, ownership and publication order. Recover missing bounds,
+   dynamic node updates and CHECKWALL's complete passes. Acceptance:
    focused original-instruction comparisons, meaningful synthetic edge cases,
    and supplied-data queries whose actual responses reach HITLANDDELIVER and
    the player consumer. A static candidate list alone cannot close this step.
