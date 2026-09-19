@@ -80,6 +80,7 @@ struct ActorSceneResource::Impl {
     std::map<std::uint32_t,std::shared_ptr<ActorSceneAppearanceList>> lists;
     std::map<std::uint32_t,std::shared_ptr<ActorBoneSelectorList>> selector_lists;
     std::size_t links{},text{};
+    std::size_t active_node_visits{};
     std::size_t owners() const noexcept {
         return nodes.size()+node_lists.size()+node_memories.size()+boxes.size()+masks.size()+mask_memories.size()+skeletons.size()+appearances.size()+lists.size()+selector_lists.size();
     }
@@ -150,6 +151,15 @@ std::shared_ptr<ActorSceneNode> ActorSceneNode::source_transform_owner() {
 }
 std::shared_ptr<const ActorSceneNode> ActorSceneNode::source_transform_owner() const {
     if(!source_transform_available_)fail("This actor scene node has no represented source-transform field.");return source_transform_;
+}
+std::shared_ptr<ModelSceneObject> ActorSceneNode::transform_input_owner() const {
+    if(!transform_input_available_)fail("This actor scene node has no represented transform-input field.");
+    return transform_input_;
+}
+void ActorSceneNode::set_transform_input_owner(std::shared_ptr<ModelSceneObject> value) {
+    if(!transform_input_available_)fail("This actor scene node has no represented transform-input field.");
+    if(value && !value->is_a("igTransformSource"))fail("Actor transform input owner is not an igTransformSource.");
+    transform_input_=std::move(value);
 }
 void ActorSceneNode::set_source_transform_owner(std::shared_ptr<ActorSceneNode> value) {
     if(!source_transform_available_)fail("This actor scene node has no represented source-transform field.");
@@ -509,6 +519,16 @@ std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t r
         };
         visit=[&](std::uint32_t ref,std::size_t depth)->std::shared_ptr<ActorSceneNode> {
             ref=canonical_reference(ref);
+            // A transform input can enter the model registry, which can call
+            // mutable_node again. The local depth resets at that public entry;
+            // retain the active path budget across those registry boundaries.
+            // Preserve the existing root-at-zero limit of 128 edges.
+            if(impl_->active_node_visits>max_depth)fail("Actor scene nested node loading exceeds its depth budget.");
+            struct VisitGuard {
+                std::size_t& active;
+                explicit VisitGuard(std::size_t& value):active(value){++active;}
+                ~VisitGuard(){--active;}
+            } active_visit(impl_->active_node_visits);
             if(visiting.contains(ref))fail("Actor scene node graph contains a cycle.");
             if(depth>max_depth)fail("Actor scene node graph exceeds its depth budget.");
             if(const auto found=impl_->nodes.find(ref);found!=impl_->nodes.end())return found->second;
@@ -529,6 +549,21 @@ std::shared_ptr<ActorSceneNode> ActorSceneResource::mutable_node(std::uint32_t r
             result->flags_=document().field_u32(value,5);visiting.insert(ref);
             if(document().is_a(value,"igTransform") || type=="beModelCtrlNode2")
                 result->matrix_=std::make_shared<AnimationMatrix>(read.floats<16>(value,8,"igMatrix44fMetaField"));
+            if(document().is_a(value,"igTransform") && document().field(value,11)) {
+                read.field(value,11,"igObjectRefMetaField");result->transform_input_available_=true;
+                // Use the public canonical registry entry point, as for node
+                // attributes. Its nested checkpoint retains completed owners
+                // that escape through this independently cached node graph.
+                if(const auto input=document().field_reference(value,11)) {
+                    // 801AC968 binds this object-reference field to the
+                    // igTransformSource metadata class via 801AB2B4. Reject
+                    // unrelated owners before their concrete loader can
+                    // recursively enter the node registry.
+                    if(!document().is_a(document().object(*input),"igTransformSource"))
+                        fail("Actor transform input owner is not an igTransformSource.");
+                    result->transform_input_=models().object(*input);
+                }
+            }
             if(document().field(value,3)) {
                 read.field(value,3,"igObjectRefMetaField");result->bound_available_=true;
                 if(const auto ref_box=document().field_reference(value,3))result->box_=box(*ref_box);

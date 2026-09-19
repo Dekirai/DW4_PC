@@ -93,10 +93,21 @@ Exact results belong in [VALIDATION.md](VALIDATION.md).
 
 The September 19 integration registers all five collision info occurrences from
 the original stage, including dynamic geometry. That same first player frame
-enters native CHECKWALL and reaches the required dynamic-transform global clock
-virtual +68 before the current node's path/matrix push. A retry preserves the
-captured query, traversal and earlier player-frame effects. No clock or transform
-update is substituted to force completion. See [HITLAND_WALL.md](HITLAND_WALL.md).
+enters native CHECKWALL and initially pauses at the missing global clock before
+the current node's path/matrix push. A retry preserves the captured query,
+traversal and earlier player-frame effects. Installing a started native long
+timer with its real PC monotonic source now resumes that same frame to completion
+through the verified transform updates and actual wall/floor collision.
+The neutral pad, system delta and manager registrations remain explicit test
+preparation. See [HITLAND_WALL.md](HITLAND_WALL.md), [GAME_CLOCK.md](GAME_CLOCK.md)
+and [ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md).
+
+The integration also executes one neutral frame for each remaining prepared
+player slot. All four preserve distinct work owners, advance only their own
+delayed subcommand once and finish native collision with balanced matrix/path
+stacks. Re-entering a completed frame changes neither its node matrix nor its
+subcommand time. This is explicit test order, not the recovered manager scheduler
+or a connected four-controller gameplay session.
 
 The checked player-controller profile does not yet dispatch different NPC or
 enemy virtual implementations, remaining position-lock/ride, dynamic query or

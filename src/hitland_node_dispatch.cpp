@@ -1,4 +1,6 @@
 #include "dw4/hitland_node_dispatch.hpp"
+#include "dw4/actor_transform.hpp"
+#include "dw4/game_clock.hpp"
 
 #include "dw4/actor_scene.hpp"
 #include "dw4/hitland_geometry.hpp"
@@ -167,6 +169,7 @@ struct HitLandNodeDispatchInvocation::Impl {
     decltype(HitLandNodeDispatchServices::geometry_bound) bound_service;
     decltype(HitLandNodeDispatchServices::other_handler) other;
     std::unique_ptr<HitLandGeometryInvocation> producer;
+    std::unique_ptr<ActorTransformUpdateInvocation> native_update;
     std::unique_ptr<HitLandNodeDispatchInvocation> child;
     std::shared_ptr<const ActorSceneNodeStorage> children;
     std::shared_ptr<const CollisionBox> bound;
@@ -250,15 +253,22 @@ MessengerCallResult HitLandNodeDispatchInvocation::resume(std::shared_ptr<HitLan
             break;
         case Impl::Phase::clock: {
             if(!s.clock && s.services)s.clock=s.services->global_clock;
+            if(!s.clock && s.services && s.services->game_clock)
+                s.clock=[clock=s.services->game_clock]()->std::optional<std::uint64_t> {return clock->time();};
             if(!s.clock)return pending("Original HITLAND transform time requires the actual global clock virtual+68.");
             const auto time=s.clock();check();
             if(!time)return pending("Original HITLAND transform time is pending its actual global clock.");
             s.time=*time;s.phase=Impl::Phase::update;break;
         }
         case Impl::Phase::update: {
-            if(!s.update && s.services)s.update=s.services->transform_update;
-            if(!s.update)return pending("Original HITLAND transform requires its actual node virtual+9C update.");
-            const auto result=s.update(s.node,s.time);check();
+            if(!s.update && !s.native_update && s.services)s.update=s.services->transform_update;
+            MessengerCallResult result;
+            if(s.update)result=s.update(s.node,s.time);
+            else {
+                if(!s.native_update)s.native_update=std::make_unique<ActorTransformUpdateInvocation>(s.node,s.time);
+                result=s.native_update->resume(s.services ? s.services->actor_transform:nullptr);
+            }
+            check();
             if(!result.completed)return result;s.phase=Impl::Phase::push_path;break;
         }
         case Impl::Phase::bound:

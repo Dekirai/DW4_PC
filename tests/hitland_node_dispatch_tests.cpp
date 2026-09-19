@@ -1,6 +1,8 @@
 #include "dw4/hitland_node_dispatch.hpp"
 #include "dw4/hitland_geometry.hpp"
 #include "dw4/hitland_query.hpp"
+#include "dw4/actor_transform.hpp"
+#include "dw4/game_clock.hpp"
 #include "hitland_scene_fixture.hpp"
 
 #include <bit>
@@ -20,13 +22,19 @@ struct Fixture {
     std::shared_ptr<ActorSceneResource> scene;
     std::shared_ptr<ActorSceneNode> group,transform,geometry,base,second;
     std::shared_ptr<HitLandIntersectionVisitor> visitor=std::make_shared<HitLandIntersectionVisitor>();
-    Fixture() {
+    explicit Fixture(bool native_input=false) {
         const auto base_ref=source.source.add(player_runtime_fixture::node);
         const auto second_ref=source.source.add(player_runtime_fixture::node);
         auto document=source.document();
         const auto flags=*document.field(document.object(source.source.owner),5);
         for(const auto ref:{base_ref,second_ref})document.objects.at(document.references.at(ref).value_index).fields.push_back(flags);
         document.metadata.object_types.at(player_runtime_fixture::node).slots=6;
+        if(native_input) {
+            auto& transform_object=document.objects.at(document.references.at(source.dynamic).value_index);
+            auto input=*document.field(transform_object,3);input.slot=11;
+            std::erase_if(transform_object.fields,[](const auto& field){return field.slot==11;});
+            transform_object.fields.push_back(input);
+        }
         scene=std::make_shared<ActorSceneResource>(std::move(document),"synthetic/hitland-dispatch",1);
         group=scene->mutable_node(source.outer);transform=scene->mutable_node(source.dynamic);
         geometry=scene->mutable_node(source.source.owner);base=scene->mutable_node(base_ref);second=scene->mutable_node(second_ref);
@@ -131,7 +139,6 @@ void time_update_and_stack() {
     Fixture f;auto services=std::make_shared<HitLandNodeDispatchServices>();
     f.visitor->bound_time=255;f.visitor->time_high=0x12345678;f.visitor->time_low=0x9abcdef0;
     HitLandNodeDispatchInvocation call(f.visitor,f.transform);
-    check(!call.resume(services).completed && f.visitor->node_path->count==0,"Missing transform update manufactured a no-op.");
     unsigned updates{},child_filters{};bool ready{};
     services->global_clock=[]()->std::optional<std::uint64_t> {throw std::runtime_error("Bound time read unused clock.");};
     services->transform_update=[&](const auto& node,std::uint64_t time) {
@@ -140,6 +147,7 @@ void time_update_and_stack() {
         return MessengerCallResult{ready,99,"Transform update pending."};
     };
     check(!call.resume(services).completed && updates==1 && f.visitor->matrix_stack->count==1,"Pending update pushed a premature matrix/path.");
+    check(f.visitor->node_path->count==0,"Pending transform update pushed its path before completing.");
     f.visitor->time_high=7;f.visitor->time_low=8;ready=true;
     f.visitor->filter_enabled=1;f.visitor->filter=[&](const auto& visitor,const auto& node) {
         check(node==f.base,"Entered transform filters unexpectedly replayed after update.");++child_filters;
@@ -157,6 +165,53 @@ void time_update_and_stack() {
     clock.visitor->bound_time=1;clock.visitor->time_low=555;clock_ready=true;
     dynamic->transform_update=[&](const auto&,auto time) {check(time==1234,"Clock pause restarted the bound-time gate.");return MessengerCallResult{true,0,{}};};
     check(unbound.resume(dynamic).completed && reads==2,"Actual clock continuation did not finish.");
+}
+void native_clock_and_null_input() {
+    Fixture f(true);auto services=std::make_shared<HitLandNodeDispatchServices>();
+    unsigned samples{};
+    const auto clock=std::make_shared<NativeGameClock>([&] {++samples;return std::uint64_t(samples)*1234567;});
+    clock->start();services->game_clock=clock;
+    const auto matrix=f.transform->matrix_owner();(*matrix)[12]=11;
+    const auto before=*matrix;
+    HitLandNodeDispatchInvocation native(f.visitor,f.transform);
+    check(native.resume(services).completed && samples==2,
+        "Native transform did not read the running game clock once after its start sample.");
+    check(*matrix==before && f.visitor->node_path->count==0 && f.visitor->matrix_stack->count==1,
+        "Native null-input update changed the matrix or left an unbalanced traversal.");
+    check(native.resume(services).completed && samples==2,"Completed native transform resampled the clock.");
+    f.visitor->bound_time=1;f.visitor->time_high=0xffffffffu;f.visitor->time_low=0x87654321u;
+    HitLandNodeDispatchInvocation bound(f.visitor,f.transform);
+    check(bound.resume(services).completed && samples==2,"Bound native transform sampled its unused global clock.");
+    f.visitor->bound_time=0;unsigned overrides{};
+    services->global_clock=[&]()->std::optional<std::uint64_t>{++overrides;return 7;};
+    HitLandNodeDispatchInvocation overridden(f.visitor,f.transform);
+    check(overridden.resume(services).completed && samples==2 && overrides==1,
+        "Explicit clock override did not take precedence before native clock entry.");
+}
+void retained_native_input() {
+    struct Input final:ModelSceneObject {Input():ModelSceneObject("igTransformSource") {}};
+    Fixture f(true);auto services=std::make_shared<HitLandNodeDispatchServices>();
+    unsigned samples{},updates{};bool ready{};
+    services->game_clock=std::make_shared<NativeGameClock>([&] {++samples;return std::uint64_t(samples)*1234567;});
+    services->game_clock->start();
+    const auto input=std::make_shared<Input>();f.transform->set_transform_input_owner(input);
+    services->actor_transform=std::make_shared<ActorTransformUpdateServices>();
+    services->actor_transform->input_update=[&](const auto& owner,const auto& matrix,auto time) {
+        ++updates;check(owner==input && matrix==f.transform->matrix_owner() && time==1234567,
+            "Native input update lost its captured owner, matrix or clock result.");
+        (*matrix)[12]=19;return MessengerCallResult{ready,0,"Input update pending."};
+    };
+    HitLandNodeDispatchInvocation call(f.visitor,f.transform);
+    check(!call.resume(services).completed && samples==2 && updates==1 &&
+        f.visitor->node_path->count==0 && f.visitor->matrix_stack->count==1,
+        "Native input suspension replayed the clock or pushed its unfinished transform.");
+    f.transform->set_transform_input_owner({});services->game_clock.reset();
+    services->transform_update=[](const auto&,auto)->MessengerCallResult {throw std::runtime_error("Late override replaced native entry.");};
+    ready=true;
+    check(call.resume(services).completed && samples==2 && updates==2 && f.transform->matrix_owner()->at(12)==19,
+        "Native input resumption restarted the node/input/clock selection.");
+    check(f.visitor->node_path->count==0 && f.visitor->matrix_stack->count==1,
+        "Resumed native input left an unbalanced traversal stack.");
 }
 void helper_prefixes_and_faults() {
     Fixture f;auto path=std::make_shared<HitLandNodePath>();path->capacity=4;
@@ -178,6 +233,6 @@ void helper_prefixes_and_faults() {
 }
 int main() {
     try {dispatch_and_filter_gates();retained_filter_and_generic_children();group_and_geometry_prefixes();
-        time_update_and_stack();helper_prefixes_and_faults();std::cout<<"HITLAND node dispatch checks: "<<checks<<'\n';return 0;
+        time_update_and_stack();native_clock_and_null_input();retained_native_input();helper_prefixes_and_faults();std::cout<<"HITLAND node dispatch checks: "<<checks<<'\n';return 0;
     }catch(const std::exception& error) {std::cerr<<"After "<<checks<<" checks: "<<error.what()<<'\n';return 1;}
 }

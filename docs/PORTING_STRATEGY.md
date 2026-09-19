@@ -69,11 +69,13 @@ not the walking preview's separate mesh-based solver.
 The September 19 extensions implement the original matrix inverse, canonical
 AABox scratch transform, CHECKLAND floor response and CHECKWALL wall response.
 Prepared native geometry integrations reach HITFLOOR/HITWALL. The original player
-frame now enters CHECKWALL with all five stage collision infos registered and
-reaches the dynamic-transform global-clock virtual +68. See [HITLAND_WALL.md](HITLAND_WALL.md),
+frame now completes its prepared neutral update with all five stage collision
+infos registered, using the recovered global clock and verified null-input
+transform updates. See [GAME_CLOCK.md](GAME_CLOCK.md),
+[ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md), [HITLAND_WALL.md](HITLAND_WALL.md),
 [MATRIX_INVERSE.md](MATRIX_INVERSE.md) and [HITLAND_FLOOR.md](HITLAND_FLOOR.md)
 for original-instruction and supplied-data evidence. The next collision work is
-the reached dynamic clock/update, missing geometry bounds, other bound classes
+nonnull transform inputs and other update bindings, missing geometry bounds, other bound classes
 and CHECKWALLFULL. Deliver those actual responses through HITLANDDELIVER to the
 recovered player frame. Dynamic operations are not complete merely because a
 test provider supplies a matrix.
@@ -86,7 +88,7 @@ sequence execution, ACTION and selected player-frame operations. Four prepared
 original Agumon slots are integration evidence for those calls. Original device
 assignment, manager attachment, complete startup, frame scheduling, camera,
 rendering, audio, combat, transitions and saves remain required. Prepared
-providers and an executed frame prefix do not establish a gameplay session or
+providers and completed prepared neutral frames do not establish a gameplay session or
 connected local multiplayer. See [MODEL_FRAME.md](MODEL_FRAME.md),
 [MODEL_DISPATCH.md](MODEL_DISPATCH.md) and [VALIDATION.md](VALIDATION.md).
 
@@ -122,7 +124,7 @@ output cannot establish its full original behavior.
 1. **Complete the reached collision operations.** Build on the implemented
    inverse, AABox transform and CHECKLAND/CHECKWALL responses, preserving
    arithmetic, type dispatch, ownership and publication order. Recover missing bounds,
-   the reached global clock/dynamic node updates and CHECKWALLFULL. Acceptance:
+   nonnull transform input and other concrete updates, and CHECKWALLFULL. Acceptance:
    focused original-instruction comparisons, meaningful synthetic edge cases,
    and supplied-data queries whose actual responses reach HITLANDDELIVER and
    the player consumer. A static candidate list alone cannot close this step.
@@ -131,7 +133,9 @@ output cannot establish its full original behavior.
    Preserve manager/work captures and completed effects across suspension;
    retain independent player and pad owners. Acceptance: original input,
    motion, collision, waits and script effects execute together through the
-   recovered frame, with compared state and call order. Do not replace the
+   recovered frame, with compared state and call order. Four prepared neutral
+   per-RAM frames now complete; next qualify nonneutral input and repeated
+   updates, then connect them to the actual outer scheduler. Do not replace the
    preview controller until the original path actually supplies its behavior.
 3. **Recover startup and the game scheduler.** Implement the reached manager,
    sound, layer/text and later startup-script services. Connect actual manager

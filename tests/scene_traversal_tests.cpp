@@ -25,6 +25,10 @@ struct Fixture : ScriptFixture {
     struct A {std::uint32_t ref,storage;std::string type;};
     std::vector<N> nodes;
     std::vector<A> attrs;
+    std::vector<std::uint32_t> transform_inputs;
+    std::uint32_t transform_input() {
+        const auto ref=add(object);transform_inputs.push_back(ref);return ref;
+    }
     std::uint32_t attribute(std::string type,std::uint32_t value=0,std::uint16_t unit=0) {
         const auto ref=add(object);
         // Geometry now also has a canonical live owner. Keep its authored
@@ -56,6 +60,7 @@ struct Fixture : ScriptFixture {
         const auto short_type=static_cast<std::uint16_t>(doc.metadata.field_types.size());doc.metadata.field_types.push_back({"igShortMetaField",1,0});
         const auto obj=[&](std::uint32_t ref)->IgbObject& {return doc.objects.at(doc.references.at(ref).value_index);};
         const auto offset=[&](std::uint32_t ref) {return doc.memories.at(doc.references.at(ref).value_index).offset;};
+        for(const auto ref:transform_inputs)obj(ref).type_index=type("igTransformSource",object);
         for(const auto& n:nodes) {
             auto& value=obj(n.ref);value.type_index=type(n.type,n.type=="igGeometry" || n.type=="igOverrideAttrSet" ?
                 static_cast<std::int32_t>(attr_set) : static_cast<std::int32_t>(group));const auto at=offset(n.storage);
@@ -149,7 +154,8 @@ void gates_and_transform() {
     check(clock.run(service).value==0 && queries==2,"Transform clock was skipped, resampled, or lost a zero time value.");
     check(draws.size()==1 && draws[0].model_view==original_matrix_multiply(identity(),current),
         "Transform callback resume must compose the actual current node matrix, not stale serialized bytes.");
-    Fixture bad;const auto input=bad.make_node("igTransform",{},{},2,false,identity(),0,0);auto invalid=bad.resource();Execution b({invalid->node(input)});
+    Fixture bad;const auto input_owner=bad.transform_input();
+    const auto input=bad.make_node("igTransform",{},{},2,false,identity(),0,input_owner);auto invalid=bad.resource();Execution b({invalid->node(input)});
     check(b.run(service).stop==BoneSelectStop::faulted,"Non-null transform input bypassed its actual update service.");
 }
 void mutable_children() {

@@ -51,9 +51,12 @@ triangle operations retain their original arithmetic and publication order.
 The September 19 updates add the original native matrix inverse, canonical
 AABox transforms, CHECKLAND floor response and CHECKWALL's three-pass wall
 correction. Native geometry responses reach the existing HITFLOOR/HITWALL
-consumers through registered receivers. An original player frame with all five
-stage collision infos now reaches the missing dynamic-transform global clock.
-Dynamic updates, missing bounds, CHECKWALLFULL and startup remain required. See
+consumers through registered receivers. The recovered global clock and actual
+null-input transform updates now let all four prepared original player slots
+finish one neutral frame each, with all five stage collision infos registered.
+Nonnull transform inputs,
+missing bounds, CHECKWALLFULL and startup remain required. See
+[GAME_CLOCK.md](docs/GAME_CLOCK.md), [ACTOR_TRANSFORM.md](docs/ACTOR_TRANSFORM.md),
 [HITLAND_WALL.md](docs/HITLAND_WALL.md),
 [HITLAND_FLOOR.md](docs/HITLAND_FLOOR.md), [MATRIX_INVERSE.md](docs/MATRIX_INVERSE.md),
 [HITLAND_GEOMETRY.md](docs/HITLAND_GEOMETRY.md),
@@ -100,9 +103,10 @@ not contain game files.
   info/RAM records with a distinct manager and shared model nodes. The five
   recipient commands preserve their original query/response and matrix-update
   order. Prepared native integration delivers real floor/wall geometry responses
-  through HITFLOOR/HITWALL. The original player-frame test now reaches the dynamic
-  clock/update boundary with all stage collision infos. Complete startup/frame
-  integration remains required. Direction normalization and XZ
+  through HITFLOOR/HITWALL. A prepared original player frame now completes native
+  collision with all stage collision infos, the recovered global clock and
+  verified transform updates. Complete startup and scheduled gameplay remain
+  required. Direction normalization and XZ
   broad-phase arithmetic have separate instruction comparisons. See
   [MODEL_MOVEMENT_COLLISION.md](docs/MODEL_MOVEMENT_COLLISION.md),
   [HITLAND_DELIVER.md](docs/HITLAND_DELIVER.md) and

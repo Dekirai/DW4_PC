@@ -6,6 +6,7 @@
 #include "dw4/model_movement_collision.hpp"
 #include "dw4/hitland_wall.hpp"
 #include "dw4/hitland_node_dispatch.hpp"
+#include "dw4/game_clock.hpp"
 #include "dw4/model_motion_actual.hpp"
 #include "dw4/model_timer.hpp"
 #include "dw4/database_runtime.hpp"
@@ -468,9 +469,11 @@ void original(const std::filesystem::path& root) {
         register_node(geometry_info->check_switch);
     }
     check(collision->infos->count==5,"Original stage collision registration lost an authored info occurrence.");
+    const auto collision_services=std::make_shared<HitLandIntersectionServices>();
+    collision_services->native_dispatch=std::make_shared<HitLandNodeDispatchServices>();
     events.register_native_controller(ControllerObjectId::allocate_native(),{
         []()->std::optional<std::uint8_t>{return 1;},
-        [collision]{return make_hitland_query_receiver(collision);}},"HITLANDMODEL",{},0);
+        [collision,collision_services]{return make_hitland_query_receiver(collision,collision_services);}},"HITLANDMODEL",{},0);
     const auto with_geometry=events.resume(*frame);
     check(!with_geometry.completed && with_geometry.diagnostic.find("HITLANDDELIVER/HITWALL")!=std::string::npos &&
         with_geometry.diagnostic.find("global clock virtual+68")!=std::string::npos &&
@@ -490,10 +493,41 @@ void original(const std::filesystem::path& root) {
         "Retrying the original dynamic collision repeated the player frame, query preparation or completed traversal prefix.");
     std::cout<<"Original frame after native collision registration: completed="<<with_geometry.completed
         <<", infos="<<collision->infos->count<<", diagnostic="<<with_geometry.diagnostic<<'\n';
+    // The real long-timer lifecycle uses the native monotonic nanosecond source.
+    // Starting this prepared owner does not stand in for complete Ark startup.
+    const auto game_clock=std::make_shared<NativeGameClock>();
+    game_clock->start();
+    collision_services->native_dispatch->game_clock=game_clock;
+    const auto with_clock=events.resume(*frame);
+    check(with_clock.completed && frame->completed() && frame->collision()->completed() &&
+        frame->captured().work==created && created->subcommands->list_owner()->front().elapsed==1 &&
+        collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+        "Original neutral frame did not finish its native collision with balanced stacks and retained work.");
+    const auto final_matrix=*generated_one->node->matrix_owner();
+    check(events.resume(*frame).completed && *generated_one->node->matrix_owner()==final_matrix &&
+        created->subcommands->list_owner()->front().elapsed==1,
+        "Completed original frame repeated collision or delayed-subcommand effects.");
+    std::cout<<"Original frame after native clock and transform updates: completed="<<with_clock.completed
+        <<", diagnostic="<<with_clock.diagnostic<<'\n';
+    for(std::size_t slot=1;slot<4;++slot) {
+        const auto work=events.model_work(ids[slot]);
+        check(work!=created && work->subcommands->list_owner()->front().elapsed==0,
+            "An earlier player's frame advanced another prepared slot's work.");
+        auto next_frame=events.begin_model_frame(ids[slot]);const auto result=events.resume(*next_frame);
+        if(!result.completed)throw std::runtime_error("Original neutral frame slot "+std::to_string(slot)+": "+result.diagnostic);
+        check(next_frame->completed() && next_frame->captured().work==work &&
+            next_frame->input() && next_frame->input()->completed() &&
+            next_frame->status() && next_frame->status()->completed() &&
+            next_frame->motion() && next_frame->motion()->completed() &&
+            next_frame->collision() && next_frame->collision()->completed() &&
+            work->subcommands->list_owner()->front().elapsed==1 &&
+            collision->visitor->node_path->count==0 && collision->visitor->matrix_stack->count==1,
+            "An original prepared player slot failed to finish its own neutral frame and native collision.");
+    }
     std::cout<<"Original player +98 returns=8 across four actual RAM/ONE/node owners and two point groups; "
         "registered GENERATE returns=4 with real actor-aware ACTION, "<<table_count<<" exported broadcast tables, player +B8 and nullable box tails; "
-        "first neutral actual frame enters shared-node HITLANDDELIVER and native CHECKWALL with all five stage collision infos registered; "
-        "dynamic-node clock/update, scheduling and full gameplay remain required\n";
+        "four prepared neutral per-RAM frames complete shared-node HITLANDDELIVER and native collision with all five stage infos registered; "
+        "complete startup, device assignment, scheduling and full gameplay remain required\n";
 }
 }
 int main(int argc,char** argv) {

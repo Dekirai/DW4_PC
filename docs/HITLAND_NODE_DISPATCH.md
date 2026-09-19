@@ -63,9 +63,20 @@ the dispatcher does not manufacture that outcome.
 A transform reads the visitor time through the represented `801D138C` rules.
 A nonzero bound-time byte selects the stored high/low words. Otherwise it
 reaches the actual global clock virtual `+68` service. No host clock or stored
-fallback timestamp substitutes for that operation. The resulting time is
-captured before the node's original virtual `+9C` update. A pending clock or
-update retains that phase and its captures.
+fallback timestamp is invented when no clock owner is installed. An explicitly
+installed `NativeGameClock` now implements the resolved long-timer getter, using
+actual PC monotonic nanoseconds as its platform source. The clock callback, when
+supplied, takes precedence at entry. See [GAME_CLOCK.md](GAME_CLOCK.md).
+
+The resulting time is captured before the node's original virtual `+9C` update.
+Without a whole-node override, the dispatcher enters the retained native
+`ActorTransformUpdateInvocation`. Exact `igTransform` and `beCopyTransform`
+share the verified `801D73A8` body: null input completes without changing the
+matrix; nonnull input reaches its actual virtual `+5C` operation. A missing
+serialized field is not a null input. See [ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md).
+A pending input retains the captured input, inline matrix and time. Installing
+a later whole-node override cannot replace an already entered native update;
+resuming it does not resample the clock or repeat the visitor-time gate.
 
 After the update, the transform appends its path entry and calls the concrete
 producer. Only a zero result pushes the current node matrix and traverses
@@ -109,11 +120,13 @@ This comparison verifies those numeric kernels; allocation and continuation
 prefixes have separate focused tests.
 
 The installed static geometry path with a present bound can enter the concrete
-candidate producer directly. Dynamic time/update services, missing geometry
-bounds, other bound classes and the remaining query reduction/response paths
-still require their actual operations. This dispatcher does not establish a
+candidate producer directly. The native long timer and the two verified
+transform-update bindings now execute directly. Nonnull input implementations,
+other concrete update bindings, missing geometry bounds, other bound classes
+and the remaining query response paths still require their actual operations.
+This dispatcher does not establish a
 complete original gameplay frame. See [HITLAND_PRIMITIVES.md](HITLAND_PRIMITIVES.md)
 and [VALIDATION.md](VALIDATION.md) for adjacent implementation and validation.
 Canonical AABox transforms and the original inverse now run natively in the
 geometry producer; see [MATRIX_INVERSE.md](MATRIX_INVERSE.md). This does not
-replace the node's still-required dynamic time/update operation.
+establish complete dynamic animation or original startup and scheduling.

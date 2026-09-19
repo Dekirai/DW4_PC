@@ -5,6 +5,8 @@
 
 namespace dw4 {
 struct HitLandGeometryServices;
+struct ActorTransformUpdateServices;
+class NativeGameClock;
 
 // Original table entries are concrete function targets, not serialized type IDs.
 enum class HitLandNodeHandler : std::uint32_t {
@@ -23,9 +25,14 @@ struct HitLandNodeDispatchServices {
     std::shared_ptr<HitLandGeometryServices> geometry;
     // Reached original global clock virtual+68 when visitor.bound_time is zero.
     std::function<std::optional<std::uint64_t>()> global_clock;
-    // Original node virtual+9C, after capturing the visitor's time.
+    // Explicit shared runtime clock. The callback above takes precedence at
+    // entry; a selected owner survives service replacement while suspended.
+    std::shared_ptr<NativeGameClock> game_clock;
+    // Override for the original node virtual+9C, selected before native entry.
+    // Without an override the recovered igTransform/beCopyTransform body runs.
     std::function<MessengerCallResult(const std::shared_ptr<const ActorSceneNode>&,
         std::uint64_t)> transform_update;
+    std::shared_ptr<ActorTransformUpdateServices> actor_transform;
     // The complete missing-bound prefix801F7148..73C4 must publish any new
     // canonical node bound and return its captured owner. Null is a completed
     // no-eligible-attribute result only when the provider established that.

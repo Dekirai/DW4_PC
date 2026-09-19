@@ -120,12 +120,14 @@ selected response through a registered HITWALL delivery to a prepared node.
 The existing original player-construction test now registers all five collision
 info occurrences from that stage's actual info list, including dynamic geometry.
 After four prepared original GENERATE calls, its first neutral player frame
-enters HITLANDDELIVER, native CHECKWALL and real stage traversal. It reaches the
-required dynamic-transform global-clock virtual `+68`; retries retain the query
-and frame prefix without repeating earlier work. No substitute clock, transform
-update or collision result is installed to force frame completion.
+enters HITLANDDELIVER, native CHECKWALL and real stage traversal. The test retains
+the initial missing-clock pause, then installs a started native long-timer owner
+with a real monotonic PC source. The same frame completes through the verified
+null-input transform updates and native wall/floor responses. Retrying a
+completed frame preserves its effects. See [GAME_CLOCK.md](GAME_CLOCK.md) and
+[ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md).
 
-Original dynamic clock/update services, missing geometry bounds, other bound
+Nonnull transform input and other update bindings, missing geometry bounds, other bound
 classes, CHECKWALLFULL, startup and the complete frame scheduler remain required.
 The walking preview still uses its provisional movement and camera. These core
 tests do not establish a complete gameplay session or connected multiplayer.

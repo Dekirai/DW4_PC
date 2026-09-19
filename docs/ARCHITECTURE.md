@@ -62,8 +62,9 @@ The September 19 extensions add native AABox scratch transforms, the original
 matrix inverse, CHECKLAND floor handling and CHECKWALL's three-pass wall query.
 Retained per-delivery receivers connect actual native geometry to HITFLOOR and
 HITWALL. The original player-frame test registers all five stage collision infos
-and reaches the dynamic-transform global clock before its path/matrix push;
-retries preserve completed frame and traversal effects. Dynamic node updates,
+and completes a prepared neutral frame using the recovered global clock and
+verified null-input transform updates. Retries preserve completed frame and
+traversal effects. Nonnull transform input and other concrete update bindings,
 other bound classes, missing-bound construction, CHECKWALLFULL and original
 manager startup remain required. See [HITLAND_WALL.md](HITLAND_WALL.md),
 [HITLAND_FLOOR.md](HITLAND_FLOOR.md),
@@ -161,6 +162,15 @@ manager and that manager's current timestamp at each original helper site.
 This supplies context time without a host clock or a timer copied into work.
 Attaching the context is explicit preparation; the original attachment and
 outer scheduler are still missing.
+
+`NativeGameClock` separately owns the recovered global long timer, including
+start, pause, reset, stop and restart. Its platform endpoint supplies monotonic
+PC nanoseconds; it does not advance manager context or invent a frame delta.
+HITLAND transform dispatch captures that clock's result and directly executes
+the verified `igTransform`/`beCopyTransform` update body. Canonical nullable
+transform inputs are distinct from a copy transform's source-matrix link.
+Nonnull inputs retain their own reached update boundary. See
+[GAME_CLOCK.md](GAME_CLOCK.md) and [ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md).
 
 `action_dispatch` connects defined ACTION programs and the existing actor-aware
 runtime to real messenger rows. It retains source/service owners and pending

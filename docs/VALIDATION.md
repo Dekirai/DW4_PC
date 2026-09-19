@@ -1,5 +1,54 @@
 # Local validation
 
+## Native game clock and completed prepared player frames
+
+Validated locally on 2026-09-19. The native global long timer and verified
+`igTransform`/`beCopyTransform` updates now connect the retained collision
+traversal to completed prepared neutral player frames. This supersedes the
+earlier missing-clock boundary below. See [GAME_CLOCK.md](GAME_CLOCK.md),
+[ACTOR_TRANSFORM.md](ACTOR_TRANSFORM.md) and [MODEL_FRAME.md](MODEL_FRAME.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 120/120 CTest suites passed locally with four build jobs |
+| Clock lifecycle | 60 checks for start, pause, reset, stop, restart, raw stopped bytes, wrapped time, live field reads, failure prefixes and monotonic PC sampling |
+| Native collision dispatch | 61 checks, including clock selection, bound-time bypass, native null-input update and retained nonnull-input suspension without a second clock read |
+| Original player integration | 167 original-inclusive / 62 synthetic checks; four original GENERATE calls followed by one completed neutral per-RAM frame for each slot; all five stage collision infos registered; actual wall/floor responses and balanced traversal stacks |
+| Original transform updates | 1,151 original-inclusive / 82 synthetic checks; 56 stage-179 copy-transform occurrences preserve every matrix word; real nonnull sequence input 1874 on node 1873 remains at its required virtual +5C boundary |
+| Independent native comparisons | 10,291 cases: 4,264 timer lifecycle, 4,001 hardware conversions, 12 timebase rollovers and 2,014 null-input transform calls; zero mismatches |
+| Bound visitor time | Separate raw instruction proof for 1,035 stored-time cases; no global clock access |
+
+The first player frame is deliberately paused at missing HITLANDMODEL, then at
+the missing clock. Retrying preserves its work, prepared rays and earlier frame
+effects. Installing a started `NativeGameClock` with its real PC monotonic
+source resumes that same invocation to completion. Each remaining slot retains
+independent work and advances only its own delayed subcommand. A completed-frame
+retry leaves the matrix and subcommand time unchanged. Pad data, system delta,
+manager registration and per-RAM call order remain explicit test preparation;
+these results do not establish scheduled gameplay or connected controllers.
+
+The instruction comparison executes 3,316,670 original instructions across its
+measured profiles. Its native drivers link the production core without
+replacement source objects. Core SHA256:
+`BE2EE3DF844F84A332D9BDB70897DEE9B2C3C195DCBAA7E393DE0E268B8CD364`.
+Equal-input arithmetic comparisons do not establish identical host/console
+sample streams, complete animation inputs or a game scheduler.
+
+A malformed transform-input chain exposed a parser stack overflow. The original
+field's base class is now checked before recursively loading an incompatible
+owner. Original-data validation also caught an incorrect inference from the
+field name `_transformInput`: the actual base is `igTransformSource`, proven by
+the registration string and all 472 nonnull stage inputs. The corrected check
+accepts those original hierarchies and rejects unrelated MODEL ONE inputs.
+An older rendering fixture was changed to supply an actual source object at
+its intended nonnull-input boundary. Synthetic tests cover rejection, retry,
+canonical ownership and preservation of valid unknown source subclasses.
+
+Original startup, nonneutral/repeated gameplay updates, complete animation
+inputs, remaining collision operations and the outer scheduler remain required.
+No interactive preview was launched and GitHub Actions remained disabled.
+Ignored logs and independent evidence are in `work/native-dynamic-clock-*`.
+
 ## Native CHECKWALL and original player-frame integration
 
 Validated locally on 2026-09-19. Native CHECKWALL now executes the original

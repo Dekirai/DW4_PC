@@ -15,6 +15,7 @@ class ActorSceneError : public std::runtime_error { public: using std::runtime_e
 class ActorSceneResource;
 class ModelSceneObjects;
 class ModelSceneList;
+class ModelSceneObject;
 class ActorSceneNodeList;
 class ActorSceneNodeStorage;
 struct ActorSceneSource;
@@ -78,6 +79,9 @@ public:
     std::shared_ptr<ActorSceneNode> source_transform_owner();
     std::shared_ptr<const ActorSceneNode> source_transform_owner() const;
     void set_source_transform_owner(std::shared_ptr<ActorSceneNode>);
+    bool transform_input_field_available() const noexcept { return transform_input_available_; }
+    std::shared_ptr<ModelSceneObject> transform_input_owner() const;
+    void set_transform_input_owner(std::shared_ptr<ModelSceneObject>);
     std::shared_ptr<ModelPlacementNode> placement_node();
 private:
     friend class ActorSceneResource;
@@ -94,6 +98,8 @@ private:
     bool mask_available_{},source_transform_available_{};
     std::shared_ptr<ActorSceneBitMask> mask_;
     std::shared_ptr<ActorSceneNode> source_transform_;
+    bool transform_input_available_{};
+    std::shared_ptr<ModelSceneObject> transform_input_; // igTransform +68, serialized slot11.
     std::optional<std::uint32_t> runtime_dispatch_index_;
     bool attributes_available_{};
     std::uint8_t attributes_enabled_{};
