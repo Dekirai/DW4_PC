@@ -146,8 +146,21 @@ order. Concrete int/bool default handlers copy verified physical bytes inside
 initialization. Separate typed metadata/internal-list constructor chains preserve
 their real allocation, physical header, default and backing-store operations;
 allocator and reflective registration endpoints remain explicit. They do not
-prove a complete cold bootstrap. Continue through prerequisite registration, actual parent/field
-construction and reference-driven directory list allocation; do not substitute
+prove a complete cold bootstrap. The actual ArkCore constructor and bootstrap
+caller now register fundamental metadata with reflection disabled, enabling it
+only after registration and callback cleanup return. A separate composed test
+enters the real metadata wrapper and direct constructors, publishes busy metadata
+and stops at missing `igObject` parent registration `80066B08`. Native parent
+inheritance and name assignment now replace two registrar service boundaries;
+raw list allocation/append, field descriptors, layout and publication remain.
+Continue from that cold path through parent/field registration and the outer
+ArkCore creation/publication wrapper, then connect initialized state to the
+decoder. Preserve the existing enabled decoder fixture as separate evidence;
+enabled reflection with a null fundamental metadata cache recursively requests
+itself before publication. See [IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md) and
+[IGB_METADATA_OPERATIONS.md](IGB_METADATA_OPERATIONS.md).
+Continue reference-driven directory list allocation; do not substitute
 name-only metadata or null pointers for those constructed owners. See
 [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
 [IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md),

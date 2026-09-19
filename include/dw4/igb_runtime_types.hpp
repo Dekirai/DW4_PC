@@ -9,6 +9,8 @@ struct IgbScratchBuffer;
 struct SystemStageLoader;
 struct IgbObjectInstanceList;
 struct IgbInternedString;
+struct IgbRegistrationCallbackList;
+struct IgbRuntimeTypeList;
 class IgbRuntimeTypesError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 // Captured original C-string pointer into a live, initialized scratch allocation.
 // Capturing this source does not read any byte or manufacture a host string.
@@ -81,6 +83,8 @@ struct IgbRuntimeMetaType {
     std::vector<SystemStageString> overwritten_constructor_strings_;
     std::weak_ptr<void> construction_active_;
     bool construction_fault_{};
+    std::optional<std::shared_ptr<IgbRuntimeTypeList>> children; // +34.
+    std::optional<std::shared_ptr<IgbInternedString>> name_string; // +1C header identity.
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 
@@ -103,6 +107,13 @@ struct IgbRuntimeTypeRegistry {
     std::optional<std::shared_ptr<ModelSceneObject>> registration_filter_pool; // +60.
     std::optional<std::int32_t> registration_filter_enabled; // +64.
     std::optional<std::shared_ptr<ModelSceneObject>> registration_filter_names; // +68.
+    std::optional<std::shared_ptr<IgbRuntimeTypeList>> secondary_types; // +24.
+    std::optional<std::shared_ptr<IgbRegistrationCallbackList>> bootstrap_callbacks; // +28.
+    std::optional<std::shared_ptr<IgbRegistrationCallbackList>> registration_callbacks; // +2C.
+    // Physical startup raw stores do not release overwritten canonical owners.
+    std::vector<std::shared_ptr<void>> overwritten_startup_owners_;
+    std::weak_ptr<void> bootstrap_active_;
+    bool bootstrap_fault_{};
 };
 struct IgbRuntimeNameField {
     std::uint32_t offset{0x1c}; // Descriptor8056176C +08, registered _name.

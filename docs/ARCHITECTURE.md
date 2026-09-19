@@ -96,8 +96,11 @@ See [IGB_FILE_FACTORY.md](IGB_FILE_FACTORY.md),
 [IGB_OBJECT_INIT.md](IGB_OBJECT_INIT.md) and [IGB_FILE_POOLS.md](IGB_FILE_POOLS.md).
 The generic `80066204` registrar now shares the file's canonical metadata cell,
 preserves original busy/parent/configuration/finalization flags and connects the
-actual deferred callback-list constructor and append. Parent metadata linkage,
-field registration, registry publication and layout remain reached operations.
+actual deferred callback-list constructor and append. Native parent metadata
+linkage preserves child publication, live layout reads and inherited field
+retains; raw list append/growth remains explicit. Native name assignment shares
+the canonical string pool and preserves interning, release and publication order.
+Field registration, registry publication and layout remain reached operations.
 Concrete int/bool field virtuals copy physical default bytes, including overlap,
 inside the actual initializer; serialized names do not select these handlers.
 Native metadata and internal-field-list factories also distinguish enabled
@@ -107,6 +110,18 @@ separate list backing allocation. Allocator, type registration and reflected
 construction endpoints remain required; these bodies do not establish complete
 cold startup. The current-pool wrapper remains fixed at handle two while
 registration uses the same native manager access with its captured handle.
+ArkCore construction `8003D234` and bootstrap caller `8003D2F8` now preserve
+physical stores and the actual disabled-to-enabled transition. The canonical
+`igMetaObject` wrapper/getters compose with the registrar and direct constructors;
+a cold integration reaches missing parent registration `80066B08` with busy
+metadata published and reflection still disabled. The existing enabled decoder
+fixture remains separate. An enabled core with a null fundamental metadata cache
+recurses before publication; the adapter reports that invalid-startup cycle
+instead of manufacturing metadata. Initial core lists/reserve, manager/platform
+operations, field descriptors and later registrations remain explicit. See
+[IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md) and
+[IGB_METADATA_OPERATIONS.md](IGB_METADATA_OPERATIONS.md).
 See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATION.md),
 [IGB_REGISTRATION_CALLBACKS.md](IGB_REGISTRATION_CALLBACKS.md),
 [IGB_THREAD_REGISTRATION.md](IGB_THREAD_REGISTRATION.md),

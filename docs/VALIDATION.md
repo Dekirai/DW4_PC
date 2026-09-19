@@ -1,5 +1,66 @@
 # Local validation
 
+## Native cold ArkCore startup and metadata registration
+
+Validated locally on 2026-09-19. The native ArkCore constructor and bootstrap
+caller now preserve the original disabled initialization phase. Canonical
+`igMetaObject` registration/getters compose with the existing registrar and
+direct metadata/internal-list constructors. Parent-field inheritance and name
+assignment also replace their original registrar endpoints. See
+[IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md) and
+[IGB_METADATA_OPERATIONS.md](IGB_METADATA_OPERATIONS.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 158/158 CTest suites passed locally with four jobs; no compiler warnings |
+| Parent and name operations | 42 checks for live field/layout reloads, captured counts and owners, wrapping references, retained failure/suspension, raw overwrite lifetime, actual native interning and registrar adapters |
+| Canonical metadata registration | 124 checks for exact arguments, shared cache, ready/busy gates, both getters, retained calls, recursive invalid-startup failure and actual cold constructor integration |
+| ArkCore constructor/bootstrap | 70 checks for exact physical stores and untouched bytes, enable ordering, 23 registration calls, capacity equality, fresh pool/count reads, missing/null prefixes and retained continuations |
+| Cold integration | Actual constructor/bootstrap, callback runner, metadata registration, generic registrar and direct metadata/internal-list constructors reach missing parent registration `80066B08`; canonical metadata is published with busy flag 8, enabled remains 0 and later counts remain unwritten |
+| Original decoder prefix | 400 original-inclusive / 107 synthetic checks; the separate prepared enabled-runtime fixture still reaches `8002A0A8` with cursor 5,381, dependency body 2,453 bytes, loading=1 and succeeded=0 |
+| Player regression | 447 original-inclusive / 62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+| Parent/name instruction comparison | 906 cases, 29,675 original instructions at 124 addresses, zero differences, including 369 bounded failure prefixes |
+| ArkCore instruction comparison | 759 cases, 262,345 original instructions at 447 addresses, zero differences, including 586 bounded failure prefixes |
+
+The cold integration prepares platform/manager work, initial core-list owners
+and reserve, physical allocation and pool endpoints. It first suspends inside
+field-list backing allocation, resumes without replay, and reaches the actual
+missing parent registration. It does not seed ready metadata or enable reflection
+before registration returns. The outer ArkCore allocation/global-publication
+wrapper, complete classes/fields/layout and remaining services are required.
+The existing enabled decoder fixture has not become an authentic cold start:
+enabled reflection with a null fundamental metadata cache recursively requests
+itself before publication. The new adapter detects that invalid active-call
+cycle and reports failure without modifying flags or manufacturing metadata.
+
+The parent/name corpus executes actual `80065640`, `80065788`, `800658E4`,
+`80065820` and `80053E6C`. Pool lookup, child-list construction, raw `80053BC0`
+append/growth and external string services are prepared boundaries. The permanent
+native tests separately compose the recovered string-table interner.
+The ArkCore corpus executes `8003D234`, `8003D2F8`, the pool selector,
+callback-list header constructor, registration wrappers and callback runner.
+Platform/manager calls, pool virtuals, initial list construction/capacity/reserve,
+callback allocation, registration bodies and final metadata are prepared.
+Registration body results are null in that corpus; it does not qualify field
+schema construction or nonempty deferred callbacks. Physical core bytes,
+represented global changes, callback-header projections and ordered endpoint
+arguments are compared, including bounded malformed-storage failure prefixes.
+Both production and comparison boundaries received independent review.
+
+Final core SHA256:
+`04DC34F5EDA5C4CBEB15D78C5CDE5F2A89A4943D1333867CB1EE662BFAC11E43`.
+Ignored local evidence: `work/native-cold-registration-final-build.log`,
+`work/native-cold-registration-prefix.log`,
+`work/native-cold-registration-player.log`,
+`work/native-cold-registration-verifier.log`,
+`work/native-metadata-parent-name-result.json` and
+`work/native-arkcore-bootstrap-result.json`. The comparison reports record
+library, driver and covered-source identities matching the final build.
+No full dependency load or native game boot is claimed. No GitHub Actions or
+interactive preview ran; the walking preview is unchanged.
+
 ## Native bootstrap metadata and internal-list construction
 
 Validated locally on 2026-09-19. The original ThreadManager registration now

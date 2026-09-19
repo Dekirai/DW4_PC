@@ -36,18 +36,20 @@ void store_word(const IgbBootstrapPointer& object,const std::shared_ptr<IgbRunti
                 std::uint32_t offset,std::uint32_t value){
     // These are raw constructor stores, not reference assignments.
     if(offset==0x1c && m->name)m->overwritten_constructor_strings_.push_back(m->name);
+    if(offset==0x1c && m->name_string && *m->name_string)m->overwritten_constructor_owners_.push_back(*m->name_string);
     if(offset==0x60)retain_name(m);
     if(offset==0x28 && m->fields)m->overwritten_constructor_owners_.push_back(m->fields);
     if(offset==0x30 && m->instances && *m->instances)m->overwritten_constructor_owners_.push_back(*m->instances);
+    if(offset==0x34 && m->children && *m->children)m->overwritten_constructor_owners_.push_back(*m->children);
     if(offset==0x38 && m->parent && *m->parent)m->overwritten_constructor_owners_.push_back(*m->parent);
     igb_bootstrap_write_word(object,offset,value);
     switch(offset){
     case 0x08:m->word_08=value;break;case 0x0c:m->word_0c=value;break;
     case 0x10:m->major=value;break;case 0x14:m->minor=value;break;
-    case 0x1c:m->name.reset();break;case 0x20:m->allocation_prefix=value;break;
+    case 0x1c:m->name.reset();m->name_string=std::shared_ptr<IgbInternedString>{};break;case 0x20:m->allocation_prefix=value;break;
     case 0x24:m->class_flags=value;break;case 0x28:m->fields.reset();break;
     case 0x2c:m->instance_count=value;break;case 0x30:m->instances=std::shared_ptr<IgbObjectInstanceList>{};break;
-    case 0x34:m->word_34=value;break;case 0x38:m->parent=std::shared_ptr<IgbRuntimeMetaType>{};break;
+    case 0x34:m->word_34=value;m->children=std::shared_ptr<IgbRuntimeTypeList>{};break;case 0x38:m->parent=std::shared_ptr<IgbRuntimeMetaType>{};break;
     case 0x3c:m->factory_redirect=value;break;case 0x40:m->word_40=value;break;
     case 0x44:m->word_44=value;break;case 0x48:m->native_size=value;break;
     case 0x4c:m->post_layout_callback=value;break;case 0x50:m->word_50=value;break;

@@ -99,6 +99,16 @@ Separate metadata and internal-field-list constructor chains now preserve actual
 header/default writes, pool selection and backing allocation boundaries. Their
 allocator and reflective registration endpoints remain explicit; this does not
 complete cold startup or switch the supplied-data test to a different runtime mode.
+The actual cold ArkCore constructor and bootstrap caller now preserve the original
+disabled initialization phase. A separate composed test enters real metadata
+registration and direct constructors, publishes the canonical busy metadata,
+and reaches the missing `igObject` parent registration before enabling reflection.
+Parent-field inheritance and metadata-name assignment are also reconstructed.
+Initial core-list allocation/reserve, allocator services and remaining class
+registrations are still explicit; this is not a complete native game boot. See
+[IGB_ARK_CORE_BOOTSTRAP.md](docs/IGB_ARK_CORE_BOOTSTRAP.md),
+[IGB_METADATA_REGISTRATION.md](docs/IGB_METADATA_REGISTRATION.md) and
+[IGB_METADATA_OPERATIONS.md](docs/IGB_METADATA_OPERATIONS.md).
 The separate native pool-name table and
 original 46-name lookup are also implemented. Loading is still incomplete.
 Full runtime initialization, concrete factories,

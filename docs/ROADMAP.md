@@ -101,13 +101,24 @@ registration `8002F178`. The actual runner and prerequisite once guard now
 compose ThreadManager registration `800238A8`, handle-based pool selection
 and metadata factory `80029E64`. With the existing enabled runtime preserved,
 the next reached boundary is `igMetaObject` registration `8002A0A8`.
-Generic type registration and callback-list operations are reconstructed;
-their remaining parent, field, registry and layout bodies stay explicit.
+Generic type registration, callback-list operations, parent-field inheritance
+and metadata-name assignment are reconstructed; raw child/field list append,
+field descriptor registration, registry publication and layout remain explicit.
 Concrete int/bool field defaults now write through the native initializer.
 Typed metadata and internal-field-list constructor chains preserve physical
 headers, exact defaults and separate backing allocation; allocator and
 reflective registration endpoints remain explicit. The supplied-data prefix
 does not substitute a completed cold bootstrap for its enabled runtime.
+The actual ArkCore constructor/bootstrap caller now enters metadata registration
+while disabled. A separate composed test constructs and publishes canonical
+busy metadata, then stops at the required `igObject` parent `80066B08` before
+enabling reflection. Continue from that cold path: recover the parent registration,
+reached child/list operations and field descriptors/defaults, then layout and
+registry publication. Complete the outer ArkCore creation/publication wrapper
+and remaining pool/platform services before joining cold startup to the decoder.
+See [IGB_ARK_CORE_BOOTSTRAP.md](IGB_ARK_CORE_BOOTSTRAP.md),
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md) and
+[IGB_METADATA_OPERATIONS.md](IGB_METADATA_OPERATIONS.md).
 Reflected allocation, header/field-pass orchestration
 and the concrete file post-default pool assignments are reconstructed, with
 prepared metadata and allocator/field endpoints in focused tests. One serialized
