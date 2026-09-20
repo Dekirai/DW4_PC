@@ -11,6 +11,8 @@
 #include "dw4/igb_metadata_probe.hpp"
 #include "dw4/igb_metadata_defaults.hpp"
 #include "dw4/igb_field_values.hpp"
+#include "dw4/igb_list_registration.hpp"
+#include "dw4/igb_list_defaults.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -287,6 +289,14 @@ void actual_cold_bootstrap_prefix(){
             }
             return MessengerCallResult{true,0,{}};};return op;
     }));
+    // Retained callback selection still consults the same dynamic binding
+    // registry when a reached function body becomes available later.
+    IgbRegistrationCallbacksFactory additional_callbacks;
+    const auto original_function_bindings=f.services->callbacks->factory;
+    f.services->callbacks->factory=[&,original_function_bindings](const IgbRegistrationCallbacksCall& c){
+        if(additional_callbacks){auto result=additional_callbacks(c);if(result)return result;}
+        return original_function_bindings?original_function_bindings(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
+    };
     IgbArkCoreBootstrapInvocation call(ark);
     check(!call.resume(bootstrap).completed && !call.faulted(),"Real cold chain did not suspend at physical field-list backing allocation.");
     check(f.services->metadata->metadata && !*f.services->metadata->metadata && f.allocations==2 && f.calls.empty(),"Pending nested list construction prematurely published metadata.");
@@ -520,7 +530,7 @@ void actual_cold_bootstrap_prefix(){
     object_defaults->meta_fields->fields=object_defaults->fields;
     object_defaults->meta_fields->bootstrap->factory=[&](const IgbBootstrapCall& c){
         check(c.kind==BK::pool_allocate && c.pool==f.pool &&
-            (c.bytes==0x34 || c.bytes==0x38 || c.bytes==0x3c || c.bytes==0x44),"Specialized allocation changed its original profile.");
+            (c.bytes==0x34 || c.bytes==0x38 || c.bytes==0x3c || c.bytes==0x44 || c.bytes==0x50),"Specialized allocation changed its original profile.");
         auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,c,out=op.get()]{
             auto descriptor=std::make_shared<IgbDecodeRuntimeField>();
             auto physical=allocation(0x730000+static_cast<std::uint32_t>(descriptors.size())*0x100,c.bytes);
@@ -655,6 +665,63 @@ void actual_cold_bootstrap_prefix(){
     check(!call.resume(bootstrap).completed && f.fields->count==27 && f.constructed->class_flags==7 && f.core->types->count==2 &&
         callback_backings==1 && descriptors.size()==27 && default_allocations==27 && string_allocations==29 && field_size_queries==final_queries,
         "Pending deferred class registration repeated completed constructors, schema, publication or callbacks.");
+
+    auto list_registration=std::make_shared<IgbListRegistrationServices>();
+    list_registration->lists=native_lists;list_registration->field_registries=fields_services;
+    list_registration->metadata=f.services->metadata;list_registration->callbacks=f.services->callbacks;
+    list_registration->types=f.services->types;list_registration->pools=f.services->pools;
+    unsigned list_probe_locals{};std::vector<IgbBootstrapPointer> list_probe_storage;
+    list_registration->local_storage=[&](IgbTypeListFactoryEntry entry){
+        auto local=allocation(0x7c0000+(++list_probe_locals)*0x100,16);
+        if(entry==IgbTypeListFactoryEntry::children)local.storage->bindings.push_back({0,{},{},{},std::make_shared<IgbRuntimeTypeList>()});
+        else local.storage->bindings.push_back({0,{},{},std::make_shared<IgbDecodeFieldRegistry>()});
+        list_probe_storage.push_back(local);return local;
+    };
+    // Bind the previously allocated canonical owners to their physical pointer
+    // words before real parent attachment or registry publication reaches them.
+    for(std::size_t i=0;i<lazy_metadata.size();++i){
+        type_pointers->values.push_back({0x790000+static_cast<std::uint32_t>(i)*0x100,lazy_metadata[i],{}});
+        field_backings.push_back({lazy_backings[i].storage->bytes,igb_bootstrap_address(lazy_backings[i]),0,{},lazy_fields[i]->backing});
+    }
+    additional_callbacks=make_native_igb_list_registration_function_factory(list_registration,
+        make_native_igb_object_registration_function_factory(object_services));
+    f.remaining=make_native_igb_list_registration_type_factory(list_registration,f.remaining);
+    const auto list_defaults_boundary=call.resume(bootstrap);
+    check(!list_defaults_boundary.completed && !call.faulted() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x8002e108,
+        "Actual deferred list registration did not reach its parent's original schema callback.");
+    check(lazy_metadata[0]->class_flags==8 && lazy_metadata[1]->class_flags==9 && lazy_metadata[1]->parent==object_type &&
+        lazy_metadata[1]->fields->count==2 && lazy_metadata[1]->native_size==16 && lazy_metadata[1]->type_word==0x80475c54 &&
+        lazy_metadata[1]->name && *lazy_metadata[1]->name=="__internalNonRefCountedObjectList" && list_probe_locals==1,
+        "Deferred list registration skipped inheritance, naming or its actual reset-only probe.");
+    check(list_probe_storage.size()==1 && igb_bootstrap_read_word(list_probe_storage.front(),0)==0x80475c54 &&
+        igb_bootstrap_read_word(list_probe_storage.front(),4)==1 && igb_bootstrap_read_word(list_probe_storage.front(),8)==0 &&
+        igb_bootstrap_read_word(list_probe_storage.front(),12)==0 && initial_lists.size()==3 && descriptors.size()==27,
+        "List probe allocated backing or substituted a prepared layout value.");
+    auto list_defaults=std::make_shared<IgbListDefaultsServices>();list_defaults->lists=native_lists;
+    list_defaults->schema=metadata_defaults->schema;list_defaults->values=values;
+    std::vector<IgbListDefaultsCall> list_defaults_calls;
+    list_defaults->factory=[&](const IgbListDefaultsCall& c){list_defaults_calls.push_back(c);return std::shared_ptr<IgbListDefaultsOperation>{};};
+    values->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    f.remaining=make_native_igb_list_defaults_factory(list_defaults,f.remaining);
+    const auto prototype_boundary=call.resume(bootstrap);
+    check(!prototype_boundary.completed && !call.faulted() && !list_defaults_calls.empty() &&
+        list_defaults_calls.back().kind==IgbListDefaultsServiceKind::register_object_field && list_defaults_calls.back().function==0x800289f8,
+        "Native list defaults skipped the required original object-field prototype registration.");
+    check(lazy_fields[1]->count==4 && descriptors.size()==29 && default_allocations==27 &&
+        lazy_fields[1]->backing->at(2)==descriptors[27] && lazy_fields[1]->backing->at(3)==descriptors[28] &&
+        descriptors[27]->vtable_word==0x80476088 && descriptors[28]->vtable_word==0x80475b60 &&
+        descriptor_allocations[27].storage->bytes->bytes.size()==0x50 && descriptor_allocations[28].storage->bytes->bytes.size()==0x34,
+        "List batch did not construct and publish its actual memory-reference and signed-integer descriptors.");
+    check(descriptors[27]->word_38==0 && descriptors[27]->element_field && descriptors[27]->element_field->expired() &&
+        descriptors[27]->flag_40==1 && descriptors[27]->flag_41==1 && descriptors[27]->flag_42==1 &&
+        !descriptors[27]->name && !descriptors[28]->name && !values->object_prototype.value() &&
+        f.core->types->count==2 && f.core->enabled==0 && f.constructed->class_flags==7,
+        "Pending prototype lookup fabricated field configuration, publication or completed bootstrap.");
+    const auto final_field_queries=field_size_queries,final_string_allocations=string_allocations;
+    check(!call.resume(bootstrap).completed && list_defaults_calls.size()==2 && descriptors.size()==29 &&
+        field_size_queries==final_field_queries && string_allocations==final_string_allocations && list_probe_locals==1,
+        "Pending object-field registration replayed completed list construction, append, inheritance or probe.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

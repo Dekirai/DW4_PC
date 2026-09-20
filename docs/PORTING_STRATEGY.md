@@ -165,9 +165,19 @@ constructors; their value setters, schema configuration, layout and publication
 complete `igMetaObject` with flags `7` as the second published type. The two
 lazy metadata/list globals are constructed under explicit pool,
 allocator and BSS prerequisites. Actual deferred callbacks are appended in
-order: `8002DD18`, `8002E054`, `80066AE0`. The next unresolved callable is
-`8002DD18`, internal field-list metadata registration. Reflection remains
-disabled until the callback runner completes. See
+order: `8002DD18`, `8002E054`, `80066AE0`. The first callback now executes
+`8002DD18 -> 8002DD40 -> 8002E07C`. Non-reference-counted list metadata
+`805619D4` inherits two base fields and runs actual probe
+`8002E020 -> 800536F8`. Defaults `8002E108` then construct memory-reference
+and signed-integer fields through `8002AC34` and `8002E1AC`, bringing the
+chain to 29 constructed descriptors. Getter `80028BFC` reaches the next
+unresolved callable, object-field prototype registration `800289F8`, with
+canonical prototype cell `805616EC` still null. The internal object-list
+metadata `805619CC` has flags `8`, and its parent `805619D4` has flags `9`;
+neither list type has finished publication. The registry still contains two
+types and reflection remains disabled until the callback runner completes. See
+[IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
+[IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
 [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md),
 [IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md),
@@ -181,9 +191,10 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue from deferred internal field-list registration `8002DD18`, preserving
-the callback order and the original disabled initialization phase. Complete the
-remaining class registrations, then the outer
+Continue with actual object-field prototype registration `800289F8`, then
+cloning and the remaining list defaults. Preserve the deferred callback order
+and the original disabled initialization phase. Complete the remaining class
+registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

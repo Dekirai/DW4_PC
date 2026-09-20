@@ -24,16 +24,17 @@ using FieldCall=Call<IgbMetaFieldCall,IgbMetaFieldFactory,IgbMetaFieldOperation>
 using ValueCall=Call<IgbFieldOperationCall,IgbFieldOperationsFactory,IgbFieldOperation>;
 using StringCall=Call<IgbDependenciesCall,IgbDependenciesFactory,IgbDependenciesOperation>;
 using K=IgbMetaFieldServiceKind;using S=IgbDependenciesServiceKind;
-constexpr std::array<IgbMetaFieldProfile,7> profiles={{
+constexpr std::array<IgbMetaFieldProfile,8> profiles={{
     {0x80022a90,0x800759e0,0x80075a2c,0x80476e6c,0x34,0x80022cb0,0x80022cd8,0x805614bc},
     {0x8002e1ac,0x8005356c,0x800535b8,0x80475b60,0x34,0x8002e390,0x8002e3b8,0x805619e0},
     {0x800385e0,0x8003eb7c,0x8003ebc8,0x80473e30,0x34,0x80038800,0x80038828,0x80561e48},
     {0x800251ec,0x80071df8,0x80071e44,0x8047693c,0x3c,0x800253dc,0x80025404,0x805615b4},
     {0x8002879c,0x8006ac50,0x8006aca4,0x804762fc,0x44,0x800289f8,0x80028a20,0x805616e8},
     {0x800274ec,0x8006c46c,0x8006c4b8,0x80476630,0x38,0x800276dc,0x80027704,0x80561694},
-    {0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494}
+    {0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494},
+    {0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818}
 }};
-bool reference_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer;}
+bool reference_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer || kind==IgbMetaFieldKind::memory_reference;}
 bool known_base_vtable(std::uint32_t word){return word==0x80471914u || word==0x804717f0u || word==0x80471384u;}
 bool known_profile_vtable(std::uint32_t word){for(const auto& profile:profiles)if(word==profile.vtable)return true;return false;}
 void retain_name(const std::shared_ptr<IgbDecodeRuntimeField>& field){
@@ -181,6 +182,7 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
             word(0,0x80471384);byte(0x34,0);s.field->flag_34=std::uint8_t{0};byte(0x35,0);s.field->flag_35=std::uint8_t{0};
             if(s.entry==IgbMetaFieldConstructor::specialized && s.resets==2){
                 word(0,derived);if(s.kind==IgbMetaFieldKind::object){word(0x40,0);s.field->word_40=0;}
+                else if(s.kind==IgbMetaFieldKind::memory_reference){word(0x48,0);s.field->word_48=0;word(0x4c,0);s.field->word_4c=0;}
                 s.phase=P::reset_base;break;
             }
         }else if(s.entry==IgbMetaFieldConstructor::specialized && s.resets==1){word(0,derived);s.phase=P::reset_base;break;}
@@ -192,6 +194,14 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
                 byte(0x35,1);s.field->flag_35=std::uint8_t{1};}
             else if(s.kind==IgbMetaFieldKind::object){word(0x40,0);s.field->word_40=0;byte(0x3c,1);s.field->flag_3c=std::uint8_t{1};
                 word(0x38,0);s.field->object_type=std::weak_ptr<IgbRuntimeMetaType>{};}
+            else if(s.kind==IgbMetaFieldKind::memory_reference){
+                word(0x48,0);s.field->word_48=0;word(0x4c,0);s.field->word_4c=0;
+                byte(0x42,1);s.field->flag_42=std::uint8_t{1};word(0x38,0);s.field->word_38=0;
+                word(0x3c,0);s.field->element_field=std::weak_ptr<IgbDecodeRuntimeField>{};
+                byte(0x24,3);s.field->default_mode=std::uint8_t{3};byte(0x41,1);s.field->flag_41=std::uint8_t{1};
+                byte(0x40,1);s.field->flag_40=std::uint8_t{1};word(0x44,0xffffffffu);s.field->word_44=0xffffffffu;
+                byte(0x27,2);s.field->flag_27=std::uint8_t{2};
+            }
         }
         s.field->construction_active_.reset();s.owns=false;s.phase=P::done;return {true,0,{}};
     case P::string_call:{const auto status=s.call.poll(services && services->dependencies?services->dependencies->factory:IgbDependenciesFactory{},check);

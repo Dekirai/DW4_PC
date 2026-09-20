@@ -7,7 +7,7 @@ unknown allocation bytes or infer a registered prototype from a class name.
 
 ## Exact virtual dispatch
 
-The seven verified vtables share actual default-copy body `80063D04` at `+8C`.
+The eight verified vtables share actual default-copy body `80063D04` at `+8C`.
 Their prototype getters are plain global reads; missing bindings suspend and
 represented nulls return null. Size and alignment are separate original leaves.
 
@@ -20,10 +20,11 @@ represented nulls return null. Size and alignment are separate original leaves.
 | Object reference | `804762FC` | `80094098` / `805616EC` | `8006A538` / 4 | `8006CD08` / 4 |
 | Pointer | `80476630` | `800940D0` / `80561698` | `8006C3D4` / 4 | `8006CD08` / 4 |
 | Unsigned short | `80477054` | `80094160` / `80561498` | `80075E84` / 2 | `80075FA4` / 2 |
+| Memory reference | `80476088` | `80094070` / `8056181C` | `800624E8` / 4 | `8006CD08` / 4 |
 
 Unknown vtables and virtual slots delegate or remain pending. The existing
 unsigned-integer prototype cell stays canonical through
-`IgbFieldOperationsServices::unsigned_int_prototype`. The six additional cells
+`IgbFieldOperationsServices::unsigned_int_prototype`. The seven additional cells
 belong to `IgbFieldValuesServices`; they remain distinct from class metadata.
 
 ## Buffer copy
@@ -74,7 +75,9 @@ not converted into a fabricated host string.
 
 ## Verification scope
 
-The local Release suite passes 108 checks. It checks all seven virtual profiles, canonical missing/null
+The original seven-profile Release suite passed 108 checks. Current results are
+recorded in [VALIDATION.md](VALIDATION.md). Tests cover all eight virtual
+profiles, canonical missing/null
 prototype cells, fresh destination/size reads, retained pool operations,
 overlap in both directions, exact partial-fault prefixes, zero-sized copies,
 late arithmetic binding, contradictory pointer identities, string-pool

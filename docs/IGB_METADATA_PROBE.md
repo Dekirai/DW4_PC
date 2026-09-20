@@ -48,9 +48,10 @@ schema configuration, layout and type publication complete `igMetaObject`
 with flags `7`, size `0x64` and the second registry entry. The two lazy
 metadata/list globals also run their real constructors under explicit pool,
 allocator and BSS prerequisites. Deferred callbacks are appended in order
-`8002DD18`, `8002E054`, `80066AE0`; the next unresolved callable is `8002DD18`,
-the internal field-list metadata registration. ArkCore remains disabled until
-the callback runner completes. See [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md)
+`8002DD18`, `8002E054`, `80066AE0`. The subsequent
+[list registration](IGB_LIST_REGISTRATION.md) now runs its parent probe and
+two-field batch before reaching object-field prototype registration `800289F8`.
+ArkCore remains disabled until the callback runner completes. See [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md)
 and [IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md).
 
 `igb_metadata_probe_tests` covers actual constructor effects and lazy string

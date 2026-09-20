@@ -1,6 +1,6 @@
 # Native specialized metadata-field construction
 
-`IgbMetaFieldFactoryInvocation` implements seven original USA descriptor
+`IgbMetaFieldFactoryInvocation` implements eight original USA descriptor
 factories with explicit physical allocations and canonical
 `IgbDecodeRuntimeField` bindings. The default profile remains unsigned integer,
 preserving existing callers. `IgbMetaFieldKind` selects a verified class profile;
@@ -15,6 +15,7 @@ an unknown factory identity is not mapped to a generic descriptor.
 | Object reference | `8002879C` | `8006AC50` / `8006ACA4` | `804762FC` | `44` | `800289F8` / `80028A20` | `805616E8` |
 | Pointer | `800274EC` | `8006C46C` / `8006C4B8` | `80476630` | `38` | `800276DC` / `80027704` | `80561694` |
 | Unsigned short | `80021E10` | `80075EC0` / `80075F0C` | `80477054` | `34` | `80021FF4` / `8002201C` | `80561494` |
+| Memory reference | `8002AC34` | `8006324C` / `800632A4` | `80476088` | `50` | `8002AE84` / `8002AEAC` | `80561818` |
 
 All table values are hexadecimal. Evidence is the supplied USA executable,
 SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. The enabled branch runs the
@@ -46,7 +47,7 @@ The default unsigned-integer profile retains these original entry points:
 | Specialized reset `80075A2C` | `800638E0`, derived vtable store | `80476E6C` |
 
 Scalar specialized constructors perform the base descriptor reset twice.
-String, object and pointer constructors additionally traverse reference base
+String, object, pointer and memory-reference constructors traverse reference base
 `8006CBF4` and reset `8006CC40`, with vtable `80471384` and bytes `+34/+35=0`.
 Their complete construction therefore executes base reset `800638E0` three
 times. Direct reference-base and reference-reset entry points are also exposed.
@@ -54,6 +55,12 @@ String reset then writes `+38=1`, `+27=2`, `+35=1`, in that order. Object
 construction clears `+40` before the third reset; object reset clears it again,
 writes `+3C=1`, then clears the object-type pointer `+38`. These are raw stores
 with nonowning metadata links, not reference assignments.
+Memory-reference construction clears words `+48/+4C` before its third reset.
+Its final reset clears those words again, sets byte `+42=1`, clears words
+`+38/+3C`, sets mode `+24=3`, bytes `+41/+40=1`, word `+44=FFFFFFFF` and
+byte `+27=2`, in that order. Its `_data` use in list registration later changes
+these defaults through [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
+
 
 Each base reset preserves the original store order, including `+10=0xFFFF`,
 zero offset, ordinal and size, known null name/default/global-slot pointers,
@@ -99,5 +106,5 @@ string-pool construction and final string release are prepared endpoints.
 The final comparison used local `dw4_core.lib` SHA-256
 `47535AEED92FC884FD5A9BCE4940F14C270154DAE59E13418AED1A4AE4583A77`;
 the corresponding historical build passed all 164 CTest suites without warnings.
-This older result does not qualify the six subsequently added profiles; current
+This older result does not qualify the subsequently added profiles; current
 family validation is recorded separately in [VALIDATION.md](VALIDATION.md).

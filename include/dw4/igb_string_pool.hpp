@@ -4,6 +4,8 @@
 
 namespace dw4 {
 class IgbStringPoolError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
+// Original8009D5D8 comparison, shared by string tables and field-name lookup.
+int igb_compare_dependency_names(const IgbDependencyName&,const IgbDependencyName&);
 
 // Header identity and physical character bytes remain distinct. Allocation does
 // not initialize the header: actual80073204 writes container/refcount later.

@@ -126,13 +126,23 @@ All 25 local descriptors join the two inherited fields; native value setters,
 schema configuration, layout and publication finish `igMetaObject` with flags
 `7` as the second published type. Two lazy metadata/list globals are constructed
 through the original allocation and constructor callers. The actual deferred
-callbacks `8002DD18`, `8002E054`, `80066AE0` are appended in that order; execution
-stops at `8002DD18`, the internal field-list metadata registration. Reflection
-remains disabled until the callback runner completes. Pool, allocator and BSS
-prerequisites are explicitly prepared. Initial core-list constructors and reserve
-run in this same chain; the separate byte-only backing profile remains covered.
-Continue through those deferred class registrations before completing cold
-startup. See
+callbacks `8002DD18`, `8002E054`, `80066AE0` are appended in that order.
+The first now executes `8002DD18 -> 8002DD40 -> 8002E07C`, inherits the two
+base fields into non-reference-counted list metadata `805619D4`, and runs
+actual probe `8002E020 -> 800536F8`. Defaults `8002E108` construct two local
+descriptors through memory-reference factory `8002AC34` and signed-integer
+factory `8002E1AC`, bringing the chain to 29 constructed descriptors. The
+reached getter `80028BFC` requires object-field prototype registration
+`800289F8` because canonical cell `805616EC` is null. Child list metadata
+`805619CC` has flags `8`, and parent list metadata `805619D4` has flags `9`;
+neither list type has finished publication. Reflection remains disabled and
+the registry still contains two types. Pool, allocator and BSS prerequisites
+are explicitly prepared. Initial core-list constructors and reserve run in
+this same chain; the separate byte-only backing profile remains covered.
+Continue with actual object-field registration, then cloning and the remaining
+list defaults and deferred registrations before completing cold startup. See
+[IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
+[IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
 [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md),
 [IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md),

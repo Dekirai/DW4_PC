@@ -27,10 +27,10 @@ explicit `80066E1C` destruction boundary when the low 23 bits are zero. A null
 factory result is appended before the later unconditional reference read fails.
 Missing metadata fails before the retain; a null list fails after it.
 
-`make_native_igb_field_schema_factory` connects the seven verified factory
+`make_native_igb_field_schema_factory` connects the eight verified factory
 profiles: unsigned int `80022A90`, signed int `8002E1AC`, boolean `800385E0`,
-string `800251EC`, object `8002879C`, pointer `800274EC` and unsigned short
-`80021E10`. Each runs its actual constructor/reset chain and virtual tails;
+string `800251EC`, object `8002879C`, pointer `800274EC`, unsigned short
+`80021E10` and memory reference `8002AC34`. Each runs its actual constructor/reset chain and virtual tails;
 see [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md). Other constructor
 identities remain reached operations. The module does not manufacture a generic
 descriptor to complete an unknown class factory. Factory results may supply an

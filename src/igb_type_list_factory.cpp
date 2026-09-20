@@ -62,6 +62,7 @@ MessengerCallResult IgbTypeListConstructorInvocation::resume(std::shared_ptr<Igb
         clear();s.call.request.kind=kind;s.call.request.object=s.object;s.call.factory=services?services->factory:IgbTypeListFactory{};
         s.after=after;s.phase=P::call;return s.call.request;
     };
+    const bool reset_only=s.entry==IgbTypeListConstructor::reset || s.entry==IgbTypeListConstructor::derived_reset;
     const auto retain_backing=[&]{
         if(s.types->backing)s.types->retained_backings_.push_back(s.types->backing);
         if(s.types->backing_bytes)s.types->retained_backings_.push_back(s.types->backing_bytes);
@@ -74,8 +75,8 @@ MessengerCallResult IgbTypeListConstructorInvocation::resume(std::shared_ptr<Igb
         if(!s.types)return pending("Metadata-list construction requires its explicit typed allocation binding.");
         if(s.types->construction_fault_ || !s.types->construction_active_.expired())fail("Metadata-list allocation is faulted or already being constructed.");
         s.types->construction_active_=s.token;s.owns=true;
-        s.base=std::make_unique<IgbBootstrapBaseInvocation>(s.object,s.entry!=IgbTypeListConstructor::reset);
-        s.phase=s.entry==IgbTypeListConstructor::reset?P::reset:P::first_base;break;
+        s.base=std::make_unique<IgbBootstrapBaseInvocation>(s.object,!reset_only);
+        s.phase=reset_only?P::reset:P::first_base;break;
     case P::first_base:{
         const auto result=s.base->resume(services?services->bootstrap:nullptr);check();if(!result.completed)return result;
         s.base.reset();check();s.phase=P::intermediate;break;
@@ -92,7 +93,7 @@ MessengerCallResult IgbTypeListConstructorInvocation::resume(std::shared_ptr<Igb
         s.phase=P::clear_count;break;
     case P::clear_count:
         igb_bootstrap_write_word(s.object,12,0);s.types->count=0;
-        s.phase=s.entry==IgbTypeListConstructor::reset?P::finish:P::pool;break;
+        s.phase=reset_only?P::finish:P::pool;break;
     case P::pool:{const auto handle=igb_bootstrap_read_byte(s.object,4);select(K::object_pool,P::after_pool).handle=handle;break;}
     case P::after_pool:s.pool=std::move(s.call.operation->pool_result);clear();s.phase=P::allocate;break;
     case P::allocate:
@@ -108,7 +109,7 @@ MessengerCallResult IgbTypeListConstructorInvocation::resume(std::shared_ptr<Igb
         s.incoming={};s.phase=P::finish;break;
     }
     case P::finish:
-        clear();if(s.entry==IgbTypeListConstructor::derived)igb_bootstrap_write_word(s.object,0,0x80475cb0);
+        clear();if(s.entry==IgbTypeListConstructor::derived || s.entry==IgbTypeListConstructor::derived_reset)igb_bootstrap_write_word(s.object,0,0x80475cb0);
         s.types->construction_active_.reset();s.owns=false;s.phase=P::done;return {true,0,{}};
     case P::call:{const auto result=s.call.poll(services,check);if(!result.completed)return result;s.phase=s.after;break;}
     case P::done:return {true,0,{}};

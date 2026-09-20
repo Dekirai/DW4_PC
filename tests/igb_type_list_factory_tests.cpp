@@ -62,10 +62,10 @@ void disabled_factory(){
     IgbTypeListFactoryInvocation empty;check(empty.resume(null_backing.services).completed && !null_backing.types->backing && null_backing.types->backing_address==0,"Null backing was incorrectly treated as failed object construction.");
 }
 void direct_constructors_and_live_gate(){
-    for(const auto entry:{IgbTypeListConstructor::derived,IgbTypeListConstructor::base,IgbTypeListConstructor::reset}){
+    for(const auto entry:{IgbTypeListConstructor::derived,IgbTypeListConstructor::base,IgbTypeListConstructor::reset,IgbTypeListConstructor::derived_reset}){
         Fixture f;IgbTypeListConstructorInvocation call(f.object,entry);check(call.resume(f.services).completed,"Direct constructor did not complete.");
-        check(igb_bootstrap_read_word(f.object,0)==(entry==IgbTypeListConstructor::derived?0x80475cb0u:0x80475c54u),"Direct constructor published the wrong vtable.");
-        check(f.calls.size()==(entry==IgbTypeListConstructor::reset?0u:2u),"Reset allocated backing or full constructor omitted it.");
+        check(igb_bootstrap_read_word(f.object,0)==((entry==IgbTypeListConstructor::derived || entry==IgbTypeListConstructor::derived_reset)?0x80475cb0u:0x80475c54u),"Direct constructor published the wrong vtable.");
+        check(f.calls.size()==((entry==IgbTypeListConstructor::reset || entry==IgbTypeListConstructor::derived_reset)?0u:2u),"Reset allocated backing or full constructor omitted it.");
     }
     Fixture changed;changed.bootstrap_action=[&](const auto& c,auto&,auto&){if(c.kind==B::pool_allocate)changed.core->enabled=1;};
     changed.action=[&](const auto& c,auto&,auto&){if(c.kind==K::object_pool)check(c.handle==0 && changed.types->reference_word==1,"Second base reset failed to clear the freshly assigned pool tag.");};

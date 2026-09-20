@@ -27,6 +27,10 @@ reads the pool-index byte. That lookup uses `8005929C`, separately from the
 raw allocator's `800607F4` manager handles. The captured pool's virtual `+D8`
 requests 16 backing bytes. A null backing remains a valid stored null result.
 
+Direct derived-reset entry `80053CF4` executes actual `800536F8` and then
+publishes `80475CB0`, without allocating backing. This supplies the original
+stack probe used by [list registration](IGB_LIST_REGISTRATION.md).
+
 The registry constructor additionally writes its derived vtable. Factory tail
 `+2C` and fresh `+24(false)` resolve to verified return-only leaves for exact
 known tables; unknown bindings remain explicit. A null object allocation skips
@@ -48,7 +52,7 @@ for the two bootstrap lists. Neither adapter invents reserve, append or
 reflected construction. Their selected services remain alive while pending;
 stored factories use weak service references to avoid permanent cycles.
 
-Tests cover both factories, all three direct constructor entries, concrete
+Tests cover both factories, all four direct constructor entries, concrete
 physical bytes, canonical cache aliases and registration runners, fresh pool
 gates, backing suballocations, null and pending failures, raw overwrite lifetime,
 typed identity conflicts, adapters and composition with parent attachment.
@@ -62,7 +66,7 @@ at missing registration body `8002A0D0`, with reflection still disabled.
 Platform hooks and physical pool/allocation results remain prepared endpoints.
 This module does not establish complete registration or cold startup.
 
-The local independent comparison executes both original factory bodies,
+The earlier independent comparison executes both original factory bodies,
 all three constructors, shared bases, raw allocation caller, pool-tag caller
 and verified return-only virtual leaves from the USA DOL. Across 1,393 cases,
 including 788 bounded failure prefixes, the native driver matches 79,230

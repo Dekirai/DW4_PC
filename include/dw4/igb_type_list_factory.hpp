@@ -50,7 +50,7 @@ private:
     friend class IgbTypeListFactoryInvocation;
     std::vector<std::shared_ptr<void>> unfinished_;
 };
-enum class IgbTypeListConstructor {derived,base,reset}; //53CB8 /5368C /536F8.
+enum class IgbTypeListConstructor {derived,base,reset,derived_reset}; //53CB8 /5368C /536F8 /53CF4.
 class IgbTypeListConstructorInvocation {
 public:
     IgbTypeListConstructorInvocation(IgbBootstrapPointer,IgbTypeListConstructor entry=IgbTypeListConstructor::base);

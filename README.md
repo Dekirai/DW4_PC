@@ -116,10 +116,21 @@ profiles used by this chain have actual constructors; native value setters,
 schema configuration, layout and type publication complete `igMetaObject`
 with flags `7` as the second published type. Its two lazy metadata/list globals
 are also constructed through the original callers. Deferred callbacks are
-appended in order: `8002DD18`, `8002E054`, `80066AE0`. Execution now reaches
-`8002DD18`, the internal field-list metadata registration; reflection remains
-disabled until the callback runner completes. Pools, physical allocation and
+appended in order: `8002DD18`, `8002E054`, `80066AE0`. The first callback now
+executes `8002DD18 -> 8002DD40 -> 8002E07C`, inherits two base fields into
+the non-reference-counted list metadata, and runs actual probe
+`8002E020 -> 800536F8`. Its defaults `8002E108` construct the memory-reference
+and signed-integer descriptors through `8002AC34` and `8002E1AC`, bringing
+the chain to 29 constructed descriptors. Getter `80028BFC` then reaches
+object-field prototype registration `800289F8` because canonical cell
+`805616EC` is still null. The internal object-list metadata `805619CC` has
+flags `8`, and its parent list metadata `805619D4` has flags `9`; neither list
+type is published yet. The registry still contains two types and reflection
+remains disabled. Next reconstruct that actual object-field registration,
+then cloning and the remaining list defaults. Pools, physical allocation and
 initial BSS bindings remain explicit fixture prerequisites. See
+[IGB_LIST_REGISTRATION.md](docs/IGB_LIST_REGISTRATION.md),
+[IGB_LIST_DEFAULTS.md](docs/IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),
 [IGB_METADATA_DEFAULTS.md](docs/IGB_METADATA_DEFAULTS.md),
 [IGB_FIELD_SCHEMA.md](docs/IGB_FIELD_SCHEMA.md),

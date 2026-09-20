@@ -75,6 +75,7 @@ void write_byte(const IgbRuntimeNameSource& target,std::uint32_t offset,std::uin
     target.buffer->bytes[position]=value;target.buffer->initialized[position]=1;
 }
 }
+int igb_compare_dependency_names(const IgbDependencyName& left,const IgbDependencyName& right){return compare(left,right);}
 void igb_bind_string_pool(const std::shared_ptr<IgbStringPoolServices>& services,
     const std::shared_ptr<ModelSceneObject>& owner,const std::shared_ptr<IgbStringPoolState>& state) {
     if(!services || !owner || !state)fail("String-pool binding requires live service, owner and state identities.");

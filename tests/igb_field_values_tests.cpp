@@ -24,7 +24,7 @@ struct Fixture {
         f.unsigned_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};services->signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->boolean_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};services->string_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};services->pointer_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
-        services->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        services->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};services->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         f.factory=make_native_igb_field_values_factory(services,[this](const IgbFieldOperationCall& c){calls.push_back(c);auto op=std::make_shared<IgbFieldOperation>();
             op->resume=[this,c,out=op.get()]{++polls;if(!ready)return MessengerCallResult{false,0,"prepared physical pool"};
                 std::uint32_t value{};if(c.kind==K::allocation_pool || c.kind==K::object_pool)out->pool_result=pool;
@@ -36,8 +36,8 @@ struct Fixture {
     }
 };
 void known_virtuals(){
-    constexpr std::array<std::uint32_t,7> tables={0x80476e6c,0x80475b60,0x80473e30,0x8047693c,0x804762fc,0x80476630,0x80477054};
-    constexpr std::array<std::uint32_t,7> widths={4,4,1,4,4,4,2};Fixture f;
+    constexpr std::array<std::uint32_t,8> tables={0x80476e6c,0x80475b60,0x80473e30,0x8047693c,0x804762fc,0x80476630,0x80477054,0x80476088};
+    constexpr std::array<std::uint32_t,8> widths={4,4,1,4,4,4,2,4};Fixture f;
     auto alignment=make_native_igb_field_alignment_factory();
     for(std::size_t i=0;i<tables.size();++i){IgbFieldOperationCall c;c.kind=K::field_virtual;c.vtable_word=tables[i];c.virtual_slot=0x64;
         const auto size=f.services->fields->factory(c);check(size && size->resume().value==widths[i],"Known original size leaf differs.");

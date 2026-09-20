@@ -1,5 +1,87 @@
 # Local validation
 
+## Native deferred list registration and memory-reference fields
+
+Validated locally on 2026-09-20. The same cold-bootstrap composition now enters
+actual deferred wrapper `8002DD18`, body `8002DD40` and its parent registration
+`8002E07C`. The parent `__internalNonRefCountedObjectList` inherits both
+`igObject` fields, interns its original name and executes stack probe
+`8002E020` with the actual `800536F8` reset. Defaults `8002E108` then construct
+memory-reference `_data` and signed-integer `_count` descriptors through the
+original two-entry batch. Their names/configuration have not yet been assigned:
+getter `80028BFC` first requires object-field prototype registration `800289F8`
+while the canonical prototype cell `805616EC` is still the original cold null.
+
+At this boundary there are 29 constructed descriptors: the completed 27-field
+metadata schema plus these two unconfigured list fields. `igMetaObject` remains
+ready with flags 7 and registry index 1. Internal-list metadata `805619CC` has
+flags 8; its parent `805619D4` has flags 9, four fields and type word `80475C54`.
+Neither list type is published yet. The type registry still contains two types,
+ArkCore remains disabled, and the earlier deferred callback order is retained.
+Repeated suspension does not replay inheritance, probes or field construction.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 172/172 CTest suites passed locally with four jobs; no compiler warnings |
+| List registration | 150 checks for exact registration arguments/canonical aliases, gates, wrappers, lazy/full/plain getters, reset probes, physical reads, suspension and lifetime |
+| List defaults and replacement | 77 checks for two-field schema, prototype registration, captured receiver, original name/index searches, clone boundary, reference ordering, live backing, reserve growth and unchanged count |
+| Cold metadata integration | 504 checks, including actual deferred list parent registration and two additional original field constructors before the required prototype registration |
+| Specialized field factories | 263 checks across eight profiles, including complete memory-reference bytes/padding, three resets, pre-reset ownership stores and physical failure prefixes |
+| Field values | 117 checks across eight prototype/size/alignment/default-copy profiles and existing ownership/copy cases |
+| Typed list constructors | 12,420 metadata-element /47 field-element checks, including actual derived reset `80053CF4` without backing allocation |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Physical allocators, pool/platform prerequisites and explicit cold global cells
+retain the previous integration's declared scope. The new probes execute the
+actual reset constructors in represented stack storage. No ready list metadata
+or object-field prototype replaces the missing original registration. The
+memory-reference descriptor's complete 0x50-byte construction is native, including
+its intermediate ownership-word stores and actual return-only factory tails.
+
+Independent bounded comparisons used the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, with unchanged instruction semantics:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Eight field factories, constructors, resets and tails | 4,296 | 2,543 | 515,154 | 983 | 0 |
+| List registration arguments, wrappers, getters and actual probes | 2,202 | 818 | 77,080 | 242 | 0 |
+| Internal-list defaults, field search and replacement | 2,020 | 1,697 | 311,331 | 290 | 0 |
+
+The factory corpus retains explicit physical allocator, enabled registration,
+reflection and string-pool endpoints. It compares complete descriptor storage,
+including padding. The registration corpus executes both real probes and
+resets, wrappers/callback runner, full/alias/plain getters and the nonnull lazy
+branches; generic registration arguments are captured at `80066204`. Wrapper
+bodies return explicitly prepared null callback lists in this corpus. It does
+not independently prove full generic registration or allocating lazy getters.
+
+The defaults corpus executes `8002DDD4`, lookup `800658F8/80053910`, original
+string comparison, index search `80053998`, finalization and replacement
+`8006588C/80053EA0/80053C44`. Clone, field virtuals, destruction and physical
+allocation queries are prepared endpoints. This corpus excludes reserve growth
+and the full `8002E108` body; permanent tests cover their scoped composition.
+Independent instruction review checked those callers and the new constructor
+stores. An initial probe-driver fixture bound two incompatible list views to
+one local; correcting that fixture produced matching results without production
+changes. No comparison establishes a complete original clone, allocator or boot.
+
+Final core SHA256:
+`7861877F2960F908117499AAB4B0C615A524090D9F2AC3ABCABAB325E722B241`.
+Ignored logs are `work/native-list-registration-build.log`,
+`work/native-list-registration-prefix.log`, `work/native-list-registration-player.log`
+and `work/native-list-registration-verifier.log`. Reports
+`work/native-list-field-family-result.json`, `work/native-list-registration-result.json`
+and `work/native-list-defaults-result.json` record matching source/driver hashes
+and their comparison scopes. See [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
+[IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md) and
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md).
+No interactive preview or GitHub Actions run was launched. Continue at actual
+object-field registration `800289F8`, then finish the list defaults/clone and
+remaining deferred registrations before connecting initialized ArkCore to the
+original-data decoder. Complete native startup and gameplay remain required.
+
 ## Native specialized fields and completed metadata registration
 
 Validated locally on 2026-09-20. The cold-bootstrap composition now constructs

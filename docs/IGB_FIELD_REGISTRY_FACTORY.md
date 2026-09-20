@@ -36,7 +36,9 @@ word remains synchronized with the typed registry through shared bootstrap
 helpers.
 
 Direct constructor entry points support derived construction, base construction,
-and reset only. Native layout bindings are required, physical reads/writes are
+base reset and derived reset. Actual `80053CF4` runs `800536F8` and then
+publishes `80475CB0` without allocating backing, as required by the original
+[list registration probe](IGB_LIST_REGISTRATION.md). Native layout bindings are required, physical reads/writes are
 checked, and selected operations remain captured while pending. A partial
 constructor holds an exclusive typed-registry lease; failures or abandonment
 poison it and retain unfinished allocation state rather than permitting replay.
@@ -48,7 +50,7 @@ constructor abandonment/recursion. Pool resolution, allocator internals, and
 enabled reflected construction remain explicit providers. This does not establish
 all metadata registration or a completed original dependency load.
 
-The local raw-instruction comparison covers 1,312 factory/direct-constructor
+The earlier raw-instruction comparison covers 1,312 factory/direct-constructor
 cases, including 754 bounded failure prefixes, with zero differences across
 72,954 original instructions and 209 instruction addresses. It executes the
 actual factory, constructor chain, shared raw allocator/base bodies, allocation

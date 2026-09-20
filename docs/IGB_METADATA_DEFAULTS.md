@@ -87,9 +87,11 @@ default setters and schema/layout/type-publication operations. It constructs
 25 local fields after two inherited fields and two lazy metadata/list globals
 under explicit allocator, pool and BSS prerequisites. `igMetaObject` finishes
 with flags `7` as the second published type. Deferred callbacks are appended
-in order `8002DD18`, `8002E054`, `80066AE0`; the next unresolved callable is
-internal field-list registration `8002DD18`. ArkCore remains disabled pending
-callback completion. This does not establish complete startup or an updated
+in order `8002DD18`, `8002E054`, `80066AE0`. The subsequent
+[list registration](IGB_LIST_REGISTRATION.md) now enters its parent schema,
+constructs two additional descriptors and reaches object-field prototype
+registration `800289F8` through getter `80028BFC`. ArkCore remains disabled
+pending callback completion. This does not establish complete startup or an updated
 playable preview. Original
 instructions and tables were read from the user-supplied USA `main.dol`
 (SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`); original bytes and generated

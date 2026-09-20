@@ -17,6 +17,7 @@ struct IgbFieldValuesServices {
     IgbRuntimeFieldSlot object_prototype; //805616EC /94098.
     IgbRuntimeFieldSlot pointer_prototype; //80561698 /940D0.
     IgbRuntimeFieldSlot unsigned_short_prototype; //80561498 /94160.
+    IgbRuntimeFieldSlot memory_reference_prototype; //8056181C /94070.
     // Exact arithmetic addresses identify pointers stored in default buffers.
     // Zero is null and needs no binding; nonzero is never a host pointer cast.
     std::vector<IgbFieldStringBinding> strings;

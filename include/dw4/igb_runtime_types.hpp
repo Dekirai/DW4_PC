@@ -69,6 +69,10 @@ struct IgbDecodeRuntimeField {
     // Specialized object-field +38 is a raw, nonowning metadata pointer.
     std::optional<std::weak_ptr<IgbRuntimeMetaType>> object_type;
     std::optional<std::uint32_t> word_40;
+    // Memory-reference descriptors have a distinct layout after +34.
+    std::optional<std::uint32_t> word_38,word_44,word_48,word_4c;
+    std::optional<std::weak_ptr<IgbDecodeRuntimeField>> element_field; // +3C.
+    std::optional<std::uint8_t> flag_40,flag_41,flag_42;
     // Constructed descriptors can expose physical bytes during virtual tails.
     // This back-reference does not own the allocation that owns the field.
     std::optional<IgbFieldStorageBinding> physical_storage;

@@ -130,9 +130,22 @@ are constructed through the real getter, allocation and constructor callers.
 Type publication then places `igMetaObject` second in the registry. Actual
 callback-list appends preserve the order `8002DD18`, `8002E054`, `80066AE0`,
 and the registrar clears the busy flag, leaving metadata flags `7`.
-The callback runner now reaches unresolved callable `8002DD18`, the internal
-field-list metadata registration. ArkCore remains disabled until that runner
-completes; later type-count snapshots remain unwritten.
+The callback runner now executes deferred `8002DD18`, its registration body
+`8002DD40`, and parent body `8002E07C`. The latter inherits the two base
+fields into non-reference-counted list metadata `805619D4`, assigns its name,
+and runs actual stack probe `8002E020 -> 800536F8`. Its defaults `8002E108`
+construct two local descriptors through memory-reference factory `8002AC34`
+and signed-integer factory `8002E1AC`, bringing the chain to 29 constructed
+descriptors while retaining the complete 27-field igMetaObject schema.
+Getter `80028BFC` now suspends at required object-field prototype registration
+`800289F8`, since canonical prototype cell `805616EC` is null. Internal
+object-list metadata `805619CC` has flags `8`, and its parent `805619D4` has
+flags `9`; neither list type has finished publication. The registry still
+contains two types, igMetaObject retains flags `7`, and ArkCore remains
+disabled. Later type-count snapshots remain unwritten. Next implement the
+actual object-field registration, then cloning and the remaining list defaults.
+See [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md) and
+[IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
 Initial ArkCore lists and their reserve operation execute natively in this
 same integration. Platform/manager work, physical allocation and string-arena
 allocation endpoints remain explicitly prepared. No ready metadata seed,

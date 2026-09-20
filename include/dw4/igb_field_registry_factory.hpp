@@ -44,7 +44,8 @@ private:
 enum class IgbFieldRegistryConstructor {
     derived, //80053CB8 ->5368C, final vtable80475CB0.
     base,    //8005368C, two base resets and16-byte backing allocation.
-    reset    //800536F8, reset only, no backing allocation.
+    reset,   //800536F8, reset only, no backing allocation.
+    derived_reset //80053CF4 ->536F8, final vtable80475CB0, no allocation.
 };
 class IgbFieldRegistryConstructorInvocation {
 public:

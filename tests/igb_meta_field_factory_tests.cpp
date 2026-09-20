@@ -133,9 +133,10 @@ constexpr ProfileEvidence evidence[]={
     {IgbMetaFieldKind::string,0x800251ec,0x80071df8,0x80071e44,0x8047693c,0x3c,0x800253dc,0x80025404,0x805615b4},
     {IgbMetaFieldKind::object,0x8002879c,0x8006ac50,0x8006aca4,0x804762fc,0x44,0x800289f8,0x80028a20,0x805616e8},
     {IgbMetaFieldKind::pointer,0x800274ec,0x8006c46c,0x8006c4b8,0x80476630,0x38,0x800276dc,0x80027704,0x80561694},
-    {IgbMetaFieldKind::unsigned_short,0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494}
+    {IgbMetaFieldKind::unsigned_short,0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494},
+    {IgbMetaFieldKind::memory_reference,0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818}
 };
-bool ref_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer;}
+bool ref_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer || kind==IgbMetaFieldKind::memory_reference;}
 void resize(Fixture& f,std::size_t size){f.object.storage->bytes->bytes.assign(size,0xcc);f.object.storage->bytes->initialized.assign(size,1);}
 void family_constructor_bytes(){
     for(const auto& p:evidence){
@@ -157,6 +158,13 @@ void family_constructor_bytes(){
                 check(f.field->flag_38==1 && f.field->flag_35==1 && f.field->flag_27==2,"String descriptor flags differ.");}
             else if(p.kind==IgbMetaFieldKind::object){word(0x38,0);word(0x40,0);expected[0x3c]=1;
                 check(f.field->object_type && igb_field_declaring_type_is_null(*f.field->object_type) && f.field->word_40==0 && f.field->flag_3c==1,"Object descriptor type/cache/flag defaults differ.");}
+            else if(p.kind==IgbMetaFieldKind::memory_reference){
+                word(0x38,0);word(0x3c,0);word(0x44,0xffffffffu);word(0x48,0);word(0x4c,0);
+                expected[0x40]=expected[0x41]=expected[0x42]=1;expected[0x24]=3;expected[0x27]=2;
+                check(f.field->element_field && f.field->element_field->expired() && f.field->word_38==0 && f.field->word_44==0xffffffffu &&
+                    f.field->word_48==0 && f.field->word_4c==0 && f.field->flag_40==1 && f.field->flag_41==1 && f.field->flag_42==1 &&
+                    f.field->default_mode==3 && f.field->flag_27==2,"Memory-reference descriptor defaults differ.");
+            }
             check(f.object.storage->bytes->bytes==expected,"Specialized descriptor physical stores or untouched padding differ.");
             check(f.field->physical_storage && f.field->physical_storage->storage.lock()==f.object.storage && f.field->physical_storage->offset==0,"Constructor lost canonical weak physical binding.");
             check(f.field->vtable_word==p.vtable && f.field->reference_word==1 && f.field->size==0 && f.calls.empty(),"Constructor delegated known original work or changed its canonical result.");
@@ -168,7 +176,7 @@ void family_constructor_bytes(){
             "Reference base entry omitted reset or overwrote padding.");
     }
     check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
-    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(7));},"Invalid descriptor profile was accepted.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(8));},"Invalid descriptor profile was accepted.");
 }
 void family_reset_prefixes(){
     for(const auto& p:evidence){
@@ -176,6 +184,9 @@ void family_reset_prefixes(){
         f.string_factory=[&](const IgbDependenciesCall& c){check(c.kind==S::create_string_pool,"Unexpected null-pool constructor operation.");++resets;
             if(resets==3 && p.kind==IgbMetaFieldKind::object)check(igb_bootstrap_read_word(f.object,0x40)==0 && igb_bootstrap_read_word(f.object,0x38)==0xcccccccc &&
                 igb_bootstrap_read_byte(f.object,0x3c)==0xcc,"Object constructor failed to clear cache40 before its third reset or stored later fields early.");
+            if(resets==3 && p.kind==IgbMetaFieldKind::memory_reference)check(igb_bootstrap_read_word(f.object,0x48)==0 && igb_bootstrap_read_word(f.object,0x4c)==0 &&
+                igb_bootstrap_read_word(f.object,0x38)==0xcccccccc && igb_bootstrap_read_byte(f.object,0x42)==0xcc,
+                "Memory-reference constructor changed its pre-reset ownership stores or published defaults early.");
             auto op=std::make_shared<IgbDependenciesOperation>();op->resume=[]{return MessengerCallResult{true,0,{}};};return op;};
         IgbMetaFieldConstructorInvocation run(f.object,IgbMetaFieldConstructor::specialized,p.kind);
         check(run.resume(f.services).completed && resets==(ref_kind(p.kind)?3u:2u),"Specialized constructor skipped an original base reset pass.");
@@ -184,6 +195,10 @@ void family_reset_prefixes(){
     rejects([&]{short_object.resume(object.services);},"Object constructor accepted missing cache40 storage.");
     check(object.field->vtable_word==0x804762fc && object.field->flag_34==0 && object.field->flag_35==0 && !object.field->flag_3c &&
         igb_bootstrap_read_word(object.object,0x38)==0xcccccccc,"Object physical failure skipped original intermediate vtable or committed future defaults.");
+    Fixture memory;resize(memory,0x4c);IgbMetaFieldConstructorInvocation short_memory(memory.object,IgbMetaFieldConstructor::specialized,IgbMetaFieldKind::memory_reference);
+    rejects([&]{short_memory.resume(memory.services);},"Memory-reference constructor accepted missing word4C storage.");
+    check(memory.field->vtable_word==0x80476088 && memory.field->word_48==0 && !memory.field->word_4c && !memory.field->flag_42 &&
+        igb_bootstrap_read_word(memory.object,0x38)==0xcccccccc,"Memory-reference failure lost the completed word48 store or wrote future fields.");
     Fixture string;resize(string,0x38);IgbMetaFieldConstructorInvocation short_string(string.object,IgbMetaFieldConstructor::specialized,IgbMetaFieldKind::string);
     rejects([&]{short_string.resume(string.services);},"String constructor accepted missing flag38 storage.");
     check(string.field->vtable_word==0x8047693c && string.field->flag_35==0 && string.field->flag_27==0,"String failure committed later flag27/35 stores.");
