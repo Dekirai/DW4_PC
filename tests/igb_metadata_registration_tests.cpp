@@ -8,6 +8,8 @@
 #include "dw4/igb_type_list_factory.hpp"
 #include "dw4/igb_type_publication.hpp"
 #include "dw4/igb_metadata_layout.hpp"
+#include "dw4/igb_metadata_probe.hpp"
+#include "dw4/igb_metadata_defaults.hpp"
 
 #include <iostream>
 
@@ -470,6 +472,38 @@ void actual_cold_bootstrap_prefix(){
     check(!call.resume(bootstrap).completed && type_size_queries==final_type_queries && string_allocations==4 && field_size_queries==4 &&
         initial_lists.size()==3 && f.core->types->count==1 && object_type->reference_word==1,
         "Pending metadata probe replayed base publication, layout, inheritance or naming.");
+
+    auto probe=std::make_shared<IgbMetadataProbeServices>();probe->metadata=f.services->metadata;probe->runtime=f.services->types->runtime;
+    auto probe_local=allocation(0x750000,0x64);auto probe_type=std::make_shared<IgbRuntimeMetaType>();
+    probe_local.storage->bindings.push_back({0,{},probe_type,{}});unsigned probe_locals{};
+    probe->local_storage=[&]{++probe_locals;return probe_local;};
+    f.remaining=make_native_igb_metadata_probe_factory(probe,f.remaining);
+    check(!call.resume(bootstrap).completed && !call.faulted() && probe_locals==1,
+        "Native metadata constructor probe did not reach its next actual default callback.");
+    check(f.constructed->type_word==0x804761d8 && probe_type->reference_word==1 && !probe_type->fields &&
+        probe_type->native_size==0xffffffffu && igb_bootstrap_read_word(probe_local,0)==0x804761d8,
+        "Actual reset-only stack probe did not publish its captured vtable identity.");
+    check(remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x8002a164 &&
+        f.constructed->class_flags==9 && f.fields->count==2 && f.core->enabled==0,
+        "Metadata probe skipped incomplete defaults or prematurely enabled reflection.");
+
+    auto metadata_defaults=std::make_shared<IgbMetadataDefaultsServices>();metadata_defaults->metadata=f.services->metadata;
+    metadata_defaults->schema=std::make_shared<IgbFieldSchemaServices>();metadata_defaults->schema->types=f.services->types;
+    metadata_defaults->schema->pools=f.services->pools;metadata_defaults->schema->dependencies=object_defaults->dependencies;
+    metadata_defaults->schema->fields=object_defaults->fields;metadata_defaults->schema->meta_fields=object_defaults->meta_fields;
+    metadata_defaults->object_metadata=object_services->metadata;std::vector<IgbFieldSchemaCall> schema_calls;
+    metadata_defaults->schema->factory=make_native_igb_field_schema_factory(metadata_defaults->schema,[&](const IgbFieldSchemaCall& c){
+        schema_calls.push_back(c);return std::shared_ptr<IgbFieldSchemaOperation>{};
+    });
+    f.remaining=make_native_igb_metadata_defaults_factory(metadata_defaults,f.remaining);
+    check(!call.resume(bootstrap).completed && !call.faulted() && schema_calls.size()==1 &&
+        schema_calls.back().kind==IgbFieldSchemaServiceKind::create_field && schema_calls.back().function==0x8002e1ac &&
+        schema_calls.back().pool==f.pool,"Actual metadata defaults did not stop at the first original signed-int field factory.");
+    check(f.fields->count==2 && f.constructed->class_flags==9 && f.core->enabled==0 && probe_locals==1 && descriptors.size()==2 &&
+        string_allocations==4 && default_allocations==2 && initial_lists.size()==3 && f.core->types->count==1,
+        "Unimplemented field factory fabricated schema completion or replayed the native cold prefix.");
+    check(!call.resume(bootstrap).completed && schema_calls.size()==2 && probe_locals==1 && f.fields->count==2 && descriptors.size()==2,
+        "Pending signed-int factory replayed the probe or inserted unconstructed descriptors.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

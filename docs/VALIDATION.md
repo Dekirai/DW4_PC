@@ -1,5 +1,63 @@
 # Local validation
 
+## Native metadata probe and field schema
+
+Validated locally on 2026-09-20. The same cold-bootstrap composition now runs
+actual metadata probe `80029FFC` and reset `80065218`, publishes type word
+`804761D8`, and enters defaults `8002A164`. Its actual field batch `80065924`
+reaches the first specialized signed-integer factory `8002E1AC`. That body is
+still an explicit boundary. `igMetaObject` retains its two inherited fields,
+flags 9 and size 0x64; `igObject` remains the sole published type with flags 7,
+and ArkCore remains disabled. Reset-only construction creates no field list.
+
+The 25 constructor/name/global/offset table entries, all 21 customization steps,
+lazy metadata getters, scalar temporary packing and generic schema callers are
+reconstructed separately. Prepared specialized constructors, scalar virtuals and
+string-default setter outputs make their full caller tests possible; they do
+not turn the incomplete cold prefix into completed metadata registration.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 169/169 CTest suites passed locally with four jobs; no compiler warnings |
+| Metadata probe | 77 checks covering actual reset, captured core/word, ordered cleanup, suspension, wrapping references, physical bindings and malformed state |
+| Generic field schema | 51 checks covering factory batches, raw append, packed creator release, name ownership, live tables/backing, captured count and finalization |
+| Metadata defaults | 1,477 checks covering all 25 table entries, every customization, scalar byte widths, actual lazy-getter callers, suspension and explicit missing bodies |
+| Cold metadata integration | 204 checks through the actual probe/defaults/batch prefix, with no manufactured field from missing `8002E1AC` |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Bounded differential comparisons used the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, with the unchanged reviewed decoder:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Field batch, configuration and schema callers | 617 | 396 | 112,444 | 339 | 0 |
+| Metadata probe and actual reset constructor | 422 | 129 | 54,352 | 145 | 0 |
+
+The field comparison prepares specialized constructors, string-pool/interner/
+release bodies, unknown virtuals, allocator operations and destruction. Actual
+helper bodies and raw append run with spare represented backing. The probe
+comparison executes `80029FFC`, `80065218`, `8006665C` and the null string leaf;
+string-pool construction and release are prepared endpoints with mutations.
+It does not substitute a prepared constructor. Ordinary reset always clears
+`+60`, so adversarial nonnull probe cleanup at that slot belongs to the separate
+synthetic tests. Independent review checked the original tables, customization
+ordering, helper read order and explicit proof boundaries.
+
+Core SHA256:
+`0C4BBDE82A87F8F6EE7A45D4C5F11AE7BC09291808BC3AE1F6D4C1BA3095FC89`.
+Ignored logs are `work/native-metadata-schema-build.log`,
+`work/native-metadata-schema-prefix.log`, `work/native-metadata-schema-player.log`
+and `work/native-metadata-schema-verifier.log`. Differential reports are
+`work/native-field-schema-result.json` and `work/native-metadata-probe-result.json`.
+See [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
+[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md) and
+[IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md).
+No interactive preview or GitHub Actions run was launched. Complete native
+startup and gameplay remain required; continue at actual `8002E1AC` and the
+other reached specialized field bodies.
+
 ## Native type publication and metadata layout
 
 Validated locally on 2026-09-19. Actual type publication `800660AC` and field

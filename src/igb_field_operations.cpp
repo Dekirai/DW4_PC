@@ -211,7 +211,7 @@ IgbFieldOperationsFactory make_native_igb_unsigned_int_field_factory(std::shared
     std::weak_ptr<IgbFieldOperationsServices> weak=services;
     return [weak,remaining=std::move(remaining)](const IgbFieldOperationCall& call){
         if(call.kind!=K::field_virtual || call.vtable_word!=0x80476e6c ||
-           (call.virtual_slot!=0x5c && call.virtual_slot!=0x64 && !(call.virtual_slot==0x8c && call.argument==0)))
+           (call.virtual_slot!=0x5c && call.virtual_slot!=0x64 && !(call.virtual_slot==0x8c && !call.source && call.argument==0)))
             return remaining?remaining(call):std::shared_ptr<IgbFieldOperation>{};
         const auto selected=weak.lock();if(!selected)fail("Unsigned-int field services expired before selection.");auto operation=std::make_shared<IgbFieldOperation>();
         if(call.virtual_slot==0x64)operation->resume=[]{return MessengerCallResult{true,4,{}};};

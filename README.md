@@ -108,8 +108,17 @@ probe and specialized field defaults `80066B7C`. The `_refCount` and
 unsigned-integer default-buffer preparation, finalization and raw registry append.
 The cold chain now executes type publication `800660AC` and field layout
 `80065A58`, completes `igObject`, and inherits its two fields into `igMetaObject`.
-It reaches the latter's local constructor probe `80029FFC`, with reflection
-still disabled. See [IGB_TYPE_PUBLICATION.md](docs/IGB_TYPE_PUBLICATION.md),
+The latter's local constructor probe `80029FFC` now executes the actual reset
+`80065218`, publishes type word `804761D8` and enters defaults `8002A164`.
+That cold chain reaches the first signed-integer field constructor `8002E1AC`
+through native batch `80065924`, with reflection still disabled and only the
+two inherited fields present. The complete 25-entry factory/name/global/offset
+tables and their configuration callers are recovered; prepared specialized
+factories verify their caller behavior separately. See
+[IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),
+[IGB_METADATA_DEFAULTS.md](docs/IGB_METADATA_DEFAULTS.md),
+[IGB_FIELD_SCHEMA.md](docs/IGB_FIELD_SCHEMA.md),
+[IGB_TYPE_PUBLICATION.md](docs/IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](docs/IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](docs/IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](docs/IGB_META_FIELD_FACTORY.md) and

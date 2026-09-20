@@ -17,6 +17,8 @@ struct IgbFieldOperationCall {
     std::shared_ptr<IgbDecodeRuntimeField> field;
     std::shared_ptr<ModelSceneObject> pool;
     IgbRuntimeFieldDefaultSource buffer;
+    // Captured nonnull scalar input to virtual+8C; its bytes survive suspension.
+    std::optional<IgbRuntimeFieldDefaultSource> source;
     std::uint32_t vtable_word{},virtual_slot{},argument{},handle{},bytes{},alignment{},address{};
 };
 struct IgbFieldOperation {

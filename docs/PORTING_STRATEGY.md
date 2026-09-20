@@ -156,8 +156,18 @@ construct `_refCount` and `_memPoolIndex` through the actual specialized factory
 name setter, unsigned-integer default-buffer preparation, finalization and raw
 append. Type publication `800660AC` and field layout `80065A58` now complete
 `igObject`; actual child-list construction and inherited field append then
-reach the `igMetaObject` constructor probe `80029FFC`, with reflection still
-disabled. See [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
+enter the `igMetaObject` constructor probe `80029FFC`. Its actual reset
+`80065218` now completes without constructing fields; the probe publishes
+type word `804761D8`. Actual defaults `8002A164` then enter native field batch
+`80065924` and stop at the first signed-integer descriptor constructor
+`8002E1AC`. Reflection remains disabled, with two inherited fields and flags `9`
+on `igMetaObject`; `igObject` has flags `7` and remains the single published
+type. All 25 original schema entries and the surrounding default/configuration
+callers are available with prepared specialized-factory evidence. See
+[IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
+[IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md),
+[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md),
+[IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
 [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
@@ -166,8 +176,9 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue from the real metadata constructor probe through its descriptor table
-and remaining class registrations, then the outer
+Continue from the reached signed-integer factory through the actual specialized
+field constructors, their defaults and the recovered descriptor table. Complete
+remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

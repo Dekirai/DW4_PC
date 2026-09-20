@@ -32,11 +32,13 @@ not prevent this body from reaching its own original pool/cache operations.
 The generic registrar still resolves the metadata pool before inspecting
 the cache, including when metadata is already ready or busy.
 
-Layout and field registration remain explicit operations. `80029FFC` is a
-real stack-object probe: it calls metadata reset `80065218`, reads a word at
+The authored `80029FFC` implementation is a real stack-object probe: it calls
+metadata reset `80065218`, reads a word at
 the offset selected by live ArkCore `+394`, and releases the temporary pool
 and name strings afterward. Returning the known metadata vtable constant
-unconditionally would omit that behavior.
+unconditionally would omit that behavior. The reset does not create a field
+list. The cold integration now runs this probe and publishes type word
+`804761D8`; see [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md).
 
 Defaults `8002A164` capture the inherited field count, append **25** actual
 field descriptors through `80065924`, configure selected defaults/reference
@@ -46,8 +48,13 @@ begin at `80464478`, `804644DC` and `80464540`. The fields include integer,
 boolean, string, object-reference, pointer and short descriptors. For example,
 `_metaFields` at `+28` uses the internal-list metadata and automatic construction;
 `_parent` at `+38` calls the allocation-only metadata getter; required alignment
-defaults to four. The defaults callback is not implemented by manufacturing
-an empty field list or treating every pointer as a null scalar.
+defaults to four. The authored defaults caller and its batch/configuration
+helpers now implement these tables and operations, with explicit specialized
+factory and string-default boundaries. They do not manufacture an empty field
+list or treat every pointer as a null scalar. Their prepared-fixture completion
+does not imply that all concrete descriptor constructors are recovered. See
+[IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md) and
+[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md).
 
 ## Two different getters
 
@@ -110,9 +117,13 @@ interning and the base-object probe run. Both specialized descriptors then run
 through native `80066B7C`, actual field construction, naming, finalization and
 append. Actual runtime type publication `800660AC` and field layout `80065A58`
 now finish igObject with flags `7`. Native child-list construction and inherited
-field append then reach the igMetaObject constructor probe `80029FFC`, with
-flags `9` and the same two inherited field identities.
-ArkCore remains disabled and later type-count snapshots remain unwritten.
+field append then enter the igMetaObject constructor probe `80029FFC`, which
+executes the real `80065218` reset and publishes type word `804761D8`.
+The same chain enters actual defaults `8002A164` and batch `80065924`, reaching
+the first specialized signed-integer field constructor `8002E1AC`. Metadata
+flags remain `9` with the same two inherited field identities; no new schema
+field has been manufactured. ArkCore remains disabled, `igObject` is the sole
+published type, and later type-count snapshots remain unwritten.
 Initial ArkCore lists and their reserve operation execute natively in this
 same integration. Platform/manager work, physical allocation and string-arena
 allocation endpoints remain explicitly prepared. No ready metadata seed,

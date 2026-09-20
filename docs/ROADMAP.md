@@ -117,11 +117,21 @@ callback construction, native name interning and layout probe. The two specializ
 field defaults `80066B7C` now execute their real constructor, name assignment,
 default-buffer preparation, finalization and append. Actual type publication
 `800660AC` and field layout `80065A58` now complete the base registration; actual
-child-list construction and inherited field append reach the `igMetaObject`
-constructor probe `80029FFC`, with reflection still disabled. Initial core-list
-constructors/reserve now run in this same chain; the separate byte-only backing
-profile remains covered. Continue through that metadata probe and its descriptor
-table, then remaining class registrations. See
+child-list construction and inherited field append enter the `igMetaObject`
+constructor probe `80029FFC`. Its actual reset `80065218` now completes, without
+creating a field list, and the probe publishes type word `804761D8`. The same
+cold chain enters defaults `8002A164` and native field batch `80065924`, reaching
+the first signed-integer descriptor constructor `8002E1AC`. At this boundary,
+reflection remains disabled, `igMetaObject` has flags `9` and only its two
+inherited fields, and `igObject` has flags `7` as the sole published type.
+The original 25-entry schema and default/configuration callers are reconstructed
+with prepared specialized-factory coverage. Initial core-list constructors and
+reserve run in this same chain; the separate byte-only backing profile remains
+covered. Continue through the actual specialized field constructors and their
+defaults before completing this schema and remaining class registrations. See
+[IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
+[IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md),
+[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md),
 [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),

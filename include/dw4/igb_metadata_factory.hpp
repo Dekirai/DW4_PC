@@ -10,6 +10,9 @@ class IgbMetadataFactoryError : public std::runtime_error {public: using std::ru
 // This is for represented callbacks; it does not retain/release the pointer.
 void igb_metadata_set_pool_name(const IgbBootstrapPointer&,
     const std::shared_ptr<IgbInternedString>&,std::uint32_t original_address);
+// Same physical/canonical binding for the live name pointer at +1C.
+void igb_metadata_set_name(const IgbBootstrapPointer&,
+    const std::shared_ptr<IgbInternedString>&,std::uint32_t original_address);
 
 enum class IgbMetadataFactoryServiceKind {
     register_type, //8002A0A8, only on the enabled branch.

@@ -60,6 +60,9 @@ struct IgbDecodeRuntimeField {
     std::optional<std::uint32_t> global_slot_address,default_bytes_address;
     std::optional<std::uint8_t> flag_27,flag_28,flag_29,flag_2a,flag_2b,flag_2c;
     std::optional<std::uint32_t> word_30;
+    std::optional<std::uint8_t> flag_34,flag_35,flag_3c;
+    // Specialized object-field +38 is a raw, nonowning metadata pointer.
+    std::optional<std::weak_ptr<IgbRuntimeMetaType>> object_type;
     // Raw stores preserve displaced host owners without guest retain/release.
     std::vector<std::shared_ptr<void>> overwritten_constructor_owners_;
     std::vector<SystemStageString> overwritten_constructor_strings_;
@@ -118,6 +121,7 @@ struct IgbRuntimeMetaType {
     bool construction_fault_{};
     std::optional<std::shared_ptr<IgbRuntimeTypeList>> children; // +34.
     std::optional<std::shared_ptr<IgbInternedString>> name_string; // +1C header identity.
+    std::optional<std::uint32_t> name_string_address;
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 

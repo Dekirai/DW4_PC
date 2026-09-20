@@ -46,7 +46,7 @@ void store_word(const IgbBootstrapPointer& object,const std::shared_ptr<IgbRunti
     switch(offset){
     case 0x08:m->word_08=value;break;case 0x0c:m->word_0c=value;break;
     case 0x10:m->major=value;break;case 0x14:m->minor=value;break;
-    case 0x1c:m->name.reset();m->name_string=std::shared_ptr<IgbInternedString>{};break;case 0x20:m->allocation_prefix=value;break;
+    case 0x1c:m->name.reset();m->name_string=std::shared_ptr<IgbInternedString>{};m->name_string_address=0;break;case 0x20:m->allocation_prefix=value;break;
     case 0x24:m->class_flags=value;break;case 0x28:m->fields.reset();break;
     case 0x2c:m->instance_count=value;break;case 0x30:m->instances=std::shared_ptr<IgbObjectInstanceList>{};break;
     case 0x34:m->word_34=value;m->children=std::shared_ptr<IgbRuntimeTypeList>{};break;case 0x38:m->parent=std::shared_ptr<IgbRuntimeMetaType>{};break;
@@ -68,6 +68,17 @@ IgbMetadataFactoryOperation* native_fields(const IgbMetadataFactoryCall& request
         const auto status=invocation->resume(fields);if(status.completed){result->fields_result=invocation->result();result->allocation_result=invocation->allocation();}return status;
     };return result;
 }
+}
+void igb_metadata_set_name(const IgbBootstrapPointer& object,
+    const std::shared_ptr<IgbInternedString>& owner,std::uint32_t address){
+    if((address==0)!=(!owner))fail("Metadata name address and canonical owner disagree.");
+    auto metadata=igb_bootstrap_metadata(object);
+    if(metadata->name_string && *metadata->name_string && *metadata->name_string!=owner)
+        metadata->overwritten_constructor_owners_.push_back(*metadata->name_string);
+    if(metadata->name && (!owner || metadata->name!=owner->value))metadata->overwritten_constructor_strings_.push_back(metadata->name);
+    igb_bootstrap_write_word(object,0x1c,address);
+    metadata->name_string=owner;metadata->name_string_address=address;
+    metadata->name=owner?owner->value:SystemStageString{};
 }
 void igb_metadata_set_pool_name(const IgbBootstrapPointer& object,
     const std::shared_ptr<IgbInternedString>& owner,std::uint32_t address){

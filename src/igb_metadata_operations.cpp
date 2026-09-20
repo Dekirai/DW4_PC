@@ -32,6 +32,7 @@ void igb_metadata_publish_name(const std::shared_ptr<IgbRuntimeMetaType>& metada
     if(!metadata)fail("Metadata name publication dereferences null metadata.");
     if(owner && !owner->value)fail("Metadata name publication requires the represented interned value identity.");
     retain_name(metadata);metadata->name_string=owner;metadata->name=owner?owner->value:SystemStageString{};
+    metadata->name_string_address=owner?std::optional<std::uint32_t>{}:std::optional<std::uint32_t>{0};
 }
 
 struct IgbMetadataParentInvocation::Impl {
