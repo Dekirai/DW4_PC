@@ -74,8 +74,8 @@ public:
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Known factory22A90 enters the authored unsigned-int descriptor constructor.
-// Every other function identity remains an explicit reached operation.
+// The seven verified factory profiles enter their authored native constructors.
+// Other function identities remain explicit reached operations.
 IgbFieldSchemaFactory make_native_igb_field_schema_factory(
     std::shared_ptr<IgbFieldSchemaServices>,IgbFieldSchemaFactory remaining={});
 } // namespace dw4

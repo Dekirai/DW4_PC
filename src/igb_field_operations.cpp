@@ -30,6 +30,26 @@ void retain_name(const std::shared_ptr<IgbDecodeRuntimeField>& field){
 }
 } // namespace
 
+void igb_field_store_size(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint16_t value){
+    require_field(field);
+    if(field->physical_storage){const auto& binding=*field->physical_storage;auto storage=binding.storage.lock();
+        if(!storage)fail("Field size store reached expired physical storage.");IgbBootstrapPointer pointer{storage,binding.offset};
+        if(igb_bootstrap_field(pointer)!=field)fail("Field size store reached a changed physical identity.");
+        igb_bootstrap_write_halfword(pointer,0x14,value);}
+    field->size=value;
+}
+void igb_field_store_default(const std::shared_ptr<IgbDecodeRuntimeField>& field,
+    const IgbRuntimeFieldDefaultSource& source,std::uint32_t address){
+    require_field(field);
+    if((address==0)!=(!source.buffer))fail("Field default pointer and storage binding disagree.");
+    if(field->physical_storage){const auto& binding=*field->physical_storage;auto storage=binding.storage.lock();
+        if(!storage)fail("Field default store reached expired physical storage.");IgbBootstrapPointer pointer{storage,binding.offset};
+        if(igb_bootstrap_field(pointer)!=field)fail("Field default store reached a changed physical identity.");
+        igb_bootstrap_write_word(pointer,0x20,address);}
+    if(field->default_bytes && field->default_bytes->buffer)field->overwritten_constructor_owners_.push_back(field->default_bytes->buffer);
+    field->default_bytes=source;field->default_bytes_address=address;
+}
+
 struct IgbFieldNameInvocation::Impl {
     enum class P{source,old,release,publish,call,done};
     std::shared_ptr<IgbDecodeRuntimeField> field;std::shared_ptr<IgbFieldNameSlot> source;
@@ -104,7 +124,7 @@ MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOpe
     try{for(;;){check();switch(s.phase){
     case P::size:{const auto table=vtable(s.field);if(!table)return pending("Field buffer requires its live size virtual binding.");
         auto& call=select(K::field_virtual,P::after_size);call.vtable_word=*table;call.virtual_slot=0x64;break;}
-    case P::after_size:clear();s.field->size=static_cast<std::uint16_t>(s.returned);s.phase=P::buffer;break;
+    case P::after_size:clear();igb_field_store_size(s.field,static_cast<std::uint16_t>(s.returned));s.phase=P::buffer;break;
     case P::buffer:
         if(!capture())return pending("Field buffer requires live default pointer+20.");s.phase=s.buffer.buffer?P::address:P::allocate_capture;break;
     case P::address:
@@ -132,8 +152,7 @@ MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOpe
         {auto& call=select(K::allocate_default,P::publish);call.pool=s.pool;call.bytes=s.bytes;call.alignment=1;}break;
     case P::publish:{s.incoming=s.call.operation->buffer_result;const auto pointer=s.call.operation->buffer_address;clear();
         if((pointer==0)!=(!s.incoming.buffer))fail("Field default allocation requires a consistent pointer and storage binding.");
-        if(s.field->default_bytes && s.field->default_bytes->buffer)s.field->overwritten_constructor_owners_.push_back(s.field->default_bytes->buffer);
-        s.field->default_bytes=s.incoming;s.field->default_bytes_address=pointer;s.incoming={};s.phase=P::done;break;}
+        igb_field_store_default(s.field,s.incoming,pointer);s.incoming={};s.phase=P::done;break;}
     case P::call:{const auto status=s.call.poll(services?services->factory:IgbFieldOperationsFactory{},check);if(!status.completed)return status;
         s.returned=status.value;s.phase=s.after;break;}
     case P::done:clear();return {true,0,{}};
@@ -161,7 +180,7 @@ MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldO
     case P::type:if(!virtual_call(0x5c,P::after_type))return pending("Field finalization requires its live type virtual.");break;
     case P::after_type:{const auto type=s.call.operation->field_result;clear();s.field->type_ordinal=type?type->ordinal:std::uint16_t{0xffff};s.phase=P::size;break;}
     case P::size:if(!virtual_call(0x64,P::after_size))return pending("Field finalization requires its freshly reloaded size virtual.");break;
-    case P::after_size:clear();s.field->size=static_cast<std::uint16_t>(s.returned);s.phase=P::defaults;break;
+    case P::after_size:clear();igb_field_store_size(s.field,static_cast<std::uint16_t>(s.returned));s.phase=P::defaults;break;
     case P::defaults:if(!virtual_call(0x8c,P::global))return pending("Field finalization requires its freshly reloaded default virtual.");break;
     case P::global:
         clear();if(!s.field->global_slot)return pending("Field finalization requires its live descriptor-global pointer+1C.");

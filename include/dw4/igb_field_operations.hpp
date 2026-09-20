@@ -4,6 +4,10 @@
 
 namespace dw4 {
 class IgbFieldOperationsError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
+// Publish reached buffer stores to optional physical constructor storage too.
+void igb_field_store_size(const std::shared_ptr<IgbDecodeRuntimeField>&,std::uint16_t);
+void igb_field_store_default(const std::shared_ptr<IgbDecodeRuntimeField>&,
+    const IgbRuntimeFieldDefaultSource&,std::uint32_t address);
 enum class IgbFieldOperationKind {
     field_virtual,    //Fresh field vtable+5C/+64/+8C.
     allocation_pool, //590A0(captured default buffer).
@@ -19,6 +23,7 @@ struct IgbFieldOperationCall {
     IgbRuntimeFieldDefaultSource buffer;
     // Captured nonnull scalar input to virtual+8C; its bytes survive suspension.
     std::optional<IgbRuntimeFieldDefaultSource> source;
+    std::optional<std::uint32_t> source_address;
     std::uint32_t vtable_word{},virtual_slot{},argument{},handle{},bytes{},alignment{},address{};
 };
 struct IgbFieldOperation {

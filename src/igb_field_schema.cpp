@@ -240,10 +240,11 @@ MessengerCallResult IgbFieldSchemaInvocation::resume(std::shared_ptr<IgbFieldSch
 IgbFieldSchemaFactory make_native_igb_field_schema_factory(std::shared_ptr<IgbFieldSchemaServices> services,IgbFieldSchemaFactory remaining){
     std::weak_ptr<IgbFieldSchemaServices> weak=services;
     return [weak,remaining=std::move(remaining)](const IgbFieldSchemaCall& call){
-        if(call.kind!=IgbFieldSchemaServiceKind::create_field || call.function!=0x80022a90)
+        const auto kind=igb_meta_field_kind_for_factory(call.function);
+        if(call.kind!=IgbFieldSchemaServiceKind::create_field || !kind)
             return remaining?remaining(call):std::shared_ptr<IgbFieldSchemaOperation>{};
         const auto selected=weak.lock();if(!selected)fail("Field constructor services expired before selection.");
-        auto invocation=std::make_shared<IgbMetaFieldFactoryInvocation>(call.pool);auto operation=std::make_shared<IgbFieldSchemaOperation>();
+        auto invocation=std::make_shared<IgbMetaFieldFactoryInvocation>(call.pool,*kind);auto operation=std::make_shared<IgbFieldSchemaOperation>();
         operation->resume=[invocation,selected,out=operation.get()]{const auto status=invocation->resume(selected->meta_fields);
             if(status.completed){out->field_result=invocation->result();out->field_address=igb_bootstrap_address(invocation->allocation());}return status;};
         return operation;

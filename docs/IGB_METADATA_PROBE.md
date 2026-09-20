@@ -41,11 +41,17 @@ releases or destructor effects.
 
 The cold metadata-registration test now resumes from real base registration,
 child-list creation and inherited-field append through this actual reset probe.
-`igMetaObject.type_word` becomes `804761D8`. It then enters actual defaults
-`8002A164`, whose batch reaches the first signed-int field factory `8002E1AC`.
-That unimplemented factory remains explicit. The metadata still has its two
-inherited fields, flags 9 and size 0x64; the registry has only the completed
-base type and ArkCore remains disabled. See [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md).
+`igMetaObject.type_word` becomes `804761D8`. It then executes actual defaults
+`8002A164`: the batch constructs 25 local descriptors after the two inherited
+fields using the original specialized constructors. Native value setters,
+schema configuration, layout and type publication complete `igMetaObject`
+with flags `7`, size `0x64` and the second registry entry. The two lazy
+metadata/list globals also run their real constructors under explicit pool,
+allocator and BSS prerequisites. Deferred callbacks are appended in order
+`8002DD18`, `8002E054`, `80066AE0`; the next unresolved callable is `8002DD18`,
+the internal field-list metadata registration. ArkCore remains disabled until
+the callback runner completes. See [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md)
+and [IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md).
 
 `igb_metadata_probe_tests` covers actual constructor effects and lazy string
 pool callbacks, live then captured core selection, initialized physical reads,

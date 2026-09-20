@@ -49,12 +49,15 @@ boolean, string, object-reference, pointer and short descriptors. For example,
 `_metaFields` at `+28` uses the internal-list metadata and automatic construction;
 `_parent` at `+38` calls the allocation-only metadata getter; required alignment
 defaults to four. The authored defaults caller and its batch/configuration
-helpers now implement these tables and operations, with explicit specialized
-factory and string-default boundaries. They do not manufacture an empty field
-list or treat every pointer as a null scalar. Their prepared-fixture completion
-does not imply that all concrete descriptor constructors are recovered. See
+helpers now compose with the actual specialized constructors and native scalar
+and string-default operations. All 25 local descriptors are constructed in the
+cold integration; an empty field list or generic null scalar does not substitute
+for the original schema. Pools, physical allocation and initial BSS bindings
+remain explicit prerequisites. See
 [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md) and
-[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md).
+[IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md), with constructor and value details in
+[IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md) and
+[IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md).
 
 ## Two different getters
 
@@ -119,11 +122,17 @@ append. Actual runtime type publication `800660AC` and field layout `80065A58`
 now finish igObject with flags `7`. Native child-list construction and inherited
 field append then enter the igMetaObject constructor probe `80029FFC`, which
 executes the real `80065218` reset and publishes type word `804761D8`.
-The same chain enters actual defaults `8002A164` and batch `80065924`, reaching
-the first specialized signed-integer field constructor `8002E1AC`. Metadata
-flags remain `9` with the same two inherited field identities; no new schema
-field has been manufactured. ArkCore remains disabled, `igObject` is the sole
-published type, and later type-count snapshots remain unwritten.
+The same chain executes actual defaults `8002A164` and batch `80065924`,
+constructing 25 local descriptors with the original profile sizes and vtables.
+Together with the two inherited descriptors, the 27-field schema runs native
+value setters, name/global publication and layout. Two lazy metadata/list globals
+are constructed through the real getter, allocation and constructor callers.
+Type publication then places `igMetaObject` second in the registry. Actual
+callback-list appends preserve the order `8002DD18`, `8002E054`, `80066AE0`,
+and the registrar clears the busy flag, leaving metadata flags `7`.
+The callback runner now reaches unresolved callable `8002DD18`, the internal
+field-list metadata registration. ArkCore remains disabled until that runner
+completes; later type-count snapshots remain unwritten.
 Initial ArkCore lists and their reserve operation execute natively in this
 same integration. Platform/manager work, physical allocation and string-arena
 allocation endpoints remain explicitly prepared. No ready metadata seed,

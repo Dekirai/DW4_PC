@@ -80,6 +80,13 @@ Known physical identities and canonical storage are separate. An unknown
 binding pauses at its reached use; it does not substitute a successful
 allocation or infer capacity from a host container.
 
+Constructed descriptors can retain an optional weak binding to their physical
+allocation. Size stores at `+14` and default-pointer publication at `+20` also
+update that storage before updating the canonical typed fields. Expired storage
+or a changed typed identity is an explicit failure. The back-reference does not
+own the allocation and does not introduce an allocation/descriptor cycle.
+This binding does not imply physical mirroring of every other field property.
+
 ## Concrete unsigned-int field binding
 
 `make_native_igb_unsigned_int_field_factory` recognizes exact vtable
@@ -91,9 +98,11 @@ allocation or infer capacity from a host container.
 | `+64` | `800759D8` | Return size `4`. |
 | `+8C`, null source | `80063D04` | Execute the actual default-buffer preparation caller. |
 
-Other bindings remain explicit. This module does not claim arbitrary field
-virtual implementations, nonnull default-data copying, the separate
-`80063BA8` configuration caller or complete engine registration.
+The companion [field-values module](IGB_FIELD_VALUES.md) now supplies all seven
+reached prototype/size/default-copy bindings, nonnull byte copying and the
+string default setter. The separate [field-schema module](IGB_FIELD_SCHEMA.md)
+implements configuration caller `80063BA8`. Unknown field virtuals and complete
+engine registration remain explicit boundaries.
 
 ## Validation scope
 
@@ -112,7 +121,7 @@ growth is qualified by the separate pointer-list evidence. There is no claim
 of arbitrary memory-fault equivalence, a complete pool implementation or a
 completed game startup.
 
-The final production-core comparison passed **1,360 cases**, including **924
+The original unsigned-int milestone's production-core comparison passed **1,360 cases**, including **924
 bounded failure prefixes**, with **zero differences** across **54,916 executed
 original instructions** and **262 distinct instruction addresses**. The
 independent decoder and endpoint scope were reviewed separately. The core
@@ -120,3 +129,6 @@ SHA-256 is
 `47535aeed92fc884fd5a9bce4940f14c270154dae59e13418aed1a4ae4583a77`.
 The ignored report `work/native-field-operations-result.json` records the
 matching driver and source hashes. The permanent suite passed **58 checks**.
+The current suite passes **65 checks**, adding physical-storage publication
+and lifetime cases. The newer seven-profile comparisons and their final core
+identity are recorded in [VALIDATION.md](VALIDATION.md).

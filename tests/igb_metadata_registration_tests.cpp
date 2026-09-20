@@ -10,7 +10,9 @@
 #include "dw4/igb_metadata_layout.hpp"
 #include "dw4/igb_metadata_probe.hpp"
 #include "dw4/igb_metadata_defaults.hpp"
+#include "dw4/igb_field_values.hpp"
 
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -340,7 +342,12 @@ void actual_cold_bootstrap_prefix(){
         auto op=std::make_shared<IgbStringPoolOperation>();op->resume=[&,c,out=op.get()]{
             ++string_allocations;out->entry_result=std::make_shared<IgbStringEntry>();out->entry_result->owner=std::make_shared<IgbInternedString>();
             out->entry_result->bytes.buffer=std::make_shared<IgbScratchBuffer>();out->entry_result->bytes.buffer->bytes.resize(c.bytes+4);
-            out->entry_result->bytes.buffer->initialized.assign(c.bytes+4,0);out->container_result=f.pool;
+            out->entry_result->bytes.buffer->initialized.assign(c.bytes+4,0);
+            // Original strcmp reads aligned words beyond a terminating byte.
+            // Represent the arena's accessible padding without initializing
+            // the character payload that the actual interner still must copy.
+            for(std::uint32_t i=c.bytes;i<c.bytes+4;++i){out->entry_result->bytes.buffer->bytes[i]=0xa5;out->entry_result->bytes.buffer->initialized[i]=1;}
+            out->container_result=f.pool;
             return MessengerCallResult{true,0,{}};};return op;
     };
     f.services->metadata->dependencies->strings=native_strings->strings;
@@ -492,9 +499,12 @@ void actual_cold_bootstrap_prefix(){
     metadata_defaults->schema->pools=f.services->pools;metadata_defaults->schema->dependencies=object_defaults->dependencies;
     metadata_defaults->schema->fields=object_defaults->fields;metadata_defaults->schema->meta_fields=object_defaults->meta_fields;
     metadata_defaults->object_metadata=object_services->metadata;std::vector<IgbFieldSchemaCall> schema_calls;
-    metadata_defaults->schema->factory=make_native_igb_field_schema_factory(metadata_defaults->schema,[&](const IgbFieldSchemaCall& c){
+    bool schema_constructors_ready{};
+    const auto schema_constructors=make_native_igb_field_schema_factory(metadata_defaults->schema);
+    metadata_defaults->schema->factory=[&](const IgbFieldSchemaCall& c){
+        if(schema_constructors_ready)return schema_constructors(c);
         schema_calls.push_back(c);return std::shared_ptr<IgbFieldSchemaOperation>{};
-    });
+    };
     f.remaining=make_native_igb_metadata_defaults_factory(metadata_defaults,f.remaining);
     check(!call.resume(bootstrap).completed && !call.faulted() && schema_calls.size()==1 &&
         schema_calls.back().kind==IgbFieldSchemaServiceKind::create_field && schema_calls.back().function==0x8002e1ac &&
@@ -504,6 +514,147 @@ void actual_cold_bootstrap_prefix(){
         "Unimplemented field factory fabricated schema completion or replayed the native cold prefix.");
     check(!call.resume(bootstrap).completed && schema_calls.size()==2 && probe_locals==1 && f.fields->count==2 && descriptors.size()==2,
         "Pending signed-int factory replayed the probe or inserted unconstructed descriptors.");
+
+    // Continue with actual specialized constructors. Only physical allocation,
+    // resize and pool ownership are prepared; no completed descriptor is seeded.
+    object_defaults->meta_fields->fields=object_defaults->fields;
+    object_defaults->meta_fields->bootstrap->factory=[&](const IgbBootstrapCall& c){
+        check(c.kind==BK::pool_allocate && c.pool==f.pool &&
+            (c.bytes==0x34 || c.bytes==0x38 || c.bytes==0x3c || c.bytes==0x44),"Specialized allocation changed its original profile.");
+        auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,c,out=op.get()]{
+            auto descriptor=std::make_shared<IgbDecodeRuntimeField>();
+            auto physical=allocation(0x730000+static_cast<std::uint32_t>(descriptors.size())*0x100,c.bytes);
+            physical.storage->bindings.push_back({0,{},{},{},{},descriptor});descriptors.push_back(descriptor);descriptor_allocations.push_back(physical);
+            out->allocation_result=physical;return MessengerCallResult{true,0,{}};};return op;
+    };
+    std::vector<IgbPointerListBacking> field_backings{
+        {backing.storage->bytes,0x400000,0,{},f.fields->backing},
+        {fields_backing.storage->bytes,0x720000,0,{},object_fields->backing}};
+    unsigned field_growths{};
+    object_defaults->fields->pointer_lists->factory=[&](const IgbPointerListCall& c){
+        auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,out=op.get()]{
+            bool found{};for(const auto& old:field_backings)if(old.address==c.backing.address && old.bytes==c.backing.bytes)found=true;
+            if(c.kind!=IgbPointerListServiceKind::object_pool)check(found,"Field-list growth used unallocated backing.");
+            if(c.kind==IgbPointerListServiceKind::allocation_pool || c.kind==IgbPointerListServiceKind::object_pool)out->pool_result=f.pool;
+            else if(c.kind==IgbPointerListServiceKind::allocation_size){++field_size_queries;out->size_result=static_cast<std::uint32_t>(c.backing.bytes->bytes.size());}
+            else if(c.kind==IgbPointerListServiceKind::reallocate){
+                check(c.pool==f.pool && c.bytes>c.backing.bytes->bytes.size() && c.bytes<=128,"Unexpected physical field-list growth request.");
+                auto grown=allocation(0x760000+(++field_growths)*0x100,c.bytes);grown.storage->bytes->initialized.assign(c.bytes,0);
+                std::copy(c.backing.bytes->bytes.begin(),c.backing.bytes->bytes.end(),grown.storage->bytes->bytes.begin());
+                std::copy(c.backing.bytes->initialized.begin(),c.backing.bytes->initialized.end(),grown.storage->bytes->initialized.begin());
+                auto mapping=std::make_shared<IgbDecodeFieldRegistry::Storage>(c.bytes/4);
+                std::copy(c.backing.fields->begin(),c.backing.fields->end(),mapping->begin());
+                out->backing_result={grown.storage->bytes,igb_bootstrap_address(grown),0,{},mapping};field_backings.push_back(out->backing_result);
+            }return MessengerCallResult{true,0,{}};};return op;
+    };
+    // Existing cold arena allocations are explicitly initialized zero bytes.
+    // This fixture does not establish the original pool allocator's body.
+    object_defaults->fields->factory=[&](const IgbFieldOperationCall& c){
+        auto op=std::make_shared<IgbFieldOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbFieldOperationKind::object_pool || c.kind==IgbFieldOperationKind::allocation_pool)out->pool_result=f.pool;
+            else if(c.kind==IgbFieldOperationKind::allocation_size){check(c.buffer.buffer!=nullptr,"Default-size query lost captured allocation.");return MessengerCallResult{true,static_cast<std::uint32_t>(c.buffer.buffer->bytes.size()),{}};}
+            else if(c.kind==IgbFieldOperationKind::allocate_default){
+                check(c.pool==f.pool && (c.bytes==1 || c.bytes==2 || c.bytes==4) && c.alignment==1,"Specialized default allocation changed its byte width or pool.");
+                ++default_allocations;auto bytes=std::make_shared<IgbScratchBuffer>();bytes->bytes.assign(c.bytes,0);bytes->initialized.assign(c.bytes,1);
+                out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;
+            }else throw std::runtime_error("Missing recovered field value operation");return MessengerCallResult{true,0,{}};};return op;
+    };
+    const auto string_allocator=native_strings->factory;unsigned string_growths{};
+    native_strings->factory=[&,string_allocator](const IgbStringPoolCall& c){
+        if(c.kind!=IgbStringPoolServiceKind::resize_table)return string_allocator(c);
+        auto op=std::make_shared<IgbStringPoolOperation>();op->resume=[&,c,out=op.get()]{
+            check(c.storage && c.capacity==c.storage->size()*2 && c.bytes==c.capacity*4,"String table resize changed its actual request.");
+            ++string_growths;out->storage_result=std::make_shared<IgbStringTable::Storage>(*c.storage);out->storage_result->resize(c.capacity);
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    std::vector<std::shared_ptr<IgbRuntimeMetaType>> lazy_metadata;
+    std::vector<std::shared_ptr<IgbDecodeFieldRegistry>> lazy_fields;
+    std::vector<IgbBootstrapPointer> lazy_allocations,lazy_backings;
+    f.services->metadata->bootstrap->factory=make_native_igb_bootstrap_pool_factory(f.services->pools,[&](const IgbBootstrapCall& c){
+        if(c.kind!=BK::pool_allocate)return std::shared_ptr<IgbBootstrapOperation>{};
+        auto op=std::make_shared<IgbBootstrapOperation>();op->resume=[&,c,out=op.get()]{
+            check(f.core->enabled==0 && c.pool==f.pool,"Lazy metadata constructor changed the cold allocation gate.");
+            IgbBootstrapPointer physical;
+            if(c.bytes==0x64){auto type=std::make_shared<IgbRuntimeMetaType>();physical=allocation(0x790000+static_cast<std::uint32_t>(lazy_metadata.size())*0x100,c.bytes);
+                physical.storage->bindings.push_back({0,{},type,{}});lazy_metadata.push_back(type);}
+            else{check(c.bytes==16,"Lazy metadata requested an unexpected allocation size.");auto fields=std::make_shared<IgbDecodeFieldRegistry>();
+                physical=allocation(0x7a0000+static_cast<std::uint32_t>(lazy_fields.size())*0x100,c.bytes);
+                physical.storage->bindings.push_back({0,{},{},fields});lazy_fields.push_back(fields);}
+            lazy_allocations.push_back(physical);out->allocation_result=physical;return MessengerCallResult{true,0,{}};};return op;
+    });
+    fields_services->factory=[&](const IgbFieldRegistryCall& c){
+        auto op=std::make_shared<IgbFieldRegistryOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==FK::object_pool)out->pool_result=f.pool;
+            else{check(c.kind==FK::allocate_backing && c.pool==f.pool && c.bytes==16,"Lazy metadata field-list backing changed its original request.");
+                auto physical=allocation(0x7b0000+static_cast<std::uint32_t>(lazy_backings.size())*0x100,16);physical.storage->bytes->initialized.assign(16,0);
+                lazy_backings.push_back(physical);out->backing_result={physical,std::make_shared<IgbDecodeFieldRegistry::Storage>(4)};}
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    fields_services->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    metadata_defaults->field_list_metadata=std::shared_ptr<IgbRegistrationMetaSlot>(fields_services,&fields_services->metadata);
+    native_lists->registry_metadata=metadata_defaults->field_list_metadata;
+    native_lists->children_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    metadata_defaults->metadata_list_metadata=native_lists->children_metadata;
+    auto values=std::make_shared<IgbFieldValuesServices>();values->fields=object_defaults->fields;
+    values->signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};values->boolean_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    values->string_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};values->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    values->pointer_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};values->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    object_defaults->fields->factory=make_native_igb_field_values_factory(values,object_defaults->fields->factory);
+    metadata_defaults->factory=make_native_igb_metadata_string_default_factory(values);
+    layout->factory=make_native_igb_field_alignment_factory();schema_constructors_ready=true;
+    const auto completed_schema=call.resume(bootstrap);
+    check(!completed_schema.completed && !call.faulted(),"Remaining cold bootstrap was silently completed after metadata registration.");
+    check(f.fields->count==27 && descriptors.size()==27 && f.constructed->class_flags==15 && f.core->types->count==2 &&
+        remaining_calls.back().kind==TK::append_callback && remaining_calls.back().function==0x8002dd18,
+        "Complete native field schema did not reach the original deferred-registration append.");
+    unsigned callback_backings{};const auto original_callbacks=f.services->callbacks->factory;
+    f.services->callbacks->factory=[&,original_callbacks](const IgbRegistrationCallbacksCall& c){
+        if(c.kind!=CK::allocate_backing)return original_callbacks(c);
+        auto op=std::make_shared<IgbRegistrationCallbacksOperation>();op->resume=[&,c,out=op.get()]{
+            check(c.bytes==16 && !c.pool,"First deferred callback backing changed original cold arguments.");
+            ++callback_backings;out->backing_result=std::make_shared<IgbRegistrationCallbackList::Storage>(4);return MessengerCallResult{true,0,{}};};return op;
+    };
+    f.remaining=make_native_igb_registration_list_factory(f.services->callbacks,f.remaining);
+    const auto registered=call.resume(bootstrap);
+    check(!registered.completed && !call.faulted() && registered.diagnostic.find("0x8002DD18")!=std::string::npos &&
+        f.constructed->class_flags==7 && f.constructed->reference_word==1 && f.constructed->word_0c==1 &&
+        f.core->types->count==2 && f.core->types->backing->at(1)==f.constructed && igb_buffer_word(grown_types.storage->bytes,4)==0x120000,
+        "Native metadata registration did not finish before the next actual deferred class registration.");
+    check(callback_backings==1 && root_callbacks->count==3 && root_callbacks->capacity==4 &&
+        root_callbacks->backing->at(0)==0x8002dd18 && root_callbacks->backing->at(1)==0x8002e054 && root_callbacks->backing->at(2)==0x80066ae0,
+        "Actual callback append did not publish the original deferred registration order.");
+    check(f.constructed->native_size==0x64 && f.constructed->native_alignment==4 && f.constructed->allocation_prefix==0 &&
+        f.constructed->type_word==0x804761d8 && f.core->enabled==0 && igb_bootstrap_read_byte(ark.allocation,0)==0 &&
+        igb_bootstrap_read_word(ark.allocation,4)==0xcccccccc && igb_bootstrap_read_word(ark.allocation,8)==0xcccccccc,
+        "Completed metadata changed its native layout or prematurely enabled/snapshotted the cold core.");
+    check(default_allocations==27 && string_allocations==29 && field_growths==3 && string_growths==3 &&
+        lazy_metadata.size()==2 && lazy_fields.size()==2 && lazy_allocations.size()==4 && lazy_backings.size()==2,
+        "Complete native field schema skipped actual allocations, growth or lazy metadata constructors.");
+    for(std::size_t i=0;i<25;++i){const auto descriptor=descriptors[i+2];
+        const auto kind=igb_meta_field_kind_for_factory(*metadata_defaults->factories->at(i));check(kind.has_value(),"Schema factory has no verified profile.");
+        check(f.fields->backing->at(i+2)==descriptor && igb_buffer_word(f.fields->backing_bytes,static_cast<std::uint32_t>((i+2)*4))==igb_bootstrap_address(descriptor_allocations[i+2]) &&
+            descriptor->vtable_word==igb_meta_field_profile(*kind).vtable && descriptor_allocations[i+2].storage->bytes->bytes.size()==igb_meta_field_profile(*kind).bytes,
+            "Schema descriptor lost its actual constructor, allocation size or physical list publication.");
+        check(descriptor->name && *descriptor->name==**metadata_defaults->names->at(i) && descriptor->offset==*metadata_defaults->offsets->at(i) &&
+            descriptor->ordinal==i+2 && descriptor->type_ordinal==0xffff && descriptor->reference_word==1 &&
+            descriptor->declaring_type && descriptor->declaring_type->lock()==f.constructed &&
+            *metadata_defaults->globals->at(i)->slot==descriptor,"Schema naming, layout, ownership or canonical global publication differs.");
+    }
+    const auto word_default=[&](std::size_t index){const auto& source=*descriptors[index+2]->default_bytes;return igb_buffer_word(source.buffer,source.offset);};
+    check(word_default(0)==0xffffffffu && word_default(1)==0xffffffffu && word_default(2)==1 &&
+        word_default(8)==0xffffffffu && word_default(18)==0xffffffffu && word_default(7)==0,
+        "Native metadata scalar/string setters did not preserve their original defaults.");
+    check(descriptors[7]->default_bytes->buffer->bytes==std::vector<std::uint8_t>{1} &&
+        descriptors[24]->default_bytes->buffer->bytes==std::vector<std::uint8_t>({0,4}),"Boolean/short defaults were copied with another field width.");
+    check(descriptors[12]->object_type->lock()==lazy_metadata[0] && descriptors[14]->object_type->lock()==lazy_metadata[1] &&
+        descriptors[15]->object_type->lock()==lazy_metadata[1] && descriptors[16]->object_type->lock()==f.constructed &&
+        descriptors[19]->object_type->lock()==object_type && lazy_metadata[0]->fields==lazy_fields[0] && lazy_metadata[1]->fields==lazy_fields[1] &&
+        lazy_fields[0]->count==0 && lazy_fields[1]->count==0 && lazy_metadata[0]->class_flags==0 && lazy_metadata[1]->class_flags==0,
+        "Metadata reference defaults were seeded instead of using native lazy constructors and canonical globals.");
+    const auto final_queries=field_size_queries;
+    check(!call.resume(bootstrap).completed && f.fields->count==27 && f.constructed->class_flags==7 && f.core->types->count==2 &&
+        callback_backings==1 && descriptors.size()==27 && default_allocations==27 && string_allocations==29 && field_size_queries==final_queries,
+        "Pending deferred class registration repeated completed constructors, schema, publication or callbacks.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

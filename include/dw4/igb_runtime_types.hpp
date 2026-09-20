@@ -9,6 +9,7 @@ struct IgbScratchBuffer;
 struct SystemStageLoader;
 struct IgbObjectInstanceList;
 struct IgbInternedString;
+struct IgbObjectStorage;
 struct IgbDecodeRuntimeField;
 struct IgbRuntimeMetaType;
 using IgbFieldNameSlot=std::optional<std::shared_ptr<IgbInternedString>>;
@@ -36,6 +37,10 @@ struct IgbRuntimeFieldDefaultSource {
     std::shared_ptr<IgbScratchBuffer> buffer;
     std::uint32_t offset{};
 };
+struct IgbFieldStorageBinding {
+    std::weak_ptr<IgbObjectStorage> storage;
+    std::uint32_t offset{};
+};
 struct IgbDecodeRuntimeField {
     std::shared_ptr<ModelSceneObject> owner;
     std::uint32_t offset{}; // +08.
@@ -60,9 +65,13 @@ struct IgbDecodeRuntimeField {
     std::optional<std::uint32_t> global_slot_address,default_bytes_address;
     std::optional<std::uint8_t> flag_27,flag_28,flag_29,flag_2a,flag_2b,flag_2c;
     std::optional<std::uint32_t> word_30;
-    std::optional<std::uint8_t> flag_34,flag_35,flag_3c;
+    std::optional<std::uint8_t> flag_34,flag_35,flag_38,flag_3c;
     // Specialized object-field +38 is a raw, nonowning metadata pointer.
     std::optional<std::weak_ptr<IgbRuntimeMetaType>> object_type;
+    std::optional<std::uint32_t> word_40;
+    // Constructed descriptors can expose physical bytes during virtual tails.
+    // This back-reference does not own the allocation that owns the field.
+    std::optional<IgbFieldStorageBinding> physical_storage;
     // Raw stores preserve displaced host owners without guest retain/release.
     std::vector<std::shared_ptr<void>> overwritten_constructor_owners_;
     std::vector<SystemStageString> overwritten_constructor_strings_;

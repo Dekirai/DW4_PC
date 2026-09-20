@@ -1,4 +1,5 @@
 #include "dw4/igb_meta_field_factory.hpp"
+#include "dw4/igb_field_operations.hpp"
 
 #include <iostream>
 
@@ -122,8 +123,121 @@ void enabled_branch_and_faults(){
     {Fixture no_owner;weakfield=no_owner.field;weakstorage=no_owner.object.storage;IgbMetaFieldConstructorInvocation pending_ctor(no_owner.object);check(!pending_ctor.resume().completed,"Constructor without services completed.");}
     check(weakfield.expired() && weakstorage.expired(),"Abandoned descriptor created a field/allocation ownership cycle.");
 }
+struct ProfileEvidence {
+    IgbMetaFieldKind kind;std::uint32_t factory,constructor,reset,vtable,bytes,registration,callback,global;
+};
+constexpr ProfileEvidence evidence[]={
+    {IgbMetaFieldKind::unsigned_int,0x80022a90,0x800759e0,0x80075a2c,0x80476e6c,0x34,0x80022cb0,0x80022cd8,0x805614bc},
+    {IgbMetaFieldKind::signed_int,0x8002e1ac,0x8005356c,0x800535b8,0x80475b60,0x34,0x8002e390,0x8002e3b8,0x805619e0},
+    {IgbMetaFieldKind::boolean,0x800385e0,0x8003eb7c,0x8003ebc8,0x80473e30,0x34,0x80038800,0x80038828,0x80561e48},
+    {IgbMetaFieldKind::string,0x800251ec,0x80071df8,0x80071e44,0x8047693c,0x3c,0x800253dc,0x80025404,0x805615b4},
+    {IgbMetaFieldKind::object,0x8002879c,0x8006ac50,0x8006aca4,0x804762fc,0x44,0x800289f8,0x80028a20,0x805616e8},
+    {IgbMetaFieldKind::pointer,0x800274ec,0x8006c46c,0x8006c4b8,0x80476630,0x38,0x800276dc,0x80027704,0x80561694},
+    {IgbMetaFieldKind::unsigned_short,0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494}
+};
+bool ref_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer;}
+void resize(Fixture& f,std::size_t size){f.object.storage->bytes->bytes.assign(size,0xcc);f.object.storage->bytes->initialized.assign(size,1);}
+void family_constructor_bytes(){
+    for(const auto& p:evidence){
+        const auto& profile=igb_meta_field_profile(p.kind);
+        check(profile.factory==p.factory && profile.constructor==p.constructor && profile.reset==p.reset && profile.vtable==p.vtable && profile.bytes==p.bytes &&
+            profile.registration==p.registration && profile.callback==p.callback && profile.metadata_global==p.global,"Recovered class profile differs from original entry identities.");
+        check(igb_meta_field_kind_for_factory(p.factory)==p.kind,"Original factory identity lost its class profile.");
+        for(const auto entry:{IgbMetaFieldConstructor::specialized,IgbMetaFieldConstructor::specialized_reset}){
+            Fixture f;resize(f,p.bytes);IgbMetaFieldConstructorInvocation call(f.object,entry,p.kind);
+            check(call.resume(f.services).completed && call.result()==f.field,"Specialized constructor family did not complete.");
+            auto expected=std::vector<std::uint8_t>(p.bytes,0xcc);
+            const auto word=[&](unsigned at,std::uint32_t value){for(unsigned j=0;j<4;++j)expected[at+j]=static_cast<std::uint8_t>(value>>((3-j)*8));};
+            word(0,p.vtable);word(4,1);for(const auto at:{8u,12u,0x18u,0x1cu,0x20u,0x30u})word(at,0);
+            expected[0x10]=expected[0x11]=0xff;
+            for(const auto at:{0x12u,0x13u,0x14u,0x15u,0x24u,0x25u,0x27u,0x28u,0x29u,0x2au})expected[at]=0;
+            expected[0x26]=expected[0x2b]=1;expected[0x2c]=2;
+            if(ref_kind(p.kind)){expected[0x34]=expected[0x35]=0;check(f.field->flag_34==0,"Reference base omitted flag34 reset.");}
+            if(p.kind==IgbMetaFieldKind::string){expected[0x35]=expected[0x38]=1;expected[0x27]=2;
+                check(f.field->flag_38==1 && f.field->flag_35==1 && f.field->flag_27==2,"String descriptor flags differ.");}
+            else if(p.kind==IgbMetaFieldKind::object){word(0x38,0);word(0x40,0);expected[0x3c]=1;
+                check(f.field->object_type && igb_field_declaring_type_is_null(*f.field->object_type) && f.field->word_40==0 && f.field->flag_3c==1,"Object descriptor type/cache/flag defaults differ.");}
+            check(f.object.storage->bytes->bytes==expected,"Specialized descriptor physical stores or untouched padding differ.");
+            check(f.field->physical_storage && f.field->physical_storage->storage.lock()==f.object.storage && f.field->physical_storage->offset==0,"Constructor lost canonical weak physical binding.");
+            check(f.field->vtable_word==p.vtable && f.field->reference_word==1 && f.field->size==0 && f.calls.empty(),"Constructor delegated known original work or changed its canonical result.");
+        }
+    }
+    for(const auto entry:{IgbMetaFieldConstructor::reference_base,IgbMetaFieldConstructor::reference_reset}){
+        Fixture f;resize(f,0x38);IgbMetaFieldConstructorInvocation run(f.object,entry);
+        check(run.resume(f.services).completed && f.field->vtable_word==0x80471384 && f.field->flag_34==0 && f.field->flag_35==0 && igb_bootstrap_read_byte(f.object,0x36)==0xcc,
+            "Reference base entry omitted reset or overwrote padding.");
+    }
+    check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(7));},"Invalid descriptor profile was accepted.");
+}
+void family_reset_prefixes(){
+    for(const auto& p:evidence){
+        Fixture f;resize(f,p.bytes);f.services->dependencies->globals->string_pool.reset();unsigned resets{};
+        f.string_factory=[&](const IgbDependenciesCall& c){check(c.kind==S::create_string_pool,"Unexpected null-pool constructor operation.");++resets;
+            if(resets==3 && p.kind==IgbMetaFieldKind::object)check(igb_bootstrap_read_word(f.object,0x40)==0 && igb_bootstrap_read_word(f.object,0x38)==0xcccccccc &&
+                igb_bootstrap_read_byte(f.object,0x3c)==0xcc,"Object constructor failed to clear cache40 before its third reset or stored later fields early.");
+            auto op=std::make_shared<IgbDependenciesOperation>();op->resume=[]{return MessengerCallResult{true,0,{}};};return op;};
+        IgbMetaFieldConstructorInvocation run(f.object,IgbMetaFieldConstructor::specialized,p.kind);
+        check(run.resume(f.services).completed && resets==(ref_kind(p.kind)?3u:2u),"Specialized constructor skipped an original base reset pass.");
+    }
+    Fixture object;resize(object,0x40);IgbMetaFieldConstructorInvocation short_object(object.object,IgbMetaFieldConstructor::specialized,IgbMetaFieldKind::object);
+    rejects([&]{short_object.resume(object.services);},"Object constructor accepted missing cache40 storage.");
+    check(object.field->vtable_word==0x804762fc && object.field->flag_34==0 && object.field->flag_35==0 && !object.field->flag_3c &&
+        igb_bootstrap_read_word(object.object,0x38)==0xcccccccc,"Object physical failure skipped original intermediate vtable or committed future defaults.");
+    Fixture string;resize(string,0x38);IgbMetaFieldConstructorInvocation short_string(string.object,IgbMetaFieldConstructor::specialized,IgbMetaFieldKind::string);
+    rejects([&]{short_string.resume(string.services);},"String constructor accepted missing flag38 storage.");
+    check(string.field->vtable_word==0x8047693c && string.field->flag_35==0 && string.field->flag_27==0,"String failure committed later flag27/35 stores.");
+}
+void bind_tail_values(Fixture& f,unsigned& allocations,bool& ready){
+    using V=IgbFieldOperationKind;f.services->fields=std::make_shared<IgbFieldOperationsServices>();
+    f.services->fields->factory=[&f,&allocations,&ready](const IgbFieldOperationCall& c){auto op=std::make_shared<IgbFieldOperation>();
+        if(c.kind==V::field_virtual && c.virtual_slot==0x8c){check(c.argument==0 && !c.source,"Post-constructor field default lost its null source.");
+            auto prepare=std::make_shared<IgbFieldBufferInvocation>(c.field);auto services=f.services->fields;
+            op->resume=[prepare,services]{return prepare->resume(services);};
+        }else op->resume=[&f,&allocations,&ready,c,out=op.get()]{
+            if(c.kind==V::field_virtual){check(c.virtual_slot==0x64,"Unexpected tail virtual.");return MessengerCallResult{true,4,{}};}
+            if(c.kind==V::object_pool){check(c.handle==0 && igb_bootstrap_read_word(f.object,0x20)==0 && f.field->size==4 &&
+                    igb_bootstrap_read_byte(f.object,0x15)==4,"Tail buffer size was not physically published before pool selection.");out->pool_result=f.pool;}
+            else if(c.kind==V::allocate_default){++allocations;check(c.bytes==4 && c.alignment==1 && c.pool==f.pool,"Tail default allocation arguments changed.");
+                if(!ready)return MessengerCallResult{false,0,"prepared tail allocator"};
+                auto data=std::make_shared<IgbScratchBuffer>();data->bytes.assign(4,0xcd);data->initialized.assign(4,1);out->buffer_result={data,0};out->buffer_address=0x200000;}
+            else throw std::runtime_error("Unexpected tail buffer operation");return MessengerCallResult{true,0,{}};};return op;};
+}
+void family_factory_tails(){
+    for(const auto& p:evidence){
+        Fixture f;resize(f,p.bytes);unsigned allocations{};bool ready=true;bind_tail_values(f,allocations,ready);
+        IgbMetaFieldFactoryInvocation run(f.pool,p.kind);check(run.resume(f.services).completed && run.result()==f.field,"Concrete family factory did not complete.");
+        check(f.raw.size()==1 && f.raw[0].bytes==p.bytes && f.field->vtable_word==p.vtable,"Family factory allocated another class's size or constructor.");
+        const bool defaults=p.kind==IgbMetaFieldKind::string || p.kind==IgbMetaFieldKind::object;
+        check(allocations==(defaults?1u:0u) && f.field->size==(defaults?4:0) && igb_bootstrap_read_word(f.object,0x20)==(defaults?0x200000u:0u),
+            "Factory +2C tail was replaced with a generic leaf or allocated unrelated fields.");
+    }
+    Fixture f;resize(f,0x3c);unsigned allocations{};bool ready{};bind_tail_values(f,allocations,ready);
+    IgbMetaFieldFactoryInvocation suspended(f.pool,IgbMetaFieldKind::string);
+    check(!suspended.resume(f.services).completed && allocations==1 && f.field->vtable_word==0x8047693c && f.field->size==4 &&
+        f.services->completed_allocations.empty() && igb_bootstrap_read_word(f.object,0x20)==0,"Tail allocation pause lost its completed constructor/size prefix.");
+    ready=true;check(suspended.resume(f.services).completed && allocations==2 && f.raw.size()==1 && f.services->completed_allocations.size()==1,"Pending tail allocation restarted construction.");
+    Fixture missing;resize(missing,0x44);IgbMetaFieldFactoryInvocation unbound(missing.pool,IgbMetaFieldKind::object);
+    check(!unbound.resume(missing.services).completed && missing.field->vtable_word==0x804762fc && missing.field->size==0 &&
+        missing.services->completed_allocations.empty(),"Missing object default virtual was reported as a completed leaf.");
+}
+void family_enabled_registration(){
+    for(const auto& p:evidence){
+        Fixture f;f.core->enabled=1;resize(f,p.bytes);auto initial=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();
+        const auto slot=p.kind==IgbMetaFieldKind::unsigned_int?f.services->metadata:
+            (f.services->metadata_slots[static_cast<std::size_t>(p.kind)]=std::make_shared<IgbRegistrationMetaSlot>());
+        *slot=initial;bool registered{};
+        f.factory=[&](const IgbMetaFieldCall& c){auto op=std::make_shared<IgbMetaFieldOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==K::register_type){check(c.function==p.registration,"Family enabled path selected another registration wrapper.");registered=true;*slot=fresh;}
+            else{check(c.kind==K::reflected_factory && c.metadata==fresh && c.pool==f.pool && registered,"Family reflected path lost canonical profile metadata.");out->allocation_result=f.object;}
+            return MessengerCallResult{true,0,{}};};return op;};
+        IgbMetaFieldFactoryInvocation run(f.pool,p.kind);check(run.resume(f.services).completed && f.raw.empty() && f.calls.size()==2 &&
+            igb_bootstrap_read_word(f.object,0)==0xcccccccc,"Enabled family path constructed or ran direct factory tails on its reflected result.");
+    }
+}
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_meta_field_factory_tests");
     exact_constructed_bytes();double_reset_and_pending();injected_name_release_and_owners();enabled_branch_and_faults();
+    family_constructor_bytes();family_reset_prefixes();family_factory_tails();family_enabled_registration();
     std::cout<<"igb_meta_field_factory_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

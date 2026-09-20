@@ -158,15 +158,20 @@ append. Type publication `800660AC` and field layout `80065A58` now complete
 `igObject`; actual child-list construction and inherited field append then
 enter the `igMetaObject` constructor probe `80029FFC`. Its actual reset
 `80065218` now completes without constructing fields; the probe publishes
-type word `804761D8`. Actual defaults `8002A164` then enter native field batch
-`80065924` and stop at the first signed-integer descriptor constructor
-`8002E1AC`. Reflection remains disabled, with two inherited fields and flags `9`
-on `igMetaObject`; `igObject` has flags `7` and remains the single published
-type. All 25 original schema entries and the surrounding default/configuration
-callers are available with prepared specialized-factory evidence. See
+type word `804761D8`. Actual defaults `8002A164` and native field batch
+`80065924` now construct all 25 local descriptors, retaining both inherited
+fields. All seven descriptor profiles used across this chain have native
+constructors; their value setters, schema configuration, layout and publication
+complete `igMetaObject` with flags `7` as the second published type. The two
+lazy metadata/list globals are constructed under explicit pool,
+allocator and BSS prerequisites. Actual deferred callbacks are appended in
+order: `8002DD18`, `8002E054`, `80066AE0`. The next unresolved callable is
+`8002DD18`, internal field-list metadata registration. Reflection remains
+disabled until the callback runner completes. See
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
 [IGB_METADATA_DEFAULTS.md](IGB_METADATA_DEFAULTS.md),
 [IGB_FIELD_SCHEMA.md](IGB_FIELD_SCHEMA.md),
+[IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md),
 [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](IGB_OBJECT_DEFAULTS.md),
@@ -176,8 +181,8 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue from the reached signed-integer factory through the actual specialized
-field constructors, their defaults and the recovered descriptor table. Complete
+Continue from deferred internal field-list registration `8002DD18`, preserving
+the callback order and the original disabled initialization phase. Complete the
 remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;

@@ -110,14 +110,20 @@ The cold chain now executes type publication `800660AC` and field layout
 `80065A58`, completes `igObject`, and inherits its two fields into `igMetaObject`.
 The latter's local constructor probe `80029FFC` now executes the actual reset
 `80065218`, publishes type word `804761D8` and enters defaults `8002A164`.
-That cold chain reaches the first signed-integer field constructor `8002E1AC`
-through native batch `80065924`, with reflection still disabled and only the
-two inherited fields present. The complete 25-entry factory/name/global/offset
-tables and their configuration callers are recovered; prepared specialized
-factories verify their caller behavior separately. See
+The same cold chain now constructs all 25 local descriptors through native
+batch `80065924`, retaining the two inherited fields. The seven descriptor
+profiles used by this chain have actual constructors; native value setters,
+schema configuration, layout and type publication complete `igMetaObject`
+with flags `7` as the second published type. Its two lazy metadata/list globals
+are also constructed through the original callers. Deferred callbacks are
+appended in order: `8002DD18`, `8002E054`, `80066AE0`. Execution now reaches
+`8002DD18`, the internal field-list metadata registration; reflection remains
+disabled until the callback runner completes. Pools, physical allocation and
+initial BSS bindings remain explicit fixture prerequisites. See
 [IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),
 [IGB_METADATA_DEFAULTS.md](docs/IGB_METADATA_DEFAULTS.md),
 [IGB_FIELD_SCHEMA.md](docs/IGB_FIELD_SCHEMA.md),
+[IGB_FIELD_VALUES.md](docs/IGB_FIELD_VALUES.md),
 [IGB_TYPE_PUBLICATION.md](docs/IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](docs/IGB_METADATA_LAYOUT.md),
 [IGB_OBJECT_DEFAULTS.md](docs/IGB_OBJECT_DEFAULTS.md),

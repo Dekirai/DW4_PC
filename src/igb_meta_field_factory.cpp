@@ -1,5 +1,6 @@
 #include "dw4/igb_meta_field_factory.hpp"
 #include "dw4/igb_string_pool.hpp"
+#include "dw4/igb_field_operations.hpp"
 
 namespace dw4 {
 namespace {
@@ -20,8 +21,21 @@ template<class Request,class Factory,class Operation>struct Call {
     }
 };
 using FieldCall=Call<IgbMetaFieldCall,IgbMetaFieldFactory,IgbMetaFieldOperation>;
+using ValueCall=Call<IgbFieldOperationCall,IgbFieldOperationsFactory,IgbFieldOperation>;
 using StringCall=Call<IgbDependenciesCall,IgbDependenciesFactory,IgbDependenciesOperation>;
 using K=IgbMetaFieldServiceKind;using S=IgbDependenciesServiceKind;
+constexpr std::array<IgbMetaFieldProfile,7> profiles={{
+    {0x80022a90,0x800759e0,0x80075a2c,0x80476e6c,0x34,0x80022cb0,0x80022cd8,0x805614bc},
+    {0x8002e1ac,0x8005356c,0x800535b8,0x80475b60,0x34,0x8002e390,0x8002e3b8,0x805619e0},
+    {0x800385e0,0x8003eb7c,0x8003ebc8,0x80473e30,0x34,0x80038800,0x80038828,0x80561e48},
+    {0x800251ec,0x80071df8,0x80071e44,0x8047693c,0x3c,0x800253dc,0x80025404,0x805615b4},
+    {0x8002879c,0x8006ac50,0x8006aca4,0x804762fc,0x44,0x800289f8,0x80028a20,0x805616e8},
+    {0x800274ec,0x8006c46c,0x8006c4b8,0x80476630,0x38,0x800276dc,0x80027704,0x80561694},
+    {0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494}
+}};
+bool reference_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer;}
+bool known_base_vtable(std::uint32_t word){return word==0x80471914u || word==0x804717f0u || word==0x80471384u;}
+bool known_profile_vtable(std::uint32_t word){for(const auto& profile:profiles)if(word==profile.vtable)return true;return false;}
 void retain_name(const std::shared_ptr<IgbDecodeRuntimeField>& field){
     if(field->name)field->overwritten_constructor_strings_.push_back(field->name);
     if(field->name_string && *field->name_string)field->overwritten_constructor_owners_.push_back(*field->name_string);
@@ -30,6 +44,12 @@ void name_zero(const IgbBootstrapPointer& object,const std::shared_ptr<IgbDecode
     retain_name(field);igb_bootstrap_write_word(object,0x0c,0);
     field->name.reset();field->name_string=std::shared_ptr<IgbInternedString>{};field->name_string_address=0;
 }
+}
+const IgbMetaFieldProfile& igb_meta_field_profile(IgbMetaFieldKind kind){
+    const auto index=static_cast<std::size_t>(kind);if(index>=profiles.size())fail("Unknown metadata-field constructor profile.");return profiles[index];
+}
+std::optional<IgbMetaFieldKind> igb_meta_field_kind_for_factory(std::uint32_t function){
+    for(std::size_t i=0;i<profiles.size();++i)if(profiles[i].factory==function)return static_cast<IgbMetaFieldKind>(i);return {};
 }
 void igb_meta_field_set_name(const IgbBootstrapPointer& object,
     const std::shared_ptr<IgbInternedString>& owner,std::uint32_t address){
@@ -43,7 +63,7 @@ void igb_meta_field_set_name(const IgbBootstrapPointer& object,
 struct IgbMetaFieldConstructorInvocation::Impl {
     enum class P {bind,first_base,initial,reset_base,stores,string_global,after_allocate,after_initialize,
         publish_pool,intern_null,old_name,release_name,publish_name,tail_stores,finish,string_call,done};
-    IgbBootstrapPointer object;IgbMetaFieldConstructor entry{};
+    IgbBootstrapPointer object;IgbMetaFieldConstructor entry{};IgbMetaFieldKind kind{};
     std::shared_ptr<IgbDecodeRuntimeField> field;
     std::shared_ptr<IgbMetaFieldFactoryServices> owner;
     std::shared_ptr<ModelSceneObject> string_pool;
@@ -53,8 +73,8 @@ struct IgbMetaFieldConstructorInvocation::Impl {
     StringCall call;P phase=P::bind,after=P::done;
     unsigned resets{};bool running{},fault{},owns{};
 };
-IgbMetaFieldConstructorInvocation::IgbMetaFieldConstructorInvocation(IgbBootstrapPointer object,IgbMetaFieldConstructor entry)
-    :impl_(std::make_unique<Impl>()){impl_->object=std::move(object);impl_->entry=entry;}
+IgbMetaFieldConstructorInvocation::IgbMetaFieldConstructorInvocation(IgbBootstrapPointer object,IgbMetaFieldConstructor entry,IgbMetaFieldKind kind)
+    :impl_(std::make_unique<Impl>()){igb_meta_field_profile(kind);impl_->object=std::move(object);impl_->entry=entry;impl_->kind=kind;}
 IgbMetaFieldConstructorInvocation::~IgbMetaFieldConstructorInvocation(){auto& s=*impl_;
     if(s.owns && !completed()){
         s.field->construction_fault_=true;
@@ -82,13 +102,18 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
     const auto globals=[&]()->std::shared_ptr<SystemStageServices>{return services && services->dependencies?services->dependencies->globals:nullptr;};
     const auto byte=[&](std::uint32_t off,std::uint8_t value){igb_bootstrap_write_byte(s.object,off,value);};
     const auto word=[&](std::uint32_t off,std::uint32_t value){igb_bootstrap_write_word(s.object,off,value);};
+    const auto derived=igb_meta_field_profile(s.kind).vtable;
+    const bool reference_entry=s.entry==IgbMetaFieldConstructor::reference_base || s.entry==IgbMetaFieldConstructor::reference_reset;
+    const bool reference=reference_entry || ((s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::specialized_reset) && reference_kind(s.kind));
     try{for(;;){check();switch(s.phase){
     case P::bind:
         if(igb_bootstrap_address(s.object)==0)igb_bootstrap_write_word(s.object,0,0x804717f0);
         s.field=igb_bootstrap_field(s.object);
         if(s.field->construction_fault_ || !s.field->construction_active_.expired())fail("Metadata field is faulted or already constructing.");
         s.field->construction_active_=s.token;s.owns=true;
-        s.phase=s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::base?P::first_base:P::reset_base;break;
+        s.field->physical_storage=IgbFieldStorageBinding{s.object.storage,s.object.offset};
+        s.phase=s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::base ||
+            s.entry==IgbMetaFieldConstructor::reference_base?P::first_base:P::reset_base;break;
     case P::first_base:
         if(!s.base)s.base=std::make_unique<IgbBootstrapBaseInvocation>(s.object,true);
         {const auto status=s.base->resume(services?services->bootstrap:nullptr);check();if(!status.completed)return status;}
@@ -149,10 +174,25 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
         byte(0x29,0);s.field->flag_29=std::uint8_t{0};byte(0x2a,0);s.field->flag_2a=std::uint8_t{0};
         byte(0x2b,1);s.field->flag_2b=std::uint8_t{1};byte(0x2c,2);s.field->flag_2c=std::uint8_t{2};
         byte(0x26,1);s.field->flag_26=1;
-        if(s.entry==IgbMetaFieldConstructor::specialized && ++s.resets==1){word(0,0x80476e6c);s.phase=P::reset_base;}
-        else s.phase=P::finish;break;
+        ++s.resets;
+        if(reference){
+            const bool full=s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::reference_base;
+            if(full && s.resets==1){word(0,0x80471384);s.phase=P::reset_base;break;}
+            word(0,0x80471384);byte(0x34,0);s.field->flag_34=std::uint8_t{0};byte(0x35,0);s.field->flag_35=std::uint8_t{0};
+            if(s.entry==IgbMetaFieldConstructor::specialized && s.resets==2){
+                word(0,derived);if(s.kind==IgbMetaFieldKind::object){word(0x40,0);s.field->word_40=0;}
+                s.phase=P::reset_base;break;
+            }
+        }else if(s.entry==IgbMetaFieldConstructor::specialized && s.resets==1){word(0,derived);s.phase=P::reset_base;break;}
+        s.phase=P::finish;break;
     case P::finish:
-        clear();if(s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::specialized_reset)word(0,0x80476e6c);
+        clear();if(s.entry==IgbMetaFieldConstructor::specialized || s.entry==IgbMetaFieldConstructor::specialized_reset){
+            word(0,derived);
+            if(s.kind==IgbMetaFieldKind::string){byte(0x38,1);s.field->flag_38=std::uint8_t{1};byte(0x27,2);s.field->flag_27=std::uint8_t{2};
+                byte(0x35,1);s.field->flag_35=std::uint8_t{1};}
+            else if(s.kind==IgbMetaFieldKind::object){word(0x40,0);s.field->word_40=0;byte(0x3c,1);s.field->flag_3c=std::uint8_t{1};
+                word(0x38,0);s.field->object_type=std::weak_ptr<IgbRuntimeMetaType>{};}
+        }
         s.field->construction_active_.reset();s.owns=false;s.phase=P::done;return {true,0,{}};
     case P::string_call:{const auto status=s.call.poll(services && services->dependencies?services->dependencies->factory:IgbDependenciesFactory{},check);
         if(!status.completed)return status;s.phase=s.after;break;}
@@ -161,16 +201,18 @@ MessengerCallResult IgbMetaFieldConstructorInvocation::resume(std::shared_ptr<Ig
 }
 
 struct IgbMetaFieldFactoryInvocation::Impl {
-    enum class P {gate,register_type,metadata,reflected,after_reflected,allocate,construct,tail_2c,tail_24,result,call,done};
+    enum class P {gate,register_type,metadata,reflected,after_reflected,allocate,construct,tail_2c,tail_defaults,tail_24,result,value_call,call,done};
     std::shared_ptr<ModelSceneObject> pool;std::shared_ptr<IgbMetaFieldFactoryServices> owner;
     std::shared_ptr<IgbRuntimeMetaType> metadata;std::shared_ptr<IgbDecodeRuntimeField> result;
     IgbBootstrapPointer allocation;
     std::unique_ptr<IgbRawAllocationInvocation> allocator;
     std::unique_ptr<IgbMetaFieldConstructorInvocation> constructor;
     std::unique_ptr<IgbRegistrationCallbacksInvocation> registration;
-    FieldCall call;P phase=P::gate,after=P::done;bool running{},fault{};
+    IgbMetaFieldKind kind{};FieldCall call;ValueCall value;P phase=P::gate,after=P::done;bool running{},fault{};
 };
-IgbMetaFieldFactoryInvocation::IgbMetaFieldFactoryInvocation(std::shared_ptr<ModelSceneObject> pool):impl_(std::make_unique<Impl>()){impl_->pool=std::move(pool);}
+IgbMetaFieldFactoryInvocation::IgbMetaFieldFactoryInvocation(std::shared_ptr<ModelSceneObject> pool,IgbMetaFieldKind kind):impl_(std::make_unique<Impl>()){
+    igb_meta_field_profile(kind);impl_->pool=std::move(pool);impl_->kind=kind;
+}
 IgbMetaFieldFactoryInvocation::~IgbMetaFieldFactoryInvocation(){auto& s=*impl_;if(!completed() && s.owner && s.allocation.storage)s.owner->unfinished_.push_back(s.allocation.storage);}
 bool IgbMetaFieldFactoryInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbMetaFieldFactoryInvocation::faulted()const noexcept{return impl_->fault;}
@@ -183,6 +225,7 @@ MessengerCallResult IgbMetaFieldFactoryInvocation::resume(std::shared_ptr<IgbMet
     Running running(s.running);if(!s.owner && services)s.owner=services;
     const auto check=[&]{if(s.fault)fail("Metadata-field factory continuation was invalidated.");};
     const auto clear=[&]{s.call.clear();check();};
+    const auto& profile=igb_meta_field_profile(s.kind);
     const auto select=[&](K kind,P after)->IgbMetaFieldCall&{
         clear();s.call.request.kind=kind;s.call.request.object=s.allocation;s.call.factory=services?services->factory:IgbMetaFieldFactory{};
         s.after=after;s.phase=P::call;return s.call.request;
@@ -190,7 +233,8 @@ MessengerCallResult IgbMetaFieldFactoryInvocation::resume(std::shared_ptr<IgbMet
     const auto tail=[&](std::uint32_t slot,P after){
         clear();const auto word=igb_bootstrap_read_word(s.allocation,0);
         if(!word)fail("Metadata-field factory dereferences a null tail vtable.");
-        if(word==0x80476e6cu || word==0x80471914u || word==0x804717f0u){s.phase=after;return;}
+        if(slot==0x2c && (word==0x8047693cu || word==0x804762fcu)){s.phase=P::tail_defaults;return;}
+        if(known_base_vtable(word) || known_profile_vtable(word)){s.phase=after;return;}
         auto& call=select(K::object_virtual,after);call.vtable_word=word;call.virtual_slot=slot;call.argument=0;
     };
     try{for(;;){check();switch(s.phase){
@@ -199,27 +243,37 @@ MessengerCallResult IgbMetaFieldFactoryInvocation::resume(std::shared_ptr<IgbMet
             return pending("Metadata-field factory requires represented ArkCore80562100.");
         if(!*services->bootstrap->runtime->singleton)fail("Metadata-field factory dereferences a null ArkCore.");
         if((*services->bootstrap->runtime->singleton)->enabled)s.phase=P::register_type;
-        else{s.allocator=std::make_unique<IgbRawAllocationInvocation>(0x34,0,s.pool);s.phase=P::allocate;}break;
+        else{s.allocator=std::make_unique<IgbRawAllocationInvocation>(profile.bytes,0,s.pool);s.phase=P::allocate;}break;
     case P::register_type:
         if(s.registration || (services && services->callbacks)){
-            if(!s.registration)s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(0x80022cd8);
+            if(!s.registration)s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(profile.callback);
             const auto progress=s.registration->resume(services?services->callbacks:nullptr);check();if(!progress.completed)return progress;
             s.registration.reset();check();s.phase=P::metadata;
-        }else select(K::register_type,P::metadata).function=0x80022cb0;break;
-    case P::metadata:
-        clear();if(!services || !services->metadata || !services->metadata->has_value())return pending("Metadata-field factory requires canonical805614BC after registration.");
-        s.metadata=**services->metadata;s.phase=P::reflected;break;
+        }else select(K::register_type,P::metadata).function=profile.registration;break;
+    case P::metadata:{
+        clear();const auto slot=services?(s.kind==IgbMetaFieldKind::unsigned_int?services->metadata:services->metadata_slots[static_cast<std::size_t>(s.kind)]):nullptr;
+        if(!slot || !slot->has_value())return pending("Metadata-field factory requires its profile's canonical metadata cell after registration.");
+        s.metadata=**slot;s.phase=P::reflected;break;}
     case P::reflected:{auto& call=select(K::reflected_factory,P::after_reflected);call.metadata=s.metadata;call.pool=s.pool;break;}
     case P::after_reflected:s.allocation=std::move(s.call.operation->allocation_result);clear();s.phase=P::result;break;
     case P::allocate:{
         const auto progress=s.allocator->resume(services?services->bootstrap:nullptr);check();if(!progress.completed)return progress;
         s.allocation=s.allocator->result();s.allocator.reset();check();
         if(!igb_bootstrap_address(s.allocation))s.phase=P::tail_2c;
-        else{s.constructor=std::make_unique<IgbMetaFieldConstructorInvocation>(s.allocation);s.phase=P::construct;}break;
+        else{s.constructor=std::make_unique<IgbMetaFieldConstructorInvocation>(s.allocation,IgbMetaFieldConstructor::specialized,s.kind);s.phase=P::construct;}break;
     }
     case P::construct:{const auto progress=s.constructor->resume(services);check();if(!progress.completed)return progress;
         s.result=s.constructor->result();s.constructor.reset();check();s.phase=P::tail_2c;break;}
     case P::tail_2c:tail(0x2c,P::tail_24);break;
+    case P::tail_defaults:{
+        // Both concrete +2C bodies call the exact BLR667D0 and then reload
+        // the field's physical vtable for +8C(NULL).
+        const auto table=igb_bootstrap_read_word(s.allocation,0);if(!table)fail("Field post-constructor defaults dereference a null vtable.");
+        s.value.clear();check();s.value.request.kind=IgbFieldOperationKind::field_virtual;s.value.request.field=igb_bootstrap_field(s.allocation);
+        s.value.request.vtable_word=table;s.value.request.virtual_slot=0x8c;s.value.request.argument=0;
+        if(services && services->fields)s.value.factory=services->fields->factory;s.phase=P::value_call;break;}
+    case P::value_call:{const auto status=s.value.poll(services && services->fields?services->fields->factory:IgbFieldOperationsFactory{},check);
+        if(!status.completed)return status;s.value.clear();check();s.phase=P::tail_24;break;}
     case P::tail_24:tail(0x24,P::result);break;
     case P::result:
         clear();if(igb_bootstrap_address(s.allocation)){s.result=igb_bootstrap_field(s.allocation);if(s.owner)s.owner->completed_allocations.push_back(s.allocation);}

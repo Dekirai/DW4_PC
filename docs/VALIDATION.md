@@ -1,5 +1,80 @@
 # Local validation
 
+## Native specialized fields and completed metadata registration
+
+Validated locally on 2026-09-20. The cold-bootstrap composition now constructs
+all 25 local `igMetaObject` descriptors through their actual specialized
+factories, alongside the two inherited `igObject` fields. Actual default-value
+copying, string customization, field layout and type publication finish this
+type's registration with flags 7, registry index 1, size 0x64 and alignment 4.
+The registry contains two types. The actual deferred callback list contains
+`8002DD18`, `8002E054` and `80066AE0` in that order; the runner stops at missing
+internal field-list registration `8002DD18`. ArkCore is still disabled and has
+not published its final type snapshot. This does not establish complete startup.
+
+Seven constructor profiles cover unsigned/signed integers, booleans, strings,
+object references, pointers and unsigned shorts. String/object post-constructor
+tails execute actual default-buffer preparation. Physical size/default-pointer
+stores remain coherent with an optional weak constructor-storage binding;
+other field state continues to use its canonical typed representation.
+Two lazy metadata objects and their empty field lists are constructed through
+the actual cold factories, rather than supplied as completed types.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 170/170 CTest suites passed locally with four jobs; no compiler warnings |
+| Specialized field factories | 236 checks for all seven profiles, common/reference constructor chains, physical bytes and padding, allocation gates, exact tail dispatch and retained continuations |
+| Field values | 108 checks for prototype cells, sizes/alignment, source capture, live destination/size, overlapping byte copies, directional failure prefixes and string-default ownership |
+| Field operations | 65 checks, including physical size/default-pointer stores, conflicting typed identities and expired weak storage |
+| Cold metadata integration | 484 checks through all 27 fields, 25 local names/offsets/globals, lazy metadata construction, actual defaults/layout/publication and ordered deferred callbacks |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+The integration still prepares physical allocators, pool/platform prerequisites
+and original cold null global/prototype cells explicitly. Its default buffers
+have declared zero-initialized bytes. The string arena exposes four initialized
+padding bytes after each allocation for the original comparison's aligned word
+reads; the actual interner must still copy and initialize the character payload.
+These allocator preconditions do not prove a complete allocator or universal
+zero initialization. Pointer-list growth, string interning and table insertion,
+descriptor construction and metadata registration run their native bodies.
+Repeated suspension at `8002DD18` does not replay completed schema or publication.
+
+Bounded comparisons used the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, and the unchanged reviewed decoder:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Seven field factories, constructors, resets and actual tails | 3,715 | 2,214 | 439,588 | 890 | 0 |
+| Field default copying, string setter and known virtuals | 825 | 326 | 57,036 | 265 | 0 |
+
+The family comparison checks every physical byte, including padding, plus
+ordered callbacks and failures. It executes the string/object `+2C` tails and
+their buffer callers; registration wrappers, reflected allocation, physical
+pool operations and string-pool construction/release remain prepared endpoints.
+The values comparison executes `80063D04`, directional copy `800031E8`, string
+setter `80071694`, finalization and the known prototype/size virtuals. It covers
+scratch aliases, changed live destinations/sizes, captured string buffers,
+reference words and partial failures. Nonnull interning and physical allocator
+endpoints are prepared; null interning runs the original leaf. Alignment leaves
+received independent instruction review, not a separate differential corpus.
+Neither profile establishes whole registration, allocator behavior or gameplay.
+
+Final core SHA256:
+`8250D2CE126F92EB31E923EF8179B3EBF5A07F81B8C5E9A2FD8D4FD94E157211`.
+Ignored logs are `work/native-field-family-build.log`,
+`work/native-field-family-prefix.log`, `work/native-field-family-player.log`
+and `work/native-field-family-verifier.log`. Reports
+`work/native-field-family-result.json` and `work/native-field-values-result.json`
+record the matching source/driver hashes and bounded comparison scope.
+See [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md),
+[IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md) and
+[IGB_METADATA_REGISTRATION.md](IGB_METADATA_REGISTRATION.md).
+No interactive preview or GitHub Actions run was launched. Continue through
+the reached deferred class registrations before connecting initialized ArkCore
+state to the original-data decoder.
+
 ## Native metadata probe and field schema
 
 Validated locally on 2026-09-20. The same cold-bootstrap composition now runs

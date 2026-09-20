@@ -127,6 +127,24 @@ void buffer_live_reads(){
     IgbFieldBufferInvocation bad(null_pool.descriptor);fails([&]{bad.resume(null_pool.services);},"Null allocation pool was accepted.");
     check(null_pool.descriptor->size==4 && null_pool.calls.size()==1,"Pool failure lost size-store prefix.");
 }
+void physical_buffer_publication(){
+    Fixture f;auto storage=std::make_shared<IgbObjectStorage>();storage->original_address=0x110000;storage->bytes=bytes(0x34);
+    storage->bindings.push_back({0,{},{},{},{},f.descriptor});f.descriptor->physical_storage=IgbFieldStorageBinding{storage,0};
+    IgbBootstrapPointer physical{storage,0};igb_bootstrap_write_word(physical,0x20,0);
+    bool observed{};f.mutate=[&](const IgbFieldOperationCall& c,auto&,auto&){if(c.kind==K::allocate_default){
+        check(igb_bootstrap_read_word(physical,0x14)==0x0004a5a5 && igb_bootstrap_read_word(physical,0x20)==0,
+            "Pending allocation did not expose the physical size store before pointer publication.");observed=true;}};
+    IgbFieldBufferInvocation call(f.descriptor);check(call.resume(f.services).completed && observed &&
+        igb_bootstrap_read_word(physical,0x20)==*f.descriptor->default_bytes_address,"Field buffer failed to publish physical default pointer.");
+    auto replacement=bytes(4);igb_field_store_default(f.descriptor,{replacement,0},0x220000);
+    check(igb_bootstrap_read_word(physical,0x20)==0x220000 && f.descriptor->default_bytes->buffer==replacement,
+        "Raw field default helper lost physical/canonical identity.");
+    storage->bindings[0].field=std::make_shared<IgbDecodeRuntimeField>();
+    fails([&]{igb_field_store_size(f.descriptor,8);},"Changed physical field binding was overwritten.");
+    check(f.descriptor->size==4,"Rejected physical size store still changed typed size.");
+    physical={};storage.reset();fails([&]{igb_field_store_default(f.descriptor,{},0);},"Expired physical field binding was ignored.");
+    check(f.descriptor->default_bytes_address==0x220000,"Rejected physical pointer store still changed typed pointer.");
+}
 void append_and_faults(){
     Fixture f;auto metadata=std::make_shared<IgbRuntimeMetaType>();metadata->fields=std::make_shared<IgbDecodeFieldRegistry>();
     auto& list=*metadata->fields;list.backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(4);list.backing_bytes=bytes(16);list.backing_address=0x90000;
@@ -148,6 +166,6 @@ void append_and_faults(){
     check(weak.expired(),"Known field adapter formed an ownership cycle.");
 }
 }
-int main(){try{names();pending_name_and_lifetime();finalization_order();global_cell_lifetime();buffer_live_reads();append_and_faults();
+int main(){try{names();pending_name_and_lifetime();finalization_order();global_cell_lifetime();buffer_live_reads();physical_buffer_publication();append_and_faults();
     std::cout<<"Field operation checks: "<<checks<<'\n';return 0;
 }catch(const std::exception& error){std::cerr<<"Field operations failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

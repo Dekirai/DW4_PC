@@ -27,8 +27,11 @@ explicit `80066E1C` destruction boundary when the low 23 bits are zero. A null
 factory result is appended before the later unconditional reference read fails.
 Missing metadata fails before the retain; a null list fails after it.
 
-`make_native_igb_field_schema_factory` connects original `80022A90` to the
-existing authored unsigned-int descriptor factory. Other specialized constructor
+`make_native_igb_field_schema_factory` connects the seven verified factory
+profiles: unsigned int `80022A90`, signed int `8002E1AC`, boolean `800385E0`,
+string `800251EC`, object `8002879C`, pointer `800274EC` and unsigned short
+`80021E10`. Each runs its actual constructor/reset chain and virtual tails;
+see [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md). Other constructor
 identities remain reached operations. The module does not manufacture a generic
 descriptor to complete an unknown class factory. Factory results may supply an
 original address for the raw pointer-list mapping; addresses are never inferred
@@ -72,8 +75,9 @@ creator destruction, interrupted ownership, name-release prefixes, raw stores,
 captured schema counts, fresh list/backing reads, inherited-field offsets,
 wrapped indices, malformed global bindings and recursive invalidation.
 
-Prepared specialized factories, string allocation and allocator operations are
-explicit fixtures. Native pool selection, pointer-list append, name assignment,
-unsigned-int field virtuals, buffer preparation and finalization execute their
-existing implementations. The focused tests do not establish complete class
-registration, original game startup or a playable native game.
+The focused helper tests prepare specialized factories, string allocation and
+allocator operations explicitly. Native pool selection, pointer-list append,
+name assignment, unsigned-int field virtuals, buffer preparation and finalization
+execute their existing implementations. Separate cold registration integration
+uses the seven actual descriptor factory profiles. See [VALIDATION.md](VALIDATION.md)
+for the reached boundary; neither fixture establishes a playable native game.

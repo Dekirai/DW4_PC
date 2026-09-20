@@ -31,9 +31,11 @@ The field names are `_id`, `_index`, `_majorVersion`, `_minorVersion`,
 `_setupFunction`, `_cleanupFunction`, `_getMetaObjectFunction`,
 `_requiredAlignment`, `_vTablePointer` and `_poolName`.
 
-The first constructor is actual `8002E1AC`. Missing specialized constructors
-remain reached operations, preserving the completed prefix. Registering the
-table does not claim those constructor bodies are implemented.
+The first constructor is actual `8002E1AC`. All specialized constructors used by
+the table now execute through their original class profiles, with exact sizes,
+vtables and reset chains; see [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md).
+The cold integration constructs all 25 local descriptors, rather than seeding
+completed fields. Unknown factory identities still remain reached operations.
 
 ## Defaults and type references
 
@@ -44,9 +46,10 @@ Helpers `80053650`, `8003EC68` and `80075E8C` pack those values as original
 big-endian temporary bytes before reading the selected field's fresh virtual
 `+8C`. The temporary storage and selected continuation survive suspension.
 This nonnull source is distinct from the null-source finalization call.
-The string default uses exact reached setter `80071694(field,0)`; its original
-string-pool and captured default-buffer ownership body remains an explicit
-endpoint, not a completed placeholder.
+The string default uses actual setter `80071694(field,0)`, including its
+string-pool operations and captured default-buffer ownership. Scalar copies,
+null-source preparation, prototype getters and alignment leaves are also native;
+see [IGB_FIELD_VALUES.md](IGB_FIELD_VALUES.md).
 
 Type-reference defaults use original lazy getters `8002DC6C` and `8002DFA8`
 with globals `805619CC` and `805619D4`. A represented null triggers actual
@@ -66,7 +69,7 @@ the field count at its own entry, independently of the initial captured count.
 
 ## Validation scope
 
-The local Release suite passes 1,477 checks. `igb_metadata_defaults_tests`
+The earlier isolated caller Release suite passed 1,477 checks. `igb_metadata_defaults_tests`
 composes the actual batch, pointer-list append,
 schema, name ownership, buffer preparation and finalization callers with
 explicit prepared specialized field factories and virtual bodies. It checks
@@ -77,9 +80,17 @@ failure propagation, and interrupted temporary lifetime. Separate cases enter
 the actual lazy getter and metadata factory callers with prepared reflected
 allocation outputs and verify raw overwrite/publication and cache reuse.
 
-These tests establish the recovered callers and their integration. They do
-not establish native specialized field construction, the string-default body,
-complete metadata registration, or playable native game startup. Original
+Those isolated tests establish caller behavior with prepared field bodies.
+The separate cold registration integration now uses actual constructors for all
+seven descriptor profiles reached across the base and local schema, native
+default setters and schema/layout/type-publication operations. It constructs
+25 local fields after two inherited fields and two lazy metadata/list globals
+under explicit allocator, pool and BSS prerequisites. `igMetaObject` finishes
+with flags `7` as the second published type. Deferred callbacks are appended
+in order `8002DD18`, `8002E054`, `80066AE0`; the next unresolved callable is
+internal field-list registration `8002DD18`. ArkCore remains disabled pending
+callback completion. This does not establish complete startup or an updated
+playable preview. Original
 instructions and tables were read from the user-supplied USA `main.dol`
 (SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`); original bytes and generated
 disassembly remain outside tracked deliverables.
