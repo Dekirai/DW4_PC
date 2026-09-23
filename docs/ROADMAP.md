@@ -174,17 +174,19 @@ scalar probe and reflected prototype. Seven local descriptors are constructed
 before the final factory enters string-field registration `80025404`.
 Its native probe and defaults construct a Boolean local before the inherited
 signed-byte clone. Native signed-byte registration and its reflected prototype
-now complete, reaching enabled clone `800680B4` with the original argument one.
-Recover its reflected allocation/copy path through `80068060 -> 80067B60` and
-required field operations. Resume the string replacements, then the memory
+now complete. Enabled clone `800680B4` performs actual reflected allocation and
+`80068060 -> 80067B60` with the original argument one. The first seven copied
+members precede required memory-buffer copy `80062824`. Recover that operation
+and its buffer allocation/ownership helpers, then resume the string replacements
+and the memory
 schema's inherited method clone/replacement dependencies. The full defaults
 callers have focused coverage with explicit leaves; neither schema is completed
 in cold startup. Then finish the memory prototype, unsigned-character element
 prototype and enabled inherited-field clone. Complete the list chain and its
 deferred `igThread` registration before semaphore registration `80026098` and
 ThreadManager startup `80023A30`. Enum metadata remains null while these
-prerequisites are pending. Enabled reflected clone
-`800680B4` and member/reference branches beyond the completed profile
+prerequisites are pending. Memory-buffer copying and member/reference branches
+beyond the completed profile
 remain explicit, together with pool/platform, allocator, callback deallocation
 and BSS prerequisites. Initial core-list constructors and reserve run in this
 same chain; the separate byte-only backing profile remains covered. Continue

@@ -213,8 +213,7 @@ metadata then feeds original parent inheritance and registration. See
 [IGB_META_ENUM.md](IGB_META_ENUM.md), [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
 [IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md) and
 [IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md).
-The enabled `800680B4` reflected clone,
-remaining member construction/reset and nonnull reference operations beyond
+The remaining reflected member copying, construction/reset and nonnull reference operations beyond
 this profile remain explicit dependencies. Pool/platform and physical allocation
 endpoints are still prepared; neither the enable store nor these seven types
 establish complete startup or every field class. See
@@ -254,12 +253,24 @@ The eighth memory-class field now enters string registration `80025404`, exact
 probe `80025348` and defaults `8002549C`. Its one Boolean local is constructed
 before the inherited shallow-copy field enters signed-byte clone `80037BC0`.
 The signed-byte class and reflected prototype complete, bringing the same cold
-invocation to **`800680B4`, enabled reflected cloning**, with argument one.
-Recover its original metadata/pool lookup, reflected allocation and `80068060`
-copy dispatch. Mode one enters `80067B60`: capture destination metadata before
-the source/destination hooks, capture the registry/count after those hooks,
-and preserve per-field backing reloads and signed copy-mode dispatch.
-Do not replace enabled copy with the separate cold `800639E4` constructor.
+invocation through **`800680B4`, enabled reflected cloning**, with argument one.
+Its native metadata/pool lookup now composes actual reflected allocation and
+`80068060` copy dispatch. All three object-copy passes preserve their distinct
+policy bytes, hooks and tails. Mode one enters `80067B60`: destination metadata
+is captured before the hooks, the registry after them, then the base global
+before the count; each member reloads the captured registry backing.
+The first seven class members now copy through actual raw, string and object
+operations. Canonical member values remain authoritative for already constructed
+fields; explicit address bindings connect their pointer identities to physical
+storage. This avoids copying stale constructor bytes or seeding a cloned record.
+The next reached body is **`80062824`, memory-reference member copying**. Recover
+its element release (`800626DC`), conditional free (`80056508`) and buffer clone
+(`8005647C`) with repeated live size queries and the captured allocation pool.
+The current descriptor has a null element, but other branches must remain
+explicit until their ownership loops are implemented. Do not substitute the
+separate cold `800639E4` constructor or copy only the default pointer.
+See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md) and
+[IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md).
 Then resume both string inherited replacements and publish its schema, prototype
 `80025628` and actual reflected tail `8007144C`. The string tail and prototype
 adapters have focused coverage; the composed startup has not yet reached them.

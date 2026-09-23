@@ -1,6 +1,103 @@
 # Local validation
 
-## Native string registration, signed-byte prototype and scalar clones
+## Native reflected cloning and base-field member copies
+
+Validated locally on 2026-09-23. The same retained cold-bootstrap invocation
+now crosses enabled clone `800680B4`: actual source metadata lookup and tagged
+pool selection feed the existing reflected factory `8006546C` and initializer
+`800667F4`. The resulting signed-byte instance enters actual `80068060` mode
+one and the `80067B60` member pass. No completed clone is supplied by the fixture.
+Existing string-arena and metadata-allocation identities are bound explicitly;
+they do not initialize or replace a class, schema or copied descriptor.
+
+The native pass copies its first seven members: offset, owned string name,
+two halfword indices, halfword size, declaring metadata and global-cell pointer.
+The next reached body is **`80062824`, memory-reference member copying** of
+`_default`. Its invocation remains pending. String metadata still has flags `9`
+and 23 fields, memory metadata has flags `9` and 29 fields, their prototypes
+remain null, and no inherited replacement is published prematurely.
+
+This composition now has 66 descriptors, 61 default buffers, eleven published
+types, four prototypes and 34 enabled allocations. Signed-byte metadata has two
+reflected instances: its previously completed prototype and the newly initialized
+copy destination. Repeated resumes preserve the allocation, completed member
+writes, string reference count, type/prototype registries and original core
+snapshots `+04 = 7`, `+08 = 1`. Full native startup remains incomplete.
+
+The new caller also reconstructs modes zero and two with their distinct policy
+bytes, hooks and tails. Signed field policies select only the original virtual
+slots; unsupported values skip their unused accesses. The member module reads
+live canonical base-field values where earlier source reconstruction already
+published them, preserving physical padding and generic bytes. Each partial
+store updates affected canonical fields, including overlapping typed views.
+This prevents stale constructor images from replacing current member values.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 192/192 CTest suites passed locally with four jobs; no compiler warnings |
+| Cold composition | 1,722 checks; actual reflected allocation and first seven member copies reach `80062824` without a fabricated clone result |
+| Reflected callers/adapters | 1,718 checks; all 256 signed policy bytes at three offsets, modes, capture/reload order, null results, physical faults, suspension and strict typed result identity |
+| Member copies | 71 checks; canonical/physical consistency, exact widths, padding, overlap, partial/pending stores, wrapped addresses, string/object ownership and retained missing operations |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; unchanged separate enabled `8002A0A8` boundary, twenty types and sixty field mappings |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Four independent comparisons execute **6,110 cases / 465,792 original
+instructions with zero differences**: 4,241 completed callers and 1,869 fault
+or bounded prefixes. Every original input, expected output, oracle and imported
+interpreter helper was sealed before successful native compilation/comparison.
+All four final drivers linked against the same core and passed on their first
+native comparison. No original case or expected result was changed to pass.
+
+| Original-instruction scope | Cases | Instructions |
+| --- | ---: | ---: |
+| Reflected allocation caller, three copy passes and signed member dispatch | 2,886 | 289,369 |
+| Raw member wrappers and original bytewise copy | 1,312 | 73,282 |
+| String member wrappers and actual assignment | 1,288 | 74,437 |
+| Object member wrapper and actual assignment | 624 | 28,704 |
+
+The reflected-caller corpus prepares the reflected result, object/member
+virtuals and tagged-pool endpoint. It independently checks caller control flow,
+captured versus live state, wrapping indices, aliasing, callbacks and faults;
+it does not establish reflected initialization or every virtual body. The cold
+composition above separately executes the actual reflected initializer and
+reached member operations. A focused zero-field test also composes the factory
+and initializer with explicit virtual/allocator leaves.
+
+Raw comparisons execute `800642E4`/`80064318`/`8006434C` and `800031E8` without
+prepared function leaves, observing bytes and initialized state. They include
+zero/null inputs, halfword truncation, overlap, padding and partial failures.
+String comparisons execute `80071B58`/`80071BC4` and `800715E8`, preparing only
+string destruction `8007381C`. Object comparisons execute `8006A81C` and
+`8006A47C`, preparing only object destruction `80066E1C`. Their complete counts,
+mutation/failure traces and physical observations qualify those functions;
+destruction internals and recursive memory copying are outside these corpora.
+Bounds failures model represented storage access, not console exception delivery.
+Canonical alias bookkeeping and delayed host bindings have separate native tests.
+
+Final `dw4_core.lib` SHA-256:
+`e79e8859bfe464f446d0b9980c46fe9cde4ef481bf4a65fe9b4ebfd703b63caf`.
+Original USA DOL SHA-1:
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`.
+Ignored final build log: `work/native-reflected-copy-verified-build.log`;
+regression logs: `work/native-reflected-copy-{cold,prefix,player,verifier}.log`.
+The sealed originals are in `work/native-reflected-copy-original-manifest.json`.
+Comparison provenance and hashes are pinned in
+`work/native-reflected-copy-milestone-audit.json`; final local consistency is
+recorded in `work/native-reflected-copy-root-audit.json`. Original data and
+instruction corpora remain local and ignored. No application preview was rebuilt
+or launched, and no hosted CI was used.
+
+Continue through `80062824` and its buffer free/copy helpers, preserving repeated
+size queries and original ownership order. Then complete the string replacements,
+schema and prototype, followed by memory-class method dependencies and the later
+DataList/list/thread/bootstrap chain. This milestone does not complete native
+startup, gameplay, audio, rendering or any full-game acceptance gate. See
+[IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
+[IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md) and
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md).
+
+## Native string registration, signed-byte prototype and scalar clones (earlier checkpoint)
 
 Validated locally on 2026-09-23. The retained cold-bootstrap invocation now
 executes string registration `80025404`, exact probe `80025348` and defaults

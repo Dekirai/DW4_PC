@@ -46,7 +46,7 @@ target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src
   src/igb_field_registry_factory.cpp src/igb_metadata_factory.cpp
   src/igb_metadata_probe.cpp src/igb_field_schema.cpp src/igb_metadata_defaults.cpp
   src/igb_field_values.cpp src/igb_list_registration.cpp src/igb_list_defaults.cpp
-  src/igb_field_probe.cpp src/igb_field_type_registration.cpp src/igb_field_type_defaults.cpp src/igb_field_prototype.cpp src/igb_field_init.cpp src/igb_field_string_init.cpp src/igb_field_copy.cpp src/igb_field_clone.cpp
+  src/igb_field_probe.cpp src/igb_field_type_registration.cpp src/igb_field_type_defaults.cpp src/igb_field_prototype.cpp src/igb_field_init.cpp src/igb_field_string_init.cpp src/igb_field_copy.cpp src/igb_field_clone.cpp src/igb_reflected_clone.cpp src/igb_field_member_copy.cpp
   src/igb_metadata_init.cpp src/igb_meta_enum.cpp src/igb_object_field_construct.cpp
   src/igb_memory_field_construct.cpp src/igb_memory_field_defaults.cpp src/igb_string_field_defaults.cpp
   src/igb_metadata_operations.cpp src/igb_metadata_registration.cpp src/igb_ark_core_bootstrap.cpp
@@ -85,6 +85,11 @@ add_executable(dw4_boot tools/dw4_boot.cpp)
 target_link_libraries(dw4_boot PRIVATE dw4_core)
 
 if(BUILD_TESTING)
+  foreach(suite igb_reflected_clone igb_field_member_copy)
+    add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
+    target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
+    add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
+  endforeach()
   foreach(suite assets igb igb_document resources packages scripts lua4 startup startup_loading controllers pad motion model_motion model_control model_sequence textures meshes materials scenes player_placement player_visual skinning animation_math animation_timing enbaya animations animation_combiner actions action_actors animation_hierarchy animation_traversal actor_skin camera settings walking walking_collision player_runtime_binding model_subcommands messenger action_event_tables action_event_runtime player_events action_queries model_wait player_waits collision_math model_hitbox model_hitbox_runtime model_hit_body model_collision model_collision_runtime script_registry model_script_context model_script_runtime action_event_script_work controller_identity)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)

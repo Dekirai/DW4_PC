@@ -48,6 +48,12 @@ source, argument and registration continuation remain captured across suspension
 An unavailable `800680B4` remains pending for all three profiles; completing the
 scalar cold constructors does not implement generic reflected copying.
 
+The authored [reflected clone module](IGB_REFLECTED_CLONE.md) now supplies that
+operation through `make_native_igb_reflected_field_clone_factory`. It composes
+the actual reflected initializer and selected member pass. Cold integration
+currently reaches memory member `80062824` after seven copied members; it does
+not supply a completed clone or substitute the disabled copy constructor.
+
 ## Copy construction
 
 The outer constructor claims the canonical destination field's construction

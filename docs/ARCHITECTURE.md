@@ -164,13 +164,16 @@ composed chain enters string-field registration `80025404` at the eighth
 memory-class descriptor. The actual string probe and defaults construct their
 one Boolean local, then select the inherited signed-byte clone. Native
 signed-byte registration and reflected prototype publication now precede the
-required enabled copy `800680B4`. Scalar clone wrappers preserve their captured
+native enabled copy `800680B4`. It captures source metadata and pool, composes
+actual reflected allocation, then executes the selected object-copy pass. The
+mode-one pass copies the first seven class members through raw, string and
+object operations before required memory-buffer copy `80062824`. Scalar clone wrappers preserve their captured
 argument and original enabled/cold branch; cold copy constructors reuse `800639E4`.
 The complete string and memory defaults callers retain explicit clone/method
 endpoints. String/memory-class completion and the later unsigned-character
 prototype remain required.
-This transition does not complete startup. Enabled reflected cloning `800680B4`,
-remaining member operations, later registrations and the outer startup remain
+This transition does not complete startup. Memory-buffer and remaining member
+operations, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
 endpoints in this composition. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),

@@ -21,6 +21,7 @@
 #include "dw4/igb_field_prototype.hpp"
 #include "dw4/igb_field_init.hpp"
 #include "dw4/igb_field_clone.hpp"
+#include "dw4/igb_reflected_clone.hpp"
 #include "dw4/igb_meta_enum.hpp"
 #include "dw4/igb_metadata_init.hpp"
 #include "dw4/igb_object_field_construct.hpp"
@@ -1594,7 +1595,9 @@ void actual_cold_bootstrap_prefix(){
         byte_probe_locals.push_back(local);return local;
     };
     std::vector<IgbFieldCloneCall> reached_reflected_clones;
-    clones->factory=[&](const IgbFieldCloneCall& c){reached_reflected_clones.push_back(c);return std::shared_ptr<IgbFieldCloneOperation>{};};
+    IgbFieldCloneFactory resumed_reflected_clones;
+    clones->factory=[&](const IgbFieldCloneCall& c){reached_reflected_clones.push_back(c);
+        return resumed_reflected_clones?resumed_reflected_clones(c):std::shared_ptr<IgbFieldCloneOperation>{};};
     const auto reflected_clone_boundary=call.resume(bootstrap);
     std::cout<<"Cold string-field reflected-clone boundary: "<<reflected_clone_boundary.diagnostic<<"; types="<<f.core->types->count<<
         ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
@@ -1627,6 +1630,58 @@ void actual_cold_bootstrap_prefix(){
         enabled_allocations.size()==33 && (**prototypes->registry)->count==4 && f.core->types->count==11 &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending reflected clone replayed completed classes, factories, prototypes or bootstrap snapshots.");
+
+    // Continue the same retained source through actual680B4/6546C/67B60.
+    // Bind existing arena identities; do not prepare an allocated clone result.
+    for(const auto& binding:allocated_names)igb_bind_field_string(values,binding.address,binding.owner);
+    const auto bind_existing=[&](const IgbBootstrapPointer& pointer){
+        for(const auto& b:pointer.storage->bindings)if(b.offset==pointer.offset && b.metadata){
+            IgbObjectInstance instance;instance.storage=pointer.storage;instance.offset=pointer.offset;instance.metadata=b.metadata;
+            igb_bind_object_field_instance(member_construct,instance);
+        }
+    };
+    for(const auto& raw:initial_allocations)bind_existing(raw);
+    for(const auto& raw:lazy_allocations)bind_existing(raw);
+    for(const auto& instance:enabled_allocations)if(instance.metadata)igb_bind_object_field_instance(member_construct,instance);
+    auto member_copy=std::make_shared<IgbFieldMemberCopyServices>();member_copy->values=values;member_copy->objects=member_construct;
+    std::vector<IgbFieldMemberCopyCall> missing_member_copies;
+    member_copy->factory=[&](const IgbFieldMemberCopyCall& c){missing_member_copies.push_back(c);return std::shared_ptr<IgbFieldMemberCopyOperation>{};};
+    auto reflection_copy=std::make_shared<IgbReflectedCloneServices>();reflection_copy->reflected=prototypes->reflected;
+    reflection_copy->object_metadata=object_type;
+    unsigned reflected_clone_pools{};
+    reflection_copy->factory=make_native_igb_reflected_clone_virtual_factory(prototypes->reflected->initializer,
+        make_native_igb_reflected_member_copy_factory(member_copy,[&](const IgbReflectedCloneCall& c){
+            if(c.kind!=IgbReflectedCloneServiceKind::tagged_pool)return std::shared_ptr<IgbReflectedCloneOperation>{};
+            auto op=std::make_shared<IgbReflectedCloneOperation>();op->resume=[&,c,out=op.get()]{
+                ++reflected_clone_pools;check(c.object.field==reached_reflected_clones.front().source && c.handle==0,
+                    "Enabled clone lost its captured source or tagged pool handle.");
+                out->pool_result=f.pool;return MessengerCallResult{true,0,{}};};return op;
+        }));
+    resumed_reflected_clones=make_native_igb_reflected_field_clone_factory(reflection_copy);
+    const auto member_copy_boundary=call.resume(bootstrap);
+    std::cout<<"Cold reflected member-copy boundary: "<<member_copy_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!member_copy_boundary.completed && !call.faulted() && reflected_clone_pools==1 && !missing_member_copies.empty() &&
+        missing_member_copies.back().function==0x80062824,"Enabled reflected clone did not reach actual memory member copying.");
+    const auto native_clone=enabled_allocations.back().field;const auto native_source=reached_reflected_clones.front().source;
+    check(native_clone && native_clone!=native_source && native_clone->vtable_word==0x80473f24 && native_clone->reference_word==1 &&
+        native_clone->offset==native_source->offset && native_clone->name_string==native_source->name_string &&
+        native_clone->type_ordinal==native_source->type_ordinal && native_clone->ordinal==native_source->ordinal &&
+        native_clone->size==native_source->size && native_clone->declaring_type &&
+        native_clone->declaring_type->lock()==native_source->declaring_type->lock() &&
+        native_clone->global_slot_address==native_source->global_slot_address,
+        "Reflected clone did not copy the actual seven members preceding its memory default.");
+    check(descriptors.size()==66 && enabled_allocations.size()==34 && byte_type->instance_count==2 &&
+        f.core->types->count==11 && (**prototypes->registry)->count==4 && !*string_defaults->shallow_copy &&
+        !*values->string_prototype && string_type->class_flags==9 && memory_type->class_flags==9,
+        "Pending memory copy supplied a finished replacement or changed the completed class registry.");
+    const auto reflected_copy_names=string_allocations;const auto reflected_copy_allocations=reflected_allocations.size();
+    const auto copied_name_references=(*native_source->name_string)->references;
+    check(!call.resume(bootstrap).completed && reflected_clone_pools==1 && descriptors.size()==66 && enabled_allocations.size()==34 &&
+        reflected_allocations.size()==reflected_copy_allocations && string_allocations==reflected_copy_names &&
+        (*native_source->name_string)->references==copied_name_references &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending member copy replayed reflected allocation, prior fields, name ownership or bootstrap state.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");
