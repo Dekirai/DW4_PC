@@ -167,16 +167,19 @@ defaults construct the local Boolean descriptor, then enter the inherited
 signed-byte clone. Signed-byte registration and its reflected prototype complete
 before the clone enters actual reflected copying `800680B4`. The native caller
 now performs reflected allocation and the original member pass, including raw
-scalar, string and parent-object copies, before required memory-buffer copy
-`80062824`. The clone and inherited replacement remain incomplete. Full string and
-memory defaults callers include their inherited replacements, covered separately
-with explicit clone/method endpoints. DataList defaults and object-list
+scalar, string, parent-object and native memory-buffer copies (`80062824`).
+Both inherited string replacements, the string schema and its reflected prototype
+now complete in the same cold chain. Memory defaults construct their eighth field
+and perform their inherited shallow-copy replacement before required reset-method
+factory `80031378`. Memory-class completion remains pending. DataList defaults and object-list
 specialization retain their remaining byte-prototype and reflected-clone services.
 Enum metadata remains null while the prerequisite chain is incomplete.
-This is still incomplete startup. Memory-buffer copying, further
-reference operations, remaining registrations and pool/platform allocator
+This is still incomplete startup. Further reference operations, method fields,
+remaining registrations and pool/platform allocator
 internals remain required. See [IGB_REFLECTED_CLONE.md](docs/IGB_REFLECTED_CLONE.md),
 [IGB_FIELD_MEMBER_COPY.md](docs/IGB_FIELD_MEMBER_COPY.md),
+[IGB_MEMORY_MEMBER_COPY.md](docs/IGB_MEMORY_MEMBER_COPY.md),
+[IGB_BUFFER_COPY.md](docs/IGB_BUFFER_COPY.md),
 [IGB_DATA_LIST_REGISTRATION.md](docs/IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](docs/IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](docs/IGB_INT_FIELD_REGISTRATION.md),

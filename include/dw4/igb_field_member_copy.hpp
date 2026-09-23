@@ -19,6 +19,12 @@ struct IgbFieldMemberCopyServices {
     IgbFieldMemberCopyFactory factory;
     std::vector<std::shared_ptr<void>> unfinished;
 };
+// Merge one already-stored byte into a canonical base-field view. written holds
+// the absolute allocation offsets changed by this operation, including this
+// byte. Untouched physical neighbors never replace live canonical values.
+void igb_synchronize_field_copy_byte(const IgbObjectInstance&,std::uint32_t relative,
+    std::uint8_t byte,const std::vector<std::uint64_t>& written,
+    const std::shared_ptr<IgbFieldMemberCopyServices>& services);
 // Actual642E4/64318/6434C raw member copies,71B58/71BC4 string wrappers,
 // and6A81C object assignment wrapper. Source field members are read live from
 // their canonical view; generic bytes and field padding remain physical.

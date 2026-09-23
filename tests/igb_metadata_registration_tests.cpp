@@ -28,6 +28,7 @@
 #include "dw4/igb_memory_field_construct.hpp"
 #include "dw4/igb_memory_field_defaults.hpp"
 #include "dw4/igb_string_field_defaults.hpp"
+#include "dw4/igb_memory_member_copy.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -529,7 +530,7 @@ void actual_cold_bootstrap_prefix(){
     bool schema_constructors_ready{};
     const auto schema_constructors=make_native_igb_field_schema_factory(metadata_defaults->schema);
     metadata_defaults->schema->factory=[&](const IgbFieldSchemaCall& c){
-        if(schema_constructors_ready)return schema_constructors(c);
+        if(schema_constructors_ready){const auto operation=schema_constructors(c);if(operation)return operation;}
         schema_calls.push_back(c);return std::shared_ptr<IgbFieldSchemaOperation>{};
     };
     f.remaining=make_native_igb_metadata_defaults_factory(metadata_defaults,f.remaining);
@@ -1182,13 +1183,17 @@ void actual_cold_bootstrap_prefix(){
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
     std::vector<IgbBootstrapPointer> signed_int_prototype_allocations,boolean_prototype_allocations,signed_byte_prototype_allocations;
     bool enabled_metadata_ready{};unsigned enabled_metadata_polls{};
+    std::vector<IgbFileFactoryCall> unbound_reflected_allocations;
+    IgbFileFactoryFactory resumed_reflected_allocations;
     prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
-        check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1 &&
-            (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field ||
+        check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1,
+            "Further reflected allocation changed its operation, pool or enabled runtime.");
+        const bool known=c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field ||
                 (signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell) ||
                 (boolean_cell && *boolean_cell && c.metadata==**boolean_cell) ||
-                (signed_byte_cell && *signed_byte_cell && c.metadata==**signed_byte_cell)),
-            "Further reflected allocation reached an unknown original class or pool.");
+                (signed_byte_cell && *signed_byte_cell && c.metadata==**signed_byte_cell);
+        if(!known){unbound_reflected_allocations.push_back(c);
+            return resumed_reflected_allocations?resumed_reflected_allocations(c):std::shared_ptr<IgbFileFactoryOperation>{};}
         reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();
         op->resume=[&,c,out=op.get(),done=false]()mutable{
             if(done)return MessengerCallResult{true,0,{}};
@@ -1645,7 +1650,9 @@ void actual_cold_bootstrap_prefix(){
     for(const auto& instance:enabled_allocations)if(instance.metadata)igb_bind_object_field_instance(member_construct,instance);
     auto member_copy=std::make_shared<IgbFieldMemberCopyServices>();member_copy->values=values;member_copy->objects=member_construct;
     std::vector<IgbFieldMemberCopyCall> missing_member_copies;
-    member_copy->factory=[&](const IgbFieldMemberCopyCall& c){missing_member_copies.push_back(c);return std::shared_ptr<IgbFieldMemberCopyOperation>{};};
+    IgbFieldMemberCopyFactory resumed_memory_copies;
+    member_copy->factory=[&](const IgbFieldMemberCopyCall& c){missing_member_copies.push_back(c);
+        return resumed_memory_copies?resumed_memory_copies(c):std::shared_ptr<IgbFieldMemberCopyOperation>{};};
     auto reflection_copy=std::make_shared<IgbReflectedCloneServices>();reflection_copy->reflected=prototypes->reflected;
     reflection_copy->object_metadata=object_type;
     unsigned reflected_clone_pools{};
@@ -1653,7 +1660,8 @@ void actual_cold_bootstrap_prefix(){
         make_native_igb_reflected_member_copy_factory(member_copy,[&](const IgbReflectedCloneCall& c){
             if(c.kind!=IgbReflectedCloneServiceKind::tagged_pool)return std::shared_ptr<IgbReflectedCloneOperation>{};
             auto op=std::make_shared<IgbReflectedCloneOperation>();op->resume=[&,c,out=op.get()]{
-                ++reflected_clone_pools;check(c.object.field==reached_reflected_clones.front().source && c.handle==0,
+                ++reflected_clone_pools;check(c.handle==0 && std::any_of(reached_reflected_clones.begin(),reached_reflected_clones.end(),
+                    [&](const auto& clone){return clone.source==c.object.field;}),
                     "Enabled clone lost its captured source or tagged pool handle.");
                 out->pool_result=f.pool;return MessengerCallResult{true,0,{}};};return op;
         }));
@@ -1682,6 +1690,116 @@ void actual_cold_bootstrap_prefix(){
         (*native_source->name_string)->references==copied_name_references &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending member copy replayed reflected allocation, prior fields, name ownership or bootstrap state.");
+
+    auto buffer_copies=std::make_shared<IgbBufferServices>();buffer_copies->values=values;
+    auto memory_copies=std::make_shared<IgbMemoryMemberCopyServices>();memory_copies->buffers=buffer_copies;
+    memory_copies->objects=member_construct;memory_copies->registration=field_types;
+    memory_copies->factory=make_native_igb_memory_member_virtual_factory(field_types);
+    resumed_memory_copies=make_native_igb_memory_member_copy_factory(memory_copies);
+    std::vector<IgbBufferCall> buffer_calls;
+    unsigned buffer_copy_allocations{};bool buffer_allocation_ready=false;
+    buffer_copies->factory=[&](const IgbBufferCall& c){
+        buffer_calls.push_back(c);auto operation=std::make_shared<IgbBufferOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            if(c.kind==IgbBufferServiceKind::allocation_pool){
+                check(c.buffer.buffer && c.address,"Memory-copy owner query lost its captured original buffer.");
+                out->pool_result=f.pool;
+            }else{
+                check(c.pool==f.pool,"Memory-copy virtual selected a different owner pool.");
+                if(c.virtual_slot==0x150){
+                    check(c.buffer.buffer && !c.buffer.buffer->released && c.buffer.offset<=c.buffer.buffer->bytes.size(),
+                        "Memory-copy size query reached unavailable backing.");
+                    done=true;return MessengerCallResult{true,static_cast<std::uint32_t>(c.buffer.buffer->bytes.size()-c.buffer.offset),{}};
+                }
+                if(c.virtual_slot==0xd8){
+                    if(!buffer_allocation_ready)return MessengerCallResult{false,0,"prepared memory-copy allocation"};
+                    check(c.bytes>0 && c.bytes<=4 && !c.buffer.buffer && c.address==0,
+                        "Memory-copy allocation changed the captured width or virtual arguments.");
+                    auto bytes=std::make_shared<IgbScratchBuffer>();bytes->bytes.assign(c.bytes,0xcc);bytes->initialized.assign(c.bytes,0);
+                    ++default_allocations;++buffer_copy_allocations;
+                    out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;
+                    values->buffers.push_back({bytes,out->buffer_address});
+                }else if(c.virtual_slot==0x108){
+                    check(c.buffer.buffer && !c.buffer.buffer->released,"Memory copy freed unavailable backing.");
+                    c.buffer.buffer->released=true;
+                }else throw std::runtime_error("Unexpected memory-copy pool virtual.");
+            }
+            done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto buffer_boundary=call.resume(bootstrap);
+    check(!buffer_boundary.completed && !call.faulted() && buffer_calls.size()==4 &&
+        buffer_calls[0].kind==IgbBufferServiceKind::allocation_pool && buffer_calls[1].kind==IgbBufferServiceKind::allocation_pool &&
+        buffer_calls[2].virtual_slot==0x150 && buffer_calls[3].virtual_slot==0xd8 && buffer_calls[3].bytes==1 &&
+        buffer_copy_allocations==0 && default_allocations==61 && native_clone->default_bytes && !native_clone->default_bytes->buffer,
+        "Cold memory copy skipped its null destination or repeated original owner/size queries.");
+    buffer_allocation_ready=true;
+    const auto after_memory_copy=call.resume(bootstrap);
+    std::cout<<"Cold native memory-copy continuation: "<<after_memory_copy.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_memory_copy.completed && !call.faulted() && native_clone->default_bytes && native_clone->default_bytes->buffer &&
+        native_source->default_bytes && native_clone->default_bytes->buffer!=native_source->default_bytes->buffer &&
+        native_source->default_bytes->buffer->bytes[native_source->default_bytes->offset]==1,
+        "Native memory-copy continuation lost its independent default allocation or changed its source.");
+    check(buffer_copy_allocations==2 && descriptors.size()==67 && default_allocations==64 && enabled_allocations.size()==35 &&
+        f.core->types->count==12 && string_type->class_flags==7 && string_type->fields->count==23 &&
+        *string_defaults->shallow_copy==native_clone && *string_defaults->destruct &&
+        native_clone->default_bytes->buffer->bytes[native_clone->default_bytes->offset]==2 &&
+        (**string_defaults->destruct)->default_bytes->buffer->bytes[(**string_defaults->destruct)->default_bytes->offset]==1 &&
+        !*values->string_prototype && !unbound_reflected_allocations.empty() &&
+        unbound_reflected_allocations.back().metadata==string_type && unbound_reflected_allocations.back().bytes==0x3c,
+        "Memory copying did not complete both inherited string replacements and reach actual prototype allocation.");
+    // Supply only raw string-class allocations. Actual667F4 and7144C still
+    // initialize the prototype and the memory schema's ordinary descriptor.
+    std::vector<IgbBootstrapPointer> string_prototype_allocations;
+    resumed_reflected_allocations=[&](const IgbFileFactoryCall& c){
+        if(c.metadata!=string_type)return std::shared_ptr<IgbFileFactoryOperation>{};
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x3c,
+                "String reflected factory changed its original allocation request.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(values->string_prototype && !*values->string_prototype)string_prototype_allocations.push_back(raw);
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto after_string_prototype=call.resume(bootstrap);
+    std::cout<<"Cold native string-prototype continuation: "<<after_string_prototype.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_string_prototype.completed && !call.faulted(),"String prototype incorrectly completed full native bootstrap.");
+    const auto string_prototype=*values->string_prototype;
+    check(string_prototype && string_prototype_allocations.size()==1 && string_type->instance_count==2 &&
+        string_prototype->vtable_word==0x8047693c && string_prototype->ordinal==4 && string_prototype->type_ordinal==4 &&
+        string_prototype->reference_word==1 && string_prototype->flag_38==1 && string_prototype->default_bytes &&
+        string_prototype->default_bytes->buffer && igb_buffer_word(string_prototype->default_bytes->buffer,string_prototype->default_bytes->offset)==0 &&
+        (**prototypes->registry)->count==5 && (**prototypes->registry)->backing->at(4)==string_prototype,
+        "String prototype skipped actual reflected initialization, owned-string flag, finalization or registry publication.");
+    check(buffer_copy_allocations==3 && descriptors.size()==69 && default_allocations==69 && enabled_allocations.size()==38 &&
+        memory_type->class_flags==9 && memory_type->fields->count==30 && memory_type->fields->backing->at(29)==descriptors[67] &&
+        descriptors[67]->vtable_word==0x8047693c && *memory_defaults->shallow_copy==descriptors[68] &&
+        descriptors[68]->default_bytes && descriptors[68]->default_bytes->buffer->bytes[descriptors[68]->default_bytes->offset]==2 &&
+        !schema_calls.empty() && schema_calls.back().kind==IgbFieldSchemaServiceKind::create_field &&
+        schema_calls.back().function==0x80031378 && schema_calls.back().pool==f.pool &&
+        !*memory_defaults->reset_method && !*values->memory_reference_prototype && !**meta_enum->metadata,
+        "Memory defaults bypassed its eight-field batch, actual inherited clone or required reset-method constructor31378.");
+    const auto completed_memory_names=string_allocations,completed_memory_defaults=default_allocations;
+    const auto completed_memory_reflections=reflected_allocations.size();
+    const auto completed_buffer_calls=buffer_calls.size();
+    check(!call.resume(bootstrap).completed && !call.faulted() && descriptors.size()==69 && enabled_allocations.size()==38 &&
+        string_allocations==completed_memory_names && default_allocations==completed_memory_defaults &&
+        reflected_allocations.size()==completed_memory_reflections && buffer_calls.size()==completed_buffer_calls &&
+        f.core->types->count==12 && (**prototypes->registry)->count==5 &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending reset-method construction replayed completed clones, prototypes, classes or original bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

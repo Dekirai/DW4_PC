@@ -146,17 +146,25 @@ void synchronize_byte(const IgbObjectInstance& target,std::uint32_t relative,std
     if(relative>=32 && relative<36){const auto old=default_address(values,f),pointer=part(old,32,4);
         if(pointer!=old){if(f.default_bytes)retain(f.default_bytes->buffer);f.default_bytes.reset();
             if(pointer && !*pointer)f.default_bytes=IgbRuntimeFieldDefaultSource{};
-            if(pointer && *pointer && values)for(const auto& b:values->buffers){const auto offset=*pointer-b.base_address;
-                if(b.buffer && offset<=b.buffer->bytes.size()){
-                    if(f.default_bytes && (f.default_bytes->buffer!=b.buffer || f.default_bytes->offset!=offset))fail("Copied buffer pointer has conflicting owners.");
-                    f.default_bytes=IgbRuntimeFieldDefaultSource{b.buffer,offset};
-                }}
+            if(pointer && *pointer && values){unsigned rank{};bool conflict{};
+                for(const auto& b:values->buffers){const auto offset=*pointer-b.base_address;
+                    if(!b.buffer || offset>b.buffer->bytes.size())continue;
+                    const unsigned candidate=offset<b.buffer->bytes.size()?2u:1u;
+                    if(candidate>rank){f.default_bytes=IgbRuntimeFieldDefaultSource{b.buffer,offset};rank=candidate;conflict=false;}
+                    else if(candidate==rank && (f.default_bytes->buffer!=b.buffer || f.default_bytes->offset!=offset))conflict=true;
+                }
+                if(conflict)fail("Copied buffer pointer has conflicting owners.");
+            }
         }f.default_bytes_address=pointer;return;}
     if(relative==0x24)f.default_mode=byte;else if(relative==0x25)f.flag_25=byte;else if(relative==0x26)f.flag_26=byte;
     else if(relative==0x27)f.flag_27=byte;else if(relative==0x28)f.flag_28=byte;else if(relative==0x29)f.flag_29=byte;
     else if(relative==0x2a)f.flag_2a=byte;else if(relative==0x2b)f.flag_2b=byte;else if(relative==0x2c)f.flag_2c=byte;
     else if(relative>=0x30 && relative<0x34)f.word_30=part(f.word_30,0x30,4);
 }
+}
+void igb_synchronize_field_copy_byte(const IgbObjectInstance& target,std::uint32_t relative,std::uint8_t byte,
+    const std::vector<std::uint64_t>& written,const std::shared_ptr<IgbFieldMemberCopyServices>& services){
+    synchronize_byte(target,relative,byte,written,services);
 }
 struct IgbFieldMemberCopyInvocation::Impl {
     enum class P {entry,raw,pointer,retain,assign,temporary,release,release_call,object,object_assign,unknown,done};P phase=P::entry;

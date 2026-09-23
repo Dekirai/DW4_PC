@@ -1,6 +1,77 @@
 # Local validation
 
-## Native reflected cloning and base-field member copies
+## Native memory-member copying and completed string registration
+
+Validated locally on 2026-09-23. The same retained cold-bootstrap invocation
+now executes memory-member copy `80062824` with its actual null-element descriptor,
+null destination and one-byte source default. Native `8005647C` allocates and
+copies distinct backing through three owner queries and two size queries. The
+remaining reflected member pass then finishes both inherited string replacements.
+Their setters publish defaults two and one without modifying the inherited
+source. String schema, registration, reflected prototype `80025628` and tail
+`8007144C` all execute in this composition. Only raw backing allocation is supplied.
+
+Memory defaults then construct their eighth local descriptor and perform their
+own inherited shallow-copy replacement. The next required body is **reset-method
+factory `80031378`**, observed with its captured pool in the actual schema factory.
+The final composition has **69 descriptors, 69 default buffers, twelve published
+types, five prototypes and 38 enabled allocations**, including three native
+buffer clones. String metadata has flags `7` and two reflected instances; memory
+metadata remains at flags `9`, with thirty fields and no prototype. Enum metadata
+remains null. Repeated resumes preserve these owners, completed writes, allocator
+calls and original core snapshots `+04 = 7`, `+08 = 1`.
+
+The new memory caller also reconstructs `800626DC` object-element release,
+post-copy object cloning and nested-buffer cloning. Full-word reference decrements,
+low-23-bit destruction tests, captured counts/backings, live element reloads and
+pointer publication retain their original order. Concrete object clone/destructor,
+metadata virtuals and pool operations remain explicit endpoints. Canonical pointer
+publication updates overlapping typed views, including unaligned partial members,
+without reading stale physical neighbors; adjacent allocations remain distinct.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 194/194 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 1,812 checks, including string completion, actual prototype construction, memory replacement and pending `80031378` stability |
+| Buffer helpers | 100 checks: exact queries/arguments, unequal sizes, live bytes, overlap, faults, teardown, pending bindings and retained owners |
+| Memory-member caller | 51 checks: physical bounds, null gates, alias publication, live offsets, release/destructor continuation, object and nested-memory loops |
+| Existing raw/string/object members | 71 checks retained after sharing the canonical byte-merge helper |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary remains unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Independent original-instruction evidence covers **3,174 cases / 841,156
+instructions**: 732 buffer-helper cases and 2,442 whole memory-caller cases,
+including actual ancestry traversal and both element loops. The original inputs,
+expected outputs, oracles and imported helpers were sealed before native comparison.
+**3,103 cases match exactly.** The remaining **71 differ in terminal status**:
+the bounded original interpreter faults on unmapped storage, while the native
+invocation suspends for an explicit missing buffer/object binding. Every ordered
+endpoint trace and observed state word matches in those cases. They are recorded
+as differences, not silently normalized or counted as completed native execution.
+The original stops comprise 22 raw source-byte accesses, 31 object-vtable accesses
+and 18 virtual-slot accesses. No other comparison difference was observed.
+
+These corpora prepare owner lookup `800590A0`, pool virtuals `+150/+D8/+108`,
+element metadata `+58`, object cloning `+54` and destruction `80066E1C`.
+They do not qualify those endpoint internals, arbitrary address-space coverage,
+console exception delivery or complete startup. Native canonical alias handling
+and delayed host bindings have separate focused tests.
+
+Final `dw4_core.lib` SHA-256:
+`dde82a8f76e24c5021bda4008ac3bea5114dfd7228edeb627b29795cf7ada133`.
+Ignored evidence: `work/native-memory-copy-verified-build.log`,
+`work/native-memory-copy-{cold,prefix,player,verifier}.log`,
+`work/native-memory-copy-original-manifest.json`,
+`work/native-memory-copy-milestone-audit.json` and
+`work/native-memory-copy-root-audit.json`. The audit retains the initial comparison
+and all original-boundary status differences. Original data and instruction corpora
+remain local and ignored. No application preview was rebuilt or launched;
+no GitHub Actions were used. See [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md),
+[IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md) for the next original bodies.
+
+## Native reflected cloning and base-field member copies (earlier checkpoint)
 
 Validated locally on 2026-09-23. The same retained cold-bootstrap invocation
 now crosses enabled clone `800680B4`: actual source metadata lookup and tagged

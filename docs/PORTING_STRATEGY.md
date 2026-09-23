@@ -263,19 +263,26 @@ The first seven class members now copy through actual raw, string and object
 operations. Canonical member values remain authoritative for already constructed
 fields; explicit address bindings connect their pointer identities to physical
 storage. This avoids copying stale constructor bytes or seeding a cloned record.
-The next reached body is **`80062824`, memory-reference member copying**. Recover
-its element release (`800626DC`), conditional free (`80056508`) and buffer clone
-(`8005647C`) with repeated live size queries and the captured allocation pool.
-The current descriptor has a null element, but other branches must remain
-explicit until their ownership loops are implemented. Do not substitute the
-separate cold `800639E4` constructor or copy only the default pointer.
-See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md) and
-[IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md).
-Then resume both string inherited replacements and publish its schema, prototype
-`80025628` and actual reflected tail `8007144C`. The string tail and prototype
-adapters have focused coverage; the composed startup has not yet reached them.
-Continue with the memory schema's inherited clone and reset-method constructor
-`80031378`.
+Native `80062824` now performs element release (`800626DC`), conditional free
+(`80056508`) and buffer cloning (`8005647C`) with all three owner queries, both
+size queries and the captured allocation pool. Its object-element and nested-memory
+loops are reconstructed; concrete allocator, object-clone and destructor leaves
+remain explicit services. The cold descriptor has a null element and copies its
+actual one-byte default into a distinct allocation.
+Both string inherited replacements, the final schema, prototype `80025628` and
+actual reflected tail `8007144C` now execute in this same startup composition.
+The eighth memory field and its inherited shallow-copy replacement also finish.
+The next reached body is **reset-method factory `80031378`**. Recover its enabled
+registration/factory path and the reached `igEnumMetaField` bodies, preserving the
+original pending invocation and canonical metadata/prototype cells.
+This factory creates `igEnumMetaField` (size `0x38`, metadata `80561C30`,
+prototype `80561C34`). Its `+34` member supplies `_getMetaEnumFunction`;
+the memory reset descriptor later assigns `8002A5EC` there. Recover this
+enum-field class without treating the still-null `igMetaEnum` global as ready.
+See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
+[IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md),
+[IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
+[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md).
 The full eight-field/method-replacement caller is implemented with explicit
 remaining leaves; the cold composition must reach and implement those leaves
 before claiming this class complete. Preserve the same canonical cells and

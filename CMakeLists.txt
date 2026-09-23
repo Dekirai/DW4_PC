@@ -49,6 +49,7 @@ target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src
   src/igb_field_probe.cpp src/igb_field_type_registration.cpp src/igb_field_type_defaults.cpp src/igb_field_prototype.cpp src/igb_field_init.cpp src/igb_field_string_init.cpp src/igb_field_copy.cpp src/igb_field_clone.cpp src/igb_reflected_clone.cpp src/igb_field_member_copy.cpp
   src/igb_metadata_init.cpp src/igb_meta_enum.cpp src/igb_object_field_construct.cpp
   src/igb_memory_field_construct.cpp src/igb_memory_field_defaults.cpp src/igb_string_field_defaults.cpp
+  src/igb_buffer_copy.cpp src/igb_memory_member_copy.cpp
   src/igb_metadata_operations.cpp src/igb_metadata_registration.cpp src/igb_ark_core_bootstrap.cpp
   src/igb_pointer_list.cpp src/igb_type_list_factory.cpp src/igb_object_registration.cpp
   src/igb_field_operations.cpp src/igb_meta_field_factory.cpp src/igb_object_defaults.cpp
@@ -85,7 +86,7 @@ add_executable(dw4_boot tools/dw4_boot.cpp)
 target_link_libraries(dw4_boot PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite igb_reflected_clone igb_field_member_copy)
+  foreach(suite igb_reflected_clone igb_field_member_copy igb_buffer_copy igb_memory_member_copy)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

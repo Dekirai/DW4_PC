@@ -167,13 +167,20 @@ signed-byte registration and reflected prototype publication now precede the
 native enabled copy `800680B4`. It captures source metadata and pool, composes
 actual reflected allocation, then executes the selected object-copy pass. The
 mode-one pass copies the first seven class members through raw, string and
-object operations before required memory-buffer copy `80062824`. Scalar clone wrappers preserve their captured
+object operations before native memory-buffer copy `80062824`. Scalar clone wrappers preserve their captured
 argument and original enabled/cold branch; cold copy constructors reuse `800639E4`.
-The complete string and memory defaults callers retain explicit clone/method
-endpoints. String/memory-class completion and the later unsigned-character
-prototype remain required.
-This transition does not complete startup. Memory-buffer and remaining member
-operations, later registrations and the outer startup remain
+Memory copying composes actual element release, conditional free, three independent
+owner queries, two size queries and directional byte copying. Object-element and
+nested-memory loops retain their original ownership and publication order; concrete
+pool, object-clone and destructor endpoints remain explicit. Canonical member stores
+also update overlapping typed views without importing stale physical neighbors.
+The same cold chain now completes both inherited string replacements, its schema
+and reflected prototype, then the eighth memory field and inherited shallow-copy
+replacement. Reset-method factory `80031378` is the next required body.
+See [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
+[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md).
+This transition does not complete startup. Remaining member operations, method
+fields, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
 endpoints in this composition. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
