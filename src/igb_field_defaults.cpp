@@ -1,5 +1,7 @@
 #include "dw4/igb_field_defaults.hpp"
 
+#include <bit>
+
 namespace dw4 {
 namespace {
 [[noreturn]] void fail(const char* message) {throw IgbFieldDefaultsError(message);}
@@ -70,6 +72,61 @@ void igb_synchronize_field_storage(const IgbObjectInstance& object,std::uint32_t
         return static_cast<std::uint16_t>((std::uint16_t(bytes->bytes[i])<<8)|bytes->bytes[i+1]);};
     const auto byte=[&](std::uint32_t relative){return bytes->bytes[std::size_t(object.offset)+relative];};
     if(object.file && ready(4,4))object.file->reference_word=word(4);
+    if(object.metadata){
+        auto& m=*object.metadata;
+        const auto retain=[&](const auto& owner){if(owner)m.overwritten_constructor_owners_.push_back(owner);};
+        if(ready(4,4))m.reference_word=word(4);
+        if(ready(8,4))m.word_08=word(8);if(ready(12,4))m.word_0c=word(12);
+        if(ready(0x10,4))m.major=word(0x10);if(ready(0x14,4))m.minor=word(0x14);
+        if(ready(0x18,1))m.flag_18=byte(0x18);if(ready(0x19,1))m.flag_19=byte(0x19);if(ready(0x1a,1))m.flag_1a=byte(0x1a);
+        if(ready(0x20,4))m.allocation_prefix=word(0x20);if(ready(0x24,4))m.class_flags=word(0x24);
+        if(ready(0x2c,4))m.instance_count=word(0x2c);
+        if(ready(0x3c,4))m.factory_redirect=word(0x3c);if(ready(0x40,4))m.word_40=word(0x40);if(ready(0x44,4))m.word_44=word(0x44);
+        if(ready(0x48,4))m.native_size=word(0x48);if(ready(0x4c,4))m.post_layout_callback=word(0x4c);
+        if(ready(0x50,4))m.word_50=word(0x50);if(ready(0x54,4))m.field_callback=word(0x54);
+        if(ready(0x58,2))m.native_alignment=half(0x58);if(ready(0x5c,4))m.type_word=word(0x5c);
+        if(ready(0x28,4)){
+            const auto address=word(0x28);if(!m.fields_address || *m.fields_address!=address || !address){retain(m.fields);m.fields.reset();}m.fields_address=address;
+        }
+        if(ready(0x30,4)){
+            const auto address=word(0x30);if(!m.instances_address || *m.instances_address!=address || !address){
+                if(m.instances)retain(*m.instances);m.instances.reset();if(!address)m.instances=std::shared_ptr<IgbObjectInstanceList>{};}m.instances_address=address;
+        }
+        if(ready(0x34,4)){
+            const auto address=word(0x34);m.word_34=address;if(!m.children_address || *m.children_address!=address || !address){
+                if(m.children)retain(*m.children);m.children.reset();if(!address)m.children=std::shared_ptr<IgbRuntimeTypeList>{};}m.children_address=address;
+        }
+        if(ready(0x38,4)){
+            const auto address=word(0x38);if(!m.parent_address || *m.parent_address!=address || !address){
+                if(m.parent)retain(*m.parent);m.parent.reset();if(!address)m.parent=std::shared_ptr<IgbRuntimeMetaType>{};}m.parent_address=address;
+        }
+        if(ready(0x1c,4)){
+            const auto address=word(0x1c);if(!m.name_string_address || *m.name_string_address!=address || !address){
+                if(m.name)m.overwritten_constructor_strings_.push_back(m.name);if(m.name_string)retain(*m.name_string);
+                m.name.reset();m.name_string.reset();if(!address)m.name_string=std::shared_ptr<IgbInternedString>{};}m.name_string_address=address;
+        }
+        if(ready(0x60,4)){
+            const auto address=word(0x60);if(!m.default_pool_string_address || *m.default_pool_string_address!=address || !address){
+                if(m.default_pool_name && *m.default_pool_name)m.overwritten_constructor_strings_.push_back(*m.default_pool_name);
+                if(m.default_pool_string)retain(*m.default_pool_string);m.default_pool_name.reset();m.default_pool_string.reset();
+                if(!address){m.default_pool_name=SystemStageString{};m.default_pool_string=std::shared_ptr<IgbInternedString>{};}}
+            m.default_pool_string_address=address;
+        }
+    }
+    if(object.fields){
+        auto& list=*object.fields;if(ready(4,4))list.reference_word=word(4);
+        if(ready(8,4)){const auto address=word(8);if(!address || address!=list.backing_address){
+            if(list.backing)list.retained_backings_.push_back(list.backing);if(list.backing_bytes)list.retained_backings_.push_back(list.backing_bytes);
+            list.backing.reset();list.backing_bytes.reset();list.backing_offset=0;list.backing_address=address;}}
+        if(ready(12,4))list.count=std::bit_cast<std::int32_t>(word(12));
+    }
+    if(object.types){
+        auto& list=*object.types;if(ready(4,4))list.reference_word=word(4);
+        if(ready(8,4)){const auto address=word(8);if(!address || address!=list.backing_address){
+            if(list.backing)list.retained_backings_.push_back(list.backing);if(list.backing_bytes)list.retained_backings_.push_back(list.backing_bytes);
+            list.backing.reset();list.backing_bytes.reset();list.backing_offset=0;list.backing_address=address;}}
+        if(ready(12,4))list.count=std::bit_cast<std::int32_t>(word(12));
+    }
     if(!object.field)return;
     auto& field=*object.field;
     if(ready(0,4))field.vtable_word=word(0);

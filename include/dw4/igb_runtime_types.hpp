@@ -10,6 +10,7 @@ struct SystemStageLoader;
 struct IgbObjectInstanceList;
 struct IgbInternedString;
 struct IgbObjectStorage;
+struct IgbObjectInstance;
 struct IgbDecodeRuntimeField;
 struct IgbRuntimeMetaType;
 using IgbFieldNameSlot=std::optional<std::shared_ptr<IgbInternedString>>;
@@ -93,6 +94,9 @@ struct IgbDecodeFieldRegistry {
     std::uint32_t backing_offset{};
 private:
     friend class IgbFieldRegistryConstructorInvocation;
+    friend class IgbObjectInitInvocation;
+    friend class IgbMemoryFieldAllocateInvocation;
+    friend void igb_synchronize_field_storage(const IgbObjectInstance&,std::uint32_t,std::uint32_t);
     friend class IgbPointerListInvocation;
     std::vector<std::shared_ptr<void>> retained_backings_;
     std::weak_ptr<void> construction_active_;
@@ -135,6 +139,8 @@ struct IgbRuntimeMetaType {
     std::optional<std::shared_ptr<IgbRuntimeTypeList>> children; // +34.
     std::optional<std::shared_ptr<IgbInternedString>> name_string; // +1C header identity.
     std::optional<std::uint32_t> name_string_address;
+    // Numeric reflected member identities remain distinct from host owners.
+    std::optional<std::uint32_t> fields_address,instances_address,children_address,parent_address;
 };
 using IgbDecodeRuntimeType=IgbRuntimeMetaType;
 
@@ -148,6 +154,9 @@ struct IgbRuntimeTypeList {
     std::uint32_t backing_address{},backing_offset{};
 private:
     friend class IgbTypeListConstructorInvocation;
+    friend class IgbObjectInitInvocation;
+    friend class IgbMemoryFieldAllocateInvocation;
+    friend void igb_synchronize_field_storage(const IgbObjectInstance&,std::uint32_t,std::uint32_t);
     friend class IgbPointerListInvocation;
     std::vector<std::shared_ptr<void>> retained_backings_;
     std::weak_ptr<void> construction_active_;

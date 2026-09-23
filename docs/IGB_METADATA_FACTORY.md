@@ -3,15 +3,18 @@
 `igb_metadata_factory` implements the original metadata factory `80029E64`,
 direct constructor `800651B4`, and reset routine `80065218`. It returns a
 canonical `IgbRuntimeMetaType` bound to explicit physical bootstrap storage.
-It does not reuse the file-only reflected instance initializer or infer runtime
-metadata from a serialized IGB file.
+Its enabled path now uses the generic initializer's distinct typed metadata
+result; it does not infer runtime metadata from a serialized IGB file.
 
 ## Factory and construction order
 
 The factory captures its input pool, then reads the current ArkCore enabled
 byte. The enabled branch calls registration `8002A0A8`, reloads metadata global
 `8056174C`, and reaches an explicit typed reflected-allocation operation at
-`8006546C`. Those operations remain pending without their real implementations.
+`8006546C`. The adapter in [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md) connects
+that operation to the actual native reflected factory, field passes and nested
+member construction. Missing class or platform services still suspend at the
+reached operation.
 
 The disabled branch composes the native raw allocator with size `0x64` and
 prefix zero. It constructs a nonnull allocation, then invokes the fresh physical

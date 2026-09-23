@@ -227,8 +227,29 @@ void field_layout_and_lifetime(){
     Fixture alias;auto elsewhere=std::make_shared<IgbDecodeRuntimeField>();elsewhere->physical_storage=IgbFieldStorageBinding{alias.storage,4};
     alias.storage->bindings={{0,{},{},{},{},elsewhere}};auto invalid=alias.call();
     rejects([&]{invalid.resume(alias.services);},"One canonical field was rebound to another physical offset.");
-    Fixture unsupported;unsupported.storage->bindings={{0,{},unsupported.meta}};auto waiting=unsupported.call();
-    check(!waiting.resume(unsupported.services).completed && !waiting.faulted(),"Unsupported metadata layout was cast to a file or field.");
+    for(unsigned mutation=0;mutation<3;++mutation){
+        Fixture captured,other;auto owner=std::make_shared<IgbDecodeRuntimeField>();
+        captured.storage->bindings={{16,{},{},{},{},owner}};
+        const auto factory=captured.services->factory;captured.services->factory={};
+        IgbObjectInitInvocation pending(captured.storage,16,captured.meta);
+        check(!pending.resume(captured.services).completed && owner->physical_storage &&
+            owner->physical_storage->storage.lock()==captured.storage && owner->physical_storage->offset==16,
+            "Physical field mutation fixture did not suspend with its captured allocation binding.");
+        const auto before=captured.storage->bytes->bytes,other_before=other.storage->bytes->bytes;
+        if(mutation==0)owner->physical_storage.reset();
+        if(mutation==1)owner->physical_storage=IgbFieldStorageBinding{captured.storage,20};
+        if(mutation==2)owner->physical_storage=IgbFieldStorageBinding{other.storage,16};
+        captured.services->factory=factory;
+        rejects([&]{pending.resume(captured.services);},"Pending initializer accepted a removed or redirected physical field binding.");
+        check(pending.faulted() && captured.storage->faulted() && owner->construction_fault_ &&
+            captured.storage->bytes->bytes==before && other.storage->bytes->bytes==other_before && !other.storage->faulted(),
+            "Physical field rebinding wrote additional bytes or faulted an unrelated allocation.");
+        rejects([&]{pending.result_instance();},"Invalidated physical field binding exposed a constructed result.");
+    }
+    Fixture typed;typed.storage->bindings={{0,{},typed.meta}};auto metadata_instance=typed.call();
+    check(metadata_instance.resume(typed.services).completed && metadata_instance.result_instance().metadata==typed.meta &&
+        !metadata_instance.result_instance().file && !metadata_instance.result_instance().field,"Supported metadata layout lost its separate typed identity.");
+    rejects([&]{metadata_instance.result();},"A completed metadata instance became a null file.");
     Fixture recursive;auto owner=std::make_shared<IgbDecodeRuntimeField>();recursive.storage->bindings={{0,{},{},{},{},owner}};auto outer=recursive.call();
     recursive.after=[&](const auto&,auto&,auto&){rejects([&]{outer.resume(recursive.services);},"Recursive field initialization succeeded.");};
     rejects([&]{outer.resume(recursive.services);},"Caught recursive field fault did not invalidate the outer continuation.");

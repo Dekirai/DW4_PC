@@ -203,8 +203,18 @@ registry has one entry. The original bootstrap caller enables reflection and
 stores count snapshots 7 and 1 at core `+04/+08` before entering the next
 registration body, `8002AAFC` (`igMetaEnum`, metadata cell `80561808`).
 
-That registration is the next boundary. The enabled `800680B4` reflected clone,
-recursive member construction/reset and nonnull reference operations beyond
+That registration now runs its prerequisite guard and enters ThreadManager
+registration. Enabled metadata initialization composes the actual reflected
+caller, all three field passes, positive object-member construction, nested
+list initialization and positive memory-member allocation. The list backing
+is zero-filled after the actual element metadata ancestry test; its pointer and
+typed owner are published before the parent metadata completes. The resulting
+metadata then feeds original parent inheritance and registration. See
+[IGB_META_ENUM.md](IGB_META_ENUM.md), [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
+[IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md) and
+[IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md).
+The enabled `800680B4` reflected clone,
+remaining member construction/reset and nonnull reference operations beyond
 this profile remain explicit dependencies. Pool/platform and physical allocation
 endpoints are still prepared; neither the enable store nor these seven types
 establish complete startup or every field class. See
@@ -230,7 +240,10 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue with the reached `igMetaEnum` registration body `8002AAFC`. Preserve
+Continue with ThreadManager defaults `80023940`, reached through `igMetaEnum`'s
+prerequisite. The new ThreadManager metadata is busy (flags 9), owns its actual
+constructed field list and has inherited the two base descriptors; it has not
+been published as a completed eighth type. Enum metadata remains null. Preserve
 the deferred callback order and the now-reached original transition from disabled
 to enabled reflection. Complete the remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the

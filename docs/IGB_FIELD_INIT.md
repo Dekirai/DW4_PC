@@ -31,7 +31,8 @@ two inherited `igObject` descriptors skipped by each pass.
 | Four reference families, `+84 = 8006C56C` | Capture the destination, call the freshly selected `+64`, truncate its result to 16 bits, then zero exactly that range |
 | Reference `+F0 = 8006CD00` | Read the live construct flag at `+34` without normalizing its byte value |
 | String/pointer `+7C` | Exact return-only original leaves |
-| Object/memory `+7C = 8006A618/80062524` | Execute the construct-flag test and zero branch; a positive branch remains pending at required recursive member allocation |
+| Object `+7C = 8006A618` | Execute the construct flag, pool selection, actual reflected child factory, assignment and temporary release; see [IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md) |
+| Memory `+7C = 80062524` | Execute the construct flag; the positive route requires its explicit memory member construction services |
 | String `+70 = 80071A9C` | Intern the captured default string when nonnull, execute `800715E8` assignment, then release the temporary |
 | Object `+70 = 8006A7C4` | Capture the target member; null returns, nonnull requires unrecovered `80067098` |
 | Reference mode-three `+74` | Exact `80063EB8` return-only body |
@@ -44,8 +45,8 @@ to an explicit provider; represented null dereferences fail.
 ## Canonical and physical member stores
 
 Scalar copying and reference clearing refresh only affected, fully initialized
-members. Padding is neither read nor normalized. Header aliases update either
-file or field reference state. Zero pointer stores publish represented null;
+members. Padding is neither read nor normalized. Header aliases update the
+file, field, metadata or list reference state. Zero pointer stores publish represented null;
 changed nonzero pointers invalidate an unavailable typed binding rather than
 retaining a stale owner or manufacturing null. Raw overwrites retain displaced
 host owners without inventing guest retain/release calls. Memory-reference
@@ -65,11 +66,15 @@ assigns its ordinal and finalizes it. Callback cleanup and the parent list's
 schema/layout/publication then complete. Canonical name-descriptor `805617C4`
 is shared directly between its original schema publication and the subsequent
 internal-list lookup. The lookup reaches the inherited memory-reference field's
-unrecovered clone virtual `+54`, with argument one.
+clone virtual `+54`, with argument one; the later implementation is documented
+in [IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md).
 
-At this boundary there are 52 schema descriptors plus one constructed
+At that earlier boundary there were 52 schema descriptors plus one constructed
 prototype, 53 default buffers, six registered types and one prototype registry
-entry. Reflection remains disabled. Physical allocator, pool/platform and BSS
+entry and reflection was disabled. The extended cold composition now crosses
+the original enable transition and enters reflected metadata/list construction;
+see [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md) and the current results in
+[VALIDATION.md](VALIDATION.md). Physical allocator, pool/platform and BSS
 prerequisites are still explicit; this is not a complete game startup.
 
 Permanent tests cover type separation, header and member publication, pending

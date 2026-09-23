@@ -1,5 +1,7 @@
 #include "dw4/igb_field_init.hpp"
 #include "dw4/igb_field_string_init.hpp"
+#include "dw4/igb_object_field_construct.hpp"
+#include "dw4/igb_memory_field_construct.hpp"
 
 namespace dw4 {
 namespace {
@@ -122,17 +124,15 @@ IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbField
                 return MessengerCallResult{true,*field->flag_34,{}};
             };return operation;
         }
-        if(call.virtual_slot==0x7c && (table==0x804762fc || table==0x80476088)) {
+        if(call.virtual_slot==0x7c && table==0x804762fc){
+            auto invocation=std::make_shared<IgbObjectFieldConstructInvocation>(call.field,call.object);
             auto operation=std::make_shared<IgbObjectInitOperation>();
-            operation->resume=[field=call.field,table,branch=std::optional<bool>{}]()mutable {
-                if(!branch) {
-                    if(!field->flag_34)return pending("Reference member construction requires its live construct flag+34.");
-                    branch=*field->flag_34!=0;
-                }
-                if(!*branch)return MessengerCallResult{true,0,{}};
-                return pending(table==0x804762fc?"Object reference construction requires actual8006A618 recursive member allocation.":
-                    "Memory reference construction requires actual80062524 element allocation.");
-            };return operation;
+            operation->resume=[invocation,selected=weak.lock()]{return invocation->resume(selected?selected->object_construct:nullptr);};return operation;
+        }
+        if(call.virtual_slot==0x7c && table==0x80476088) {
+            auto invocation=std::make_shared<IgbMemoryFieldConstructInvocation>(call.field,call.object);
+            auto operation=std::make_shared<IgbObjectInitOperation>();
+            operation->resume=[invocation,selected=weak.lock()]{return invocation->resume(selected?selected->memory_construct:nullptr);};return operation;
         }
         if(call.virtual_slot==0x70 && table==0x804762fc) {
             auto operation=std::make_shared<IgbObjectInitOperation>();

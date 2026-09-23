@@ -136,11 +136,19 @@ Both list metadata owners finish with flags `7`. The chain contains 53 schema
 descriptors plus one reflected prototype, 54 default buffers, seven published
 types and one prototype-registry entry. The original bootstrap caller enables
 reflection and snapshots counts 7 and 1 at core `+04/+08`; it then reaches
-the still-unbound `igMetaEnum` registration body `8002AAFC` for metadata
-`80561808`. This transition does not complete startup. Enabled reflected
-cloning `800680B4`, recursive member operations, later registrations and the
-outer startup remain required. Pool/platform and physical allocation services
-are explicit prepared endpoints in this composition. See
+the `igMetaEnum` registration body `8002AAFC` for metadata `80561808`.
+That body now enters its prerequisite ThreadManager registration. The enabled
+metadata factory composes actual reflected initialization with distinct metadata
+and field-list owners. Positive object-member construction calls the nested
+reflected factory; its memory member derives size/alignment, tests element
+ancestry and zero-fills the actual allocated backing before pointer publication.
+This transition does not complete startup. Enabled reflected cloning `800680B4`,
+remaining member operations, later registrations and the outer startup remain
+required. Pool/platform and physical allocation services are explicit prepared
+endpoints in this composition. See [IGB_META_ENUM.md](IGB_META_ENUM.md),
+[IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
+[IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md),
+[IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md),
 [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
 [IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and
 [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md).

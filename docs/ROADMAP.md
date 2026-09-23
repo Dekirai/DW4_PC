@@ -157,13 +157,22 @@ contains 53 schema descriptors plus one reflected prototype, 54 default buffers
 and one prototype entry. The actual bootstrap caller enables reflection and
 snapshots type/prototype counts 7 and 1 into core `+04/+08` before reaching
 `igMetaEnum` registration body `8002AAFC`, canonical cell `80561808`.
-That body is the next implementation boundary. Enabled reflected clone
-`800680B4` and recursive member/reference branches beyond the completed profile
+That body now enters its actual prerequisite guard and ThreadManager registrar.
+The enabled reflected metadata factory now executes its full field passes,
+including positive object-member construction of an internal field list and
+the list's actual memory-member allocation/zero fill. The returned metadata
+feeds original registration and inherited field append. The next reached body
+is ThreadManager defaults `80023940`; enum metadata remains null while this
+prerequisite is pending. Enabled reflected clone
+`800680B4` and member/reference branches beyond the completed profile
 remain explicit, together with pool/platform, allocator, callback deallocation
 and BSS prerequisites. Initial core-list constructors and reserve run in this
 same chain; the separate byte-only backing profile remains covered. Continue
 through `igMetaEnum`, later registrations and the outer startup before claiming
-complete native initialization. See
+complete native initialization. See [IGB_META_ENUM.md](IGB_META_ENUM.md),
+[IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
+[IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md),
+[IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md),
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),

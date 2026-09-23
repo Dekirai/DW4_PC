@@ -3,12 +3,15 @@
 `IgbObjectInitInvocation` reconstructs USA `800667F4`, allocation-base helper
 `80068184`, field passes `80066F40`, `80066FF8`, `8006712C`, and default-mode
 dispatcher `80063DD0`. It initializes an explicitly represented allocation and
-typed file or runtime-field binding. The binding describes storage, not a successfully
+typed file, field, metadata, field-list or type-list binding. The binding describes storage, not a successfully
 constructed original object. Concrete field bodies remain separate operations.
 Verified six-profile scalar bodies are available through
 [IGB_FIELD_DEFAULTS.md](IGB_FIELD_DEFAULTS.md). The object-field prototype now
 composes the reference/string/default operations in [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md).
-Positive recursive reference construction, other runtime object classes and
+Positive object-reference construction now composes the actual reflected
+factory and assignment helper; see [IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md).
+Metadata and internal-list virtuals are described in
+[IGB_METADATA_INIT.md](IGB_METADATA_INIT.md). Other runtime object classes and
 the file's complete descriptor/default setup still require reconstruction.
 
 ## Header and allocation ownership
@@ -73,18 +76,19 @@ This native profile bounds physical field indices and per-pass visits to
 262,144, and validates an entire four-byte write before publishing it. These
 are host representation guards, not claims about original malformed memory.
 `result_instance()` exposes the retained storage, adjusted offset and canonical
-file or field owner only after the full initializer completes. The existing
-`result()` file adapter rejects a completed field instead of returning a false
-null file. Bindings at one offset must identify one object kind and one owner;
-metadata and list layouts remain unsupported here. An absent supported binding
-pauses before header writes. Field construction shares its existing
+typed owner only after the full initializer completes. The existing
+`result()` file adapter rejects every non-file instance instead of returning a
+false null file. Bindings at one offset must identify one object kind and one
+owner; callbacks cannot replace that binding during construction. An absent
+supported binding pauses before header writes. Field construction shares its existing
 `construction_active_`, `construction_fault_` and `physical_storage` members
-with direct field construction. Conflicting physical identities, recursion and
-abandonment cannot expose a constructed field. This does not establish factories
+with direct field construction. Metadata and list owners share their canonical
+construction leases and fault state with their direct constructors. Conflicting
+physical identities, recursion and abandonment cannot expose a constructed object. This does not establish factories
 for all runtime object classes.
 
 Physical vtable writes and fresh virtual-table reads publish the field's
-canonical vtable view. Header stores synchronize the captured file or field
+canonical vtable view. Header stores synchronize the captured typed owner's
 reference word, including a pool callback's changed lower bytes. A completed
 field keeps its physical allocation binding for reached size/default stores;
 callers retaining that binding must retain the returned instance's storage.

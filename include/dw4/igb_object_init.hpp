@@ -32,10 +32,15 @@ struct IgbObjectInstance {
     std::uint32_t offset{};
     std::shared_ptr<LoaderRequestFile> file;
     std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::shared_ptr<IgbRuntimeMetaType> metadata;
+    std::shared_ptr<IgbDecodeFieldRegistry> fields;
+    std::shared_ptr<IgbRuntimeTypeList> types;
 };
+// Verify one canonical typed identity at the represented allocation offset.
+void igb_object_validate_instance(const IgbObjectInstance&);
 // While construction owns the allocation, the physical header is authoritative.
 // Bound callbacks must use this writer for packed-reference changes so the typed
-// file or field view and physical word remain synchronized. After construction,
+// file, field, metadata or list view and physical word remain synchronized. After construction,
 // the returned owner's canonical reference_word is used by native services.
 std::uint32_t igb_object_reference_word(const IgbObjectInstance&);
 void igb_object_set_reference_word(const IgbObjectInstance&,std::uint32_t value);
@@ -86,7 +91,7 @@ public:
     bool completed() const noexcept;
     bool faulted() const noexcept;
     IgbObjectInstance result_instance() const;
-    // Strict file adapter. A completed field is not a null file result.
+    // Strict file adapter. Other completed typed instances are not null files.
     std::shared_ptr<LoaderRequestFile> result() const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

@@ -39,7 +39,7 @@ private:
     std::vector<std::shared_ptr<IgbObjectStorage>> unfinished_allocations_;
 };
 
-// Original8006546C allocation caller. Exposes typed file or field storage after
+// Original8006546C allocation caller. Exposes typed object storage after
 // the actual800667F4 initialization continuation has completed.
 class IgbReflectedFactoryInvocation {
 public:

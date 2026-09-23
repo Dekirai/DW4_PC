@@ -66,7 +66,7 @@ IgbObjectInstance IgbReflectedFactoryInvocation::result_instance() const {
 }
 std::shared_ptr<LoaderRequestFile> IgbReflectedFactoryInvocation::result() const {
     const auto object=result_instance();
-    if(object.field)fail("A reflected field cannot be returned through the file adapter.");return object.file;
+    if(object.field || object.metadata || object.fields || object.types)fail("A reflected non-file instance cannot be returned through the file adapter.");return object.file;
 }
 MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFileFactoryServices> services) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbFileFactoryServiceKind;

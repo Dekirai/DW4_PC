@@ -37,6 +37,17 @@ void select_release(Call& call,const std::shared_ptr<IgbInternedString>& owner,c
 }
 void synchronize(const IgbObjectInstance& target,std::uint32_t offset,std::uint32_t address,
     const std::shared_ptr<IgbInternedString>& owner){
+    if(target.metadata && (offset==0x1c || offset==0x60)){
+        auto& m=*target.metadata;
+        auto& header=offset==0x1c?m.name_string:m.default_pool_string;
+        auto& pointer=offset==0x1c?m.name_string_address:m.default_pool_string_address;
+        const auto old_value=offset==0x1c?m.name:m.default_pool_name.value_or(SystemStageString{});
+        if(header && *header && *header!=owner)m.overwritten_constructor_owners_.push_back(*header);
+        if(old_value && (!owner || old_value!=owner->value))m.overwritten_constructor_strings_.push_back(old_value);
+        pointer=address;if(address && !owner)header.reset();else header=owner;
+        if(offset==0x1c)m.name=owner?owner->value:SystemStageString{};
+        else if(address && !owner)m.default_pool_name.reset();else m.default_pool_name=owner?owner->value:SystemStageString{};
+    }
     if(!target.field)return;auto& field=*target.field;
     if(offset==0x0c){
         if(field.name_string && *field.name_string && *field.name_string!=owner)field.overwritten_constructor_owners_.push_back(*field.name_string);
@@ -79,6 +90,10 @@ MessengerCallResult IgbFieldStringAssignInvocation::resume(std::shared_ptr<IgbFi
     case P::release_old:
         s.old=string_owner(services,s.old_address);if(!s.old && s.target.field && s.offset==0x0c && s.target.field->name_string_address==s.old_address && s.target.field->name_string)
             s.old=*s.target.field->name_string;
+        if(!s.old && s.target.metadata){const auto& m=*s.target.metadata;
+            if(s.offset==0x1c && m.name_string_address==s.old_address && m.name_string)s.old=*m.name_string;
+            if(s.offset==0x60 && m.default_pool_string_address==s.old_address && m.default_pool_string)s.old=*m.default_pool_string;
+        }
         if(!s.old)return pending("String assignment requires the captured destination string header.");require_live(s.old);--s.old->references;
         if(s.old->references==0){select_release(s.call,s.old,services);s.phase=P::release;}else s.phase=P::publish;break;
     case P::release:{const auto status=s.call.poll(services,check);if(!status.completed)return status;s.call.clear();check();s.phase=P::publish;break;}

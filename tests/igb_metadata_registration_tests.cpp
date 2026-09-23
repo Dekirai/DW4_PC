@@ -19,6 +19,10 @@
 #include "dw4/igb_field_prototype.hpp"
 #include "dw4/igb_field_init.hpp"
 #include "dw4/igb_field_clone.hpp"
+#include "dw4/igb_meta_enum.hpp"
+#include "dw4/igb_metadata_init.hpp"
+#include "dw4/igb_object_field_construct.hpp"
+#include "dw4/igb_memory_field_construct.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -992,6 +996,178 @@ void actual_cold_bootstrap_prefix(){
         clone_default_allocations==1 && (*copied->name_string)->references==2,
         "Later suspension replayed native clone, replacement, name retention or completed registration.");
 
+    // Continue the real first enabled registration. Its prerequisite guard
+    // enters ThreadManager before constructing igMetaEnum itself. Represent
+    // only the original null BSS globals and raw allocation identities here.
+    auto meta_enum=std::make_shared<IgbMetaEnumServices>();meta_enum->callbacks=f.services->callbacks;
+    meta_enum->types=f.services->types;meta_enum->schema=metadata_defaults->schema;
+    meta_enum->metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    unsigned enum_probe_locals{};meta_enum->local_storage=[&]{++enum_probe_locals;return allocation(0x820000,0x14);};
+    additional_callbacks=make_native_igb_meta_enum_function_factory(meta_enum,additional_callbacks);
+    f.remaining=make_native_igb_meta_enum_type_factory(meta_enum,f.remaining);
+    const auto missing_prerequisites=call.resume(bootstrap);
+    check(!missing_prerequisites.completed && !call.faulted() &&
+        missing_prerequisites.diagnostic.find("80561488/489")!=std::string::npos && meta_enum->metadata->has_value() && !**meta_enum->metadata,
+        "Enabled enum registration skipped its original prerequisite storage boundary.");
+    f.services->callbacks->prerequisites=std::make_shared<IgbRegistrationPrerequisitesState>();
+    f.services->callbacks->prerequisites->started=0;f.services->callbacks->prerequisites->initialized=0;
+    auto thread=std::make_shared<IgbThreadRegistrationState>();thread->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    additional_callbacks=make_native_igb_thread_registration_function_factory(thread,f.services->callbacks,f.services->types,additional_callbacks);
+    f.remaining=make_native_igb_thread_type_factory(thread,f.services->callbacks,f.services->types,f.remaining);
+
+    auto metadata_init=std::make_shared<IgbMetadataInitServices>();metadata_init->metadata=f.services->metadata;
+    metadata_init->reflected=prototypes->reflected;metadata_init->field_lists=fields_services;
+    auto member_construct=std::make_shared<IgbObjectFieldConstructServices>();member_construct->reflected=prototypes->reflected;
+    member_construct->values=values;field_init->object_construct=member_construct;
+    std::vector<IgbObjectFieldConstructCall> member_calls;
+    member_construct->factory=[&](const IgbObjectFieldConstructCall& c){
+        member_calls.push_back(c);
+        if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool)return std::shared_ptr<IgbObjectFieldConstructOperation>{};
+        auto op=std::make_shared<IgbObjectFieldConstructOperation>();op->resume=[&,c,out=op.get()]{
+            check(c.handle==0 && c.object.metadata && igb_bootstrap_address({c.object.storage,c.object.offset})==0x800000,
+                "Metadata member construction changed its captured tag or target allocation.");
+            out->pool_result=f.pool;return MessengerCallResult{true,0,{}};};return op;
+    };
+    auto reflected_metadata=std::make_shared<IgbRuntimeMetaType>();
+    auto reflected_fields=std::make_shared<IgbDecodeFieldRegistry>();reflected_fields->count=37;
+    const auto reflected_metadata_storage=allocation(0x800000,0x64),reflected_fields_storage=allocation(0x810000,16);
+    reflected_metadata_storage.storage->bindings.push_back({0,{},reflected_metadata,{}});
+    reflected_fields_storage.storage->bindings.push_back({0,{},{},reflected_fields});
+    std::vector<IgbFileFactoryCall> reflected_allocations;
+    const auto original_reflected_allocator=prototypes->reflected->factory;
+    prototypes->reflected->factory=[&,original_reflected_allocator](const IgbFileFactoryCall& c){
+        if(c.kind!=IgbFileFactoryServiceKind::allocate || (c.metadata!=f.constructed && c.metadata!=lazy_metadata[0]))
+            return original_reflected_allocator(c);
+        reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,c,out=op.get()]{
+            check(f.core->enabled==1 && c.pool==f.pool,"Enabled metadata allocation lost its actual reflection gate or pool.");
+            if(c.metadata==f.constructed){check(c.bytes==0x64,"Reflected metadata changed its native allocation size.");out->allocation_result=reflected_metadata_storage.storage;}
+            else{check(c.bytes==16,"Reflected field registry changed its native allocation size.");out->allocation_result=reflected_fields_storage.storage;}
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    std::vector<IgbObjectInitCall> reflected_init_calls;
+    prototypes->reflected->initializer->factory=make_native_igb_metadata_init_factory(metadata_init,
+        make_native_igb_scalar_field_factory(make_native_igb_field_init_factory(field_init,[&](const IgbObjectInitCall& c){
+            reflected_init_calls.push_back(c);
+            if(c.kind!=IgbObjectInitServiceKind::allocation_pool && c.kind!=IgbObjectInitServiceKind::pool_index)
+                return std::shared_ptr<IgbObjectInitOperation>{};
+            auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[&,c,out=op.get()]{
+                if(c.kind==IgbObjectInitServiceKind::allocation_pool){
+                    check(c.address==0x800000 || c.address==0x810000,"Enabled initializer queried another physical allocation.");out->pool_result=f.pool;
+                }else check(c.pool==f.pool,"Enabled initializer changed the captured allocation owner.");
+                return MessengerCallResult{true,0,{}};};return op;
+        })));
+    f.services->metadata->factory=make_native_igb_reflected_metadata_factory(metadata_init,f.services->metadata->factory);
+    const auto reflected_member=call.resume(bootstrap);
+    std::cout<<"Cold enabled metadata boundary: "<<reflected_member.diagnostic<<"; types="<<f.core->types->count<<
+        ", reflected allocations="<<reflected_allocations.size()<<'\n';
+    check(!reflected_member.completed && !call.faulted() &&
+        reflected_member.diagnostic=="Memory member construction requires its reached field or allocator service.",
+        "Enabled metadata construction did not reach its nested field-list memory allocation boundary.");
+    check(f.services->callbacks->prerequisites->initialized==1 && f.services->callbacks->prerequisites->started==1 &&
+        thread->metadata && !*thread->metadata && meta_enum->metadata->has_value() && !**meta_enum->metadata && enum_probe_locals==0,
+        "Pending prerequisite metadata fabricated ThreadManager or enum publication.");
+    check(reflected_allocations.size()==2 && reflected_allocations[0].metadata==f.constructed &&
+        reflected_allocations[1].metadata==lazy_metadata[0] && member_calls.size()==1 && reflected_init_calls.size()==4,
+        "Positive object-member construction skipped reflected allocation or original owner/tag lookup.");
+    check(igb_bootstrap_read_word(reflected_metadata_storage,0)==0x804761d8 &&
+        igb_bootstrap_read_word(reflected_metadata_storage,4)==1 && igb_bootstrap_read_word(reflected_metadata_storage,0x28)==0 &&
+        !reflected_metadata->fields && reflected_metadata->reference_word==1 &&
+        igb_bootstrap_read_word(reflected_fields_storage,0)==0x80475cb0 && igb_bootstrap_read_word(reflected_fields_storage,4)==1 &&
+        igb_bootstrap_read_word(reflected_fields_storage,8)==0 && igb_bootstrap_read_word(reflected_fields_storage,12)==0xcccccccc &&
+        !reflected_fields->backing && !reflected_fields->backing_bytes && reflected_fields->count==37,
+        "Nested reflected initialization seeded a completed field list or published its member before construction returned.");
+    check(metadata_init->completed_allocations.empty() && member_construct->objects.empty() &&
+        f.constructed->instance_count==0 && lazy_metadata[0]->instance_count==0 &&
+        f.core->enabled==1 && f.core->types->count==after_types && descriptors.size()==after_descriptors &&
+        default_allocations==after_defaults && prototype_allocations==1 && clone_default_allocations==1,
+        "Incomplete nested construction changed completed type/prototype counts or exposed a returned instance.");
+    const auto after_reflected_names=string_allocations;const auto after_reflected_frees=freed_callback_lists.size();
+    check(!call.resume(bootstrap).completed && reflected_allocations.size()==2 && reflected_init_calls.size()==4 &&
+        member_calls.size()==1 && metadata_init->completed_allocations.empty() && !reflected_metadata->fields &&
+        string_allocations==after_reflected_names && freed_callback_lists.size()==after_reflected_frees &&
+        descriptors.size()==after_descriptors && default_allocations==after_defaults,
+        "Pending nested memory construction replayed reflected allocation, header passes or prerequisite registration.");
+
+    // Continue the retained62524 call through real element virtuals, ancestry,
+    // aligned allocation, conditional zero fill and typed member publication.
+    // Status globals are explicit preceding startup stores:8003D004 writes0
+    // to805622D0 and8003D00C writes1 to805622D4 before ArkCore construction.
+    auto memory_construct=std::make_shared<IgbMemoryFieldConstructServices>();memory_construct->values=values;
+    memory_construct->reference_metadata=field_types->reference_metadata;
+    memory_construct->status_success=0;memory_construct->status_failure=1;
+    field_init->memory_construct=memory_construct;
+    const auto reflected_backing=allocation(0x830000,64);reflected_backing.storage->bytes->initialized.assign(64,0);
+    const auto reflected_mapping=std::make_shared<IgbDecodeFieldRegistry::Storage>(16);
+    bool memory_allocation_ready{};unsigned memory_allocation_polls{},memory_allocations{},memory_pool_queries{};
+    std::vector<IgbMemoryFieldConstructCall> memory_calls;
+    const auto memory_elements=make_native_igb_memory_field_virtual_factory(field_types,[&](const IgbMemoryFieldConstructCall& c){
+        auto op=std::make_shared<IgbMemoryFieldConstructOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool){
+                ++memory_pool_queries;check(c.handle==0 && c.object.fields==reflected_fields &&
+                    igb_bootstrap_address({c.object.storage,c.object.offset})==0x810000,
+                    "Nested memory construction changed its captured object/tag.");out->pool_result=f.pool;
+            }else{
+                check(c.kind==IgbMemoryFieldConstructServiceKind::allocate && c.pool==f.pool && c.bytes==64 && c.alignment==4,
+                    "Native memory field changed the element-derived allocation size, alignment or pool.");
+                ++memory_allocation_polls;if(!memory_allocation_ready)return MessengerCallResult{false,0,"prepared aligned field-list backing allocation"};
+                ++memory_allocations;out->backing_result={reflected_backing.storage->bytes,igb_bootstrap_address(reflected_backing),0,{},reflected_mapping};
+                field_backings.push_back(out->backing_result);
+            }return MessengerCallResult{true,0,{}};};return op;
+    });
+    memory_construct->factory=[&,memory_elements](const IgbMemoryFieldConstructCall& c){memory_calls.push_back(c);return memory_elements(c);};
+    // This is the already allocated metadata's arithmetic identity, not a
+    // constructed class or a replacement for its pending reflected initializer.
+    type_pointers->values.push_back({0x800000,reflected_metadata,{}});
+    const auto pending_memory=call.resume(bootstrap);
+    check(!pending_memory.completed && !call.faulted() && pending_memory.diagnostic=="prepared aligned field-list backing allocation" &&
+        memory_pool_queries==1 && memory_allocation_polls==1 && memory_allocations==0 && memory_calls.size()==5,
+        "Native62524/62BB8 did not retain its exact aligned allocator boundary.");
+    check(memory_calls[0].kind==IgbMemoryFieldConstructServiceKind::field_virtual && memory_calls[0].field==prototype_field &&
+        memory_calls[0].virtual_slot==0x64 && memory_calls[2].field==prototype_field && memory_calls[2].virtual_slot==0x64 &&
+        memory_calls[3].field==prototype_field && memory_calls[3].virtual_slot==0x6c && !reflected_fields->backing &&
+        !reflected_metadata->fields && igb_bootstrap_read_word(reflected_fields_storage,8)==0 &&
+        metadata_init->completed_allocations.empty(),"Memory construction skipped independent element reads or published before allocation.");
+    check(!call.resume(bootstrap).completed && memory_allocation_polls==2 && memory_calls.size()==5 && memory_pool_queries==1 &&
+        reflected_allocations.size()==2,"Pending aligned allocation replayed selected size, alignment, pool or reflected allocations.");
+    memory_allocation_ready=true;
+    const auto initialized_metadata=call.resume(bootstrap);
+    std::cout<<"Cold native metadata completion boundary: "<<initialized_metadata.diagnostic<<"; types="<<f.core->types->count<<
+        ", field-list bytes="<<reflected_backing.storage->bytes->bytes.size()<<'\n';
+    check(!initialized_metadata.completed && !call.faulted() && !remaining_calls.empty() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80023940,
+        "Completed native metadata/list construction did not reach actual ThreadManager defaults80023940.");
+    check(memory_allocations==1 && memory_allocation_polls==3 && memory_pool_queries==1 && memory_calls.size()==6 &&
+        memory_calls.back().kind==IgbMemoryFieldConstructServiceKind::field_virtual && memory_calls.back().virtual_slot==0x58 &&
+        memory_calls.back().field==prototype_field && reflected_fields->backing==reflected_mapping &&
+        reflected_fields->backing_bytes==reflected_backing.storage->bytes && reflected_fields->backing_address==0x830000 &&
+        igb_bootstrap_read_word(reflected_fields_storage,8)==0x830000,
+        "Actual element ancestry/allocation did not publish the same physical and typed list backing.");
+    check(reflected_metadata->fields==reflected_fields && igb_bootstrap_read_word(reflected_metadata_storage,0x28)==0x810000 &&
+        reflected_fields->reference_word==1 && igb_bootstrap_read_word(reflected_fields_storage,4)==1 &&
+        metadata_init->completed_allocations.size()==1 && metadata_init->completed_allocations.front().metadata==reflected_metadata &&
+        member_construct->objects.size()==1 && member_construct->objects.front().fields==reflected_fields &&
+        f.constructed->instance_count==1 && lazy_metadata[0]->instance_count==1,
+        "Positive object-member assignment skipped publication, retain/release balance or completed instance ownership.");
+    check(thread->metadata==reflected_metadata && reflected_metadata->class_flags==9 && reflected_metadata->parent==object_type &&
+        reflected_metadata->name && *reflected_metadata->name=="igThreadManager" && reflected_metadata->native_size==0x10 &&
+        reflected_metadata->flag_1a==1 && reflected_metadata->field_callback==0x80023920 && reflected_fields->count==2 &&
+        reflected_mapping->at(0)==descriptors[0] && reflected_mapping->at(1)==descriptors[1] &&
+        igb_buffer_word(reflected_backing.storage->bytes,0)==igb_bootstrap_address(descriptor_allocations[0]) &&
+        igb_buffer_word(reflected_backing.storage->bytes,4)==igb_bootstrap_address(descriptor_allocations[1]),
+        "Native constructor result did not feed the original prerequisite registrar and inherited field append.");
+    for(std::size_t i=8;i<64;++i)check(reflected_backing.storage->bytes->initialized[i]==1 && reflected_backing.storage->bytes->bytes[i]==0,
+        "Reference element ancestry did not zero untouched pointer storage before inheritance appended fields.");
+    check(!**meta_enum->metadata && enum_probe_locals==0 && f.core->types->count==after_types && f.core->enabled==1 &&
+        descriptors.size()==after_descriptors && default_allocations==after_defaults && prototype_allocations==1 && clone_default_allocations==1,
+        "Pending ThreadManager fields fabricated enum completion or replayed existing schemas/prototypes.");
+    const auto final_enabled_names=string_allocations;const auto final_enabled_frees=freed_callback_lists.size();
+    const auto final_enabled_memory_calls=memory_calls.size();
+    check(!call.resume(bootstrap).completed && memory_allocations==1 && memory_calls.size()==final_enabled_memory_calls &&
+        reflected_allocations.size()==2 && metadata_init->completed_allocations.size()==1 &&
+        f.constructed->instance_count==1 && lazy_metadata[0]->instance_count==1 && reflected_fields->count==2 &&
+        string_allocations==final_enabled_names && freed_callback_lists.size()==final_enabled_frees &&
+        descriptors.size()==after_descriptors && default_allocations==after_defaults,
+        "Later prerequisite suspension replayed native memory construction, assignment, metadata initialization or inheritance.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

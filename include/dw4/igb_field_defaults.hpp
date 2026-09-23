@@ -5,7 +5,7 @@
 namespace dw4 {
 class IgbFieldDefaultsError : public std::runtime_error {public: using std::runtime_error::runtime_error;};
 
-// Refresh represented members after writes to a field object's physical
+// Refresh represented members after writes to a typed object's physical
 // allocation. Only overlapping, fully initialized members are read. Zero
 // pointers become represented null; changed nonzero pointers need an explicit
 // typed binding before use. Untouched padding is never read.

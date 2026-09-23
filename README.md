@@ -142,10 +142,20 @@ The chain contains 53 schema descriptors plus the reflected prototype, 54
 default buffers, seven published types and one prototype entry. The original
 bootstrap caller now writes enabled byte 1 and snapshots type/prototype counts
 7 and 1 at core `+04/+08`. It next reaches `igMetaEnum` registration body
-`8002AAFC`, canonical metadata `80561808`. This is still incomplete startup.
-Enabled reflected cloning `800680B4`, recursive reference/member operations,
-remaining registrations, pool/platform services and physical allocators remain
-explicit dependencies. Continue with the reached `igMetaEnum` body. See
+`8002AAFC`, canonical metadata `80561808`. That body now enters its actual
+prerequisite guard and ThreadManager registration. Enabled metadata construction
+uses the native reflected factory and all three field passes. Its `_metaFields`
+member constructs the real internal list, including a 64-byte backing allocation
+with four-byte alignment, reference-element ancestry zero fill and balanced object assignment.
+The resulting metadata continues into registration and inherited field append;
+the composed test now waits at ThreadManager defaults `80023940` while enum
+metadata remains null.
+This is still incomplete startup. Enabled reflected cloning `800680B4`, further
+reference operations, remaining registrations and pool/platform allocator
+internals remain required. See [IGB_META_ENUM.md](docs/IGB_META_ENUM.md),
+[IGB_METADATA_INIT.md](docs/IGB_METADATA_INIT.md),
+[IGB_OBJECT_FIELD_CONSTRUCT.md](docs/IGB_OBJECT_FIELD_CONSTRUCT.md),
+[IGB_MEMORY_FIELD_CONSTRUCT.md](docs/IGB_MEMORY_FIELD_CONSTRUCT.md),
 [IGB_FIELD_TYPE_REGISTRATION.md](docs/IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](docs/IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](docs/IGB_FIELD_PROTOTYPE.md),

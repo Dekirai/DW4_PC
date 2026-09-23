@@ -5,15 +5,21 @@
 #include "dw4/igb_field_defaults.hpp"
 
 namespace dw4 {
+struct IgbObjectFieldConstructServices;
+struct IgbMemoryFieldConstructServices;
 class IgbFieldInitError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
 struct IgbFieldInitServices {
     std::shared_ptr<IgbFieldTypeRegistrationServices> registration;
     std::shared_ptr<IgbFieldValuesServices> values;
+    std::shared_ptr<IgbObjectFieldConstructServices> object_construct;
+    std::shared_ptr<IgbMemoryFieldConstructServices> memory_construct;
 };
 
 // Verified object-field object virtuals and reached reference-field passes.
-// Unrecovered recursive member construction/reset stays pending at its branch;
-// unknown tables and slots are delegated. Scalar defaults compose separately.
+// Object-reference construction composes actual6546C and assignment6A47C.
+// Memory construction composes62524/62BB8. Reached services and unrecovered
+// reset branches stay pending; unknown tables and slots are delegated.
+// Scalar defaults compose separately.
 IgbObjectInitFactory make_native_igb_field_init_factory(
     std::shared_ptr<IgbFieldInitServices>,IgbObjectInitFactory remaining={});
 } // namespace dw4

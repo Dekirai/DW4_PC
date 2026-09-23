@@ -1,5 +1,85 @@
 # Local validation
 
+## Native enabled metadata and recursive list construction
+
+Validated locally on 2026-09-23. The next registration body, `8002AAFC`
+(`igMetaEnum`), now runs its actual prerequisite guard and enters the existing
+native ThreadManager registrar. The enabled `80029E64` metadata factory
+composes `8006546C` and `800667F4` with a distinct typed metadata allocation.
+Its positive `_metaFields` descriptor calls actual `8006A618`, recursively
+initializes the internal field list, and assigns it through `8006A47C` with
+the original packed references and temporary release.
+
+The list's positive memory member executes `80062524 -> 80062BB8`: separate
+element size reads, alignment, pool selection, aligned allocation, live element
+metadata ancestry, conditional zero fill and raw pointer publication. The
+reached list requests 64 bytes aligned to four, zeroes 16 reference slots and
+initializes its count through the separate int descriptor. No ready list or
+completed child object replaces these operations.
+
+The same retained cold integration now completes both reflected allocations,
+publishes the metadata's actual list, balances its reference word back to one,
+and increments both class instance counts once. ThreadManager registration
+inherits the two base descriptors and interns its name before the next required
+body, **defaults `80023940`**. Its canonical metadata `805614E8` is busy with
+flags 9; enum metadata `80561808` remains null. There are still seven completed
+registered types, 53 schema descriptors, 54 default buffers and one prototype
+entry. The earlier enable transition and snapshots `+04 = 7`, `+08 = 1` remain
+covered. This is additional startup reconstruction, not a playable game.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 184/184 CTest suites passed locally, four jobs, no compiler warnings |
+| Cold composition | 1,045 checks; actual prerequisite recursion, retained aligned-allocation pause, physical backing and member publication, balanced ownership, inherited fields and exact next callback |
+| Generic object initializer | 215 checks, including removal/redirection of a pending field's physical binding without further writes |
+| Metadata/list initializer | 46 checks; exact getters, typed results, null state, physical/canonical synchronization, nonzero backing offsets, padding, abandonment and binding changes |
+| Enum registration/defaults/probe | 198 checks; exact registration arguments, prerequisite order, getters, physical local probe, three-field batch/schema and captured type stores |
+| Object member construction/assignment | 201 checks; actual reflected child caller, live pool/offset/ownership reads, full-word reference arithmetic, pending destruction and publication |
+| Memory member construction | 176 checks; separate size/alignment reads, wrapping arithmetic, ancestry, partial zero-fill faults, late mappings, allocation failure and status order |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; unchanged enabled `8002A0A8` boundary, 20 types, 60 field mappings, 47 matched classes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Independent local instruction comparisons against the same final production
+core cover **8,904 cases and 6,968,248 original instructions, zero differences**:
+
+| Comparison | Cases | Original instructions | Completion/failure scope |
+| --- | --- | --- | --- |
+| Metadata and nested construction | 5,040 | 6,755,910 | 840 completions, 4,060 injected callback-failure prefixes, 140 deliberately bounded positive-entry prefixes |
+| Object member assignment | 624 | 22,720 | 560 completions, 64 destructor-failure prefixes; aliases, packed-word wrapping and changed destination after destruction |
+| Memory member construction | 3,240 | 189,618 | 576 completions, 2,664 callback-failure prefixes; separate widths, alignment, allocation results, ancestry and live publication |
+
+The metadata comparison retains separate control profiles with a disabled
+construct flag or explicitly synthetic empty child schema. Its additional
+2,870-case profile executes the real internal-list virtuals, registered
+four-descriptor layout, `62524/62BB8` and element ancestry. It compares all
+100 parent bytes, the 16-byte child plus a 16-byte guard, 64 backing bytes,
+callback order, instance counts and canonical ownership. The memory comparison
+uses prepared element virtuals and allocator results to vary those boundaries.
+Schema/default setup, raw allocators, pool lookup and destructor endpoints are
+explicit preparation in the respective comparisons; their internals and
+complete original startup are not established by these results.
+
+Final `dw4_core.lib` SHA-256:
+`79fe17371d3c6d8f929d9cdab8acb042ba88874202fa56f14de19a2cfc88a89b`.
+Ignored evidence includes `work/native-metadata-members-final-build.log`,
+`work/native-metadata-members-{cold-final,prefix,player}.log`,
+`work/native-metadata-init-verifier.log`,
+`work/native-metadata-milestone-audit.json` and the three comparison reports
+`native-metadata-init-all-result.json`, `native-object-member-assign-result.json`
+and `native-memory-member-init-result.json` under `work/`.
+The audit records source, driver, corpus and core hashes. Original data,
+generated disassembly and comparison executables remain outside source control.
+
+Continue at the reached ThreadManager defaults, then enum registration and
+its further dependencies. The separate enabled decoder fixture remains
+separate; it does not borrow this prepared cold fixture's registry. Pool and
+platform internals, later classes, outer startup, rendering, audio and complete
+gameplay remain required. See [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
+[IGB_META_ENUM.md](IGB_META_ENUM.md),
+[IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md) and
+[IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md).
+
 ## Native memory-field clone and fundamental bootstrap completion
 
 Validated locally on 2026-09-23. The inherited memory-reference clone now
