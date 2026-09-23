@@ -37,6 +37,19 @@ struct IgbFieldPrototypeServices {
 };
 std::shared_ptr<IgbRuntimeFieldSlot> igb_field_prototype_slot(
     const std::shared_ptr<IgbFieldPrototypeServices>&,IgbFieldTypeKind);
+// Actual31728(enum) /27824(pointer): null-only prototype test, registration,
+// then a fresh prototype-cell load. This does not return type metadata.
+class IgbFieldPrototypeLookupInvocation {
+public:
+    explicit IgbFieldPrototypeLookupInvocation(IgbFieldTypeKind);
+    ~IgbFieldPrototypeLookupInvocation();
+    IgbFieldPrototypeLookupInvocation(const IgbFieldPrototypeLookupInvocation&)=delete;
+    IgbFieldPrototypeLookupInvocation& operator=(const IgbFieldPrototypeLookupInvocation&)=delete;
+    MessengerCallResult resume(std::shared_ptr<IgbFieldPrototypeServices> services={});
+    bool completed()const noexcept;bool faulted()const noexcept;
+    std::shared_ptr<IgbDecodeRuntimeField> result()const;
+private:struct Impl;std::unique_ptr<Impl> impl_;
+};
 // Actual63B5C: null-only registry test,607F4,2DB4C,raw publication,reload.
 class IgbFieldPrototypeRegistryInvocation {
 public:
@@ -48,7 +61,8 @@ public:
     std::shared_ptr<IgbDecodeFieldRegistry> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual27454(reference) /28B64(object) /2E440(int) /2B178(memory) /388B0(bool) /25628(string) /37DB0(byte).
+// Actual27454(reference) /28B64(object) /2E440(int) /2B178(memory) /388B0(bool)
+// /25628(string) /37DB0(byte) /31690(enum) /2778C(pointer).
 // These callbacks return no descriptor;
 // descriptor publication is through the canonical global cell only.
 class IgbFieldPrototypeInvocation {

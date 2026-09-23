@@ -7,7 +7,7 @@ namespace {
 [[noreturn]] void fail(const char* message) {throw IgbFieldDefaultsError(message);}
 bool scalar_table(std::uint32_t table) {
     return table==0x80476e6cu || table==0x80475b60u || table==0x80473e30u ||
-        table==0x80477054u || table==0x80476848u || table==0x80473f24u;
+        table==0x80477054u || table==0x80476848u || table==0x80473f24u || table==0x804758e4u;
 }
 struct ScalarCopy {
     IgbObjectInstance object;
@@ -175,6 +175,7 @@ void igb_synchronize_field_storage(const IgbObjectInstance& object,std::uint32_t
         field.default_bytes_address=address;
     }
     const auto table=field.vtable_word.value_or(0);
+    if(table==0x804758e4 && ready(0x34,4))field.method_function=word(0x34);
     const bool reference=table==0x8047693c || table==0x804762fc || table==0x80476630 || table==0x80476088;
     if(reference && ready(0x34,1))field.flag_34=byte(0x34);
     if(reference && ready(0x35,1))field.flag_35=byte(0x35);

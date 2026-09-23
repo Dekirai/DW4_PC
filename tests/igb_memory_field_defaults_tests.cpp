@@ -63,7 +63,7 @@ struct Fixture {
         v.signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};v.boolean_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         v.object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};v.string_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         v.signed_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
-        s.fields->factory=make_native_igb_field_values_factory(services->lists->values,[this](const IgbFieldOperationCall& c){
+        const auto prepared_fields=[this](const IgbFieldOperationCall& c){
             auto op=std::make_shared<IgbFieldOperation>();
             if(c.kind==FK::field_virtual){check(c.vtable_word==0x804758e4,"Unexpected prepared field vtable.");
                 if(c.virtual_slot==0x8c && c.source)method_calls.push_back(c);
@@ -82,7 +82,15 @@ struct Fixture {
                 if(c.kind==FK::allocation_pool || c.kind==FK::object_pool)out->pool_result=pool;
                 else{check(c.kind==FK::allocation_size,"Unexpected prepared field allocation.");return MessengerCallResult{true,4,{}};}
                 return MessengerCallResult{true,0,{}};};return op;
-        });
+        };
+        const auto native_fields=make_native_igb_field_values_factory(services->lists->values,prepared_fields);
+        // This caller fixture deliberately prepares enum-field virtuals so its
+        // suspension/mutation cases isolate2AF40. Keep that boundary explicit
+        // now that the production value adapter also recognizes this vtable.
+        s.fields->factory=[prepared_fields,native_fields](const IgbFieldOperationCall& c){
+            if(c.kind==FK::field_virtual && c.vtable_word==0x804758e4)return prepared_fields(c);
+            return native_fields(c);
+        };
         // Only factory/clone/method bodies and allocation/string endpoints are
         // prepared. The defaults caller, batch, values, schema and replacement run natively.
         s.factory=[this](const IgbFieldSchemaCall& c){check(c.kind==IgbFieldSchemaServiceKind::create_field,"Unexpected batch destroy.");

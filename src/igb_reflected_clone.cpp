@@ -269,7 +269,7 @@ IgbReflectedCloneFactory make_native_igb_reflected_member_copy_factory(
         if(call.kind!=K::field_virtual || call.virtual_slot<0x90 || call.virtual_slot>0xa0 || (call.virtual_slot&3u))return delegate();
         const auto table=call.vtable_word;
         const bool scalar=table==0x80475b60 || table==0x80476848 || table==0x80477054 ||
-            table==0x80473f24 || table==0x80473e30 || table==0x80476630;
+            table==0x80473f24 || table==0x80473e30 || table==0x80476630 || table==0x804758e4;
         if(!scalar && table!=0x8047693c && table!=0x804762fc && table!=0x80476088)return delegate();
         const auto slot=(call.virtual_slot-0x90u)/4u;
         constexpr std::uint32_t raw[]={0x800642e4,0x8006434c,0x80064318,0x80064380,0x800643a0};

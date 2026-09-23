@@ -292,15 +292,15 @@ void boolean_probe(){
     Fixture invalid;invalid.core->vtable_offset=0x34;IgbFieldProbeInvocation outside(invalid.local,IgbMetaFieldKind::boolean);
     rejects([&]{outside.resume(invalid.services);},"Boolean probe accepted an offset beyond its 0x34-byte local.");
 }
-void string_and_signed_byte_probes(){
-    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte}){
+void small_profile_probes(){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer}){
         const auto profile=igb_meta_field_profile(kind);
         for(std::uint32_t offset=0;offset<profile.bytes;offset+=4){Fixture f;
             f.local.storage->bytes->bytes.resize(profile.bytes);f.local.storage->bytes->initialized.resize(profile.bytes);f.core->vtable_offset=offset;
             IgbFieldProbeInvocation run(f.local,kind);
             check(run.resume(f.services).completed && run.value()==(offset==0?profile.vtable:igb_bootstrap_read_word(f.local,offset)),
-                "String or signed-byte probe did not use its exact local size and reset.");
-            check(f.field->vtable_word==0x80471914 && f.calls.empty(),"String or signed-byte probe executed a cache cleanup.");
+                "Small-field probe did not use its exact local size and reset.");
+            check(f.field->vtable_word==0x80471914 && f.calls.empty(),"Small-field probe executed a cache cleanup.");
             if(kind==IgbMetaFieldKind::string)check(f.field->flag_35==1 && f.field->flag_38==1 && f.field->flag_27==2 &&
                 igb_bootstrap_read_word(f.local,0x38)==0x01cccccc,"String reset lost reference flags or changed padding.");
         }
@@ -333,7 +333,7 @@ void string_and_signed_byte_probes(){
         igb_meta_field_set_name(zero.local,ignored,0x5008);zero.services->runtime->singleton=zero.core;
         check(skip.resume(zero.services).completed && ignored->references==1 && zero.calls.empty(),"Probe ignored the original zero member-address branch.");
         Fixture adapter;IgbTypeRegistrationCall request;request.kind=IgbTypeRegistrationServiceKind::layout_probe;
-        request.function=kind==IgbMetaFieldKind::string?0x80025348:0x80037c78;
+        request.function=kind==IgbMetaFieldKind::string?0x80025348:kind==IgbMetaFieldKind::signed_byte?0x80037c78:kind==IgbMetaFieldKind::enumeration?0x800314d4:0x80027648;
         auto operation=make_native_igb_field_probe_factory(adapter.services)(request);
         check(operation && !operation->resume().completed,"New probe guessed the legacy object local.");unsigned allocations{};
         adapter.services->profile_local_storage=[&](IgbMetaFieldKind selected){++allocations;check(selected==kind,"Probe adapter selected another profile.");return adapter.local;};
@@ -346,9 +346,24 @@ void string_and_signed_byte_probes(){
     rejects([&]{unreadable.resume(padding.services);},"String reset fabricated initialized trailing padding.");
     check(padding.field->vtable_word==0x8047693c,"String padding fault performed later cleanup.");
 }
+void enum_function_and_pointer_padding(){
+    Fixture enumeration;enumeration.local.storage->bytes->bytes.resize(0x38);enumeration.local.storage->bytes->initialized.resize(0x38);
+    igb_bootstrap_write_word(enumeration.local,0x34,0x12345678);enumeration.field->method_function=0x12345678;enumeration.core->vtable_offset=0x34;
+    IgbFieldProbeInvocation reset(enumeration.local,IgbMetaFieldKind::enumeration);
+    check(reset.resume(enumeration.services).completed && reset.value()==0x12345678 && enumeration.field->method_function==0x12345678 &&
+        igb_bootstrap_read_word(enumeration.local,0x34)==0x12345678,"Enum probe initialized or released the untouched derived function pointer.");
+    for(const auto kind:{IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer}){
+        Fixture unknown;unknown.local.storage->bytes->bytes.resize(0x38);unknown.local.storage->bytes->initialized.resize(0x38);
+        unknown.core->vtable_offset=0x34;unknown.local.storage->bytes->initialized[kind==IgbMetaFieldKind::enumeration?0x34:0x36]=0;
+        IgbFieldProbeInvocation invalid(unknown.local,kind);
+        rejects([&]{invalid.resume(unknown.services);},"Small-field reset fabricated initialized derived padding or an enum getter.");
+        check(invalid.faulted() && unknown.field->vtable_word==igb_meta_field_profile(kind).vtable && unknown.calls.empty(),
+            "Derived read fault ran later base or name cleanup.");
+    }
+}
 }
 int main(){try{reset_and_capture();cleanup_order();missing_bindings_and_failures();adapters();signed_int_probe();
     memory_reset_and_capture();memory_cleanup_order();memory_packed_counts_and_bindings();memory_pending_destructor();memory_failures_and_adapter();boolean_probe();
-    string_and_signed_byte_probes();
+    small_profile_probes();enum_function_and_pointer_padding();
     std::cout<<"Field layout probe tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

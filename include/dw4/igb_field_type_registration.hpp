@@ -6,7 +6,7 @@
 
 namespace dw4 {
 class IgbFieldTypeRegistrationError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
-enum class IgbFieldTypeKind {base,reference,object,signed_int,memory_reference,boolean,string,signed_byte};
+enum class IgbFieldTypeKind {base,reference,object,signed_int,memory_reference,boolean,string,signed_byte,enumeration,pointer};
 struct IgbFieldTypeProfile {
     const char* name{};
     std::uint32_t metadata_global{},wrapper{},body{},size{},flag{},parent_body{},parent_getter{};
@@ -29,7 +29,8 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_field_type_metadata_slot(
     const std::shared_ptr<IgbFieldTypeRegistrationServices>&,IgbFieldTypeKind);
 IgbTypeRegistrationArguments igb_field_type_registration_arguments(
     const std::shared_ptr<IgbFieldTypeRegistrationServices>&,IgbFieldTypeKind);
-// Actual2A6D8/27360/28A20/2E3B8/2AEAC/38828/25404/37D28; no prerequisite guard21B94.
+// Actual2A6D8/27360/28A20/2E3B8/2AEAC/38828/25404/37D28/31584/27704;
+// no prerequisite guard21B94.
 class IgbFieldTypeRegistrationInvocation {
 public:
     explicit IgbFieldTypeRegistrationInvocation(IgbFieldTypeKind);

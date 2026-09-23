@@ -28,7 +28,7 @@ struct Fixture {
     }
 };
 void leaves_and_binding() {
-    for(const auto table:{0x80476e6cu,0x80475b60u,0x80473e30u,0x80477054u,0x80476848u,0x80473f24u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
+    for(const auto table:{0x80476e6cu,0x80475b60u,0x80473e30u,0x80477054u,0x80476848u,0x80473f24u,0x804758e4u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
         Fixture f;f.field->vtable_word=table;f.field->default_bytes.reset();f.object.storage.reset();
         const auto op=f.operation(slot);check(op && op->resume().completed && op->resume().value==0,"Verified scalar leaf accessed default or object storage.");
     }
@@ -62,12 +62,16 @@ void field_object_storage() {
     target->vtable_word=0x80476088;target->element_field=f.field;copy(0x3c,{0,0,0,0});
     check(target->element_field && !target->element_field->lock(),"Zeroed memory-reference element retained a stale descriptor.");
     copy(0x3c,{0,0x40,0,0});check(!target->element_field,"Changed memory-reference element pointer fabricated a typed binding.");
-    for(const auto table:{0x80476e6cu,0x80477054u,0x80476848u,0x80473f24u,0x80476630u}) {
+    for(const auto table:{0x80476e6cu,0x80477054u,0x80476848u,0x80473f24u,0x80476630u,0x804758e4u}) {
         Fixture scalar;scalar.field->vtable_word=table;
         check(scalar.operation(0x70)->resume().completed && igb_buffer_word(scalar.object.storage->bytes,0x60)==0xfada,
             "Verified scalar/pointer table failed its shared default body.");
         if(table==0x80476630u)check(!scalar.operation(0x84) && !scalar.operation(0xf0),"Pointer reference passes became scalar leaves.");
     }
+    target->vtable_word=0x804758e4;target->flag_34=0x5a;target->flag_35=0x6b;
+    copy(0x34,{0x80,0x02,0xa5,0xec});
+    check(target->method_function==0x8002a5ec && target->flag_34==0x5a && target->flag_35==0x6b,
+        "Enum getter publication was lost or reinterpreted as reference ownership flags.");
 }
 void copy_and_capture() {
     for(const auto slot:{0x70u,0x78u}) {

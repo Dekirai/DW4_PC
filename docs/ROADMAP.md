@@ -179,10 +179,12 @@ now complete. Enabled clone `800680B4` performs actual reflected allocation and
 members now feed actual memory-buffer copy `80062824` and its allocation/ownership
 helpers. Both inherited string replacements, the complete string schema and its
 reflected prototype finish in this same cold invocation. The eighth memory field
-and inherited shallow-copy replacement now lead to required reset-method factory
-`80031378`. Recover that factory and its reached class/constructor/default bodies;
-the memory schema is still incomplete. Then finish the memory prototype, unsigned-character element
-prototype and enabled inherited-field clone. Complete the list chain and its
+and inherited shallow-copy replacement now lead through enum factory `80031378`.
+Actual enum/raw-reference registration, probes, defaults and prototypes finish,
+then the memory reset descriptor, memory schema and memory prototype complete.
+The same DataList caller now reaches unsigned-byte registration `80023234`.
+Recover that class and its element prototype, then the enabled inherited-field
+clone. Complete the list chain and its
 deferred `igThread` registration before semaphore registration `80026098` and
 ThreadManager startup `80023A30`. Enum metadata remains null while these
 prerequisites are pending. Further member/reference branches

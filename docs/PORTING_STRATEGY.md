@@ -272,22 +272,24 @@ actual one-byte default into a distinct allocation.
 Both string inherited replacements, the final schema, prototype `80025628` and
 actual reflected tail `8007144C` now execute in this same startup composition.
 The eighth memory field and its inherited shallow-copy replacement also finish.
-The next reached body is **reset-method factory `80031378`**. Recover its enabled
-registration/factory path and the reached `igEnumMetaField` bodies, preserving the
-original pending invocation and canonical metadata/prototype cells.
-This factory creates `igEnumMetaField` (size `0x38`, metadata `80561C30`,
-prototype `80561C34`). Its `+34` member supplies `_getMetaEnumFunction`;
-the memory reset descriptor later assigns `8002A5EC` there. Recover this
-enum-field class without treating the still-null `igMetaEnum` global as ready.
+Reset descriptor factory **`80031378`** now executes actual `igEnumMetaField`
+registration (size `0x38`, metadata `80561C30`, prototype `80561C34`). Its raw
+constructor/reset preserve the untouched `+34` word. Actual defaults `80031614`
+register `igRawRefMetaField`, construct the pointer descriptor for
+`_getMetaEnumFunction` and execute the one-field schema. Both classes' native
+probes and reflected prototypes complete. The memory caller then publishes
+four-byte reset value three and getter `8002A5EC`, replaces the inherited field,
+finishes its schema and initializes the memory prototype. Storing that function
+pointer does not invoke it or initialize the separate `igMetaEnum` global.
+The cold composition has 72 descriptors, 77 default buffers, fifteen published
+types, eight prototypes and 48 enabled allocations. It returns to the existing
+DataList caller at **unsigned-byte registration `80023234`**.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md),
 [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
-[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md).
-The full eight-field/method-replacement caller is implemented with explicit
-remaining leaves; the cold composition must reach and implement those leaves
-before claiming this class complete. Preserve the same canonical cells and
-prototype registry, including the memory prototype callback `8002B178`.
-Then recover unsigned-character registration `80023234` for the DataList element
+[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
+[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md).
+Recover unsigned-character registration `80023234` for the DataList element
 prototype, enabled cloning needed by `80029724`, and deferred thread class
 `80023C40`. Complete that chain before `80026098` and actual startup callback
 `80023A30`. Semaphore metadata still has flags zero; enum metadata remains null. Preserve

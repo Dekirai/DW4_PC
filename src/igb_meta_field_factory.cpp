@@ -24,7 +24,7 @@ using FieldCall=Call<IgbMetaFieldCall,IgbMetaFieldFactory,IgbMetaFieldOperation>
 using ValueCall=Call<IgbFieldOperationCall,IgbFieldOperationsFactory,IgbFieldOperation>;
 using StringCall=Call<IgbDependenciesCall,IgbDependenciesFactory,IgbDependenciesOperation>;
 using K=IgbMetaFieldServiceKind;using S=IgbDependenciesServiceKind;
-constexpr std::array<IgbMetaFieldProfile,10> profiles={{
+constexpr std::array<IgbMetaFieldProfile,11> profiles={{
     {0x80022a90,0x800759e0,0x80075a2c,0x80476e6c,0x34,0x80022cb0,0x80022cd8,0x805614bc},
     {0x8002e1ac,0x8005356c,0x800535b8,0x80475b60,0x34,0x8002e390,0x8002e3b8,0x805619e0},
     {0x800385e0,0x8003eb7c,0x8003ebc8,0x80473e30,0x34,0x80038800,0x80038828,0x80561e48},
@@ -34,7 +34,8 @@ constexpr std::array<IgbMetaFieldProfile,10> profiles={{
     {0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494},
     {0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818},
     {0x800259a8,0x800710bc,0x80071108,0x80476848,0x34,0x80025b8c,0x80025bb4,0x805615d8},
-    {0x80037b1c,0x8003ff44,0x8003ff90,0x80473f24,0x34,0x80037d00,0x80037d28,0x80561e1c}
+    {0x80037b1c,0x8003ff44,0x8003ff90,0x80473f24,0x34,0x80037d00,0x80037d28,0x80561e1c},
+    {0x80031378,0x80046f8c,0x80046fd8,0x804758e4,0x38,0x8003155c,0x80031584,0x80561c30}
 }};
 bool reference_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer || kind==IgbMetaFieldKind::memory_reference;}
 bool known_base_vtable(std::uint32_t word){return word==0x80471914u || word==0x804717f0u || word==0x80471384u;}

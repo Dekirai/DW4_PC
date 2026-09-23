@@ -136,7 +136,8 @@ constexpr ProfileEvidence evidence[]={
     {IgbMetaFieldKind::unsigned_short,0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494},
     {IgbMetaFieldKind::memory_reference,0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818},
     {IgbMetaFieldKind::signed_short,0x800259a8,0x800710bc,0x80071108,0x80476848,0x34,0x80025b8c,0x80025bb4,0x805615d8},
-    {IgbMetaFieldKind::signed_byte,0x80037b1c,0x8003ff44,0x8003ff90,0x80473f24,0x34,0x80037d00,0x80037d28,0x80561e1c}
+    {IgbMetaFieldKind::signed_byte,0x80037b1c,0x8003ff44,0x8003ff90,0x80473f24,0x34,0x80037d00,0x80037d28,0x80561e1c},
+    {IgbMetaFieldKind::enumeration,0x80031378,0x80046f8c,0x80046fd8,0x804758e4,0x38,0x8003155c,0x80031584,0x80561c30}
 };
 bool ref_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer || kind==IgbMetaFieldKind::memory_reference;}
 void resize(Fixture& f,std::size_t size){f.object.storage->bytes->bytes.assign(size,0xcc);f.object.storage->bytes->initialized.assign(size,1);}
@@ -156,6 +157,9 @@ void family_constructor_bytes(){
             for(const auto at:{0x12u,0x13u,0x14u,0x15u,0x24u,0x25u,0x27u,0x28u,0x29u,0x2au})expected[at]=0;
             expected[0x26]=expected[0x2b]=1;expected[0x2c]=2;
             if(ref_kind(p.kind)){expected[0x34]=expected[0x35]=0;check(f.field->flag_34==0,"Reference base omitted flag34 reset.");}
+            if(p.kind==IgbMetaFieldKind::enumeration)check(!f.field->method_function && !f.field->flag_34 &&
+                igb_bootstrap_read_word(f.object,0x34)==0xcccccccc,
+                "Enum reset initialized its untouched function word or performed reference-base stores.");
             if(p.kind==IgbMetaFieldKind::string){expected[0x35]=expected[0x38]=1;expected[0x27]=2;
                 check(f.field->flag_38==1 && f.field->flag_35==1 && f.field->flag_27==2,"String descriptor flags differ.");}
             else if(p.kind==IgbMetaFieldKind::object){word(0x38,0);word(0x40,0);expected[0x3c]=1;
@@ -178,7 +182,7 @@ void family_constructor_bytes(){
             "Reference base entry omitted reset or overwrote padding.");
     }
     check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
-    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(10));},"Invalid descriptor profile was accepted.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(11));},"Invalid descriptor profile was accepted.");
 }
 void family_reset_prefixes(){
     for(const auto& p:evidence){

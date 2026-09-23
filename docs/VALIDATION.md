@@ -1,6 +1,85 @@
 # Local validation
 
-## Native memory-member copying and completed string registration
+## Native enum and raw-reference classes complete memory registration
+
+Validated locally on 2026-09-23. The retained cold-bootstrap invocation now
+executes enum descriptor factory `80031378`, registration `80031584`, actual
+probe `800314D4` and defaults `80031614`. Its single pointer field requires
+actual `igRawRefMetaField` registration `80027704` and probe `80027648`.
+Neither class is supplied ready. The fixture supplies raw allocations and
+the additionally reached child-list reallocation; native constructors, schema,
+layout and prototype callers establish the contents and ownership.
+
+Both prototypes complete before the memory defaults caller publishes its
+replacement reset descriptor: four-byte value three, member offset `24`,
+getter function `8002A5EC` at descriptor `+34`, and canonical cell `80561834`.
+Memory metadata and its reflected prototype then complete. The same DataList
+caller constructs its memory descriptor and reaches **unsigned-byte class
+registration `80023234`**. That body is the next unimplemented operation.
+
+The cold composition now contains **72 descriptors, 77 default buffers,
+fifteen published types, eight prototypes and 48 enabled allocations**.
+Enum, raw-reference and memory metadata have flags `7` and two instances each.
+Their prototypes occupy indices 6, 5 and 7 respectively. DataList remains at
+flags `9` with five fields, and its unsigned-byte prototype remains null.
+The separate `igMetaEnum` metadata object also remains null. Repeated resumes
+preserve completed work, the single deferred bootstrap callback and original
+core snapshots `+04 = 7`, `+08 = 1`.
+
+The tests also preserve a subtle original difference between construction paths:
+the raw enum reset leaves `+34` untouched; reflected pointer-member initialization
+zeroes it. The memory class's four-byte enum default overlaps three subsequent
+byte fields. Their ordered writes produce `00000102` at `+24`; forcing the
+reflected instance to the raw memory reset's byte-three value would be incorrect.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 195/195 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 2,060 checks, including actual schemas, raw allocations, physical publications, prototype lifecycle, overlapping defaults and stable next boundary |
+| Enum defaults | 120 checks covering captured metadata/count, live registry replacement, wrapped indices, flag stores, pending table owners, faults and recursive callbacks |
+| Descriptor lifecycle | Existing constructor/value/initializer tests extended to enum and raw-reference profiles; 437 registration and 160 prototype checks |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Eight independently sealed original-code groups cover **10,137 observations /
+935,846 instructions**: 3,996 completed original caller cases, 6,139 explicit
+fault or endpoint-prefix cases and two registration-argument observations.
+**10,128 observations match exactly; nine differ in state and endpoint trace.**
+There are no native pending cases in this comparison. Native pending, fault and
+completion statuses are recorded separately rather than normalized together.
+
+The nine differences deliberately replace the live enum field registry with
+more entries than the declared one-element schema table. Native schema processing
+faults at the unavailable next table entry. The original continues into adjacent
+mapped DOL words and executes seven additional endpoint events before a word
+store at `80063F90` faults at address `00000034`. The first eleven events agree;
+nine observed state words differ. These are explicit bounded-table differences,
+not equivalent execution or successful native completion. Inputs and original
+expectations were not changed or excluded to remove them.
+
+Factory and probe groups compare whole represented storage, including enum `+34`
+and padding. Defaults and prototype groups compare selected members, ordered
+endpoint traces and represented list backing, not every descriptor byte. Actual
+registration, allocation, interning and field operations are prepared where
+declared by each corpus. The separate cold composition and focused physical
+tests cover their native connections. This evidence does not establish complete
+startup, enum conversions, all pointer/member operations or playable gameplay.
+
+Final `dw4_core.lib` SHA-256:
+`f4941d9dccd6cb8fbb6fd6184434d4f840fec279dd3906dec9e1277d1972618d`.
+Ignored evidence includes `work/native-enum-class-complete-build.log`,
+`work/native-enum-class-{cold,prefix,player,verifier}.log`,
+`work/native-enum-class-original-manifest.json`,
+`work/native-enum-class-registration-original-manifest.json`,
+`work/native-enum-class-original-boundaries.json` and
+`work/native-enum-class-milestone-audit.json`. Original binaries, corpora and
+generated observations remain local and ignored. No application preview was
+built or launched and no GitHub Actions were used. See
+[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md).
+
+## Native memory-member copying and completed string registration (earlier checkpoint)
 
 Validated locally on 2026-09-23. The same retained cold-bootstrap invocation
 now executes memory-member copy `80062824` with its actual null-element descriptor,

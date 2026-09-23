@@ -18,6 +18,7 @@
 #include "dw4/igb_field_type_registration.hpp"
 #include "dw4/igb_field_type_defaults.hpp"
 #include "dw4/igb_field_probe.hpp"
+#include "dw4/igb_enum_field_defaults.hpp"
 #include "dw4/igb_field_prototype.hpp"
 #include "dw4/igb_field_init.hpp"
 #include "dw4/igb_field_clone.hpp"
@@ -527,10 +528,11 @@ void actual_cold_bootstrap_prefix(){
     metadata_defaults->schema->pools=f.services->pools;metadata_defaults->schema->dependencies=object_defaults->dependencies;
     metadata_defaults->schema->fields=object_defaults->fields;metadata_defaults->schema->meta_fields=object_defaults->meta_fields;
     metadata_defaults->object_metadata=object_services->metadata;std::vector<IgbFieldSchemaCall> schema_calls;
-    bool schema_constructors_ready{};
+    bool schema_constructors_ready{},enumeration_constructor_ready{};
     const auto schema_constructors=make_native_igb_field_schema_factory(metadata_defaults->schema);
     metadata_defaults->schema->factory=[&](const IgbFieldSchemaCall& c){
-        if(schema_constructors_ready){const auto operation=schema_constructors(c);if(operation)return operation;}
+        if(schema_constructors_ready && (c.function!=0x80031378 || enumeration_constructor_ready)){
+            const auto operation=schema_constructors(c);if(operation)return operation;}
         schema_calls.push_back(c);return std::shared_ptr<IgbFieldSchemaOperation>{};
     };
     f.remaining=make_native_igb_metadata_defaults_factory(metadata_defaults,f.remaining);
@@ -1800,6 +1802,157 @@ void actual_cold_bootstrap_prefix(){
         f.core->types->count==12 && (**prototypes->registry)->count==5 &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending reset-method construction replayed completed clones, prototypes, classes or original bootstrap snapshots.");
+
+    // Resume the retained factory with represented null class cells, never
+    // prebuilt metadata. Both layout probes execute their actual local resets.
+    auto enumeration_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    auto pointer_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::enumeration)]=enumeration_cell;
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::pointer)]=pointer_cell;
+    values->enumeration_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    // The enum class becomes the fifth child of igMetaField. Supply the
+    // allocator's enlarged backing; native growth still copies/publishes slots.
+    std::optional<IgbPointerListBacking> grown_base_field_children;
+    const auto previous_type_allocator=type_pointers->factory;
+    type_pointers->factory=[&,previous_type_allocator](const IgbPointerListCall& c){
+        const bool query=c.kind==IgbPointerListServiceKind::allocation_size && grown_base_field_children &&
+            c.backing.address==grown_base_field_children->address;
+        const bool grow=c.kind==IgbPointerListServiceKind::reallocate && base_field->children && c.types==*base_field->children;
+        if(!query && !grow)return previous_type_allocator(c);
+        auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,query,out=op.get()]{
+            if(query){check(c.backing.bytes==grown_base_field_children->bytes && c.pool==f.pool,
+                "Base-field child query lost its grown allocation.");out->size_result=32;}
+            else{
+                check(!grown_base_field_children && c.types->count==4 && c.pool==f.pool && c.bytes==32 &&
+                    c.backing.offset==0 && c.backing.bytes && c.backing.bytes->bytes.size()==16 && c.backing.types,
+                    "Fifth base-field child changed its original reallocation request.");
+                auto raw=allocation(0xb90000,c.bytes);raw.storage->bytes->initialized.assign(c.bytes,0);
+                std::copy(c.backing.bytes->bytes.begin(),c.backing.bytes->bytes.end(),raw.storage->bytes->bytes.begin());
+                std::copy(c.backing.bytes->initialized.begin(),c.backing.bytes->initialized.end(),raw.storage->bytes->initialized.begin());
+                auto mapping=std::make_shared<IgbRuntimeTypeList::Storage>(8);
+                std::copy(c.backing.types->begin(),c.backing.types->end(),mapping->begin());
+                grown_base_field_children=IgbPointerListBacking{raw.storage->bytes,igb_bootstrap_address(raw),0,mapping,{}};
+                out->backing_result=*grown_base_field_children;
+            }return MessengerCallResult{true,0,{}};
+        };return op;
+    };
+    std::vector<IgbBootstrapPointer> enumeration_probe_locals,pointer_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::enumeration || kind==IgbMetaFieldKind::pointer,
+            "Enum dependency registration replayed a completed class probe.");
+        auto& locals=kind==IgbMetaFieldKind::enumeration?enumeration_probe_locals:pointer_probe_locals;
+        auto local=allocation((kind==IgbMetaFieldKind::enumeration?0xb70000u:0xb80000u)+static_cast<std::uint32_t>(locals.size())*0x100,0x38);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        locals.push_back(local);return local;
+    };
+    enumeration_constructor_ready=true;
+    const auto enumeration_boundary=call.resume(bootstrap);
+    check(!enumeration_boundary.completed && !call.faulted() && **enumeration_cell && !**pointer_cell &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80031614 &&
+        (**enumeration_cell)->class_flags==9 && (**enumeration_cell)->fields->count==20 &&
+        enumeration_probe_locals.size()==1 && pointer_probe_locals.empty(),
+        "Enum construction did not enter original registration, inherited fields and its one-field defaults callback.");
+    auto enumeration_defaults=std::make_shared<IgbEnumFieldDefaultsServices>();
+    enumeration_defaults->registration=field_types;enumeration_defaults->schema=metadata_defaults->schema;
+    f.remaining=make_native_igb_enum_field_defaults_factory(enumeration_defaults,f.remaining);
+    const auto pointer_boundary=call.resume(bootstrap);
+    check(!pointer_boundary.completed && !call.faulted() && **pointer_cell &&
+        (**pointer_cell)->class_flags==7 && (**pointer_cell)->fields->count==22 && pointer_probe_locals.size()==1 &&
+        !*values->pointer_prototype && unbound_reflected_allocations.back().metadata==**pointer_cell &&
+        unbound_reflected_allocations.back().bytes==0x38 && (**enumeration_cell)->fields->count==20,
+        "Enum defaults bypassed real pointer registration or fabricated its reflected prototype.");
+    const auto previous_reflected_allocations=resumed_reflected_allocations;
+    std::vector<IgbBootstrapPointer> enumeration_prototype_allocations,pointer_prototype_allocations,memory_prototype_allocations;
+    resumed_reflected_allocations=[&,previous_reflected_allocations](const IgbFileFactoryCall& c){
+        const bool enumeration=c.metadata==**enumeration_cell,pointer=c.metadata==**pointer_cell,memory=c.metadata==memory_type;
+        if(!enumeration && !pointer && !memory)return previous_reflected_allocations(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,enumeration,pointer,memory,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==(memory?0x50u:0x38u),
+                "Enum/pointer/memory reflected factory changed its original raw allocation request.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            const auto& prototype=enumeration?values->enumeration_prototype:pointer?values->pointer_prototype:values->memory_reference_prototype;
+            if(prototype && !*prototype){auto& allocations=enumeration?enumeration_prototype_allocations:pointer?pointer_prototype_allocations:memory_prototype_allocations;
+                allocations.push_back(raw);}
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto after_enumeration=call.resume(bootstrap);
+    std::cout<<"Cold native enum/pointer continuation: "<<after_enumeration.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_enumeration.completed && !call.faulted(),"Enum registration incorrectly completed full native bootstrap.");
+    const auto enumeration_type=**enumeration_cell,pointer_type=**pointer_cell;
+    const auto enum_member=enumeration_type->fields->backing->at(20);
+    check(enumeration_type->class_flags==7 && enumeration_type->fields->count==21 && enumeration_type->native_size==0x38 &&
+        enumeration_type->type_word==0x804758e4 && enumeration_type->instance_count==2 &&
+        pointer_type->class_flags==7 && pointer_type->fields->count==22 && pointer_type->native_size==0x38 &&
+        pointer_type->type_word==0x80476630 && pointer_type->instance_count==2 &&
+        pointer_type->name && *pointer_type->name=="igRawRefMetaField",
+        "Enum and raw-reference classes did not finish actual registration and both reflected instances.");
+    check(enum_member && enum_member->vtable_word==0x80476630 && enum_member->name &&
+        *enum_member->name=="_getMetaEnumFunction" && enum_member->offset==0x34 && enum_member->flag_26==0 &&
+        enum_member->global_slot_address==0x80561c38 && *enumeration_defaults->globals->at(0)->slot==enum_member &&
+        enum_member->declaring_type && enum_member->declaring_type->lock()==enumeration_type &&
+        igb_bootstrap_read_byte(descriptor_allocations[69],0x26)==0,
+        "Enum schema did not publish its real nonpersistent pointer member into physical and canonical storage.");
+    check(grown_base_field_children && (*base_field->children)->count==5 &&
+        (*base_field->children)->backing==grown_base_field_children->types && grown_base_field_children->types->at(4)==enumeration_type,
+        "Enum registration bypassed base-field child growth and canonical parent publication.");
+    for(std::size_t at=20;at<32;++at)check(grown_base_field_children->bytes->initialized[at] && grown_base_field_children->bytes->bytes[at]==0,
+        "Native base-field child growth did not zero its unused slots.");
+    check(memory_defaults->reset_method && memory_defaults->reset_method->has_value(),
+        "Memory reset descriptor's canonical global remains unknown.");
+    const auto reset_descriptor=**memory_defaults->reset_method;
+    check(memory_type->class_flags==7 && memory_type->fields->count==30 && memory_type->instance_count==2 && reset_descriptor &&
+        reset_descriptor->vtable_word==0x804758e4 && reset_descriptor->size==4 && reset_descriptor->offset==0x24 &&
+        reset_descriptor->name && *reset_descriptor->name=="_resetMethod" && reset_descriptor->global_slot_address==0x80561834 &&
+        reset_descriptor->declaring_type && reset_descriptor->declaring_type->lock()==memory_type &&
+        reset_descriptor->method_function==0x8002a5ec && reset_descriptor->default_bytes &&
+        igb_buffer_word(reset_descriptor->default_bytes->buffer,reset_descriptor->default_bytes->offset)==3 &&
+        igb_bootstrap_read_word(descriptor_allocations[70],0x34)==0x8002a5ec &&
+        std::find(memory_type->fields->backing->begin(),memory_type->fields->backing->end(),reset_descriptor)!=memory_type->fields->backing->end(),
+        "Memory defaults did not complete their enum replacement, original four-byte value or getter publication.");
+    const auto pointer_prototype=*values->pointer_prototype,enum_prototype=*values->enumeration_prototype;
+    const auto memory_prototype=*values->memory_reference_prototype;
+    check(pointer_prototype_allocations.size()==1 && enumeration_prototype_allocations.size()==1 && memory_prototype_allocations.size()==1 &&
+        pointer_prototype && enum_prototype && memory_prototype && (**prototypes->registry)->count==8,
+        "New prototypes did not execute exactly one reflected allocation apiece.");
+    const std::array new_prototypes={pointer_prototype,enum_prototype,memory_prototype};
+    for(std::size_t i=0;i<new_prototypes.size();++i){const auto& field=new_prototypes[i];
+        check(field->reference_word==1 && field->ordinal==i+5 && field->type_ordinal==i+5 &&
+            (**prototypes->registry)->backing->at(i+5)==field && field->default_bytes && field->default_bytes->buffer &&
+            igb_buffer_word(field->default_bytes->buffer,field->default_bytes->offset)==0,
+            "Prototype append, ordinal, finalization or independent default storage differs.");
+    }
+    check(enum_prototype->method_function==0 && igb_bootstrap_read_word(enumeration_prototype_allocations.front(),0x34)==0 &&
+        pointer_prototype->flag_34==0 && pointer_prototype->flag_35==0,
+        "Actual reflected member passes failed enum getter zeroing or reference flags.");
+    // Enum reset policy writes four big-endian bytes at +24. The later
+    // inherited byte defaults overwrite +25/+26/+27 in registry order;
+    // this reflected instance is not equivalent to the raw reset's byte3.
+    check(memory_prototype->default_mode==0 && memory_prototype->flag_25==0 && memory_prototype->flag_26==1 &&
+        memory_prototype->flag_27==2 && igb_bootstrap_read_word(memory_prototype_allocations.front(),0x24)==0x00000102,
+        "Reflected memory defaults lost the original overlapping enum and later byte-store order.");
+    check(after_enumeration.diagnostic=="Registration requires original function 0x80023234." &&
+        descriptors.size()==72 && default_allocations==77 && enabled_allocations.size()==48 && f.core->types->count==15 &&
+        buffer_copy_allocations==3 && data_type->class_flags==9 && data_type->fields->count==5 &&
+        data_type->fields->backing->at(4)==descriptors.back() && descriptors.back()->vtable_word==0x80476088 &&
+        !**data_defaults->unsigned_char_prototype && !**meta_enum->metadata,
+        "Completed memory schema did not return to DataList's actual unsigned-character prototype registration boundary.");
+    const auto enum_names=string_allocations,enum_defaults=default_allocations;
+    const auto enum_reflections=reflected_allocations.size(),enum_buffer_calls=buffer_calls.size();
+    check(!call.resume(bootstrap).completed && !call.faulted() && string_allocations==enum_names && default_allocations==enum_defaults &&
+        reflected_allocations.size()==enum_reflections && buffer_calls.size()==enum_buffer_calls &&
+        descriptors.size()==72 && enabled_allocations.size()==48 && f.core->types->count==15 && (**prototypes->registry)->count==8 &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending unsigned-byte registration replayed completed factories, schemas, prototypes or original bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

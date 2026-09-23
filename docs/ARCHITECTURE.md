@@ -176,9 +176,17 @@ pool, object-clone and destructor endpoints remain explicit. Canonical member st
 also update overlapping typed views without importing stale physical neighbors.
 The same cold chain now completes both inherited string replacements, its schema
 and reflected prototype, then the eighth memory field and inherited shallow-copy
-replacement. Reset-method factory `80031378` is the next required body.
+replacement. Reset descriptor factory `80031378` now registers the enum-field
+class and its raw-reference dependency. Actual probes, one-field defaults and
+reflected prototype lifecycles share their canonical globals. Reflected member
+initialization zeroes the enum getter word, while the raw enum reset leaves it
+untouched. The memory defaults caller assigns its four-byte reset policy and
+getter function, completes its schema and returns through memory prototype
+publication. The same DataList caller now reaches unsigned-byte registration
+`80023234`; the separate `igMetaEnum` metadata object remains unconstructed.
 See [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
-[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md).
+[IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
+[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md).
 This transition does not complete startup. Remaining member operations, method
 fields, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
