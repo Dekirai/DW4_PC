@@ -3,7 +3,9 @@
 `igb_field_copy` reconstructs the shared USA field copy constructor `800639E4`.
 It composes object copy `80066690`, the existing header reset `8006665C`,
 default allocation `800681C4`, and directional byte copy `800031E8`. The
-memory-reference clone composes this body through [IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md).
+memory-reference, signed-byte and Boolean clone constructors compose this body
+through [IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md). Their distinct wrappers and
+derived-table stores remain outside this shared base copy.
 
 Evidence is the supplied USA `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Original instructions and comparison

@@ -35,6 +35,13 @@ The adapter uses the original live class cells; it does not trigger registration
 or substitute a prototype. Their class profiles and prototype aliases are
 documented in [IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md).
 
+String vtable `8047693C` and signed-byte vtable `80473F24` bind plain metadata
+getters `800940F8` and `80093E8C` to cells `805615B4` and `80561E1C`.
+Both reuse the verified `+0C/+24/+34` return-only entries. Signed byte's `+2C`
+is also return-only. String's `+2C = 8007144C` instead shares the object's real
+descriptor default-buffer tail: reload the physical vtable and select `+8C`
+with null input. See [IGB_STRING_FIELD_REGISTRATION.md](IGB_STRING_FIELD_REGISTRATION.md).
+
 The initializer visits the derived registry from the captured base-field
 count through its captured derived count, retaining original live backing
 reads between visits. The object-field class has 25 descriptors, including

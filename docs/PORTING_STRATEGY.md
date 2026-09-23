@@ -250,13 +250,21 @@ The signed-integer field class completes registration and reflected prototype
 publication before DataList's third factory enters memory-field registration
 `8002AEAC`. The exact `8002AD90` probe and `8002AF40` defaults caller now compose
 with actual Boolean registration `80038828` and prototype `800388B0`.
-The eighth memory-class field reaches **`80025404`, string-field registration**.
-Continue through string probe `80025348`, defaults `8002549C`, prototype
-`80025628` and its real reflected tail `8007144C`. String defaults replace
-inherited shallow-copy and destruct descriptors, reaching signed-byte clone
-`80037BC0` and enabled copy `800680B4 -> 80068060 -> 80067B60`.
-Then resume the memory schema's inherited shallow-copy clone and reset-method
-constructor `80031378`.
+The eighth memory-class field now enters string registration `80025404`, exact
+probe `80025348` and defaults `8002549C`. Its one Boolean local is constructed
+before the inherited shallow-copy field enters signed-byte clone `80037BC0`.
+The signed-byte class and reflected prototype complete, bringing the same cold
+invocation to **`800680B4`, enabled reflected cloning**, with argument one.
+Recover its original metadata/pool lookup, reflected allocation and `80068060`
+copy dispatch. Mode one enters `80067B60`: capture destination metadata before
+the source/destination hooks, capture the registry/count after those hooks,
+and preserve per-field backing reloads and signed copy-mode dispatch.
+Do not replace enabled copy with the separate cold `800639E4` constructor.
+Then resume both string inherited replacements and publish its schema, prototype
+`80025628` and actual reflected tail `8007144C`. The string tail and prototype
+adapters have focused coverage; the composed startup has not yet reached them.
+Continue with the memory schema's inherited clone and reset-method constructor
+`80031378`.
 The full eight-field/method-replacement caller is implemented with explicit
 remaining leaves; the cold composition must reach and implement those leaves
 before claiming this class complete. Preserve the same canonical cells and
@@ -271,6 +279,8 @@ to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTR
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
 [IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md),
 [IGB_MEMORY_FIELD_DEFAULTS.md](IGB_MEMORY_FIELD_DEFAULTS.md),
+[IGB_STRING_FIELD_REGISTRATION.md](IGB_STRING_FIELD_REGISTRATION.md),
+[IGB_STRING_FIELD_DEFAULTS.md](IGB_STRING_FIELD_DEFAULTS.md),
 [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md).
 Complete the remaining class registrations, then the outer

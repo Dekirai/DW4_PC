@@ -2,7 +2,8 @@
 
 `igb_field_prototype` reconstructs reference-field callback `80027454`,
 object-field callback `80028B64`, integer-field callback `8002E440`,
-memory-reference callback `8002B178`, Boolean callback `800388B0`, and lazy
+memory-reference callback `8002B178`, Boolean callback `800388B0`, string
+callback `80025628`, signed-byte callback `80037DB0`, and lazy
 field-registry getter `80063B5C`.
 The callbacks run after their descriptor-class metadata registration. They
 publish canonical descriptor instances; those globals are distinct from the
@@ -22,6 +23,8 @@ remain local; committed code and fixtures are authored C++.
 | `8002E440` | `805619E0`, igIntMetaField | `805619E4` |
 | `8002B178` | `80561818`, igMemoryRefMetaField | `8056181C` |
 | `800388B0` | `80561E48`, igBoolMetaField | `80561E4C` |
+| `80025628` | `805615B4`, igStringMetaField | `805615B8` |
+| `80037DB0` | `80561E1C`, igCharMetaField | `80561E20` |
 
 The object prototype aliases `IgbFieldValuesServices::object_prototype`.
 The integer prototype aliases `IgbFieldValuesServices::signed_int_prototype`;
@@ -29,6 +32,8 @@ the existing `80094028` descriptor getter therefore observes the same cell.
 Memory-reference and Boolean prototypes alias `memory_reference_prototype`
 and `boolean_prototype` on those same services. Plain getters `80094070`
 and `80093E84` consequently share their publication identities.
+String and signed-byte aliases are `string_prototype` and
+`signed_byte_prototype`, also shared by plain getters `80094100` and `80093E94`.
 Reference prototype `80561688` and registry `8056229C` are shared cells that
 can alias the bootstrap's canonical members. The registry contains field
 prototypes, not type metadata. The later bootstrap store at `8003D46C` also
@@ -69,7 +74,7 @@ branch and returns null before allocation. `80027454` publishes that null and
 skips registry creation, append, release and finalization. This is the original
 callback behavior and does not manufacture a reference-field instance.
 
-For concrete object-reference, integer, memory-reference and Boolean metadata, the same reflected invocation
+For all six represented concrete field classes, the same reflected invocation
 preserves redirect handling, pool selection, allocation prefix arithmetic and actual `800667F4`
 initialization. The object initializer now accepts a canonical runtime-field
 binding at the adjusted allocation offset. Its generic result retains that
@@ -92,6 +97,12 @@ Their reflected `+2C` entries are also `800667D0`; their distinct class schema
 and other member operations still execute. Separate prototype getters
 `8002B210` and `80038948` are outside these callback adapters. See
 [IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md).
+
+String callback `80025628` and signed-byte callback `80037DB0` also use the
+same publication sequence. String construction reaches the real default-buffer
+tail `8007144C`; signed byte uses return-only `800667D0`. Their separate lazy
+prototype getters `800256C0` and `80037E48` remain outside these callback
+adapters. See [IGB_STRING_FIELD_REGISTRATION.md](IGB_STRING_FIELD_REGISTRATION.md).
 
 Prototype retain/release and ordinal stores also update represented physical
 field storage. Each store uses its original captured or freshly reloaded owner,

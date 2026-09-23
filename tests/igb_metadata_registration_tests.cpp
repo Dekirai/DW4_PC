@@ -26,6 +26,7 @@
 #include "dw4/igb_object_field_construct.hpp"
 #include "dw4/igb_memory_field_construct.hpp"
 #include "dw4/igb_memory_field_defaults.hpp"
+#include "dw4/igb_string_field_defaults.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -1177,14 +1178,15 @@ void actual_cold_bootstrap_prefix(){
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
     std::vector<IgbPointerListBacking> enabled_backings;
-    std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell;
-    std::vector<IgbBootstrapPointer> signed_int_prototype_allocations,boolean_prototype_allocations;
+    std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
+    std::vector<IgbBootstrapPointer> signed_int_prototype_allocations,boolean_prototype_allocations,signed_byte_prototype_allocations;
     bool enabled_metadata_ready{};unsigned enabled_metadata_polls{};
     prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
         check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1 &&
             (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field ||
                 (signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell) ||
-                (boolean_cell && *boolean_cell && c.metadata==**boolean_cell)),
+                (boolean_cell && *boolean_cell && c.metadata==**boolean_cell) ||
+                (signed_byte_cell && *signed_byte_cell && c.metadata==**signed_byte_cell)),
             "Further reflected allocation reached an unknown original class or pool.");
         reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();
         op->resume=[&,c,out=op.get(),done=false]()mutable{
@@ -1206,13 +1208,16 @@ void actual_cold_bootstrap_prefix(){
             }else{
                 const bool integer=signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell;
                 const bool boolean=boolean_cell && *boolean_cell && c.metadata==**boolean_cell;
-                check(c.bytes==((integer||boolean)?0x34u:0x44u),"Enabled descriptor factory changed its allocation size.");
+                const bool byte=signed_byte_cell && *signed_byte_cell && c.metadata==**signed_byte_cell;
+                check(c.bytes==((integer||boolean||byte)?0x34u:0x44u),"Enabled descriptor factory changed its allocation size.");
                 instance.field=std::make_shared<IgbDecodeRuntimeField>();
                 raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
                 if(integer && values->signed_int_prototype && !*values->signed_int_prototype)
                     signed_int_prototype_allocations.push_back(raw);
                 else if(boolean && values->boolean_prototype && !*values->boolean_prototype)
                     boolean_prototype_allocations.push_back(raw);
+                else if(byte && values->signed_byte_prototype && !*values->signed_byte_prototype)
+                    signed_byte_prototype_allocations.push_back(raw);
                 else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
             }
@@ -1517,7 +1522,7 @@ void actual_cold_bootstrap_prefix(){
         ", backings="<<enabled_backings.size()<<", metadata/list instances="<<f.constructed->instance_count.value_or(0xffffffffu)<<'/'<<
         lazy_metadata[0]->instance_count.value_or(0xffffffffu)<<'\n';
     const auto boolean_type=**boolean_cell;const auto boolean_prototype=*values->boolean_prototype;
-    check(!string_boundary.completed && !call.faulted() && string_boundary.diagnostic.find("0x80025404")!=std::string::npos,
+    check(!string_boundary.completed && !call.faulted() && string_boundary.diagnostic.find("canonical metadata cell")!=std::string::npos,
         "Memory schema failed before its actual string class prerequisite.");
     check(boolean_type && boolean_prototype && boolean_type->class_flags==7 && boolean_type->parent==base_field &&
         boolean_type->native_size==0x34 && boolean_type->type_word==0x80473e30 && boolean_type->fields->count==20 &&
@@ -1546,6 +1551,82 @@ void actual_cold_bootstrap_prefix(){
         (**prototypes->registry)->count==3 && f.core->types->count==10 && (*f.core->bootstrap_callbacks)->count==1 &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending string registration replayed the completed Boolean class or changed original bootstrap snapshots.");
+
+    auto string_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::string)]=string_cell;
+    values->string_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> string_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::string,"String registration replayed a completed class probe.");
+        auto local=allocation(0xb50000+static_cast<std::uint32_t>(string_probe_locals.size())*0x100,0x3c);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        string_probe_locals.push_back(local);return local;
+    };
+    const auto string_defaults_boundary=call.resume(bootstrap);const auto string_type=**string_cell;
+    check(!string_defaults_boundary.completed && !call.faulted() && !remaining_calls.empty() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x8002549c &&
+        string_type && string_type->class_flags==9 && string_type->parent==reference_field &&
+        string_type->native_size==0x3c && string_type->type_word==0x8047693c && string_type->fields->count==22 &&
+        string_probe_locals.size()==1 && igb_bootstrap_read_word(string_probe_locals.front(),0)==0x80471914,
+        "String registration skipped actual metadata construction, parent inheritance, reset/probe or defaults.");
+    check(enabled_allocations.size()==29 && enabled_backings.size()==8 && f.constructed->instance_count==9 &&
+        lazy_metadata[0]->instance_count==9 && descriptors.size()==64 && default_allocations==60 && f.core->types->count==10,
+        "String metadata defaults boundary fabricated a descriptor or prototype.");
+    auto string_defaults=std::make_shared<IgbStringFieldDefaultsServices>();string_defaults->registration=field_types;
+    string_defaults->lists=list_defaults;f.remaining=make_native_igb_string_field_defaults_factory(string_defaults,f.remaining);
+    const auto byte_boundary=call.resume(bootstrap);
+    std::cout<<"Cold string-field byte-class boundary: "<<byte_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!byte_boundary.completed && !call.faulted() && byte_boundary.diagnostic.find("canonical metadata cell")!=std::string::npos &&
+        string_type->fields->count==23 && string_type->fields->backing->at(22)==descriptors[64] &&
+        descriptors[64]->vtable_word==0x80473e30 && !descriptors[64]->name && boolean_type->instance_count==5 &&
+        descriptors.size()==65 && default_allocations==60 && enabled_allocations.size()==30 &&
+        !*string_defaults->shallow_copy && !*string_defaults->destruct && !*values->string_prototype,
+        "String defaults bypassed its Boolean factory or required signed-byte clone registration.");
+    signed_byte_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_byte)]=signed_byte_cell;
+    values->signed_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> byte_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::signed_byte,"Signed-byte registration replayed another class probe.");
+        auto local=allocation(0xb60000+static_cast<std::uint32_t>(byte_probe_locals.size())*0x100,0x34);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        byte_probe_locals.push_back(local);return local;
+    };
+    std::vector<IgbFieldCloneCall> reached_reflected_clones;
+    clones->factory=[&](const IgbFieldCloneCall& c){reached_reflected_clones.push_back(c);return std::shared_ptr<IgbFieldCloneOperation>{};};
+    const auto reflected_clone_boundary=call.resume(bootstrap);
+    std::cout<<"Cold string-field reflected-clone boundary: "<<reflected_clone_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", backings="<<enabled_backings.size()<<", metadata/list instances="<<f.constructed->instance_count.value_or(0xffffffffu)<<'/'<<
+        lazy_metadata[0]->instance_count.value_or(0xffffffffu)<<'\n';
+    const auto byte_type=**signed_byte_cell;const auto byte_prototype=*values->signed_byte_prototype;
+    check(!reflected_clone_boundary.completed && !call.faulted() && reached_reflected_clones.size()==1 &&
+        reached_reflected_clones.front().kind==IgbFieldCloneServiceKind::reflected_clone &&
+        reached_reflected_clones.front().function==0x800680b4 && reached_reflected_clones.front().argument==1 &&
+        reached_reflected_clones.front().source==*field_defaults->tables[0].globals->at(11)->slot &&
+        reached_reflected_clones.front().source->name && *reached_reflected_clones.front().source->name=="_shallowCopyMethod",
+        "Enabled signed-byte clone did not reach actual680B4 with its captured inherited source.");
+    check(byte_type && byte_prototype && byte_type->class_flags==7 && byte_type->parent==base_field &&
+        byte_type->native_size==0x34 && byte_type->type_word==0x80473f24 && byte_type->fields->count==20 &&
+        byte_type->instance_count==1 && f.core->types->count==11 && f.core->types->backing->at(10)==byte_type &&
+        signed_byte_prototype_allocations.size()==1 && byte_probe_locals.size()==1 &&
+        igb_bootstrap_read_word(byte_probe_locals.front(),0)==0x80471914 && byte_prototype->reference_word==1 &&
+        byte_prototype->ordinal==3 && byte_prototype->type_ordinal==3 && byte_prototype->default_bytes &&
+        byte_prototype->default_bytes->buffer && byte_prototype->default_bytes->buffer->bytes.size()==1 &&
+        (**prototypes->registry)->count==4 && (**prototypes->registry)->backing->at(3)==byte_prototype,
+        "Signed-byte class or reflected prototype skipped actual inheritance, publication, initialization or finalization.");
+    check(descriptors.size()==65 && default_allocations==61 && enabled_allocations.size()==33 && enabled_backings.size()==9 &&
+        f.constructed->instance_count==10 && lazy_metadata[0]->instance_count==10 && string_type->fields->count==23 &&
+        string_type->class_flags==9 && memory_type->fields->count==29 && memory_type->class_flags==9 && data_type->fields->count==4 &&
+        !*values->string_prototype && !*values->memory_reference_prototype && !**meta_enum->metadata,
+        "Unbound enabled clone fabricated a descriptor, completed schema or later startup dependency.");
+    const auto clone_names=string_allocations;const auto clone_reflections=reflected_allocations.size();
+    check(!call.resume(bootstrap).completed && string_allocations==clone_names && reflected_allocations.size()==clone_reflections &&
+        descriptors.size()==65 && default_allocations==61 && byte_probe_locals.size()==1 && string_probe_locals.size()==1 &&
+        enabled_allocations.size()==33 && (**prototypes->registry)->count==4 && f.core->types->count==11 &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending reflected clone replayed completed classes, factories, prototypes or bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

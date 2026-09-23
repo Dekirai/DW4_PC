@@ -1,6 +1,126 @@
 # Local validation
 
-## Native memory-reference defaults and Boolean registration
+## Native string registration, signed-byte prototype and scalar clones
+
+Validated locally on 2026-09-23. The retained cold-bootstrap invocation now
+executes string registration `80025404`, exact probe `80025348` and defaults
+caller `8002549C`. The latter constructs its Boolean local through enabled
+reflection, then selects the inherited `_shallowCopyMethod` descriptor through
+the actual name/index lookup and its published canonical global. Its signed-byte
+clone enters registration `80037D28`, probe `80037C78` and reflected prototype
+callback `80037DB0`. No ready class or completed clone is supplied by the fixture.
+
+Signed-byte metadata finishes with flags `7`, twenty inherited fields and one
+reflected instance, becoming type eleven. Its canonical prototype `80561E20`
+has ordinal/type ordinal three, one-byte default storage and one retained
+reference. The next reached boundary is **`800680B4`, enabled reflected cloning**,
+with the captured inherited source and original argument one. The bound endpoint
+returns no operation; the invocation remains pending without a result or cold-copy
+fallback. Repeated resumes preserve completed registrations and allocations.
+
+At this boundary there are 65 schema descriptors, 61 default buffers, eleven
+registered types and four prototypes. String metadata remains at flags `9`
+with 23 fields; memory metadata remains at flags `9` with 29 fields. Neither
+prototype is published, DataList still has four fields, and enum metadata remains
+null. The fixture has 33 enabled allocations, nine field-list backings and ten
+metadata/internal-list instances each. Original core snapshots stay `+04 = 7`
+and `+08 = 1`. Allocation and platform leaves remain explicit prepared services.
+
+The full string-default caller separately covers both inherited replacements,
+byte defaults and final schema publication with prepared clone endpoints.
+Signed-byte and Boolean clone wrappers now implement their actual cold allocation
+and `8003FFCC`/`8003EC04` copy constructors through shared `800639E4`; enabled
+wrappers preserve registration and the separate required `800680B4` call.
+Focused tests also cover the string prototype caller and its real `8007144C`
+default-buffer tail, which cold startup has not yet reached.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 190/190 CTest suites passed locally with four jobs; no compiler warnings |
+| Cold composition | 1,713 checks; real string prerequisite, signed-byte registration/prototype and pending enabled clone with canonical source and argument one |
+| String defaults | 172 checks; both inherited replacements, fresh index registries, physical header faults, retained callbacks and final one-field schema |
+| Clone wrappers/copy constructors | 224 checks; memory and scalar profiles, exact cold allocations, independent defaults, ownership, padding, suspension and explicit enabled boundary |
+| Field registration/probe/prototype/init | 357 /398 /123 /99 checks across represented profiles |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; preserves the separate enabled `8002A0A8` boundary, twenty types and sixty field mappings |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Ten independent comparisons execute **10,285 cases / 1,215,758 original
+instructions with zero differences**: 4,085 completed callers, 6,198 fault or
+explicit-boundary prefixes, and two registration ABI observations. All ten
+drivers linked against the same final core, exited zero and produced their exact
+expected row counts with empty stderr. The original inputs, expected outputs
+and oracle files remained identical to the sealed pre-comparison manifest.
+No production correction or case replacement was required by these comparisons.
+
+| Original-instruction scope | Cases | Instructions |
+| --- | ---: | ---: |
+| String registration arguments, wrapper and getters | 577 | 14,572 |
+| String probe, reset and name cleanup | 1,476 | 185,002 |
+| String prototype, append, finalization and bounded reserve prefix | 2,098 | 158,730 |
+| Signed-byte registration arguments, wrapper and getters | 577 | 14,570 |
+| Signed-byte probe, reset and name cleanup | 1,308 | 140,526 |
+| Signed-byte prototype, append, finalization and bounded reserve prefix | 2,098 | 158,730 |
+| Signed-byte clone wrapper and copy constructor | 858 | 116,526 |
+| Boolean clone wrapper and copy constructor | 858 | 123,992 |
+| Complete string-defaults caller | 327 | 301,814 |
+| String default-buffer tail | 108 | 1,296 |
+
+Registration comparisons prepare the bodies called by wrappers/getters; the
+separate ABI observations execute real `80025404`/`80037D28` to the generic
+registrar entry and capture arguments/extras. They do not independently execute
+that entire registrar. Signed-byte `80037C00` is part of its clone's cold branch,
+not an allocation-only metadata getter. Probe comparisons execute actual resets
+and cleanup across every physical local word, with separately labeled post-reset
+mutations and prepared string-pool/release endpoints.
+
+Prototype comparisons prepare the `8006546C` result and use an existing registry.
+They execute actual append and finalization with prepared field virtuals, pool
+queries and destruction. Capacity cases execute the `8005383C` prefix through
+the explicit `800682A4` boundary; they do not establish complete reserve growth
+or positive reflected construction. The cold test separately composes the actual
+signed-byte reflected prototype. String prototype completion remains future work
+in that same cold invocation.
+
+Scalar-clone comparisons execute the cold wrappers, original raw allocation
+dispatch, scalar/base constructors and directional default-buffer copying.
+They cover captured allocation/source state, self-aliasing, name ownership,
+overlap, changed byte lengths and partial failures, including all 28 bytes after
+each `0x34` object in its `0x50` scratch allocation. Enabled cases prepare their
+registration and whole `800680B4` endpoints; they do not verify its internal copy.
+The string-defaults comparison executes the complete batch/search/replacement/
+schema caller with explicit descriptor constructors, clone results, scalar
+virtuals and pool/string/destructor services. The tail comparison executes
+`8007144C`/`800667D0` with two prepared `+8C` targets; the virtual's buffer body
+is outside that corpus. Its additional pending-poll checks qualify native
+continuation capture and idempotence, not original guest timing.
+
+Final `dw4_core.lib` SHA-256:
+`ce15e8604c48bb3c3a5599b0458e0afe8493b51473e5007bd90324c359676f2e`.
+Original USA DOL SHA-1:
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`.
+Ignored build log: `work/native-string-class-final-build.log`; regression logs:
+`work/native-string-class-{cold,prefix,player,verifier}.log`.
+The sealed originals are recorded in `work/native-string-class-original-manifest.json`.
+Comparison inputs, outputs, source/driver/core/oracle hashes and build provenance
+are pinned in `work/native-string-class-milestone-audit.json`; the final consistency
+audit is `work/native-string-class-root-audit.json`. Original binaries and generated
+instruction corpora remain local and ignored. No application preview was rebuilt
+or launched, and no hosted CI was used.
+
+Continue with `800680B4` metadata/pool lookup and reflected allocation, followed
+by actual `80068060` dispatch. The reached mode one enters `80067B60`; modes zero
+and two select `80067C28` and `80067ADC`, while other signed values select no copy.
+These bodies and their reached member operations remain unrecovered. Complete
+the string replacements/schema/prototype, then memory method dependencies and
+later DataList/list/thread/bootstrap work. This milestone does not complete
+native startup, audio, rendering, gameplay or any full-game acceptance gate.
+See [IGB_STRING_FIELD_REGISTRATION.md](IGB_STRING_FIELD_REGISTRATION.md),
+[IGB_STRING_FIELD_DEFAULTS.md](IGB_STRING_FIELD_DEFAULTS.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md) for the continuation.
+
+## Native memory-reference defaults and Boolean registration (earlier checkpoint)
 
 Validated locally on 2026-09-23. The retained cold-bootstrap invocation now
 executes `igMemoryRefMetaField` registration `8002AEAC`, its exact layout probe

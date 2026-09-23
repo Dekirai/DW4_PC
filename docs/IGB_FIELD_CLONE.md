@@ -1,10 +1,13 @@
-# Native memory-reference field cloning
+# Native field clone wrappers
 
 `igb_field_clone` reconstructs USA `8002ACD8`, the clone virtual at `+54`
 of memory-reference descriptor vtable `80476088`. The cold path executes
 copy constructor `8006331C`, its reference base `8006CC88`, and the shared
 `800639E4` field copy through [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md).
-The source is the existing canonical descriptor; its physical constructor
+The module also reconstructs the signed-byte clone `80037BC0` and Boolean
+clone `80038684`, including their cold scalar copy constructors `8003FFCC`
+and `8003EC04`. These execute the same shared `800639E4` body and then publish
+only their own derived vtable. The source is the existing canonical descriptor; its physical constructor
 image is not substituted for later schema changes.
 
 Evidence is the supplied USA `main.dol`, SHA-1
@@ -25,12 +28,25 @@ without calling a constructor or virtual tail. A nonnull result enters the
 actual copy constructor. This path ignores the captured clone argument and
 does not call the ordinary `8002AC34` field factory or `8006324C` constructor.
 
+The two scalar wrappers use `80066DD8(0x34, 0)` with the same null and
+allocation semantics. They call the copy constructor for the selected profile,
+without running reference-base or memory-member copying. Their original integer
+argument is likewise ignored by the cold path.
+
 With reflection enabled, registration `8002AE84` runs before `800680B4` with
 the captured source and argument. Existing callback services can execute the
 actual registration runner for body `8002AEAC`; otherwise the exact wrapper
 is an explicit reached operation. The reflected clone remains a separate
 reached operation. It is not replaced with cold copying when registration or
 generic reflected copying is missing.
+
+Enabled signed-byte and Boolean wrappers similarly execute registrations
+`80037D00` and `80038800`, respectively, before `800680B4(source, argument)`.
+When registration callback services are bound, the native runner executes the
+exact corresponding bodies `80037D28` and `80038828`. The selected branch,
+source, argument and registration continuation remain captured across suspension.
+An unavailable `800680B4` remains pending for all three profiles; completing the
+scalar cold constructors does not implement generic reflected copying.
 
 ## Copy construction
 
@@ -55,6 +71,12 @@ earlier header/name/default-buffer stores then affect subsequent source reads.
 There is no eager source snapshot or assignment of the whole host structure.
 Padding and fields not written by the original copy remain untouched.
 
+After the shared base copy, signed-byte constructor `8003FFCC` writes only
+`80473F24` at destination `+00`; Boolean constructor `8003EC04` writes only
+`80473E30`. Both release the same construction lease after this final store.
+Neither reads source reference flags or elements, and neither writes beyond the
+original `0x34`-byte scalar object.
+
 The element pointer uses the canonical weak field identity and explicit
 numeric bindings in `values->fields->pointer_lists->values`. A known null
 pointer stores zero. Missing pointer state or an unavailable nonnull numeric
@@ -70,15 +92,23 @@ destination field rather than exposing a completed clone. Completed allocations
 remain owned by clone services, keeping each descriptor's weak physical-storage
 binding valid. Typed results are available only after construction returns.
 
-`make_native_igb_list_field_clone_factory` binds only memory-reference table
-`80476088`, virtual `+54`, for the existing list-default caller. Its result
+`IgbFieldCloneInvocation(source, argument, kind)` and
+`IgbFieldCloneConstructorInvocation(destination, source, kind)` accept
+`memory_reference`, `signed_byte`, or `boolean`; omitted kinds preserve the
+memory-reference profile. `make_native_igb_list_field_clone_factory` selects
+those profiles from captured tables `80476088`, `80473F24`, and `80473E30`,
+respectively, for virtual `+54`. Its result
 includes the canonical field and adjusted numeric address for later replacement.
 Other tables, slots and operations delegate. The subsequent internal-list flag,
 global-slot assignment, finalization and replacement remain the original
 `igb_list_defaults` operations; clone construction does not seed their result.
 
 Tests distinguish the complete cold copy chain from explicitly prepared enabled
-registration/reflected endpoints. Local build results, bounded original-code
+registration/reflected endpoints. Scalar checks additionally cover exact
+allocation size, independent one-byte default storage, padding, null allocation,
+late source-buffer changes, failure before the derived-table store, abandonment,
+and both registration routes stopping at the explicit reflected-copy boundary.
+Local build results, bounded original-code
 comparisons and the complete cold-start integration are recorded separately in
 [VALIDATION.md](VALIDATION.md). Neither clone completion nor registration tests
 establish complete game startup or playable native gameplay.

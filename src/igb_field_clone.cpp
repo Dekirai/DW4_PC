@@ -5,6 +5,15 @@ namespace {
 [[noreturn]] void fail(const char* message){throw IgbFieldCloneError(message);}
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Running(){value=false;}};
+struct CloneProfile {std::uint32_t wrapper,body;};
+CloneProfile profile(IgbMetaFieldKind kind){
+    switch(kind){
+    case IgbMetaFieldKind::memory_reference:return {0x8002ae84,0x8002aeac};
+    case IgbMetaFieldKind::signed_byte:return {0x80037d00,0x80037d28};
+    case IgbMetaFieldKind::boolean:return {0x80038800,0x80038828};
+    default:fail("Unsupported field clone profile.");
+    }
+}
 bool null_element(const std::weak_ptr<IgbDecodeRuntimeField>& field){const std::weak_ptr<IgbDecodeRuntimeField> empty;
     return !field.owner_before(empty) && !empty.owner_before(field);}
 std::optional<std::uint32_t> element_address(const std::weak_ptr<IgbDecodeRuntimeField>& element,
@@ -32,16 +41,17 @@ struct Call {
 };
 }
 struct IgbFieldCloneConstructorInvocation::Impl {
-    enum class P {bind,base,reference_table,construct,destruct,memory_table,clear_48,clear_4c,flag_42,
+    enum class P {bind,base,scalar_table,reference_table,construct,destruct,memory_table,clear_48,clear_4c,flag_42,
         element,element_store,word_38,mode,flag_41,flag_40,word_44,done};
     IgbBootstrapPointer destination;std::shared_ptr<IgbDecodeRuntimeField> source,field;
     std::shared_ptr<IgbFieldCloneServices> owner;std::unique_ptr<IgbFieldCopyInvocation> base;
     std::shared_ptr<void> token=std::make_shared<int>(0);std::weak_ptr<IgbDecodeRuntimeField> element;
+    IgbMetaFieldKind kind=IgbMetaFieldKind::memory_reference;
     P phase=P::bind;bool owns{},running{},fault{};
 };
 IgbFieldCloneConstructorInvocation::IgbFieldCloneConstructorInvocation(IgbBootstrapPointer destination,
-    std::shared_ptr<IgbDecodeRuntimeField> source):impl_(std::make_unique<Impl>()){
-    impl_->destination=std::move(destination);impl_->source=std::move(source);
+    std::shared_ptr<IgbDecodeRuntimeField> source,IgbMetaFieldKind kind):impl_(std::make_unique<Impl>()){
+    profile(kind);impl_->destination=std::move(destination);impl_->source=std::move(source);impl_->kind=kind;
 }
 IgbFieldCloneConstructorInvocation::~IgbFieldCloneConstructorInvocation(){auto& s=*impl_;if(s.owns && !completed()){
     s.field->construction_fault_=true;if(s.owner)s.owner->unfinished.push_back(s.destination.storage);
@@ -75,7 +85,10 @@ MessengerCallResult IgbFieldCloneConstructorInvocation::resume(std::shared_ptr<I
         s.field->construction_active_=s.token;s.owns=true;
         s.base=std::make_unique<IgbFieldCopyInvocation>(s.destination,s.source);s.phase=P::base;break;
     case P::base:{const auto status=s.base->resume(services?services->copy:nullptr);check();if(!status.completed)return status;
-        s.base.reset();check();s.phase=P::reference_table;break;}
+        s.base.reset();check();s.phase=s.kind==IgbMetaFieldKind::memory_reference?P::reference_table:P::scalar_table;break;}
+    case P::scalar_table:
+        word(0,igb_meta_field_profile(s.kind).vtable);
+        s.field->construction_active_.reset();s.owns=false;s.phase=P::done;return {true,igb_bootstrap_address(s.destination),{}};
     case P::reference_table:word(0,0x80471384);s.phase=P::construct;break;
     case P::construct:
         if(!source().flag_34)return pending("Field copy requires source construct flag+34.");
@@ -119,14 +132,16 @@ MessengerCallResult IgbFieldCloneConstructorInvocation::resume(std::shared_ptr<I
 struct IgbFieldCloneInvocation::Impl {
     enum class P {gate,registration,reflected,after_reflected,allocate,construct,result,call,done};
     std::shared_ptr<IgbDecodeRuntimeField> source,result;std::uint32_t argument{};
+    IgbMetaFieldKind kind=IgbMetaFieldKind::memory_reference;
     std::shared_ptr<IgbFieldCloneServices> owner;IgbBootstrapPointer allocation;
     std::unique_ptr<IgbRawAllocationInvocation> allocator;
     std::unique_ptr<IgbFieldCloneConstructorInvocation> constructor;
     std::unique_ptr<IgbRegistrationCallbacksInvocation> registration;
     Call call;P phase=P::gate,after=P::done;bool running{},fault{};
 };
-IgbFieldCloneInvocation::IgbFieldCloneInvocation(std::shared_ptr<IgbDecodeRuntimeField> source,std::uint32_t argument):impl_(std::make_unique<Impl>()){
-    impl_->source=std::move(source);impl_->argument=argument;
+IgbFieldCloneInvocation::IgbFieldCloneInvocation(std::shared_ptr<IgbDecodeRuntimeField> source,std::uint32_t argument,
+    IgbMetaFieldKind kind):impl_(std::make_unique<Impl>()){
+    profile(kind);impl_->source=std::move(source);impl_->argument=argument;impl_->kind=kind;
 }
 IgbFieldCloneInvocation::~IgbFieldCloneInvocation(){auto& s=*impl_;if(!completed() && s.owner && s.allocation.storage)s.owner->unfinished.push_back(s.allocation.storage);}
 bool IgbFieldCloneInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
@@ -152,20 +167,20 @@ MessengerCallResult IgbFieldCloneInvocation::resume(std::shared_ptr<IgbFieldClon
         if(!f || !f->bootstrap || !f->bootstrap->runtime || !f->bootstrap->runtime->singleton)return pending("Field clone requires represented ArkCore80562100.");
         if(!*f->bootstrap->runtime->singleton)fail("Field clone dereferences a null ArkCore.");
         if((*f->bootstrap->runtime->singleton)->enabled)s.phase=P::registration;
-        else{s.allocator=std::make_unique<IgbRawAllocationInvocation>(0x50,0,nullptr);s.phase=P::allocate;}break;
+        else{s.allocator=std::make_unique<IgbRawAllocationInvocation>(igb_meta_field_profile(s.kind).bytes,0,nullptr);s.phase=P::allocate;}break;
     }
     case P::registration:{const auto f=fields();
         if(s.registration || (f && f->callbacks)){
-            if(!s.registration)s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(0x8002aeac);
+            if(!s.registration)s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(profile(s.kind).body);
             const auto status=s.registration->resume(f?f->callbacks:nullptr);check();if(!status.completed)return status;
             s.registration.reset();check();s.phase=P::reflected;
-        }else select(K::register_type,P::reflected,0x8002ae84);break;
+        }else select(K::register_type,P::reflected,profile(s.kind).wrapper);break;
     }
     case P::reflected:select(K::reflected_clone,P::after_reflected,0x800680b4);break;
     case P::after_reflected:s.allocation=std::move(s.call.operation->allocation_result);clear();s.phase=P::result;break;
     case P::allocate:{const auto f=fields();const auto status=s.allocator->resume(f?f->bootstrap:nullptr);check();if(!status.completed)return status;
         s.allocation=s.allocator->result();s.allocator.reset();check();
-        if(igb_bootstrap_address(s.allocation)){s.constructor=std::make_unique<IgbFieldCloneConstructorInvocation>(s.allocation,s.source);s.phase=P::construct;}
+        if(igb_bootstrap_address(s.allocation)){s.constructor=std::make_unique<IgbFieldCloneConstructorInvocation>(s.allocation,s.source,s.kind);s.phase=P::construct;}
         else s.phase=P::result;break;
     }
     case P::construct:{const auto status=s.constructor->resume(services);check();if(!status.completed)return status;
@@ -179,10 +194,13 @@ MessengerCallResult IgbFieldCloneInvocation::resume(std::shared_ptr<IgbFieldClon
 }
 IgbListDefaultsFactory make_native_igb_list_field_clone_factory(std::shared_ptr<IgbFieldCloneServices> services,IgbListDefaultsFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbListDefaultsCall& call)->std::shared_ptr<IgbListDefaultsOperation>{
-        if(call.kind!=IgbListDefaultsServiceKind::clone_field || call.vtable_word!=0x80476088 || call.virtual_slot!=0x54)
+        if(call.kind!=IgbListDefaultsServiceKind::clone_field ||
+            (call.vtable_word!=0x80476088 && call.vtable_word!=0x80473f24 && call.vtable_word!=0x80473e30) || call.virtual_slot!=0x54)
             return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Field clone services expired before operation selection.");
-        auto invocation=std::make_shared<IgbFieldCloneInvocation>(call.field,call.argument);auto operation=std::make_shared<IgbListDefaultsOperation>();
+        const auto kind=call.vtable_word==0x80473f24?IgbMetaFieldKind::signed_byte:
+            call.vtable_word==0x80473e30?IgbMetaFieldKind::boolean:IgbMetaFieldKind::memory_reference;
+        auto invocation=std::make_shared<IgbFieldCloneInvocation>(call.field,call.argument,kind);auto operation=std::make_shared<IgbListDefaultsOperation>();
         operation->resume=[invocation,selected,out=operation.get()]{const auto status=invocation->resume(selected);
             if(status.completed){out->field_result=invocation->result();out->field_address=igb_bootstrap_address(invocation->allocation());}return status;};return operation;
     };

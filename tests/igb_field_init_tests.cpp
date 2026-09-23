@@ -116,7 +116,49 @@ void object_virtuals() {
     auto boolean_reloaded=f.select(0x58);check(boolean_reloaded->resume().completed && boolean_reloaded->metadata_result==boolean_meta,
         "Boolean getter failed fresh canonical80561E48.");
 }
+
+void string_and_byte_virtuals(){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte}){
+        Fixture f;const bool string=kind==IgbMetaFieldKind::string;
+        f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=string?0x8047693c:0x80473f24;
+        f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
+        f.services->registration->meta_fields=std::make_shared<IgbMetaFieldFactoryServices>();
+        auto cell=std::make_shared<IgbRegistrationMetaSlot>();
+        f.services->registration->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]=cell;
+        for(const auto slot:{0x0cu,0x24u,0x34u})check(f.select(slot)->resume().completed,"Scalar/string verified object leaf did not return.");
+        if(!string)check(f.select(0x2c)->resume().completed,"Signed-byte tail invented default-buffer work.");
+        auto getter=f.select(0x58);check(!getter->resume().completed,"Unknown scalar/string metadata became a ready object.");
+        *cell=std::shared_ptr<IgbRuntimeMetaType>{};check(getter->resume().completed && !getter->metadata_result,"Plain scalar/string getter registered a null class.");
+        auto type=std::make_shared<IgbRuntimeMetaType>();*cell=type;
+        check(getter->resume().completed && getter->metadata_result==type,"Scalar/string getter failed its fresh global read.");
+    }
+    Fixture f;f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=0x8047693c;
+    igb_bootstrap_write_word({f.call.object.storage,f.call.object.offset},0,0x8047693c);
+    unsigned selections{},polls{};bool ready{};
+    f.services->values->fields->factory=[&](const IgbFieldOperationCall& request){
+        ++selections;check(request.vtable_word==0x8047693c && request.virtual_slot==0x8c && !request.source,
+            "String tail did not select its actual null-input buffer virtual.");
+        auto op=std::make_shared<IgbFieldOperation>();op->resume=[&]{++polls;return MessengerCallResult{ready,0,{}};};return op;
+    };
+    auto tail=f.select(0x2c);check(!tail->resume().completed && selections==1 && polls==1,"String tail skipped its retained field virtual.");
+    igb_bootstrap_write_word({f.call.object.storage,f.call.object.offset},0,0x80473e30);
+    f.services->values->fields->factory={};ready=true;
+    check(tail->resume().completed && selections==1 && polls==2 && tail->resume().completed && polls==2,
+        "Pending string tail reselected its target or repeated a completed callback.");
+    Fixture invalid;invalid.call.kind=IgbObjectInitServiceKind::object_virtual;invalid.call.vtable_word=0x8047693c;
+    rejects([&]{invalid.select(0x2c)->resume();},"String tail ignored uninitialized physical vtable bytes.");
+    for(const auto table:{0x8047693cu,0x804762fcu}){
+        Fixture null;null.call.kind=IgbObjectInitServiceKind::object_virtual;null.call.vtable_word=table;
+        igb_bootstrap_write_word({null.call.object.storage,null.call.object.offset},0,0);
+        unsigned callbacks{};null.services->values->fields->factory=[&](const IgbFieldOperationCall&){++callbacks;return std::shared_ptr<IgbFieldOperation>{};};
+        auto invocation=null.select(0x2c);
+        rejects([&]{invocation->resume();},"Descriptor tail called a virtual through a represented null physical table.");
+        check(callbacks==0,"Null physical table allowed a later descriptor callback.");
+        rejects([&]{invocation->resume();},"Faulted null-table descriptor tail resumed.");
+    }
 }
-int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();
+
+}
+int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();string_and_byte_virtuals();
     std::cout<<"igb_field_init_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

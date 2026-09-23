@@ -18,7 +18,11 @@ constexpr std::array profiles{
     IgbFieldTypeProfile{"igMemoryRefMetaField",0x80561818,0x8002ae84,0x8002aeac,0x50,0,0x80027360,0x80025494,
         0x8002af20,0x8002ad90,0x8002af40,0,0x8002ad54,0,0x804649f0,{0x8002a6b0,0x8002b178,0}},
     IgbFieldTypeProfile{"igBoolMetaField",0x80561e48,0x80038800,0x80038828,0x34,0,0x8002a6d8,0x80021d70,
-        0x80038890,0x80038778,0,0x80038700,0x8003873c,0,0x8055d690,{0x800388b0,0,0}}
+        0x80038890,0x80038778,0,0x80038700,0x8003873c,0,0x8055d690,{0x800388b0,0,0}},
+    IgbFieldTypeProfile{"igStringMetaField",0x805615b4,0x800253dc,0x80025404,0x3c,0,0x80027360,0x80025494,
+        0x80025474,0x80025348,0x8002549c,0,0x8002530c,0,0x8055d0e8,{0x80025628,0,0}},
+    IgbFieldTypeProfile{"igCharMetaField",0x80561e1c,0x80037d00,0x80037d28,0x34,0,0x8002a6d8,0x80021d70,
+        0x80037d90,0x80037c78,0,0,0x80037c3c,0,0x8055d670,{0x80037db0,0,0}}
 };
 std::optional<Entry> registration_function(std::uint32_t function,bool wrapper){
     for(std::size_t i=0;i<profiles.size();++i)if(function==(wrapper?profiles[i].wrapper:profiles[i].body))return static_cast<Entry>(i);return {};
@@ -42,7 +46,9 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_field_type_metadata_slot(const std:
     if(entry==Entry::reference)return services->reference_metadata;
     const auto kind=entry==Entry::signed_int?IgbMetaFieldKind::signed_int:
         entry==Entry::memory_reference?IgbMetaFieldKind::memory_reference:
-        entry==Entry::boolean?IgbMetaFieldKind::boolean:IgbMetaFieldKind::object;
+        entry==Entry::boolean?IgbMetaFieldKind::boolean:
+        entry==Entry::string?IgbMetaFieldKind::string:
+        entry==Entry::signed_byte?IgbMetaFieldKind::signed_byte:IgbMetaFieldKind::object;
     return services->meta_fields?services->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]:nullptr;
 }
 IgbTypeRegistrationArguments igb_field_type_registration_arguments(const std::shared_ptr<IgbFieldTypeRegistrationServices>& services,Entry entry){

@@ -292,8 +292,63 @@ void boolean_probe(){
     Fixture invalid;invalid.core->vtable_offset=0x34;IgbFieldProbeInvocation outside(invalid.local,IgbMetaFieldKind::boolean);
     rejects([&]{outside.resume(invalid.services);},"Boolean probe accepted an offset beyond its 0x34-byte local.");
 }
+void string_and_signed_byte_probes(){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte}){
+        const auto profile=igb_meta_field_profile(kind);
+        for(std::uint32_t offset=0;offset<profile.bytes;offset+=4){Fixture f;
+            f.local.storage->bytes->bytes.resize(profile.bytes);f.local.storage->bytes->initialized.resize(profile.bytes);f.core->vtable_offset=offset;
+            IgbFieldProbeInvocation run(f.local,kind);
+            check(run.resume(f.services).completed && run.value()==(offset==0?profile.vtable:igb_bootstrap_read_word(f.local,offset)),
+                "String or signed-byte probe did not use its exact local size and reset.");
+            check(f.field->vtable_word==0x80471914 && f.calls.empty(),"String or signed-byte probe executed a cache cleanup.");
+            if(kind==IgbMetaFieldKind::string)check(f.field->flag_35==1 && f.field->flag_38==1 && f.field->flag_27==2 &&
+                igb_bootstrap_read_word(f.local,0x38)==0x01cccccc,"String reset lost reference flags or changed padding.");
+        }
+        Fixture f;f.services->runtime->singleton.reset();IgbFieldProbeInvocation run(f.local,kind);
+        check(!run.resume(f.services).completed && f.field->vtable_word==profile.vtable,"New probe failed to suspend after the exact reset.");
+        auto name=string(1);igb_meta_field_set_name(f.local,name,0x1008);f.services->runtime->singleton=f.core;unsigned polls{};bool ready{};
+        f.action=[&](const IgbDependenciesCall& c,MessengerCallResult& status){++polls;
+            check(c.kind==K::release_string && c.string==name && name->references==0 &&
+                f.field->vtable_word==(polls==1?0x80471914u:0x12345678u),
+                "New probe changed base cleanup or full-word name release.");status.completed=ready;};
+        check(!run.resume(f.services).completed && polls==1,"New probe did not retain its pending name release.");
+        f.core->vtable_offset=4;igb_bootstrap_write_word(f.local,0,0x12345678);ready=true;
+        check(run.resume(f.services).completed && run.value()==profile.vtable && polls==2 && name->references==0 && f.field->vtable_word==0x12345678 &&
+            igb_bootstrap_read_word(f.local,0x0c)==0x1008,"Pending probe replayed capture, destructor stores or reference decrement.");
+        for(const auto references:{0u,0x800001u}){Fixture wrapping;wrapping.services->runtime->singleton.reset();IgbFieldProbeInvocation wrap(wrapping.local,kind);
+            check(!wrap.resume(wrapping.services).completed,"Name wrap fixture did not pause after reset.");
+            auto header=string(references);igb_meta_field_set_name(wrapping.local,header,0x2008);wrapping.services->runtime->singleton=wrapping.core;
+            check(wrap.resume(wrapping.services).completed && header->references==references-1u && wrapping.calls.empty(),
+                "New probe used packed object counts for string cleanup.");
+        }
+        Fixture late;late.services->runtime->singleton.reset();IgbFieldProbeInvocation capture(late.local,kind);
+        check(!capture.resume(late.services).completed,"Late string binding fixture did not pause.");
+        igb_bootstrap_write_word(late.local,0x0c,0x3008);late.services->runtime->singleton=late.core;
+        check(!capture.resume(late.services).completed,"Missing name binding was fabricated.");
+        auto captured=string(2),replacement=string(7);late.services->strings[0x3008]=captured;igb_meta_field_set_name(late.local,replacement,0x4008);
+        check(capture.resume(late.services).completed && captured->references==1 && replacement->references==7,
+            "Late name binding redirected the captured original pointer.");
+        Fixture zero;zero.local.storage->original_address=0xfffffff4;zero.services->runtime->singleton.reset();IgbFieldProbeInvocation skip(zero.local,kind);
+        check(!skip.resume(zero.services).completed,"Member-address guard fixture did not pause.");auto ignored=string(1);
+        igb_meta_field_set_name(zero.local,ignored,0x5008);zero.services->runtime->singleton=zero.core;
+        check(skip.resume(zero.services).completed && ignored->references==1 && zero.calls.empty(),"Probe ignored the original zero member-address branch.");
+        Fixture adapter;IgbTypeRegistrationCall request;request.kind=IgbTypeRegistrationServiceKind::layout_probe;
+        request.function=kind==IgbMetaFieldKind::string?0x80025348:0x80037c78;
+        auto operation=make_native_igb_field_probe_factory(adapter.services)(request);
+        check(operation && !operation->resume().completed,"New probe guessed the legacy object local.");unsigned allocations{};
+        adapter.services->profile_local_storage=[&](IgbMetaFieldKind selected){++allocations;check(selected==kind,"Probe adapter selected another profile.");return adapter.local;};
+        check(operation->resume().completed && allocations==1,"New probe adapter did not resume its late local binding.");
+        Fixture outside;outside.core->vtable_offset=profile.bytes;IgbFieldProbeInvocation invalid(outside.local,kind);
+        rejects([&]{invalid.resume(outside.services);},"New probe accepted a word beyond its original local object.");
+    }
+    Fixture padding;padding.core->vtable_offset=0x38;padding.local.storage->bytes->initialized[0x39]=0;
+    IgbFieldProbeInvocation unreadable(padding.local,IgbMetaFieldKind::string);
+    rejects([&]{unreadable.resume(padding.services);},"String reset fabricated initialized trailing padding.");
+    check(padding.field->vtable_word==0x8047693c,"String padding fault performed later cleanup.");
+}
 }
 int main(){try{reset_and_capture();cleanup_order();missing_bindings_and_failures();adapters();signed_int_probe();
     memory_reset_and_capture();memory_cleanup_order();memory_packed_counts_and_bindings();memory_pending_destructor();memory_failures_and_adapter();boolean_probe();
+    string_and_signed_byte_probes();
     std::cout<<"Field layout probe tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

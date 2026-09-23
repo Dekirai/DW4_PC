@@ -42,6 +42,12 @@ struct Fixture {
         services->values->boolean_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         auto boolean_meta=metadata();boolean_meta->native_size=0x34;boolean_meta->type_word=0x80473e30;
         r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::boolean)]=std::make_shared<IgbRegistrationMetaSlot>(boolean_meta);
+        services->values->string_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        services->values->signed_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        auto string_meta=metadata();string_meta->native_size=0x3c;string_meta->type_word=0x8047693c;
+        auto byte_meta=metadata();byte_meta->native_size=0x34;byte_meta->type_word=0x80473f24;
+        r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::string)]=std::make_shared<IgbRegistrationMetaSlot>(string_meta);
+        r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_byte)]=std::make_shared<IgbRegistrationMetaSlot>(byte_meta);
         fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(4);fields->backing_bytes=backing.storage->bytes;fields->backing_address=0x300000;
         services->registry=std::make_shared<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>>(fields);
         services->schema=std::make_shared<IgbFieldSchemaServices>();services->schema->fields=std::make_shared<IgbFieldOperationsServices>();
@@ -58,7 +64,7 @@ struct Fixture {
     auto slot(E kind){return igb_field_prototype_slot(services,kind);}
 };
 void gates_and_native_reflection(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
         check(gate.resume(f.services).completed && f.created->reference_word==1 && f.fields->count==0,"Existing prototype failed null-only gate.");}
     Fixture unknown;unknown.slot(E::object)->reset();IgbFieldPrototypeInvocation missing(E::object);
     check(!missing.resume(unknown.services).completed && unknown.reflected_calls==0,"Unknown prototype was treated as null.");
@@ -149,7 +155,7 @@ void native_registry(){
     *f.services->registry=f.fields;check(get.resume().completed && get.result()==fields,"Completed registry getter reloaded replacement.");
 }
 void append_release_finalize(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean}){Fixture f;
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte}){Fixture f;
         // The nonnull reference case represents a changed live abstract flag;
         // the canonical cold reference profile returns null in the test above.
         if(kind==E::reference)f.services->registration->reference_metadata->value()->flag_1a=0;
@@ -174,8 +180,8 @@ void append_release_finalize(){
     check(null.fields->count==1 && null.created->reference_word==2 && invalid.faulted(),"Null release fault lost original append/retain prefix.");
 }
 void callbacks_and_missing(){
-    Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;*f.slot(E::signed_int)=f.created;*f.slot(E::memory_reference)=f.created;*f.slot(E::boolean)=f.created;
-    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
+    Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;*f.slot(E::signed_int)=f.created;*f.slot(E::memory_reference)=f.created;*f.slot(E::boolean)=f.created;*f.slot(E::string)=f.created;*f.slot(E::signed_byte)=f.created;
+    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u,0x80025628u,0x80037db0u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
         auto op=factory(c);check(op && op->resume().completed && !op->callbacks_result,"Prototype callback fabricated a returned deferred list.");}
     IgbRegistrationCallbacksCall other;other.kind=IgbRegistrationCallbacksServiceKind::invoke_function;other.function=0x800289f8;check(!factory(other),"Prototype adapter swallowed registration wrapper.");
     Fixture retained;retained.services->registration->types->metadata_pool_handle.reset();IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=0x80028b64;

@@ -24,11 +24,13 @@ struct IgbFieldCloneServices {
     std::vector<IgbBootstrapPointer> completed_allocations;
     std::vector<std::shared_ptr<void>> unfinished;
 };
-// Actual6331C ->6CC88 ->639E4. Source members stay live between the original
-// reads; copied element pointers are nonowning and require numeric bindings.
+// Memory6331C ->6CC88 ->639E4, signed-byte3FFCC ->639E4, or Boolean3EC04
+// ->639E4. Source members stay live between original reads. Only the memory
+// profile copies reference flags and a nonowning element pointer.
 class IgbFieldCloneConstructorInvocation {
 public:
-    IgbFieldCloneConstructorInvocation(IgbBootstrapPointer,std::shared_ptr<IgbDecodeRuntimeField> source);
+    IgbFieldCloneConstructorInvocation(IgbBootstrapPointer,std::shared_ptr<IgbDecodeRuntimeField> source,
+        IgbMetaFieldKind kind=IgbMetaFieldKind::memory_reference);
     ~IgbFieldCloneConstructorInvocation();
     IgbFieldCloneConstructorInvocation(const IgbFieldCloneConstructorInvocation&)=delete;
     IgbFieldCloneConstructorInvocation& operator=(const IgbFieldCloneConstructorInvocation&)=delete;
@@ -37,11 +39,13 @@ public:
     std::shared_ptr<IgbDecodeRuntimeField> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual2ACD8. Disabled reflection allocates through66DD8/66D60, then6331C;
-// enabled reflection registers2AE84 and calls680B4 with the captured argument.
+// Actual2ACD8(memory), 37BC0(signed byte), or38684(Boolean). Disabled reflection
+// allocates through66DD8/66D60 and executes the profile's copy constructor.
+// Enabled reflection registers the selected class, then requires680B4.
 class IgbFieldCloneInvocation {
 public:
-    explicit IgbFieldCloneInvocation(std::shared_ptr<IgbDecodeRuntimeField> source,std::uint32_t argument=1);
+    explicit IgbFieldCloneInvocation(std::shared_ptr<IgbDecodeRuntimeField> source,std::uint32_t argument=1,
+        IgbMetaFieldKind kind=IgbMetaFieldKind::memory_reference);
     ~IgbFieldCloneInvocation();
     IgbFieldCloneInvocation(const IgbFieldCloneInvocation&)=delete;
     IgbFieldCloneInvocation& operator=(const IgbFieldCloneInvocation&)=delete;

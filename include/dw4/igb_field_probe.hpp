@@ -13,7 +13,7 @@ struct IgbFieldProbeServices {
     std::shared_ptr<IgbRuntimeTypesServices> runtime;
     // Physical representation of the original 0x44-byte stack object.
     std::function<IgbBootstrapPointer()> local_storage;
-    // Profile-specific locals: object 0x44 / int or bool 0x34 / memory 0x50 bytes.
+    // Profile-specific locals: object 0x44 / scalar 0x34 / memory 0x50 / string 0x3C.
     std::function<IgbBootstrapPointer(IgbMetaFieldKind)> profile_local_storage;
     std::unordered_map<std::uint32_t,std::shared_ptr<IgbInternedString>> strings;
     std::vector<std::shared_ptr<void>> retained;
@@ -21,8 +21,9 @@ struct IgbFieldProbeServices {
     // continuation. A numeric member alone does not manufacture an owner.
     std::shared_ptr<IgbObjectFieldConstructServices> object_cleanup;
 };
-// Actual80028934(object), 8002E308(int), 8002AD90(memory), and 80038778(bool):
-// reset, capture the word selected by live ArkCore+394, then member cleanup.
+// Actual80028934(object), 8002E308(int), 8002AD90(memory), 80038778(bool),
+// 80025348(string), and 80037C78(signed byte): reset, capture the word selected
+// by live ArkCore+394, then the original profile-specific member cleanup.
 class IgbFieldProbeInvocation {
 public:
     explicit IgbFieldProbeInvocation(IgbBootstrapPointer,IgbMetaFieldKind=IgbMetaFieldKind::object);

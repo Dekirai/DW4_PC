@@ -66,28 +66,30 @@ struct ReferenceClear {
         }catch(...){fault=true;throw;}
     }
 };
-struct ObjectFieldTail {
+struct DescriptorDefaultTail {
     IgbObjectInstance object;
     VirtualCall call;
     bool captured{},done{},running{},fault{};
     MessengerCallResult resume(const std::shared_ptr<IgbFieldInitServices>& services) {
-        if(running || fault){fault=true;fail("Object-field tail requires an unfaulted nonrecursive operation.");}
+        if(running || fault){fault=true;fail("Descriptor default tail requires an unfaulted nonrecursive operation.");}
         if(done)return {true,0,{}};
         struct Guard{bool& v;Guard(bool& value):v(value){v=true;}~Guard(){v=false;}} guard(running);
         try {
-            // Actual6A438 calls return-only667D0, then reloads the object's
+            // Actual6A438(object) /7144C(string) call return-only667D0,
+            // then reload the object's
             // physical table and selects +8C with a null source pointer.
             if(!captured) {
-                if(!object.field || object.file || !object.storage)fail("Object-field tail requires its typed descriptor allocation.");
+                if(!object.field || object.file || !object.storage)fail("Descriptor default tail requires its typed descriptor allocation.");
                 call.request.kind=IgbFieldOperationKind::field_virtual;call.request.field=object.field;
                 call.request.vtable_word=igb_buffer_word(object.storage->bytes,object.offset);
+                if(!call.request.vtable_word)fail("Descriptor default tail dereferences a null physical vtable at +8C.");
                 object.field->vtable_word=call.request.vtable_word;
                 call.request.virtual_slot=0x8c;captured=true;
             }
             const auto status=call.resume(services);
-            if(fault)fail("Object-field tail was invalidated by a callback.");
+            if(fault)fail("Descriptor default tail was invalidated by a callback.");
             if(!status.completed)return status;
-            call.clear();if(fault)fail("Object-field tail was invalidated by callback teardown.");
+            call.clear();if(fault)fail("Descriptor default tail was invalidated by callback teardown.");
             done=true;return {true,0,{}};
         }catch(...){fault=true;throw;}
     }
@@ -101,12 +103,14 @@ IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbField
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbObjectInitCall& call)->std::shared_ptr<IgbObjectInitOperation> {
         const auto delegate=[&]{return remaining?remaining(call):std::shared_ptr<IgbObjectInitOperation>{};};
         if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc ||
-            call.vtable_word==0x80475b60 || call.vtable_word==0x80476088 || call.vtable_word==0x80473e30)) {
+            call.vtable_word==0x80475b60 || call.vtable_word==0x80476088 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c || call.vtable_word==0x80473f24)) {
             const auto kind=call.vtable_word==0x80475b60?IgbFieldTypeKind::signed_int:
                 call.vtable_word==0x80476088?IgbFieldTypeKind::memory_reference:
-                call.vtable_word==0x80473e30?IgbFieldTypeKind::boolean:IgbFieldTypeKind::object;
+                call.vtable_word==0x80473e30?IgbFieldTypeKind::boolean:
+                call.vtable_word==0x8047693c?IgbFieldTypeKind::string:
+                call.vtable_word==0x80473f24?IgbFieldTypeKind::signed_byte:IgbFieldTypeKind::object;
             if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24 ||
-                (kind!=IgbFieldTypeKind::object && call.virtual_slot==0x2c))return leaf();
+                (kind!=IgbFieldTypeKind::object && kind!=IgbFieldTypeKind::string && call.virtual_slot==0x2c))return leaf();
             if(call.virtual_slot!=0x58 && call.virtual_slot!=0x2c)return delegate();
             const auto selected=weak.lock();if(!selected)fail("Field initializer services expired before selection.");
             auto operation=std::make_shared<IgbObjectInitOperation>();
@@ -115,7 +119,7 @@ IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbField
                 if(!cell || !*cell)return pending("Field metadata getter requires its represented canonical class cell.");
                 out->metadata_result=**cell;return MessengerCallResult{true,0,{}};
             };
-            else {auto state=std::make_shared<ObjectFieldTail>();state->object=call.object;
+            else {auto state=std::make_shared<DescriptorDefaultTail>();state->object=call.object;
                 operation->resume=[state,selected]{return state->resume(selected);};}
             return operation;
         }
