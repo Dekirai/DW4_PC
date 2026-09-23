@@ -140,21 +140,28 @@ have native constructors, including signed-short and signed-byte fields.
 The three field classes complete inheritance, schema, layout and publication:
 the chain contains 52 constructed descriptors, 50 default buffers and five
 published types. Abstract prototype callback `80027454` completes its actual
-null reflected-factory branch. Object callback `80028B64` reaches the real
-reflected factory and its `800667F4` initializer after allocating `0x44` bytes.
-Typed field binding in that initializer is the next boundary; the new storage
-has not been initialized or published as canonical prototype `805616EC`.
-Child list metadata `805619CC` retains flags `8`, and parent list metadata
-`805619D4` retains flags `9`; neither list type has finished publication and
-reflection remains disabled. Pool, allocator and BSS prerequisites are
-explicitly prepared. Initial core-list constructors and reserve run in this
-same chain; the separate byte-only backing profile remains covered.
-Continue with typed field initialization, prototype publication, cloning and
-the remaining list defaults and deferred registrations before completing cold
-startup. See
+null reflected-factory branch. Object callback `80028B64` now completes the real
+reflected factory and `800667F4` with a canonical field binding, actual reached
+field passes, string defaults and object-field tail `8006A438`. The prototype
+is published at `805616EC`, appended to its native registry and finalized with
+ordinal and type ordinal zero. Callback cleanup returns to the list chain;
+parent metadata `805619D4` finishes with flags `7` as the sixth published type.
+The current chain contains 52 schema descriptors plus one reflected prototype
+and 53 default buffers. Child metadata `805619CC` remains busy with flags `9`.
+Its native name/index lookup uses the actual published `805617C4` descriptor
+and reaches the inherited memory-reference field's clone virtual `+54` with
+argument 1 (`80476088` vtable). That clone is the next implementation boundary.
+Reflection remains disabled. Recursive member/reference branches outside the
+completed profile remain explicit, together with pool, allocator, callback
+deallocation and BSS prerequisites. Initial core-list constructors and reserve
+run in this same chain; the separate byte-only backing profile remains covered.
+Continue through the original clone, remaining list defaults and deferred
+registrations before completing cold startup. See
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
 [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),

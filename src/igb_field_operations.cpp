@@ -178,7 +178,12 @@ MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldO
         s.phase=P::call;s.after=after;return true;};
     try{for(;;){check();switch(s.phase){
     case P::type:if(!virtual_call(0x5c,P::after_type))return pending("Field finalization requires its live type virtual.");break;
-    case P::after_type:{const auto type=s.call.operation->field_result;clear();s.field->type_ordinal=type?type->ordinal:std::uint16_t{0xffff};s.phase=P::size;break;}
+    case P::after_type:{const auto type=s.call.operation->field_result;clear();const auto ordinal=type?type->ordinal:std::uint16_t{0xffff};
+        if(s.field->physical_storage){const auto& binding=*s.field->physical_storage;auto storage=binding.storage.lock();
+            if(!storage)fail("Field finalization reached expired physical storage.");const IgbBootstrapPointer pointer{storage,binding.offset};
+            if(igb_bootstrap_field(pointer)!=s.field)fail("Field finalization reached a changed physical identity.");
+            igb_bootstrap_write_halfword(pointer,0x10,ordinal);}
+        s.field->type_ordinal=ordinal;s.phase=P::size;break;}
     case P::size:if(!virtual_call(0x64,P::after_size))return pending("Field finalization requires its freshly reloaded size virtual.");break;
     case P::after_size:clear();igb_field_store_size(s.field,static_cast<std::uint16_t>(s.returned));s.phase=P::defaults;break;
     case P::defaults:if(!virtual_call(0x8c,P::global))return pending("Field finalization requires its freshly reloaded default virtual.");break;

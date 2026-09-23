@@ -146,7 +146,7 @@ igObjectRefMetaField`. Defaults `8002A764`, `800273EC`, and `80028AB4` add
 fields after inheritance, with native sizes `34`, `38`, and `44` hexadecimal.
 The two abstract classes do not invent constructor probes; the object field's
 real probe executes its reset/cleanup and publishes vtable identity `804762FC`.
-The same cold chain now has 52 constructed descriptors and 50 default buffers,
+At this registration stage, the cold chain has 52 constructed descriptors and 50 default buffers,
 and the three field classes follow `igObject` and `igMetaObject` in the five-type
 registry. All ten reached descriptor profiles use native constructors and
 field value operations, including the signed-short and signed-byte defaults.
@@ -154,22 +154,38 @@ field value operations, including the signed-short and signed-byte defaults.
 The callback runner then enters reference-prototype callback `80027454`.
 Its real reflected factory `8006546C` returns null for the abstract class.
 Object-prototype callback `80028B64` reaches the concrete reflected allocation
-and then `800667F4`. The allocator provides separate `0x44`-byte storage with
-a field binding; the initializer currently suspends because that typed binding
-is unsupported. This allocation is not counted as a constructed descriptor:
-its original bytes remain unchanged and it has no initialized vtable. Canonical
-object prototype `805616EC` remains null, as do reference prototype `80561688`
-and prototype registry `8056229C`. The latter two use the same canonical
-bootstrap cells with the corrected field-descriptor and field-registry types.
+and now completes `800667F4`. The allocator provides separate `0x44`-byte storage
+with a canonical field binding. The original field passes initialize its 23
+selected members; actual scalar defaults, string defaults, reference gates and
+object-field tail `8006A438` construct the represented state and default buffer.
+The reflected result retains its physical allocation and typed owner. Native
+prototype publication, registry append, release and finalization publish
+`805616EC`, set ordinal and type ordinal to zero, and leave its reference word
+at one. Registry `8056229C` contains that one prototype and the object-field
+class records one instance. Abstract reference prototype `80561688` remains
+null. All canonical pointer/ordinal/reference stores agree with the physical
+object, while padding remains unchanged.
 
-Internal object-list metadata `805619CC` retains flags `8`, and its parent
-`805619D4` retains flags `9`; neither list type has finished publication.
+The callback runner then executes its actual cleanup using explicit backing
+and list deallocation endpoints. Parent non-reference-counted list metadata
+`805619D4` finishes defaults and publication with flags `7` as the sixth type.
+The chain now contains 52 schema descriptors plus one reflected prototype and
+53 default buffers. Child object-list metadata `805619CC` remains busy with
+flags `9`. Name lookup uses the actual published name descriptor `805617C4`,
+then native index search selects its inherited `_data` memory-reference field.
+The next boundary is that field's clone virtual `+54`, argument 1, on vtable
+`80476088`. No clone result is fabricated in this cold integration.
+
 `igMetaObject` retains flags `7`, ArkCore remains disabled, and later type-count
-snapshots remain unwritten. Next support typed field initialization, then finish
-prototype publication, cloning and the remaining list defaults. See
+snapshots remain unwritten. Recursive reference/member initialization branches
+outside the completed prototype profile remain explicit operations. Next finish
+the original memory-reference clone, remaining list defaults and deferred
+registrations. See
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
 [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md) and
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
 Initial ArkCore lists and their reserve operation execute natively in this

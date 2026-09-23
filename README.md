@@ -94,7 +94,8 @@ field defaults remain required before this original dependency can be created.
 The generic type registrar now preserves original parent/default/registry/layout
 ordering and deferred callback lists. Concrete integer and boolean field
 handlers perform the original default-byte copies inside the object initializer;
-reference fields and automatically constructed directory lists remain required.
+remaining recursive reference/member operations and automatically constructed
+directory lists remain required.
 Separate metadata and internal-field-list constructor chains now preserve actual
 header/default writes, pool selection and backing allocation boundaries. Their
 allocator and reflective registration endpoints remain explicit; this does not
@@ -129,17 +130,24 @@ value operations. The three field classes finish registration, bringing the
 chain to 52 constructed descriptors, 50 default buffers, and five published
 types. Abstract reference-prototype callback `80027454` executes the real
 reflected factory's null branch; concrete object-prototype callback `80028B64`
-then allocates its `0x44`-byte storage and reaches initializer `800667F4`.
-That initializer still needs typed field binding support. The prototype storage
-remains uninitialized and canonical prototype `805616EC` remains null.
-Internal list metadata `805619CC` and `805619D4` retain flags `8` and `9`;
-neither list type is published, and reflection remains disabled. Next extend
-typed field initialization, then finish prototype publication, cloning, and
-the remaining list defaults. Pools, physical allocation and initial BSS bindings
-remain explicit fixture prerequisites. See
+now initializes its `0x44`-byte allocation through actual `800667F4`, the reached
+field passes, string defaults, and object-field tail `8006A438`. Native prototype
+publication, registry append and finalization produce canonical `805616EC`
+with ordinal and type ordinal zero. The chain now contains 52 schema descriptors
+plus that reflected prototype, 53 default buffers, and six published types:
+parent non-reference-counted list `805619D4` also completes with flags `7`.
+Child list `805619CC` remains busy with flags `9`. Its actual name/index search,
+using canonical name descriptor `805617C4`, reaches the inherited memory-reference
+field's clone virtual `+54`, argument 1. That clone is the next boundary;
+reflection remains disabled. Recursive reference/member operations outside the
+completed profile remain explicit, as do pools, physical allocation, callback
+deallocation and initial BSS prerequisites. Continue with the original clone,
+remaining list defaults and deferred registrations. See
 [IGB_FIELD_TYPE_REGISTRATION.md](docs/IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](docs/IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](docs/IGB_FIELD_PROTOTYPE.md),
+[IGB_FIELD_INIT.md](docs/IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](docs/IGB_FIELD_STRING_INIT.md),
 [IGB_LIST_REGISTRATION.md](docs/IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](docs/IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),

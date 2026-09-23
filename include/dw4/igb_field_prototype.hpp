@@ -27,7 +27,7 @@ struct IgbFieldPrototypeServices {
     std::shared_ptr<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>> registry; //Canonical8056229C.
     std::shared_ptr<IgbFieldRegistryServices> registries;
     // When bound, execute actual6546C and its retained667F4 initializer.
-    // Current concrete typed-field initialization remains a reached boundary.
+    // File/field result identities remain distinct throughout construction.
     std::shared_ptr<IgbFileFactoryServices> reflected;
     std::shared_ptr<IgbFieldSchemaServices> schema;
     // Explicit typed reflection endpoint when reflected services are absent;

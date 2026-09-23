@@ -84,11 +84,21 @@ three-query reserve growth, unchanged list counts, null and unknown bindings,
 self-assignment, adapters and recursive-failure propagation.
 
 The original object-field metadata registration body and its parent registrations
-now complete in the composed cold test. Its wrapper remains in the deferred
-prototype callback, which reaches typed
-field initialization `800667F4`; that initialization and the field clone body
-remain unfinished. A two-field schema or a successful prepared clone test is
-not proof of complete original registration or native game startup. See
+now complete in the composed cold test. Its wrapper also completes the concrete
+prototype callback through actual typed `800667F4` initialization, reached field
+passes and `8006A438` tail, then native prototype publication and callback cleanup.
+The parent list's two-field defaults and publication complete; metadata
+`805619D4` becomes the sixth type with flags `7`. Child `805619CC` remains busy
+with flags `9`. The actual name descriptor published at `805617C4` feeds native
+name/index search, reaching the inherited `_data` memory-reference descriptor's
+clone virtual `+54`, argument 1, vtable `80476088`. That clone remains unbound
+in the cold integration; subsequent child replacement/publication and other
+deferred registrations remain unfinished. ArkCore stays disabled. The chain
+contains 52 schema descriptors plus the reflected object-field prototype and
+53 default buffers. Recursive reference/member operations beyond that completed
+prototype profile remain explicit. A successful prepared clone test is not
+proof of its original body or complete native startup. See
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md) and
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md). Source
 evidence is the user-supplied USA `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`; original bytes and generated

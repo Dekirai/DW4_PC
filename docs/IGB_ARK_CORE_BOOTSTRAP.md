@@ -82,8 +82,21 @@ The current composition also completes that metadata's probe and defaults,
 enters deferred list registration and registers the three reached field classes.
 It constructs 52 descriptors and publishes five types. Abstract reference-field
 prototype creation returns null through the actual reflected factory; concrete
-object-field prototype creation reaches typed initialization `800667F4`.
-The core remains disabled at that boundary. See
+object-field prototype creation now completes typed initialization `800667F4`,
+the reached field passes and tail `8006A438`. Its native registry publication
+and finalization produce canonical `805616EC` with ordinal and type ordinal
+zero. The prototype registry contains one descriptor; the object-field class
+records one instance. After actual callback cleanup through explicit deallocation
+endpoints, parent list metadata `805619D4` publishes as the sixth type with
+flags `7`. The composition now has 52 schema descriptors plus one reflected
+prototype and 53 default buffers. Child list `805619CC` remains busy with flags
+`9`. Actual name/index lookup through canonical name descriptor `805617C4`
+reaches its inherited memory-reference descriptor's clone virtual `+54` with
+argument 1 (`80476088` vtable). The core remains disabled at that unfinished
+clone; recursive member/reference operations beyond the completed prototype
+profile and later startup remain required. See
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
 [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
 [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),

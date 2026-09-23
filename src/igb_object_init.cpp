@@ -7,19 +7,37 @@ namespace {
 [[noreturn]] void fail(const char* message) {throw IgbObjectInitError(message);}
 MessengerCallResult pending(const char* message) {return {false,0,message};}
 std::int32_t increment(std::int32_t value) {return std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(value)+1u);}
+void synchronize_header(const IgbObjectInstance& object,std::uint32_t relative,std::uint32_t width) {
+    const auto synchronize=[&](std::uint32_t header)->std::optional<std::uint32_t> {
+        if(relative>=header+4u || static_cast<std::uint64_t>(relative)+width<=header)return {};
+        const auto bytes=object.storage->bytes;const auto at=static_cast<std::uint64_t>(object.offset)+header;
+        if(!bytes || bytes->released || at>bytes->bytes.size() || bytes->bytes.size()-at<4 ||
+            at>bytes->initialized.size() || bytes->initialized.size()-at<4)return {};
+        for(unsigned byte=0;byte<4;++byte)if(!bytes->initialized[static_cast<std::size_t>(at)+byte])return {};
+        return igb_buffer_word(bytes,static_cast<std::size_t>(at));
+    };
+    if(const auto word=synchronize(0);word && object.field)object.field->vtable_word=*word;
+    if(const auto word=synchronize(4)) {
+        if(object.file)object.file->reference_word=*word;
+        if(object.field)object.field->reference_word=*word;
+    }
+}
 void write_byte(const IgbObjectInstance& object,std::uint32_t relative,std::uint8_t value) {
     const auto position=object.offset+relative;const auto bytes=object.storage->bytes;
     if(!bytes || bytes->released || position>=bytes->bytes.size() || position>=bytes->initialized.size())
         fail("Object initialization reaches unavailable physical write storage.");
     bytes->bytes[position]=value;bytes->initialized[position]=1;
+    synchronize_header(object,relative,1);
 }
 void write_word(const IgbObjectInstance& object,std::uint32_t relative,std::uint32_t value) {
     const auto position=object.offset+relative;const auto bytes=object.storage->bytes;
     if(!bytes || bytes->released || position>bytes->bytes.size() || bytes->bytes.size()-position<4 ||
         position>bytes->initialized.size() || bytes->initialized.size()-position<4)
         fail("Object initialization reaches unavailable physical word storage.");
-    for(unsigned byte=0;byte<4;++byte)write_byte(object,relative+byte,static_cast<std::uint8_t>(value>>(24u-8u*byte)));
-    if(relative==4)object.file->reference_word=value;
+    for(unsigned byte=0;byte<4;++byte) {
+        bytes->bytes[position+byte]=static_cast<std::uint8_t>(value>>(24u-8u*byte));bytes->initialized[position+byte]=1;
+    }
+    synchronize_header(object,relative,4);
 }
 std::shared_ptr<IgbDecodeRuntimeField> physical(const std::shared_ptr<IgbDecodeFieldRegistry>& list,std::int32_t index) {
     if(index<0 || index>=262144 || !list->backing || static_cast<std::size_t>(index)>=list->backing->size())
@@ -29,11 +47,11 @@ std::shared_ptr<IgbDecodeRuntimeField> physical(const std::shared_ptr<IgbDecodeF
 }
 }
 std::uint32_t igb_object_reference_word(const IgbObjectInstance& object) {
-    if(!object.storage || !object.file)fail("Object header access requires represented storage and a typed binding.");
+    if(!object.storage || bool(object.file)==bool(object.field))fail("Object header access requires represented storage and one typed binding.");
     return igb_buffer_word(object.storage->bytes,object.offset+4u);
 }
 void igb_object_set_reference_word(const IgbObjectInstance& object,std::uint32_t value) {
-    if(!object.storage || !object.file)fail("Object header access requires represented storage and a typed binding.");
+    if(!object.storage || bool(object.file)==bool(object.field))fail("Object header access requires represented storage and one typed binding.");
     write_word(object,4,value);
 }
 struct IgbObjectInitInvocation::Impl {
@@ -66,19 +84,29 @@ IgbObjectInitInvocation::~IgbObjectInitInvocation() {
     if(impl_->owns && !completed()) {
         impl_->object.storage->fault_=true;
         if(impl_->object.file)impl_->object.storage->unreleased_.push_back(impl_->object.file);
+        if(impl_->object.field) {
+            impl_->object.field->construction_fault_=true;
+            impl_->object.storage->unreleased_.push_back(impl_->object.field);
+        }
     }
 }
 bool IgbObjectInitInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
 bool IgbObjectInitInvocation::faulted() const noexcept {return impl_->fault;}
+IgbObjectInstance IgbObjectInitInvocation::result_instance() const {
+    if(!completed() || faulted())fail("Incomplete object initialization has no constructed instance result.");return impl_->object;
+}
 std::shared_ptr<LoaderRequestFile> IgbObjectInitInvocation::result() const {
-    if(!completed() || faulted())fail("Incomplete object initialization has no constructed file result.");return impl_->object.file;
+    const auto object=result_instance();
+    if(object.field)fail("A constructed field cannot be returned through the file adapter.");return object.file;
 }
 MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectInitServices> services) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbObjectInitServiceKind;
-    if(s.running || s.fault) {s.fault=true;if(s.owns)s.object.storage->fault_=true;fail("Object initialization requires an unfaulted nonrecursive invocation.");}
+    const auto invalidate=[&] {s.fault=true;if(s.owns) {s.object.storage->fault_=true;if(s.object.field)s.object.field->construction_fault_=true;}};
+    if(s.running || s.fault) {invalidate();fail("Object initialization requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     struct Running {bool& v;Running(bool& flag):v(flag){v=true;}~Running(){v=false;}} running(s.running);
-    const auto check=[&] {if(s.fault || (s.owns && s.object.storage->fault_))fail("Object initialization continuation was invalidated.");};
+    const auto check=[&] {if(s.fault || (s.owns && (s.object.storage->fault_ ||
+        (s.object.field && s.object.field->construction_fault_))))fail("Object initialization continuation was invalidated.");};
     const auto clear=[&] {s.callback={};s.factory={};s.operation.reset();s.request={};check();};
     const auto select=[&](K kind,P after)->IgbObjectInitCall& {
         clear();s.request.kind=kind;s.request.object=s.object;s.request.metadata=s.metadata;
@@ -89,6 +117,7 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
         // before the next original vtable load, not inside select afterwards.
         clear();
         const auto word=igb_buffer_word(s.object.storage->bytes,s.object.offset);
+        if(s.object.field)s.object.field->vtable_word=word;
         auto& request=select(K::object_virtual,after);request.virtual_slot=slot;request.vtable_word=word;request.argument=argument;
     };
     const auto field_virtual=[&](std::uint32_t slot,P after) {
@@ -97,15 +126,32 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
     const auto core_available=[&] {return services && services->runtime && services->runtime->singleton.has_value();};
     try {
         for(;;) {check();switch(s.phase) {
-        case P::bind:
+        case P::bind: {
             if(!s.object.storage)fail("Object initialization has no represented allocation.");
             if(s.object.storage->fault_ || !s.object.storage->active_.expired())fail("Object allocation is faulted or already initializing.");
+            unsigned selected_kind{};std::shared_ptr<void> selected_owner;
+            s.object.file.reset();s.object.field.reset();
             for(const auto& binding:s.object.storage->bindings)if(binding.offset==s.object.offset) {
-                if(s.object.file && s.object.file!=binding.file)fail("Object offset has conflicting native layout bindings.");
-                s.object.file=binding.file;
+                const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u)|
+                    (binding.types?8u:0u)|(binding.field?16u:0u);
+                if(kind && (kind&(kind-1u)))fail("Object offset has conflicting native layout kinds.");
+                std::shared_ptr<void> owner;
+                if(binding.file)owner=binding.file;else if(binding.metadata)owner=binding.metadata;
+                else if(binding.fields)owner=binding.fields;else if(binding.types)owner=binding.types;else if(binding.field)owner=binding.field;
+                if(kind && selected_kind && (kind!=selected_kind || owner!=selected_owner))fail("Object offset has conflicting native layout bindings.");
+                if(kind) {selected_kind=kind;selected_owner=owner;}
+                if(binding.file)s.object.file=binding.file;if(binding.field)s.object.field=binding.field;
             }
-            if(!s.object.file)return pending("Object initialization requires a typed binding at its adjusted allocation offset.");
+            if(!s.object.file && !s.object.field)return pending("Object initialization requires a supported typed binding at its adjusted allocation offset.");
+            if(s.object.field) {
+                const auto field=s.object.field;
+                if(field->construction_fault_ || !field->construction_active_.expired())fail("Object field is faulted or already initializing.");
+                if(field->physical_storage && (field->physical_storage->storage.lock()!=s.object.storage || field->physical_storage->offset!=s.object.offset))
+                    fail("Object field has a conflicting physical allocation binding.");
+                field->physical_storage=IgbFieldStorageBinding{s.object.storage,s.object.offset};field->construction_active_=s.token;
+            }
             s.object.storage->active_=s.token;s.owns=true;s.phase=P::core;break;
+        }
         case P::core:
             if(!core_available())return pending("Object initialization requires ArkCore global80562100.");
             s.core=*services->runtime->singleton;s.phase=P::type_word;break;
@@ -136,7 +182,6 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
         case P::pool_index:select(K::pool_index,P::after_pool_index).pool=s.pool;break;
         case P::after_pool_index:
             clear();write_byte(s.object,4,static_cast<std::uint8_t>(s.returned));
-            s.object.file->reference_word=igb_object_reference_word(s.object);
             s.pass=0;s.phase=P::pass;break;
         case P::pass:object_virtual(0x58,P::after_pass_metadata);break;
         case P::after_pass_metadata:
@@ -207,8 +252,8 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             {const auto result=s.callback();check();if(!result.completed)return result;s.returned=result.value;s.phase=s.after;}
             break;
         case P::done:
-            clear();s.object.storage->active_.reset();s.owns=false;return {true,0,{}};
+            clear();s.object.storage->active_.reset();if(s.object.field)s.object.field->construction_active_.reset();s.owns=false;return {true,0,{}};
         }}
-    }catch(...) {s.fault=true;if(s.owns)s.object.storage->fault_=true;throw;}
+    }catch(...) {invalidate();throw;}
 }
 } // namespace dw4

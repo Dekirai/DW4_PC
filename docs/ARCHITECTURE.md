@@ -124,8 +124,14 @@ second registry lookup preserve the exact published type index. Layout assigns
 alignment, prefix and field ownership, then sets flag4 before dispatching the
 captured-count registration callbacks; it does not rewrite native size. The
 base registration completes and actual child-list construction/inherited field
-append reach metadata constructor probe `80029FFC`, with reflection still
-disabled. Descriptor-global and declaring-type pointers are weak bindings:
+append feed metadata constructor probe `80029FFC`. The current composition
+also completes that schema, three field-class registrations and the reflected
+object-field prototype through actual `800667F4` and all three field passes.
+Files and fields retain separate typed results and canonical physical stores.
+Prototype publication and parent-list registration bring the chain to six
+types; the internal-list override reaches its required memory-field clone,
+with reflection still disabled. See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md).
+Descriptor-global and declaring-type pointers are weak bindings:
 unrepresented, original null and expired nonnull storage remain distinct. Guest
 reference counts remain separate from host ownership. See
 [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),

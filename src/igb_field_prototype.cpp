@@ -8,6 +8,20 @@ namespace {
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running{bool& flag;explicit Running(bool& value):flag(value){flag=true;}~Running(){flag=false;}};
 void profile(IgbFieldTypeKind kind){if(kind!=IgbFieldTypeKind::reference && kind!=IgbFieldTypeKind::object)fail("Unsupported field prototype callback.");}
+std::optional<IgbBootstrapPointer> physical_field(const std::shared_ptr<IgbDecodeRuntimeField>& field){
+    if(!field->physical_storage)return {};
+    const auto& binding=*field->physical_storage;IgbBootstrapPointer pointer{binding.storage.lock(),binding.offset};
+    if(!pointer.storage || igb_bootstrap_field(pointer)!=field)fail("Prototype store requires its live canonical physical field binding.");
+    return pointer;
+}
+void store_reference(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t value){
+    if(const auto pointer=physical_field(field))igb_bootstrap_write_word(*pointer,4,value);
+    field->reference_word=value;
+}
+void store_ordinal(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint16_t value){
+    if(const auto pointer=physical_field(field))igb_bootstrap_write_halfword(*pointer,0x12,value);
+    field->ordinal=value;
+}
 }
 std::shared_ptr<IgbRuntimeFieldSlot> igb_field_prototype_slot(const std::shared_ptr<IgbFieldPrototypeServices>& services,IgbFieldTypeKind kind){
     profile(kind);if(!services)return {};if(kind==IgbFieldTypeKind::reference)return services->reference_prototype;
@@ -66,6 +80,7 @@ struct IgbFieldPrototypeInvocation::Impl {
     std::unique_ptr<IgbPoolByHandleInvocation> lookup;
     std::unique_ptr<IgbReflectedFactoryInvocation> reflected;
     std::shared_ptr<IgbFileFactoryServices> reflected_services;
+    IgbObjectInstance reflected_instance;
     std::unique_ptr<IgbFieldPrototypeRegistryInvocation> registry_getter;
     std::shared_ptr<IgbMetadataOperation> append;
     std::function<MessengerCallResult()> append_callback;
@@ -107,8 +122,12 @@ MessengerCallResult IgbFieldPrototypeInvocation::resume(std::shared_ptr<IgbField
         if(s.reflected || (services && services->reflected)){
             if(!s.reflected){s.reflected_services=services->reflected;s.reflected=std::make_unique<IgbReflectedFactoryInvocation>(s.metadata,s.pool);}
             const auto status=s.reflected->resume(s.reflected_services);check();if(!status.completed)return status;
-            if(s.reflected->result())fail("Reflected prototype returned a file binding instead of a typed field descriptor.");
-            s.field.reset();s.address=0;s.reflected.reset();s.reflected_services.reset();check();s.phase=P::publish;
+            s.reflected_instance=s.reflected->result_instance();
+            if(s.reflected_instance.file)fail("Reflected prototype returned a file binding instead of a typed field descriptor.");
+            s.field=s.reflected_instance.field;
+            s.address=(s.reflected_instance.storage?s.reflected_instance.storage->original_address:0u)+s.reflected_instance.offset;
+            if(s.field && s.reflected_instance.storage)s.owner->retained.push_back(s.reflected_instance.storage);
+            s.reflected.reset();s.reflected_services.reset();check();s.phase=P::publish;
         }else{auto& request=select(K::reflected_field,P::after_reflected);request.function=0x8006546c;request.metadata=s.metadata;request.pool=s.pool;}break;
     case P::after_reflected:s.field=s.operation->field_result;s.address=s.operation->field_address;clear();s.phase=P::publish;break;
     case P::publish:
@@ -117,7 +136,7 @@ MessengerCallResult IgbFieldPrototypeInvocation::resume(std::shared_ptr<IgbField
         if(!s.field)s.phase=P::done;else{s.registry_getter=std::make_unique<IgbFieldPrototypeRegistryInvocation>();s.phase=P::registry;}break;
     case P::registry:{const auto status=s.registry_getter->resume(services);check();if(!status.completed)return status;
         s.registry=s.registry_getter->result();s.registry_getter.reset();check();s.phase=P::retain;break;}
-    case P::retain:++s.field->reference_word;s.phase=P::append;break;
+    case P::retain:store_reference(s.field,s.field->reference_word+1u);s.phase=P::append;break;
     case P::append:
         bind();if(!s.append){const auto lists=pointers();if(!lists)return pending("Prototype append requires actual pointer-list services.");
             IgbMetadataOperationCall request;request.kind=IgbMetadataOperationKind::append_field;request.fields=s.registry;request.field=s.field;
@@ -127,7 +146,7 @@ MessengerCallResult IgbFieldPrototypeInvocation::resume(std::shared_ptr<IgbField
         {const auto status=s.append_callback();check();if(!status.completed)return status;}
         s.append_callback={};s.append.reset();check();s.phase=P::release;break;
     case P::release:
-        if(!live())return pending("Prototype release requires its live canonical descriptor.");--s.live->reference_word;
+        if(!live())return pending("Prototype release requires its live canonical descriptor.");store_reference(s.live,s.live->reference_word-1u);
         if((s.live->reference_word&0x7fffffu)==0){const auto field=s.live;auto& request=select(K::destroy_field,P::after_destroy);request.function=0x80066e1c;request.field=field;}
         else s.phase=P::after_destroy;break;
     case P::after_destroy:clear();s.live.reset();s.registry_getter=std::make_unique<IgbFieldPrototypeRegistryInvocation>();s.phase=P::registry_again;break;
@@ -135,7 +154,7 @@ MessengerCallResult IgbFieldPrototypeInvocation::resume(std::shared_ptr<IgbField
         s.registry=s.registry_getter->result();s.registry_getter.reset();check();
         if(!s.registry)fail("Prototype ordinal reads count from null registry.");s.ordinal=static_cast<std::uint16_t>(std::bit_cast<std::uint32_t>(s.registry->count)-1u);s.phase=P::ordinal;break;}
     case P::ordinal:
-        if(!live())return pending("Prototype ordinal requires its reloaded canonical descriptor.");s.live->ordinal=s.ordinal;s.live.reset();s.phase=P::finalize_capture;break;
+        if(!live())return pending("Prototype ordinal requires its reloaded canonical descriptor.");store_ordinal(s.live,s.ordinal);s.live.reset();s.phase=P::finalize_capture;break;
     case P::finalize_capture:
         if(!live())return pending("Prototype finalization requires its reloaded descriptor.");s.finalize=std::make_unique<IgbFieldFinalizeInvocation>(s.live);s.phase=P::finalize;break;
     case P::finalize:{const auto status=s.finalize->resume(services && services->schema?services->schema->fields:nullptr);check();if(!status.completed)return status;

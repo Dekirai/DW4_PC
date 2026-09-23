@@ -180,19 +180,31 @@ constructed descriptors, 50 default buffers and five published types.
 
 Reference prototype callback `80027454` executes the actual reflected factory
 `8006546C`; its abstract metadata correctly produces null. Object callback
-`80028B64` then executes the concrete branch and reaches initializer
-`800667F4` after the explicit allocator returns `0x44` bytes. Supporting its
-typed field binding is the next implementation step. The allocated prototype
-storage remains unchanged, and canonical prototype `805616EC` is still null.
-The prototype-list cell `8056229C` and reference-prototype cell `80561688`
-share the original bootstrap globals, with field-registry and field-descriptor
-types. No ready prototype or replacement success callback bypasses this work.
-Internal object-list metadata `805619CC` retains flags `8`, and its parent
-`805619D4` retains flags `9`; neither list type has finished publication.
-Reflection remains disabled until the callback runner completes. See
+`80028B64` now completes the concrete branch through typed field initialization
+`800667F4`, its reached scalar/reference/string passes and actual object-field
+tail `8006A438`. A separate `0x44`-byte allocation is initialized and retained,
+then published at `805616EC`, appended to registry `8056229C` and finalized.
+The prototype has ordinal and type ordinal zero; reference prototype `80561688`
+remains null. These cells share the original bootstrap globals with the correct
+field-registry and field-descriptor types. No ready prototype or replacement
+success callback bypasses this construction.
+
+Actual callback cleanup returns to the original list defaults. Parent list
+metadata `805619D4` completes with flags `7` as the sixth published type. The
+chain now holds 52 schema descriptors plus one reflected prototype and 53
+default buffers. Child list metadata `805619CC` remains busy with flags `9`.
+The published name descriptor `805617C4` feeds actual name/index lookup, which
+selects the inherited memory-reference descriptor's `80476088` vtable and
+clone virtual `+54` with argument 1. That original clone is the next boundary.
+Reflection remains disabled until the outer callback runner completes. Recursive
+member construction/reset and nonnull reference operations beyond this profile
+remain explicit dependencies; supporting a typed field does not complete every
+field class. See
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
 [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
@@ -208,8 +220,8 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue with typed field initialization in `800667F4`, then prototype
-publication, cloning and the remaining list defaults. Preserve the deferred callback order
+Continue with the reached memory-reference field clone and remaining list
+defaults. Preserve the deferred callback order
 and the original disabled initialization phase. Complete the remaining class
 registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the

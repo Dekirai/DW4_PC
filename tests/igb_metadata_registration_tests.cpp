@@ -17,6 +17,7 @@
 #include "dw4/igb_field_type_defaults.hpp"
 #include "dw4/igb_field_probe.hpp"
 #include "dw4/igb_field_prototype.hpp"
+#include "dw4/igb_field_init.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -707,8 +708,9 @@ void actual_cold_bootstrap_prefix(){
     std::vector<IgbListDefaultsCall> list_defaults_calls;
     IgbListDefaultsFactory reached_list_operations;
     list_defaults->factory=[&](const IgbListDefaultsCall& c){
+        list_defaults_calls.push_back(c);
         if(reached_list_operations)return reached_list_operations(c);
-        list_defaults_calls.push_back(c);return std::shared_ptr<IgbListDefaultsOperation>{};};
+        return std::shared_ptr<IgbListDefaultsOperation>{};};
     values->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
     f.remaining=make_native_igb_list_defaults_factory(list_defaults,f.remaining);
     const auto prototype_boundary=call.resume(bootstrap);
@@ -766,6 +768,9 @@ void actual_cold_bootstrap_prefix(){
     f.remaining=make_native_igb_field_type_registration_type_factory(field_types,f.remaining);
     auto field_defaults=std::make_shared<IgbFieldTypeDefaultsServices>();field_defaults->registration=field_types;
     field_defaults->schema=metadata_defaults->schema;field_defaults->metadata=f.services;
+    // The class-default publication and later list-name lookup address the
+    // same original805617C4 cell, not a copied or prepopulated descriptor.
+    field_defaults->tables[0].globals->at(1)->slot=std::shared_ptr<IgbRuntimeFieldSlot>(list_defaults,&list_defaults->name_descriptor);
     f.remaining=make_native_igb_field_type_defaults_factory(field_defaults,f.remaining);
     auto field_probe=std::make_shared<IgbFieldProbeServices>();field_probe->fields=object_defaults->meta_fields;
     field_probe->runtime=f.services->types->runtime;auto object_field_local=allocation(0x7d0000,0x44);
@@ -841,16 +846,80 @@ void actual_cold_bootstrap_prefix(){
     };
     additional_callbacks=make_native_igb_field_prototype_function_factory(prototypes,additional_callbacks);
     const auto concrete_prototype=call.resume(bootstrap);
-    check(!concrete_prototype.completed && !call.faulted() && concrete_prototype.diagnostic.find("typed binding")!=std::string::npos && prototype_allocations==1,
+    check(!concrete_prototype.completed && !call.faulted() && concrete_prototype.diagnostic.find("operation")!=std::string::npos && prototype_allocations==1,
         "Native prototype callbacks did not finish the abstract null branch and reach actual concrete667F4.");
     check(bootstrap->reference_prototype && !*bootstrap->reference_prototype && bootstrap->field_prototypes && !*bootstrap->field_prototypes &&
         !values->object_prototype.value() && f.core->types->count==5 && f.core->enabled==0 && descriptors.size()==52 &&
-        prototype_storage.storage->bytes->bytes==std::vector<std::uint8_t>(0x44,0xcc) && !prototype_field->vtable_word &&
+        igb_bootstrap_read_word(prototype_storage,0)==0x804762fc && prototype_field->vtable_word==0x804762fc &&
+        igb_bootstrap_read_word(prototype_storage,4)==1 && prototype_field->reference_word==1 &&
+        igb_bootstrap_read_word(prototype_storage,8)==0xcccccccc &&
         default_allocations==50 && field_probe_locals==1,
-        "Pending typed initializer fabricated prototype publication, construction bytes or core activation.");
+        "Pending typed initializer lost header writes or fabricated member defaults, prototype publication or core activation.");
     check(!call.resume(bootstrap).completed && prototype_allocations==1 && descriptors.size()==52 && default_allocations==50 &&
         f.core->types->count==5 && !values->object_prototype.value(),
         "Pending concrete prototype restarted reflected allocation or earlier field registrations.");
+
+    auto field_init=std::make_shared<IgbFieldInitServices>();field_init->registration=field_types;field_init->values=values;
+    unsigned prototype_pool_queries{};
+    prototypes->reflected->initializer->factory=make_native_igb_scalar_field_factory(make_native_igb_field_init_factory(field_init,
+        [&](const IgbObjectInitCall& c){
+            if(c.kind!=IgbObjectInitServiceKind::allocation_pool && c.kind!=IgbObjectInitServiceKind::pool_index)
+                return std::shared_ptr<IgbObjectInitOperation>{};
+            auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[&,c,out=op.get()]{
+                ++prototype_pool_queries;if(c.kind==IgbObjectInitServiceKind::allocation_pool){
+                    check(c.address==0x7e0000,"Reflected field initialization queried a wrong allocation base.");out->pool_result=f.pool;
+                }else check(c.pool==f.pool,"Reflected field initialization changed its captured pool owner.");
+                return MessengerCallResult{true,0,{}};};return op;
+        }));
+    const auto initialized_prototype=call.resume(bootstrap);
+    check(!initialized_prototype.completed && !call.faulted() && values->object_prototype && *values->object_prototype==prototype_field,
+        "Actual reflected field initialization did not publish its concrete prototype.");
+    check(prototype_allocations==1 && prototype_pool_queries==2 && prototype_field->reference_word==1 &&
+        prototype_field->offset==0 && prototype_field->type_ordinal==0 && prototype_field->ordinal==0 && prototype_field->size==4 &&
+        prototype_field->default_mode==0 && prototype_field->flag_26==1 && prototype_field->flag_2b==1 && prototype_field->flag_2c==2 &&
+        prototype_field->flag_34==0 && prototype_field->flag_35==0 && prototype_field->flag_3c==1 && prototype_field->word_40==0,
+        "Reflected field constructor/default/finalizer sequence left incorrect canonical members.");
+    check(prototype_field->default_bytes && prototype_field->default_bytes->buffer && prototype_field->default_bytes_address &&
+        igb_bootstrap_read_word(prototype_storage,0x20)==*prototype_field->default_bytes_address &&
+        igb_bootstrap_read_word(prototype_storage,0x10)==0 && igb_bootstrap_read_word(prototype_storage,4)==1 &&
+        prototype_storage.storage->bytes->bytes[0x16]==0xcc && prototype_storage.storage->bytes->bytes[0x3d]==0xcc,
+        "Reflected prototype physical image, published ordinals or untouched padding differs.");
+    check(bootstrap->field_prototypes && *bootstrap->field_prototypes && (*bootstrap->field_prototypes)->count==1 &&
+        (*bootstrap->field_prototypes)->backing->at(0)==prototype_field && object_field->instance_count==1,
+        "Concrete prototype skipped its native instance count or prototype registry publication.");
+    check(initialized_prototype.diagnostic.find("free80056378")!=std::string::npos,
+        "Completed concrete prototype did not return to its original callback-list cleanup.");
+    const auto callback_functions=additional_callbacks;
+    std::vector<std::shared_ptr<IgbRegistrationCallbackList>> freed_callback_lists;
+    std::vector<std::shared_ptr<IgbRegistrationCallbackList::Storage>> freed_callback_backings;
+    additional_callbacks=[&,callback_functions](const IgbRegistrationCallbacksCall& c){
+        if(c.kind!=CK::free_backing && c.kind!=CK::free_list)return callback_functions(c);
+        auto op=std::make_shared<IgbRegistrationCallbacksOperation>();op->resume=[&,c]{
+            check(c.callbacks && !c.callbacks->released,"Callback allocator reached a released or null list.");
+            if(c.kind==CK::free_backing){check(c.backing==c.callbacks->backing,"Callback cleanup changed its captured backing.");freed_callback_backings.push_back(c.backing);}
+            else freed_callback_lists.push_back(c.callbacks);
+            return MessengerCallResult{true,0,{}};};return op;
+    };
+    const auto list_clone=call.resume(bootstrap);
+    std::cout<<"Cold field initializer boundary: "<<list_clone.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<'\n';
+    check(!list_clone.completed && !call.faulted() && f.core->enabled==0 && values->object_prototype.value()==prototype_field,
+        "Callback cleanup skipped remaining list registration or replayed the field prototype.");
+    check(!freed_callback_lists.empty() && freed_callback_lists.size()==freed_callback_backings.size() &&
+        std::all_of(freed_callback_lists.begin(),freed_callback_lists.end(),[](const auto& list){return list->released;}),
+        "Native callback cleanup did not release each completed backing/list pair.");
+    check(!list_defaults_calls.empty() && list_defaults_calls.back().kind==IgbListDefaultsServiceKind::clone_field &&
+        list_defaults_calls.back().field==descriptors[27] && list_defaults_calls.back().vtable_word==0x80476088 &&
+        list_defaults_calls.back().virtual_slot==0x54 && list_defaults_calls.back().argument==1,
+        "Original list name/index search did not reach its actual inherited memory-field clone.");
+    check(list_defaults->name_descriptor==descriptors[30] && lazy_metadata[1]->class_flags==7 && lazy_metadata[0]->class_flags==9 &&
+        f.core->types->count==6 && f.core->types->backing->at(5)==lazy_metadata[1] && default_allocations==53 &&
+        *list_defaults->globals->at(0)->slot==descriptors[27] && *list_defaults->globals->at(1)->slot==descriptors[28],
+        "Native parent-list defaults/publication or canonical name-descriptor linkage differs.");
+    const auto freed_lists=freed_callback_lists.size();
+    check(!call.resume(bootstrap).completed && descriptors.size()==52 && default_allocations==53 && prototype_allocations==1 &&
+        f.core->types->count==6 && freed_callback_lists.size()==freed_lists && (*bootstrap->field_prototypes)->count==1,
+        "Pending clone repeated prototype construction, parent registration or callback cleanup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

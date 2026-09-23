@@ -1,5 +1,102 @@
 # Local validation
 
+## Native typed field initialization and concrete prototype
+
+Validated locally on 2026-09-23. The shared reflected factory and `800667F4`
+initializer now return distinct file/field instances. The cold composition
+constructs the concrete object-field prototype through its real 23-descriptor
+initialization, all three field passes, string assignment and default-buffer
+tail. It publishes canonical `805616EC`, creates and appends to prototype
+registry `8056229C`, assigns ordinal zero and finalizes type ordinal zero.
+The abstract reference callback still returns null through the original branch.
+
+With explicitly represented callback allocation/deallocation endpoints, the
+wrapper now returns to the original parent-list defaults, layout and type
+publication. Canonical name-descriptor `805617C4` is the same cell written by
+the actual field schema and read by the internal-list lookup. That lookup and
+index search reach the inherited memory-reference field (`80476088`) clone
+virtual `+54`, argument one. Its actual clone body remains unimplemented.
+
+The verified boundary contains 52 schema descriptors plus one reflected field
+prototype, 53 default buffers, six published types and one prototype registry
+entry. Parent list `805619D4` has flags 7; child list `805619CC` has flags 9.
+ArkCore remains disabled and its later count snapshots remain unwritten.
+Repeated suspension does not replay allocation, prototype creation, parent
+registration or completed callback cleanup. Physical allocators, pool/platform
+state and original BSS bindings remain explicit prerequisites.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 178/178 CTest suites passed locally with four jobs; no compiler warnings |
+| Cold metadata integration | 931 checks; concrete initialization/publication, actual parent-list completion, canonical name lookup and retained memory-field clone boundary |
+| Generic object initialization | 202 checks; separate typed fields/files, adjusted offsets, conflicting bindings, physical headers, suspension and construction lifetime |
+| Reflected/file factories | 107 checks including strict file adapters and field instance results |
+| Prototype callbacks | 73 checks including reflected typed publication, adjusted addresses, physical ownership/ordinal stores and retained allocation lifetime |
+| Scalar defaults | 136 checks across six scalar profiles, shared pointer slots and canonical member publication |
+| Field operations | 66 checks including physical finalization type ordinal |
+| Reference/object initialization | 55 checks including captured size callbacks, low16 truncation, null/unknown tables, header aliases, positive-branch suspension and live object virtuals |
+| String initialization/assignment | 53 checks including native cached interning, raw pointer reloads, full-word references, pending release, lazy pools, aliases, faults and lifetime |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Review corrected synchronization of the memory-reference element pointer,
+fresh physical vtable selection in the tail, aliased file reference headers,
+and the represented-null vtable failure. New permanent checks cover these
+cases. Test fixture corrections supplied the previously missing canonical
+metadata cell and recorded calls through the later-installed clone dispatcher;
+the final complete suite passed after those corrections.
+
+Independent comparisons execute instructions from the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`:
+
+| Corpus | Cases | Faults | Pending boundaries | Original instructions | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Six scalar profiles and verified pointer subset | 5,402 | 1,120 | 0 | 686,368 | 0 |
+| Reference initialization virtuals | 1,364 | 640 | 8 | 45,910 | 0 |
+| Complete 0x44-byte object-field initialization | 630 | 490 | 0 | 1,174,460 | 0 |
+| String assignment and initialization | 1,236 | 276 | 0 | 62,887 | 0 |
+
+Total: 8,632 cases, 2,526 faults, eight explicit pending boundaries and 1,969,625
+original instructions, with zero differences. The scalar corpus uses actual
+copy functions and leaves, without prepared callees; partial malformed copies
+remain outside its complete-range profile. The reference corpus uses actual
+clearing and gate bodies, with real width leaves or explicitly prepared width
+callback results/faults. Its eight nonnull object-default cases stop at required
+`80067098`; positive recursive member-construction branches are not proved.
+
+The whole-object corpus uses the original factory/offset tables and prepared
+registered metadata/default buffers. It executes actual `800667F4`, all three
+passes, scalar/reference/string-null bodies and `8006A438` through the real
+`80063D04/80063C74/80068254/80068430` tail. Physical size/default-pointer stores,
+all 0x44 bytes including padding, instance counts and ordered calls are compared.
+Allocation-owner lookup, pool tags, `8005929C` and default allocation remain
+prepared endpoints. This corpus does not prove class registration or a complete
+allocator; the cold composition has its separately stated scope above.
+
+The string corpus executes actual `800715E8/80071A9C` with prepared string-pool
+allocation, initialization, interning and release endpoints. It compares all
+target bytes, three header reference counts, pool/global mutations, captured
+offsets and source rereads. A permanent test separately composes the native
+cached interner; neither result establishes complete string-pool allocation.
+
+Final core SHA256:
+`EAAB382DAF57A827E354FEC6477AEAFB4EC30BC5513B352E692D49C80086379A`.
+Ignored logs are `work/native-field-initialization-final-build.log` and
+`work/native-field-initialization-{prefix,player,verifier}.log`. Reports are
+`work/native-scalar-field-defaults-result.json`,
+`work/native-reference-field-init-result.json`,
+`work/native-object-field-init-result.json` and
+`work/native-field-string-init-result.json`. All recorded source, executable
+and library hashes match the final files; the last rebuild changed only the
+cold test and retained the same library hash.
+
+See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md) and
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md). Continue through the actual
+memory-reference clone and remaining deferred registrations. No interactive
+preview or GitHub Actions run was launched, and native gameplay remains unproven.
+
 ## Native field classes and prototype startup
 
 Built and validated locally on 2026-09-20; report, source, executable and library

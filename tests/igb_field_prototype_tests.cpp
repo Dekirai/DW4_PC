@@ -62,9 +62,63 @@ void gates_and_native_reflection(){
     concrete.services->reflected->factory=[&](const IgbFileFactoryCall& c){check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==concrete.pool && c.bytes==0x44,"Actual reflected allocation changed metadata size or pool.");
         auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++allocations;out->allocation_result=bytes.storage;return MessengerCallResult{true,0,{}};};return op;};
     IgbFieldPrototypeInvocation actual(E::object);const auto status=actual.resume(concrete.services);
-    check(!status.completed && status.diagnostic.find("typed binding")!=std::string::npos && allocations==1 && !concrete.slot(E::object)->value(),"Concrete reflection bypassed its actual typed initializer boundary.");
-    check(!actual.resume(concrete.services).completed && allocations==1 && concrete.fields->count==0 && concrete.reflected_calls==0,"Pending typed initialization replayed allocation or used a direct constructor.");
+    check(!status.completed && status.diagnostic.find("ArkCore")!=std::string::npos && allocations==1 && !concrete.slot(E::object)->value(),"Concrete reflection bypassed its actual initializer's missing ArkCore boundary.");
+    check(!actual.resume(concrete.services).completed && allocations==1 && concrete.fields->count==0 && concrete.reflected_calls==0,"Pending initialization replayed allocation or used a direct constructor.");
     rejects([]{IgbFieldPrototypeInvocation invalid(E::base);},"Nonexistent base prototype callback was invented.");
+}
+void reflected_instance_publication(){
+    Fixture f;f.services->reflected=std::make_shared<IgbFileFactoryServices>();
+    auto initializer=std::make_shared<IgbObjectInitServices>();f.services->reflected->initializer=initializer;
+    initializer->runtime=f.services->registration->types->runtime;f.core->vtable_offset=0;f.core->field_initialization_enabled=1;
+    const auto meta=igb_field_type_metadata_slot(f.services->registration,E::object)->value();
+    meta->allocation_prefix=8;meta->class_flags=4;meta->instance_count=0;meta->instances=std::shared_ptr<IgbObjectInstanceList>{};
+    meta->fields=std::make_shared<IgbDecodeFieldRegistry>();meta->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
+    auto base=metadata();base->fields=std::make_shared<IgbDecodeFieldRegistry>();initializer->object_metadata=base;
+    auto bytes=allocation(0x500000,0x4c);bytes.storage->bindings.push_back({8,{},{},{},{},f.created});const auto storage=std::weak_ptr(bytes.storage);
+    unsigned allocations{},polls{};bool ready{};
+    f.services->reflected->factory=[&](const IgbFileFactoryCall& c){check(c.kind==IgbFileFactoryServiceKind::allocate && c.bytes==0x4c,"Reflected prototype lost its allocation prefix.");
+        auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++allocations;out->allocation_result=bytes.storage;return MessengerCallResult{true,0,{}};};return op;};
+    // Prepared empty field metadata and object virtuals isolate actual6546C,
+    // 667F4 and the prototype callback. Real descriptor defaults are separate.
+    initializer->factory=[&](const IgbObjectInitCall& c){
+        check(c.object.field==f.created && !c.object.file && c.object.offset==8,"Prototype initializer changed its canonical typed allocation.");
+        auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbObjectInitServiceKind::object_virtual && c.virtual_slot==0x58)out->metadata_result=meta;
+            if(c.kind==IgbObjectInitServiceKind::object_virtual && c.virtual_slot==0x34){++polls;if(!ready)return MessengerCallResult{false,0,"Prepared field post-defaults."};}
+            return MessengerCallResult{true,0,{}};};return op;};
+    {
+        IgbFieldPrototypeInvocation actual(E::object);
+        check(!actual.resume(f.services).completed && allocations==1 && polls==1 && !f.slot(E::object)->value() && f.fields->count==0,
+            "Prototype was published before retained reflected initialization completed.");
+        check(f.created->physical_storage && f.created->physical_storage->offset==8 && !f.created->construction_active_.expired(),
+            "Pending reflected prototype lost its physical owner or construction token.");
+        ready=true;f.services->reflected->factory={};
+        check(actual.resume(f.services).completed && allocations==1 && polls==2 && f.reflected_calls==0,
+            "Native reflected field result used the prepared shortcut or replayed allocation.");
+        check(f.slot(E::object)->value()==f.created && f.fields->count==1 && f.fields->backing->at(0)==f.created &&
+            igb_buffer_word(f.backing.storage->bytes,0)==0x500008,"Actual prototype append lost its adjusted physical identity.");
+        check(f.created->reference_word==1 && f.created->ordinal==0 && f.created->size==4 && f.finalized==3 && meta->instance_count==1,
+            "Reflected prototype skipped initializer accounting or downstream ownership/finalization.");
+        const auto ordinal_bytes=igb_buffer_bytes(bytes.storage->bytes,8+0x12,2);
+        check(igb_buffer_word(bytes.storage->bytes,12)==1 && ordinal_bytes[0]==0 && ordinal_bytes[1]==0,
+            "Prototype reference/ordinal publication left stale physical constructor storage.");
+        bytes.storage.reset();
+    }
+    check(!storage.expired() && f.created->physical_storage->storage.lock()==storage.lock(),
+        "Completed prototype lost physical storage when its reflected invocation was destroyed.");
+    // Raw callback publication must still reject a completed file result.
+    Fixture wrong;wrong.services->reflected=std::make_shared<IgbFileFactoryServices>();auto file=std::make_shared<LoaderRequestFile>();
+    auto wrong_storage=allocation(0x620000,0x44);wrong_storage.storage->bindings.push_back({0,file});
+    const auto wrong_meta=igb_field_type_metadata_slot(wrong.services->registration,E::object)->value();
+    wrong_meta->class_flags=4;wrong_meta->instance_count=0;wrong_meta->instances=std::shared_ptr<IgbObjectInstanceList>{};
+    wrong_meta->fields=std::make_shared<IgbDecodeFieldRegistry>();wrong_meta->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
+    auto init=std::make_shared<IgbObjectInitServices>();wrong.services->reflected->initializer=init;init->runtime=wrong.services->registration->types->runtime;
+    wrong.core->vtable_offset=0;init->object_metadata=wrong_meta;
+    init->factory=[&](const IgbObjectInitCall& c){auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[c,wrong_meta,out=op.get()]{
+        if(c.kind==IgbObjectInitServiceKind::object_virtual && c.virtual_slot==0x58)out->metadata_result=wrong_meta;return MessengerCallResult{true,0,{}};};return op;};
+    wrong.services->reflected->factory=[&](const IgbFileFactoryCall&){auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{out->allocation_result=wrong_storage.storage;return MessengerCallResult{true,0,{}};};return op;};
+    IgbFieldPrototypeInvocation invalid(E::object);rejects([&]{invalid.resume(wrong.services);},"Prototype accepted a completed file as its descriptor.");
+    check(invalid.faulted() && !wrong.slot(E::object)->value() && wrong.fields->count==0,"Wrong typed reflected result changed prototype publication.");
 }
 void native_registry(){
     Fixture f;*f.services->registry=std::shared_ptr<IgbDecodeFieldRegistry>{};f.services->registries=std::make_shared<IgbFieldRegistryServices>();
@@ -124,6 +178,6 @@ void callbacks_and_missing(){
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_field_prototype_tests");
-    gates_and_native_reflection();native_registry();append_release_finalize();callbacks_and_missing();
+    gates_and_native_reflection();reflected_instance_publication();native_registry();append_release_finalize();callbacks_and_missing();
     std::cout<<"igb_field_prototype_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"Field prototype failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

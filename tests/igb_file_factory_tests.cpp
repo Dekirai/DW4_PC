@@ -216,7 +216,44 @@ void concrete_file_virtuals(){
         "Reflected caller did not compose actual80058C80 fallback after named miss.");
     check(fallback.trace==std::vector<K>{K::named_pool,K::allocate},"Current-pool adapter delegated its recovered endpoint.");
 }
+void reflected_field_results(){
+    Fixture f;auto field=std::make_shared<IgbDecodeRuntimeField>();f.storage->bindings={{16,{},{},{},{},field}};
+    f.meta->allocation_prefix=16;f.meta->native_size=0x44;f.meta->type_word=0x804762fc;
+    const auto original=f.services->initializer->factory;bool ready{};unsigned selections{},polls{};
+    f.services->initializer->factory=[&](const IgbObjectInitCall& c){
+        check(c.object.field==field && !c.object.file && c.object.offset==16,"Reflected field entered a file or unadjusted initializer.");
+        const auto op=original(c);
+        if(c.kind==IgbObjectInitServiceKind::object_virtual && c.virtual_slot==0x58 && selections++==0){
+            const auto callback=op->resume;op->resume=[&,callback]{++polls;if(!ready)return MessengerCallResult{false,0,"Prepared field metadata."};return callback();};
+        }return op;
+    };
+    IgbReflectedFactoryInvocation call(f.meta,f.pool);
+    check(!call.resume(f.services).completed && f.trace==std::vector<K>{K::allocate} && polls==1 &&
+        field->vtable_word==0x804762fc && field->reference_word==1,"Reflected field did not retain its actual initializer after allocation.");
+    rejects([&]{call.result_instance();},"Pending reflected field exposed an initialized instance.");
+    ready=true;f.services->factory={};
+    check(call.resume(f.services).completed && polls==2 && f.trace==std::vector<K>{K::allocate},"Reflected field initialization replayed its allocation.");
+    const auto result=call.result_instance();
+    check(result.field==field && !result.file && result.storage==f.storage && result.offset==16 && f.meta->instance_count==1,
+        "Completed reflected field lost canonical identity, physical storage or initializer tail.");
+    rejects([&]{call.result();},"Completed reflected field silently became a null file.");
+    check(call.resume().completed && !call.faulted() && call.result_instance().field==field,"Strict file adapter rejection damaged reflected field completion.");
+    Fixture null;null.meta->flag_1a=1;IgbReflectedFactoryInvocation abstract(null.meta,null.pool);
+    check(abstract.resume(null.services).completed && !abstract.result_instance().storage && !abstract.result_instance().field &&
+        !abstract.result_instance().file && !abstract.result(),"Abstract reflected result did not retain genuine null semantics.");
+    Fixture wrong;auto wrong_field=std::make_shared<IgbDecodeRuntimeField>();wrong.storage->bindings={{0,{},{},{},{},wrong_field}};
+    IgbFileFactoryInvocation file(wrong.pool);rejects([&]{file.resume(wrong.services);},"File factory accepted a reflected field result.");
+    check(file.faulted() && !wrong_field->construction_fault_ && !wrong.storage->faulted() && wrong.meta->instance_count==1,
+        "File wrapper type rejection corrupted the already completed field allocation.");
+    Fixture abandoned;auto partial=std::make_shared<IgbDecodeRuntimeField>();abandoned.storage->bindings={{0,{},{},{},{},partial}};
+    abandoned.services->initializer->factory={};const auto bytes=std::weak_ptr(abandoned.storage);
+    {IgbReflectedFactoryInvocation pending(abandoned.meta,abandoned.pool);check(!pending.resume(abandoned.services).completed,"Reflected field abandonment did not pause.");abandoned.storage.reset();}
+    check(!bytes.expired() && bytes.lock()->faulted() && partial->construction_fault_,"Abandoned reflected field lost its allocation or canonical fault state.");
+    Fixture strict;auto pools=std::make_shared<IgbFilePoolsServices>();const auto native=make_native_igb_file_init_factory(strict.services,pools);
+    IgbObjectInitCall post;post.kind=IgbObjectInitServiceKind::object_virtual;post.vtable_word=0x804724c4;post.virtual_slot=0x34;post.object.field=field;
+    rejects([&]{native(post);},"File pool adapter accepted a field with a file vtable word.");
 }
-int main(){try{registration_and_metadata();redirect_and_abstract();pool_selection();allocation_arithmetic_and_pending();errors_and_lifetime();native_adapters();concrete_file_virtuals();
+}
+int main(){try{registration_and_metadata();redirect_and_abstract();pool_selection();allocation_arithmetic_and_pending();errors_and_lifetime();native_adapters();concrete_file_virtuals();reflected_field_results();
     std::cout<<"IGB file factory: "<<checks<<" checks passed.\n";return 0;
 }catch(const std::exception& e){std::cerr<<"IGB file factory after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

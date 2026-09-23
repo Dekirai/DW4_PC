@@ -61,11 +61,19 @@ callback behavior and does not manufacture a reference-field instance.
 
 For concrete object metadata, the same reflected invocation preserves redirect
 handling, pool selection, allocation prefix arithmetic and actual `800667F4`
-initialization. The current object initializer requires a typed file view;
-an allocation bound only to a field reaches that explicit typed initialization
-boundary. It is not converted into a file or initialized with the cold direct
-constructor. Generalized field initialization and its reached virtuals remain
-required before the native concrete prototype can complete.
+initialization. The object initializer now accepts a canonical runtime-field
+binding at the adjusted allocation offset. Its generic result retains that
+allocation and owner; the callback rejects a returned file and uses the original
+adjusted numeric address for registry publication. The prototype services retain
+the allocation after construction so the field's weak physical binding remains
+valid. Reached field/default virtuals still determine construction completion;
+the binding does not substitute a completed descriptor or cold direct constructor.
+
+Prototype retain/release and ordinal stores also update represented physical
+field storage. Each store uses its original captured or freshly reloaded owner,
+checks that owner's physical identity, and preserves the existing canonical
+reference-count and ordinal behavior. Prepared instances without physical
+storage retain the same explicit caller-test profile.
 
 When reflected services are absent, a separate explicit typed service endpoint
 allows bounded caller fixtures to provide an already initialized descriptor.
@@ -84,7 +92,8 @@ constructor. A callback replacement of the registry does not suppress the
 later original raw store.
 
 The permanent suite covers the null-only gates, actual abstract `8006546C`,
-the concrete typed-initializer boundary, native registry construction and raw
+the retained concrete initializer, strict field-result typing, adjusted-address
+publication, physical ownership stores, native registry construction and raw
 publication, physical append, live global replacement, low-23-bit destruction,
 wrapped ordinals, finalization, retained callbacks, malformed bindings and
 service lifetime. Nonnull reflected descriptor results and finalization
@@ -92,3 +101,10 @@ virtuals are explicitly prepared in the isolated caller fixtures. Local build,
 cold-chain and bounded original-instruction evidence is recorded separately in
 [VALIDATION.md](VALIDATION.md). Completed abstract callback behavior does not
 establish completed native startup or a new gameplay preview.
+
+The current cold composition also finishes the concrete object-field prototype
+with its actual 23 reached descriptors, all three field passes, default-buffer
+tail, registry append and finalizer. It then completes the parent-list type and
+reaches the required internal-list memory-field clone. See
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md) for that larger composition and its
+explicit physical allocator and initialization prerequisites.

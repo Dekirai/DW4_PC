@@ -28,7 +28,7 @@ struct Fixture {
     }
 };
 void leaves_and_binding() {
-    for(const auto table:{0x80475b60u,0x80473e30u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
+    for(const auto table:{0x80476e6cu,0x80475b60u,0x80473e30u,0x80477054u,0x80476848u,0x80473f24u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
         Fixture f;f.field->vtable_word=table;f.field->default_bytes.reset();f.object.storage.reset();
         const auto op=f.operation(slot);check(op && op->resume().completed && op->resume().value==0,"Verified scalar leaf accessed default or object storage.");
     }
@@ -37,6 +37,37 @@ void leaves_and_binding() {
     f.field->vtable_word=0x804762fc;check(!f.operation(0x70),"Object-reference defaults were replaced by scalar copying.");
     unsigned delegated{};f.factory=make_native_igb_scalar_field_factory([&](const auto&) {++delegated;return std::make_shared<IgbObjectInitOperation>();});
     check(f.operation(0x70) && delegated==1,"Unimplemented reference field did not reach its explicit provider.");
+}
+void field_object_storage() {
+    Fixture f;f.object.file.reset();f.object.field=std::make_shared<IgbDecodeRuntimeField>();
+    auto target=f.object.field;target->vtable_word=0x804762fc;
+    const auto copy=[&](std::uint32_t at,std::initializer_list<std::uint8_t> data) {
+        f.field->offset=at;f.field->size=static_cast<std::uint16_t>(data.size());
+        f.field->default_bytes=IgbRuntimeFieldDefaultSource{bytes(data),0};
+        check(f.operation(0x70)->resume().completed,"Field-object scalar default did not complete.");
+    };
+    copy(8,{0,0,0,17});copy(0x10,{0xff,0xfe,0,7,0,4});copy(0x24,{0,1,1,0,1,2,3,4,5});
+    check(target->offset==17 && target->type_ordinal==0xfffe && target->ordinal==7 && target->size==4 &&
+        target->default_mode==0 && target->flag_25==1 && target->flag_2c==5,"Physical scalar stores left canonical field members stale.");
+    copy(0x34,{0,1});copy(0x3c,{1});
+    check(target->flag_34==0 && target->flag_35==1 && target->flag_3c==1,"Derived field flags were not synchronized.");
+    copy(0x1c,{0,0,0,0});copy(0x20,{0,0,0,0});copy(0x38,{0,0,0,0});
+    check(target->global_slot && igb_field_global_slot_is_null(*target->global_slot) &&
+        target->default_bytes && !target->default_bytes->buffer && target->object_type &&
+        igb_field_declaring_type_is_null(*target->object_type),"Zero physical pointers were left unknown.");
+    copy(0x20,{0,0x40,0,0});
+    check(!target->default_bytes && target->default_bytes_address==0x400000,"A changed nonnull pointer retained a fabricated typed binding.");
+    check(f.object.storage->bytes->initialized[0x16]==0 && f.object.storage->bytes->bytes[0x16]==0xcd,
+        "Field synchronization initialized untouched padding.");
+    target->vtable_word=0x80476088;target->element_field=f.field;copy(0x3c,{0,0,0,0});
+    check(target->element_field && !target->element_field->lock(),"Zeroed memory-reference element retained a stale descriptor.");
+    copy(0x3c,{0,0x40,0,0});check(!target->element_field,"Changed memory-reference element pointer fabricated a typed binding.");
+    for(const auto table:{0x80476e6cu,0x80477054u,0x80476848u,0x80473f24u,0x80476630u}) {
+        Fixture scalar;scalar.field->vtable_word=table;
+        check(scalar.operation(0x70)->resume().completed && igb_buffer_word(scalar.object.storage->bytes,0x60)==0xfada,
+            "Verified scalar/pointer table failed its shared default body.");
+        if(table==0x80476630u)check(!scalar.operation(0x84) && !scalar.operation(0xf0),"Pointer reference passes became scalar leaves.");
+    }
 }
 void copy_and_capture() {
     for(const auto slot:{0x70u,0x78u}) {
@@ -100,7 +131,7 @@ void actual_initializer() {
 }
 int main(int argc,char**) {
     try {if(argc!=1)throw std::runtime_error("Usage: igb_field_defaults_tests");
-        leaves_and_binding();copy_and_capture();aliases_and_physical_faults();actual_initializer();
+        leaves_and_binding();copy_and_capture();aliases_and_physical_faults();actual_initializer();field_object_storage();
         std::cout<<"igb_field_defaults_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

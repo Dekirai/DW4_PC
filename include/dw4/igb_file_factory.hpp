@@ -39,7 +39,7 @@ private:
     std::vector<std::shared_ptr<IgbObjectStorage>> unfinished_allocations_;
 };
 
-// Original8006546C allocation caller. Exposes typed file storage only after
+// Original8006546C allocation caller. Exposes typed file or field storage after
 // the actual800667F4 initialization continuation has completed.
 class IgbReflectedFactoryInvocation {
 public:
@@ -50,6 +50,8 @@ public:
     MessengerCallResult resume(std::shared_ptr<IgbFileFactoryServices> services={});
     bool completed() const noexcept;
     bool faulted() const noexcept;
+    IgbObjectInstance result_instance() const;
+    // Strict file adapter; the original abstract/null result remains null.
     std::shared_ptr<LoaderRequestFile> result() const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

@@ -104,10 +104,19 @@ Its two local field constructors now bring the chain to 29 descriptors.
 Getter `80028BFC` now executes object-field registration `800289F8` and its
 base/reference parents, bringing the chain to 52 constructed descriptors and
 five published types. The abstract prototype callback completes its null
-branch; concrete callback `80028B64` reaches `800667F4` with a field-only
-allocation whose typed initialization is still unsupported. Canonical cell
-`805616EC` remains null. The list schema customization and both list types'
-publication remain incomplete; see [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md).
+branch; concrete callback `80028B64` now completes actual `800667F4` field
+initialization, tail `8006A438`, prototype publication, registry append and
+finalization. The separately allocated prototype is canonical `805616EC`,
+with ordinal and type ordinal zero. After callback cleanup, parent list metadata
+`805619D4` completes its defaults and publishes as the sixth type with flags
+`7`. The chain contains 52 schema descriptors plus one reflected prototype
+and 53 default buffers. Child list metadata `805619CC` remains busy with flags
+`9`; its native lookup through name descriptor `805617C4` reaches the inherited
+memory-reference descriptor's clone virtual `+54`, argument 1, vtable `80476088`.
+That clone and child publication remain unfinished, with ArkCore disabled.
+Recursive reference/member operations outside this initialized prototype profile
+remain explicit; see [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md) and
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md).
 Completed registration of one type does not imply completed startup or an
 updated gameplay preview.
 

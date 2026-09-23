@@ -174,7 +174,67 @@ void faults_and_abandonment(){
     check(!order.resume(null_core.services).completed,"Captured null ArkCore was dereferenced before the missing metadata+5C read.");
     null_core.meta->type_word=0;rejects([&]{order.resume(null_core.services);},"Represented null ArkCore did not fail at +394.");
 }
+void field_layout_and_lifetime(){
+    // Prepared field virtuals exercise the same original initializer and its
+    // physical/typed boundary without supplying a completed descriptor.
+    for(const auto offset:{0u,16u}){
+        Fixture f;const auto field=std::make_shared<IgbDecodeRuntimeField>();
+        f.storage->bindings={{offset,{},{},{},{},field},{offset,{},{},{},{},field},{offset}};
+        f.meta->type_word=0x804762fc;f.meta->allocation_prefix=offset;f.pool=std::make_shared<ModelSceneData>();
+        f.file->reference_word=0xdeadbeef;
+        f.after=[&](const auto& c,auto&,auto& status){
+            check(c.object.field==field && !c.object.file && c.object.offset==offset,"Field initializer selected a file or another adjusted owner.");
+            if(c.kind==K::allocation_pool)check(c.address==f.storage->original_address,"Field allocation-base helper lost its adjusted offset.");
+            if(c.kind==K::pool_index){igb_object_set_reference_word(c.object,0x11234567);status.value=0xaa;}
+            if(c.kind==K::object_virtual && c.virtual_slot==0x34)put(f.storage->bytes,offset,0x12345678);
+        };
+        IgbObjectInitInvocation call(f.storage,offset,f.meta);
+        check(call.resume(f.services).completed,"Prepared reflected field initialization did not complete.");
+        const auto result=call.result_instance();
+        check(result.storage==f.storage && result.offset==offset && result.field==field && !result.file,"Typed field result lost its allocation or canonical owner.");
+        check(field->reference_word==0xaa234567 && igb_buffer_word(f.storage->bytes,offset+4)==0xaa234567 &&
+            field->vtable_word==0x12345678,"Field reference or fresh physical vtable publication differs.");
+        check(field->physical_storage && field->physical_storage->storage.lock()==f.storage && field->physical_storage->offset==offset &&
+            field->construction_active_.expired() && !field->construction_fault_,"Completed field retained a construction token or lost its physical binding.");
+        check(f.file->reference_word==0xdeadbeef && (offset==0 || f.storage->bytes->bytes.front()==0xcd),"Field initialization changed an unrelated file or allocation prefix.");
+        rejects([&]{call.result();},"A completed field was exposed as a null file.");
+        check(!call.faulted() && call.result_instance().field==field,"Strict file result rejection invalidated the constructed field.");
+    }
+    Fixture late;late.storage->bindings.clear();auto field=std::make_shared<IgbDecodeRuntimeField>();auto call=late.call();
+    check(!call.resume(late.services).completed && !late.storage->faulted(),"Absent field binding did not suspend before construction.");
+    late.storage->bindings.push_back({0,{},{},{},{},field});const auto virtuals=late.services->factory;late.services->factory={};
+    check(!call.resume(late.services).completed && !field->construction_active_.expired() && field->vtable_word==0x804724c4 && field->reference_word==1,
+        "Late field binding did not enter and retain actual header initialization.");
+    rejects([&]{call.result_instance();},"Pending field initialization exposed a constructed result.");
+    auto competing=late.call();rejects([&]{competing.resume(late.services);},"A second initializer acquired active field storage.");
+    check(!late.storage->faulted() && !field->construction_fault_,"Rejected competing initializer invalidated the existing owner.");
+    late.services->factory=virtuals;check(call.resume(late.services).completed && call.result_instance().field==field,"Retained field initialization could not resume.");
+
+    Fixture abandoned;auto unfinished=std::make_shared<IgbDecodeRuntimeField>();abandoned.storage->bindings={{0,{},{},{},{},unfinished}};abandoned.services->factory={};
+    {auto pending=abandoned.call();check(!pending.resume(abandoned.services).completed,"Field abandonment fixture did not suspend.");}
+    check(abandoned.storage->faulted() && unfinished->construction_fault_ && unfinished->construction_active_.expired(),"Abandoned field construction did not retain fault and release its token.");
+
+    for(unsigned kind=0;kind<4;++kind){
+        Fixture conflict;auto first=std::make_shared<IgbDecodeRuntimeField>();conflict.storage->bindings={{0,{},{},{},{},first}};
+        if(kind==0)conflict.storage->bindings.push_back({0,conflict.file});
+        if(kind==1)conflict.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        if(kind==2)conflict.storage->bindings.push_back({0,{},conflict.meta});
+        if(kind==3)conflict.storage->bindings.front().file=conflict.file;
+        auto invalid=conflict.call();rejects([&]{invalid.resume(conflict.services);},"Conflicting native field layout was accepted.");
+        check(!first->construction_fault_ && std::all_of(conflict.storage->bytes->initialized.begin(),conflict.storage->bytes->initialized.end(),[](auto b){return b==0;}),
+            "Rejected field binding published bytes or invalidated an unowned field.");
+    }
+    Fixture alias;auto elsewhere=std::make_shared<IgbDecodeRuntimeField>();elsewhere->physical_storage=IgbFieldStorageBinding{alias.storage,4};
+    alias.storage->bindings={{0,{},{},{},{},elsewhere}};auto invalid=alias.call();
+    rejects([&]{invalid.resume(alias.services);},"One canonical field was rebound to another physical offset.");
+    Fixture unsupported;unsupported.storage->bindings={{0,{},unsupported.meta}};auto waiting=unsupported.call();
+    check(!waiting.resume(unsupported.services).completed && !waiting.faulted(),"Unsupported metadata layout was cast to a file or field.");
+    Fixture recursive;auto owner=std::make_shared<IgbDecodeRuntimeField>();recursive.storage->bindings={{0,{},{},{},{},owner}};auto outer=recursive.call();
+    recursive.after=[&](const auto&,auto&,auto&){rejects([&]{outer.resume(recursive.services);},"Recursive field initialization succeeded.");};
+    rejects([&]{outer.resume(recursive.services);},"Caught recursive field fault did not invalidate the outer continuation.");
+    check(owner->construction_fault_ && recursive.storage->faulted(),"Recursive field failure lost canonical construction fault state.");
 }
-int main(){try{headers_and_empty_ranges();gates_and_default_modes();captures_and_fresh_reads();physical_ranges_and_nulls();pool_and_instance_tail();pending_and_teardown();faults_and_abandonment();
+}
+int main(){try{headers_and_empty_ranges();gates_and_default_modes();captures_and_fresh_reads();physical_ranges_and_nulls();pool_and_instance_tail();pending_and_teardown();faults_and_abandonment();field_layout_and_lifetime();
     std::cout<<"IGB object initialization: "<<checks<<" checks passed.\n";return 0;
 }catch(const std::exception& e){std::cerr<<"IGB object initialization after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

@@ -44,7 +44,7 @@ after a pending allocation or callback mutation.
 
 `IgbObjectStorage` separates represented physical bytes, typed layout bindings,
 and the original numeric address used for pointer arithmetic. That number is
-never treated as a host address. Providers must explicitly bind a file owner at
+never treated as a host address. Providers must explicitly bind a file or field owner at
 the proper storage offset; this binding describes uninitialized storage and
 does not execute its constructor. A wrapping adjusted address of zero returns
 null without initialization. A null base plus a nonzero prefix instead reaches
@@ -52,12 +52,20 @@ the initializer and its physical storage checks; it is not treated as ordinary
 allocation failure.
 
 For a nonzero adjusted address, the caller retains allocation, prefix and
-metadata through the real `800667F4` continuation. It exposes the typed file
+metadata through the real `800667F4` continuation. It exposes the typed instance
 only after initialization completes. The initializer performs the recovered
 object header and field-pass orchestration. Missing field handlers, allocation
 pool resolution, post-defaults, or instance registration remain pending at
 their actual calls. This allocation module never manufactures an empty decoder
 state, byte stream, field list or completed original document.
+
+`result_instance()` retains the original allocation and adjusted offset alongside
+its canonical file or runtime-field owner. Genuine abstract/null results return
+an empty instance. The existing file-only `result()` adapter rejects a completed
+field, and `IgbFileFactoryInvocation` keeps that strict file contract. Prototype
+callbacks consume the generic instance and separately require a field owner;
+they never reinterpret a file as a descriptor or replace reflected construction
+with a direct constructor. Physical storage must outlive its weak field binding.
 
 The concrete `igIGBFile` vtable `804724C4` identifies `80051698` at `+34`, the
 post-default pool assignment operation. Its three independent current-pool
@@ -87,6 +95,7 @@ Permanent tests cover registration and metadata reload, redirect ordering and
 captured pool, exact abstract flags, null/empty/high-bit pool names, failed named
 lookup fallback, reached null pools, wrapping sizes and adjusted addresses,
 pending allocation mutation, missing initializer state, recursion, abandonment,
+adjusted field storage, retained field initialization and strict result typing,
 and both ordinary/dependency request adapters. Full caller-to-initializer tests
 use explicitly prepared zero-field metadata and virtual endpoints; they do not
 claim real file defaults or a completed original `igIGBFile` registration.

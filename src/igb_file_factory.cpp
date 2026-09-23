@@ -43,7 +43,7 @@ struct IgbReflectedFactoryInvocation::Impl {
     std::shared_ptr<ModelSceneObject> original_pool,pool;
     std::shared_ptr<IgbObjectStorage> allocation;
     std::shared_ptr<IgbFileFactoryServices> allocation_services;
-    std::shared_ptr<LoaderRequestFile> result;
+    IgbObjectInstance result;
     std::unique_ptr<IgbObjectInitInvocation> initializer;
     Call call;
     Phase phase=Phase::entry,after=Phase::done;
@@ -61,8 +61,12 @@ IgbReflectedFactoryInvocation::~IgbReflectedFactoryInvocation() {
 }
 bool IgbReflectedFactoryInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
 bool IgbReflectedFactoryInvocation::faulted() const noexcept {return impl_->fault;}
+IgbObjectInstance IgbReflectedFactoryInvocation::result_instance() const {
+    if(!completed() || faulted())fail("Incomplete reflected construction has no returned instance.");return impl_->result;
+}
 std::shared_ptr<LoaderRequestFile> IgbReflectedFactoryInvocation::result() const {
-    if(!completed() || faulted())fail("Incomplete reflected construction has no returned file.");return impl_->result;
+    const auto object=result_instance();
+    if(object.field)fail("A reflected field cannot be returned through the file adapter.");return object.file;
 }
 MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFileFactoryServices> services) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbFileFactoryServiceKind;
@@ -121,7 +125,7 @@ MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFil
         }
         case P::initialize: {
             const auto result=s.initializer->resume(services?services->initializer:nullptr);check();if(!result.completed)return result;
-            s.result=s.initializer->result();return finish();
+            s.result=s.initializer->result_instance();return finish();
         }
         case P::call: {
             if(s.call.request.kind==K::allocate && !s.allocation_services && services)s.allocation_services=services;
@@ -217,6 +221,7 @@ IgbObjectInitFactory make_native_igb_file_init_factory(std::shared_ptr<IgbFileFa
             };return operation;
         }
         if(call.virtual_slot==0x34) {
+            if(!call.object.file || call.object.field)fail("IGB file pool initialization requires a file layout binding.");
             const auto selected=weak_pools.lock();if(!selected)fail("IGB post-default pools require their live canonical services.");
             auto invocation=std::make_shared<IgbFilePoolsInvocation>(call.object.file);
             auto operation=std::make_shared<IgbObjectInitOperation>();

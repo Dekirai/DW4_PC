@@ -139,6 +139,10 @@ void physical_buffer_publication(){
     auto replacement=bytes(4);igb_field_store_default(f.descriptor,{replacement,0},0x220000);
     check(igb_bootstrap_read_word(physical,0x20)==0x220000 && f.descriptor->default_bytes->buffer==replacement,
         "Raw field default helper lost physical/canonical identity.");
+    f.mutate={};f.descriptor->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>{};
+    IgbFieldFinalizeInvocation finalized(f.descriptor);
+    check(finalized.resume(f.services).completed && igb_bootstrap_read_word(physical,0x10)==0xffffa5a5,
+        "Field finalization left physical type ordinal stale or overwrote adjacent instance ordinal.");
     storage->bindings[0].field=std::make_shared<IgbDecodeRuntimeField>();
     fails([&]{igb_field_store_size(f.descriptor,8);},"Changed physical field binding was overwritten.");
     check(f.descriptor->size==4,"Rejected physical size store still changed typed size.");

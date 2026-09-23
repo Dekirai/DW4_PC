@@ -31,11 +31,12 @@ struct IgbObjectInstance {
     std::shared_ptr<IgbObjectStorage> storage;
     std::uint32_t offset{};
     std::shared_ptr<LoaderRequestFile> file;
+    std::shared_ptr<IgbDecodeRuntimeField> field;
 };
 // While construction owns the allocation, the physical header is authoritative.
 // Bound callbacks must use this writer for packed-reference changes so the typed
-// file view and physical word remain synchronized. After construction, the
-// returned file's canonical reference_word is used by native loader services.
+// file or field view and physical word remain synchronized. After construction,
+// the returned owner's canonical reference_word is used by native services.
 std::uint32_t igb_object_reference_word(const IgbObjectInstance&);
 void igb_object_set_reference_word(const IgbObjectInstance&,std::uint32_t value);
 struct IgbObjectInstanceList {
@@ -84,6 +85,8 @@ public:
     MessengerCallResult resume(std::shared_ptr<IgbObjectInitServices> services={});
     bool completed() const noexcept;
     bool faulted() const noexcept;
+    IgbObjectInstance result_instance() const;
+    // Strict file adapter. A completed field is not a null file result.
     std::shared_ptr<LoaderRequestFile> result() const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
