@@ -1,6 +1,7 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_defaults.hpp"
+#include "dw4/igb_data_list_defaults.hpp"
 #include "dw4/igb_ark_core_bootstrap.hpp"
 #include "dw4/igb_object_registration.hpp"
 #include "dw4/igb_metadata_operations.hpp"
@@ -1175,10 +1176,13 @@ void actual_cold_bootstrap_prefix(){
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
     std::vector<IgbPointerListBacking> enabled_backings;
+    std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell;
+    std::vector<IgbBootstrapPointer> signed_int_prototype_allocations;
     bool enabled_metadata_ready{};unsigned enabled_metadata_polls{};
     prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
         check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1 &&
-            (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field),
+            (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field ||
+                (signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell)),
             "Further reflected allocation reached an unknown original class or pool.");
         reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();
         op->resume=[&,c,out=op.get(),done=false]()mutable{
@@ -1198,10 +1202,13 @@ void actual_cold_bootstrap_prefix(){
                 instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
                 raw.storage->bindings.push_back({0,{},{},instance.fields});
             }else{
-                check(c.bytes==0x44,"Enabled object-field factory changed its allocation size.");
+                const bool integer=signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell;
+                check(c.bytes==(integer?0x34u:0x44u),"Enabled descriptor factory changed its allocation size.");
                 instance.field=std::make_shared<IgbDecodeRuntimeField>();
                 raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
-                descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);
+                if(integer && values->signed_int_prototype && !*values->signed_int_prototype)
+                    signed_int_prototype_allocations.push_back(raw);
+                else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
             }
             enabled_allocations.push_back(instance);out->allocation_result=raw.storage;done=true;
@@ -1327,6 +1334,115 @@ void actual_cold_bootstrap_prefix(){
         (*f.core->bootstrap_callbacks)->count==1 && string_allocations==completed_thread_names && default_allocations==completed_thread_defaults &&
         freed_callback_lists.size()==completed_thread_frees && memory_calls.size()==completed_thread_memory,
         "Pending dependency registration replayed ThreadManager defaults, lazy construction, publication or callback append.");
+
+    // Resume the same actual deferred callback through its real parent chain.
+    // DataList is the fifth child of igObject. Provide the reached allocator
+    // reallocation while leaving growth, zero fill and append to native code.
+    std::optional<IgbPointerListBacking> grown_object_children;
+    const auto original_type_allocator=type_pointers->factory;
+    type_pointers->factory=[&,original_type_allocator](const IgbPointerListCall& c){
+        const bool grown_query=c.kind==IgbPointerListServiceKind::allocation_size && grown_object_children &&
+            c.backing.address==grown_object_children->address;
+        if(c.kind!=IgbPointerListServiceKind::reallocate && !grown_query)return original_type_allocator(c);
+        auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,grown_query,out=op.get()]{
+            if(grown_query){check(c.backing.bytes==grown_object_children->bytes && c.pool==f.pool,
+                "Grown child-list query lost its physical allocation.");out->size_result=32;}
+            else{
+                check(!grown_object_children && object_type->children && c.types==*object_type->children && c.types->count==4 &&
+                    c.pool==f.pool && c.bytes==32 && c.backing.bytes && c.backing.bytes->bytes.size()==16 && c.backing.types,
+                    "Fifth object child changed the original growth request.");
+                auto raw=allocation(0xb20000,c.bytes);raw.storage->bytes->initialized.assign(c.bytes,0);
+                std::copy(c.backing.bytes->bytes.begin(),c.backing.bytes->bytes.end(),raw.storage->bytes->bytes.begin());
+                std::copy(c.backing.bytes->initialized.begin(),c.backing.bytes->initialized.end(),raw.storage->bytes->initialized.begin());
+                auto mapping=std::make_shared<IgbRuntimeTypeList::Storage>(8);
+                std::copy(c.backing.types->begin(),c.backing.types->end(),mapping->begin());
+                grown_object_children=IgbPointerListBacking{raw.storage->bytes,igb_bootstrap_address(raw),0,mapping,{}};
+                out->backing_result=*grown_object_children;
+            }return MessengerCallResult{true,0,{}};
+        };return op;
+    };
+    auto data_registration=std::make_shared<IgbDataListRegistrationServices>();
+    data_registration->data_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    data_registration->object_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    data_registration->dependencies=thread_dependencies;data_registration->types=f.services->types;
+    data_registration->callbacks=f.services->callbacks;data_registration->pools=f.services->pools;data_registration->metadata=f.services->metadata;
+    std::vector<IgbBootstrapPointer> data_probe_locals;
+    data_registration->local_storage=[&](IgbDataListKind kind){
+        check(kind==IgbDataListKind::data_list,"Parent-chain probe bypassed unfinished DataList registration.");
+        auto local=allocation(0xb00000+static_cast<std::uint32_t>(data_probe_locals.size())*0x100,0x14);
+        data_probe_locals.push_back(local);return local;
+    };
+    auto data_defaults=std::make_shared<IgbDataListDefaultsServices>();data_defaults->registration=data_registration;
+    data_defaults->lists=list_defaults;data_defaults->callbacks=f.services->callbacks;
+    *data_defaults->unsigned_char_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    additional_callbacks=make_native_igb_data_list_registration_function_factory(data_registration,additional_callbacks);
+    f.remaining=make_native_igb_data_list_registration_type_factory(data_registration,
+        make_native_igb_data_list_defaults_factory(data_defaults,f.remaining));
+    const auto integer_cell_boundary=call.resume(bootstrap);
+    std::cout<<"Cold DataList integer registration boundary: "<<integer_cell_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!integer_cell_boundary.completed && !call.faulted() && data_probe_locals.size()==1 && descriptors.size()==55 &&
+        enabled_allocations.size()==10 && enabled_backings.size()==4 && f.core->types->count==8,
+        "DataList parent chain skipped original metadata/list allocation or entered an invented ready field class.");
+    const auto data_type=**data_registration->data_metadata,nonref_type=**data_registration->object_metadata;
+    check(data_type && nonref_type && data_type!=nonref_type && thread_list_metadata->class_flags==8 && nonref_type->class_flags==8 &&
+        data_type->class_flags==9 && data_type->parent==object_type && data_type->fields->count==2 && data_type->native_size==0x14 &&
+        data_type->name && *data_type->name=="igDataList" && data_type->type_word==0x80472fa0 &&
+        igb_bootstrap_read_word(data_probe_locals.front(),0)==0x80472fa0,
+        "DataList constructor probe, captured parent fields or pending registrar flags differ.");
+
+    // Bind the reached canonical integer cells, then perform registration,
+    // its actual probe and reflected prototype before the two schema factories.
+    signed_int_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_int)]=signed_int_cell;
+    values->signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> integer_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::signed_int,"New field probe replayed an earlier object class.");
+        auto local=allocation(0xb10000+static_cast<std::uint32_t>(integer_probe_locals.size())*0x100,0x34);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        integer_probe_locals.push_back(local);return local;
+    };
+    const auto memory_class_boundary=call.resume(bootstrap);
+    std::cout<<"Cold DataList memory-field boundary: "<<memory_class_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<
+        ", defaults="<<default_allocations<<", backings="<<enabled_backings.size()<<
+        ", metadata/list instances="<<f.constructed->instance_count.value_or(0xffffffffu)<<'/'<<lazy_metadata[0]->instance_count.value_or(0xffffffffu)<<'\n';
+    check(!memory_class_boundary.completed && !call.faulted() && memory_class_boundary.diagnostic.find("0x8002AEAC")!=std::string::npos,
+        "DataList integer construction did not reach actual memory-reference field registration.");
+    const auto integer_type=**signed_int_cell;const auto integer_prototype=*values->signed_int_prototype;
+    check(integer_type && integer_prototype && integer_type->class_flags==7 && integer_type->parent==base_field &&
+        integer_type->native_size==0x34 && integer_type->type_word==0x80475b60 && integer_type->fields->count==20 &&
+        integer_type->instance_count==3 && f.core->types->count==9 && f.core->types->backing->at(8)==integer_type &&
+        signed_int_prototype_allocations.size()==1 && integer_probe_locals.size()==1 &&
+        igb_bootstrap_read_word(integer_probe_locals.front(),0)==0x80471914,
+        "Integer class did not preserve actual inheritance, probe cleanup, publication and three reflected instances.");
+    check(integer_prototype->vtable_word==0x80475b60 && integer_prototype->reference_word==1 && integer_prototype->ordinal==1 &&
+        integer_prototype->type_ordinal==1 && integer_prototype->default_bytes && integer_prototype->default_bytes->buffer &&
+        integer_prototype->default_bytes->buffer->bytes.size()==4 && (**prototypes->registry)->count==2 &&
+        (**prototypes->registry)->backing->at(1)==integer_prototype,
+        "Integer prototype skipped native initialization, registry append, release or finalization.");
+    check(descriptors.size()==57 && data_type->fields->count==4 && data_type->fields->backing->at(2)==descriptors[55] &&
+        data_type->fields->backing->at(3)==descriptors[56] && descriptors[55]->vtable_word==0x80475b60 &&
+        descriptors[56]->vtable_word==0x80475b60 && !descriptors[55]->name && !descriptors[56]->name &&
+        data_type->class_flags==9 && nonref_type->class_flags==8 && thread_list_metadata->class_flags==8 &&
+        descriptors[55]->default_bytes && !descriptors[55]->default_bytes->buffer &&
+        descriptors[56]->default_bytes && !descriptors[56]->default_bytes->buffer &&
+        !**meta_enum->metadata && !**data_defaults->unsigned_char_prototype && default_allocations==57 &&
+        enabled_allocations.size()==15 && enabled_backings.size()==5 && f.constructed->instance_count==6 && lazy_metadata[0]->instance_count==6,
+        "Pending third DataList field invented schema completion, a byte prototype or ready parent classes.");
+    check(grown_object_children && (*object_type->children)->count==5 &&
+        (*object_type->children)->backing==grown_object_children->types && grown_object_children->types->at(4)==data_type &&
+        igb_buffer_word(grown_object_children->bytes,16)==igb_bootstrap_address({enabled_allocations[8].storage,enabled_allocations[8].offset}) &&
+        igb_buffer_word(grown_object_children->bytes,20)==0 && igb_buffer_word(grown_object_children->bytes,28)==0,
+        "DataList inheritance skipped original child-list growth, pointer publication or spare-slot zero fill.");
+    const auto final_new_allocations=reflected_allocations.size();
+    const auto final_new_strings=string_allocations;
+    check(!call.resume(bootstrap).completed && reflected_allocations.size()==final_new_allocations && string_allocations==final_new_strings &&
+        descriptors.size()==57 && data_type->fields->count==4 && f.core->types->count==9 && integer_type->instance_count==3 &&
+        (**prototypes->registry)->count==2 && integer_probe_locals.size()==1 && data_probe_locals.size()==1 &&
+        (*f.core->bootstrap_callbacks)->count==1,
+        "Pending memory-field registration replayed parent registration, probes, reflected factories or prototype publication.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

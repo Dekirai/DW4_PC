@@ -33,6 +33,9 @@ struct Fixture {
         r->pools->memory_pools->selector=0;r->pools->memory_pools->fallback=manager;manager->original_pool_access_bound=true;manager->pools[5]=pool;
         services->values=std::make_shared<IgbFieldValuesServices>();services->values->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->reference_prototype=std::make_shared<IgbRuntimeFieldSlot>(std::shared_ptr<IgbDecodeRuntimeField>{});
+        services->values->signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        auto int_meta=metadata();int_meta->native_size=0x34;int_meta->type_word=0x80475b60;
+        r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_int)]=std::make_shared<IgbRegistrationMetaSlot>(int_meta);
         fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(4);fields->backing_bytes=backing.storage->bytes;fields->backing_address=0x300000;
         services->registry=std::make_shared<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>>(fields);
         services->schema=std::make_shared<IgbFieldSchemaServices>();services->schema->fields=std::make_shared<IgbFieldOperationsServices>();
@@ -49,7 +52,7 @@ struct Fixture {
     auto slot(E kind){return igb_field_prototype_slot(services,kind);}
 };
 void gates_and_native_reflection(){
-    for(const auto kind:{E::reference,E::object}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
+    for(const auto kind:{E::reference,E::object,E::signed_int}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
         check(gate.resume(f.services).completed && f.created->reference_word==1 && f.fields->count==0,"Existing prototype failed null-only gate.");}
     Fixture unknown;unknown.slot(E::object)->reset();IgbFieldPrototypeInvocation missing(E::object);
     check(!missing.resume(unknown.services).completed && unknown.reflected_calls==0,"Unknown prototype was treated as null.");
@@ -140,7 +143,7 @@ void native_registry(){
     *f.services->registry=f.fields;check(get.resume().completed && get.result()==fields,"Completed registry getter reloaded replacement.");
 }
 void append_release_finalize(){
-    for(const auto kind:{E::reference,E::object}){Fixture f;
+    for(const auto kind:{E::reference,E::object,E::signed_int}){Fixture f;
         // The nonnull reference case represents a changed live abstract flag;
         // the canonical cold reference profile returns null in the test above.
         if(kind==E::reference)f.services->registration->reference_metadata->value()->flag_1a=0;
@@ -165,8 +168,8 @@ void append_release_finalize(){
     check(null.fields->count==1 && null.created->reference_word==2 && invalid.faulted(),"Null release fault lost original append/retain prefix.");
 }
 void callbacks_and_missing(){
-    Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;
-    for(const auto address:{0x80027454u,0x80028b64u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
+    Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;*f.slot(E::signed_int)=f.created;
+    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
         auto op=factory(c);check(op && op->resume().completed && !op->callbacks_result,"Prototype callback fabricated a returned deferred list.");}
     IgbRegistrationCallbacksCall other;other.kind=IgbRegistrationCallbacksServiceKind::invoke_function;other.function=0x800289f8;check(!factory(other),"Prototype adapter swallowed registration wrapper.");
     Fixture retained;retained.services->registration->types->metadata_pool_handle.reset();IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=0x80028b64;

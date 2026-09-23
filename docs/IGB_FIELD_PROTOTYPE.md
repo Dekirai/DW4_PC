@@ -1,7 +1,8 @@
 # Native field prototype callbacks
 
 `igb_field_prototype` reconstructs reference-field callback `80027454`,
-object-field callback `80028B64`, and lazy field-registry getter `80063B5C`.
+object-field callback `80028B64`, integer-field callback `8002E440`, and lazy
+field-registry getter `80063B5C`.
 The callbacks run after their descriptor-class metadata registration. They
 publish canonical descriptor instances; those globals are distinct from the
 metadata cells documented in
@@ -17,15 +18,18 @@ remain local; committed code and fixtures are authored C++.
 | --- | --- | --- |
 | `80027454` | `80561684`, igRefMetaField | `80561688` |
 | `80028B64` | `805616E8`, igObjectRefMetaField | `805616EC` |
+| `8002E440` | `805619E0`, igIntMetaField | `805619E4` |
 
 The object prototype aliases `IgbFieldValuesServices::object_prototype`.
+The integer prototype aliases `IgbFieldValuesServices::signed_int_prototype`;
+the existing `80094028` descriptor getter therefore observes the same cell.
 Reference prototype `80561688` and registry `8056229C` are shared cells that
 can alias the bootstrap's canonical members. The registry contains field
 prototypes, not type metadata. The later bootstrap store at `8003D46C` also
 targets `80561688`; its `80027824` getter returns pointer-field prototype
 `80561698`. That later assignment must share the descriptor cell.
 
-Both callbacks first test only whether their prototype pointer is nonnull.
+Each callback first tests only whether its prototype pointer is nonnull.
 A known null pointer reads metadata pool handle `805621F4`, runs actual
 `800607F4`, reloads the class metadata, and calls reflected factory `8006546C`.
 The returned pointer is stored directly into the prototype cell before its
@@ -59,8 +63,8 @@ branch and returns null before allocation. `80027454` publishes that null and
 skips registry creation, append, release and finalization. This is the original
 callback behavior and does not manufacture a reference-field instance.
 
-For concrete object metadata, the same reflected invocation preserves redirect
-handling, pool selection, allocation prefix arithmetic and actual `800667F4`
+For concrete object-reference and integer metadata, the same reflected invocation
+preserves redirect handling, pool selection, allocation prefix arithmetic and actual `800667F4`
 initialization. The object initializer now accepts a canonical runtime-field
 binding at the adjusted allocation offset. Its generic result retains that
 allocation and owner; the callback rejects a returned file and uses the original
@@ -68,6 +72,14 @@ adjusted numeric address for registry publication. The prototype services retain
 the allocation after construction so the field's weak physical binding remains
 valid. Reached field/default virtuals still determine construction completion;
 the binding does not substitute a completed descriptor or cold direct constructor.
+
+The integer profile uses its inherited `igMetaField` schema and verified scalar
+object virtuals. Its `+2C` is the return-only `800667D0`; it does not run the
+object-reference field's default-buffer tail. After reflection, `8002E440`
+performs the same captured append, live canonical release, ordinal and finalizer
+sequence described above. Its separate lazy prototype getter `8002E4D8` remains
+outside this callback change. See
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
 
 Prototype retain/release and ordinal stores also update represented physical
 field storage. Each store uses its original captured or freshly reloaded owner,
@@ -102,19 +114,20 @@ cold-chain and bounded original-instruction evidence is recorded separately in
 [VALIDATION.md](VALIDATION.md). Completed abstract callback behavior does not
 establish completed native startup or a new gameplay preview.
 
-The current cold composition also finishes the concrete object-field prototype
+The cold composition finishes the concrete object-field prototype
 with its actual 23 reached descriptors, all three field passes, default-buffer
 tail, registry append and finalizer. It then completes the parent-list type and
 the actual internal-list memory-field clone through
 `8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4`. Clone finalization and
 replacement finish the child list; both list metadata owners have flags `7`.
-The larger chain now contains 53 schema descriptors plus this reflected
-prototype, 54 default buffers, seven published types and one prototype entry.
-The bootstrap caller performs its original enable store and records type and
-prototype counts 7 and 1 at core `+04/+08`. Its next reached body is still
-`igMetaEnum` registration `8002AAFC`, canonical metadata `80561808`.
-Enabled reflected clone `800680B4`, later registrations and full startup remain
-unimplemented boundaries. See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+The bootstrap caller subsequently performs its original enable store and
+records its then-current type and prototype counts at core `+04/+08`.
+The later ThreadManager/DataList composition reaches the integer registration,
+its reflected prototype, and the enabled scalar field factories. That extension
+does not complete the DataList memory-field class or later thread services.
+Current measured totals and the next reached boundary are recorded in
+[VALIDATION.md](VALIDATION.md). Enabled reflected clone `800680B4` and full
+startup remain separate work. See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
 [IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md)
 for the composition and its explicit pool/platform and physical allocator
 prerequisites.

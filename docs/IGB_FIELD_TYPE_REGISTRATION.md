@@ -11,6 +11,11 @@ requested when the object-field prototype getter reaches `800289F8`:
            -> 80066B08 igObject
 ```
 
+The enabled DataList constructor also reaches `8002E390 -> 8002E3B8`,
+`igIntMetaField`, whose parent is the same `igMetaField` class. It uses a
+separate metadata cell, scalar layout probe and prototype callback; see
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
+
 These are metadata registrations for the descriptor classes. They are separate
 from constructing an individual descriptor and from publishing a shared field
 prototype. In particular, metadata cell `805616E8` cannot substitute for the
@@ -25,27 +30,27 @@ outside the repository.
 
 Each wrapper calls native callback runner `80066188` with the corresponding
 body. Each body passes the following exact arguments to native registrar
-`80066204`. None of these three bodies calls prerequisite guard `80021B94`.
+`80066204`. None of these four bodies calls prerequisite guard `80021B94`.
 
-| Argument | igMetaField | igRefMetaField | igObjectRefMetaField |
-| --- | --- | --- | --- |
-| Wrapper | `8002A6B0` | `80027338` | `800289F8` |
-| Body | `8002A6D8` | `80027360` | `80028A20` |
-| Metadata cell | `805617BC` | `80561684` | `805616E8` |
-| Native size | `0x34` | `0x38` | `0x44` |
-| Abstract flag | `1` | `1` | `0` |
-| Parent body | `80066B08` | `8002A6D8` | `80027360` |
-| Parent getter | `800237D0` | `80021D70` | `80025494` |
-| Field callback | `8002A744` | `800273CC` | `80028A94` |
-| Layout probe | Null | Null | `80028934` |
-| Defaults | `8002A764` | `800273EC` | `80028AB4` |
-| Extra-callback table | `8055D290` | `8055D158` | `804640C4` |
-| Extra callbacks | `8002A0A8`, zero | `80027454`, zero | `8002A0A8`, `80028B64`, zero |
-| Trailing callback | Null | Null | Null |
+| Argument | igMetaField | igRefMetaField | igObjectRefMetaField | igIntMetaField |
+| --- | --- | --- | --- | --- |
+| Wrapper | `8002A6B0` | `80027338` | `800289F8` | `8002E390` |
+| Body | `8002A6D8` | `80027360` | `80028A20` | `8002E3B8` |
+| Metadata cell | `805617BC` | `80561684` | `805616E8` | `805619E0` |
+| Native size | `0x34` | `0x38` | `0x44` | `0x34` |
+| Abstract flag | `1` | `1` | `0` | `0` |
+| Parent body | `80066B08` | `8002A6D8` | `80027360` | `8002A6D8` |
+| Parent getter | `800237D0` | `80021D70` | `80025494` | `80021D70` |
+| Field callback | `8002A744` | `800273CC` | `80028A94` | `8002E420` |
+| Layout probe | Null | Null | `80028934` | `8002E308` |
+| Defaults | `8002A764` | `800273EC` | `80028AB4` | Null |
+| Extra-callback table | `8055D290` | `8055D158` | `804640C4` | `8055D3C4` |
+| Extra callbacks | `8002A0A8`, zero | `80027454`, zero | `8002A0A8`, `80028B64`, zero | `8002E440`, zero |
+| Trailing callback | Null | Null | Null | Null |
 
 The two abstract parents skip the layout-probe call through the original
-registrar flag test. The object-reference class reaches its actual probe;
-a constant vtable result is not supplied by this module. Specialized defaults
+registrar flag test. The object-reference and integer classes reach their actual
+probes; a constant vtable result is not supplied by this module. Specialized defaults
 and probe implementations are composed through their exact service identities.
 Unbound operations retain their reached continuation.
 
@@ -60,15 +65,16 @@ do not create ready metadata. See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATI
 `IgbFieldTypeRegistrationServices::base_metadata` represents `805617BC`, and
 `reference_metadata` represents `80561684`. Object metadata always uses
 `IgbMetaFieldFactoryServices::metadata_slots[object]`, the existing canonical
-`805616E8` cell used by the object-field factory. The shared slot helper returns
-these owners without introducing another metadata cache.
+`805616E8` cell used by the object-field factory. Integer metadata similarly
+uses `metadata_slots[signed_int]`, canonical `805619E0`. The shared slot helper
+returns these owners without introducing another metadata cache.
 
-| Behavior | igMetaField | igRefMetaField | igObjectRefMetaField |
-| --- | --- | --- | --- |
-| Allocation-only getter | `8002A638` | Not represented | `800288BC` |
-| Full getter | `8002A674` | `800272FC` | `800288F8` |
-| Full-getter alias | `8002A744` | `800273CC` | `80028A94` |
-| Plain parent getter | `80021D70` | `80025494` | Not represented |
+| Behavior | igMetaField | igRefMetaField | igObjectRefMetaField | igIntMetaField |
+| --- | --- | --- | --- | --- |
+| Allocation-only getter | `8002A638` | Not represented | `800288BC` | Not represented |
+| Full getter | `8002A674` | `800272FC` | `800288F8` | `8002E2CC` |
+| Full-getter alias | `8002A744` | `800273CC` | `80028A94` | `8002E420` |
+| Plain parent getter | `80021D70` | `80025494` | Not represented | Not represented |
 
 Allocation-only getters return an existing nonnull owner immediately. A known
 null cell captures the current metadata pool handle, executes actual
@@ -86,14 +92,14 @@ survive suspension, and completed results retain their identity.
 
 ## Integration and evidence limits
 
-The function adapter handles only the six exact wrappers and bodies. The
-type-registration adapter binds their parent-body calls and ten metadata
+The function adapter handles only the profiles' exact wrappers and bodies. The
+type-registration adapter binds their parent-body calls and represented metadata
 getter addresses. The field-factory adapter connects a represented enabled
 descriptor factory to these wrappers. Adapters use weak service ownership
 until selection and retain the selected services while an operation is pending.
 
-This module intentionally leaves callbacks `80027454` and `80028B64` available
-for their actual prototype construction implementations. A successful type
+This module intentionally leaves callbacks `80027454`, `80028B64` and
+`8002E440` available for their actual prototype construction implementations. A successful type
 registration body returns a deferred list; it does not imply that those
 callbacks or the surrounding cold bootstrap have completed. The existing
 object-field prototype getter `80028BFC` remains a separate descriptor lookup
@@ -102,7 +108,7 @@ in [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
 Permanent tests check exact profile arguments and callback tables, shared
 cells, metadata construction, the three-class parent chain, gates, abstract
 probe skipping, explicit defaults/probe boundaries, native callback append,
-all ten getter adapters, lazy raw-store ownership, retained operations and
+the getter adapters, lazy raw-store ownership, retained operations and
 recursive failure. Isolated fixtures prepare physical allocations, internal
 field-list allocation and selected layout/name endpoints. Those preparations
 are not evidence that their omitted original bodies execute. The composed

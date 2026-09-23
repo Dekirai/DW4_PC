@@ -165,8 +165,13 @@ feeds original registration and inherited field append. ThreadManager defaults
 `80023940` now create both reflected object fields and two lazy metadata/list
 pairs, publish the schema/redirect and append bootstrap callback `80023A50`.
 ThreadManager finishes as type eight with flags `7`; there are 55 schema
-descriptors and 56 default buffers. The next reached body is deferred thread-list
-registration `80023F28`, followed by semaphore registration `80026098` and
+descriptors and 56 default buffers. Deferred thread-list registration `80023F28`
+now enters actual non-reference-counted object-list and DataList registration.
+The signed-integer field class and its reflected prototype complete before
+DataList's third field reaches memory-field registration `8002AEAC`. Recover
+that class's defaults, probe and prototype, then the unsigned-character element
+prototype and enabled inherited-field clone. Complete the list chain and its
+deferred `igThread` registration before semaphore registration `80026098` and
 ThreadManager startup `80023A30`. Enum metadata remains null while these
 prerequisites are pending. Enabled reflected clone
 `800680B4` and member/reference branches beyond the completed profile
@@ -174,7 +179,10 @@ remain explicit, together with pool/platform, allocator, callback deallocation
 and BSS prerequisites. Initial core-list constructors and reserve run in this
 same chain; the separate byte-only backing profile remains covered. Continue
 through `igMetaEnum`, later registrations and the outer startup before claiming
-complete native initialization. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
+complete native initialization. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
+[IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
 [IGB_META_ENUM.md](IGB_META_ENUM.md),
 [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),

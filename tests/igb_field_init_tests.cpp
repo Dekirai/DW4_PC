@@ -93,6 +93,12 @@ void object_virtuals() {
     };
     check(f.select(0x2c)->resume().completed,"Object-field tail did not select its actual buffer virtual.");
     f.call.vtable_word=0x123;check(!f.select(0x24),"Unknown object table inherited unrelated leaves.");
+    f.call.vtable_word=0x80475b60;
+    for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u})check(f.select(slot)->resume().completed,"Original integer-field object BLR was not composed.");
+    auto int_cell=std::make_shared<IgbRegistrationMetaSlot>();registration->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_int)]=int_cell;
+    auto int_getter=f.select(0x58);check(!int_getter->resume().completed,"Unknown integer metadata reused the object-field global.");
+    *int_cell=std::shared_ptr<IgbRuntimeMetaType>{};check(int_getter->resume().completed && !int_getter->metadata_result,"Integer getter registered a represented null class.");
+    *int_cell=meta;auto reloaded=f.select(0x58);check(reloaded->resume().completed && reloaded->metadata_result==meta,"Integer getter failed fresh canonical805619E0.");
 }
 }
 int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();

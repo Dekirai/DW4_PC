@@ -240,16 +240,26 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue with deferred thread-list registration `80023F28`, reached through
+Deferred thread-list registration `80023F28` is reached through
 ThreadManager's returned callback list. ThreadManager defaults `80023940` now
 complete their two reflected descriptors, both lazy metadata/list allocations,
 schema publication, redirect and bootstrap callback append. ThreadManager is
-published as the eighth type (flags `7`), while thread-list/semaphore metadata
-exists with flags zero. Implement `80023F28`, then `80026098`, then actual
-startup callback `80023A30`; share the lazy getters' canonical cells with those
-registrars. Enum metadata remains null. Preserve
+published as the eighth type (flags `7`). The thread-list registrar now shares
+its lazy getter's metadata and enters actual parents `80029694` and `80033A14`.
+The signed-integer field class completes registration and reflected prototype
+publication before DataList's third factory reaches **`8002AEAC`**. Continue
+with this memory-reference field registration, exact `8002AD90` probe and
+`8002AF40` defaults. Those defaults include eight local fields and inherited
+method replacements; an existing descriptor constructor does not complete them.
+Then recover unsigned-character registration `80023234` for the DataList element
+prototype, enabled cloning needed by `80029724`, and deferred thread class
+`80023C40`. Complete that chain before `80026098` and actual startup callback
+`80023A30`. Semaphore metadata still has flags zero; enum metadata remains null. Preserve
 the deferred callback order and the now-reached original transition from disabled
-to enabled reflection. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
+to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
+[IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md).
 Complete the remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the

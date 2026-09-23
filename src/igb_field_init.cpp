@@ -100,14 +100,15 @@ std::shared_ptr<IgbObjectInitOperation> leaf() {
 IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbFieldInitServices> services,IgbObjectInitFactory remaining) {
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbObjectInitCall& call)->std::shared_ptr<IgbObjectInitOperation> {
         const auto delegate=[&]{return remaining?remaining(call):std::shared_ptr<IgbObjectInitOperation>{};};
-        if(call.kind==IgbObjectInitServiceKind::object_virtual && call.vtable_word==0x804762fc) {
-            if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24)return leaf();
+        if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc || call.vtable_word==0x80475b60)) {
+            const bool scalar=call.vtable_word==0x80475b60;
+            if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24 || (scalar && call.virtual_slot==0x2c))return leaf();
             if(call.virtual_slot!=0x58 && call.virtual_slot!=0x2c)return delegate();
             const auto selected=weak.lock();if(!selected)fail("Field initializer services expired before selection.");
             auto operation=std::make_shared<IgbObjectInitOperation>();
-            if(call.virtual_slot==0x58)operation->resume=[selected,out=operation.get()] {
-                const auto cell=igb_field_type_metadata_slot(selected->registration,IgbFieldTypeKind::object);
-                if(!cell || !*cell)return pending("Object-field metadata getter requires represented805616E8.");
+            if(call.virtual_slot==0x58)operation->resume=[selected,scalar,out=operation.get()] {
+                const auto cell=igb_field_type_metadata_slot(selected->registration,scalar?IgbFieldTypeKind::signed_int:IgbFieldTypeKind::object);
+                if(!cell || !*cell)return pending("Field metadata getter requires its represented canonical class cell.");
                 out->metadata_result=**cell;return MessengerCallResult{true,0,{}};
             };
             else {auto state=std::make_shared<ObjectFieldTail>();state->object=call.object;

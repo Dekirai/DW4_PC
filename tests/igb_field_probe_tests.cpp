@@ -100,7 +100,31 @@ void adapters(){
     check(!wait->resume().completed,"Missing stack representation was fabricated.");late.services->local_storage=[&]{return late.local;};
     check(wait->resume().completed,"Late stack storage failed to resume.");
 }
+void signed_int_probe(){
+    for(const auto offset:{0u,4u,0x10u,0x24u,0x30u}){Fixture f;
+        f.local.storage->bytes->bytes.resize(0x34);f.local.storage->bytes->initialized.resize(0x34);f.core->vtable_offset=offset;
+        IgbFieldProbeInvocation run(f.local,IgbMetaFieldKind::signed_int);
+        check(run.resume(f.services).completed && run.value()==(offset==0?0x80475b60u:igb_bootstrap_read_word(f.local,offset)),
+            "Integer probe substituted another class reset or failed exact short storage.");
+        check(f.field->vtable_word==0x80471914 && f.calls.empty(),"Integer probe executed object-cache or reference-base cleanup.");
+    }
+    Fixture f;f.services->runtime->singleton.reset();IgbFieldProbeInvocation suspended(f.local,IgbMetaFieldKind::signed_int);
+    check(!suspended.resume(f.services).completed && f.field->vtable_word==0x80475b60,"Integer probe did not pause after its real reset.");
+    auto name=string(1);igb_meta_field_set_name(f.local,name,0x1008);f.services->runtime->singleton=f.core;bool ready{};unsigned calls{};
+    f.action=[&](const IgbDependenciesCall& c,MessengerCallResult& status){++calls;check(c.kind==K::release_string && c.string==name && name->references==0 &&
+        f.field->vtable_word==0x80471914,"Integer cleanup changed full-word release or vtable order.");status.completed=ready;};
+    check(!suspended.resume(f.services).completed && calls==1,"Integer name release did not retain its pending continuation.");ready=true;
+    check(suspended.resume(f.services).completed && calls==2 && name->references==0 && suspended.value()==0x80475b60,
+        "Integer release resume repeated the decrement or selected-word read.");
+    Fixture invalid;invalid.core->vtable_offset=0x34;IgbFieldProbeInvocation outside(invalid.local,IgbMetaFieldKind::signed_int);
+    rejects([&]{outside.resume(invalid.services);},"Integer probe accepted bytes outside its original0x34-byte object.");
+    check(invalid.field->vtable_word==0x80475b60,"Integer bounds fault ran cleanup prematurely.");
+    Fixture selected;unsigned locals{};selected.services->profile_local_storage=[&](IgbMetaFieldKind kind){++locals;
+        check(kind==IgbMetaFieldKind::signed_int,"Integer adapter selected another stack profile.");return selected.local;};
+    IgbTypeRegistrationCall request;request.kind=IgbTypeRegistrationServiceKind::layout_probe;request.function=0x8002e308;
+    auto op=make_native_igb_field_probe_factory(selected.services)(request);check(op && op->resume().completed && locals==1,"Integer probe adapter was not composed.");
 }
-int main(){try{reset_and_capture();cleanup_order();missing_bindings_and_failures();adapters();
+}
+int main(){try{reset_and_capture();cleanup_order();missing_bindings_and_failures();adapters();signed_int_probe();
     std::cout<<"Field layout probe tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

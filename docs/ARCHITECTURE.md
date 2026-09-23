@@ -147,12 +147,24 @@ with exact typed descriptor results. Defaults compose allocation-only dependency
 getters, schema publication and the actual ArkCore bootstrap callback append.
 They construct separate metadata/internal-list pairs without marking either
 dependency class ready. ThreadManager publishes as the eighth type before the
-runner reaches `80023F28`. Its returned dependency/startup callbacks remain
+runner enters `80023F28`. Its returned dependency/startup callbacks remain
 separate from the `80023A50` callback queued on ArkCore `+28`.
+The thread-list, non-reference-counted object-list and DataList registrars share
+those canonical cells and execute their actual prerequisite guards. Their
+layout probes preserve distinct core-capture positions and physical vtable
+stores. DataList defaults use native batch/schema callers; object specialization
+retains the selected inherited field through clone, prototype lookup and
+replacement. Integer-field registration shares the existing descriptor metadata
+and value-prototype cells, including the reflected initializer and scalar
+virtuals. The composed chain reaches memory-field registration `8002AEAC`;
+the later unsigned-character prototype and enabled clone remain required.
 This transition does not complete startup. Enabled reflected cloning `800680B4`,
 remaining member operations, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
-endpoints in this composition. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
+endpoints in this composition. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
+[IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
 [IGB_META_ENUM.md](IGB_META_ENUM.md),
 [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),

@@ -1,5 +1,87 @@
 # Local validation
 
+## Native DataList hierarchy and enabled integer fields
+
+Validated locally on 2026-09-23. The same cold-bootstrap invocation now crosses
+deferred `80023F28` into the actual non-reference-counted object-list and DataList
+parents. Their registrars preserve prerequisite guards, canonical metadata,
+parent inheritance, and layout-probe capture/store order. The fifth `igObject`
+child exercises native backing growth and zero fill with an explicit allocator
+reallocation endpoint.
+
+DataList's first factory enters actual `igIntMetaField` registration `8002E3B8`,
+probe `8002E308`, reflected initialization and prototype callback `8002E440`.
+The integer class finishes with flags `7` as type nine, inheriting twenty fields.
+Its prototype uses canonical `805619E4`, occupies registry ordinal one, and
+receives its four-byte default buffer through real finalization. The two DataList
+integer descriptors are then reflected instances of that class. Their names,
+schema configuration and default buffers remain pending until the third factory
+completes; the batch does not finalize them early.
+
+The next reached original body is **`8002AEAC`, igMemoryRefMetaField registration**.
+There are 57 schema descriptors, 57 default buffers, nine registered types and
+two prototypes. DataList remains at flags `9`; its non-reference-counted object
+and thread-list children remain at flags `8`. Enum metadata `80561808` is still
+null. The earlier bootstrap snapshots remain `+04 = 7`, `+08 = 1`.
+The actual byte-element registration, enabled inherited-field clone, thread
+class, semaphore and startup callbacks still need completion. This is a longer
+verified startup prefix, not completed native startup or playable gameplay.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 188/188 CTest suites passed locally with four jobs; no compiler warnings |
+| Cold composition | 1,360 checks; preserves the earlier 1,230-check checkpoint and composes actual enabled integer registration, prototype and descriptor construction without ready-class seeds |
+| Data-list registration | 506 checks; three profiles, canonical getters, prerequisite/parent ordering, exact probes, suspension and allocation ownership |
+| Data-list defaults | 292 checks; actual batch/schema and replacement callers with prepared leaves, captured receivers, ordered physical stores, prototype effects before destination faults and wrapped physical indices |
+| Field registration/probe/prototype/init | 198 /106 /83 /62 checks, including the integer profile, shared prototype cell, scalar cleanup and verified initialization virtuals |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; unchanged separate enabled `8002A0A8` boundary, twenty types and sixty field mappings |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+The malformed-destination regression preserves prototype registration effects
+before the first `+3C` store faults. The wrapped-index regression follows
+`800658E8`'s 32-bit shift before checking the represented physical slot: index
+`0x80000002` addresses slot two. The resulting slot remains bounded by the
+fixed profile and actual backing size.
+
+Six independent local comparisons execute **10,957 cases / 2,578,396 original
+instructions with zero differences**. The unchanged corpora include 7,380
+fault or bounded failure prefixes, 3,573 completed instruction-executed calls,
+and four observations of the original registration argument lists.
+
+| Original-instruction scope | Cases | Instructions |
+| --- | ---: | ---: |
+| Three data-list registrations, wrappers, getters and probes | 3,477 | 101,621 |
+| DataList defaults, actual batch/schema callers and byte-prototype getter | 3,870 | 1,947,710 |
+| Non-reference-counted object specialization, lookup/index, prototype getter and replacement | 1,437 | 369,271 |
+| Integer registration arguments, wrapper and getters | 577 | 14,570 |
+| Integer layout probe, reset and name cleanup | 1,308 | 140,526 |
+| Integer prototype guard/null-publication paths | 288 | 4,698 |
+
+These comparisons preserve explicit prepared endpoints: field constructors,
+registration bodies selected by getters, clone results, field virtuals, string
+interning and allocator/pool callbacks. Registration-argument observations do
+not execute the generic registrar, and lazy getter comparisons cover existing
+nonnull cells rather than their allocation branch. The integer-prototype
+corpus deliberately uses abstract metadata to qualify the original factory's
+null return; it does not establish positive registry append or finalization.
+The separate cold composition above executes the actual positive reflected
+integer prototype. The specialized object-list comparison excludes reserve
+growth. Each report records its exact prepared leaves and failure scope.
+
+Final `dw4_core.lib` SHA-256:
+`64be6f5ebf01a5f86c37a2b25a4e0e56536a2d048006fa25a0f8b1d961e9864e`.
+Ignored local build log: `work/native-data-list-wrap-build.log`; cold/original
+regression logs: `work/native-data-list-{cold,prefix,player,verifier}.log`.
+Independent comparison artifacts, source/driver/corpus hashes and transitive
+oracle-helper hashes are recorded in `work/native-data-list-milestone-audit.json`.
+The final core/test/regression consistency audit is
+`work/native-data-list-root-audit.json`. Original instructions, assets and
+generated comparison corpora remain local and ignored.
+See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
+[IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md), and
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
+
 ## Native ThreadManager fields and lazy dependencies
 
 Validated locally on 2026-09-23. The retained cold-bootstrap integration now

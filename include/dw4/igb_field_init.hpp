@@ -15,7 +15,9 @@ struct IgbFieldInitServices {
     std::shared_ptr<IgbMemoryFieldConstructServices> memory_construct;
 };
 
-// Verified object-field object virtuals and reached reference-field passes.
+// Verified object-reference and signed-integer descriptor object virtuals,
+// plus the reached reference-field passes. The integer +2C tail is BLR;
+// object-reference +2C still performs its actual default-buffer preparation.
 // Object-reference construction composes actual6546C and assignment6A47C.
 // Memory construction composes62524/62BB8. Reached services and unrecovered
 // reset branches stay pending; unknown tables and slots are delegated.

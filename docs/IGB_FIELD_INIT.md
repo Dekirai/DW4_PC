@@ -20,6 +20,14 @@ vtable and calls the field's `+8C` with null input. The existing native
 `80063D04 -> 80063C74` chain selects size, prepares default storage and
 publishes its physical pointer. It is not a successful empty tail.
 
+The signed-integer descriptor vtable `80475B60` binds `+58` to plain metadata
+getter `80094020`, canonical `805619E0`. Its `+0C`, `+24`, `+2C` and `+34`
+entries are return-only `800667A4`, `800667B0`, `800667D0` and `800667CC`.
+It uses the same generic reflected initializer with its inherited `igMetaField`
+schema, while its scalar `+2C` has no object-reference default-buffer tail.
+Its class and prototype identities are documented in
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
+
 The initializer visits the derived registry from the captured base-field
 count through its captured derived count, retaining original live backing
 reads between visits. The object-field class has 25 descriptors, including
@@ -77,9 +85,18 @@ see [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md) and the current results in
 [VALIDATION.md](VALIDATION.md). Physical allocator, pool/platform and BSS
 prerequisites are still explicit; this is not a complete game startup.
 
+The later DataList composition uses the enabled signed-integer descriptor
+factory for its first two local fields. Its native class registration and
+layout probe precede reflected prototype construction, registry publication,
+and those two reflected instances. This extends the scalar descriptor path;
+the third DataList field's memory-reference class and later list/thread
+operations retain their separate reached boundaries.
+
 Permanent tests cover type separation, header and member publication, pending
 callbacks, live virtuals, null/unknown states, string ownership, captured widths,
 padding, invalidation and the cold integration. Independent comparisons execute
 the original scalar/reference/string bodies and all 0x44 bytes of the reflected
-field constructor, including its real default-buffer tail. Prepared endpoint
+object-reference field constructor, including its real default-buffer tail.
+Signed-integer probe and constructor evidence is described separately in
+[IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md). Prepared endpoint
 scopes and final hashes are recorded in [VALIDATION.md](VALIDATION.md).
