@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/igb_meta_field_factory.hpp"
+#include "dw4/igb_object_field_construct.hpp"
 #include "dw4/igb_type_registration.hpp"
 
 #include <unordered_map>
@@ -12,13 +13,16 @@ struct IgbFieldProbeServices {
     std::shared_ptr<IgbRuntimeTypesServices> runtime;
     // Physical representation of the original 0x44-byte stack object.
     std::function<IgbBootstrapPointer()> local_storage;
-    // Optional profile-specific locals: object0x44 / signed-int0x34 bytes.
+    // Profile-specific locals: object 0x44 / int or bool 0x34 / memory 0x50 bytes.
     std::function<IgbBootstrapPointer(IgbMetaFieldKind)> profile_local_storage;
     std::unordered_map<std::uint32_t,std::shared_ptr<IgbInternedString>> strings;
     std::vector<std::shared_ptr<void>> retained;
+    // Explicit +48 object identities and the reached destroy_object/80066E1C
+    // continuation. A numeric member alone does not manufacture an owner.
+    std::shared_ptr<IgbObjectFieldConstructServices> object_cleanup;
 };
-// Actual80028934(object) /8002E308(int): reset, capture the word selected by
-// live ArkCore+394, then original string cleanup. Only object has a +40 cache.
+// Actual80028934(object), 8002E308(int), 8002AD90(memory), and 80038778(bool):
+// reset, capture the word selected by live ArkCore+394, then member cleanup.
 class IgbFieldProbeInvocation {
 public:
     explicit IgbFieldProbeInvocation(IgbBootstrapPointer,IgbMetaFieldKind=IgbMetaFieldKind::object);

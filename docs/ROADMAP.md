@@ -168,9 +168,14 @@ ThreadManager finishes as type eight with flags `7`; there are 55 schema
 descriptors and 56 default buffers. Deferred thread-list registration `80023F28`
 now enters actual non-reference-counted object-list and DataList registration.
 The signed-integer field class and its reflected prototype complete before
-DataList's third field reaches memory-field registration `8002AEAC`. Recover
-that class's defaults, probe and prototype, then the unsigned-character element
-prototype and enabled inherited-field clone. Complete the list chain and its
+DataList's third field enters memory-field registration `8002AEAC`. Its native
+probe and eight-field defaults now execute the reached Boolean registration,
+scalar probe and reflected prototype. Seven local descriptors are constructed
+before the final factory reaches string-field registration `80025404`.
+Recover that class and resume the memory schema's actual inherited method
+clone/replacement dependencies. Its full defaults caller has focused coverage
+with explicit leaves; it is not yet completed in cold startup. Then finish the
+memory prototype, unsigned-character element prototype and enabled inherited-field clone. Complete the list chain and its
 deferred `igThread` registration before semaphore registration `80026098` and
 ThreadManager startup `80023A30`. Enum metadata remains null while these
 prerequisites are pending. Enabled reflected clone
@@ -182,6 +187,8 @@ through `igMetaEnum`, later registrations and the outer startup before claiming
 complete native initialization. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_DEFAULTS.md](IGB_MEMORY_FIELD_DEFAULTS.md),
 [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
 [IGB_META_ENUM.md](IGB_META_ENUM.md),

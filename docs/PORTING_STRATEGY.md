@@ -247,10 +247,20 @@ schema publication, redirect and bootstrap callback append. ThreadManager is
 published as the eighth type (flags `7`). The thread-list registrar now shares
 its lazy getter's metadata and enters actual parents `80029694` and `80033A14`.
 The signed-integer field class completes registration and reflected prototype
-publication before DataList's third factory reaches **`8002AEAC`**. Continue
-with this memory-reference field registration, exact `8002AD90` probe and
-`8002AF40` defaults. Those defaults include eight local fields and inherited
-method replacements; an existing descriptor constructor does not complete them.
+publication before DataList's third factory enters memory-field registration
+`8002AEAC`. The exact `8002AD90` probe and `8002AF40` defaults caller now compose
+with actual Boolean registration `80038828` and prototype `800388B0`.
+The eighth memory-class field reaches **`80025404`, string-field registration**.
+Continue through string probe `80025348`, defaults `8002549C`, prototype
+`80025628` and its real reflected tail `8007144C`. String defaults replace
+inherited shallow-copy and destruct descriptors, reaching signed-byte clone
+`80037BC0` and enabled copy `800680B4 -> 80068060 -> 80067B60`.
+Then resume the memory schema's inherited shallow-copy clone and reset-method
+constructor `80031378`.
+The full eight-field/method-replacement caller is implemented with explicit
+remaining leaves; the cold composition must reach and implement those leaves
+before claiming this class complete. Preserve the same canonical cells and
+prototype registry, including the memory prototype callback `8002B178`.
 Then recover unsigned-character registration `80023234` for the DataList element
 prototype, enabled cloning needed by `80029724`, and deferred thread class
 `80023C40`. Complete that chain before `80026098` and actual startup callback
@@ -259,6 +269,8 @@ the deferred callback order and the now-reached original transition from disable
 to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_DEFAULTS.md](IGB_MEMORY_FIELD_DEFAULTS.md),
 [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md).
 Complete the remaining class registrations, then the outer

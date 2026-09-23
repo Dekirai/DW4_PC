@@ -22,7 +22,7 @@ struct IgbFieldPrototypeOperation {
 using IgbFieldPrototypeFactory=std::function<std::shared_ptr<IgbFieldPrototypeOperation>(const IgbFieldPrototypeCall&)>;
 struct IgbFieldPrototypeServices {
     std::shared_ptr<IgbFieldTypeRegistrationServices> registration;
-    std::shared_ptr<IgbFieldValuesServices> values; //Canonical object805616EC/int805619E4 prototypes.
+    std::shared_ptr<IgbFieldValuesServices> values; //Canonical object/int/boolean/memory prototypes.
     std::shared_ptr<IgbRuntimeFieldSlot> reference_prototype; //Canonical80561688.
     std::shared_ptr<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>> registry; //Canonical8056229C.
     std::shared_ptr<IgbFieldRegistryServices> registries;
@@ -48,7 +48,8 @@ public:
     std::shared_ptr<IgbDecodeFieldRegistry> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual27454(reference) /28B64(object) /2E440(int). These callbacks return no descriptor;
+// Actual27454(reference) /28B64(object) /2E440(int) /2B178(memory) /388B0(bool).
+// These callbacks return no descriptor;
 // descriptor publication is through the canonical global cell only.
 class IgbFieldPrototypeInvocation {
 public:

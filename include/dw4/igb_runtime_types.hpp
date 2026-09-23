@@ -67,6 +67,9 @@ struct IgbDecodeRuntimeField {
     std::optional<std::uint8_t> flag_27,flag_28,flag_29,flag_2a,flag_2b,flag_2c;
     std::optional<std::uint32_t> word_30;
     std::optional<std::uint8_t> flag_34,flag_35,flag_38,flag_3c;
+    // Method descriptors use a distinct four-byte function member at+34.
+    // It does not alias the reference-field construct byte in the host view.
+    std::optional<std::uint32_t> method_function;
     // Specialized object-field +38 is a raw, nonowning metadata pointer.
     std::optional<std::weak_ptr<IgbRuntimeMetaType>> object_type;
     std::optional<std::uint32_t> word_40;

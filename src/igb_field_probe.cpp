@@ -5,9 +5,28 @@ namespace {
 [[noreturn]] void fail(const char* message){throw IgbFieldProbeError(message);}
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& flag;explicit Running(bool& value):flag(value){flag=true;}~Running(){flag=false;}};
+bool scalar(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::signed_int || kind==IgbMetaFieldKind::boolean;}
+bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){
+    return a.storage==b.storage && a.offset==b.offset && a.file==b.file && a.field==b.field &&
+        a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;
+}
+std::optional<IgbObjectInstance> object_binding(const std::shared_ptr<IgbFieldProbeServices>& services,
+    std::uint32_t address,const IgbObjectInstance& local){
+    std::optional<IgbObjectInstance> result;
+    const auto consider=[&](const IgbObjectInstance& object){
+        if(igb_bootstrap_address({object.storage,object.offset})!=address)return;
+        if(!object.storage || object.storage->faulted())fail("Field probe requires an unfaulted captured object allocation.");
+        igb_object_validate_instance(object);
+        if(result && !same(*result,object))fail("Field probe object pointer has conflicting native identities.");
+        result=object;
+    };
+    consider(local);
+    if(services && services->object_cleanup)for(const auto& object:services->object_cleanup->objects)consider(object);
+    return result;
+}
 }
 struct IgbFieldProbeInvocation::Impl {
-    enum class P {construct,core,offset,word,cache,base,name,resolve,release,done};
+    enum class P {construct,core,offset,word,cache,object,object_resolve,object_destroy,base,name,resolve,release,done};
     IgbBootstrapPointer local;
     IgbMetaFieldKind kind{};
     std::shared_ptr<IgbFieldProbeServices> owner;
@@ -18,11 +37,17 @@ struct IgbFieldProbeInvocation::Impl {
     IgbDependenciesCall request;IgbDependenciesFactory factory;
     std::shared_ptr<IgbDependenciesOperation> operation;
     std::function<MessengerCallResult()> callback;
+    IgbObjectInstance object;
+    IgbObjectFieldConstructCall object_request;
+    IgbObjectFieldConstructFactory object_factory;
+    std::shared_ptr<IgbObjectFieldConstructOperation> object_operation;
+    std::function<MessengerCallResult()> object_callback;
     std::uint32_t offset{},value{},address{},slot{};
     P phase=P::construct,after=P::done;bool running{},fault{};
 };
 IgbFieldProbeInvocation::IgbFieldProbeInvocation(IgbBootstrapPointer local,IgbMetaFieldKind kind):impl_(std::make_unique<Impl>()){
-    if(kind!=IgbMetaFieldKind::object && kind!=IgbMetaFieldKind::signed_int)fail("Unsupported field layout probe profile.");
+    if(kind!=IgbMetaFieldKind::object && !scalar(kind) && kind!=IgbMetaFieldKind::memory_reference)
+        fail("Unsupported field layout probe profile.");
     impl_->local=std::move(local);impl_->kind=kind;
 }
 IgbFieldProbeInvocation::~IgbFieldProbeInvocation()=default;
@@ -38,6 +63,7 @@ MessengerCallResult IgbFieldProbeInvocation::resume(std::shared_ptr<IgbFieldProb
     if(!s.owner && services){s.owner=services;if(s.local.storage)s.owner->retained.push_back(s.local.storage);}
     const auto check=[&]{if(s.fault)fail("Field layout probe continuation was invalidated.");};
     const auto fallback=[&]{return services && services->fields && services->fields->dependencies?services->fields->dependencies->factory:IgbDependenciesFactory{};};
+    const auto object_fallback=[&]{return services && services->object_cleanup?services->object_cleanup->factory:IgbObjectFieldConstructFactory{};};
     try{for(;;){check();switch(s.phase){
     case P::construct:
         if(!s.constructor)s.constructor=std::make_unique<IgbMetaFieldConstructorInvocation>(s.local,
@@ -55,13 +81,38 @@ MessengerCallResult IgbFieldProbeInvocation::resume(std::shared_ptr<IgbFieldProb
         if(s.offset>igb_meta_field_profile(s.kind).bytes-4 || (s.offset&3u)!=0)fail("Field probe exceeds its aligned local-object profile.");
         s.value=igb_bootstrap_read_word(s.local,s.offset);
         igb_bootstrap_write_word(s.local,0,igb_meta_field_profile(s.kind).vtable);
-        s.phase=s.kind==IgbMetaFieldKind::object?P::cache:P::base;break;
+        s.phase=scalar(s.kind)?P::base:P::cache;break;
     case P::base:
-        if(s.kind==IgbMetaFieldKind::object)igb_bootstrap_write_word(s.local,0,0x80471384);
+        if(!scalar(s.kind))igb_bootstrap_write_word(s.local,0,0x80471384);
         igb_bootstrap_write_word(s.local,0,0x80471914);s.phase=P::name;break;
     case P::cache:case P::name:
-        s.slot=s.phase==P::cache?0x40u:0x0cu;s.after=s.phase==P::cache?P::base:P::done;
+        s.slot=s.phase==P::cache?(s.kind==IgbMetaFieldKind::memory_reference?0x4cu:0x40u):0x0cu;
+        s.after=s.phase==P::cache?(s.kind==IgbMetaFieldKind::memory_reference?P::object:P::base):P::done;
+        if((s.kind==IgbMetaFieldKind::memory_reference || s.kind==IgbMetaFieldKind::boolean) &&
+            igb_bootstrap_address(s.local)+s.slot==0){s.phase=s.after;break;}
         s.address=igb_bootstrap_read_word(s.local,s.slot);s.phase=s.address?P::resolve:s.after;break;
+    case P::object:
+        // The original reads this member after the preceding string callback.
+        if(igb_bootstrap_address(s.local)+0x48u==0){s.phase=P::base;break;}
+        s.address=igb_bootstrap_read_word(s.local,0x48);s.phase=s.address?P::object_resolve:P::base;break;
+    case P::object_resolve:{
+        const auto object=object_binding(services,s.address,{s.local.storage,s.local.offset,{},s.field});
+        if(!object)return pending("Field probe requires the physical binding of its captured +48 object.");
+        s.object=*object;if(s.owner)s.owner->retained.push_back(s.object.storage);
+        igb_object_set_reference_word(s.object,igb_object_reference_word(s.object)-1u);
+        if((igb_object_reference_word(s.object)&0x7fffffu)!=0){s.phase=P::base;break;}
+        s.object_request.kind=IgbObjectFieldConstructServiceKind::destroy_object;s.object_request.object=s.object;
+        s.object_factory=object_fallback();s.phase=P::object_destroy;break;
+    }
+    case P::object_destroy:
+        if(!s.object_factory)s.object_factory=object_fallback();
+        if(!s.object_factory)return pending("Field probe requires object destruction80066E1C.");
+        if(!s.object_operation){s.object_operation=s.object_factory(s.object_request);check();}
+        if(!s.object_operation)return pending("Field probe reached unbound object destruction80066E1C.");
+        if(!s.object_callback)s.object_callback=s.object_operation->resume;
+        if(!s.object_callback)return pending("Field probe requires its retained object-destruction continuation.");
+        {const auto status=s.object_callback();check();if(!status.completed)return status;}
+        s.object_callback={};s.object_operation.reset();s.object_factory={};s.object_request={};check();s.phase=P::base;break;
     case P::resolve:
         // The selected physical pointer survives missing bindings and callbacks.
         if(s.slot==0x0c && s.field->name_string_address && *s.field->name_string_address==s.address && s.field->name_string)
@@ -92,11 +143,14 @@ IgbTypeRegistrationFactory make_native_igb_field_probe_factory(
     std::shared_ptr<IgbFieldProbeServices> services,IgbTypeRegistrationFactory remaining){
     std::weak_ptr<IgbFieldProbeServices> weak=services;
     return [weak,remaining=std::move(remaining)](const IgbTypeRegistrationCall& call){
-        if(call.kind!=IgbTypeRegistrationServiceKind::layout_probe || (call.function!=0x80028934 && call.function!=0x8002e308))
+        if(call.kind!=IgbTypeRegistrationServiceKind::layout_probe ||
+            (call.function!=0x80028934 && call.function!=0x8002e308 && call.function!=0x8002ad90 && call.function!=0x80038778))
             return remaining?remaining(call):std::shared_ptr<IgbTypeRegistrationOperation>{};
         auto selected=weak.lock();if(!selected)fail("Field probe services expired before selection.");
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();
-        const auto kind=call.function==0x8002e308?IgbMetaFieldKind::signed_int:IgbMetaFieldKind::object;
+        const auto kind=call.function==0x8002e308?IgbMetaFieldKind::signed_int:
+            call.function==0x8002ad90?IgbMetaFieldKind::memory_reference:
+            call.function==0x80038778?IgbMetaFieldKind::boolean:IgbMetaFieldKind::object;
         operation->resume=[selected,kind,invocation=std::shared_ptr<IgbFieldProbeInvocation>{}]()mutable{
             if(!invocation){if(!selected->profile_local_storage && (kind!=IgbMetaFieldKind::object || !selected->local_storage))
                     return pending("Field probe requires represented stack-local storage.");

@@ -158,15 +158,22 @@ parents, including prerequisite guards, canonical metadata and layout probes.
 The reached signed-integer field class has native registration, reflected
 initialization and prototype publication. DataList's first two descriptors
 are constructed through that registered class; schema configuration and
-finalization wait for its third factory, which still requires memory-field
-registration `8002AEAC`. DataList defaults and object-list specialization are
-implemented with explicit remaining byte-prototype and reflected-clone services.
+finalization wait for its third factory. That factory now enters native
+memory-field registration `8002AEAC`, its exact probe and eight-field defaults.
+The reached Boolean class completes registration and reflected prototype
+publication; seven memory-class descriptors are constructed before the final
+factory reaches string-field registration `80025404`. The full memory defaults
+caller includes both inherited method replacements, covered separately with
+explicit constructor/clone endpoints. DataList defaults and object-list
+specialization retain their remaining byte-prototype and reflected-clone services.
 Enum metadata remains null while the prerequisite chain is incomplete.
 This is still incomplete startup. Enabled reflected cloning `800680B4`, further
 reference operations, remaining registrations and pool/platform allocator
 internals remain required. See [IGB_DATA_LIST_REGISTRATION.md](docs/IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](docs/IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](docs/IGB_INT_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_REGISTRATION.md](docs/IGB_MEMORY_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_DEFAULTS.md](docs/IGB_MEMORY_FIELD_DEFAULTS.md),
 [IGB_THREAD_DEFAULTS.md](docs/IGB_THREAD_DEFAULTS.md),
 [IGB_THREAD_DEPENDENCIES.md](docs/IGB_THREAD_DEPENDENCIES.md),
 [IGB_META_ENUM.md](docs/IGB_META_ENUM.md),

@@ -99,6 +99,22 @@ void object_virtuals() {
     auto int_getter=f.select(0x58);check(!int_getter->resume().completed,"Unknown integer metadata reused the object-field global.");
     *int_cell=std::shared_ptr<IgbRuntimeMetaType>{};check(int_getter->resume().completed && !int_getter->metadata_result,"Integer getter registered a represented null class.");
     *int_cell=meta;auto reloaded=f.select(0x58);check(reloaded->resume().completed && reloaded->metadata_result==meta,"Integer getter failed fresh canonical805619E0.");
+    f.call.vtable_word=0x80476088;
+    for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u})check(f.select(slot)->resume().completed,"Original memory-field object BLR was not composed.");
+    auto memory_cell=std::make_shared<IgbRegistrationMetaSlot>();registration->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::memory_reference)]=memory_cell;
+    auto memory_getter=f.select(0x58);check(!memory_getter->resume().completed,"Unknown memory metadata reused another field global.");
+    *memory_cell=std::shared_ptr<IgbRuntimeMetaType>{};check(memory_getter->resume().completed && !memory_getter->metadata_result,"Memory getter registered a represented null class.");
+    auto memory_meta=std::make_shared<IgbRuntimeMetaType>();*memory_cell=memory_meta;
+    auto memory_reloaded=f.select(0x58);check(memory_reloaded->resume().completed && memory_reloaded->metadata_result==memory_meta,
+        "Memory getter failed fresh canonical80561818.");
+    f.call.vtable_word=0x80473e30;
+    for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u})check(f.select(slot)->resume().completed,"Original boolean-field object BLR was not composed.");
+    auto boolean_cell=std::make_shared<IgbRegistrationMetaSlot>();registration->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::boolean)]=boolean_cell;
+    auto boolean_getter=f.select(0x58);check(!boolean_getter->resume().completed,"Unknown boolean metadata reused another field global.");
+    *boolean_cell=std::shared_ptr<IgbRuntimeMetaType>{};check(boolean_getter->resume().completed && !boolean_getter->metadata_result,"Boolean getter registered a represented null class.");
+    auto boolean_meta=std::make_shared<IgbRuntimeMetaType>();*boolean_cell=boolean_meta;
+    auto boolean_reloaded=f.select(0x58);check(boolean_reloaded->resume().completed && boolean_reloaded->metadata_result==boolean_meta,
+        "Boolean getter failed fresh canonical80561E48.");
 }
 }
 int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();

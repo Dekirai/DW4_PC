@@ -16,6 +16,11 @@ The enabled DataList constructor also reaches `8002E390 -> 8002E3B8`,
 separate metadata cell, scalar layout probe and prototype callback; see
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
 
+The memory-reference and Boolean profiles extend that same registration
+framework with bodies `8002AEAC` and `80038828`. Their complete argument tables,
+getters and distinct canonical cells are documented in
+[IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md).
+
 These are metadata registrations for the descriptor classes. They are separate
 from constructing an individual descriptor and from publishing a shared field
 prototype. In particular, metadata cell `805616E8` cannot substitute for the
@@ -30,7 +35,9 @@ outside the repository.
 
 Each wrapper calls native callback runner `80066188` with the corresponding
 body. Each body passes the following exact arguments to native registrar
-`80066204`. None of these four bodies calls prerequisite guard `80021B94`.
+`80066204`. None of the six represented bodies calls prerequisite guard
+`80021B94`. The original four profiles are listed here; the memory-reference
+and Boolean profiles have their own linked table above.
 
 | Argument | igMetaField | igRefMetaField | igObjectRefMetaField | igIntMetaField |
 | --- | --- | --- | --- | --- |
@@ -66,8 +73,10 @@ do not create ready metadata. See [IGB_TYPE_REGISTRATION.md](IGB_TYPE_REGISTRATI
 `reference_metadata` represents `80561684`. Object metadata always uses
 `IgbMetaFieldFactoryServices::metadata_slots[object]`, the existing canonical
 `805616E8` cell used by the object-field factory. Integer metadata similarly
-uses `metadata_slots[signed_int]`, canonical `805619E0`. The shared slot helper
-returns these owners without introducing another metadata cache.
+uses `metadata_slots[signed_int]`, canonical `805619E0`. Memory-reference and
+Boolean metadata use `metadata_slots[memory_reference]` (`80561818`) and
+`metadata_slots[boolean]` (`80561E48`). The shared slot helper returns these
+owners without introducing another metadata cache.
 
 | Behavior | igMetaField | igRefMetaField | igObjectRefMetaField | igIntMetaField |
 | --- | --- | --- | --- | --- |
@@ -98,8 +107,9 @@ getter addresses. The field-factory adapter connects a represented enabled
 descriptor factory to these wrappers. Adapters use weak service ownership
 until selection and retain the selected services while an operation is pending.
 
-This module intentionally leaves callbacks `80027454`, `80028B64` and
-`8002E440` available for their actual prototype construction implementations. A successful type
+This module intentionally leaves callbacks `80027454`, `80028B64`,
+`8002E440`, `8002B178` and `800388B0` available for their actual prototype
+construction implementations. A successful type
 registration body returns a deferred list; it does not imply that those
 callbacks or the surrounding cold bootstrap have completed. The existing
 object-field prototype getter `80028BFC` remains a separate descriptor lookup

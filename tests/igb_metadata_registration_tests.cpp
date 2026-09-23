@@ -25,6 +25,7 @@
 #include "dw4/igb_metadata_init.hpp"
 #include "dw4/igb_object_field_construct.hpp"
 #include "dw4/igb_memory_field_construct.hpp"
+#include "dw4/igb_memory_field_defaults.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -1176,13 +1177,14 @@ void actual_cold_bootstrap_prefix(){
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
     std::vector<IgbPointerListBacking> enabled_backings;
-    std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell;
-    std::vector<IgbBootstrapPointer> signed_int_prototype_allocations;
+    std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell;
+    std::vector<IgbBootstrapPointer> signed_int_prototype_allocations,boolean_prototype_allocations;
     bool enabled_metadata_ready{};unsigned enabled_metadata_polls{};
     prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
         check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1 &&
             (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field ||
-                (signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell)),
+                (signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell) ||
+                (boolean_cell && *boolean_cell && c.metadata==**boolean_cell)),
             "Further reflected allocation reached an unknown original class or pool.");
         reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();
         op->resume=[&,c,out=op.get(),done=false]()mutable{
@@ -1203,11 +1205,14 @@ void actual_cold_bootstrap_prefix(){
                 raw.storage->bindings.push_back({0,{},{},instance.fields});
             }else{
                 const bool integer=signed_int_cell && *signed_int_cell && c.metadata==**signed_int_cell;
-                check(c.bytes==(integer?0x34u:0x44u),"Enabled descriptor factory changed its allocation size.");
+                const bool boolean=boolean_cell && *boolean_cell && c.metadata==**boolean_cell;
+                check(c.bytes==((integer||boolean)?0x34u:0x44u),"Enabled descriptor factory changed its allocation size.");
                 instance.field=std::make_shared<IgbDecodeRuntimeField>();
                 raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
                 if(integer && values->signed_int_prototype && !*values->signed_int_prototype)
                     signed_int_prototype_allocations.push_back(raw);
+                else if(boolean && values->boolean_prototype && !*values->boolean_prototype)
+                    boolean_prototype_allocations.push_back(raw);
                 else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
             }
@@ -1408,7 +1413,7 @@ void actual_cold_bootstrap_prefix(){
         ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<
         ", defaults="<<default_allocations<<", backings="<<enabled_backings.size()<<
         ", metadata/list instances="<<f.constructed->instance_count.value_or(0xffffffffu)<<'/'<<lazy_metadata[0]->instance_count.value_or(0xffffffffu)<<'\n';
-    check(!memory_class_boundary.completed && !call.faulted() && memory_class_boundary.diagnostic.find("0x8002AEAC")!=std::string::npos,
+    check(!memory_class_boundary.completed && !call.faulted() && memory_class_boundary.diagnostic.find("canonical metadata cell")!=std::string::npos,
         "DataList integer construction did not reach actual memory-reference field registration.");
     const auto integer_type=**signed_int_cell;const auto integer_prototype=*values->signed_int_prototype;
     check(integer_type && integer_prototype && integer_type->class_flags==7 && integer_type->parent==base_field &&
@@ -1443,6 +1448,104 @@ void actual_cold_bootstrap_prefix(){
         (**prototypes->registry)->count==2 && integer_probe_locals.size()==1 && data_probe_locals.size()==1 &&
         (*f.core->bootstrap_callbacks)->count==1,
         "Pending memory-field registration replayed parent registration, probes, reflected factories or prototype publication.");
+
+    // Supply the reached BSS cell and local storage; actual memory-field
+    // registration must construct and initialize its metadata before defaults.
+    auto memory_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::memory_reference)]=memory_cell;
+    std::vector<IgbBootstrapPointer> memory_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::memory_reference,"Memory-field registration replayed an earlier class probe.");
+        auto local=allocation(0xb30000+static_cast<std::uint32_t>(memory_probe_locals.size())*0x100,0x50);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        memory_probe_locals.push_back(local);return local;
+    };
+    const auto memory_defaults_boundary=call.resume(bootstrap);
+    std::cout<<"Cold memory-field defaults boundary: "<<memory_defaults_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    const auto memory_type=**memory_cell;
+    check(!memory_defaults_boundary.completed && !call.faulted() && !remaining_calls.empty() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x8002af40 &&
+        memory_type && memory_type->class_flags==9 && memory_type->parent==reference_field &&
+        memory_type->native_size==0x50 && memory_type->type_word==0x80476088 && memory_type->fields->count==22 &&
+        memory_probe_locals.size()==1 && igb_bootstrap_read_word(memory_probe_locals.front(),0)==0x80471914 &&
+        igb_bootstrap_read_word(memory_probe_locals.front(),0x48)==0 && igb_bootstrap_read_word(memory_probe_locals.front(),0x4c)==0,
+        "Memory-field metadata registration skipped inheritance, exact reset/cleanup or its required defaults.");
+    check(enabled_allocations.size()==17 && enabled_backings.size()==6 && f.constructed->instance_count==7 &&
+        lazy_metadata[0]->instance_count==7 && descriptors.size()==57 && default_allocations==57 &&
+        f.core->types->count==9 && (**prototypes->registry)->count==2,
+        "Pending memory-field defaults fabricated descriptor construction or class/prototype completion.");
+    auto memory_defaults=std::make_shared<IgbMemoryFieldDefaultsServices>();memory_defaults->registration=field_types;
+    memory_defaults->lists=list_defaults;
+    f.remaining=make_native_igb_memory_field_defaults_factory(memory_defaults,f.remaining);
+    const auto boolean_boundary=call.resume(bootstrap);
+    std::cout<<"Cold memory-field boolean boundary: "<<boolean_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!boolean_boundary.completed && !call.faulted() && boolean_boundary.diagnostic.find("canonical metadata cell")!=std::string::npos &&
+        memory_type->fields->count==24 && descriptors.size()==59 && memory_type->fields->backing->at(22)==descriptors[57] &&
+        memory_type->fields->backing->at(23)==descriptors[58] && descriptors[57]->vtable_word==0x80475b60 &&
+        descriptors[58]->vtable_word==0x804762fc && !descriptors[57]->name && !descriptors[58]->name,
+        "Memory defaults did not use actual enabled field factories before boolean registration.");
+    check(memory_type->class_flags==9 && memory_type->instance_count==0 && integer_type->instance_count==4 &&
+        object_field->instance_count==4 && enabled_allocations.size()==19 && enabled_backings.size()==6 &&
+        default_allocations==58 && f.core->types->count==9 && (**prototypes->registry)->count==2 &&
+        data_type->fields->count==4 && !**meta_enum->metadata && !*values->memory_reference_prototype,
+        "Pending memory schema completed its class/prototype, DataList parent or unreached enum.");
+    const auto memory_names=string_allocations;
+    const auto memory_reflected_calls=reflected_allocations.size();
+    check(!call.resume(bootstrap).completed && memory_type->fields->count==24 && descriptors.size()==59 &&
+        string_allocations==memory_names && reflected_allocations.size()==memory_reflected_calls &&
+        default_allocations==58 && memory_probe_locals.size()==1 && enabled_allocations.size()==19,
+        "Pending boolean registration replayed memory-field metadata, probe, inherited fields or descriptor factories.");
+
+    // Resume the reached Boolean class through its original registration,
+    // scalar probe and reflected prototype. The remaining batch must still
+    // stop at the actual unrecovered string class, without configuring locals.
+    boolean_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::boolean)]=boolean_cell;
+    values->boolean_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> boolean_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::boolean,"Boolean registration replayed a previous class probe.");
+        auto local=allocation(0xb40000+static_cast<std::uint32_t>(boolean_probe_locals.size())*0x100,0x34);
+        local.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        boolean_probe_locals.push_back(local);return local;
+    };
+    const auto string_boundary=call.resume(bootstrap);
+    std::cout<<"Cold memory-field string boundary: "<<string_boundary.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", backings="<<enabled_backings.size()<<", metadata/list instances="<<f.constructed->instance_count.value_or(0xffffffffu)<<'/'<<
+        lazy_metadata[0]->instance_count.value_or(0xffffffffu)<<'\n';
+    const auto boolean_type=**boolean_cell;const auto boolean_prototype=*values->boolean_prototype;
+    check(!string_boundary.completed && !call.faulted() && string_boundary.diagnostic.find("0x80025404")!=std::string::npos,
+        "Memory schema failed before its actual string class prerequisite.");
+    check(boolean_type && boolean_prototype && boolean_type->class_flags==7 && boolean_type->parent==base_field &&
+        boolean_type->native_size==0x34 && boolean_type->type_word==0x80473e30 && boolean_type->fields->count==20 &&
+        boolean_type->instance_count==4 && f.core->types->count==10 && f.core->types->backing->at(9)==boolean_type &&
+        boolean_prototype_allocations.size()==1 && boolean_probe_locals.size()==1 &&
+        igb_bootstrap_read_word(boolean_probe_locals.front(),0)==0x80471914,
+        "Boolean class skipped its actual inheritance, probe, publication or four reflected instances.");
+    check(boolean_prototype->vtable_word==0x80473e30 && boolean_prototype->reference_word==1 && boolean_prototype->ordinal==2 &&
+        boolean_prototype->type_ordinal==2 && boolean_prototype->default_bytes && boolean_prototype->default_bytes->buffer &&
+        boolean_prototype->default_bytes->buffer->bytes.size()==1 && (**prototypes->registry)->count==3 &&
+        (**prototypes->registry)->backing->at(2)==boolean_prototype,
+        "Boolean prototype skipped initializer, registry publication or one-byte default finalization.");
+    check(memory_type->fields->count==29 && descriptors.size()==64 && memory_type->class_flags==9 && memory_type->instance_count==0 &&
+        integer_type->instance_count==5 && object_field->instance_count==5 && default_allocations==60 &&
+        enabled_allocations.size()==27 && enabled_backings.size()==7 && f.constructed->instance_count==8 &&
+        lazy_metadata[0]->instance_count==8 && data_type->fields->count==4 && !**meta_enum->metadata && !*values->memory_reference_prototype,
+        "Pending string field invented finished memory schema, prototype or parent registration.");
+    const std::array<std::uint32_t,7> local_vtables{0x80475b60,0x804762fc,0x80473e30,0x80473e30,0x80473e30,0x80475b60,0x804762fc};
+    for(std::size_t i=0;i<local_vtables.size();++i)
+        check(memory_type->fields->backing->at(22+i)==descriptors[57+i] && descriptors[57+i]->vtable_word==local_vtables[i] &&
+            !descriptors[57+i]->name,"Memory defaults reordered, renamed or bypassed the seven enabled descriptor factories.");
+    const auto string_names=string_allocations;const auto string_reflections=reflected_allocations.size();
+    check(!call.resume(bootstrap).completed && memory_type->fields->count==29 && descriptors.size()==64 &&
+        string_allocations==string_names && reflected_allocations.size()==string_reflections && default_allocations==60 &&
+        enabled_allocations.size()==27 && boolean_probe_locals.size()==1 && boolean_type->instance_count==4 &&
+        (**prototypes->registry)->count==3 && f.core->types->count==10 && (*f.core->bootstrap_callbacks)->count==1 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending string registration replayed the completed Boolean class or changed original bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

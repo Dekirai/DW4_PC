@@ -31,6 +31,10 @@ struct Fixture {
             std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
         services->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_int)]=
             std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+        services->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::memory_reference)]=
+            std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+        services->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::boolean)]=
+            std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
         services->callbacks=std::make_shared<IgbRegistrationCallbacksServices>();services->types=std::make_shared<IgbTypeRegistrationServices>();
         services->types->metadata_pool_handle=5;services->types->runtime=std::make_shared<IgbRuntimeTypesServices>();services->types->runtime->singleton=core;
         services->pools=std::make_shared<IgbFilePoolsServices>();services->pools->memory_pools=std::make_shared<IgbMemoryPoolsServices>();
@@ -59,7 +63,9 @@ void exact_profiles(){
         Expected{E::base,"igMetaField",0x805617bc,0x8002a6b0,0x8002a6d8,0x34,1,0x80066b08,0x800237d0,0x8002a744,0,0x8002a764,0x8055d290,{0x8002a0a8,0}},
         Expected{E::reference,"igRefMetaField",0x80561684,0x80027338,0x80027360,0x38,1,0x8002a6d8,0x80021d70,0x800273cc,0,0x800273ec,0x8055d158,{0x80027454,0}},
         Expected{E::object,"igObjectRefMetaField",0x805616e8,0x800289f8,0x80028a20,0x44,0,0x80027360,0x80025494,0x80028a94,0x80028934,0x80028ab4,0x804640c4,{0x8002a0a8,0x80028b64,0}},
-        Expected{E::signed_int,"igIntMetaField",0x805619e0,0x8002e390,0x8002e3b8,0x34,0,0x8002a6d8,0x80021d70,0x8002e420,0x8002e308,0,0x8055d3c4,{0x8002e440,0}}
+        Expected{E::signed_int,"igIntMetaField",0x805619e0,0x8002e390,0x8002e3b8,0x34,0,0x8002a6d8,0x80021d70,0x8002e420,0x8002e308,0,0x8055d3c4,{0x8002e440,0}},
+        Expected{E::memory_reference,"igMemoryRefMetaField",0x80561818,0x8002ae84,0x8002aeac,0x50,0,0x80027360,0x80025494,0x8002af20,0x8002ad90,0x8002af40,0x804649f0,{0x8002a6b0,0x8002b178,0}},
+        Expected{E::boolean,"igBoolMetaField",0x80561e48,0x80038800,0x80038828,0x34,0,0x8002a6d8,0x80021d70,0x80038890,0x80038778,0,0x8055d690,{0x800388b0,0}}
     };
     for(const auto& e:expected){Fixture f;const auto& p=igb_field_type_profile(e.entry);const auto args=igb_field_type_registration_arguments(f.services,e.entry);
         check(p.metadata_global==e.global && p.wrapper==e.wrapper && p.body==e.body && p.extras_global==e.extras,"Field-type profile changed canonical numeric identities.");
@@ -70,13 +76,13 @@ void exact_profiles(){
         if(e.entry==E::object)check(args.metadata_slot==f.services->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::object)],"Object field metadata acquired a separate cache.");
         const auto owner=args.metadata_slot;f.services.reset();check(owner->value()==value,"Captured metadata cell lost its canonical owner.");
     }
-    rejects([]{igb_field_type_profile(static_cast<E>(4));},"Unknown field-type profile was accepted.");
+    rejects([]{igb_field_type_profile(static_cast<E>(6));},"Unknown field-type profile was accepted.");
     rejects([]{igb_field_type_registration_arguments({},E::base);},"Arguments accepted absent canonical storage.");
     rejects([]{IgbFieldTypeLookupInvocation invalid(E::reference,IgbFieldTypeLookup::allocate_if_null);},"An unsupported reference-field lazy getter was invented.");
     rejects([]{IgbFieldTypeLookupInvocation invalid(E::object,IgbFieldTypeLookup::plain);},"An unsupported object-field plain getter was invented.");
 }
 void registration_gates(){
-    for(const auto entry:{E::base,E::reference,E::object,E::signed_int}){
+    for(const auto entry:{E::base,E::reference,E::object,E::signed_int,E::memory_reference,E::boolean}){
         Fixture f;IgbFieldTypeRegistrationInvocation run(entry);check(!run.resume(f.services).completed,"Unknown parent registration completed.");
         check(f.allocations==1 && *f.slot(entry)==f.constructed && f.constructed->class_flags==8 && f.constructed->fields==f.fields,"Registration skipped actual metadata construction or busy publication.");
         check(!f.services->callbacks->prerequisites && f.calls.size()==1 && f.calls.back().kind==TK::register_parent && f.calls.back().function==igb_field_type_profile(entry).parent_body,
@@ -114,7 +120,7 @@ void actual_parent_chain(){
     check(!chain.resume(f.services).completed && constructed.size()==3,"Pending igObject parent replayed the actual cold metadata chain.");
 }
 void deferred_tables(){
-    for(const auto entry:{E::base,E::reference,E::object,E::signed_int}){Fixture f;auto value=meta(3);value->post_layout_callback=0;*f.slot(entry)=value;
+    for(const auto entry:{E::base,E::reference,E::object,E::signed_int,E::memory_reference,E::boolean}){Fixture f;auto value=meta(3);value->post_layout_callback=0;*f.slot(entry)=value;
         auto list=std::make_shared<IgbRegistrationCallbackList>();unsigned list_allocations{},backing_allocations{};
         f.services->callbacks->runtime=f.services->types->runtime;f.core->registration_callback_pool=std::shared_ptr<ModelSceneObject>{};
         f.services->callbacks->factory=[&](const IgbRegistrationCallbacksCall& c){check(c.kind==CK::allocate_backing && c.bytes==16,"Deferred table changed its first backing request.");
@@ -131,7 +137,7 @@ void deferred_tables(){
     }
 }
 void getters_and_lifetimes(){
-    for(const auto entry:{E::base,E::reference,E::object,E::signed_int}){
+    for(const auto entry:{E::base,E::reference,E::object,E::signed_int,E::memory_reference,E::boolean}){
         Fixture f;auto ready=meta(4);*f.slot(entry)=ready;f.services->types.reset();f.services->pools.reset();IgbFieldTypeLookupInvocation run(entry);
         check(run.resume(f.services).completed && run.result()==ready,"Ready full getter required registration or unrelated dependencies.");
         *f.slot(entry)=meta();check(run.resume().completed && run.result()==ready,"Completed getter reloaded metadata.");
@@ -148,7 +154,7 @@ void getters_and_lifetimes(){
     }
     for(const auto entry:{E::base,E::reference}){Fixture f;f.services->types.reset();f.services->callbacks.reset();IgbFieldTypeLookupInvocation run(entry,IgbFieldTypeLookup::plain);
         check(run.resume(f.services).completed && !run.result(),"Plain parent getter constructed known-null metadata.");}
-    for(const auto entry:{E::base,E::object}){
+    for(const auto entry:{E::base,E::object,E::boolean}){
         Fixture f;f.services->types->metadata_pool_handle.reset();IgbFieldTypeLookupInvocation run(entry,IgbFieldTypeLookup::allocate_if_null);
         check(!run.resume(f.services).completed && f.allocations==0,"Lazy field-type getter skipped original handle read.");f.services->types->metadata_pool_handle=5;
         check(run.resume(f.services).completed && run.result()==f.constructed && *f.slot(entry)==f.constructed && f.allocations==1 && f.constructed->class_flags==0,"Lazy getter skipped actual factory or added registration.");
@@ -160,18 +166,22 @@ void getters_and_lifetimes(){
     }
 }
 void adapters(){
-    Fixture f;std::array<std::shared_ptr<IgbRuntimeMetaType>,4> owners{meta(4),meta(4),meta(4),meta(4)};
+    Fixture f;std::array<std::shared_ptr<IgbRuntimeMetaType>,6> owners{meta(4),meta(4),meta(4),meta(4),meta(4),meta(4)};
     for(std::size_t i=0;i<owners.size();++i)*f.slot(static_cast<E>(i))=owners[i];
     auto factory=make_native_igb_field_type_registration_type_factory(f.services);
-    const std::array<std::pair<std::uint32_t,E>,12> getters{{{0x8002a638,E::base},{0x8002a674,E::base},{0x8002a744,E::base},{0x80021d70,E::base},
-        {0x800272fc,E::reference},{0x800273cc,E::reference},{0x80025494,E::reference},{0x800288bc,E::object},{0x800288f8,E::object},{0x80028a94,E::object},{0x8002e2cc,E::signed_int},{0x8002e420,E::signed_int}}};
+    const std::array<std::pair<std::uint32_t,E>,17> getters{{{0x8002a638,E::base},{0x8002a674,E::base},{0x8002a744,E::base},{0x80021d70,E::base},
+        {0x800272fc,E::reference},{0x800273cc,E::reference},{0x80025494,E::reference},{0x800288bc,E::object},{0x800288f8,E::object},{0x80028a94,E::object},
+        {0x8002e2cc,E::signed_int},{0x8002e420,E::signed_int},{0x8002ad54,E::memory_reference},{0x8002af20,E::memory_reference},
+        {0x80038700,E::boolean},{0x8003873c,E::boolean},{0x80038890,E::boolean}}};
     for(const auto& [address,entry]:getters){IgbTypeRegistrationCall c;c.kind=TK::get_parent;c.function=address;auto op=factory(c);
         check(op && op->resume().completed && op->metadata_result==owners[static_cast<std::size_t>(entry)],"Concrete getter adapter selected another canonical cell.");}
-    for(const auto entry:{E::base,E::reference,E::object,E::signed_int})for(const auto address:{igb_field_type_profile(entry).body,igb_field_type_profile(entry).wrapper}){
+    for(const auto entry:{E::base,E::reference,E::object,E::signed_int,E::memory_reference,E::boolean})for(const auto address:{igb_field_type_profile(entry).body,igb_field_type_profile(entry).wrapper}){
         IgbRegistrationCallbacksCall c;c.kind=CK::invoke_function;c.function=address;auto op=f.services->callbacks->factory(c);
         check(op && op->resume().completed,"Exact wrapper/body adapter failed its original ready gate.");}
-    IgbMetaFieldCall c;c.kind=IgbMetaFieldServiceKind::register_type;c.function=0x800289f8;
-    auto reflected=make_native_igb_field_type_registration_factory(f.services)(c);check(reflected && reflected->resume().completed,"Enabled object field factory missed original registration.");
+    for(const auto entry:{E::object,E::signed_int,E::memory_reference,E::boolean}){
+        IgbMetaFieldCall c;c.kind=IgbMetaFieldServiceKind::register_type;c.function=igb_field_type_profile(entry).wrapper;
+        auto reflected=make_native_igb_field_type_registration_factory(f.services)(c);
+        check(reflected && reflected->resume().completed,"Enabled field factory missed original registration.");}
     for(const auto address:{0x80028934u,0x8002a764u,0x800273ecu,0x80028ab4u,0x80028bfcu}){IgbTypeRegistrationCall unknown;unknown.kind=address==0x80028934?TK::layout_probe:TK::defaults;unknown.function=address;
         check(!factory(unknown),"Registration adapter claimed unimplemented probe/default/prototype work.");}
     Fixture retained;retained.services->types->metadata_pool_handle.reset();*retained.slot(E::object)=meta(4);

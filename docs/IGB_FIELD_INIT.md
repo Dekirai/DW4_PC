@@ -28,6 +28,13 @@ schema, while its scalar `+2C` has no object-reference default-buffer tail.
 Its class and prototype identities are documented in
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
 
+Memory-reference vtable `80476088` and Boolean vtable `80473E30` share those
+four exact return-only entries. Their `+58` calls are plain getters `80094068`
+and `80093E7C`, observing canonical metadata cells `80561818` and `80561E48`.
+The adapter uses the original live class cells; it does not trigger registration
+or substitute a prototype. Their class profiles and prototype aliases are
+documented in [IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md).
+
 The initializer visits the derived registry from the captured base-field
 count through its captured derived count, retaining original live backing
 reads between visits. The object-field class has 25 descriptors, including
@@ -85,12 +92,14 @@ see [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md) and the current results in
 [VALIDATION.md](VALIDATION.md). Physical allocator, pool/platform and BSS
 prerequisites are still explicit; this is not a complete game startup.
 
-The later DataList composition uses the enabled signed-integer descriptor
+The earlier DataList checkpoint used the enabled signed-integer descriptor
 factory for its first two local fields. Its native class registration and
 layout probe precede reflected prototype construction, registry publication,
 and those two reflected instances. This extends the scalar descriptor path;
 the third DataList field's memory-reference class and later list/thread
-operations retain their separate reached boundaries.
+operations were separate reached boundaries at that checkpoint. Subsequent
+class adapters and defaults do not change the scope of those historical
+measurements; current composed results belong in [VALIDATION.md](VALIDATION.md).
 
 Permanent tests cover type separation, header and member publication, pending
 callbacks, live virtuals, null/unknown states, string ownership, captured widths,

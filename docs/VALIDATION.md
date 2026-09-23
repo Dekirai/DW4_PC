@@ -1,6 +1,100 @@
 # Local validation
 
-## Native DataList hierarchy and enabled integer fields
+## Native memory-reference defaults and Boolean registration
+
+Validated locally on 2026-09-23. The retained cold-bootstrap invocation now
+executes `igMemoryRefMetaField` registration `8002AEAC`, its exact layout probe
+`8002AD90`, and the reached `8002AF40` defaults batch. Metadata and prototype
+cells alias the existing descriptor factories and value operations. Cleanup
+preserves full-word string references and packed object references separately.
+
+The batch's Boolean prerequisite now completes actual registration `80038828`,
+probe `80038778`, reflected initialization and prototype callback `800388B0`.
+It becomes type ten, with flags `7`, twenty inherited fields and four reflected
+instances: its prototype and three descriptors. Canonical prototype `80561E4C`
+occupies ordinal two and receives its one-byte default through the real finalizer.
+
+The next reached cold boundary is **`80025404`, igStringMetaField registration**,
+needed by the eighth memory-class descriptor. Seven locals have been constructed
+through enabled reflection; their names and final schema remain pending.
+The composition has 64 schema descriptors, 60 default buffers, ten registered
+types and three prototypes. Memory metadata stays at flags `9` with 29 fields
+and no constructed instance/prototype. DataList still has its four fields;
+its children and enum registration are not completed. Enabled allocations total
+27, with seven backings and eight metadata/internal-list instances each.
+The historical core count snapshots remain `+04 = 7`, `+08 = 1`.
+
+The full memory defaults caller separately implements all eight locals and
+both inherited method replacements using the existing native batch, schema,
+search, scalar-value and replacement operations. Its focused fixtures prepare
+constructor, clone and method endpoints; they do not establish cold completion
+of those endpoints. A physical-access regression now ensures unreadable vtable
+bytes fault before clone/scalar callback dispatch, preserving completed earlier
+work and retained calls across suspension.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 189/189 CTest suites passed locally with four jobs; no compiler warnings |
+| Cold composition | 1,560 checks; memory registration/probe and seven enabled local factories, including the complete Boolean class and reflected prototype |
+| Memory defaults | 551 checks; eight fields, both method replacements, physical stores, captured lookup receivers, retained callbacks and malformed-header access order |
+| Field registration/probe/prototype/init | 283 /289 /103 /76 checks across the represented profiles |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; preserves the separate enabled `8002A0A8` boundary, twenty types and sixty field mappings |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Six independent comparisons execute **10,726 cases / 4,034,801 original
+instructions with zero differences**. They include 4,742 completed calls,
+5,982 fault or bounded failure prefixes and two registration ABI observations.
+Those observations remain separate from execution of the generic registrar.
+
+| Original-instruction scope | Cases | Instructions |
+| --- | ---: | ---: |
+| Memory registration arguments, wrapper and getters | 577 | 14,573 |
+| Memory probe, reset and member cleanup | 5,074 | 729,362 |
+| Memory prototype, append, finalization and bounded reserve prefix | 2,098 | 158,730 |
+| Boolean registration arguments, wrapper and getters | 577 | 14,570 |
+| Boolean probe, reset and name cleanup | 1,308 | 140,526 |
+| Memory defaults, complete batch/search/replacement/schema callers | 1,092 | 2,977,040 |
+
+The memory-prototype comparison uses a prepared reflected result and an existing
+registry; it executes actual append/finalization and the reserve prefix through
+its capacity queries to `800682A4` entry. It does not cover reflected construction,
+null-registry creation or complete reserve growth. The first comparison stopped
+the original reserve path earlier than the native unbound allocator endpoint,
+producing 59 trace differences. Both sides now stop at the same operation;
+all 2,098 inputs remain unchanged and the original executes 4,665 additional
+instructions. Before/after evidence is retained locally. No production code or
+expected gameplay behavior was changed to remove these differences.
+
+Probe comparisons cover complete represented locals, with explicit mutations
+after reset to exercise cleanup branches that normal reset leaves null.
+String/object destructor and selected allocation endpoints remain prepared.
+The defaults comparison executes the entire original caller and surrounding
+batch/search/replacement/schema operations, with explicit field constructors,
+clone results, scalar virtuals, pool/string/buffer and destruction endpoints.
+Registration comparisons expose the original ABI/extras and wrapper/getter
+behavior; they do not independently execute the entire generic registrar.
+The composed cold test above supplies separate integration evidence.
+
+Final `dw4_core.lib` SHA-256:
+`40d320bd12f1ca811cadca283264302a13a72f17cfc596d8996b57ceb1c3a3b3`.
+Ignored local build log: `work/native-memory-class-final-build.log`; regression
+logs: `work/native-memory-class-{cold,prefix,player,verifier}.log`.
+The pinned comparisons and source/driver/corpus/oracle hashes are in
+`work/native-memory-class-milestone-audit.json`; the final consistency audit
+is `work/native-memory-class-root-audit.json`. Original assets and instruction
+corpora remain local and ignored. No application preview was rebuilt or launched,
+and no hosted CI was used.
+
+Continue through actual string-class registration, its defaults and reached
+signed-byte clone, then the memory schema's method dependencies, byte-element
+prototype and later list/thread/bootstrap work. This milestone does not complete
+native startup, audio, rendering, gameplay or any full-game acceptance gate.
+See [IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_DEFAULTS.md](IGB_MEMORY_FIELD_DEFAULTS.md) and
+[PORTING_STRATEGY.md](PORTING_STRATEGY.md) for the exact continuation.
+
+## Native DataList hierarchy and enabled integer fields (earlier checkpoint)
 
 Validated locally on 2026-09-23. The same cold-bootstrap invocation now crosses
 deferred `80023F28` into the actual non-reference-counted object-list and DataList

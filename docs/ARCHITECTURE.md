@@ -156,14 +156,22 @@ stores. DataList defaults use native batch/schema callers; object specialization
 retains the selected inherited field through clone, prototype lookup and
 replacement. Integer-field registration shares the existing descriptor metadata
 and value-prototype cells, including the reflected initializer and scalar
-virtuals. The composed chain reaches memory-field registration `8002AEAC`;
-the later unsigned-character prototype and enabled clone remain required.
+virtuals. Memory-field registration now uses the canonical descriptor metadata,
+its exact reset/probe/cleanup and the eight-field defaults caller. The latter
+preserves inherited method lookup/replacement and physical configuration order.
+Reached Boolean registration and its reflected prototype complete before the
+composed chain reaches string-field registration `80025404` at the eighth
+memory-class descriptor. Full defaults coverage still has explicit clone/method
+factory endpoints. Memory-class completion, the later unsigned-character
+prototype and enabled clone remain required.
 This transition does not complete startup. Enabled reflected cloning `800680B4`,
 remaining member operations, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
 endpoints in this composition. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_REGISTRATION.md](IGB_MEMORY_FIELD_REGISTRATION.md),
+[IGB_MEMORY_FIELD_DEFAULTS.md](IGB_MEMORY_FIELD_DEFAULTS.md),
 [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
 [IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
 [IGB_META_ENUM.md](IGB_META_ENUM.md),

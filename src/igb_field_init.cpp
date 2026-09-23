@@ -100,14 +100,18 @@ std::shared_ptr<IgbObjectInitOperation> leaf() {
 IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbFieldInitServices> services,IgbObjectInitFactory remaining) {
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbObjectInitCall& call)->std::shared_ptr<IgbObjectInitOperation> {
         const auto delegate=[&]{return remaining?remaining(call):std::shared_ptr<IgbObjectInitOperation>{};};
-        if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc || call.vtable_word==0x80475b60)) {
-            const bool scalar=call.vtable_word==0x80475b60;
-            if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24 || (scalar && call.virtual_slot==0x2c))return leaf();
+        if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc ||
+            call.vtable_word==0x80475b60 || call.vtable_word==0x80476088 || call.vtable_word==0x80473e30)) {
+            const auto kind=call.vtable_word==0x80475b60?IgbFieldTypeKind::signed_int:
+                call.vtable_word==0x80476088?IgbFieldTypeKind::memory_reference:
+                call.vtable_word==0x80473e30?IgbFieldTypeKind::boolean:IgbFieldTypeKind::object;
+            if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24 ||
+                (kind!=IgbFieldTypeKind::object && call.virtual_slot==0x2c))return leaf();
             if(call.virtual_slot!=0x58 && call.virtual_slot!=0x2c)return delegate();
             const auto selected=weak.lock();if(!selected)fail("Field initializer services expired before selection.");
             auto operation=std::make_shared<IgbObjectInitOperation>();
-            if(call.virtual_slot==0x58)operation->resume=[selected,scalar,out=operation.get()] {
-                const auto cell=igb_field_type_metadata_slot(selected->registration,scalar?IgbFieldTypeKind::signed_int:IgbFieldTypeKind::object);
+            if(call.virtual_slot==0x58)operation->resume=[selected,kind,out=operation.get()] {
+                const auto cell=igb_field_type_metadata_slot(selected->registration,kind);
                 if(!cell || !*cell)return pending("Field metadata getter requires its represented canonical class cell.");
                 out->metadata_result=**cell;return MessengerCallResult{true,0,{}};
             };
