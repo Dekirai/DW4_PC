@@ -1,5 +1,67 @@
 # Local validation
 
+## Native ThreadManager fields and lazy dependencies
+
+Validated locally on 2026-09-23. The retained cold-bootstrap integration now
+executes actual ThreadManager defaults `80023940`, including its two object
+field factories through enabled reflection. Each dependency getter (`80023E40`
+and `80026020`) calls the real metadata factory, reflected initializer, positive
+object-member construction and nested internal-list memory initialization.
+The two dependency metadata objects own distinct 64-byte zeroed backings; their
+class flags remain zero because these getters allocate without registering.
+
+Native schema publication assigns `_threadList` / `_sema`, offsets `8` / `12`,
+their original global cells and the type/construct stores. The caller publishes
+redirect `80023A10` and appends `80023A50` to ArkCore's `+28` bootstrap list.
+ThreadManager then completes registration with flags `7`, as the eighth type.
+There are 55 schema descriptors, 56 default buffers and one prototype. The
+earlier bootstrap snapshots remain `+04 = 7`, `+08 = 1`.
+
+The next required operation is **deferred thread-list registration `80023F28`**.
+The retained class callback list is `[80023F28, 80026098, 80023A30]`; this is
+separate from the bootstrap queue, and neither startup nor teardown is executed
+early. Enum metadata `80561808` remains null. This is additional original
+startup reconstruction, not complete initialization or playable gameplay.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 186/186 CTest suites passed locally, four jobs, no compiler warnings |
+| Cold composition | 1,230 checks; preserves the earlier 1,045-check checkpoint, actual reflected descriptor and nested metadata/list construction, retained allocator pause, physical stores, callback order and exact next boundary |
+| Thread defaults | 214 checks; original schema tables, dynamic inherited indices, captured fields and fresh redirect owner, physical stores and untouched adjacent flags, schema/append suspension and failure prefixes |
+| Dependency getters/bootstrap append | 60 checks; both null-only getters, retained canonical cell/factory, unknown/null distinctions, raw overwritten ownership, physical identity conflicts and captured outer core versus fresh inner pool |
+| Descriptor factories | 309 checks; existing constructor families plus actual reflected adapter, adjusted typed storage, retained allocation and abstract/null result |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; unchanged enabled `8002A0A8` boundary, 20 types, 60 field mappings, 47 matched classes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared application/system/serial player frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+An independent local comparison executes **11,556 cases / 4,765,922 original
+instructions across 489 instruction addresses, with zero differences**.
+There are 360 completed cases and 11,196 callback/null-allocation failure
+prefixes. It executes `23940`, actual batch/schema callers and their reached
+helpers, both lazy getters, enabled metadata factory `29E64`, and bootstrap
+append `65D94 -> 3E4D8 -> 3E8B8`.
+
+The comparison varies inherited first indices, existing/null dependency cells,
+metadata/global/field-backing replacement during callbacks, adjacent descriptor
+flags, callback list capacity and null allocation. It compares two metadata
+allocations, field state and physical type/construct stores, pointer-list
+contents, canonical cells, string references, callback buffers and call order.
+Field factories, metadata registration/reflected results, string interning,
+field virtuals and pool/allocator leaves are explicit prepared endpoints in
+this comparison. Their internals are not established by this corpus; the cold
+integration separately composes actual reflected construction. Thread startup,
+semaphore behavior and complete game startup remain outside the measured scope.
+
+Final `dw4_core.lib` SHA-256:
+`5c08b8478ac86361b6434c9e72e876a9bb35d852dabb7fbcd90952c98a12436e`.
+Ignored local logs: `work/native-thread-defaults-final-build.log` and
+`work/native-thread-defaults-{cold,prefix,player,verifier}.log`.
+Original comparison and provenance: `work/native-thread-defaults-result.json`
+and `work/native-thread-defaults-audit.json`.
+See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md) for recovered behavior
+and the explicitly prepared allocator/platform boundaries.
+
 ## Native enabled metadata and recursive list construction
 
 Validated locally on 2026-09-23. The next registration body, `8002AAFC`

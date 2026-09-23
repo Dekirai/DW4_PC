@@ -86,4 +86,8 @@ public:
     IgbBootstrapPointer allocation()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
+// Connect the enabled profile factory to actual6546C/667F4. The outer
+// profile caller retains the completed physical descriptor allocation.
+IgbMetaFieldFactory make_native_igb_reflected_meta_field_factory(
+    std::shared_ptr<IgbFileFactoryServices>,IgbMetaFieldFactory remaining={});
 } // namespace dw4

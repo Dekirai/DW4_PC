@@ -240,12 +240,18 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue with ThreadManager defaults `80023940`, reached through `igMetaEnum`'s
-prerequisite. The new ThreadManager metadata is busy (flags 9), owns its actual
-constructed field list and has inherited the two base descriptors; it has not
-been published as a completed eighth type. Enum metadata remains null. Preserve
+Continue with deferred thread-list registration `80023F28`, reached through
+ThreadManager's returned callback list. ThreadManager defaults `80023940` now
+complete their two reflected descriptors, both lazy metadata/list allocations,
+schema publication, redirect and bootstrap callback append. ThreadManager is
+published as the eighth type (flags `7`), while thread-list/semaphore metadata
+exists with flags zero. Implement `80023F28`, then `80026098`, then actual
+startup callback `80023A30`; share the lazy getters' canonical cells with those
+registrars. Enum metadata remains null. Preserve
 the deferred callback order and the now-reached original transition from disabled
-to enabled reflection. Complete the remaining class registrations, then the outer
+to enabled reflection. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md).
+Complete the remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

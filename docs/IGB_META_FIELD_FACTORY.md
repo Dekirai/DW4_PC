@@ -92,9 +92,16 @@ same physical offset. Tests exercise each class's complete allocation, untouched
 padding, both reset passes, pending callbacks, enabled-gate mutation, canonical
 registration, live name replacement/release and malformed physical prefixes.
 
-Physical allocators, enabled reflected construction and arbitrary virtual
-tables remain explicit boundaries. This module does not establish complete
-field registration or startup.
+The enabled path now composes actual reflected factory `8006546C` through
+`make_native_igb_reflected_meta_field_factory`. The adapter preserves its
+selected services and pending allocator, returns adjusted typed field storage
+only after `800667F4`, and rejects another native object kind. It does not run
+the disabled factory's constructor/tail sequence on that reflected result.
+The outer factory retains the completed physical allocation. Focused adapter
+tests use explicit empty metadata; the cold-bootstrap integration separately
+constructs ThreadManager's two real reflected object fields with their actual
+registered schema. Physical allocators and arbitrary virtual tables remain
+explicit boundaries. This module does not establish complete startup.
 
 The earlier unsigned-integer-only local comparison executes its original factory, all four
 constructor entries, shared bases, raw allocation caller, allocation-tag

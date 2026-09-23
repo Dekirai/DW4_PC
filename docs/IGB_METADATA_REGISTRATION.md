@@ -110,6 +110,8 @@ outputs are labeled isolated caller fixtures; they do not establish complete
 metadata registration or cold startup. Local build and supplied-data results
 are recorded separately in [VALIDATION.md](VALIDATION.md).
 
+## Earlier cold-bootstrap checkpoint
+
 A composed cold-start fixture runs the actual ArkCore constructor and bootstrap
 caller into the native registration runner, registrar, disabled metadata factory,
 metadata constructor and internal-field-list constructor. It suspends first at
@@ -193,3 +195,23 @@ same integration. Platform/manager work, physical allocation and string-arena
 allocation endpoints remain explicitly prepared. No ready metadata seed,
 registration-success callback or premature
 enabled store is used. See [IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md).
+
+## Current cold-bootstrap continuation
+
+The retained integration now completes the memory-reference clone and both
+internal-list registrations, enables reflection and records snapshots 7 and 1.
+It enters `igMetaEnum`'s prerequisite ThreadManager registrar, constructs its
+metadata and nested internal field list through actual reflected initialization,
+and completes ThreadManager defaults `80023940`. The two local object fields
+are actual reflected instances. Their allocation-only getters construct distinct
+thread-list/semaphore metadata and nested lists without registering those
+classes. ThreadManager publishes as type eight with flags `7`, 55 total schema
+descriptors, 56 default buffers and one prototype.
+
+The integration stops at the next actual deferred callback `80023F28`, with
+enum metadata still null. Its 1,230 checks retain the earlier checkpoints and
+verify native physical stores, ownership, callback ordering and suspension.
+See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md) and
+[VALIDATION.md](VALIDATION.md). Pool/platform allocation endpoints remain
+prepared; full native startup and gameplay are still incomplete.

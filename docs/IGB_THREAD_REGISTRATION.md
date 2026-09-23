@@ -31,10 +31,13 @@ copy of that sequence. The exact arguments to `80066204` are:
 | Extension callbacks | `80023F28`, `80026098`, zero terminator |
 | Trailing callback | `80023A30` |
 
-The native wrapper executes these real caller bodies. Its remaining field,
-parent and activation operations delegate or suspend; they do not fabricate
-an empty completed type. In particular, `80023940` installs two ObjectRef
-fields, `_threadList` and `_sema`, and a concrete platform factory redirect.
+The native wrapper executes these real caller bodies. Defaults `80023940`
+now install two reflected ObjectRef fields, `_threadList` and `_sema`, their
+lazy dependency metadata, and the concrete platform factory redirect. See
+[IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md) and
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md). The cold integration
+completes this type and reaches deferred registration `80023F28`. Remaining
+dependency registration and activation operations delegate or suspend.
 `80023A30` enters `800755F8`, which constructs and activates actual thread
 objects. Neither operation is an ignorable registration annotation.
 

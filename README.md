@@ -147,12 +147,18 @@ prerequisite guard and ThreadManager registration. Enabled metadata construction
 uses the native reflected factory and all three field passes. Its `_metaFields`
 member constructs the real internal list, including a 64-byte backing allocation
 with four-byte alignment, reference-element ancestry zero fill and balanced object assignment.
-The resulting metadata continues into registration and inherited field append;
-the composed test now waits at ThreadManager defaults `80023940` while enum
-metadata remains null.
+The resulting metadata continues into registration and inherited field append.
+ThreadManager defaults `80023940` now construct two actual reflected object
+descriptors and lazily allocate distinct metadata/internal-list pairs for their
+thread-list and semaphore types. Native schema publication and bootstrap
+callback append complete ThreadManager as the eighth registered type, with 55
+schema descriptors and 56 default buffers. The composed test now waits at
+deferred thread-list registration `80023F28`; enum metadata remains null.
 This is still incomplete startup. Enabled reflected cloning `800680B4`, further
 reference operations, remaining registrations and pool/platform allocator
-internals remain required. See [IGB_META_ENUM.md](docs/IGB_META_ENUM.md),
+internals remain required. See [IGB_THREAD_DEFAULTS.md](docs/IGB_THREAD_DEFAULTS.md),
+[IGB_THREAD_DEPENDENCIES.md](docs/IGB_THREAD_DEPENDENCIES.md),
+[IGB_META_ENUM.md](docs/IGB_META_ENUM.md),
 [IGB_METADATA_INIT.md](docs/IGB_METADATA_INIT.md),
 [IGB_OBJECT_FIELD_CONSTRUCT.md](docs/IGB_OBJECT_FIELD_CONSTRUCT.md),
 [IGB_MEMORY_FIELD_CONSTRUCT.md](docs/IGB_MEMORY_FIELD_CONSTRUCT.md),

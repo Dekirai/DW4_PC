@@ -1,5 +1,6 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
+#include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_ark_core_bootstrap.hpp"
 #include "dw4/igb_object_registration.hpp"
 #include "dw4/igb_metadata_operations.hpp"
@@ -1168,6 +1169,164 @@ void actual_cold_bootstrap_prefix(){
         string_allocations==final_enabled_names && freed_callback_lists.size()==final_enabled_frees &&
         descriptors.size()==after_descriptors && default_allocations==after_defaults,
         "Later prerequisite suspension replayed native memory construction, assignment, metadata initialization or inheritance.");
+
+    // Further enabled factories receive new raw allocations and explicit typed
+    // identities. Their headers, members and child lists remain the work of
+    // the same reflected initializer used above.
+    std::vector<IgbObjectInstance> enabled_allocations;
+    std::vector<IgbPointerListBacking> enabled_backings;
+    bool enabled_metadata_ready{};unsigned enabled_metadata_polls{};
+    prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
+        check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && f.core->enabled==1 &&
+            (c.metadata==f.constructed || c.metadata==lazy_metadata[0] || c.metadata==object_field),
+            "Further reflected allocation reached an unknown original class or pool.");
+        reflected_allocations.push_back(c);auto op=std::make_shared<IgbFileFactoryOperation>();
+        op->resume=[&,c,out=op.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            if(c.metadata==f.constructed){++enabled_metadata_polls;
+                if(!enabled_metadata_ready)return MessengerCallResult{false,0,"prepared next metadata allocation"};}
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;
+            if(c.metadata==f.constructed){
+                check(c.bytes==0x64,"Lazy enabled metadata changed its allocation size.");
+                instance.metadata=std::make_shared<IgbRuntimeMetaType>();
+                raw.storage->bindings.push_back({0,{},instance.metadata});
+                type_pointers->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
+                values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
+            }else if(c.metadata==lazy_metadata[0]){
+                check(c.bytes==16,"Lazy enabled field list changed its allocation size.");
+                instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
+                raw.storage->bindings.push_back({0,{},{},instance.fields});
+            }else{
+                check(c.bytes==0x44,"Enabled object-field factory changed its allocation size.");
+                instance.field=std::make_shared<IgbDecodeRuntimeField>();
+                raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+                descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);
+                values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            }
+            enabled_allocations.push_back(instance);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return op;
+    };
+    const auto enabled_identity=[&](const IgbObjectInstance& object){return std::any_of(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& known){return known.storage==object.storage && known.offset==object.offset &&
+            known.metadata==object.metadata && known.fields==object.fields && known.field==object.field;});};
+    member_construct->factory=[&](const IgbObjectFieldConstructCall& c){
+        member_calls.push_back(c);
+        if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool)return std::shared_ptr<IgbObjectFieldConstructOperation>{};
+        auto op=std::make_shared<IgbObjectFieldConstructOperation>();op->resume=[&,c,out=op.get()]{
+            check(c.handle==0 && c.object.metadata && enabled_identity(c.object),
+                "Enabled metadata member construction lost its fresh allocation identity.");
+            out->pool_result=f.pool;return MessengerCallResult{true,0,{}};};return op;
+    };
+    prototypes->reflected->initializer->factory=make_native_igb_metadata_init_factory(metadata_init,
+        make_native_igb_scalar_field_factory(make_native_igb_field_init_factory(field_init,[&](const IgbObjectInitCall& c){
+            reflected_init_calls.push_back(c);
+            if(c.kind!=IgbObjectInitServiceKind::allocation_pool && c.kind!=IgbObjectInitServiceKind::pool_index)
+                return std::shared_ptr<IgbObjectInitOperation>{};
+            auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[&,c,out=op.get()]{
+                if(c.kind==IgbObjectInitServiceKind::allocation_pool){
+                    check(enabled_identity(c.object) && c.address==igb_bootstrap_address({c.object.storage,c.object.offset}),
+                        "Enabled initializer queried another allocation base.");out->pool_result=f.pool;
+                }else check(c.pool==f.pool,"Enabled initializer changed its captured allocator.");
+                return MessengerCallResult{true,0,{}};};return op;
+        })));
+    const auto subsequent_elements=make_native_igb_memory_field_virtual_factory(field_types,[&](const IgbMemoryFieldConstructCall& c){
+        auto op=std::make_shared<IgbMemoryFieldConstructOperation>();op->resume=[&,c,out=op.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool){
+                check(c.handle==0 && c.object.fields && enabled_identity(c.object),
+                    "Enabled memory construction changed its fresh field-list identity.");
+                ++memory_pool_queries;out->pool_result=f.pool;
+            }else{
+                check(c.kind==IgbMemoryFieldConstructServiceKind::allocate && c.pool==f.pool && c.bytes==64 && c.alignment==4,
+                    "Enabled memory construction changed its original aligned backing request.");
+                auto raw=allocation(0xa00000+static_cast<std::uint32_t>(enabled_backings.size())*0x100,c.bytes);
+                raw.storage->bytes->initialized.assign(c.bytes,0);
+                out->backing_result={raw.storage->bytes,igb_bootstrap_address(raw),0,{},std::make_shared<IgbDecodeFieldRegistry::Storage>(c.bytes/4)};
+                enabled_backings.push_back(out->backing_result);field_backings.push_back(out->backing_result);
+                ++memory_allocations;++memory_allocation_polls;
+            }done=true;return MessengerCallResult{true,0,{}};};return op;
+    });
+    memory_construct->factory=[&,subsequent_elements](const IgbMemoryFieldConstructCall& c){memory_calls.push_back(c);return subsequent_elements(c);};
+    object_defaults->meta_fields->callbacks=f.services->callbacks;
+    object_defaults->meta_fields->factory=make_native_igb_reflected_meta_field_factory(prototypes->reflected,object_defaults->meta_fields->factory);
+    auto thread_dependencies=std::make_shared<IgbThreadDependenciesServices>();thread_dependencies->types=f.services->types;
+    thread_dependencies->pools=f.services->pools;thread_dependencies->metadata=f.services->metadata;
+    thread_dependencies->thread_list=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    thread_dependencies->semaphore=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    auto thread_defaults=std::make_shared<IgbThreadDefaultsServices>();thread_defaults->thread=thread;
+    thread_defaults->dependencies=thread_dependencies;thread_defaults->callbacks=f.services->callbacks;
+    thread_defaults->schema=metadata_defaults->schema;thread_defaults->physical_metadata.push_back(reflected_metadata_storage);
+    f.remaining=make_native_igb_thread_defaults_factory(thread_defaults,f.remaining);
+    const auto pending_dependency=call.resume(bootstrap);
+    std::cout<<"Cold ThreadManager dependency boundary: "<<pending_dependency.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<'\n';
+    check(!pending_dependency.completed && !call.faulted() && pending_dependency.diagnostic=="prepared next metadata allocation" &&
+        enabled_metadata_polls==1 && enabled_allocations.size()==2 && reflected_allocations.size()==5,
+        "Thread defaults did not reach the retained first lazy metadata allocation through two reflected descriptors.");
+    check(descriptors.size()==55 && reflected_fields->count==4 && reflected_mapping->at(2)==descriptors[53] &&
+        reflected_mapping->at(3)==descriptors[54] && object_field->instance_count==3 && default_allocations==56 &&
+        reflected_metadata->flag_18==1 && igb_bootstrap_read_byte(reflected_metadata_storage,0x18)==1 &&
+        reflected_metadata->factory_redirect==0 && !**thread_dependencies->thread_list && !**thread_dependencies->semaphore &&
+        thread_dependencies->allocations.empty() && metadata_init->completed_allocations.size()==1 && f.core->types->count==7,
+        "Pending lazy allocation fabricated dependency metadata, skipped field construction or published the redirect early.");
+    const auto pending_dependency_names=string_allocations;const auto pending_dependency_callbacks=freed_callback_lists.size();
+    check(!call.resume(bootstrap).completed && enabled_metadata_polls==2 && enabled_allocations.size()==2 &&
+        reflected_allocations.size()==5 && descriptors.size()==55 && reflected_fields->count==4 && default_allocations==56 &&
+        string_allocations==pending_dependency_names && freed_callback_lists.size()==pending_dependency_callbacks,
+        "Pending lazy metadata allocation replayed constructor selection, field append or earlier defaults.");
+    std::vector<std::uint32_t> thread_callback_trace;
+    const auto before_thread_callbacks=additional_callbacks;
+    additional_callbacks=[&,before_thread_callbacks](const IgbRegistrationCallbacksCall& c){
+        if(c.kind==CK::invoke_function)thread_callback_trace.push_back(c.function);
+        return before_thread_callbacks?before_thread_callbacks(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
+    };
+    enabled_metadata_ready=true;
+    const auto completed_thread=call.resume(bootstrap);
+    std::cout<<"Cold ThreadManager registration boundary: "<<completed_thread.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!completed_thread.completed && !call.faulted() && completed_thread.diagnostic.find("0x80023F28")!=std::string::npos &&
+        !thread_callback_trace.empty() && thread_callback_trace.back()==0x80023f28 &&
+        std::find(thread_callback_trace.begin(),thread_callback_trace.end(),0x80023a30)==thread_callback_trace.end() &&
+        std::find(thread_callback_trace.begin(),thread_callback_trace.end(),0x80023a50)==thread_callback_trace.end(),
+        "Completed ThreadManager defaults did not stop at the actual first deferred dependency registration.");
+    const auto thread_list_metadata=**thread_dependencies->thread_list,semaphore_metadata=**thread_dependencies->semaphore;
+    check(thread_list_metadata && semaphore_metadata && thread_list_metadata!=semaphore_metadata &&
+        thread_dependencies->allocations.size()==2 && enabled_allocations.size()==6 && enabled_backings.size()==2 &&
+        reflected_allocations.size()==8 && metadata_init->completed_allocations.size()==3 && memory_allocations==3 &&
+        f.constructed->instance_count==3 && lazy_metadata[0]->instance_count==3 && object_field->instance_count==3,
+        "Lazy dependency getters did not construct distinct native metadata and nested field-list instances.");
+    for(std::size_t i=0;i<2;++i){const auto dependency=i==0?thread_list_metadata:semaphore_metadata;
+        const auto descriptor=descriptors[53+i];const auto raw=descriptor_allocations[53+i];
+        check(dependency->class_flags==0 && dependency->fields && dependency->fields->count==0 &&
+            dependency->fields->backing_bytes==enabled_backings[i].bytes && dependency->fields->backing==enabled_backings[i].fields &&
+            dependency->fields->backing_address==enabled_backings[i].address && dependency->native_size==0xffffffffu,
+            "Lazy dependency allocation fabricated registration or skipped actual reflected member defaults.");
+        check(descriptor->object_type && descriptor->object_type->lock()==dependency && descriptor->flag_34==1 &&
+            igb_bootstrap_read_word(raw,0x38)==igb_bootstrap_address(thread_dependencies->allocations[i]) &&
+            igb_bootstrap_read_byte(raw,0x34)==1 && descriptor->declaring_type && descriptor->declaring_type->lock()==reflected_metadata &&
+            descriptor->name && *descriptor->name==**thread_defaults->names->at(i) && descriptor->offset==8+i*4 &&
+            *thread_defaults->globals->at(i)->slot==descriptor && descriptor->ordinal==i+2,
+            "Thread defaults lost physical type/construct stores, canonical schema publication or captured inheritance indices.");
+        for(std::size_t at=0;at<64;++at)check(enabled_backings[i].bytes->initialized[at]==1 && enabled_backings[i].bytes->bytes[at]==0,
+            "Lazy metadata's field list was preconstructed or lost its original zero-filled empty storage.");
+    }
+    check(reflected_metadata->class_flags==7 && reflected_metadata->factory_redirect==0x80023a10 &&
+        igb_bootstrap_read_word(reflected_metadata_storage,0x3c)==0x80023a10 && f.core->types->count==8 &&
+        f.core->types->backing->at(7)==reflected_metadata && f.core->bootstrap_callbacks && *f.core->bootstrap_callbacks &&
+        (*f.core->bootstrap_callbacks)->count==1 && (*f.core->bootstrap_callbacks)->backing->at(0)==0x80023a50 &&
+        root_callbacks && *root_callbacks->backing==IgbRegistrationCallbackList::Storage({0x80023f28,0x80026098,0x80023a30,0}) &&
+        root_callbacks->count==3 && !root_callbacks->released && !**meta_enum->metadata && enum_probe_locals==0,
+        "Thread completion mixed its class callbacks with the ArkCore bootstrap queue or completed the pending enum.");
+    const auto completed_thread_names=string_allocations,completed_thread_defaults=default_allocations;
+    const auto completed_thread_frees=freed_callback_lists.size(),completed_thread_memory=memory_calls.size();
+    check(!call.resume(bootstrap).completed && enabled_allocations.size()==6 && enabled_backings.size()==2 && descriptors.size()==55 &&
+        reflected_allocations.size()==8 && thread_dependencies->allocations.size()==2 && f.core->types->count==8 &&
+        reflected_fields->count==4 && object_field->instance_count==3 && f.constructed->instance_count==3 && lazy_metadata[0]->instance_count==3 &&
+        (*f.core->bootstrap_callbacks)->count==1 && string_allocations==completed_thread_names && default_allocations==completed_thread_defaults &&
+        freed_callback_lists.size()==completed_thread_frees && memory_calls.size()==completed_thread_memory,
+        "Pending dependency registration replayed ThreadManager defaults, lazy construction, publication or callback append.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

@@ -161,15 +161,22 @@ That body now enters its actual prerequisite guard and ThreadManager registrar.
 The enabled reflected metadata factory now executes its full field passes,
 including positive object-member construction of an internal field list and
 the list's actual memory-member allocation/zero fill. The returned metadata
-feeds original registration and inherited field append. The next reached body
-is ThreadManager defaults `80023940`; enum metadata remains null while this
-prerequisite is pending. Enabled reflected clone
+feeds original registration and inherited field append. ThreadManager defaults
+`80023940` now create both reflected object fields and two lazy metadata/list
+pairs, publish the schema/redirect and append bootstrap callback `80023A50`.
+ThreadManager finishes as type eight with flags `7`; there are 55 schema
+descriptors and 56 default buffers. The next reached body is deferred thread-list
+registration `80023F28`, followed by semaphore registration `80026098` and
+ThreadManager startup `80023A30`. Enum metadata remains null while these
+prerequisites are pending. Enabled reflected clone
 `800680B4` and member/reference branches beyond the completed profile
 remain explicit, together with pool/platform, allocator, callback deallocation
 and BSS prerequisites. Initial core-list constructors and reserve run in this
 same chain; the separate byte-only backing profile remains covered. Continue
 through `igMetaEnum`, later registrations and the outer startup before claiming
-complete native initialization. See [IGB_META_ENUM.md](IGB_META_ENUM.md),
+complete native initialization. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
+[IGB_META_ENUM.md](IGB_META_ENUM.md),
 [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
 [IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md),
 [IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md),

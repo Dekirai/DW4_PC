@@ -294,4 +294,17 @@ MessengerCallResult IgbMetaFieldFactoryInvocation::resume(std::shared_ptr<IgbMet
     case P::done:return {true,0,{}};
     }}}catch(...){s.fault=true;throw;}
 }
+IgbMetaFieldFactory make_native_igb_reflected_meta_field_factory(std::shared_ptr<IgbFileFactoryServices> reflected,IgbMetaFieldFactory remaining){
+    return [weak=std::weak_ptr(reflected),remaining=std::move(remaining)](const IgbMetaFieldCall& call)->std::shared_ptr<IgbMetaFieldOperation>{
+        if(call.kind!=IgbMetaFieldServiceKind::reflected_factory)return remaining?remaining(call):nullptr;
+        const auto selected=weak.lock();if(!selected)fail("Reflected descriptor services expired before selection.");
+        auto invocation=std::make_shared<IgbReflectedFactoryInvocation>(call.metadata,call.pool);
+        auto operation=std::make_shared<IgbMetaFieldOperation>();
+        operation->resume=[selected,invocation,out=operation.get()]{const auto status=invocation->resume(selected);
+            if(!status.completed)return status;const auto instance=invocation->result_instance();
+            if(instance.storage){if(!instance.field)fail("Reflected descriptor factory returned another native object kind.");igb_object_validate_instance(instance);}
+            out->allocation_result={instance.storage,instance.offset};return status;
+        };return operation;
+    };
+}
 } // namespace dw4

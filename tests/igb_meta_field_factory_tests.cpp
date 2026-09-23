@@ -252,9 +252,47 @@ void family_enabled_registration(){
             igb_bootstrap_read_word(f.object,0)==0xcccccccc,"Enabled family path constructed or ran direct factory tails on its reflected result.");
     }
 }
+void native_reflected_adapter(){
+    // Explicit empty class isolates adapter/type ownership. Actual object-field
+    // defaults and registration are exercised in the cold-bootstrap fixture.
+    auto reflected=std::make_shared<IgbFileFactoryServices>();
+    auto metadata=std::make_shared<IgbRuntimeMetaType>();metadata->factory_redirect=0;
+    metadata->allocation_prefix=8;metadata->native_size=0x44;metadata->type_word=0x804762fc;
+    metadata->instance_count=0;metadata->instances=std::shared_ptr<IgbObjectInstanceList>{};
+    metadata->fields=std::make_shared<IgbDecodeFieldRegistry>();metadata->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
+    auto base=std::make_shared<IgbRuntimeMetaType>();base->allocation_prefix=0;
+    base->fields=std::make_shared<IgbDecodeFieldRegistry>();base->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
+    auto field=std::make_shared<IgbDecodeRuntimeField>();auto pointer=allocation(0x300000,0x4c);
+    pointer.storage->bindings.push_back({8,{},{},{},{},field});
+    auto pool=std::make_shared<ModelSceneData>();auto core=std::make_shared<IgbRuntimeTypeRegistry>();
+    core->enabled=1;core->field_initialization_enabled=1;core->vtable_offset=0;
+    reflected->initializer=std::make_shared<IgbObjectInitServices>();reflected->initializer->runtime=std::make_shared<IgbRuntimeTypesServices>();
+    reflected->initializer->runtime->singleton=core;reflected->initializer->object_metadata=base;
+    reflected->initializer->factory=[metadata](const IgbObjectInitCall& call){auto op=std::make_shared<IgbObjectInitOperation>();
+        op->resume=[metadata,call,out=op.get()]{if(call.kind==IgbObjectInitServiceKind::object_virtual && call.virtual_slot==0x58)out->metadata_result=metadata;
+            return MessengerCallResult{true,0,{}};};return op;};
+    unsigned selected{},polls{};bool ready{};
+    reflected->factory=[&](const IgbFileFactoryCall& call){check(call.kind==IgbFileFactoryServiceKind::allocate && call.pool==pool && call.bytes==0x4c,
+        "Descriptor adapter changed reflected allocation size or pool.");++selected;auto op=std::make_shared<IgbFileFactoryOperation>();
+        op->resume=[&,out=op.get()]{++polls;if(!ready)return MessengerCallResult{false,0,"Prepared descriptor allocation."};
+            out->allocation_result=pointer.storage;return MessengerCallResult{true,0,{}};};return op;};
+    unsigned remaining{};const auto adapter=make_native_igb_reflected_meta_field_factory(reflected,[&](const IgbMetaFieldCall&){++remaining;return std::shared_ptr<IgbMetaFieldOperation>{};});
+    IgbMetaFieldCall request;request.kind=K::register_type;check(!adapter(request) && remaining==1,"Reflected adapter consumed a registration endpoint.");
+    request.kind=K::reflected_factory;request.metadata=metadata;request.pool=pool;auto op=adapter(request);
+    check(op && !op->resume().completed && selected==1,"Native descriptor adapter bypassed pending reflected allocation.");
+    reflected->factory={};ready=true;check(op->resume().completed && selected==1 && polls==2,"Descriptor adapter replaced a pending reflected allocator.");
+    check(op->allocation_result.storage==pointer.storage && op->allocation_result.offset==8 && igb_bootstrap_field(op->allocation_result)==field,
+        "Descriptor adapter lost adjusted storage or its exact field owner.");
+    check(igb_bootstrap_read_word(op->allocation_result,0)==0x804762fc && metadata->instance_count==1,
+        "Descriptor adapter skipped actual object initialization or instance publication.");
+    auto abstract=std::make_shared<IgbRuntimeMetaType>();abstract->factory_redirect=0;abstract->flag_1a=1;request.metadata=abstract;
+    auto empty=adapter(request);check(empty->resume().completed && !empty->allocation_result.storage && selected==1,"Abstract descriptor result was fabricated or allocated.");
+    auto temporary=std::make_shared<IgbFileFactoryServices>();auto expired=make_native_igb_reflected_meta_field_factory(temporary);temporary.reset();
+    rejects([&]{expired(request);},"Expired descriptor services were treated as a successful factory.");
+}
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_meta_field_factory_tests");
     exact_constructed_bytes();double_reset_and_pending();injected_name_release_and_owners();enabled_branch_and_faults();
-    family_constructor_bytes();family_reset_prefixes();family_factory_tails();family_enabled_registration();
+    family_constructor_bytes();family_reset_prefixes();family_factory_tails();family_enabled_registration();native_reflected_adapter();
     std::cout<<"igb_meta_field_factory_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

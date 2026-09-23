@@ -142,10 +142,19 @@ metadata factory composes actual reflected initialization with distinct metadata
 and field-list owners. Positive object-member construction calls the nested
 reflected factory; its memory member derives size/alignment, tests element
 ancestry and zero-fills the actual allocated backing before pointer publication.
+ThreadManager's two local object fields now use that same reflected factory,
+with exact typed descriptor results. Defaults compose allocation-only dependency
+getters, schema publication and the actual ArkCore bootstrap callback append.
+They construct separate metadata/internal-list pairs without marking either
+dependency class ready. ThreadManager publishes as the eighth type before the
+runner reaches `80023F28`. Its returned dependency/startup callbacks remain
+separate from the `80023A50` callback queued on ArkCore `+28`.
 This transition does not complete startup. Enabled reflected cloning `800680B4`,
 remaining member operations, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared
-endpoints in this composition. See [IGB_META_ENUM.md](IGB_META_ENUM.md),
+endpoints in this composition. See [IGB_THREAD_DEFAULTS.md](IGB_THREAD_DEFAULTS.md),
+[IGB_THREAD_DEPENDENCIES.md](IGB_THREAD_DEPENDENCIES.md),
+[IGB_META_ENUM.md](IGB_META_ENUM.md),
 [IGB_METADATA_INIT.md](IGB_METADATA_INIT.md),
 [IGB_OBJECT_FIELD_CONSTRUCT.md](IGB_OBJECT_FIELD_CONSTRUCT.md),
 [IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md),
