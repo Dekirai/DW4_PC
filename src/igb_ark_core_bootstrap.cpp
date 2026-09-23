@@ -62,15 +62,15 @@ void igb_construct_ark_core(const IgbArkCoreObject& object){
 struct IgbArkCoreBootstrapInvocation::Impl {
     enum class P {entry,platform,after_platform,manager,after_manager_allocation,after_manager_constructor,
         publish_manager,manager_begin,pool,lookup,list,after_list,capacity,after_size,reserve,after_reserve,
-        callbacks,after_callbacks,register_meta,enable,counts,enum_count,registrations,final_metadata,
-        after_final_metadata,publish_final_metadata,manager_end,call,done};
+        callbacks,after_callbacks,register_meta,enable,counts,field_count,registrations,final_prototype,
+        after_final_prototype,publish_final_prototype,manager_end,call,done};
     IgbArkCoreObject object;
     std::shared_ptr<IgbArkCoreBootstrapServices> owner;
     std::shared_ptr<void> token=std::make_shared<int>(0);
     std::shared_ptr<IgbMemoryPoolRegistry> manager;
     std::shared_ptr<ModelSceneObject> pool;
     std::shared_ptr<IgbRuntimeTypeList> types;
-    std::shared_ptr<IgbRuntimeMetaType> metadata;
+    std::shared_ptr<IgbDecodeRuntimeField> prototype;
     IgbBootstrapPointer allocation;
     std::unique_ptr<IgbPoolByHandleInvocation> lookup;
     std::unique_ptr<IgbRegistrationCallbacksInvocation> registration;
@@ -173,21 +173,21 @@ MessengerCallResult IgbArkCoreBootstrapInvocation::resume(std::shared_ptr<IgbArk
     case P::enable:igb_bootstrap_write_byte(s.object.allocation,0,1);s.object.core->enabled=1;s.phase=P::counts;break;
     case P::counts:
         if(!s.object.core->types)fail("ArkCore bootstrap count snapshot dereferences a null main type list.");
-        word(4,std::bit_cast<std::uint32_t>(s.object.core->types->count));s.phase=P::enum_count;break;
-    case P::enum_count:
-        if(!services || !services->enum_types)return pending("ArkCore bootstrap requires enum type-list global8056229C.");
-        if(!*services->enum_types)fail("ArkCore bootstrap dereferences a null enum type list.");
-        word(8,std::bit_cast<std::uint32_t>((*services->enum_types)->count));s.phase=P::registrations;break;
+        word(4,std::bit_cast<std::uint32_t>(s.object.core->types->count));s.phase=P::field_count;break;
+    case P::field_count:
+        if(!services || !services->field_prototypes)return pending("ArkCore bootstrap requires field-prototype registry global8056229C.");
+        if(!*services->field_prototypes)fail("ArkCore bootstrap dereferences a null field-prototype registry.");
+        word(8,std::bit_cast<std::uint32_t>((*services->field_prototypes)->count));s.phase=P::registrations;break;
     case P::registrations:
         if(!s.registration)s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(registration_bodies[s.registration_index]);
         {const auto r=s.registration->resume(services?services->callbacks:nullptr);check();if(!r.completed)return r;}
-        s.registration.reset();check();if(++s.registration_index==std::size(registration_bodies))s.phase=P::final_metadata;break;
-    case P::final_metadata:select(K::final_metadata,P::after_final_metadata);break;
-    case P::after_final_metadata:
-        s.metadata=std::move(s.call.operation->metadata_result);clear();s.phase=P::publish_final_metadata;break;
-    case P::publish_final_metadata:{
-        if(!services)return pending("ArkCore bootstrap requires final metadata global80561688 storage.");
-        retain(s.object.core,services->final_metadata);services->final_metadata=s.metadata;s.phase=P::manager_end;break;
+        s.registration.reset();check();if(++s.registration_index==std::size(registration_bodies))s.phase=P::final_prototype;break;
+    case P::final_prototype:select(K::final_prototype,P::after_final_prototype);break;
+    case P::after_final_prototype:
+        s.prototype=std::move(s.call.operation->field_result);clear();s.phase=P::publish_final_prototype;break;
+    case P::publish_final_prototype:{
+        if(!services)return pending("ArkCore bootstrap requires reference-prototype global80561688 storage.");
+        retain(s.object.core,services->reference_prototype);services->reference_prototype=s.prototype;s.phase=P::manager_end;break;
     }
     case P::call:{const auto r=s.call.poll(services,check);if(!r.completed)return r;s.returned=r.value;s.phase=s.after;break;}
     case P::done:

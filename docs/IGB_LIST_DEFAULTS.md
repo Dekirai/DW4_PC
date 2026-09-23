@@ -83,9 +83,13 @@ old/new reference counts, retained pending destruction, live backing changes,
 three-query reserve growth, unchanged list counts, null and unknown bindings,
 self-assignment, adapters and recursive-failure propagation.
 
-The original object-field registration wrapper and field clone body remain
-reached boundaries. A two-field schema or a successful prepared clone test is
-not proof of complete original registration or native game startup. Source
+The original object-field metadata registration body and its parent registrations
+now complete in the composed cold test. Its wrapper remains in the deferred
+prototype callback, which reaches typed
+field initialization `800667F4`; that initialization and the field clone body
+remain unfinished. A two-field schema or a successful prepared clone test is
+not proof of complete original registration or native game startup. See
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md). Source
 evidence is the user-supplied USA `main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`; original bytes and generated
 disassembly remain untracked.

@@ -1,6 +1,6 @@
 # Native specialized metadata-field construction
 
-`IgbMetaFieldFactoryInvocation` implements eight original USA descriptor
+`IgbMetaFieldFactoryInvocation` implements ten original USA descriptor
 factories with explicit physical allocations and canonical
 `IgbDecodeRuntimeField` bindings. The default profile remains unsigned integer,
 preserving existing callers. `IgbMetaFieldKind` selects a verified class profile;
@@ -16,6 +16,8 @@ an unknown factory identity is not mapped to a generic descriptor.
 | Pointer | `800274EC` | `8006C46C` / `8006C4B8` | `80476630` | `38` | `800276DC` / `80027704` | `80561694` |
 | Unsigned short | `80021E10` | `80075EC0` / `80075F0C` | `80477054` | `34` | `80021FF4` / `8002201C` | `80561494` |
 | Memory reference | `8002AC34` | `8006324C` / `800632A4` | `80476088` | `50` | `8002AE84` / `8002AEAC` | `80561818` |
+| Signed short | `800259A8` | `800710BC` / `80071108` | `80476848` | `34` | `80025B8C` / `80025BB4` | `805615D8` |
+| Signed byte | `80037B1C` | `8003FF44` / `8003FF90` | `80473F24` | `34` | `80037D00` / `80037D28` | `80561E1C` |
 
 All table values are hexadecimal. Evidence is the supplied USA executable,
 SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. The enabled branch runs the

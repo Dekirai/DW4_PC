@@ -101,9 +101,13 @@ completed metadata. The existing cold integration can consequently enter
 deferred `8002DD18`, descend through `8002DD40` into parent `8002E07C`, and
 run real inheritance and the parent probe before entering `8002E108`.
 Its two local field constructors now bring the chain to 29 descriptors.
-Getter `80028BFC` then reaches object-field prototype registration `800289F8`
-with canonical cell `805616EC` still null. The schema customization and both
-list types' publication remain incomplete at this boundary.
+Getter `80028BFC` now executes object-field registration `800289F8` and its
+base/reference parents, bringing the chain to 52 constructed descriptors and
+five published types. The abstract prototype callback completes its null
+branch; concrete callback `80028B64` reaches `800667F4` with a field-only
+allocation whose typed initialization is still unsupported. Canonical cell
+`805616EC` remains null. The list schema customization and both list types'
+publication remain incomplete; see [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md).
 Completed registration of one type does not imply completed startup or an
 updated gameplay preview.
 

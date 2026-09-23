@@ -89,8 +89,11 @@ under explicit allocator, pool and BSS prerequisites. `igMetaObject` finishes
 with flags `7` as the second published type. Deferred callbacks are appended
 in order `8002DD18`, `8002E054`, `80066AE0`. The subsequent
 [list registration](IGB_LIST_REGISTRATION.md) now enters its parent schema,
-constructs two additional descriptors and reaches object-field prototype
-registration `800289F8` through getter `80028BFC`. ArkCore remains disabled
+constructs two additional descriptors and enters object-field registration
+`800289F8` through getter `80028BFC`. Three field classes now register through
+their original schemas, bringing the chain to 52 descriptors and five types.
+Concrete prototype initialization `800667F4` still requires typed field support;
+see [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md). ArkCore remains disabled
 pending callback completion. This does not establish complete startup or an updated
 playable preview. Original
 instructions and tables were read from the user-supplied USA `main.dol`

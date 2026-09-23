@@ -28,7 +28,7 @@ struct Fixture {
         services->pools=std::make_shared<IgbFilePoolsServices>();services->pools->memory_pools=std::make_shared<IgbMemoryPoolsServices>();
         services->pools->memory_pools->selector=0;services->pools->memory_pools->fallback=manager;
         manager->original_pool_access_bound=true;manager->pools[7]=pool;manager->pools[11]=other_pool;
-        services->enum_types=std::make_shared<IgbRuntimeTypeList>();(*services->enum_types)->count=3;
+        services->field_prototypes=std::make_shared<IgbDecodeFieldRegistry>();(*services->field_prototypes)->count=3;
         services->callbacks=std::make_shared<IgbRegistrationCallbacksServices>();services->callbacks->runtime=services->bootstrap->runtime;
         services->callbacks->factory=[this](const IgbRegistrationCallbacksCall& c){
             if(c.kind!=IgbRegistrationCallbacksServiceKind::invoke_function)return std::shared_ptr<IgbRegistrationCallbacksOperation>{};
@@ -42,7 +42,7 @@ struct Fixture {
             if(c.kind==K::backing_size)r.value=16;
             if(c.kind==K::allocate_callbacks){auto list=std::make_shared<IgbRegistrationCallbackList>();list->count=13;list->capacity=19;
                 callback_lists.push_back(list);out->callbacks_result=list;out->allocation_result=allocation(0x400000+static_cast<std::uint32_t>(callback_lists.size())*16,12);}
-            if(c.kind==K::final_metadata)out->metadata_result=std::make_shared<IgbRuntimeMetaType>();
+            if(c.kind==K::final_prototype)out->field_result=std::make_shared<IgbDecodeRuntimeField>();
             if(action)action(c,*out,r);return r;};return op;};
         igb_construct_ark_core(object);
     }
@@ -72,7 +72,7 @@ void complete_caller(){
     check(*f.object.core->bootstrap_callbacks==f.callback_lists[0] && *f.object.core->registration_callbacks==f.callback_lists[1],"Callback lists were combined or lost.");
     for(const auto& list:f.callback_lists)check(list->count==0 && list->capacity==0 && !list->backing,"Actual callback-list constructor was skipped.");
     check(f.calls.front().kind==K::platform_initialize && f.calls.back().kind==K::manager_virtual && f.calls.back().virtual_slot==0xac,"Bootstrap boundary order differs.");
-    check(f.services->final_metadata && *f.services->final_metadata,"Final canonical80561688 publication missing.");
+    check(f.services->reference_prototype && *f.services->reference_prototype,"Final canonical80561688 publication missing.");
     const auto calls=f.calls.size();check(call.resume().completed && f.calls.size()==calls,"Completed bootstrap replayed operations.");
 }
 void live_reads_and_threshold(){
@@ -109,9 +109,9 @@ void failure_prefixes(){
     null_manager.action=[](const auto& c,auto& op,auto&){if(c.kind==K::allocate_manager){op.allocation_result={};op.manager_result.reset();}};
     IgbArkCoreBootstrapInvocation invalid(null_manager.object);rejects([&]{invalid.resume(null_manager.services);},"Null manager allocation bypassed reached virtual dereference.");
     check(null_manager.object.core->enabled==0 && null_manager.object.core->field_initialization_enabled==1,"Null manager lost the reached startup prefix.");
-    Fixture enums;enums.services->enum_types=std::shared_ptr<IgbRuntimeTypeList>{};IgbArkCoreBootstrapInvocation enum_null(enums.object);
-    rejects([&]{enum_null.resume(enums.services);},"Represented null enum list was replaced with a zero count.");
-    check(enums.object.core->enabled==1 && igb_bootstrap_read_word(enums.object.allocation,8)==0xa5a5a5a5,"Enum failure did not preserve enable-before-count order.");
+    Fixture enums;enums.services->field_prototypes=std::shared_ptr<IgbDecodeFieldRegistry>{};IgbArkCoreBootstrapInvocation enum_null(enums.object);
+    rejects([&]{enum_null.resume(enums.services);},"Represented null field-prototype registry was replaced with a zero count.");
+    check(enums.object.core->enabled==1 && igb_bootstrap_read_word(enums.object.allocation,8)==0xa5a5a5a5,"Field-registry failure did not preserve enable-before-count order.");
     Fixture abandon;abandon.services->factory={};{IgbArkCoreBootstrapInvocation unfinished(abandon.object);check(!unfinished.resume(abandon.services).completed,"Unbound platform operation completed.");}
     IgbArkCoreBootstrapInvocation restart(abandon.object);rejects([&]{restart.resume(abandon.services);},"Abandoned cold prefix was replayed.");
     Fixture recursion;IgbArkCoreBootstrapInvocation active(recursion.object);recursion.action=[&](const auto&,auto&,auto&){try{active.resume(recursion.services);}catch(const std::runtime_error&) {}};

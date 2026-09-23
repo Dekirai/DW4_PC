@@ -111,8 +111,8 @@ The cold chain now executes type publication `800660AC` and field layout
 The latter's local constructor probe `80029FFC` now executes the actual reset
 `80065218`, publishes type word `804761D8` and enters defaults `8002A164`.
 The same cold chain now constructs all 25 local descriptors through native
-batch `80065924`, retaining the two inherited fields. The seven descriptor
-profiles used by this chain have actual constructors; native value setters,
+batch `80065924`, retaining the two inherited fields. That schema's seven
+descriptor profiles have actual constructors; native value setters,
 schema configuration, layout and type publication complete `igMetaObject`
 with flags `7` as the second published type. Its two lazy metadata/list globals
 are also constructed through the original callers. Deferred callbacks are
@@ -121,14 +121,25 @@ executes `8002DD18 -> 8002DD40 -> 8002E07C`, inherits two base fields into
 the non-reference-counted list metadata, and runs actual probe
 `8002E020 -> 800536F8`. Its defaults `8002E108` construct the memory-reference
 and signed-integer descriptors through `8002AC34` and `8002E1AC`, bringing
-the chain to 29 constructed descriptors. Getter `80028BFC` then reaches
-object-field prototype registration `800289F8` because canonical cell
-`805616EC` is still null. The internal object-list metadata `805619CC` has
-flags `8`, and its parent list metadata `805619D4` has flags `9`; neither list
-type is published yet. The registry still contains two types and reflection
-remains disabled. Next reconstruct that actual object-field registration,
-then cloning and the remaining list defaults. Pools, physical allocation and
-initial BSS bindings remain explicit fixture prerequisites. See
+the chain to 29 constructed descriptors. Getter `80028BFC` now enters actual
+object-field registration `800289F8`, including its base and reference parents.
+Their defaults `8002A764`, `800273EC`, and `80028AB4` add 18, 2, and 3
+descriptors. All ten reached descriptor profiles have native constructors and
+value operations. The three field classes finish registration, bringing the
+chain to 52 constructed descriptors, 50 default buffers, and five published
+types. Abstract reference-prototype callback `80027454` executes the real
+reflected factory's null branch; concrete object-prototype callback `80028B64`
+then allocates its `0x44`-byte storage and reaches initializer `800667F4`.
+That initializer still needs typed field binding support. The prototype storage
+remains uninitialized and canonical prototype `805616EC` remains null.
+Internal list metadata `805619CC` and `805619D4` retain flags `8` and `9`;
+neither list type is published, and reflection remains disabled. Next extend
+typed field initialization, then finish prototype publication, cloning, and
+the remaining list defaults. Pools, physical allocation and initial BSS bindings
+remain explicit fixture prerequisites. See
+[IGB_FIELD_TYPE_REGISTRATION.md](docs/IGB_FIELD_TYPE_REGISTRATION.md),
+[IGB_FIELD_TYPE_DEFAULTS.md](docs/IGB_FIELD_TYPE_DEFAULTS.md),
+[IGB_FIELD_PROTOTYPE.md](docs/IGB_FIELD_PROTOTYPE.md),
 [IGB_LIST_REGISTRATION.md](docs/IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](docs/IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),

@@ -23,7 +23,7 @@ enum class IgbArkCoreServiceKind {
     backing_size,        //8005641C for captured nonnull type-list backing.
     reserve_types,       //8005383C(captured type list,1024).
     allocate_callbacks,  //800560F8(12); actual3E848 stores follow natively.
-    final_metadata       //80027824, returned canonical80561698 metadata.
+    final_prototype      //80027824, returned canonical80561698 pointer-field prototype.
 };
 struct IgbArkCoreCall {
     IgbArkCoreServiceKind kind{};
@@ -44,15 +44,15 @@ struct IgbArkCoreOperation {
     std::shared_ptr<IgbMemoryPoolRegistry> manager_result;
     std::shared_ptr<IgbRuntimeTypeList> types_result;
     std::shared_ptr<IgbRegistrationCallbackList> callbacks_result;
-    std::shared_ptr<IgbRuntimeMetaType> metadata_result;
+    std::shared_ptr<IgbDecodeRuntimeField> field_result;
 };
 using IgbArkCoreFactory=std::function<std::shared_ptr<IgbArkCoreOperation>(const IgbArkCoreCall&)>;
 struct IgbArkCoreBootstrapServices {
     std::shared_ptr<IgbBootstrapServices> bootstrap; //Canonical runtime/default handle.
     std::shared_ptr<IgbFilePoolsServices> pools; //Canonical805621C8 and actual607F4.
     std::shared_ptr<IgbRegistrationCallbacksServices> callbacks;
-    std::optional<std::shared_ptr<IgbRuntimeTypeList>> enum_types; //8056229C.
-    std::optional<std::shared_ptr<IgbRuntimeMetaType>> final_metadata; //80561688.
+    std::optional<std::shared_ptr<IgbDecodeFieldRegistry>> field_prototypes; //8056229C.
+    IgbRuntimeFieldSlot reference_prototype; //80561688, later aliases pointer prototype80561698.
     IgbArkCoreFactory factory;
     std::vector<std::shared_ptr<void>> unfinished_;
 };

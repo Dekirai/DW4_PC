@@ -134,7 +134,9 @@ constexpr ProfileEvidence evidence[]={
     {IgbMetaFieldKind::object,0x8002879c,0x8006ac50,0x8006aca4,0x804762fc,0x44,0x800289f8,0x80028a20,0x805616e8},
     {IgbMetaFieldKind::pointer,0x800274ec,0x8006c46c,0x8006c4b8,0x80476630,0x38,0x800276dc,0x80027704,0x80561694},
     {IgbMetaFieldKind::unsigned_short,0x80021e10,0x80075ec0,0x80075f0c,0x80477054,0x34,0x80021ff4,0x8002201c,0x80561494},
-    {IgbMetaFieldKind::memory_reference,0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818}
+    {IgbMetaFieldKind::memory_reference,0x8002ac34,0x8006324c,0x800632a4,0x80476088,0x50,0x8002ae84,0x8002aeac,0x80561818},
+    {IgbMetaFieldKind::signed_short,0x800259a8,0x800710bc,0x80071108,0x80476848,0x34,0x80025b8c,0x80025bb4,0x805615d8},
+    {IgbMetaFieldKind::signed_byte,0x80037b1c,0x8003ff44,0x8003ff90,0x80473f24,0x34,0x80037d00,0x80037d28,0x80561e1c}
 };
 bool ref_kind(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::string || kind==IgbMetaFieldKind::object || kind==IgbMetaFieldKind::pointer || kind==IgbMetaFieldKind::memory_reference;}
 void resize(Fixture& f,std::size_t size){f.object.storage->bytes->bytes.assign(size,0xcc);f.object.storage->bytes->initialized.assign(size,1);}
@@ -176,7 +178,7 @@ void family_constructor_bytes(){
             "Reference base entry omitted reset or overwrote padding.");
     }
     check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
-    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(8));},"Invalid descriptor profile was accepted.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(10));},"Invalid descriptor profile was accepted.");
 }
 void family_reset_prefixes(){
     for(const auto& p:evidence){

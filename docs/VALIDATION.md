@@ -1,5 +1,95 @@
 # Local validation
 
+## Native field classes and prototype startup
+
+Built and validated locally on 2026-09-20; report, source, executable and library
+hashes rechecked on 2026-09-23. The same cold-bootstrap invocation now completes
+the registrations of `igMetaField`, `igRefMetaField` and `igObjectRefMetaField`
+through their actual wrappers, parent calls, probes and defaults. Their 23 local
+descriptors bring the composition to 52 constructed descriptors, 50 default
+buffers and five published types. All ten reached field constructor profiles
+are native, including the signed-short and signed-byte profiles.
+
+The abstract reference-prototype callback `80027454` completes through the
+actual reflected factory's null-return branch. Concrete object-prototype
+callback `80028B64` enters the actual reflected factory, allocates its 0x44-byte
+storage through the explicit physical allocator, and reaches `800667F4`.
+That initializer still requires typed field-object support. The allocation
+remains uninitialized, prototype global `805616EC` remains null, the two
+internal-list metadata objects retain flags 8 and 9, and ArkCore remains
+disabled. Repeating the pending call does not allocate or construct again.
+
+The bootstrap's canonical `8056229C` global is now correctly represented as
+a field-prototype registry, and `80561688` as a reference-field prototype.
+These replace earlier incorrect metadata-list/metadata host interpretations;
+the original control flow, raw publication and count order are preserved.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 176/176 CTest suites passed with four jobs; no compiler warnings |
+| Cold metadata integration | 887 checks including actual registration/default composition, all 23 descriptor names/offsets/globals, five published types, real abstract null return and retained concrete initializer boundary |
+| Field-type registration | 162 checks for three profiles, canonical cells, exact arguments, callbacks and getters |
+| Field-type defaults | 706 checks for all three schemas, customization order, live field identities, scalar packing, schema composition and suspension |
+| Object-field layout probe | 87 checks for actual reset, physical result selection, string cleanup, live reloads and failure prefixes |
+| Field prototypes | 50 checks including actual abstract reflection, concrete typed-initializer suspension, native lazy registry creation and separately prepared positive prototype callers |
+| Specialized field factories and values | 301 factory checks and 130 value checks across ten profiles |
+| ArkCore bootstrap | 70 checks with corrected canonical registry/prototype types |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled fixture still reaches `8002A0A8`, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+The first build exposed one registration-test fixture that incorrectly expected
+absent parent/type-word state after construction. Correcting that fixture to
+the constructor's represented null parent and zero type word required no
+production change. The final full build passed all 176 suites.
+
+Independent bounded comparisons used the supplied USA DOL, SHA-1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`, with unchanged instruction semantics:
+
+| Profile | Cases | Failure prefixes | Original instructions | Addresses | Differences |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ten field factories, constructors, resets and tails | 5,258 | 3,121 | 611,895 | 1,133 | 0 |
+| Object-field layout probe and cleanup | 1,763 | 973 | 232,215 | 189 | 0 |
+| Field registration arguments, wrappers and getters | 1,782 | 540 | 45,539 | 234 | 0 |
+| Three complete field-default callers | 708 | 675 | 1,298,477 | 576 | 0 |
+| Abstract prototype callbacks and reflected null return | 576 | 204 | 9,396 | 61 | 0 |
+
+Total: 10,087 cases, 5,513 failure prefixes and 2,197,522 original instructions,
+with zero differences. Address counts are per corpus, not a union count.
+The factory corpus compares complete initialized storage and padding while
+retaining explicit pool, allocator, enabled registration/reflection and
+string-pool endpoints. The probe corpus includes both uninterrupted resets
+and explicitly injected post-reset string owners for cleanup mutation cases;
+it does not claim the constructor naturally produces those injected owners.
+
+The registration corpus captures all three argument lists at `80066204` and
+checks all 23 original default-table rows. It excludes complete generic
+registration and allocating lazy getters. The defaults corpus executes the
+full three callers and reached schema helpers; prepared factories cyclically
+return three field identities to exercise aliasing. Physical allocation,
+string services and selected field virtuals remain explicit endpoints.
+The prototype corpus proves the abstract null branch only. Positive typed
+initialization, registry append and finalization are outside that comparison;
+the separately prepared positive native tests do not prove cold construction.
+
+Final core SHA256:
+`FCECD0CBCF737CF426FD528A2CAA1114D3EEBF7E3793FC1FE8A04DF81D18E7FA`.
+Ignored build/regression logs are `work/native-field-prototype-build.log` and
+`work/native-field-type-{prefix,player,verifier}.log`. The five reports are
+`work/native-object-field-family-result.json`, `work/native-field-probe-result.json`,
+`work/native-field-type-registration-result.json`,
+`work/native-field-type-defaults-result.json` and
+`work/native-field-prototype-null-result.json`. Their final source, executable
+and shared-library hashes all match the local files.
+
+See [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
+[IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
+[IGB_FIELD_PROBE.md](IGB_FIELD_PROBE.md) and
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md).
+No interactive preview or GitHub Actions run was launched. Continue with
+typed field initialization at `800667F4`, then prototype publication and the
+remaining list defaults. This evidence does not establish a native game boot.
+
 ## Native deferred list registration and memory-reference fields
 
 Validated locally on 2026-09-20. The same cold-bootstrap composition now enters

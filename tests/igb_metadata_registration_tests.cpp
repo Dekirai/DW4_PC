@@ -13,6 +13,10 @@
 #include "dw4/igb_field_values.hpp"
 #include "dw4/igb_list_registration.hpp"
 #include "dw4/igb_list_defaults.hpp"
+#include "dw4/igb_field_type_registration.hpp"
+#include "dw4/igb_field_type_defaults.hpp"
+#include "dw4/igb_field_probe.hpp"
+#include "dw4/igb_field_prototype.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -701,7 +705,10 @@ void actual_cold_bootstrap_prefix(){
     auto list_defaults=std::make_shared<IgbListDefaultsServices>();list_defaults->lists=native_lists;
     list_defaults->schema=metadata_defaults->schema;list_defaults->values=values;
     std::vector<IgbListDefaultsCall> list_defaults_calls;
-    list_defaults->factory=[&](const IgbListDefaultsCall& c){list_defaults_calls.push_back(c);return std::shared_ptr<IgbListDefaultsOperation>{};};
+    IgbListDefaultsFactory reached_list_operations;
+    list_defaults->factory=[&](const IgbListDefaultsCall& c){
+        if(reached_list_operations)return reached_list_operations(c);
+        list_defaults_calls.push_back(c);return std::shared_ptr<IgbListDefaultsOperation>{};};
     values->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
     f.remaining=make_native_igb_list_defaults_factory(list_defaults,f.remaining);
     const auto prototype_boundary=call.resume(bootstrap);
@@ -722,6 +729,128 @@ void actual_cold_bootstrap_prefix(){
     check(!call.resume(bootstrap).completed && list_defaults_calls.size()==2 && descriptors.size()==29 &&
         field_size_queries==final_field_queries && string_allocations==final_string_allocations && list_probe_locals==1,
         "Pending object-field registration replayed completed list construction, append, inheritance or probe.");
+
+
+    // Continue through the actual object/reference/base field registrations.
+    // Newly allocated physical metadata and backing receive identity bindings;
+    // the existing native constructors still initialize every represented field.
+    auto field_types=std::make_shared<IgbFieldTypeRegistrationServices>();
+    field_types->meta_fields=object_defaults->meta_fields;field_types->metadata=f.services->metadata;
+    field_types->callbacks=f.services->callbacks;field_types->types=f.services->types;field_types->pools=f.services->pools;
+    field_types->base_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    field_types->reference_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    field_types->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::object)]=
+        std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    values->signed_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    values->signed_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    const auto allocate_metadata=f.services->metadata->bootstrap->factory;
+    f.services->metadata->bootstrap->factory=[&,allocate_metadata](const IgbBootstrapCall& c){
+        auto op=allocate_metadata(c);if(!op || c.kind!=BK::pool_allocate)return op;
+        const auto run=op->resume;op->resume=[&,run,out=op.get(),bound=false]()mutable{
+            const auto status=run();if(status.completed && !bound){
+                const auto physical=out->allocation_result;
+                if(physical.storage)for(const auto& binding:physical.storage->bindings)if(binding.metadata)
+                    type_pointers->values.push_back({igb_bootstrap_address(physical)+binding.offset,binding.metadata,{}});
+                bound=true;
+            }return status;};return op;
+    };
+    const auto allocate_field_backing=fields_services->factory;
+    fields_services->factory=[&,allocate_field_backing](const IgbFieldRegistryCall& c){
+        auto op=allocate_field_backing(c);if(!op || c.kind!=FK::allocate_backing)return op;
+        const auto run=op->resume;op->resume=[&,run,out=op.get(),bound=false]()mutable{
+            const auto status=run();if(status.completed && !bound){const auto& b=out->backing_result;
+                field_backings.push_back({b.allocation.storage->bytes,igb_bootstrap_address(b.allocation),b.allocation.offset,{},b.fields});bound=true;
+            }return status;};return op;
+    };
+    additional_callbacks=make_native_igb_field_type_registration_function_factory(field_types,additional_callbacks);
+    f.remaining=make_native_igb_field_type_registration_type_factory(field_types,f.remaining);
+    auto field_defaults=std::make_shared<IgbFieldTypeDefaultsServices>();field_defaults->registration=field_types;
+    field_defaults->schema=metadata_defaults->schema;field_defaults->metadata=f.services;
+    f.remaining=make_native_igb_field_type_defaults_factory(field_defaults,f.remaining);
+    auto field_probe=std::make_shared<IgbFieldProbeServices>();field_probe->fields=object_defaults->meta_fields;
+    field_probe->runtime=f.services->types->runtime;auto object_field_local=allocation(0x7d0000,0x44);
+    auto object_field_view=std::make_shared<IgbDecodeRuntimeField>();object_field_local.storage->bindings.push_back({0,{},{},{},{},object_field_view});
+    unsigned field_probe_locals{};field_probe->local_storage=[&]{++field_probe_locals;return object_field_local;};
+    f.remaining=make_native_igb_field_probe_factory(field_probe,f.remaining);
+    reached_list_operations=[&](const IgbListDefaultsCall& c){
+        if(c.kind!=IgbListDefaultsServiceKind::register_object_field || c.function!=0x800289f8)return std::shared_ptr<IgbListDefaultsOperation>{};
+        auto wrapper=std::make_shared<IgbRegistrationCallbacksInvocation>(0x80028a20);
+        auto op=std::make_shared<IgbListDefaultsOperation>();op->resume=[&,wrapper]{return wrapper->resume(f.services->callbacks);};return op;
+    };
+    const auto field_chain=call.resume(bootstrap);
+    check(!field_chain.completed && !call.faulted() && field_chain.diagnostic.find("0x80027454")!=std::string::npos,
+        "Original field registration chain did not reach its required reference prototype callback.");
+    const auto base_field=**field_types->base_metadata,reference_field=**field_types->reference_metadata;
+    const auto object_field=**field_types->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::object)];
+    check(base_field && reference_field && object_field && base_field->parent==object_type && reference_field->parent==base_field && object_field->parent==reference_field,
+        "Field class inheritance did not preserve its three actual canonical metadata owners.");
+    check(base_field->class_flags==7 && reference_field->class_flags==7 && object_field->class_flags==7 &&
+        base_field->fields->count==20 && reference_field->fields->count==22 && object_field->fields->count==25 && descriptors.size()==52,
+        "Field registration skipped original local descriptors, inheritance or publication.");
+    check(base_field->native_size==0x34 && reference_field->native_size==0x38 && object_field->native_size==0x44 &&
+        base_field->flag_1a==1 && reference_field->flag_1a==1 && object_field->flag_1a==0 && object_field->type_word==0x804762fc &&
+        field_probe_locals==1 && object_field_view->vtable_word==0x80471914,
+        "Abstract field registration invented a probe or object field registration skipped actual reset/cleanup.");
+    const std::array<std::shared_ptr<IgbRuntimeMetaType>,3> field_classes={base_field,reference_field,object_field};
+    const std::array<std::size_t,3> descriptor_starts={29,47,49},inherited_counts={2,20,22};
+    for(std::size_t k=0;k<field_classes.size();++k){const auto& t=field_defaults->tables[k];const auto& type=field_classes[k];
+        for(std::size_t i=0;i<t.factories->size();++i){const auto d=descriptors[descriptor_starts[k]+i];
+            const auto kind=igb_meta_field_kind_for_factory(*t.factories->at(i));check(kind.has_value(),"Field class uses an unverified descriptor factory.");
+            check(type->fields->backing->at(inherited_counts[k]+i)==d && *t.globals->at(i)->slot==d &&
+                d->name && *d->name==**t.names->at(i) && d->offset==*t.offsets->at(i) && d->ordinal==inherited_counts[k]+i &&
+                d->vtable_word==igb_meta_field_profile(*kind).vtable && d->declaring_type && d->declaring_type->lock()==type,
+                "Registered field schema lost its constructor, canonical global, owner, name or layout.");
+        }
+    }
+    check(descriptors[31]->default_bytes->buffer->bytes==std::vector<std::uint8_t>({0xff,0xff}) &&
+        descriptors[32]->default_bytes->buffer->bytes==std::vector<std::uint8_t>({0xff,0xff}) &&
+        descriptors[45]->default_bytes->buffer->bytes==std::vector<std::uint8_t>({2}) &&
+        descriptors[34]->object_type->lock()==f.constructed && descriptors[49]->object_type->lock()==f.constructed,
+        "Field class signed defaults or parent metadata references differ from original callers.");
+    check(f.core->types->count==5 && f.core->types->backing->at(2)==base_field && f.core->types->backing->at(3)==reference_field &&
+        f.core->types->backing->at(4)==object_field && lazy_metadata.size()==5 && lazy_fields.size()==5 &&
+        default_allocations==50 && f.core->enabled==0 && !values->object_prototype.value() &&
+        lazy_metadata[0]->class_flags==8 && lazy_metadata[1]->class_flags==9 && !descriptors[27]->name,
+        "Field class completion fabricated prototype creation, list completion or enabled native startup.");
+    const auto final_descriptors=descriptors.size(),final_metadata=lazy_metadata.size();
+    const auto final_defaults=default_allocations,final_names=string_allocations;
+    check(!call.resume(bootstrap).completed && descriptors.size()==final_descriptors && lazy_metadata.size()==final_metadata &&
+        default_allocations==final_defaults && string_allocations==final_names && field_probe_locals==1 && f.core->types->count==5,
+        "Pending reference prototype replayed registered classes or completed original bootstrap.");
+
+
+    // The abstract reference class's real reflected factory returns null.
+    // Its callback must finish before the concrete object prototype starts.
+    auto prototypes=std::make_shared<IgbFieldPrototypeServices>();prototypes->registration=field_types;
+    prototypes->values=values;prototypes->registries=fields_services;prototypes->schema=metadata_defaults->schema;
+    bootstrap->reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    bootstrap->field_prototypes=std::shared_ptr<IgbDecodeFieldRegistry>{};
+    prototypes->reference_prototype=std::shared_ptr<IgbRuntimeFieldSlot>(bootstrap,&bootstrap->reference_prototype);
+    prototypes->registry=std::shared_ptr<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>>(bootstrap,&bootstrap->field_prototypes);
+    prototypes->reflected=std::make_shared<IgbFileFactoryServices>();
+    prototypes->reflected->initializer=std::make_shared<IgbObjectInitServices>();
+    prototypes->reflected->initializer->runtime=f.services->types->runtime;
+    prototypes->reflected->initializer->object_metadata=object_type;
+    auto prototype_storage=allocation(0x7e0000,0x44);auto prototype_field=std::make_shared<IgbDecodeRuntimeField>();
+    prototype_storage.storage->bindings.push_back({0,{},{},{},{},prototype_field});unsigned prototype_allocations{};
+    prototypes->reflected->factory=[&](const IgbFileFactoryCall& c){
+        check(c.kind==IgbFileFactoryServiceKind::allocate && c.metadata==object_field && c.pool==f.pool && c.bytes==0x44,
+            "Actual abstract prototype allocated or concrete reflected factory changed its metadata/pool/size.");
+        auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++prototype_allocations;
+            out->allocation_result=prototype_storage.storage;return MessengerCallResult{true,0,{}};};return op;
+    };
+    additional_callbacks=make_native_igb_field_prototype_function_factory(prototypes,additional_callbacks);
+    const auto concrete_prototype=call.resume(bootstrap);
+    check(!concrete_prototype.completed && !call.faulted() && concrete_prototype.diagnostic.find("typed binding")!=std::string::npos && prototype_allocations==1,
+        "Native prototype callbacks did not finish the abstract null branch and reach actual concrete667F4.");
+    check(bootstrap->reference_prototype && !*bootstrap->reference_prototype && bootstrap->field_prototypes && !*bootstrap->field_prototypes &&
+        !values->object_prototype.value() && f.core->types->count==5 && f.core->enabled==0 && descriptors.size()==52 &&
+        prototype_storage.storage->bytes->bytes==std::vector<std::uint8_t>(0x44,0xcc) && !prototype_field->vtable_word &&
+        default_allocations==50 && field_probe_locals==1,
+        "Pending typed initializer fabricated prototype publication, construction bytes or core activation.");
+    check(!call.resume(bootstrap).completed && prototype_allocations==1 && descriptors.size()==52 && default_allocations==50 &&
+        f.core->types->count==5 && !values->object_prototype.value(),
+        "Pending concrete prototype restarted reflected allocation or earlier field registrations.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

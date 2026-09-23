@@ -30,9 +30,9 @@ disabled direct constructor before reflected allocation becomes enabled.
 Pending or failed registration does not manufacture that metadata or skip to
 the enable store.
 
-The caller then snapshots fresh main-list and enum-list counts into core
+The caller then snapshots fresh main-type and field-prototype registry counts into core
 `+04/+08`, executes the original 22 post-enable registration runners in order,
-publishes the explicit `80027824` result to canonical `80561688`, and freshly
+publishes the explicit `80027824` pointer-field prototype result to canonical `80561688`, and freshly
 reloads the fallback manager before virtual `+AC`.
 
 Platform initialization, manager allocation/construction/virtual operations,
@@ -53,7 +53,7 @@ only ordering under the explicitly supplied service results.
 Permanent tests cover untouched constructor bytes and loader state, original
 constants, ordered registration gates and count snapshots, distinct list
 publications, capacity equality, fresh pool handles, conditional manager
-creation, retained pending callbacks, null manager/enum failure prefixes,
+creation, retained pending callbacks, null manager/field-registry failure prefixes,
 abandonment and recursive invalidation.
 
 The local raw-instruction comparison covers 759 constructor/bootstrap cases,
@@ -63,7 +63,7 @@ entire physical `0x3A0` core, globals and callback-list header states. Original
 constructor/bootstrap, pool-selector dispatch, callback-list initializer,
 registration wrappers and callback runner execute. Registration bodies return
 explicitly prepared null callback lists; manager/list/allocator/platform and
-final metadata-getter endpoints remain prepared. This establishes caller
+final prototype-getter endpoints remain prepared. This establishes caller
 ordering and failure prefixes within that profile, not complete registration.
 
 A subsequent integration now binds actual metadata-element list factories and
@@ -78,10 +78,27 @@ The extended metadata integration now also uses those actual initial list
 constructors and reserve operations. It registers igObject through its real
 specialized fields, type publication, field layout and empty callback dispatch,
 then constructs its child list and inherits both fields into igMetaObject.
-The next boundary is igMetaObject's local constructor probe `80029FFC`; the
-core remains disabled. See [IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
+The current composition also completes that metadata's probe and defaults,
+enters deferred list registration and registers the three reached field classes.
+It constructs 52 descriptors and publishes five types. Abstract reference-field
+prototype creation returns null through the actual reflected factory; concrete
+object-field prototype creation reaches typed initialization `800667F4`.
+The core remains disabled at that boundary. See
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_TYPE_LIST_FACTORY.md](IGB_TYPE_LIST_FACTORY.md),
 [IGB_TYPE_PUBLICATION.md](IGB_TYPE_PUBLICATION.md),
 [IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md),
 [IGB_POINTER_LIST.md](IGB_POINTER_LIST.md),
 [IGB_OBJECT_REGISTRATION.md](IGB_OBJECT_REGISTRATION.md) and
 [VALIDATION.md](VALIDATION.md) for current evidence and remaining boundaries.
+
+
+The canonical globals have distinct element types: `8056229C` contains field
+prototypes (`IgbDecodeFieldRegistry`), while `80561688` is a descriptor pointer
+(`IgbRuntimeFieldSlot`). The latter initially belongs to `igRefMetaField`
+prototype creation `80027454`; the late bootstrap store aliases the pointer-field
+prototype returned by `80027824` from `80561698`. They are shared with the native
+prototype module, not represented as metadata or a second metadata list. This
+corrects the earlier host-type interpretation while preserving original count
+reads and the raw final assignment. The complete bootstrap remains unverified;
+see [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md) and [VALIDATION.md](VALIDATION.md).

@@ -137,14 +137,40 @@ and runs actual stack probe `8002E020 -> 800536F8`. Its defaults `8002E108`
 construct two local descriptors through memory-reference factory `8002AC34`
 and signed-integer factory `8002E1AC`, bringing the chain to 29 constructed
 descriptors while retaining the complete 27-field igMetaObject schema.
-Getter `80028BFC` now suspends at required object-field prototype registration
-`800289F8`, since canonical prototype cell `805616EC` is null. Internal
-object-list metadata `805619CC` has flags `8`, and its parent `805619D4` has
-flags `9`; neither list type has finished publication. The registry still
-contains two types, igMetaObject retains flags `7`, and ArkCore remains
-disabled. Later type-count snapshots remain unwritten. Next implement the
-actual object-field registration, then cloning and the remaining list defaults.
-See [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md) and
+Getter `80028BFC` now enters actual object-field registration `800289F8`, with
+base field metadata `805617BC`, reference field metadata `80561684`, and object
+field metadata `805616E8` constructed through their canonical cells. Their
+inheritance chain is `igObject -> igMetaField -> igRefMetaField ->
+igObjectRefMetaField`. Defaults `8002A764`, `800273EC`, and `80028AB4` add
+18, 2, and 3 local descriptors. Their complete schemas contain 20, 22, and 25
+fields after inheritance, with native sizes `34`, `38`, and `44` hexadecimal.
+The two abstract classes do not invent constructor probes; the object field's
+real probe executes its reset/cleanup and publishes vtable identity `804762FC`.
+The same cold chain now has 52 constructed descriptors and 50 default buffers,
+and the three field classes follow `igObject` and `igMetaObject` in the five-type
+registry. All ten reached descriptor profiles use native constructors and
+field value operations, including the signed-short and signed-byte defaults.
+
+The callback runner then enters reference-prototype callback `80027454`.
+Its real reflected factory `8006546C` returns null for the abstract class.
+Object-prototype callback `80028B64` reaches the concrete reflected allocation
+and then `800667F4`. The allocator provides separate `0x44`-byte storage with
+a field binding; the initializer currently suspends because that typed binding
+is unsupported. This allocation is not counted as a constructed descriptor:
+its original bytes remain unchanged and it has no initialized vtable. Canonical
+object prototype `805616EC` remains null, as do reference prototype `80561688`
+and prototype registry `8056229C`. The latter two use the same canonical
+bootstrap cells with the corrected field-descriptor and field-registry types.
+
+Internal object-list metadata `805619CC` retains flags `8`, and its parent
+`805619D4` retains flags `9`; neither list type has finished publication.
+`igMetaObject` retains flags `7`, ArkCore remains disabled, and later type-count
+snapshots remain unwritten. Next support typed field initialization, then finish
+prototype publication, cloning and the remaining list defaults. See
+[IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
+[IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md) and
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
 Initial ArkCore lists and their reserve operation execute natively in this
 same integration. Platform/manager work, physical allocation and string-arena

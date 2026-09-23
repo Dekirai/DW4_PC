@@ -9,13 +9,13 @@ namespace {
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Running(){value=false;}};
 struct Profile {std::uint32_t vtable,size;};
-constexpr std::array<Profile,8> profiles={{{0x80476e6c,4},{0x80475b60,4},{0x80473e30,1},
-    {0x8047693c,4},{0x804762fc,4},{0x80476630,4},{0x80477054,2},{0x80476088,4}}};
+constexpr std::array<Profile,10> profiles={{{0x80476e6c,4},{0x80475b60,4},{0x80473e30,1},
+    {0x8047693c,4},{0x804762fc,4},{0x80476630,4},{0x80477054,2},{0x80476088,4},{0x80476848,2},{0x80473f24,1}}};
 std::optional<std::size_t> profile(std::uint32_t table){for(std::size_t i=0;i<profiles.size();++i)if(profiles[i].vtable==table)return i;return {};}
 IgbRuntimeFieldSlot* prototype(IgbFieldValuesServices& s,std::size_t index){
     switch(index){case 0:return s.fields?&s.fields->unsigned_int_prototype:nullptr;case 1:return &s.signed_int_prototype;
     case 2:return &s.boolean_prototype;case 3:return &s.string_prototype;case 4:return &s.object_prototype;
-    case 5:return &s.pointer_prototype;case 6:return &s.unsigned_short_prototype;default:return &s.memory_reference_prototype;}
+    case 5:return &s.pointer_prototype;case 6:return &s.unsigned_short_prototype;case 7:return &s.memory_reference_prototype;case 8:return &s.signed_short_prototype;default:return &s.signed_byte_prototype;}
 }
 bool range(const IgbRuntimeFieldDefaultSource& view,std::uint32_t count,bool read){
     if(!view.buffer || view.buffer->released)return false;
