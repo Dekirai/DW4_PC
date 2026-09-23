@@ -72,9 +72,22 @@ wrapped reference words and a negative/wrapped index preserve the original
 arithmetic and reached failure prefix. Physical pointer identity is explicit,
 separate from the host owner mapping.
 
+For descriptors with represented physical storage, the list callers also
+publish their individual descriptor stores through validated canonical bindings.
+Parent defaults store the element pointer at `+3C`, word `+38 = 0x40`, then bytes
+`+34`, `+35`, `+40`, `+41`, and `+42` in that order. A missing nonnull element
+address suspends before either physical or canonical publication; a late binding
+uses the already captured prototype. Its weak element reference remains
+nonowning. The clone caller physically writes flag `+42` and global pointer
+`+1C` before replacement. Replacement retain, old release, and the caller's
+creator release keep the represented physical reference words synchronized
+with their canonical owners. Bounds or binding failures preserve the completed
+store prefix; padding and later members remain untouched. Canonical-only
+prepared descriptor fixtures remain a separate supported test profile.
+
 ## Verification scope
 
-The local Release suite passes 77 checks. It composes native batch creation, schema, name ownership,
+The local suite composes native batch creation, schema, name ownership,
 lookup, index search, descriptor finalization, replacement and pointer-list
 growth with explicit prepared descriptor constructors, allocator callbacks and
 clone results. It checks the original tables, inherited offsets, prototype
@@ -82,6 +95,10 @@ registration pauses, captured receiver, clone selection, global publication,
 old/new reference counts, retained pending destruction, live backing changes,
 three-query reserve growth, unchanged list counts, null and unknown bindings,
 self-assignment, adapters and recursive-failure propagation.
+Focused physical-storage cases cover late element addresses, captured prototype
+identity, ordered partial-store faults, clone flag/global publication, suspended
+old release, creator release and full-word self-replacement wrap. Measured local
+build results are recorded in [VALIDATION.md](VALIDATION.md).
 
 The original object-field metadata registration body and its parent registrations
 now complete in the composed cold test. Its wrapper also completes the concrete

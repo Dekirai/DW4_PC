@@ -1,6 +1,7 @@
 #include "dw4/igb_list_defaults.hpp"
 #include "dw4/igb_stream.hpp"
 
+#include <algorithm>
 #include <iostream>
 
 namespace {
@@ -14,6 +15,13 @@ std::shared_ptr<IgbRuntimeMetaType> metadata(){auto m=std::make_shared<IgbRuntim
 std::shared_ptr<IgbDecodeRuntimeField> field(std::uint32_t vt=0x80476088){auto f=std::make_shared<IgbDecodeRuntimeField>();f->vtable_word=vt;
     f->name_string=std::shared_ptr<IgbInternedString>{};f->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>{};f->global_slot_address=0;
     f->default_bytes=IgbRuntimeFieldDefaultSource{bytes(4),0};f->default_bytes_address=0x700000;return f;}
+std::shared_ptr<IgbObjectStorage> bind_physical(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t address,std::uint32_t size=0x50){
+    auto storage=std::make_shared<IgbObjectStorage>();storage->original_address=address-4;storage->bytes=bytes(size+4);
+    std::fill(storage->bytes->bytes.begin(),storage->bytes->bytes.end(),0xcc);storage->bindings.push_back({4,{},{},{},{},field});
+    field->physical_storage=IgbFieldStorageBinding{storage,4};const IgbBootstrapPointer pointer{storage,4};
+    igb_bootstrap_write_word(pointer,0,*field->vtable_word);igb_bootstrap_write_word(pointer,4,field->reference_word);
+    igb_bootstrap_write_word(pointer,0x20,field->default_bytes_address.value_or(0));return storage;
+}
 struct Fixture {
     std::shared_ptr<IgbListDefaultsServices> services=std::make_shared<IgbListDefaultsServices>();
     std::shared_ptr<IgbRuntimeMetaType> children=metadata(),registry=metadata();
@@ -129,8 +137,71 @@ void adapters_reentry_and_alias(){Fixture f;f.prepare_parent();auto adapter=make
     rejects([&]{invocation.resume(recursive.services);},"Swallowed recursive defaults failed to poison caller.");
     check(invocation.faulted() && !*recursive.services->internal_data,"Recursive failure published unreached cloned global.");
 }
+void physical_array_publication(){
+    Fixture f;std::vector<std::shared_ptr<IgbObjectStorage>> allocations;const auto factory=f.services->schema->factory;
+    f.services->schema->factory=[&](const IgbFieldSchemaCall& c){auto op=factory(c);const auto run=op->resume;
+        op->resume=[&,run,out=op.get(),bound=false]()mutable{const auto status=run();if(status.completed && !bound){
+            allocations.push_back(bind_physical(out->field_result,*out->field_address));bound=true;}return status;};return op;};
+    IgbListDefaultsInvocation call(IgbListDefaultsEntry::children);const auto missing=call.resume(f.services);
+    check(!missing.completed && missing.diagnostic.find("arithmetic address")!=std::string::npos && f.created.size()==2 && f.names==0,
+        "Physical array publication fabricated its unbound element pointer or skipped completed batch creation.");
+    const IgbBootstrapPointer array{allocations[0],4};const auto captured=f.prototype;
+    check(igb_bootstrap_read_word(array,0x3c)==0xcccccccc && !f.created[0]->element_field && !f.created[0]->word_38,
+        "Missing element address published canonical or physical array configuration early.");
+    f.services->values->object_prototype=field(0x804762fc);f.services->schema->fields->pointer_lists->values.push_back({0x660000,{},captured});
+    check(call.resume(f.services).completed && f.created.size()==2 && f.created[0]->element_field->lock()==captured,
+        "Late element address replayed creation or reloaded the already captured prototype.");
+    check(igb_bootstrap_read_word(array,0x3c)==0x660000 && igb_bootstrap_read_word(array,0x38)==0x40,
+        "Configured array element and element size were not published physically.");
+    for(const auto offset:{0x34u,0x35u,0x40u,0x41u})check(igb_bootstrap_read_byte(array,offset)==1,"Array flag physical publication differs.");
+    check(igb_bootstrap_read_byte(array,0x42)==0 && igb_bootstrap_read_byte(array,0x36)==0xcc && igb_bootstrap_read_byte(array,0x43)==0xcc,
+        "Array stores changed their final flag or untouched padding.");
+    Fixture physical;std::vector<std::shared_ptr<IgbObjectStorage>> storage;const auto prepared=physical.services->schema->factory;
+    auto prototype=bind_physical(physical.prototype,0x670000,0x44);
+    physical.services->schema->factory=[&](const auto& c){auto op=prepared(c);const auto run=op->resume;op->resume=[&,run,out=op.get()]{
+        const auto result=run();if(result.completed)storage.push_back(bind_physical(out->field_result,*out->field_address));return result;};return op;};
+    IgbListDefaultsInvocation direct(IgbListDefaultsEntry::children);check(direct.resume(physical.services).completed &&
+        igb_bootstrap_read_word({storage[0],4},0x3c)==0x670000,"Validated physical prototype identity did not supply its actual address.");
+    check(igb_bootstrap_read_word({prototype,4},4)==1 && physical.prototype->reference_word==1,
+        "Array element publication introduced ownership for its original nonowning reference.");
+}
+void physical_array_failure_prefix(){
+    Fixture f;std::vector<std::shared_ptr<IgbObjectStorage>> allocations;const auto factory=f.services->schema->factory;
+    f.services->schema->fields->pointer_lists->values.push_back({0x660000,{},f.prototype});
+    f.services->schema->factory=[&](const auto& c){auto op=factory(c);const auto run=op->resume;op->resume=[&,run,out=op.get()]{
+        const auto result=run();if(result.completed)allocations.push_back(bind_physical(out->field_result,*out->field_address,0x40));return result;};return op;};
+    IgbListDefaultsInvocation call(IgbListDefaultsEntry::children);rejects([&]{call.resume(f.services);},"Short physical array descriptor accepted out-of-range flag stores.");
+    const IgbBootstrapPointer array{allocations[0],4};check(call.faulted() && f.names==0 &&
+        igb_bootstrap_read_word(array,0x3c)==0x660000 && igb_bootstrap_read_word(array,0x38)==0x40 &&
+        igb_bootstrap_read_byte(array,0x34)==1 && igb_bootstrap_read_byte(array,0x35)==1,
+        "Array storage fault lost the original element, size and first flag store prefix.");
+    check(f.created[0]->element_field->lock()==f.prototype && f.created[0]->word_38==0x40 && f.created[0]->flag_34==1 &&
+        f.created[0]->flag_35==1 && !f.created[0]->flag_40 && !f.created[0]->flag_41 && !f.created[0]->flag_42,
+        "Failed physical array store published later canonical flags.");
+}
+void physical_clone_and_references(){
+    Fixture f;f.prepare_parent();const auto old=f.created[0];old->reference_word=1;auto original=bind_physical(old,0x100000);
+    std::shared_ptr<IgbObjectStorage> clone;
+    f.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field){clone=bind_physical(f.cloned,0x180000);f.ready=false;}};
+    IgbListDefaultsInvocation call(IgbListDefaultsEntry::registry);check(!call.resume(f.services).completed && clone && old->reference_word==0 && f.cloned->reference_word==2,
+        "Physical clone replacement did not suspend after retain and old release.");
+    const IgbBootstrapPointer copied{clone,4};check(igb_bootstrap_read_byte(copied,0x42)==1 && igb_bootstrap_read_word(copied,0x1c)==0x805619d0 &&
+        igb_bootstrap_read_word(copied,4)==2 && igb_bootstrap_read_word({original,4},4)==0,
+        "Clone flags, descriptor-global or replacement reference words were not physically published in order.");
+    check(f.registry->fields->backing->at(2)==old && *f.services->internal_data==f.cloned,
+        "Pending physical destruction changed the backing before native finalization/publication.");
+    f.ready=true;check(call.resume(f.services).completed && f.cloned->reference_word==1 && igb_bootstrap_read_word(copied,4)==1 &&
+        igb_bootstrap_read_word({original,4},4)==0 && f.registry->fields->backing->at(2)==f.cloned,
+        "Resumption repeated physical reference changes or omitted the creator release.");
+    check(igb_bootstrap_read_byte(copied,0x43)==0xcc,"Physical clone flag publication changed padding.");
+    Fixture alias;auto value=field();value->reference_word=0xffffffffu;auto allocation=bind_physical(value,0x190000);
+    alias.registry->fields->backing->at(0)=value;alias.services->schema->fields->pointer_lists->values.push_back({0x190000,{},value});
+    IgbFieldReplaceInvocation self(alias.registry,0,value);check(self.resume(alias.services).completed && value->reference_word==0xffffffffu &&
+        igb_bootstrap_read_word({allocation,4},4)==0xffffffffu,"Physical self-replacement lost full-word reference wrap.");
+}
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_list_defaults_tests");
     children_caller();prototype_prefix();internal_clone_and_replace();pending_clone_and_old_release();replacement_growth_and_failures();adapters_reentry_and_alias();
+    physical_array_publication();physical_array_failure_prefix();physical_clone_and_references();
     std::cout<<"igb_list_defaults_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"List defaults failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

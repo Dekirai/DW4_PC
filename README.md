@@ -133,21 +133,26 @@ reflected factory's null branch; concrete object-prototype callback `80028B64`
 now initializes its `0x44`-byte allocation through actual `800667F4`, the reached
 field passes, string defaults, and object-field tail `8006A438`. Native prototype
 publication, registry append and finalization produce canonical `805616EC`
-with ordinal and type ordinal zero. The chain now contains 52 schema descriptors
-plus that reflected prototype, 53 default buffers, and six published types:
-parent non-reference-counted list `805619D4` also completes with flags `7`.
-Child list `805619CC` remains busy with flags `9`. Its actual name/index search,
-using canonical name descriptor `805617C4`, reaches the inherited memory-reference
-field's clone virtual `+54`, argument 1. That clone is the next boundary;
-reflection remains disabled. Recursive reference/member operations outside the
-completed profile remain explicit, as do pools, physical allocation, callback
-deallocation and initial BSS prerequisites. Continue with the original clone,
-remaining list defaults and deferred registrations. See
+with ordinal and type ordinal zero. The actual list name/index search through
+canonical descriptor `805617C4` now enters the memory-reference clone
+`8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4`. Its native copy, independent
+default buffer, finalization and replacement complete child list registration.
+Both list metadata owners `805619D4` and `805619CC` finish with flags `7`.
+The chain contains 53 schema descriptors plus the reflected prototype, 54
+default buffers, seven published types and one prototype entry. The original
+bootstrap caller now writes enabled byte 1 and snapshots type/prototype counts
+7 and 1 at core `+04/+08`. It next reaches `igMetaEnum` registration body
+`8002AAFC`, canonical metadata `80561808`. This is still incomplete startup.
+Enabled reflected cloning `800680B4`, recursive reference/member operations,
+remaining registrations, pool/platform services and physical allocators remain
+explicit dependencies. Continue with the reached `igMetaEnum` body. See
 [IGB_FIELD_TYPE_REGISTRATION.md](docs/IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](docs/IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](docs/IGB_FIELD_PROTOTYPE.md),
 [IGB_FIELD_INIT.md](docs/IGB_FIELD_INIT.md),
 [IGB_FIELD_STRING_INIT.md](docs/IGB_FIELD_STRING_INIT.md),
+[IGB_FIELD_CLONE.md](docs/IGB_FIELD_CLONE.md),
+[IGB_FIELD_COPY.md](docs/IGB_FIELD_COPY.md),
 [IGB_LIST_REGISTRATION.md](docs/IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](docs/IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](docs/IGB_METADATA_PROBE.md),

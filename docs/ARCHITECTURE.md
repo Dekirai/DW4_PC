@@ -128,9 +128,22 @@ append feed metadata constructor probe `80029FFC`. The current composition
 also completes that schema, three field-class registrations and the reflected
 object-field prototype through actual `800667F4` and all three field passes.
 Files and fields retain separate typed results and canonical physical stores.
-Prototype publication and parent-list registration bring the chain to six
-types; the internal-list override reaches its required memory-field clone,
-with reflection still disabled. See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md).
+Prototype publication and parent-list registration now feed the actual
+memory-reference clone `8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4`.
+The copied descriptor retains the canonical configured source, receives its
+own default buffer, then runs original finalization and list replacement.
+Both list metadata owners finish with flags `7`. The chain contains 53 schema
+descriptors plus one reflected prototype, 54 default buffers, seven published
+types and one prototype-registry entry. The original bootstrap caller enables
+reflection and snapshots counts 7 and 1 at core `+04/+08`; it then reaches
+the still-unbound `igMetaEnum` registration body `8002AAFC` for metadata
+`80561808`. This transition does not complete startup. Enabled reflected
+cloning `800680B4`, recursive member operations, later registrations and the
+outer startup remain required. Pool/platform and physical allocation services
+are explicit prepared endpoints in this composition. See
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and
+[IGB_FIELD_COPY.md](IGB_FIELD_COPY.md).
 Descriptor-global and declaring-type pointers are weak bindings:
 unrepresented, original null and expired nonnull storage remain distinct. Guest
 reference counts remain separate from host ownership. See

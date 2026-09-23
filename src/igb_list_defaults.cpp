@@ -38,6 +38,26 @@ std::int32_t field_index(const std::shared_ptr<IgbDecodeFieldRegistry>& list,con
     for(std::int32_t i=0;i<count;++i)if(physical(slots,static_cast<std::uint32_t>(i)<<2u)==field)return i;
     return -1;
 }
+std::optional<IgbBootstrapPointer> physical_field(const std::shared_ptr<IgbDecodeRuntimeField>& field){
+    if(!field)fail("List field store dereferences a null descriptor.");if(!field->physical_storage)return {};
+    const auto& binding=*field->physical_storage;IgbBootstrapPointer pointer{binding.storage.lock(),binding.offset};
+    if(!pointer.storage || igb_bootstrap_field(pointer)!=field)fail("List field store requires its live canonical physical binding.");return pointer;
+}
+void field_word(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t offset,std::uint32_t value){
+    if(const auto pointer=physical_field(field))igb_bootstrap_write_word(*pointer,offset,value);
+}
+void field_byte(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t offset,std::uint8_t value){
+    if(const auto pointer=physical_field(field))igb_bootstrap_write_byte(*pointer,offset,value);
+}
+void field_reference(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t value){field_word(field,4,value);field->reference_word=value;}
+std::optional<std::uint32_t> field_address(const std::shared_ptr<IgbDecodeRuntimeField>& field,const std::shared_ptr<IgbListDefaultsServices>& services){
+    if(!field)return 0;std::optional<std::uint32_t> result;
+    if(const auto pointer=physical_field(field))result=igb_bootstrap_address(*pointer);
+    const auto pointers=services && services->schema && services->schema->fields?services->schema->fields->pointer_lists:nullptr;
+    if(pointers)for(const auto& binding:pointers->values)if(binding.field==field){
+        if(binding.metadata || !binding.address || (result && *result!=binding.address))fail("List element prototype has conflicting arithmetic identities.");result=binding.address;
+    }return result;
+}
 }
 IgbListDefaultsServices::IgbListDefaultsServices(){
     factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{0x8002ac34u,0x8002e1acu});
@@ -82,11 +102,11 @@ MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDef
         s.finalize.reset();check();s.phase=P::list;break;}
     case P::list:
         if(!s.metadata)fail("Finalized field replacement reads a null metadata receiver.");s.fields=s.metadata->fields;
-        if(s.field)++s.field->reference_word;s.phase=P::old;break;
+        if(s.field)field_reference(s.field,s.field->reference_word+1u);s.phase=P::old;break;
     case P::old:
         if(!s.fields)fail("Field replacement reads a null registry after retaining its replacement.");
         s.old=physical(s.fields->backing,s.index<<2u);
-        if(s.old){--s.old->reference_word;if((s.old->reference_word&0x7fffffu)==0){
+        if(s.old){field_reference(s.old,s.old->reference_word-1u);if((s.old->reference_word&0x7fffffu)==0){
             s.destroy.request.kind=IgbListDefaultsServiceKind::destroy_field;s.destroy.request.function=0x80066e1c;s.destroy.request.field=s.old;
             if(services)s.destroy.factory=services->factory;s.phase=P::release_old;break;}}
         s.phase=P::capacity;break;
@@ -123,7 +143,7 @@ MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDef
 }
 
 struct IgbListDefaultsInvocation::Impl {
-    enum class P {capture,batch,first,prototype,register_prototype,reload_prototype,array,schema,find_setup,find_descriptor,find_test,
+    enum class P {capture,batch,first,prototype,register_prototype,reload_prototype,array,schema_setup,schema,find_setup,find_descriptor,find_test,
         find_field,find_name,find_compare,index,clone,after_clone,flag,global,replace,release,after_destroy,call,done};
     IgbListDefaultsEntry entry;
     std::shared_ptr<IgbListDefaultsServices> owner;
@@ -176,11 +196,18 @@ MessengerCallResult IgbListDefaultsInvocation::resume(std::shared_ptr<IgbListDef
     case P::reload_prototype:
         if(!services || !services->values || !services->values->object_prototype)return pending("Array-field default requires the getter's reloaded805616EC.");
         s.element=*services->values->object_prototype;s.phase=P::array;break;
-    case P::array:
+    case P::array:{
         if(!s.field)fail("List defaults configure a null first local field.");
-        s.field->element_field=std::weak_ptr<IgbDecodeRuntimeField>(s.element);s.field->word_38=std::uint32_t{0x40};
-        s.field->flag_34=std::uint8_t{1};s.field->flag_35=std::uint8_t{1};s.field->flag_40=std::uint8_t{1};
-        s.field->flag_41=std::uint8_t{1};s.field->flag_42=std::uint8_t{0};
+        if(const auto pointer=physical_field(s.field)){const auto address=field_address(s.element,services);
+            if(!address)return pending("Array field requires its captured element prototype's arithmetic address.");
+            igb_bootstrap_write_word(*pointer,0x3c,*address);}
+        s.field->element_field=std::weak_ptr<IgbDecodeRuntimeField>(s.element);
+        field_word(s.field,0x38,0x40);s.field->word_38=std::uint32_t{0x40};
+        field_byte(s.field,0x34,1);s.field->flag_34=std::uint8_t{1};field_byte(s.field,0x35,1);s.field->flag_35=std::uint8_t{1};
+        field_byte(s.field,0x40,1);s.field->flag_40=std::uint8_t{1};field_byte(s.field,0x41,1);s.field->flag_41=std::uint8_t{1};
+        field_byte(s.field,0x42,0);s.field->flag_42=std::uint8_t{0};s.phase=P::schema_setup;break;
+    }
+    case P::schema_setup:
         if(!services)return pending("List defaults require their original schema tables.");
         s.schema=std::make_unique<IgbFieldSchemaInvocation>(s.metadata,services->names,services->globals,services->offsets,s.first);s.phase=P::schema;break;
     case P::schema:{const auto status=s.schema->resume(services?services->schema:nullptr);check();if(!status.completed)return status;s.schema.reset();check();s.phase=P::done;break;}
@@ -217,14 +244,15 @@ MessengerCallResult IgbListDefaultsInvocation::resume(std::shared_ptr<IgbListDef
             call.field=field;call.vtable_word=table;call.virtual_slot=0x54;call.argument=1;}break;
     case P::after_clone:s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;clear();bind();s.phase=P::flag;break;
     case P::flag:
-        if(!s.field)fail("Internal defaults write through a null cloned field.");s.field->flag_42=std::uint8_t{1};s.phase=P::global;break;
+        if(!s.field)fail("Internal defaults write through a null cloned field.");field_byte(s.field,0x42,1);s.field->flag_42=std::uint8_t{1};s.phase=P::global;break;
     case P::global:
         if(!services || !services->internal_data)return pending("Internal defaults require canonical descriptor-global805619D0.");
+        field_word(s.field,0x1c,0x805619d0);
         s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(services->internal_data);s.field->global_slot_address=0x805619d0;
         s.replace=std::make_unique<IgbFieldReplaceInvocation>(s.metadata,s.index,s.field);s.phase=P::replace;break;
     case P::replace:{bind();const auto status=s.replace->resume(services);check();if(!status.completed)return status;s.replace.reset();check();s.phase=P::release;break;}
     case P::release:
-        --s.field->reference_word;if((s.field->reference_word&0x7fffffu)==0){const auto field=s.field;auto& call=select(K::destroy_field,P::after_destroy);
+        field_reference(s.field,s.field->reference_word-1u);if((s.field->reference_word&0x7fffffu)==0){const auto field=s.field;auto& call=select(K::destroy_field,P::after_destroy);
             call.field=field;call.function=0x80066e1c;}else s.phase=P::done;break;
     case P::after_destroy:clear();s.phase=P::done;break;
     case P::call:{const auto status=s.call.poll(services?services->factory:IgbListDefaultsFactory{},check);if(!status.completed)return status;s.phase=s.after;break;}

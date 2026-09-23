@@ -1,6 +1,79 @@
 # Local validation
 
-## Native typed field initialization and concrete prototype
+## Native memory-field clone and fundamental bootstrap completion
+
+Validated locally on 2026-09-23. The inherited memory-reference clone now
+executes actual `8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4`, including the
+object header copy, full name references and separate default-buffer allocation
+through `800681C4`. Original `800031E8` copy direction, live source reads,
+self-aliasing and partial failure stores are retained. List setup/replacement
+now publishes its reached field members and reference words to represented
+physical storage as well as canonical owners.
+
+The same suspended cold composition now finishes the child-list defaults,
+replacement, layout, publication and deferred callbacks. It holds 53 schema
+field descriptors plus one reflected object-field prototype, 54 default buffers,
+seven registered types and one prototype registry entry. Parent list metadata
+`805619D4` and child list metadata `805619CC` both have flags 7. The original
+outer caller enables ArkCore and writes its count snapshots: `+04 = 7`,
+`+08 = 1`. It then stops at the next required registration body `8002AAFC`,
+`igMetaEnum`, canonical metadata global `80561808`.
+
+This proves completion of the fundamental registration phase within the
+explicitly prepared pool/platform, physical allocation and initial-global
+fixture. It does not establish complete original startup. Enabled reflected
+clone `800680B4`, remaining class registration, complete allocator bodies and
+later scene/gameplay loading remain required. The separate original decoder
+fixture still stops at its own enabled `8002A0A8` boundary; it does not silently
+consume the prepared cold fixture's completed registry.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 180/180 CTest suites passed locally, four jobs, no compiler warnings |
+| Cold metadata composition | 953 checks; captured default-allocation suspension, distinct source/copy buffers, original child replacement, physical references, seven type publications, enable transition, count snapshots and retained next registration |
+| Base field copy | 24 checks; enabled classification endpoint, captured pool/size, late destination/source binding, live size reload, padding, partial backward-copy faults, recursion and changed physical identity |
+| Memory-reference clone | 103 checks; complete cold chain, gate capture, null allocation, late source reads, missing pointer identity, pending registration/reflected boundaries, construction lifetime and changed binding/storage/offset rejection |
+| List defaults/replacement | 116 checks; physical source configuration, late element address, original store order, partial-write faults, clone/global publication, aliasing and reference stores |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; 20 types, 60 inherited field mappings, 47 matched classes, cursor 5,381 and dependency body 2,453 bytes |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released frames and 28 prepared application/system/serial frames |
+| Python asset verifier | 6 synthetic tests passed |
+
+Review found and corrected a destination-pointer recapture across a missing
+source binding and insufficient destination identity checks after suspension.
+Permanent tests verify both fixes. The cold test's original expected disabled
+state and zero array flags were corrected against the actual outer enable
+transition and original list setup; final assertions now check the reached
+state and inherited construct/destruct flags.
+
+An independent local comparison executes the supplied USA DOL instructions
+(SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`): 858 cases, 372 completed
+returns, 486 fault prefixes and 139,591 original instructions, with zero
+differences. It compares the whole 0x50-byte memory descriptor, untouched
+padding, source/destination default buffers, name reference counts and ordered
+calls. Cases cover aliases, overlap, zero/null allocations, null core/pools,
+endpoint failure and allocator mutations of source/default size and later
+derived members. Source object storage is represented and initialized in this
+corpus; it does not claim equivalence for unrepresented source bytes.
+
+The corpus executes actual cold wrapper/allocation routing, all three copy
+constructors, header reset, default-allocation routing and directional byte
+copy. Handle lookup `800607F4`, heap allocation `8009281C`, pool `+D8` and
+`8005929C` are prepared endpoints. Enabled-wrapper cases prepare registration
+`8002AE84` and the whole reflected `800680B4` boundary. Enabled base-copy pool
+classification and deep reflected copying are not covered by this original-code
+corpus; their exact reached endpoints remain explicit in the implementation.
+
+Final core SHA256:
+`D761855733D056D0B9F1F2C911F364C254AFDB374025A18FB629EE8B6D294EC6`.
+Ignored evidence is `work/native-field-clone-final-build.log`,
+`work/native-field-clone-{prefix,player,verifier}.log`, and
+`work/native-field-clone-result.json`. Original data, reference execution and
+comparison binaries remain local. See [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and
+[IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md).
+
+
+## Earlier native typed field initialization and concrete prototype
 
 Validated locally on 2026-09-23. The shared reflected factory and `800667F4`
 initializer now return distinct file/field instances. The cold composition

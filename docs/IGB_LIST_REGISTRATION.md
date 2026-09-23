@@ -109,14 +109,21 @@ initialization, tail `8006A438`, prototype publication, registry append and
 finalization. The separately allocated prototype is canonical `805616EC`,
 with ordinal and type ordinal zero. After callback cleanup, parent list metadata
 `805619D4` completes its defaults and publishes as the sixth type with flags
-`7`. The chain contains 52 schema descriptors plus one reflected prototype
-and 53 default buffers. Child list metadata `805619CC` remains busy with flags
-`9`; its native lookup through name descriptor `805617C4` reaches the inherited
-memory-reference descriptor's clone virtual `+54`, argument 1, vtable `80476088`.
-That clone and child publication remain unfinished, with ArkCore disabled.
-Recursive reference/member operations outside this initialized prototype profile
-remain explicit; see [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md) and
-[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md).
+`7`. Native lookup through name descriptor `805617C4` then enters the inherited
+memory-reference clone virtual `+54`, argument 1, vtable `80476088`. Its actual
+cold chain `8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4` now completes,
+including an independent copied default buffer. Original clone finalization and
+replacement finish child list metadata `805619CC` with flags `7`, publishing
+the seventh type. The complete prefix contains 53 schema descriptors plus one
+reflected prototype and 54 default buffers, with one prototype-registry entry.
+The original bootstrap enables reflection, snapshots counts 7 and 1 into
+core `+04/+08`, then reaches `igMetaEnum` registration body `8002AAFC`, metadata
+cell `80561808`. This remains an unfinished startup boundary. Enabled reflected
+cloning `800680B4`, recursive reference/member operations beyond the completed
+profile, pool/platform and physical allocator bodies remain explicit. See
+[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md).
 Completed registration of one type does not imply completed startup or an
 updated gameplay preview.
 

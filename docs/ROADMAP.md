@@ -146,22 +146,31 @@ field passes, string defaults and object-field tail `8006A438`. The prototype
 is published at `805616EC`, appended to its native registry and finalized with
 ordinal and type ordinal zero. Callback cleanup returns to the list chain;
 parent metadata `805619D4` finishes with flags `7` as the sixth published type.
-The current chain contains 52 schema descriptors plus one reflected prototype
-and 53 default buffers. Child metadata `805619CC` remains busy with flags `9`.
 Its native name/index lookup uses the actual published `805617C4` descriptor
-and reaches the inherited memory-reference field's clone virtual `+54` with
-argument 1 (`80476088` vtable). That clone is the next implementation boundary.
-Reflection remains disabled. Recursive member/reference branches outside the
-completed profile remain explicit, together with pool, allocator, callback
-deallocation and BSS prerequisites. Initial core-list constructors and reserve
-run in this same chain; the separate byte-only backing profile remains covered.
-Continue through the original clone, remaining list defaults and deferred
-registrations before completing cold startup. See
+and enters the inherited memory-reference clone virtual `+54`, argument 1
+(`80476088` vtable). The actual cold chain
+`8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4` now completes, including
+separate default-buffer allocation/copy. Original clone finalization and
+replacement finish child metadata `805619CC` with flags `7` as the seventh
+published type; parent `805619D4` also retains flags `7`. The composition now
+contains 53 schema descriptors plus one reflected prototype, 54 default buffers
+and one prototype entry. The actual bootstrap caller enables reflection and
+snapshots type/prototype counts 7 and 1 into core `+04/+08` before reaching
+`igMetaEnum` registration body `8002AAFC`, canonical cell `80561808`.
+That body is the next implementation boundary. Enabled reflected clone
+`800680B4` and recursive member/reference branches beyond the completed profile
+remain explicit, together with pool/platform, allocator, callback deallocation
+and BSS prerequisites. Initial core-list constructors and reserve run in this
+same chain; the separate byte-only backing profile remains covered. Continue
+through `igMetaEnum`, later registrations and the outer startup before claiming
+complete native initialization. See
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
 [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
 [IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md),
+[IGB_FIELD_COPY.md](IGB_FIELD_COPY.md),
 [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),

@@ -190,21 +190,31 @@ field-registry and field-descriptor types. No ready prototype or replacement
 success callback bypasses this construction.
 
 Actual callback cleanup returns to the original list defaults. Parent list
-metadata `805619D4` completes with flags `7` as the sixth published type. The
-chain now holds 52 schema descriptors plus one reflected prototype and 53
-default buffers. Child list metadata `805619CC` remains busy with flags `9`.
+metadata `805619D4` completes with flags `7` as the sixth published type.
 The published name descriptor `805617C4` feeds actual name/index lookup, which
 selects the inherited memory-reference descriptor's `80476088` vtable and
-clone virtual `+54` with argument 1. That original clone is the next boundary.
-Reflection remains disabled until the outer callback runner completes. Recursive
-member construction/reset and nonnull reference operations beyond this profile
-remain explicit dependencies; supporting a typed field does not complete every
-field class. See
+clone virtual `+54` with argument 1. Native
+`8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4` now performs the actual cold
+copy, retaining the canonical configured source and allocating independent
+default storage. Original finalization/replacement completes child list metadata
+`805619CC` with flags `7` as the seventh type. The chain now contains 53 schema
+descriptors plus one reflected prototype and 54 default buffers. Its prototype
+registry has one entry. The original bootstrap caller enables reflection and
+stores count snapshots 7 and 1 at core `+04/+08` before entering the next
+registration body, `8002AAFC` (`igMetaEnum`, metadata cell `80561808`).
+
+That registration is the next boundary. The enabled `800680B4` reflected clone,
+recursive member construction/reset and nonnull reference operations beyond
+this profile remain explicit dependencies. Pool/platform and physical allocation
+endpoints are still prepared; neither the enable store nor these seven types
+establish complete startup or every field class. See
 [IGB_FIELD_TYPE_REGISTRATION.md](IGB_FIELD_TYPE_REGISTRATION.md),
 [IGB_FIELD_TYPE_DEFAULTS.md](IGB_FIELD_TYPE_DEFAULTS.md),
 [IGB_FIELD_PROTOTYPE.md](IGB_FIELD_PROTOTYPE.md),
 [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
 [IGB_FIELD_STRING_INIT.md](IGB_FIELD_STRING_INIT.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md),
+[IGB_FIELD_COPY.md](IGB_FIELD_COPY.md),
 [IGB_LIST_REGISTRATION.md](IGB_LIST_REGISTRATION.md),
 [IGB_LIST_DEFAULTS.md](IGB_LIST_DEFAULTS.md),
 [IGB_METADATA_PROBE.md](IGB_METADATA_PROBE.md),
@@ -220,10 +230,9 @@ Native parent inheritance and name assignment compose with raw
 child/field list append and growth. Typed metadata-list constructors now feed
 actual ArkCore initial capacity/reserve in this same cold integration, with a
 separate byte-only backing profile. Allocator virtuals remain explicit.
-Continue with the reached memory-reference field clone and remaining list
-defaults. Preserve the deferred callback order
-and the original disabled initialization phase. Complete the remaining class
-registrations, then the outer
+Continue with the reached `igMetaEnum` registration body `8002AAFC`. Preserve
+the deferred callback order and the now-reached original transition from disabled
+to enabled reflection. Complete the remaining class registrations, then the outer
 ArkCore creation/publication wrapper, then connect initialized state to the
 decoder. Preserve the existing enabled decoder fixture as separate evidence;
 enabled reflection with a null fundamental metadata cache recursively requests

@@ -18,6 +18,7 @@
 #include "dw4/igb_field_probe.hpp"
 #include "dw4/igb_field_prototype.hpp"
 #include "dw4/igb_field_init.hpp"
+#include "dw4/igb_field_clone.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -352,10 +353,12 @@ void actual_cold_bootstrap_prefix(){
     auto string_state=std::make_shared<IgbStringPoolState>();string_state->table=std::make_shared<IgbStringTable>();
     string_state->table->capacity=4;string_state->table->storage=std::make_shared<IgbStringTable::Storage>(4);string_state->arena=f.pool;
     igb_bind_string_pool(native_strings,f.pool,string_state);unsigned string_allocations{};
+    std::vector<IgbFieldStringBinding> allocated_names;
     native_strings->factory=[&](const IgbStringPoolCall& c){
         check(c.kind==IgbStringPoolServiceKind::allocate_string && c.arena==f.pool,"Cold name interning reached an unexpected arena operation.");
         auto op=std::make_shared<IgbStringPoolOperation>();op->resume=[&,c,out=op.get()]{
             ++string_allocations;out->entry_result=std::make_shared<IgbStringEntry>();out->entry_result->owner=std::make_shared<IgbInternedString>();
+            allocated_names.push_back({0x780000+string_allocations*0x100,out->entry_result->owner});
             out->entry_result->bytes.buffer=std::make_shared<IgbScratchBuffer>();out->entry_result->bytes.buffer->bytes.resize(c.bytes+4);
             out->entry_result->bytes.buffer->initialized.assign(c.bytes+4,0);
             // Original strcmp reads aligned words beyond a terminating byte.
@@ -920,6 +923,75 @@ void actual_cold_bootstrap_prefix(){
     check(!call.resume(bootstrap).completed && descriptors.size()==52 && default_allocations==53 && prototype_allocations==1 &&
         f.core->types->count==6 && freed_callback_lists.size()==freed_lists && (*bootstrap->field_prototypes)->count==1,
         "Pending clone repeated prototype construction, parent registration or callback cleanup.");
+
+    // Continue this same disabled bootstrap through actual2ACD8/6331C.
+    // Only pool selection and physical D8 allocation are prepared endpoints.
+    auto clones=std::make_shared<IgbFieldCloneServices>();clones->fields=object_defaults->meta_fields;clones->values=values;
+    clones->copy=std::make_shared<IgbFieldCopyServices>();clones->copy->fields=clones->fields;clones->copy->values=values;
+    for(const auto& binding:allocated_names)igb_bind_field_string(values,binding.address,binding.owner);
+    for(const auto& binding:type_pointers->values)if(binding.metadata)values->fields->pointer_lists->values.push_back(binding);
+    clones->fields->bootstrap->default_pool_handle=0;
+    clones->fields->bootstrap->factory=make_native_igb_bootstrap_pool_factory(f.services->pools,clones->fields->bootstrap->factory);
+    unsigned clone_pool_queries{},clone_default_allocations{};bool clone_allocation_ready=false;
+    clones->copy->factory=[&](const IgbFieldCopyCall& c){
+        auto op=std::make_shared<IgbFieldCopyOperation>();op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbFieldCopyServiceKind::tagged_pool){
+                ++clone_pool_queries;check(c.handle==0,"Disabled field copy used a nonzero pool tag.");out->pool_result=f.pool;
+            }else{
+                check(c.kind==IgbFieldCopyServiceKind::allocate_default && c.pool==f.pool && c.bytes==4,
+                    "Field copy changed its original D8 allocation or entered an enabled registration.");
+                if(!clone_allocation_ready)return MessengerCallResult{false,0,"prepared clone default allocation"};
+                ++clone_default_allocations;++default_allocations;
+                auto bytes=std::make_shared<IgbScratchBuffer>();bytes->bytes.assign(c.bytes,0xcc);bytes->initialized.assign(c.bytes,0);
+                out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;
+            }return MessengerCallResult{true,0,{}};};return op;
+    };
+    reached_list_operations=make_native_igb_list_field_clone_factory(clones,reached_list_operations);
+    const auto suspended_copy=call.resume(bootstrap);
+    check(!suspended_copy.completed && !call.faulted() && suspended_copy.diagnostic=="prepared clone default allocation" &&
+        descriptors.size()==53 && clone_pool_queries==1 && clone_default_allocations==0 && default_allocations==53,
+        "Native clone failed to retain its allocated copy and captured default allocator.");
+    const auto inherited=descriptors[27],copied=descriptors[52];const auto copied_storage=descriptor_allocations[52];
+    check(copied->vtable_word==0x80471914 && copied->name_string==inherited->name_string &&
+        (*copied->name_string)->references==2 && copied->offset==inherited->offset && copied->size==4 &&
+        lazy_fields[0]->backing->at(2)==inherited && inherited->reference_word==2 && f.core->types->count==6,
+        "Suspended base copy lost its exact publication, string retain or original list membership.");
+    check(!call.resume(bootstrap).completed && descriptors.size()==53 && clone_pool_queries==1 &&
+        (*copied->name_string)->references==2,"Pending default allocation repeated descriptor allocation or name retention.");
+    clone_allocation_ready=true;
+    const auto after_clone=call.resume(bootstrap);
+    std::cout<<"Cold field clone boundary: "<<after_clone.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<'\n';
+    check(!after_clone.completed && !call.faulted() && f.core->enabled==1 && clone_default_allocations==1 &&
+        after_clone.diagnostic.find("0x8002AAFC")!=std::string::npos,
+        "Field clone was fabricated or incomplete bootstrap was reported complete.");
+    check(f.core->types->count==7 && lazy_metadata[0]->class_flags==7 && lazy_metadata[1]->class_flags==7 &&
+        f.core->types->backing->at(6)==lazy_metadata[0] && igb_bootstrap_read_byte(ark.allocation,0)==1 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1 &&
+        descriptors.size()==53 && default_allocations==54 && (*bootstrap->field_prototypes)->count==1,
+        "Completed fundamental registration failed to enable reflection and publish its original count snapshots.");
+    check(copied->vtable_word==0x80476088 && copied->word_38==0x40 && copied->element_field &&
+        copied->element_field->lock()==prototype_field && copied->flag_34==1 && copied->flag_35==1 &&
+        copied->flag_40==1 && copied->flag_41==1 && copied->flag_42==1 && copied->word_48==0 && copied->word_4c==0,
+        "Actual memory copy constructor lost configured element identity, size or flags.");
+    check(copied->default_bytes && copied->default_bytes->buffer && inherited->default_bytes &&
+        copied->default_bytes->buffer!=inherited->default_bytes->buffer &&
+        copied->default_bytes->buffer->bytes==inherited->default_bytes->buffer->bytes &&
+        igb_bootstrap_read_word(copied_storage,0x20)==copied->default_bytes_address &&
+        igb_bootstrap_read_word(copied_storage,0x38)==0x40 && igb_bootstrap_read_word(copied_storage,0x3c)==0x7e0000,
+        "Native clone lost its separate initialized default buffer or physical member publications.");
+    check(lazy_fields[0]->backing->at(2)==copied && lazy_fields[1]->backing->at(2)==inherited &&
+        *list_defaults->internal_data==copied && copied->global_slot_address==0x805619d0 &&
+        igb_bootstrap_read_word(copied_storage,0x1c)==0x805619d0 && copied->reference_word==1 && inherited->reference_word==1 &&
+        igb_bootstrap_read_word(copied_storage,4)==1 && igb_bootstrap_read_byte(copied_storage,0x42)==1,
+        "Native replacement failed to preserve parent/child ownership, global publication or physical stores.");
+    const auto after_types=f.core->types->count;const auto after_names=string_allocations,after_defaults=default_allocations;
+    const auto after_descriptors=descriptors.size(),after_frees=freed_callback_lists.size();
+    check(!call.resume(bootstrap).completed && f.core->types->count==after_types && string_allocations==after_names &&
+        default_allocations==after_defaults && descriptors.size()==after_descriptors && freed_callback_lists.size()==after_frees &&
+        clone_default_allocations==1 && (*copied->name_string)->references==2,
+        "Later suspension replayed native clone, replacement, name retention or completed registration.");
+
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

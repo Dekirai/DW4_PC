@@ -105,6 +105,16 @@ establish completed native startup or a new gameplay preview.
 The current cold composition also finishes the concrete object-field prototype
 with its actual 23 reached descriptors, all three field passes, default-buffer
 tail, registry append and finalizer. It then completes the parent-list type and
-reaches the required internal-list memory-field clone. See
-[IGB_FIELD_INIT.md](IGB_FIELD_INIT.md) for that larger composition and its
-explicit physical allocator and initialization prerequisites.
+the actual internal-list memory-field clone through
+`8002ACD8 -> 8006331C -> 8006CC88 -> 800639E4`. Clone finalization and
+replacement finish the child list; both list metadata owners have flags `7`.
+The larger chain now contains 53 schema descriptors plus this reflected
+prototype, 54 default buffers, seven published types and one prototype entry.
+The bootstrap caller performs its original enable store and records type and
+prototype counts 7 and 1 at core `+04/+08`. Its next reached body is still
+`igMetaEnum` registration `8002AAFC`, canonical metadata `80561808`.
+Enabled reflected clone `800680B4`, later registrations and full startup remain
+unimplemented boundaries. See [IGB_FIELD_INIT.md](IGB_FIELD_INIT.md),
+[IGB_FIELD_CLONE.md](IGB_FIELD_CLONE.md) and [IGB_FIELD_COPY.md](IGB_FIELD_COPY.md)
+for the composition and its explicit pool/platform and physical allocator
+prerequisites.
