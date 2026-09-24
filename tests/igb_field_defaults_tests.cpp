@@ -28,7 +28,7 @@ struct Fixture {
     }
 };
 void leaves_and_binding() {
-    for(const auto table:{0x80476e6cu,0x80475b60u,0x80473e30u,0x80477054u,0x80476848u,0x80473f24u,0x804758e4u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
+    for(const auto table:{0x80476e6cu,0x80475b60u,0x80473e30u,0x80477054u,0x80476848u,0x80473f24u,0x804758e4u,0x80470a44u})for(const auto slot:{0x84u,0x7cu,0x74u,0xf0u}) {
         Fixture f;f.field->vtable_word=table;f.field->default_bytes.reset();f.object.storage.reset();
         const auto op=f.operation(slot);check(op && op->resume().completed && op->resume().value==0,"Verified scalar leaf accessed default or object storage.");
     }
@@ -107,6 +107,39 @@ void aliases_and_physical_faults() {
     Fixture null;null.field->default_bytes=IgbRuntimeFieldDefaultSource{};rejects([&] {null.operation(0x70)->resume();},"Positive-size copy accepted a represented null source.");
     Fixture header;header.field->offset=4;check(header.operation(0x70)->resume().completed && header.object.file->reference_word==0xfadau,"Explicit header alias left the canonical reference view stale.");
 }
+void unsigned_byte_defaults() {
+    for(const auto slot:{0x70u,0x78u})for(const auto value:{std::uint8_t{0},std::uint8_t{0x80},std::uint8_t{0xff}}) {
+        Fixture f;f.field->vtable_word=0x80470a44;f.field->offset=0x61;f.field->size=1;
+        f.field->default_bytes=IgbRuntimeFieldDefaultSource{bytes({0x41,value,0x42}),1};const auto operation=f.operation(slot);
+        check(operation && operation->resume().completed && f.object.storage->bytes->bytes[0x61]==value &&
+            f.object.storage->bytes->initialized[0x61]==1,"Unsigned-byte default lost its full byte value or source offset.");
+        check(f.object.storage->bytes->bytes[0x60]==0xcd && f.object.storage->bytes->bytes[0x62]==0xcd &&
+            f.object.storage->bytes->initialized[0x60]==0 && f.object.storage->bytes->initialized[0x62]==0,
+            "Unsigned-byte default wrote or initialized adjacent storage.");
+        f.field->default_bytes->buffer->bytes[1]=0x33;
+        check(operation->resume().completed && f.object.storage->bytes->bytes[0x61]==value,"Completed unsigned-byte default replayed its copy.");
+    }
+    Fixture pending;pending.field->vtable_word=0x80470a44;pending.field->offset=0x61;pending.field->size=1;pending.field->default_bytes.reset();
+    const auto operation=pending.operation(0x70);check(operation && !operation->resume().completed,"Unknown unsigned-byte default source became a zero byte.");
+    pending.field->offset=0x70;pending.field->size=4;pending.field->vtable_word=0x804762fc;
+    pending.field->default_bytes=IgbRuntimeFieldDefaultSource{bytes({0xab}),0};
+    check(operation->resume().completed && pending.object.storage->bytes->bytes[0x61]==0xab &&
+        pending.object.storage->bytes->initialized[0x62]==0 && pending.object.storage->bytes->initialized[0x70]==0,
+        "Pending unsigned-byte default changed its captured destination, width or selected handler.");
+    Fixture alias;alias.field->vtable_word=0x80470a44;alias.field->offset=0x26;alias.field->size=1;
+    alias.object.file.reset();alias.object.field=std::make_shared<IgbDecodeRuntimeField>();alias.object.field->vtable_word=0x80476088;
+    alias.object.storage->bytes->bytes[0x25]=0xe1;alias.object.storage->bytes->initialized[0x25]=1;
+    alias.field->default_bytes=IgbRuntimeFieldDefaultSource{alias.object.storage->bytes,0x25};
+    check(alias.operation(0x78)->resume().completed && alias.object.field->flag_26==0xe1 &&
+        alias.object.storage->bytes->bytes[0x25]==0xe1 && alias.object.storage->bytes->initialized[0x27]==0,
+        "Aliased unsigned-byte copy lost canonical descriptor synchronization or changed a neighbor.");
+    Fixture invalid;invalid.field->vtable_word=0x80470a44;invalid.field->size=1;
+    invalid.field->default_bytes=IgbRuntimeFieldDefaultSource{bytes({0x99}),0};invalid.field->default_bytes->buffer->initialized[0]=0;
+    const auto fault=invalid.operation(0x70);rejects([&]{fault->resume();},"Unsigned-byte default read an uninitialized source byte.");
+    check(invalid.object.storage->bytes->bytes[0x60]==0xcd && invalid.object.storage->bytes->initialized[0x60]==0,
+        "Faulted unsigned-byte default published its destination.");
+    invalid.field->default_bytes->buffer->initialized[0]=1;rejects([&]{fault->resume();},"Faulted unsigned-byte default restarted after source repair.");
+}
 void actual_initializer() {
     Fixture f;
     auto boolean=std::make_shared<IgbDecodeRuntimeField>();boolean->vtable_word=0x80473e30;boolean->offset=0x115;
@@ -135,7 +168,7 @@ void actual_initializer() {
 }
 int main(int argc,char**) {
     try {if(argc!=1)throw std::runtime_error("Usage: igb_field_defaults_tests");
-        leaves_and_binding();copy_and_capture();aliases_and_physical_faults();actual_initializer();field_object_storage();
+        leaves_and_binding();copy_and_capture();aliases_and_physical_faults();actual_initializer();field_object_storage();unsigned_byte_defaults();
         std::cout<<"igb_field_defaults_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception& error) {std::cerr<<error.what()<<'\n';return 1;}
 }

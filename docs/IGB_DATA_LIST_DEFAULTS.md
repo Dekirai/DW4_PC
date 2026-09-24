@@ -92,5 +92,17 @@ unknown versus null cells, receiver capture across suspension, physical
 pointer binding, ordered partial stores, inherited replacement ownership,
 pending destruction, null-clone ordering, getter effects before malformed
 destination faults, invalidated physical bindings,
-and recursive continuation faults. These caller tests do not establish the
-unrecovered field registration or enabled reflected-clone bodies.
+and recursive continuation faults. These isolated caller tests do not by
+themselves establish field registration or enabled reflected-clone bodies.
+
+The composed cold-bootstrap test now executes unsigned-byte registration and
+prototype initialization, resumes this same DataList getter, and completes the
+schema. It then constructs the metadata child lists through the actual reflected
+initializer and runs `80029724` through the native memory-field clone, member
+copy and replacement. The original DataList descriptor keeps its unsigned-byte
+element; the distinct object-list replacement uses the object prototype.
+The thread-list subclass inherits that replacement before deferred thread
+registration `80023C40` remains pending. Pool/allocator endpoints and address
+identity mappings remain explicit test preparation. See
+[IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md) and
+[VALIDATION.md](VALIDATION.md) for scope and results.

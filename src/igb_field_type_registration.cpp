@@ -26,7 +26,9 @@ constexpr std::array profiles{
     IgbFieldTypeProfile{"igEnumMetaField",0x80561c30,0x8003155c,0x80031584,0x38,0,0x8002a6d8,0x80021d70,
         0x800315f4,0x800314d4,0x80031614,0,0x80031498,0x80094000,0x8055d510,{0x80031690,0,0}},
     IgbFieldTypeProfile{"igRawRefMetaField",0x80561694,0x800276dc,0x80027704,0x38,0,0x80027360,0x80025494,
-        0x8002776c,0x80027648,0,0,0x8002760c,0x800940c8,0x8055d180,{0x8002778c,0,0}}
+        0x8002776c,0x80027648,0,0,0x8002760c,0x800940c8,0x8055d180,{0x8002778c,0,0}},
+    IgbFieldTypeProfile{"igUnsignedCharMetaField",0x805614d0,0x8002320c,0x80023234,0x34,0,0x8002a6d8,0x80021d70,
+        0x800232a0,0x80023180,0,0,0x80023144,0x80093a20,0x8055cf70,{0x800232c0,0,0}}
 };
 std::optional<Entry> registration_function(std::uint32_t function,bool wrapper){
     for(std::size_t i=0;i<profiles.size();++i)if(function==(wrapper?profiles[i].wrapper:profiles[i].body))return static_cast<Entry>(i);return {};
@@ -54,6 +56,7 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_field_type_metadata_slot(const std:
         entry==Entry::string?IgbMetaFieldKind::string:
         entry==Entry::enumeration?IgbMetaFieldKind::enumeration:
         entry==Entry::pointer?IgbMetaFieldKind::pointer:
+        entry==Entry::unsigned_byte?IgbMetaFieldKind::unsigned_byte:
         entry==Entry::signed_byte?IgbMetaFieldKind::signed_byte:IgbMetaFieldKind::object;
     return services->meta_fields?services->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]:nullptr;
 }
@@ -69,6 +72,7 @@ IgbTypeRegistrationArguments igb_field_type_registration_arguments(const std::sh
 }
 struct IgbFieldTypeRegistrationInvocation::Impl {
     Entry entry{};std::unique_ptr<IgbTypeRegistrationInvocation> registration;
+    IgbRegistrationPrerequisitesInvocation prerequisites;
     std::shared_ptr<IgbRegistrationCallbackList> result;bool running{},fault{},done{};
 };
 IgbFieldTypeRegistrationInvocation::IgbFieldTypeRegistrationInvocation(Entry entry):impl_(std::make_unique<Impl>()){igb_field_type_profile(entry);impl_->entry=entry;}
@@ -83,6 +87,8 @@ MessengerCallResult IgbFieldTypeRegistrationInvocation::resume(std::shared_ptr<I
     if(s.done)return {true,0,{}};Running running(s.running);
     const auto check=[&]{if(s.fault)fail("Field-type registration continuation was invalidated.");};
     try{
+        if(s.entry==Entry::unsigned_byte){const auto status=s.prerequisites.resume(services?services->callbacks:nullptr);
+            check();if(!status.completed)return status;}
         if(!s.registration){if(!igb_field_type_metadata_slot(services,s.entry))return pending("Field-type registration requires its canonical metadata cell.");
             s.registration=std::make_unique<IgbTypeRegistrationInvocation>(igb_field_type_registration_arguments(services,s.entry));}
         const auto status=s.registration->resume(services?services->types:nullptr);check();if(!status.completed)return status;

@@ -37,9 +37,10 @@ struct Fixture {
     }
 };
 void known_virtuals(){
-    constexpr std::array<std::uint32_t,11> tables={0x80476e6c,0x80475b60,0x80473e30,0x8047693c,0x804762fc,0x80476630,0x80477054,0x80476088,0x80476848,0x80473f24,0x804758e4};
-    constexpr std::array<std::uint32_t,11> widths={4,4,1,4,4,4,2,4,2,1,4};Fixture f;
+    constexpr std::array<std::uint32_t,12> tables={0x80476e6c,0x80475b60,0x80473e30,0x8047693c,0x804762fc,0x80476630,0x80477054,0x80476088,0x80476848,0x80473f24,0x804758e4,0x80470a44};
+    constexpr std::array<std::uint32_t,12> widths={4,4,1,4,4,4,2,4,2,1,4,1};Fixture f;
     f.services->enumeration_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    f.services->unsigned_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
     auto alignment=make_native_igb_field_alignment_factory();
     for(std::size_t i=0;i<tables.size();++i){IgbFieldOperationCall c;c.kind=K::field_virtual;c.vtable_word=tables[i];c.virtual_slot=0x64;
         const auto size=f.services->fields->factory(c);check(size && size->resume().value==widths[i],"Known original size leaf differs.");

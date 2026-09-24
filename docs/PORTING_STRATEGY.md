@@ -281,17 +281,23 @@ probes and reflected prototypes complete. The memory caller then publishes
 four-byte reset value three and getter `8002A5EC`, replaces the inherited field,
 finishes its schema and initializes the memory prototype. Storing that function
 pointer does not invoke it or initialize the separate `igMetaEnum` global.
-The cold composition has 72 descriptors, 77 default buffers, fifteen published
-types, eight prototypes and 48 enabled allocations. It returns to the existing
-DataList caller at **unsigned-byte registration `80023234`**.
+Unsigned-byte registration `80023234`, its direct-base probe and reflected
+prototype now resume the retained DataList getter and schema. The enabled
+metadata child-list factories use actual reflected initialization, with raw
+backing supplied to native memory construction and zero fill. The inherited
+memory-field clone finishes object-list specialization. DataList, object-list
+and thread-list metadata complete. The cold composition has 73 descriptors,
+82 default buffers, nineteen published types, nine prototypes and 54 enabled
+allocations; four default buffers were copied by the reflected clone path.
+It reaches **deferred `igThread` registration `80023C40`**.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md),
 [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
 [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
-[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md).
-Recover unsigned-character registration `80023234` for the DataList element
-prototype, enabled cloning needed by `80029724`, and deferred thread class
-`80023C40`. Complete that chain before `80026098` and actual startup callback
+[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
+[IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md).
+Recover thread class `80023C40 -> 80023C68`, including its actual named-object
+parent `80029D58`, before `80026098` and actual startup callback
 `80023A30`. Semaphore metadata still has flags zero; enum metadata remains null. Preserve
 the deferred callback order and the now-reached original transition from disabled
 to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),

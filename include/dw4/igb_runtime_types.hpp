@@ -42,6 +42,10 @@ struct IgbFieldStorageBinding {
     std::weak_ptr<IgbObjectStorage> storage;
     std::uint32_t offset{};
 };
+struct IgbListStorageBinding {
+    std::weak_ptr<IgbObjectStorage> storage;
+    std::uint32_t offset{};
+};
 struct IgbDecodeRuntimeField {
     std::shared_ptr<ModelSceneObject> owner;
     std::uint32_t offset{}; // +08.
@@ -95,6 +99,9 @@ struct IgbDecodeFieldRegistry {
     std::shared_ptr<IgbScratchBuffer> backing_bytes;
     std::uint32_t backing_address{};
     std::uint32_t backing_offset{};
+    // Absent for canonical-only representations. Constructed lists retain a
+    // nonowning allocation identity for their physical +08/+0C publications.
+    std::optional<IgbListStorageBinding> physical_storage;
 private:
     friend class IgbFieldRegistryConstructorInvocation;
     friend class IgbObjectInitInvocation;
@@ -155,6 +162,7 @@ struct IgbRuntimeTypeList {
     std::uint32_t reference_word{1};
     std::shared_ptr<IgbScratchBuffer> backing_bytes;
     std::uint32_t backing_address{},backing_offset{};
+    std::optional<IgbListStorageBinding> physical_storage;
 private:
     friend class IgbTypeListConstructorInvocation;
     friend class IgbObjectInitInvocation;

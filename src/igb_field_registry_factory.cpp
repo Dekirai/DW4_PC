@@ -56,7 +56,10 @@ MessengerCallResult IgbFieldRegistryConstructorInvocation::resume(std::shared_pt
     if(s.running || s.fault){s.fault=true;if(s.owns)s.fields->construction_fault_=true;fail("Internal-list constructor requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault || (s.owns && s.fields->construction_fault_))fail("Internal-list construction was invalidated.");};
+    const auto check=[&]{if(s.fault || (s.owns && s.fields->construction_fault_))fail("Internal-list construction was invalidated.");
+        if(s.owns && (!s.fields->physical_storage || s.fields->physical_storage->storage.lock()!=s.object.storage ||
+            s.fields->physical_storage->offset!=s.object.offset || igb_bootstrap_fields(s.object)!=s.fields))
+            fail("Internal-list construction lost its physical allocation binding.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto select=[&](K kind,P after)->IgbFieldRegistryCall&{
         clear();s.call.request.kind=kind;s.call.request.object=s.object;s.call.factory=services?services->factory:IgbFieldRegistryFactory{};
@@ -74,6 +77,9 @@ MessengerCallResult IgbFieldRegistryConstructorInvocation::resume(std::shared_pt
         s.fields=igb_bootstrap_fields(s.object);
         if(!s.fields)return pending("Internal-list construction requires its explicit typed allocation binding.");
         if(s.fields->construction_fault_ || !s.fields->construction_active_.expired())fail("Internal-list allocation is faulted or already being constructed.");
+        if(s.fields->physical_storage && (s.fields->physical_storage->storage.lock()!=s.object.storage || s.fields->physical_storage->offset!=s.object.offset))
+            fail("Internal-list construction has a conflicting physical allocation binding.");
+        s.fields->physical_storage=IgbListStorageBinding{s.object.storage,s.object.offset};
         s.fields->construction_active_=s.token;s.owns=true;
         s.base=std::make_unique<IgbBootstrapBaseInvocation>(s.object,!reset_only);
         s.phase=reset_only?P::reset:P::first_base;break;

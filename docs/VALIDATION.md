@@ -1,5 +1,90 @@
 # Local validation
 
+## Native unsigned-byte fields and reflected child lists
+
+Validated locally on 2026-09-24. The retained cold invocation now executes
+unsigned-byte registration `80023234`, its actual prerequisite and base-reset
+probe, and reflected prototype initializer `800232C0`. The existing DataList
+getter observes the same canonical prototype cell and resumes its original
+element stores and three-field schema. DataList then requires enabled metadata
+child-list construction; these instances run actual reflected initialization
+and memory-member allocation/zero fill. No ready list or prototype is inserted.
+
+The original object-list specialization now runs its reflected memory-field
+clone, copies its default buffer, sets the object element and replaces the
+inherited descriptor. DataList retains its separate unsigned-byte descriptor.
+The object-list and thread-list registrations complete before deferred
+**`igThread` registration `80023C40`** remains pending. Its `80023C68` body and
+`igNamedObject` parent `80029D58` remain the next recovery work, before semaphore
+registration `80026098` and ThreadManager startup `80023A30`.
+
+The cold composition contains **73 descriptors, 82 default buffers, nineteen
+published types, nine prototypes and 54 enabled allocations**. Four default
+buffers were copied through the reflected clone path. The two new child lists
+have distinct raw allocations, native-initialized 64-byte backing, one child
+each and zeroed unused slots. The unsigned-byte prototype has ordinal/type
+ordinal eight and an independent one-byte default. Repeated resumes preserve
+all completed work and the original bootstrap snapshots `+04 = 7`, `+08 = 1`.
+The separate `igMetaEnum` metadata object remains null.
+
+Physical inspection exposed a stale header in the previous pointer-list
+implementation: append changed the canonical count while object `+0C` remained
+zero. Direct and reflected list construction now establish an optional physical
+identity. Append/growth publish `+08` and `+0C` in original order, retaining
+committed writes when a later store cannot complete. Focused tests cover known
+binding changes, padding and backing/header aliases. Canonical-only owners
+remain supported. These publication checks do not imply that every original
+header-read fault is modeled as a physical read.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 195/195 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 2,375 checks; actual unsigned-byte lifecycle and list schemas, physical headers, clone ownership and unchanged pending continuation |
+| Pointer lists | 239 checks, including returned backing that aliases its own header, mapping invalidation and committed-store prefixes |
+| Reflected metadata/list initialization | 114 checks, including native child-list allocation, memory zero fill and canonical getter cells |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Five independently sealed unsigned-byte groups contain **760 observations /
+49,211 original instructions**: 318 completed original callers, 441 bounded
+fault or endpoint prefixes and one registration-argument observation. All 760
+match exactly, with no native pending cases. The prototype driver observes
+physical registry `+08/+0C` as well as canonical state and backing words.
+
+A strengthened physical pointer-list driver compares the unchanged **1,679
+original cases /162,732 instructions**, including 816 completed callers and
+863 bounded fault prefixes. It observes physical object `+04/+08/+0C`, backing
+words and endpoint traces. All cases match exactly, with no native pending
+cases. Allocator callbacks update their represented physical and canonical
+headers coherently. Original expected results were not rewritten.
+
+Together these comparisons contain **2,439 exact observations /211,943 original
+instructions**. Completion, fault and pending remain distinct statuses. Probe
+and factory groups compare whole represented storage; prototype groups compare
+selected members and represented backing. Prepared allocator/virtual endpoints,
+canonical header reads and bounded address mappings remain limits. The new
+incoming-header-alias cases have focused native regression coverage; they are
+not additional original-instruction observations. The nine historical enum
+table-overrun differences documented in the next section remain separate and
+are not reclassified by these results.
+
+Final `dw4_core.lib` SHA-256:
+`b49975aa578663676573bcd3777c8b84c5c13f3c268811d6b11af54c1bf00732`.
+The unsigned-byte and physical-pointer audit verifiers checked 112 and 38
+artifact hashes respectively. Ignored evidence is stored in
+`work/native-unsigned-byte-final-{build,cold}.log`,
+`work/native-unsigned-byte-{prefix,player,verifier}.log`,
+`work/native-unsigned-byte-milestone-{audit.json,compare.log,verify.log}`,
+`work/native-typed-pointer-list-physical-{audit.json,compare.log,verify.log}`
+and their independently sealed original manifests. Original binaries and
+generated observations remain local and ignored.
+
+This is still incomplete native startup. Pool/platform allocation services and
+address mappings are explicit preparation; original gameplay, audio and a
+playable application are not established. No app package or GitHub Actions run
+was used for this milestone.
+
 ## Native enum and raw-reference classes complete memory registration
 
 Validated locally on 2026-09-23. The retained cold-bootstrap invocation now

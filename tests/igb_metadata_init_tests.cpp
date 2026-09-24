@@ -1,6 +1,7 @@
 #include "dw4/igb_metadata_init.hpp"
 #include "dw4/igb_field_init.hpp"
 #include "dw4/igb_field_string_init.hpp"
+#include "dw4/igb_memory_field_construct.hpp"
 
 #include <iostream>
 
@@ -146,7 +147,117 @@ void field_list_virtuals(){
     request.virtual_slot=0x58;request.vtable_word=0x804761d8;
     rejects([&]{adapter(request);},"Metadata virtual accepted a field-list identity.");
 }
+std::shared_ptr<IgbRuntimeTypeList> type_list_fixture(Fixture& f,bool registry){
+    auto list=std::make_shared<IgbRuntimeTypeList>();f.storage->bindings={{8,{},{},{},list}};
+    f.type->type_word=registry?0x80475cb0:0x80475c54;f.type->native_size=0x10;
+    f.services->type_lists=std::make_shared<IgbTypeListServices>();
+    f.services->field_lists=std::make_shared<IgbFieldRegistryServices>();f.services->field_lists->metadata=f.type;
+    f.services->type_lists->registry_metadata=std::shared_ptr<IgbRegistrationMetaSlot>(f.services->field_lists,&f.services->field_lists->metadata);
+    f.services->type_lists->children_metadata=std::make_shared<IgbRegistrationMetaSlot>(f.type);
+    f.services->reflected->factory=[&f](const IgbFileFactoryCall& c){
+        check(c.kind==IgbFileFactoryServiceKind::allocate && c.metadata==f.type && c.pool==f.pool && c.bytes==0x18,
+            "Reflected type-list changed its original class size, prefix or pool.");
+        auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&f,out=op.get()]{
+            if(!f.ready)return MessengerCallResult{false,13,"Prepared type-list allocation."};
+            ++f.allocations;out->allocation_result=f.storage;return MessengerCallResult{true,0,{}};};return op;};
+    return list;
 }
-int main(){try{reflected_members();adapter_and_lifetime();list_typed_headers();field_list_virtuals();
+void reflected_type_lists(){
+    for(bool registry:{false,true}){
+        Fixture f;const auto list=type_list_fixture(f,registry);
+        f.add(0x80476088,8,4)->default_mode=1;f.add(0x80475b60,12,4,0);
+        list->backing=std::make_shared<IgbRuntimeTypeList::Storage>();const std::weak_ptr<IgbRuntimeTypeList::Storage> displaced=list->backing;
+        IgbTypeListCall request;request.kind=IgbTypeListServiceKind::reflected_factory;request.metadata=f.type;request.pool=f.pool;
+        request.entry=registry?IgbTypeListFactoryEntry::registry:IgbTypeListFactoryEntry::children;
+        auto adapter=make_native_igb_reflected_type_list_factory(f.services);auto operation=adapter(request);f.ready=false;
+        const auto pending=operation->resume();check(!pending.completed && pending.value==13 && f.allocations==0 && f.services->completed_allocations.empty(),
+            "Type-list adapter skipped the actual pending reflected allocator.");
+        f.ready=true;f.services->reflected->factory={};
+        check(operation->resume().completed && operation->allocation_result.storage==f.storage && operation->allocation_result.offset==8 &&
+            f.allocations==1 && f.services->completed_allocations.size()==1 && f.services->completed_allocations.front().types==list,
+            "Type-list adapter replaced a retained allocation or lost its adjusted typed result.");
+        check(list->reference_word==0xa5000001 && list->count==0 && !list->backing && !displaced.expired() &&
+            list->backing_address==0 && igb_buffer_word(f.storage->bytes,8)==*f.type->type_word &&
+            igb_buffer_word(f.storage->bytes,16)==0 && igb_buffer_word(f.storage->bytes,20)==0 && f.type->instance_count==1,
+            "Type-list actual field passes lost header, null backing, count or instance publication.");
+        check(list->physical_storage && list->physical_storage->storage.lock()==f.storage && list->physical_storage->offset==8,
+            "Reflected type-list did not retain its adjusted physical header identity.");
+        check(operation->resume().completed && f.allocations==1 && f.services->completed_allocations.size()==1 && f.type->instance_count==1,
+            "Completed reflected type-list repeated initialization or owner retention.");
+        IgbObjectInitCall getter_request;getter_request.kind=IgbObjectInitServiceKind::object_virtual;
+        getter_request.object=f.services->completed_allocations.front();getter_request.vtable_word=*f.type->type_word;getter_request.virtual_slot=0x58;
+        auto getter=make_native_igb_metadata_init_factory(f.services)(getter_request);
+        const auto cell=registry?f.services->type_lists->registry_metadata:f.services->type_lists->children_metadata;
+        cell->reset();check(!getter->resume().completed,"Unknown type-list canonical cell became a successful null getter.");
+        auto replacement=schema();*cell=replacement;
+        check(getter->resume().completed && getter->metadata_result==replacement && (!registry || f.services->field_lists->metadata==replacement),
+            "Type-list getter cached metadata or detached the shared805619CC alias.");
+        *cell=std::shared_ptr<IgbRuntimeMetaType>{};check(getter->resume().completed && !getter->metadata_result,
+            "Represented-null type-list metadata did not remain distinct from an unknown cell.");
+        for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u}){getter_request.virtual_slot=slot;
+            const auto leaf=make_native_igb_metadata_init_factory({})(getter_request);
+            check(leaf && leaf->resume().completed,"Verified type-list BLR depended on metadata getter services.");}
+    }
+    Fixture wrong;IgbTypeListCall request;request.kind=IgbTypeListServiceKind::reflected_factory;request.metadata=wrong.type;request.pool=wrong.pool;
+    const auto operation=make_native_igb_reflected_type_list_factory(wrong.services)(request);
+    rejects([&]{operation->resume();},"Reflected type-list adapter accepted a metadata instance.");
+    check(wrong.services->completed_allocations.empty() && !operation->allocation_result.storage,
+        "Wrong-kind reflected result was retained or exposed as a type-list allocation.");
+    unsigned delegated{};const auto adapter=make_native_igb_reflected_type_list_factory(wrong.services,[&](const auto&){++delegated;return std::shared_ptr<IgbTypeListOperation>{};});
+    request.kind=IgbTypeListServiceKind::register_type;check(!adapter(request) && delegated==1,"Type-list adapter consumed a registration request.");
+    auto temporary=std::make_shared<IgbMetadataInitServices>();const auto expired=make_native_igb_reflected_type_list_factory(temporary);temporary.reset();
+    request.kind=IgbTypeListServiceKind::reflected_factory;rejects([&]{expired(request);},"Expired type-list services were accepted.");
+    Fixture abstract;type_list_fixture(abstract,false);abstract.type->flag_1a=1;request.metadata=abstract.type;request.pool=abstract.pool;
+    const auto empty=make_native_igb_reflected_type_list_factory(abstract.services)(request);
+    check(empty->resume().completed && !empty->allocation_result.storage && abstract.allocations==0 && abstract.services->completed_allocations.empty(),
+        "Abstract reflected type-list manufactured a typed allocation.");
+}
+void reflected_type_list_backing(){
+    Fixture f;const auto list=type_list_fixture(f,false);auto memory=f.add(0x80476088,8,4);memory->default_mode=1;
+    memory->flag_34=1;memory->word_38=16;memory->word_4c=0;f.add(0x80475b60,12,4);
+    auto element=std::make_shared<IgbDecodeRuntimeField>();element->vtable_word=0x804762fc;memory->element_field=element;
+    auto reference=std::make_shared<IgbRuntimeMetaType>(),element_type=std::make_shared<IgbRuntimeMetaType>();element_type->parent=reference;
+    f.fields->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
+    f.fields->registration->meta_fields=std::make_shared<IgbMetaFieldFactoryServices>();
+    f.fields->registration->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::object)]=std::make_shared<IgbRegistrationMetaSlot>(element_type);
+    auto construct=std::make_shared<IgbMemoryFieldConstructServices>();f.fields->memory_construct=construct;construct->values=f.fields->values;
+    construct->reference_metadata=std::make_shared<IgbRegistrationMetaSlot>(reference);construct->status_success=0;construct->status_failure=1;
+    IgbPointerListBacking backing{bytes(24,0xcc),0x300004,4,std::make_shared<IgbRuntimeTypeList::Storage>(4),{}};
+    bool ready{};unsigned selections{},polls{};std::shared_ptr<IgbMemoryFieldConstructOperation> backing_operation;
+    construct->factory=make_native_igb_memory_field_virtual_factory(f.fields->registration,[&](const IgbMemoryFieldConstructCall& c){
+        auto op=std::make_shared<IgbMemoryFieldConstructOperation>();
+        if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool)op->resume=[&,c,out=op.get()]{
+            check(c.handle==0xa5,"Reflected type-list memory constructor lost its initialized pool tag.");out->pool_result=f.pool;return MessengerCallResult{true,0,{}};};
+        else{check(c.kind==IgbMemoryFieldConstructServiceKind::allocate && c.bytes==16 && c.alignment==4 && c.pool==f.pool,
+                "Type-list member changed native memory allocation arguments.");++selections;backing_operation=op;
+            op->resume=[&,out=op.get()]{++polls;if(!ready)return MessengerCallResult{false,29,"Prepared type-list backing."};
+                out->backing_result=backing;return MessengerCallResult{true,0,{}};};}return op;});
+    IgbTypeListCall request;request.kind=IgbTypeListServiceKind::reflected_factory;request.metadata=f.type;request.pool=f.pool;
+    const auto operation=make_native_igb_reflected_type_list_factory(f.services)(request);const auto first=operation->resume();
+    check(!first.completed && first.value==29 && f.allocations==1 && selections==1 && polls==1 && list->count==0 &&
+        list->backing_address==0 && !list->backing && f.services->completed_allocations.empty(),
+        "Pending type-list memory construction skipped prior null/count stores or published backing early.");
+    ready=true;backing_operation->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced type-list backing continuation was used.");};
+    check(operation->resume().completed && selections==1 && polls==2 && list->backing==backing.types &&
+        list->backing_bytes==backing.bytes && list->backing_offset==4 && list->backing_address==0x300004 && list->count==0 &&
+        igb_buffer_word(f.storage->bytes,16)==0x300004 && f.services->completed_allocations.size()==1,
+        "Type-list actual memory constructor lost retained allocation, typed backing or physical publication.");
+    for(std::size_t i=0;i<24;++i)check(backing.bytes->bytes[i]==(i>=4 && i<20?0:0xcc),"Type-list member zeroing changed backing padding.");
+    check(operation->resume().completed && polls==2 && f.type->instance_count==1,"Completed type-list memory construction repeated its caller.");
+    auto append_services=std::make_shared<IgbPointerListServices>();
+    append_services->factory=[&](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();
+        op->resume=[&,c,out=op.get()]{
+            if(c.kind==IgbPointerListServiceKind::allocation_pool)out->pool_result=f.pool;
+            else{check(c.kind==IgbPointerListServiceKind::allocation_size && c.backing.address==0x300004,
+                    "Constructed type-list append selected an unexpected allocator endpoint.");out->size_result=16;}
+            return MessengerCallResult{true,0,{}};};return op;};
+    IgbPointerListInvocation append(list,IgbPointerListValue{0x90000,f.base,{}});
+    check(append.resume(append_services).completed && list->count==1 && list->backing->at(0)==f.base &&
+        igb_buffer_word(f.storage->bytes,20)==1 && igb_buffer_word(backing.bytes,4)==0x90000 &&
+        igb_buffer_word(f.storage->bytes,16)==0x300004,
+        "Appending to a reflected type-list left its physical header behind the canonical count.");
+}
+}
+int main(){try{reflected_members();adapter_and_lifetime();list_typed_headers();field_list_virtuals();reflected_type_lists();reflected_type_list_backing();
     std::cout<<"igb_metadata_init_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Metadata initialization failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

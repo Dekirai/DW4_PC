@@ -6,7 +6,7 @@ namespace {
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& flag;explicit Running(bool& value):flag(value){flag=true;}~Running(){flag=false;}};
 bool scalar(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::signed_int || kind==IgbMetaFieldKind::boolean ||
-    kind==IgbMetaFieldKind::signed_byte || kind==IgbMetaFieldKind::enumeration;}
+    kind==IgbMetaFieldKind::signed_byte || kind==IgbMetaFieldKind::enumeration || kind==IgbMetaFieldKind::unsigned_byte;}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){
     return a.storage==b.storage && a.offset==b.offset && a.file==b.file && a.field==b.field &&
         a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;
@@ -69,12 +69,16 @@ MessengerCallResult IgbFieldProbeInvocation::resume(std::shared_ptr<IgbFieldProb
     try{for(;;){check();switch(s.phase){
     case P::construct:
         if(!s.constructor)s.constructor=std::make_unique<IgbMetaFieldConstructorInvocation>(s.local,
-            IgbMetaFieldConstructor::specialized_reset,s.kind);
+            s.kind==IgbMetaFieldKind::unsigned_byte?IgbMetaFieldConstructor::reset:IgbMetaFieldConstructor::specialized_reset,s.kind);
         {const auto status=s.constructor->resume(services?services->fields:nullptr);check();if(!status.completed)return status;}
         s.field=s.constructor->result();s.constructor.reset();check();s.phase=P::core;break;
     case P::core:
         if(!services || !services->runtime || !services->runtime->singleton)return pending("Field probe requires live ArkCore80562100 after reset.");
-        s.core=*services->runtime->singleton;s.phase=P::offset;break;
+        s.core=*services->runtime->singleton;
+        // Actual23180 captures ArkCore before publishing the derived table,
+        // then reads the captured owner's +394. No specialized reset is called.
+        if(s.kind==IgbMetaFieldKind::unsigned_byte)igb_bootstrap_write_word(s.local,0,0x80470a44);
+        s.phase=P::offset;break;
     case P::offset:
         if(!s.core)fail("Field probe dereferences null ArkCore at+394.");
         if(!s.core->vtable_offset)return pending("Field probe requires captured ArkCore offset+394.");
@@ -92,7 +96,7 @@ MessengerCallResult IgbFieldProbeInvocation::resume(std::shared_ptr<IgbFieldProb
         s.after=s.phase==P::cache?(s.kind==IgbMetaFieldKind::memory_reference?P::object:P::base):P::done;
         if((s.kind==IgbMetaFieldKind::memory_reference || s.kind==IgbMetaFieldKind::boolean ||
             s.kind==IgbMetaFieldKind::string || s.kind==IgbMetaFieldKind::signed_byte ||
-            s.kind==IgbMetaFieldKind::enumeration || s.kind==IgbMetaFieldKind::pointer) &&
+            s.kind==IgbMetaFieldKind::enumeration || s.kind==IgbMetaFieldKind::pointer || s.kind==IgbMetaFieldKind::unsigned_byte) &&
             igb_bootstrap_address(s.local)+s.slot==0){s.phase=s.after;break;}
         s.address=igb_bootstrap_read_word(s.local,s.slot);s.phase=s.address?P::resolve:s.after;break;
     case P::object:
@@ -149,7 +153,8 @@ IgbTypeRegistrationFactory make_native_igb_field_probe_factory(
     return [weak,remaining=std::move(remaining)](const IgbTypeRegistrationCall& call){
         if(call.kind!=IgbTypeRegistrationServiceKind::layout_probe ||
             (call.function!=0x80028934 && call.function!=0x8002e308 && call.function!=0x8002ad90 && call.function!=0x80038778 &&
-                call.function!=0x80025348 && call.function!=0x80037c78 && call.function!=0x800314d4 && call.function!=0x80027648))
+                call.function!=0x80025348 && call.function!=0x80037c78 && call.function!=0x800314d4 && call.function!=0x80027648 &&
+                call.function!=0x80023180))
             return remaining?remaining(call):std::shared_ptr<IgbTypeRegistrationOperation>{};
         auto selected=weak.lock();if(!selected)fail("Field probe services expired before selection.");
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();
@@ -159,6 +164,7 @@ IgbTypeRegistrationFactory make_native_igb_field_probe_factory(
             call.function==0x80025348?IgbMetaFieldKind::string:
             call.function==0x80037c78?IgbMetaFieldKind::signed_byte:
             call.function==0x800314d4?IgbMetaFieldKind::enumeration:
+            call.function==0x80023180?IgbMetaFieldKind::unsigned_byte:
             call.function==0x80027648?IgbMetaFieldKind::pointer:IgbMetaFieldKind::object;
         operation->resume=[selected,kind,invocation=std::shared_ptr<IgbFieldProbeInvocation>{}]()mutable{
             if(!invocation){if(!selected->profile_local_storage && (kind!=IgbMetaFieldKind::object || !selected->local_storage))

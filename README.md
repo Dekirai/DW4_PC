@@ -175,9 +175,14 @@ and perform their inherited shallow-copy replacement. Reset descriptor factory
 executes their actual probes, schema and reflected prototypes, and returns to the
 memory defaults caller. The four-byte reset value and enum-getter pointer are
 published through their original operations. Memory registration and its reflected
-prototype complete; DataList then reaches unsigned-byte registration `80023234`.
-The cold composition has fifteen published types and eight prototypes. DataList
-and object-list specialization retain their byte-prototype and clone requirements.
+prototype complete. Unsigned-byte registration `80023234`, its exact base-reset
+probe and reflected prototype now complete as well. The retained DataList
+getter shares that prototype cell and finishes its schema. Enabled metadata
+child lists use the actual reflected initializer and memory-member allocation;
+the object-list specialization runs the original reflected memory-field clone.
+DataList, the non-reference-counted object list and the thread list finish
+registration. The cold composition has nineteen published types and nine
+prototypes and reaches deferred `igThread` registration `80023C40`.
 Enum metadata remains null while the prerequisite chain is incomplete.
 This is still incomplete startup. Further reference operations, method fields,
 remaining registrations and pool/platform allocator
@@ -186,6 +191,7 @@ internals remain required. See [IGB_REFLECTED_CLONE.md](docs/IGB_REFLECTED_CLONE
 [IGB_MEMORY_MEMBER_COPY.md](docs/IGB_MEMORY_MEMBER_COPY.md),
 [IGB_BUFFER_COPY.md](docs/IGB_BUFFER_COPY.md),
 [IGB_ENUM_FIELD_DEFAULTS.md](docs/IGB_ENUM_FIELD_DEFAULTS.md),
+[IGB_UNSIGNED_BYTE_FIELD.md](docs/IGB_UNSIGNED_BYTE_FIELD.md),
 [IGB_DATA_LIST_REGISTRATION.md](docs/IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](docs/IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](docs/IGB_INT_FIELD_REGISTRATION.md),

@@ -38,9 +38,18 @@ arithmetic address separately from their typed owner mapping. Values use
 explicit address-to-owner bindings; host pointers are never cast to guest
 addresses. A missing typed mapping pauses the store rather than inferring
 initialized pointer entries from allocation. Raw overwritten owners remain
-retained without modifying their guest reference words. Canonical typed list
-views are authoritative after physical construction, as in existing runtime
-lookup; object allocation bytes are not a second live header implementation.
+retained without modifying their guest reference words. Lists may have an
+explicit weak binding to their physical object header. Direct and reflected
+construction establish that binding when storage is known. Pointer-list writes
+then keep header `+08` and `+0C` coherent with backing and count publication;
+canonical-only owners remain supported without inventing physical storage.
+The header store preserves original ordering: a newly allocated backing is
+published before its tail is cleared, and an appended pointer is stored before
+the count is incremented. An unavailable header does not erase earlier stores.
+If a header store overlaps a represented pointer array, its old owner mapping
+is retained and invalidated. This also applies to an incoming reallocation
+mapping prepared before the publication store. A subsequent append waits for
+an explicit replacement mapping instead of treating unknown addresses as null.
 
 Adapters connect actual append to metadata parent inheritance and actual
 capacity/reserve to the ArkCore bootstrap. A selected size call preserves its
@@ -55,10 +64,14 @@ comparisons and their explicitly prepared allocator boundaries are recorded
 in [VALIDATION.md](VALIDATION.md). These operations do not implement the pool
 allocator, full class registration or a complete game startup.
 
-The final local raw comparison passed 1,679 cases, including 863 bounded
+The strengthened local physical-header comparison passed 1,679 unchanged
+original cases, including 863 bounded
 failure prefixes, with zero differences over 162,732 original instructions
 at 189 addresses. Actual append, reserve, allocation-size/reallocation callers,
 tag extraction and memset execute; only allocation-owner lookup, tagged-pool
 lookup and pool size/reallocation virtuals are prepared. Its represented
 physical regions exclude an unavailable wrapped address from null backing
-with count `-1`. This is not a general MMU or arbitrary malformed-heap model.
+with count `-1`. Callbacks keep physical and canonical headers coherent; native
+header reads remain canonical with explicit alias synchronization. These
+comparisons do not establish every original header-read fault or a general
+MMU or arbitrary malformed-heap model.

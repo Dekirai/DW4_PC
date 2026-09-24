@@ -110,6 +110,13 @@ checking its physical header and instance publication. That fixture qualifies
 caller/initializer composition, not complete class registration or the bodies
 of its prepared virtuals.
 
+The memory-field and unsigned-byte tables now expose their verified object
+hooks `+14`, `+18` and `+48` through the same adapter. Focused tests compose
+the member passes in modes zero, one and two with native initialization,
+metadata lookup and member copying. The unsigned-byte table's `+54` points
+directly to `800680B4`; its dispatch introduces neither a class-registration
+wrapper nor an enabled/disabled core test.
+
 Measured build, original-comparison and cold-start results belong in
 [VALIDATION.md](VALIDATION.md). This module does not establish complete startup,
 object serialization, rendering, audio, gameplay or a playable native game.

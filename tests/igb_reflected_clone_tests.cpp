@@ -1,4 +1,5 @@
 #include "dw4/igb_reflected_clone.hpp"
+#include "dw4/igb_field_init.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -266,7 +267,7 @@ void adapters(){
     initializer->factory=[&](const IgbObjectInitCall& c){check(c.kind==IgbObjectInitServiceKind::object_virtual && c.virtual_slot==0x58,"Metadata adapter delegated an unverified object virtual.");
         auto result=std::make_shared<IgbObjectInitOperation>();result->metadata_result=f.meta;result->resume=[] {return MessengerCallResult{true,0,{}};};return result;};
     const auto virtuals=make_native_igb_reflected_clone_virtual_factory(initializer,[&](const auto&){++fallback;return std::shared_ptr<IgbReflectedCloneOperation>{};});
-    for(const auto vtable:{0x80473f24u,0x80473e30u,0x8047693cu})for(const auto slot:{0x48u,0x14u,0x18u}){
+    for(const auto vtable:{0x80473f24u,0x80473e30u,0x8047693cu,0x80476088u,0x80470a44u})for(const auto slot:{0x48u,0x14u,0x18u}){
         IgbReflectedCloneCall c;c.kind=K::object_virtual;c.object=f.source;c.vtable_word=vtable;c.virtual_slot=slot;
         const auto leaf=virtuals(c);check(leaf && leaf->resume().completed,"Verified scalar/string BLR hook remained unbound.");
     }
@@ -298,7 +299,7 @@ void strict_field_result(){
 void member_adapter_profiles(){
     unsigned fallback{};auto services=std::make_shared<IgbFieldMemberCopyServices>();
     const auto factory=make_native_igb_reflected_member_copy_factory(services,[&](const auto&){++fallback;return std::shared_ptr<IgbReflectedCloneOperation>{};});
-    for(const auto table:{0x80475b60u,0x80476848u,0x80477054u,0x80473f24u,0x80473e30u,0x80476630u}){
+    for(const auto table:{0x80475b60u,0x80476848u,0x80477054u,0x80473f24u,0x80473e30u,0x80476630u,0x80470a44u}){
         for(const auto slot:{0x90u,0x94u,0x98u}){
             auto source=object(0x500000),destination=object(0x600000);auto field=descriptor();field->offset=0x2d;field->size=2;
             source.storage->bytes->bytes[0x2d]=0x12;source.storage->bytes->bytes[0x2e]=0x34;
@@ -308,7 +309,7 @@ void member_adapter_profiles(){
                 "Known scalar member adapter did not execute the exact two-byte raw copy.");
         }
     }
-    for(const auto table:{0x80475b60u,0x80473f24u,0x80473e30u,0x8047693cu,0x804762fcu,0x80476088u}){
+    for(const auto table:{0x80475b60u,0x80473f24u,0x80473e30u,0x8047693cu,0x804762fcu,0x80476088u,0x80470a44u}){
         IgbReflectedCloneCall c;c.kind=K::field_virtual;c.vtable_word=table;c.virtual_slot=0xa0;
         const auto op=factory(c);check(op && op->resume().completed,"Verified no-copy BLR read absent fields or objects.");
     }
@@ -323,8 +324,59 @@ void member_adapter_profiles(){
         auto op=std::make_shared<IgbFieldMemberCopyOperation>();op->resume=[] {return MessengerCallResult{true,0,{}};};return op;};
     check(memory->resume().completed && prepared==1,"Unbound member prerequisite could not acquire its explicit late endpoint.");
 }
+void memory_and_unsigned_byte_hooks(){
+    for(const auto table:{0x80476088u,0x80470a44u}){
+        auto init_services=std::make_shared<IgbFieldInitServices>();
+        init_services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
+        init_services->registration->meta_fields=std::make_shared<IgbMetaFieldFactoryServices>();
+        const auto kind=table==0x80476088?IgbMetaFieldKind::memory_reference:IgbMetaFieldKind::unsigned_byte;
+        auto cell=std::make_shared<IgbRegistrationMetaSlot>();
+        init_services->registration->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]=cell;
+        auto initializer=std::make_shared<IgbObjectInitServices>();
+        initializer->factory=make_native_igb_field_init_factory(init_services);
+        unsigned delegated{};
+        const auto native_hooks=make_native_igb_reflected_clone_virtual_factory(initializer,[&](const auto&){
+            ++delegated;return std::shared_ptr<IgbReflectedCloneOperation>{};});
+        IgbReflectedCloneCall request;request.kind=K::object_virtual;request.vtable_word=table;request.virtual_slot=0x58;
+        const auto getter=native_hooks(request);
+        check(getter && !getter->resume().completed && delegated==0,"New class getter fabricated an unrepresented metadata cell.");
+        auto actual=metadata();*cell=actual;
+        check(getter->resume().completed && getter->metadata_result==actual,"Retained plain metadata getter missed its late canonical binding.");
+        *cell=std::shared_ptr<IgbRuntimeMetaType>{};const auto null_getter=native_hooks(request);
+        check(null_getter && null_getter->resume().completed && !null_getter->metadata_result,
+            "Plain metadata getter registered a class instead of returning represented null.");
+        // Actual BLRs do not read their receiver or require an initializer.
+        const auto leaves=make_native_igb_reflected_clone_virtual_factory({});
+        for(const auto slot:{0x48u,0x14u,0x18u}){request.virtual_slot=slot;const auto leaf=leaves(request);
+            check(leaf && leaf->resume().completed && leaf->resume().completed,"Verified new class BLR required a receiver or replayed work.");}
+        request.virtual_slot=0x4c;check(!native_hooks(request) && delegated==1,"Adjacent unverified object virtual was assumed to be a BLR.");
+        request.virtual_slot=0x48;request.kind=K::field_virtual;
+        check(!native_hooks(request) && delegated==2,"Object hook adapter consumed a member virtual.");
+        for(const auto mode:{0u,1u,2u}){
+            auto source=object(0x500000),destination=object(0x600000);put(source,0,table);put(destination,0,table);
+            source.field->vtable_word=destination.field->vtable_word=table;
+            auto member=descriptor(0);member->vtable_word=0x80470a44;member->offset=0x26;member->size=1;
+            actual=metadata(1);actual->fields->backing->push_back(member);*cell=actual;
+            source.storage->bytes->bytes[0x26]=0x51;source.field->flag_26=0x51;
+            auto members=std::make_shared<IgbFieldMemberCopyServices>();
+            const auto native=make_native_igb_reflected_member_copy_factory(members,native_hooks);
+            auto services=std::make_shared<IgbReflectedCloneServices>();services->object_metadata=metadata();
+            std::vector<std::uint32_t> slots;
+            services->factory=[&](const IgbReflectedCloneCall& c){slots.push_back(c.virtual_slot);return native(c);};
+            IgbObjectCopyInvocation copy(destination,source,mode);
+            check(copy.resume(services).completed && destination.storage->bytes->bytes[0x26]==0x51 && destination.field->flag_26==0x51 &&
+                destination.storage->bytes->bytes[0x25]==0xcc && destination.storage->bytes->bytes[0x27]==0xcc,
+                "New object hook profile did not compose actual unsigned-byte member copying.");
+            const std::vector<std::uint32_t> expected=mode==1?std::vector<std::uint32_t>{0x58,0x48,0x48,0x90,0x14}:
+                mode==0?std::vector<std::uint32_t>{0x58,0x90,0x18}:std::vector<std::uint32_t>{0x58,0x90};
+            check(slots==expected && delegated==2,"New class hooks changed original mode-specific dispatch order.");
+            check(copy.resume().completed && slots==expected,"Completed class copy replayed its hooks or member.");
+        }
+    }
+}
 }
 int main(){try{all_signed_policies();modes_and_original_order();live_hooks_registry_and_backing();retained_operations_and_teardown();
     physical_access_and_faults();outer_reflection_and_null_results();actual_reflected_factory_composition();adapters();strict_field_result();member_adapter_profiles();
+    memory_and_unsigned_byte_hooks();
     std::cout<<"IGB reflected clone tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

@@ -211,7 +211,10 @@ IgbReflectedCloneFactory make_native_igb_reflected_clone_virtual_factory(
         ->std::shared_ptr<IgbReflectedCloneOperation>{
         const auto delegate=[&]{return remaining?remaining(call):nullptr;};
         if(call.kind!=K::object_virtual)return delegate();
-        if((call.vtable_word==0x80473f24 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c) &&
+        // The memory and unsigned-byte tables also point these three slots
+        // directly at667E8/667AC/667B8; they do not invoke member destruction.
+        if((call.vtable_word==0x80473f24 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c ||
+            call.vtable_word==0x80476088 || call.vtable_word==0x80470a44) &&
             (call.virtual_slot==0x48 || call.virtual_slot==0x14 || call.virtual_slot==0x18)){
             auto operation=std::make_shared<IgbReflectedCloneOperation>();operation->resume=[]{return MessengerCallResult{true,0,{}};};return operation;
         }
@@ -269,7 +272,7 @@ IgbReflectedCloneFactory make_native_igb_reflected_member_copy_factory(
         if(call.kind!=K::field_virtual || call.virtual_slot<0x90 || call.virtual_slot>0xa0 || (call.virtual_slot&3u))return delegate();
         const auto table=call.vtable_word;
         const bool scalar=table==0x80475b60 || table==0x80476848 || table==0x80477054 ||
-            table==0x80473f24 || table==0x80473e30 || table==0x80476630 || table==0x804758e4;
+            table==0x80473f24 || table==0x80473e30 || table==0x80476630 || table==0x804758e4 || table==0x80470a44;
         if(!scalar && table!=0x8047693c && table!=0x804762fc && table!=0x80476088)return delegate();
         const auto slot=(call.virtual_slot-0x90u)/4u;
         constexpr std::uint32_t raw[]={0x800642e4,0x8006434c,0x80064318,0x80064380,0x800643a0};

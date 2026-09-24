@@ -182,11 +182,18 @@ reflected prototype lifecycles share their canonical globals. Reflected member
 initialization zeroes the enum getter word, while the raw enum reset leaves it
 untouched. The memory defaults caller assigns its four-byte reset policy and
 getter function, completes its schema and returns through memory prototype
-publication. The same DataList caller now reaches unsigned-byte registration
-`80023234`; the separate `igMetaEnum` metadata object remains unconstructed.
+publication. Unsigned-byte registration `80023234` now executes its actual
+prerequisite, direct-base probe and reflected prototype lifecycle. Its shared
+prototype cell resumes the DataList schema. Enabled child-list factories
+compose the existing reflected initializer with typed metadata-pointer backing
+and native zero fill. The original reflected memory clone then completes the
+object-list specialization. DataList, object-list and thread-list metadata
+finish before the deferred `igThread` wrapper `80023C40` remains pending.
+The separate `igMetaEnum` metadata object remains unconstructed.
 See [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
 [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
-[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md).
+[IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
+[IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md).
 This transition does not complete startup. Remaining member operations, method
 fields, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared

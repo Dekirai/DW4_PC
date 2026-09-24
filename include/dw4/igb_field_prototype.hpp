@@ -62,7 +62,7 @@ public:
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
 // Actual27454(reference) /28B64(object) /2E440(int) /2B178(memory) /388B0(bool)
-// /25628(string) /37DB0(byte) /31690(enum) /2778C(pointer).
+// /25628(string) /37DB0(byte) /31690(enum) /2778C(pointer) /232C0(unsigned byte).
 // These callbacks return no descriptor;
 // descriptor publication is through the canonical global cell only.
 class IgbFieldPrototypeInvocation {

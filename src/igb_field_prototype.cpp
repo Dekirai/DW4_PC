@@ -10,7 +10,7 @@ struct Running{bool& flag;explicit Running(bool& value):flag(value){flag=true;}~
 void profile(IgbFieldTypeKind kind){if(kind!=IgbFieldTypeKind::reference && kind!=IgbFieldTypeKind::object &&
     kind!=IgbFieldTypeKind::signed_int && kind!=IgbFieldTypeKind::memory_reference &&
     kind!=IgbFieldTypeKind::boolean && kind!=IgbFieldTypeKind::string && kind!=IgbFieldTypeKind::signed_byte &&
-    kind!=IgbFieldTypeKind::enumeration && kind!=IgbFieldTypeKind::pointer)fail("Unsupported field prototype callback.");}
+    kind!=IgbFieldTypeKind::enumeration && kind!=IgbFieldTypeKind::pointer && kind!=IgbFieldTypeKind::unsigned_byte)fail("Unsupported field prototype callback.");}
 std::optional<IgbBootstrapPointer> physical_field(const std::shared_ptr<IgbDecodeRuntimeField>& field){
     if(!field->physical_storage)return {};
     const auto& binding=*field->physical_storage;IgbBootstrapPointer pointer{binding.storage.lock(),binding.offset};
@@ -35,6 +35,7 @@ std::shared_ptr<IgbRuntimeFieldSlot> igb_field_prototype_slot(const std::shared_
     if(kind==IgbFieldTypeKind::signed_byte)return services->values?std::shared_ptr<IgbRuntimeFieldSlot>(services->values,&services->values->signed_byte_prototype):nullptr;
     if(kind==IgbFieldTypeKind::enumeration)return services->values?std::shared_ptr<IgbRuntimeFieldSlot>(services->values,&services->values->enumeration_prototype):nullptr;
     if(kind==IgbFieldTypeKind::pointer)return services->values?std::shared_ptr<IgbRuntimeFieldSlot>(services->values,&services->values->pointer_prototype):nullptr;
+    if(kind==IgbFieldTypeKind::unsigned_byte)return services->values?std::shared_ptr<IgbRuntimeFieldSlot>(services->values,&services->values->unsigned_byte_prototype):nullptr;
     return services->values?std::shared_ptr<IgbRuntimeFieldSlot>(services->values,&services->values->object_prototype):nullptr;
 }
 struct IgbFieldPrototypeLookupInvocation::Impl {
@@ -213,13 +214,14 @@ IgbRegistrationCallbacksFactory make_native_igb_field_prototype_function_factory
     std::weak_ptr<IgbFieldPrototypeServices> weak=services;return [weak,remaining=std::move(remaining)](const IgbRegistrationCallbacksCall& call){
         if(call.kind!=IgbRegistrationCallbacksServiceKind::invoke_function || (call.function!=0x80027454 && call.function!=0x80028b64 &&
             call.function!=0x8002e440 && call.function!=0x8002b178 && call.function!=0x800388b0 && call.function!=0x80025628 && call.function!=0x80037db0 &&
-            call.function!=0x80031690 && call.function!=0x8002778c))
+            call.function!=0x80031690 && call.function!=0x8002778c && call.function!=0x800232c0))
             return remaining?remaining(call):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
         const auto selected=weak.lock();if(!selected)fail("Field prototype services expired before callback selection.");
         const auto kind=call.function==0x80027454?IgbFieldTypeKind::reference:call.function==0x8002e440?IgbFieldTypeKind::signed_int:
             call.function==0x8002b178?IgbFieldTypeKind::memory_reference:call.function==0x800388b0?IgbFieldTypeKind::boolean:
             call.function==0x80025628?IgbFieldTypeKind::string:call.function==0x80037db0?IgbFieldTypeKind::signed_byte:
-            call.function==0x80031690?IgbFieldTypeKind::enumeration:call.function==0x8002778c?IgbFieldTypeKind::pointer:IgbFieldTypeKind::object;
+            call.function==0x80031690?IgbFieldTypeKind::enumeration:call.function==0x8002778c?IgbFieldTypeKind::pointer:
+            call.function==0x800232c0?IgbFieldTypeKind::unsigned_byte:IgbFieldTypeKind::object;
         auto invocation=std::make_shared<IgbFieldPrototypeInvocation>(kind);
         auto operation=std::make_shared<IgbRegistrationCallbacksOperation>();operation->resume=[selected,invocation]{return invocation->resume(selected);};return operation;
     };

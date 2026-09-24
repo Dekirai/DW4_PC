@@ -104,13 +104,14 @@ IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbField
         const auto delegate=[&]{return remaining?remaining(call):std::shared_ptr<IgbObjectInitOperation>{};};
         if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc ||
             call.vtable_word==0x80475b60 || call.vtable_word==0x80476088 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c || call.vtable_word==0x80473f24 ||
-            call.vtable_word==0x804758e4 || call.vtable_word==0x80476630)) {
+            call.vtable_word==0x804758e4 || call.vtable_word==0x80476630 || call.vtable_word==0x80470a44)) {
             const auto kind=call.vtable_word==0x80475b60?IgbFieldTypeKind::signed_int:
                 call.vtable_word==0x80476088?IgbFieldTypeKind::memory_reference:
                 call.vtable_word==0x80473e30?IgbFieldTypeKind::boolean:
                 call.vtable_word==0x8047693c?IgbFieldTypeKind::string:
                 call.vtable_word==0x804758e4?IgbFieldTypeKind::enumeration:
                 call.vtable_word==0x80476630?IgbFieldTypeKind::pointer:
+                call.vtable_word==0x80470a44?IgbFieldTypeKind::unsigned_byte:
                 call.vtable_word==0x80473f24?IgbFieldTypeKind::signed_byte:IgbFieldTypeKind::object;
             if(call.virtual_slot==0x0c || call.virtual_slot==0x34 || call.virtual_slot==0x24 ||
                 (kind!=IgbFieldTypeKind::object && kind!=IgbFieldTypeKind::string && call.virtual_slot==0x2c))return leaf();

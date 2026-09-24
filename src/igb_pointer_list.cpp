@@ -1,4 +1,5 @@
 #include "dw4/igb_pointer_list.hpp"
+#include "dw4/igb_field_defaults.hpp"
 
 #include <bit>
 
@@ -69,8 +70,9 @@ struct IgbPointerListInvocation::Impl {
     IgbPointerListValue value;IgbPointerListBacking selected,incoming;
     std::shared_ptr<IgbPointerListServices> owner;std::shared_ptr<ModelSceneObject> pool;
     std::unique_ptr<Size> size;Call call;P phase=P::entry,after=P::done;
+    IgbBootstrapPointer physical_object;
     std::int32_t index{};std::uint32_t capacity{},old{},grown{},zero_at{},zero_left{},zero_total{},store_at{};
-    bool field_list{},append{},running{},fault{};
+    bool field_list{},append{},running{},fault{},physical_captured{};
 };
 IgbPointerListInvocation::IgbPointerListInvocation(std::shared_ptr<IgbRuntimeTypeList> list,IgbPointerListValue value):impl_(std::make_unique<Impl>()){
     impl_->types=std::move(list);impl_->value=std::move(value);impl_->append=true;
@@ -97,7 +99,22 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
     auto& s=*impl_;using P=Impl::P;
     if(s.running || s.fault){s.fault=true;fail("Pointer list requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Pointer-list continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Pointer-list continuation was invalidated.");
+        if(s.physical_captured){
+            const auto& binding=s.field_list?s.fields->physical_storage:s.types->physical_storage;
+            if(binding && !s.physical_object.storage){
+                s.physical_object={binding->storage.lock(),binding->offset};
+                if(!s.physical_object.storage)fail("Pointer-list physical allocation binding expired.");
+            }
+            if(bool(binding)!=bool(s.physical_object.storage) || (binding &&
+                (binding->storage.lock()!=s.physical_object.storage || binding->offset!=s.physical_object.offset)))
+                fail("Pointer-list operation lost its captured physical allocation binding.");
+            if(s.physical_object.storage){
+                if(s.physical_object.storage->faulted())fail("Pointer-list physical allocation is faulted.");
+                if(s.field_list?igb_bootstrap_fields(s.physical_object)!=s.fields:igb_bootstrap_types(s.physical_object)!=s.types)
+                    fail("Pointer-list physical allocation changed its typed owner.");
+            }
+        }};
     const auto live=[&]{if(s.field_list){if(!s.fields)fail("Pointer list dereferences a null field list.");return backing(s.fields);}
         if(!s.types)fail("Pointer list dereferences a null type list.");return backing(s.types);};
     const auto count=[&]()->std::int32_t&{return s.field_list?s.fields->count:s.types->count;};
@@ -109,8 +126,38 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
         else{s.size=std::make_unique<Size>();s.size->backing=std::move(b);s.after=after;s.phase=P::size;}
     };
     const auto retain=[&](const auto& value){if(value){if(s.field_list)s.fields->retained_backings_.push_back(value);else s.types->retained_backings_.push_back(value);}};
+    const auto overlaps_header=[&](const IgbPointerListBacking& b,std::uint32_t offset){
+        if(!s.physical_object.storage || b.bytes!=s.physical_object.storage->bytes)return false;
+        const auto slots=s.field_list?(b.fields?b.fields->size():0):(b.types?b.types->size():0);
+        const auto at=std::uint64_t(s.physical_object.offset)+offset;
+        return at<std::uint64_t(b.offset)+slots*4u && at+4u>b.offset;
+    };
+    const auto header=[&](std::uint32_t offset,std::uint32_t value){
+        if(!s.physical_object.storage)return;
+        igb_bootstrap_write_word(s.physical_object,offset,value);
+        const auto b=live();if(overlaps_header(b,offset)){
+            // A header store over an aliased pointer array can leave a nonnull
+            // address without a known owner. Preserve the bytes and discard
+            // the stale mapping rather than presenting that address as null.
+            retain(b.fields);retain(b.types);
+            if(s.field_list)s.fields->backing.reset();else s.types->backing.reset();
+        }
+    };
+    const auto synchronize_alias=[&](const IgbPointerListBacking& b,std::uint32_t relative,unsigned width){
+        if(!s.physical_object.storage || b.bytes!=s.physical_object.storage->bytes)return;
+        IgbObjectInstance object;object.storage=s.physical_object.storage;object.offset=s.physical_object.offset;
+        object.fields=s.fields;object.types=s.types;
+        // A represented backing can alias its own header. In particular,
+        //53C24 must observe an element store over +0C before incrementing it.
+        const auto at=(b.address+relative)-(b.address-b.offset);
+        igb_synchronize_field_storage(object,at,width);
+    };
     try{for(;;){check();switch(s.phase){
-    case P::entry:{const auto b=live();if(s.append){s.index=count();capacity(b,P::append_capacity);}else capacity(b,P::reserve_capacity);break;}
+    case P::entry:{const auto b=live();const auto& binding=s.field_list?s.fields->physical_storage:s.types->physical_storage;
+        if(binding){s.physical_object={binding->storage.lock(),binding->offset};
+            if(!s.physical_object.storage)fail("Pointer-list physical allocation binding expired.");}
+        s.physical_captured=true;check();
+        if(s.append){s.index=count();capacity(b,P::append_capacity);}else capacity(b,P::reserve_capacity);break;}
     case P::append_capacity:
         if(s.index<std::bit_cast<std::int32_t>(s.capacity))s.phase=P::store;
         else capacity(live(),P::reserve_capacity);break;
@@ -134,6 +181,16 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
         {auto& call=select(K::reallocate,P::publish);call.pool=s.pool;call.backing=s.selected;call.bytes=s.grown<<2u;}break;
     case P::publish:{
         s.incoming=std::move(s.call.operation->backing_result);clear();
+        // Actual538D8 publishes +08 before the tail clear at538F4. A failed
+        // physical header store must leave the canonical backing unchanged.
+        header(8,s.incoming.address);
+        // The returned mapping was prepared before538D8 as well. It may
+        // overlap +08 even when the previous backing did not; installing it
+        // unchanged would reintroduce an owner invalidated by that store.
+        if(overlaps_header(s.incoming,8)){
+            retain(s.incoming.types);retain(s.incoming.fields);
+            s.incoming.types.reset();s.incoming.fields.reset();
+        }
         const auto previous=live();retain(previous.bytes);retain(previous.types);retain(previous.fields);
         if(s.field_list){s.fields->backing_address=s.incoming.address;s.fields->backing_offset=s.incoming.offset;
             s.fields->backing_bytes=s.incoming.bytes;s.fields->backing=s.incoming.fields;}
@@ -147,7 +204,7 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
         //full words, then a byte tail. Preserve partial malformed-store prefixes.
         while(s.zero_left){
             const auto width=s.zero_total>=32u && ((b.address+s.zero_at)&3u)==0 && s.zero_left>=4u?4u:1u;
-            const auto before=s.zero_at;write(b,s.zero_at,0,width);s.zero_at+=width;s.zero_left-=width;
+            const auto before=s.zero_at;write(b,s.zero_at,0,width);synchronize_alias(b,s.zero_at,width);s.zero_at+=width;s.zero_left-=width;
             for(auto at=before/4u;at<s.zero_at/4u;++at){
                 if(b.types && at<b.types->size()){retain((*b.types)[at]);(*b.types)[at].reset();}
                 if(b.fields && at<b.fields->size()){retain((*b.fields)[at]);(*b.fields)[at].reset();}}
@@ -170,12 +227,15 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
         }
         if(s.field_list){if(s.value.metadata || (s.value.address==0)!=(!s.value.field))fail("Pointer-list field value requires a consistent explicit identity.");
             if(!b.fields || slot>=b.fields->size())return pending("Pointer-list store requires its explicit physical field-owner mapping.");
-            write(b,raw_index,s.value.address,4);retain((*b.fields)[slot]);(*b.fields)[slot]=s.value.field;
+            write(b,raw_index,s.value.address,4);synchronize_alias(b,raw_index,4);retain((*b.fields)[slot]);(*b.fields)[slot]=s.value.field;
         }else{if(s.value.field || (s.value.address==0)!=(!s.value.metadata))fail("Pointer-list type value requires a consistent explicit identity.");
             if(!b.types || slot>=b.types->size())return pending("Pointer-list store requires its explicit physical metadata-owner mapping.");
-            write(b,raw_index,s.value.address,4);retain((*b.types)[slot]);(*b.types)[slot]=s.value.metadata;
+            write(b,raw_index,s.value.address,4);synchronize_alias(b,raw_index,4);retain((*b.types)[slot]);(*b.types)[slot]=s.value.metadata;
         }
-        count()=std::bit_cast<std::int32_t>(std::bit_cast<std::uint32_t>(count())+1u);s.phase=P::done;break;
+        const auto next=std::bit_cast<std::uint32_t>(count())+1u;
+        // Actual53C20 has already stored the pointer. Preserve that prefix if
+        // the following +0C store at53C2C cannot reach physical header bytes.
+        header(12,next);count()=std::bit_cast<std::int32_t>(next);s.phase=P::done;break;
     }
     case P::size:{const auto status=s.size->resume(services,check);if(!status.completed)return status;
         s.capacity=s.size->result>>2u;s.size.reset();check();s.phase=s.after;break;}

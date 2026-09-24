@@ -23,7 +23,8 @@ struct IgbFieldProbeServices {
     std::shared_ptr<IgbObjectFieldConstructServices> object_cleanup;
 };
 // Actual80028934(object), 8002E308(int), 8002AD90(memory), 80038778(bool),
-// 80025348(string), 80037C78(signed byte), 800314D4(enum), 80027648(pointer):
+// 80025348(string), 80037C78(signed byte), 800314D4(enum), 80027648(pointer),
+// 80023180(unsigned byte, direct base reset followed by derived publication):
 // reset, capture the word selected
 // by live ArkCore+394, then the original profile-specific member cleanup.
 class IgbFieldProbeInvocation {

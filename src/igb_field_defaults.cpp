@@ -7,7 +7,7 @@ namespace {
 [[noreturn]] void fail(const char* message) {throw IgbFieldDefaultsError(message);}
 bool scalar_table(std::uint32_t table) {
     return table==0x80476e6cu || table==0x80475b60u || table==0x80473e30u ||
-        table==0x80477054u || table==0x80476848u || table==0x80473f24u || table==0x804758e4u;
+        table==0x80477054u || table==0x80476848u || table==0x80473f24u || table==0x804758e4u || table==0x80470a44u;
 }
 struct ScalarCopy {
     IgbObjectInstance object;

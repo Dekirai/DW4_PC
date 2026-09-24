@@ -11,6 +11,7 @@ CloneProfile profile(IgbMetaFieldKind kind){
     case IgbMetaFieldKind::memory_reference:return {0x8002ae84,0x8002aeac};
     case IgbMetaFieldKind::signed_byte:return {0x80037d00,0x80037d28};
     case IgbMetaFieldKind::boolean:return {0x80038800,0x80038828};
+    case IgbMetaFieldKind::unsigned_byte:return {}; // Vtable+54 is680B4 directly; no registration wrapper.
     default:fail("Unsupported field clone profile.");
     }
 }
@@ -51,7 +52,8 @@ struct IgbFieldCloneConstructorInvocation::Impl {
 };
 IgbFieldCloneConstructorInvocation::IgbFieldCloneConstructorInvocation(IgbBootstrapPointer destination,
     std::shared_ptr<IgbDecodeRuntimeField> source,IgbMetaFieldKind kind):impl_(std::make_unique<Impl>()){
-    profile(kind);impl_->destination=std::move(destination);impl_->source=std::move(source);impl_->kind=kind;
+    profile(kind);if(kind==IgbMetaFieldKind::unsigned_byte)fail("Unsigned-byte fields have no recovered raw copy constructor.");
+    impl_->destination=std::move(destination);impl_->source=std::move(source);impl_->kind=kind;
 }
 IgbFieldCloneConstructorInvocation::~IgbFieldCloneConstructorInvocation(){auto& s=*impl_;if(s.owns && !completed()){
     s.field->construction_fault_=true;if(s.owner)s.owner->unfinished.push_back(s.destination.storage);
@@ -164,6 +166,7 @@ MessengerCallResult IgbFieldCloneInvocation::resume(std::shared_ptr<IgbFieldClon
     const auto fields=[&]{return services?services->fields:nullptr;};
     try{for(;;){check();switch(s.phase){
     case P::gate:{const auto f=fields();
+        if(s.kind==IgbMetaFieldKind::unsigned_byte){s.phase=P::reflected;break;}
         if(!f || !f->bootstrap || !f->bootstrap->runtime || !f->bootstrap->runtime->singleton)return pending("Field clone requires represented ArkCore80562100.");
         if(!*f->bootstrap->runtime->singleton)fail("Field clone dereferences a null ArkCore.");
         if((*f->bootstrap->runtime->singleton)->enabled)s.phase=P::registration;
@@ -195,10 +198,11 @@ MessengerCallResult IgbFieldCloneInvocation::resume(std::shared_ptr<IgbFieldClon
 IgbListDefaultsFactory make_native_igb_list_field_clone_factory(std::shared_ptr<IgbFieldCloneServices> services,IgbListDefaultsFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbListDefaultsCall& call)->std::shared_ptr<IgbListDefaultsOperation>{
         if(call.kind!=IgbListDefaultsServiceKind::clone_field ||
-            (call.vtable_word!=0x80476088 && call.vtable_word!=0x80473f24 && call.vtable_word!=0x80473e30) || call.virtual_slot!=0x54)
+            (call.vtable_word!=0x80476088 && call.vtable_word!=0x80473f24 && call.vtable_word!=0x80473e30 && call.vtable_word!=0x80470a44) || call.virtual_slot!=0x54)
             return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Field clone services expired before operation selection.");
         const auto kind=call.vtable_word==0x80473f24?IgbMetaFieldKind::signed_byte:
+            call.vtable_word==0x80470a44?IgbMetaFieldKind::unsigned_byte:
             call.vtable_word==0x80473e30?IgbMetaFieldKind::boolean:IgbMetaFieldKind::memory_reference;
         auto invocation=std::make_shared<IgbFieldCloneInvocation>(call.field,call.argument,kind);auto operation=std::make_shared<IgbListDefaultsOperation>();
         operation->resume=[invocation,selected,out=operation.get()]{const auto status=invocation->resume(selected);

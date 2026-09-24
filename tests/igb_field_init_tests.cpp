@@ -118,7 +118,7 @@ void object_virtuals() {
 }
 
 void string_and_byte_virtuals(){
-    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer}){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte}){
         Fixture f;const bool string=kind==IgbMetaFieldKind::string;
         f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=igb_meta_field_profile(kind).vtable;
         f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();

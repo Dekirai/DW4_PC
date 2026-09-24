@@ -62,11 +62,12 @@ void igb_object_validate_instance(const IgbObjectInstance& object) {
         found=true;
     }
     if(!found)fail("Object allocation no longer contains its canonical typed binding.");
-    if(object.field && object.field->physical_storage){
-        const auto& physical=*object.field->physical_storage;
+    const auto validate_physical=[&](const auto& owner){if(owner && owner->physical_storage){
+        const auto& physical=*owner->physical_storage;
         if(physical.storage.lock()!=object.storage || physical.offset!=object.offset)
-            fail("Object field changed its canonical physical allocation binding.");
-    }
+            fail("Object owner changed its canonical physical allocation binding.");
+    }};
+    validate_physical(object.field);validate_physical(object.fields);validate_physical(object.types);
 }
 std::uint32_t igb_object_reference_word(const IgbObjectInstance& object) {
     igb_object_validate_instance(object);
@@ -140,6 +141,8 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             igb_object_validate_instance(s.object);
             if(s.object.field && !s.object.field->physical_storage)
                 fail("Object field lost its physical allocation binding during initialization.");
+            if((s.object.fields && !s.object.fields->physical_storage) || (s.object.types && !s.object.types->physical_storage))
+                fail("Object list lost its physical allocation binding during initialization.");
         }};
     const auto clear=[&] {s.callback={};s.factory={};s.operation.reset();s.request={};check();};
     const auto select=[&](K kind,P after)->IgbObjectInitCall& {
@@ -189,6 +192,12 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
                 if(owner->construction_fault_ || !owner->construction_active_.expired())fail("Object owner is faulted or already initializing.");
                 owner->construction_active_=s.token;
             };
+            const auto bind_list=[&](const auto& owner){if(!owner)return;
+                if(owner->physical_storage && (owner->physical_storage->storage.lock()!=s.object.storage || owner->physical_storage->offset!=s.object.offset))
+                    fail("Object list has a conflicting physical allocation binding.");
+                owner->physical_storage=IgbListStorageBinding{s.object.storage,s.object.offset};
+            };
+            bind_list(s.object.fields);bind_list(s.object.types);
             acquire(s.object.metadata);acquire(s.object.fields);acquire(s.object.types);
             s.object.storage->active_=s.token;s.owns=true;s.phase=P::core;break;
         }

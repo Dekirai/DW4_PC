@@ -310,8 +310,78 @@ void scalar_enabled_boundaries_and_adapters(){
     }
     Fixture f;rejects([&]{IgbFieldCloneInvocation unsupported(f.source,1,IgbMetaFieldKind::string);},"Scalar clone extension accepted an unimplemented string clone.");
 }
+void unsigned_byte_direct_clone(){
+    for(unsigned state=0;state<5;++state)for(const auto argument:{0u,1u,2u,0xffffffffu}){
+        Fixture f;f.source->vtable_word=0x80470a44;
+        if(state==0)f.services->fields.reset();
+        else if(state==1)f.services->fields->bootstrap->runtime->singleton.reset();
+        else if(state==2)f.services->fields->bootstrap->runtime->singleton=std::shared_ptr<IgbRuntimeTypeRegistry>{};
+        else f.core->enabled=state==4;
+        IgbFieldCloneInvocation call(f.source,argument,IgbMetaFieldKind::unsigned_byte);const auto status=call.resume(f.services);
+        check(status.completed && status.value==0x200000 && call.result()==f.destination && !call.faulted() && f.allocations.empty() &&
+            f.calls.size()==1 && f.calls.front().kind==K::reflected_clone && f.calls.front().function==0x800680b4 &&
+            f.calls.front().source==f.source && f.calls.front().argument==argument,
+            "Unsigned-byte +54 consulted ArkCore, registered its class or changed direct680B4 arguments.");
+        check(f.storage.storage->bytes->bytes==std::vector<std::uint8_t>(0x50,0xcc) && f.services->completed_allocations.size()==1 &&
+            f.destination->construction_active_.expired(),"Unsigned-byte reflected result ran raw copying or lost allocation ownership.");
+        check(call.resume().completed && f.calls.size()==1 && f.services->completed_allocations.size()==1,
+            "Completed unsigned-byte clone replayed reflection or ownership publication.");
+    }
+    Fixture null;null.source.reset();null.storage={};null.services->fields.reset();
+    IgbFieldCloneInvocation passthrough(nullptr,2,IgbMetaFieldKind::unsigned_byte);
+    check(passthrough.resume(null.services).completed && !passthrough.result() && !passthrough.allocation().storage &&
+        null.calls.size()==1 && !null.calls.front().source && null.calls.front().argument==2 && null.allocations.empty(),
+        "Unsigned-byte clone wrapper dereferenced a source or null result before its selected680B4 body.");
+    Fixture unsupported;const auto before=unsupported.storage.storage->bytes->bytes;
+    rejects([&]{IgbFieldCloneConstructorInvocation raw(unsupported.storage,unsupported.source,IgbMetaFieldKind::unsigned_byte);},
+        "Unsigned-byte clone extension invented a raw copy constructor.");
+    check(unsupported.storage.storage->bytes->bytes==before && unsupported.destination->construction_active_.expired() &&
+        !unsupported.destination->construction_fault_,"Rejected unsigned-byte raw copy changed destination bytes or construction ownership.");
+}
+void unsigned_byte_clone_pending_and_adapter(){
+    Fixture f;f.services->fields.reset();bool ready{};unsigned polls{};std::shared_ptr<IgbFieldCloneOperation> selected;
+    f.remaining=[&](const IgbFieldCloneCall& c){check(c.kind==K::reflected_clone && c.function==0x800680b4 && c.source==f.source && c.argument==0x87654321,
+            "Pending unsigned-byte clone changed the selected original call.");selected=std::make_shared<IgbFieldCloneOperation>();
+        selected->resume=[&,out=selected.get()]{++polls;if(!ready)return MessengerCallResult{false,19,"Prepared unsigned-byte reflected copy."};
+            out->allocation_result=f.storage;return MessengerCallResult{true,0,{}};};return selected;};
+    IgbFieldCloneInvocation call(f.source,0x87654321,IgbMetaFieldKind::unsigned_byte);const auto first=call.resume(f.services);
+    check(!first.completed && first.value==19 && polls==1 && !call.completed() && !call.faulted() && f.calls.size()==1,
+        "Unsigned-byte direct clone lost a pending status or exposed completion.");
+    rejects([&]{call.result();},"Pending unsigned-byte clone exposed its destination.");
+    rejects([&]{call.allocation();},"Pending unsigned-byte clone exposed its allocation.");
+    selected->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced unsigned-byte clone continuation was used.");};
+    f.services->factory={};ready=true;
+    check(call.resume(f.services).completed && polls==2 && f.calls.size()==1 && f.allocations.empty() && call.result()==f.destination,
+        "Unsigned-byte clone replaced its retained callback or entered cold copying on resume.");
+
+    Fixture adapter;adapter.services->fields.reset();adapter.source->vtable_word=0x80470a44;
+    IgbListDefaultsCall request;request.kind=IgbListDefaultsServiceKind::clone_field;request.field=adapter.source;
+    request.vtable_word=0x80470a44;request.virtual_slot=0x54;request.argument=2;unsigned delegated{};
+    const auto factory=make_native_igb_list_field_clone_factory(adapter.services,[&](const IgbListDefaultsCall&){++delegated;return std::shared_ptr<IgbListDefaultsOperation>{};});
+    const auto operation=factory(request);adapter.source->vtable_word=0;
+    check(operation && operation->resume().completed && operation->field_result==adapter.destination && operation->field_address==0x200000 &&
+        adapter.calls.size()==1 && adapter.calls.front().function==0x800680b4 && adapter.calls.front().argument==2 &&
+        adapter.allocations.empty() && delegated==0,"Unsigned-byte adapter reloaded its captured dispatch table or inserted registration.");
+    request.virtual_slot=0x58;check(!factory(request) && delegated==1,"Unsigned-byte clone adapter consumed an unrelated virtual slot.");
+
+    Fixture missing;missing.services->fields.reset();missing.remaining=[](const IgbFieldCloneCall&)->std::shared_ptr<IgbFieldCloneOperation>{return {};};
+    IgbFieldCloneInvocation boundary(missing.source,1,IgbMetaFieldKind::unsigned_byte);
+    check(!boundary.resume(missing.services).completed && !boundary.resume(missing.services).completed && !boundary.faulted() &&
+        missing.allocations.empty() && missing.services->completed_allocations.empty(),
+        "Unbound unsigned-byte680B4 became a successful clone or cold fallback.");
+    missing.remaining={};check(boundary.resume(missing.services).completed && boundary.result()==missing.destination && missing.allocations.empty(),
+        "Late unsigned-byte reflected service did not resume the retained boundary.");
+    Fixture invalid;invalid.services->fields.reset();invalid.storage.storage->bindings.clear();
+    IgbFieldCloneInvocation fault(invalid.source,1,IgbMetaFieldKind::unsigned_byte);
+    rejects([&]{fault.resume(invalid.services);},"Unsigned-byte reflected allocation accepted a missing typed descriptor binding.");
+    check(fault.faulted() && !fault.completed() && invalid.services->completed_allocations.empty() && invalid.allocations.empty(),
+        "Invalid unsigned-byte reflected result was published or replaced by raw copying.");
+    rejects([&]{fault.resume(invalid.services);},"Faulted unsigned-byte clone restarted.");
+    rejects([&]{fault.result();},"Faulted unsigned-byte clone exposed a result.");
+}
 }
 int main(){try{null_allocation_and_gates();enabled_order_and_adapters();missing_base_and_constructor_lifetime();complete_cold_copy();live_derived_reads_and_pointer_binding();replaced_destination_binding();
     scalar_cold_clones();scalar_pending_copy_and_faults();scalar_enabled_boundaries_and_adapters();
+    unsigned_byte_direct_clone();unsigned_byte_clone_pending_and_adapter();
     std::cout<<"igb_field_clone_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Field clone failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

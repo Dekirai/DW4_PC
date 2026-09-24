@@ -9,8 +9,10 @@
 namespace dw4 {
 struct IgbFieldOperationsServices;
 class IgbMetaFieldFactoryError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
-enum class IgbMetaFieldKind {unsigned_int,signed_int,boolean,string,object,pointer,unsigned_short,memory_reference,signed_short,signed_byte,enumeration};
+enum class IgbMetaFieldKind {unsigned_int,signed_int,boolean,string,object,pointer,unsigned_short,memory_reference,signed_short,signed_byte,enumeration,unsigned_byte};
 struct IgbMetaFieldProfile {
+    // Zero constructor/reset means no specialized raw entry exists in this
+    // recovered profile. Unsigned-byte factory2310C always registers/reflects.
     std::uint32_t factory{},constructor{},reset{},vtable{},bytes{},registration{},callback{},metadata_global{};
 };
 const IgbMetaFieldProfile& igb_meta_field_profile(IgbMetaFieldKind);
@@ -44,7 +46,7 @@ struct IgbMetaFieldFactoryServices {
     std::shared_ptr<IgbRegistrationMetaSlot> metadata; //Legacy unsigned-int alias805614BC.
     // Distinct canonical cells for the other profiles; unsigned_int always
     // uses metadata above, retaining the existing API's single global identity.
-    std::array<std::shared_ptr<IgbRegistrationMetaSlot>,11> metadata_slots;
+    std::array<std::shared_ptr<IgbRegistrationMetaSlot>,12> metadata_slots;
     std::shared_ptr<IgbFieldOperationsServices> fields;
     IgbMetaFieldFactory factory;
     std::vector<IgbBootstrapPointer> completed_allocations;
@@ -70,7 +72,8 @@ public:
     std::shared_ptr<IgbDecodeRuntimeField> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual profile factory, default80022A90. Allocation and reflection results
+// Actual profile factory, default80022A90 (unsigned-byte2310C is always reflected).
+// Allocation and reflection results
 // require explicit original addresses and typed bindings; a null allocation
 // still reaches tail access. String/object tails also initialize default bytes.
 class IgbMetaFieldFactoryInvocation {

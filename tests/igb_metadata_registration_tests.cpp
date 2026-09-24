@@ -260,7 +260,13 @@ void actual_cold_bootstrap_prefix(){
             physical.storage->bindings.push_back({0,{},{},{},list});initial_lists.push_back(list);initial_allocations.push_back(physical);
             out->allocation_result=physical;return MessengerCallResult{true,0,{}};};return op;
     };
+    IgbTypeListFactory resumed_type_lists;
+    std::vector<IgbTypeListCall> enabled_type_list_calls;
     native_lists->factory=[&](const IgbTypeListCall& c){
+        if(c.kind==IgbTypeListServiceKind::reflected_factory){
+            enabled_type_list_calls.push_back(c);
+            return resumed_type_lists?resumed_type_lists(c):std::shared_ptr<IgbTypeListOperation>{};
+        }
         auto op=std::make_shared<IgbTypeListOperation>();op->resume=[&,c,out=op.get()]{
             if(c.kind==IgbTypeListServiceKind::object_pool){check(c.handle==0,"Cold type-list constructor did not reset its pool tag.");out->pool_result=f.pool;}
             else if(c.kind==IgbTypeListServiceKind::allocate_backing){
@@ -309,9 +315,11 @@ void actual_cold_bootstrap_prefix(){
     // Retained callback selection still consults the same dynamic binding
     // registry when a reached function body becomes available later.
     IgbRegistrationCallbacksFactory additional_callbacks;
+    bool unsigned_byte_registration_ready{};
     const auto original_function_bindings=f.services->callbacks->factory;
     f.services->callbacks->factory=[&,original_function_bindings](const IgbRegistrationCallbacksCall& c){
-        if(additional_callbacks){auto result=additional_callbacks(c);if(result)return result;}
+        if(additional_callbacks && (c.function!=0x80023234 || unsigned_byte_registration_ready)){
+            auto result=additional_callbacks(c);if(result)return result;}
         return original_function_bindings?original_function_bindings(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
     };
     IgbArkCoreBootstrapInvocation call(ark);
@@ -365,11 +373,13 @@ void actual_cold_bootstrap_prefix(){
     string_state->table->capacity=4;string_state->table->storage=std::make_shared<IgbStringTable::Storage>(4);string_state->arena=f.pool;
     igb_bind_string_pool(native_strings,f.pool,string_state);unsigned string_allocations{};
     std::vector<IgbFieldStringBinding> allocated_names;
+    std::shared_ptr<IgbFieldValuesServices> live_value_bindings;
     native_strings->factory=[&](const IgbStringPoolCall& c){
         check(c.kind==IgbStringPoolServiceKind::allocate_string && c.arena==f.pool,"Cold name interning reached an unexpected arena operation.");
         auto op=std::make_shared<IgbStringPoolOperation>();op->resume=[&,c,out=op.get()]{
             ++string_allocations;out->entry_result=std::make_shared<IgbStringEntry>();out->entry_result->owner=std::make_shared<IgbInternedString>();
             allocated_names.push_back({0x780000+string_allocations*0x100,out->entry_result->owner});
+            if(live_value_bindings)igb_bind_field_string(live_value_bindings,allocated_names.back().address,allocated_names.back().owner);
             out->entry_result->bytes.buffer=std::make_shared<IgbScratchBuffer>();out->entry_result->bytes.buffer->bytes.resize(c.bytes+4);
             out->entry_result->bytes.buffer->initialized.assign(c.bytes+4,0);
             // Original strcmp reads aligned words beyond a terminating byte.
@@ -1181,6 +1191,7 @@ void actual_cold_bootstrap_prefix(){
     // identities. Their headers, members and child lists remain the work of
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
+    bool bind_new_instance_addresses{};
     std::vector<IgbPointerListBacking> enabled_backings;
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
     std::vector<IgbBootstrapPointer> signed_int_prototype_allocations,boolean_prototype_allocations,signed_byte_prototype_allocations;
@@ -1229,13 +1240,16 @@ void actual_cold_bootstrap_prefix(){
                 else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
             }
-            enabled_allocations.push_back(instance);out->allocation_result=raw.storage;done=true;
+            enabled_allocations.push_back(instance);
+            if(bind_new_instance_addresses)igb_bind_object_field_instance(member_construct,instance);
+            out->allocation_result=raw.storage;done=true;
             return MessengerCallResult{true,0,{}};
         };return op;
     };
     const auto enabled_identity=[&](const IgbObjectInstance& object){return std::any_of(enabled_allocations.begin(),enabled_allocations.end(),
         [&](const auto& known){return known.storage==object.storage && known.offset==object.offset &&
-            known.metadata==object.metadata && known.fields==object.fields && known.field==object.field;});};
+            known.metadata==object.metadata && known.fields==object.fields && known.field==object.field &&
+            known.types==object.types && known.file==object.file;});};
     member_construct->factory=[&](const IgbObjectFieldConstructCall& c){
         member_calls.push_back(c);
         if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool)return std::shared_ptr<IgbObjectFieldConstructOperation>{};
@@ -1391,6 +1405,7 @@ void actual_cold_bootstrap_prefix(){
         data_probe_locals.push_back(local);return local;
     };
     auto data_defaults=std::make_shared<IgbDataListDefaultsServices>();data_defaults->registration=data_registration;
+    data_defaults->unsigned_char_prototype=std::shared_ptr<IgbRuntimeFieldSlot>(values,&values->unsigned_byte_prototype);
     data_defaults->lists=list_defaults;data_defaults->callbacks=f.services->callbacks;
     *data_defaults->unsigned_char_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
     additional_callbacks=make_native_igb_data_list_registration_function_factory(data_registration,additional_callbacks);
@@ -1769,7 +1784,9 @@ void actual_cold_bootstrap_prefix(){
             if(values->string_prototype && !*values->string_prototype)string_prototype_allocations.push_back(raw);
             else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
             values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
-            enabled_allocations.push_back(instance);reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            enabled_allocations.push_back(instance);
+            if(bind_new_instance_addresses)igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
             return MessengerCallResult{true,0,{}};
         };return operation;
     };
@@ -1879,7 +1896,9 @@ void actual_cold_bootstrap_prefix(){
                 allocations.push_back(raw);}
             else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
             values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
-            enabled_allocations.push_back(instance);reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            enabled_allocations.push_back(instance);
+            if(bind_new_instance_addresses)igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
             return MessengerCallResult{true,0,{}};
         };return operation;
     };
@@ -1953,6 +1972,228 @@ void actual_cold_bootstrap_prefix(){
         descriptors.size()==72 && enabled_allocations.size()==48 && f.core->types->count==15 && (**prototypes->registry)->count==8 &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending unsigned-byte registration replayed completed factories, schemas, prototypes or original bootstrap snapshots.");
+
+    // The retained23358 getter must see the same canonical prototype cell as
+    // actual232C0. Registration receives a null class cell and raw allocations;
+    // every metadata/header/default store still belongs to the native callers.
+    auto unsigned_byte_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::unsigned_byte)]=unsigned_byte_cell;
+    const auto pending_data_descriptor=descriptors[71];
+    const auto pending_data_flags=std::array{igb_bootstrap_read_byte(descriptor_allocations[71],0x35),
+        igb_bootstrap_read_byte(descriptor_allocations[71],0x40),igb_bootstrap_read_byte(descriptor_allocations[71],0x41)};
+    std::vector<IgbBootstrapPointer> unsigned_byte_probe_locals,unsigned_byte_prototype_allocations;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::unsigned_byte,"Unsigned-byte registration replayed a completed field probe.");
+        auto raw=allocation(0xba0000+static_cast<std::uint32_t>(unsigned_byte_probe_locals.size())*0x100,0x34);
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        unsigned_byte_probe_locals.push_back(raw);return raw;
+    };
+    unsigned_byte_registration_ready=true;
+    native_lists->callbacks=f.services->callbacks;
+    const auto unsigned_byte_allocation=call.resume(bootstrap);
+    std::cout<<"Cold unsigned-byte prototype boundary: "<<unsigned_byte_allocation.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!unsigned_byte_allocation.completed && !call.faulted() && **unsigned_byte_cell &&
+        (**unsigned_byte_cell)->class_flags==7 && (**unsigned_byte_cell)->fields->count==20 &&
+        unsigned_byte_probe_locals.size()==1 && !*values->unsigned_byte_prototype &&
+        unbound_reflected_allocations.back().metadata==**unsigned_byte_cell && unbound_reflected_allocations.back().bytes==0x34,
+        "Unsigned-byte registration bypassed its real probe, inherited schema or reflected prototype allocator.");
+    const auto unsigned_byte_type=**unsigned_byte_cell;
+    check(unsigned_byte_type->name && *unsigned_byte_type->name=="igUnsignedCharMetaField" &&
+        unsigned_byte_type->parent==base_field && unsigned_byte_type->native_size==0x34 && unsigned_byte_type->type_word==0x80470a44 &&
+        f.core->types->count==16 && f.core->types->backing->at(15)==unsigned_byte_type &&
+        !pending_data_descriptor->name && pending_data_descriptor->element_field && pending_data_descriptor->element_field->expired() &&
+        igb_bootstrap_read_word(descriptor_allocations[71],0x3c)==0 &&
+        pending_data_flags==std::array{igb_bootstrap_read_byte(descriptor_allocations[71],0x35),
+            igb_bootstrap_read_byte(descriptor_allocations[71],0x40),igb_bootstrap_read_byte(descriptor_allocations[71],0x41)},
+        "Pending unsigned-byte prototype changed DataList's later element/configuration stores or mispublished its class.");
+
+    // Publish arena identities only, including names allocated later during
+    // DataList schema publication. These bindings do not initialize a member,
+    // retain a reference or substitute a ready object for reflected copying.
+    live_value_bindings=values;
+    for(const auto& binding:allocated_names)igb_bind_field_string(values,binding.address,binding.owner);
+    for(const auto& instance:enabled_allocations)igb_bind_object_field_instance(member_construct,instance);
+    bind_new_instance_addresses=true;
+    const auto preceding_reflected_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,preceding_reflected_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=**unsigned_byte_cell)return preceding_reflected_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x34 &&
+                unsigned_byte_prototype_allocations.empty() && !*values->unsigned_byte_prototype,
+                "Unsigned-byte prototype changed its original allocation request or allocated twice.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            unsigned_byte_prototype_allocations.push_back(raw);
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    std::vector<IgbDataListKind> resumed_list_probes;
+    data_registration->local_storage=[&](IgbDataListKind kind){
+        check(kind==IgbDataListKind::nonref_object || kind==IgbDataListKind::thread_list,
+            "Resumed list registration replayed the completed DataList probe.");
+        auto raw=allocation(0xbb0000+static_cast<std::uint32_t>(resumed_list_probes.size())*0x100,0x14);
+        data_probe_locals.push_back(raw);resumed_list_probes.push_back(kind);return raw;
+    };
+    const auto after_unsigned_byte=call.resume(bootstrap);
+    std::cout<<"Cold native unsigned-byte continuation: "<<after_unsigned_byte.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_unsigned_byte.completed && !call.faulted(),"Unsigned-byte registration incorrectly completed full native bootstrap.");
+    const auto unsigned_byte_prototype=*values->unsigned_byte_prototype;
+    check(unsigned_byte_prototype && **data_defaults->unsigned_char_prototype==unsigned_byte_prototype &&
+        unsigned_byte_prototype_allocations.size()==1 && unsigned_byte_type->instance_count==1 &&
+        unsigned_byte_prototype->vtable_word==0x80470a44 && unsigned_byte_prototype->reference_word==1 &&
+        unsigned_byte_prototype->ordinal==8 && unsigned_byte_prototype->type_ordinal==8 && unsigned_byte_prototype->size==1 &&
+        (**prototypes->registry)->count==9 && (**prototypes->registry)->backing->at(8)==unsigned_byte_prototype &&
+        unsigned_byte_prototype->default_bytes && unsigned_byte_prototype->default_bytes->buffer &&
+        unsigned_byte_prototype->default_bytes->buffer->bytes.size()==1 &&
+        igb_buffer_bytes(unsigned_byte_prototype->default_bytes->buffer,unsigned_byte_prototype->default_bytes->offset,1)[0]==0,
+        "Unsigned-byte prototype skipped reflected initialization, shared publication, registry ordering or one-byte default storage.");
+    for(std::size_t i=0;i<3;++i){const auto& field=data_type->fields->backing->at(2+i);
+        check(field && field->name && *field->name==**data_defaults->names->at(i) && field->offset==*data_defaults->offsets->at(i) &&
+            *data_defaults->globals->at(i)->slot==field && field->global_slot_address==data_defaults->globals->at(i)->address &&
+            field->declaring_type && field->declaring_type->lock()==data_type,
+            "DataList did not finish its original three-field schema and canonical global publication.");
+    }
+    check(pending_data_descriptor->element_field->lock()==unsigned_byte_prototype && pending_data_descriptor->flag_35==1 &&
+        pending_data_descriptor->flag_40==1 && pending_data_descriptor->flag_41==1 &&
+        igb_bootstrap_read_word(descriptor_allocations[71],0x3c)==igb_bootstrap_address(unsigned_byte_prototype_allocations.front()) &&
+        igb_bootstrap_read_byte(descriptor_allocations[71],0x35)==1 && igb_bootstrap_read_byte(descriptor_allocations[71],0x40)==1 &&
+        igb_bootstrap_read_byte(descriptor_allocations[71],0x41)==1,
+        "DataList's retained prototype getter did not precede its physical and canonical element/flag stores.");
+
+    // Actual parent linkage now needs the first enabled metadata child list.
+    // Its type was registered earlier, but its instance must run the reflected
+    // initializer and memory-member allocation rather than a raw constructor.
+    check(!enabled_type_list_calls.empty() && enabled_type_list_calls.back().entry==IgbTypeListFactoryEntry::children &&
+        enabled_type_list_calls.back().metadata==**native_lists->children_metadata &&
+        enabled_type_list_calls.back().pool==f.pool && data_type->class_flags==7,
+        "DataList completion did not reach the actual enabled child-list factory.");
+    metadata_init->type_lists=native_lists;
+    resumed_type_lists=make_native_igb_reflected_type_list_factory(metadata_init);
+    const auto before_type_list_allocator=resumed_reflected_allocations;
+    std::vector<IgbObjectInstance> enabled_type_list_allocations;
+    std::vector<IgbPointerListBacking> enabled_type_backings;
+    resumed_reflected_allocations=[&,before_type_list_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=**native_lists->children_metadata)return before_type_list_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==16,
+                "Enabled child-list factory changed its actual raw allocation request.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.types=std::make_shared<IgbRuntimeTypeList>();
+            instance.types->count=37;
+            raw.storage->bindings.push_back({0,{},{},{},instance.types});
+            enabled_type_list_allocations.push_back(instance);enabled_allocations.push_back(instance);
+            igb_bind_object_field_instance(member_construct,instance);reflected_allocations.push_back(c);
+            out->allocation_result=raw.storage;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto field_list_memory=memory_construct->factory;
+    bool pending_type_backing{};
+    memory_construct->factory=[&,field_list_memory](const IgbMemoryFieldConstructCall& c){
+        const bool type_pool=c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool && c.object.types;
+        // The original allocator receives pool/size/alignment, not an object.
+        // Its prepared typed mapping follows the preceding actual owner query.
+        if(!type_pool && !(c.kind==IgbMemoryFieldConstructServiceKind::allocate && pending_type_backing))return field_list_memory(c);
+        memory_calls.push_back(c);auto operation=std::make_shared<IgbMemoryFieldConstructOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool){
+                check(c.handle==0 && enabled_identity(c.object),"Enabled child-list backing lost its fresh typed owner.");
+                check(!pending_type_backing,"Enabled type backing was requested before its earlier allocation completed.");
+                pending_type_backing=true;++memory_pool_queries;out->pool_result=f.pool;
+            }else{
+                check(c.pool==f.pool && c.bytes==64 && c.alignment==4,
+                    "Enabled child-list memory constructor changed the original aligned backing request.");
+                auto raw=allocation(0xbc0000+static_cast<std::uint32_t>(enabled_type_backings.size())*0x100,c.bytes);
+                raw.storage->bytes->initialized.assign(c.bytes,0);
+                out->backing_result={raw.storage->bytes,igb_bootstrap_address(raw),0,
+                    std::make_shared<IgbRuntimeTypeList::Storage>(c.bytes/4),{}};
+                enabled_type_backings.push_back(out->backing_result);pending_type_backing=false;++memory_allocations;++memory_allocation_polls;
+            }
+            done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto earlier_type_backing_queries=type_pointers->factory;
+    type_pointers->factory=[&,earlier_type_backing_queries](const IgbPointerListCall& c){
+        if(c.kind!=IgbPointerListServiceKind::allocation_size)return earlier_type_backing_queries(c);
+        for(const auto& backing:enabled_type_backings)if(c.backing.address==backing.address){
+            auto operation=std::make_shared<IgbPointerListOperation>();operation->resume=[&,c,backing,out=operation.get()]{
+                check(c.pool==f.pool && c.backing.bytes==backing.bytes && c.backing.types==backing.types,
+                    "Enabled child-list capacity query changed its physical backing identity.");
+                out->size_result=static_cast<std::uint32_t>(backing.bytes->bytes.size());return MessengerCallResult{true,0,{}};
+            };return operation;
+        }
+        return earlier_type_backing_queries(c);
+    };
+    const auto after_type_lists=call.resume(bootstrap);
+    std::cout<<"Cold native reflected child-list continuation: "<<after_type_lists.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_type_lists.completed && !call.faulted(),"Reflected child lists incorrectly completed full native bootstrap.");
+    check(after_type_lists.diagnostic=="Registration requires original function 0x80023C40." &&
+        f.core->types->count==19 && descriptors.size()==73 && default_allocations==82 && enabled_allocations.size()==54 &&
+        (**prototypes->registry)->count==9 && buffer_copy_allocations==4 &&
+        data_type->class_flags==7 && nonref_type->class_flags==7 && thread_list_metadata->class_flags==7 &&
+        f.core->types->backing->at(16)==data_type && f.core->types->backing->at(17)==nonref_type &&
+        f.core->types->backing->at(18)==thread_list_metadata && !**meta_enum->metadata,
+        "Completed DataList/object/thread-list registration did not reach the original deferred thread class.");
+    check(nonref_type->parent==data_type && thread_list_metadata->parent==nonref_type &&
+        nonref_type->fields->count==5 && thread_list_metadata->fields->count==5 &&
+        resumed_list_probes==std::vector<IgbDataListKind>{IgbDataListKind::nonref_object,IgbDataListKind::thread_list} &&
+        enabled_type_list_allocations.size()==2 && enabled_type_backings.size()==2 && !pending_type_backing,
+        "Completed list classes lost their original inheritance, probe order or reflected child-list allocations.");
+    const std::array parent_types{data_type,nonref_type},child_types{nonref_type,thread_list_metadata};
+    for(std::size_t i=0;i<2;++i){const auto& instance=enabled_type_list_allocations[i];const auto& backing=enabled_type_backings[i];
+        const auto& list=instance.types;const IgbBootstrapPointer physical{instance.storage,instance.offset};
+        check(parent_types[i]->children && *parent_types[i]->children==list && list->count==1 &&
+            list->backing==backing.types && list->backing_bytes==backing.bytes && list->backing_address==backing.address &&
+            list->backing->at(0)==child_types[i] && list->backing->size()==16 &&
+            igb_bootstrap_read_word(physical,0)==0x80475c54 && igb_bootstrap_read_word(physical,8)==backing.address &&
+            igb_bootstrap_read_word(physical,12)==1 &&
+            std::count_if(metadata_init->completed_allocations.begin(),metadata_init->completed_allocations.end(),
+                [&](const auto& kept){return kept.storage==instance.storage && kept.types==list;})==1,
+            "Enabled child list skipped native header/defaults, backing publication, parent append or retained identity.");
+        for(std::size_t at=4;at<64;++at)check(backing.bytes->initialized[at] && backing.bytes->bytes[at]==0,
+            "Enabled child-list memory construction did not zero its unused physical pointer slots.");
+        for(std::size_t at=1;at<16;++at)check(!list->backing->at(at),"Enabled child-list pointer mapping lost zero initialization.");
+    }
+    const auto specialized_data=descriptors[72];const auto& specialized_storage=descriptor_allocations[72];
+    check(specialized_data!=pending_data_descriptor && *data_defaults->nonref_data==specialized_data &&
+        specialized_data->global_slot_address==0x80561734 && specialized_data->offset==16 && specialized_data->name &&
+        *specialized_data->name=="_data" && specialized_data->element_field && specialized_data->element_field->lock()==prototype_field &&
+        specialized_data->word_38==0 && specialized_data->flag_42==0 && specialized_data->declaring_type &&
+        specialized_data->declaring_type->lock()==nonref_type && nonref_type->fields->backing->at(4)==specialized_data &&
+        thread_list_metadata->fields->backing->at(4)==specialized_data && data_type->fields->backing->at(4)==pending_data_descriptor &&
+        pending_data_descriptor->element_field->lock()==unsigned_byte_prototype &&
+        igb_bootstrap_read_word(specialized_storage,0x1c)==0x80561734 &&
+        igb_bootstrap_read_word(specialized_storage,0x3c)==igb_bootstrap_address(prototype_storage) &&
+        igb_bootstrap_read_word(specialized_storage,0x38)==0 && igb_bootstrap_read_byte(specialized_storage,0x42)==0 &&
+        specialized_data->default_bytes && pending_data_descriptor->default_bytes &&
+        specialized_data->default_bytes->buffer!=pending_data_descriptor->default_bytes->buffer,
+        "Object-list specialization skipped its actual reflected memory clone or modified the DataList source descriptor.");
+    const auto finished_names=string_allocations,finished_defaults=default_allocations,finished_copies=buffer_copy_allocations;
+    const auto finished_reflections=reflected_allocations.size(),finished_memory_calls=memory_calls.size();
+    const auto finished_buffer_calls=buffer_calls.size(),finished_clones=reached_reflected_clones.size();
+    const auto finished_type_calls=enabled_type_list_calls.size(),finished_callback_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_type_lists.diagnostic && !call.completed() && !call.faulted() &&
+        string_allocations==finished_names && default_allocations==finished_defaults && buffer_copy_allocations==finished_copies &&
+        reflected_allocations.size()==finished_reflections && memory_calls.size()==finished_memory_calls &&
+        buffer_calls.size()==finished_buffer_calls && reached_reflected_clones.size()==finished_clones &&
+        enabled_type_list_calls.size()==finished_type_calls && freed_callback_lists.size()==finished_callback_frees &&
+        unsigned_byte_probe_locals.size()==1 && resumed_list_probes.size()==2 && enabled_allocations.size()==54 &&
+        f.core->types->count==19 && (**prototypes->registry)->count==9 && descriptors.size()==73 &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending Thread registration replayed completed native classes, clones, child-list allocation or bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

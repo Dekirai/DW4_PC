@@ -67,7 +67,7 @@ public:
     IgbObjectInstance result_instance()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Reuse the existing metadata58 providers and verified scalar/string BLR hooks.
+// Reuse metadata58 providers and verified scalar/string/memory-reference BLRs.
 IgbReflectedCloneFactory make_native_igb_reflected_clone_virtual_factory(
     std::shared_ptr<IgbObjectInitServices>,IgbReflectedCloneFactory remaining={});
 IgbReflectedCloneFactory make_native_igb_reflected_member_copy_factory(

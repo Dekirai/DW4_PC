@@ -30,6 +30,16 @@ does not supply the list's `_data` backing; that member follows the actual
 positive memory-reference constructor in
 [IGB_MEMORY_FIELD_CONSTRUCT.md](IGB_MEMORY_FIELD_CONSTRUCT.md).
 
+The metadata child-list table `80475C54` uses plain getter `80094030` and
+canonical cell `805619D4`, with the same four verified return-only methods.
+Its enabled factory now enters the shared reflected caller and requires a
+type-list result. Internal type lists can also use `80475CB0`, reading the
+same `805619CC` cell as the field-list representation through an explicit
+alias. Both representations retain their own typed physical owners.
+No raw list constructor is substituted when reflection is enabled. Scalar
+count initialization and memory-member backing construction remain part of
+the actual reflected passes; an allocator supplies storage and identity only.
+
 Concrete scalar defaults, reference clears and string defaults update the
 physical storage and the corresponding canonical metadata members. Numeric
 pointer identity remains separate from a bound host owner. Null stores clear

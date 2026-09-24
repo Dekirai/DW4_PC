@@ -182,10 +182,11 @@ reflected prototype finish in this same cold invocation. The eighth memory field
 and inherited shallow-copy replacement now lead through enum factory `80031378`.
 Actual enum/raw-reference registration, probes, defaults and prototypes finish,
 then the memory reset descriptor, memory schema and memory prototype complete.
-The same DataList caller now reaches unsigned-byte registration `80023234`.
-Recover that class and its element prototype, then the enabled inherited-field
-clone. Complete the list chain and its
-deferred `igThread` registration before semaphore registration `80026098` and
+Unsigned-byte registration, its exact probe and reflected prototype now complete.
+The same retained getter resumes the DataList schema. Native reflected child-list
+initialization and the memory-field clone complete the object-list and thread-list
+registrations, reaching deferred `igThread` wrapper `80023C40`.
+Recover that class and its actual `igNamedObject` parent before semaphore registration `80026098` and
 ThreadManager startup `80023A30`. Enum metadata remains null while these
 prerequisites are pending. Further member/reference branches
 remain explicit, together with pool/platform, allocator, callback deallocation
