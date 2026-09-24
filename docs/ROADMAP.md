@@ -189,9 +189,13 @@ registrations. Deferred `igThread` wrapper `80023C40` now executes its actual
 `igNamedObject` parent and `_name` defaults. Unsigned-integer registration
 `80022CD8`, its probe and reflected prototype now complete, allowing Thread's
 ten-field defaults/schema and semaphore registration `80026098` to finish.
-Recover the reached ThreadManager startup `80023A30 -> 800755F8`, its concrete
-metadata redirects and actual runtime manager/main-thread objects. Metadata
-registration alone does not establish those objects or platform behavior.
+ThreadManager startup `80023A30 -> 800755F8`, its manager factory and concrete
+manager metadata redirect now execute in the retained cold test. Concrete
+registration completes as the twenty-fourth type before the actual manager
+allocator remains pending. Add its runtime owner and inherited list/semaphore
+construction, then the concrete main thread and reached platform operations.
+Metadata registration alone does not establish those objects or platform behavior.
+See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md).
 See [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and
 [IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md). Enum metadata remains null while these
 prerequisites are pending. Further member/reference branches

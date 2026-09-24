@@ -1,5 +1,7 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
+#include "dw4/igb_thread_startup.hpp"
+#include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
 #include "dw4/igb_data_list_defaults.hpp"
@@ -1198,6 +1200,7 @@ void actual_cold_bootstrap_prefix(){
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
     std::shared_ptr<IgbNamedTypeDefaultsServices> named_defaults;
+    std::shared_ptr<IgbPlatformThreadRegistrationServices> platform_thread;
     bool bind_new_instance_addresses{};
     std::vector<IgbPointerListBacking> enabled_backings;
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
@@ -1228,6 +1231,7 @@ void actual_cold_bootstrap_prefix(){
                 type_pointers->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
                 if(named_defaults)named_defaults->physical_metadata.push_back(raw);
+                if(platform_thread)platform_thread->physical_metadata.push_back(raw);
             }else if(c.metadata==lazy_metadata[0]){
                 check(c.bytes==16,"Lazy enabled field list changed its allocation size.");
                 instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
@@ -2400,6 +2404,87 @@ void actual_cold_bootstrap_prefix(){
         !**meta_enum->metadata && (*f.core->bootstrap_callbacks)->count==1 &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending ThreadManager startup replayed completed classes, prototypes, schemas or bootstrap snapshots.");
+
+    // Continue the retained activation callback through the original pool,
+    // factory, redirect and concrete manager registrar. The pool registry is
+    // explicit test preparation; no completed manager/thread object is seeded.
+    auto startup=std::make_shared<IgbThreadStartupServices>();
+    startup->manager_metadata=std::shared_ptr<IgbRegistrationMetaSlot>(thread,&thread->metadata);
+    startup->thread_metadata=named_registration->thread_metadata;
+    startup->callbacks=f.services->callbacks;startup->reflected=prototypes->reflected;startup->pools=f.services->pools;
+    startup->factory=make_native_igb_thread_startup_service_factory(startup);
+    additional_callbacks=make_native_igb_thread_startup_function_factory(startup,additional_callbacks);
+    const auto unknown_handle=call.resume(bootstrap);
+    check(!unknown_handle.completed && unknown_handle.diagnostic=="Thread startup requires live pool handle805621F0." &&
+        !startup->manager && !startup->pool_handle && f.core->types->count==23,
+        "Thread activation invented a pool handle or advanced past its first original load.");
+    publish_original_igb_thread_pool_handle(*startup);
+    const auto unknown_pool=call.resume(bootstrap);
+    check(!unknown_pool.completed && startup->pool_handle==4 && f.services->types->metadata_pool_handle==5 &&
+        unknown_pool.diagnostic=="Pool-by-handle access requires its captured physical manager slot." && !startup->manager,
+        "Thread startup confused handle4 with the separately initialized metadata handle5.");
+    f.manager->pools[4]=f.pool;
+    const auto allocation_factory=prototypes->reflected->factory;
+    std::vector<IgbFileFactoryCall> startup_redirects;
+    IgbFileFactoryFactory concrete_redirect;
+    prototypes->reflected->factory=[&,allocation_factory](const IgbFileFactoryCall& c){
+        if(c.kind!=IgbFileFactoryServiceKind::redirect_type)return allocation_factory(c);
+        startup_redirects.push_back(c);return concrete_redirect?concrete_redirect(c):std::shared_ptr<IgbFileFactoryOperation>{};
+    };
+    const auto manager_redirect=call.resume(bootstrap);
+    check(!manager_redirect.completed && !call.faulted() && startup_redirects.size()==1 &&
+        startup_redirects.front().metadata==*thread->metadata && startup_redirects.front().redirect==0x80023a10 &&
+        manager_redirect.diagnostic=="Reflected factory requires its captured metadata+3C redirect callback." &&
+        !startup->manager && enabled_allocations.size()==73,
+        "Actual manager factory skipped registration/abstract redirect or fabricated a returned runtime manager.");
+
+    platform_thread=std::make_shared<IgbPlatformThreadRegistrationServices>();
+    platform_thread->state=std::make_shared<IgbPlatformThreadRegistrationState>();
+    platform_thread->state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    platform_thread->parent=thread;platform_thread->callbacks=f.services->callbacks;platform_thread->types=f.services->types;
+    std::vector<IgbBootstrapPointer> platform_manager_probes;
+    platform_thread->local_storage=[&]{
+        auto raw=allocation(0xbf0000+static_cast<std::uint32_t>(platform_manager_probes.size())*0x100,16);
+        platform_manager_probes.push_back(raw);return raw;
+    };
+    concrete_redirect=make_native_igb_platform_thread_redirect_factory(platform_thread);
+    additional_callbacks=make_native_igb_platform_thread_registration_function_factory(platform_thread,additional_callbacks);
+    f.remaining=make_native_igb_platform_thread_registration_type_factory(platform_thread,f.remaining);
+    const auto after_platform_manager=call.resume(bootstrap);
+    std::cout<<"Cold native ThreadManager activation: "<<after_platform_manager.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<'\n';
+    check(!after_platform_manager.completed && !call.faulted() && platform_thread->state->metadata &&
+        *platform_thread->state->metadata,"Concrete manager redirect did not enter its actual registrar.");
+    const auto concrete_manager=*platform_thread->state->metadata;
+    check(concrete_manager->name && *concrete_manager->name=="igGamecubeThreadManager" &&
+        concrete_manager->class_flags==7 && concrete_manager->flag_1a==0 && concrete_manager->native_size==16 &&
+        concrete_manager->parent==*thread->metadata && concrete_manager->fields->count==4 &&
+        concrete_manager->type_word==0x804700a8 && concrete_manager->word_40==0x80023920 &&
+        concrete_manager->factory_redirect==0 && f.core->types->count==24 && f.core->types->backing->at(23)==concrete_manager,
+        "Concrete manager registration lost its parent schema, physical probe, default getter or publication order.");
+    check(platform_manager_probes.size()==1 && igb_bootstrap_read_word(platform_manager_probes.front(),0)==0x804700a8 &&
+        igb_bootstrap_read_word(platform_manager_probes.front(),4)==1 && platform_thread->physical_metadata.size()==1 &&
+        igb_bootstrap_read_word(platform_thread->physical_metadata.front(),0x40)==0x80023920,
+        "Concrete manager probe/defaults did not perform the original physical stores.");
+    for(std::size_t i=0;i<4;++i)check(concrete_manager->fields->backing->at(i)==(*thread->metadata)->fields->backing->at(i),
+        "Concrete manager changed its inherited descriptor identity.");
+    check(after_platform_manager.diagnostic=="Reflected factory requires the captured pool allocation virtual+D8." &&
+        unbound_reflected_allocations.back().metadata==concrete_manager && unbound_reflected_allocations.back().pool==f.pool &&
+        unbound_reflected_allocations.back().bytes==16 && !startup->manager && concrete_manager->instance_count==0 &&
+        descriptors.size()==84 && default_allocations==94 && (**prototypes->registry)->count==10 &&
+        !**meta_enum->metadata && (*f.core->bootstrap_callbacks)->count==1,
+        "Thread startup fabricated runtime allocation/publication or advanced to thread creation before the manager returned.");
+    const auto platform_allocations=enabled_allocations.size(),platform_reflections=reflected_allocations.size();
+    const auto platform_names=string_allocations;const auto platform_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_platform_manager.diagnostic && !call.faulted() &&
+        platform_manager_probes.size()==1 && platform_thread->physical_metadata.size()==1 &&
+        enabled_allocations.size()==platform_allocations && reflected_allocations.size()==platform_reflections &&
+        string_allocations==platform_names && freed_callback_lists.size()==platform_frees &&
+        f.core->types->count==24 && descriptors.size()==84 && default_allocations==94 &&
+        !startup->manager && !**meta_enum->metadata &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending concrete manager allocation replayed registration or changed startup snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

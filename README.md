@@ -185,9 +185,14 @@ registration. Deferred `igThread` registration now runs its named-object parent,
 including the original probe and `_name` schema. Unsigned-integer registration
 `80022CD8`, its actual probe and reflected prototype now resume `_stackSize`
 construction. The ten-field Thread batch finishes its setters and schema, and
-both Thread and Semaphore metadata complete. The cold composition has
-twenty-three published types and ten prototypes and requires original
-ThreadManager startup `80023A30`. Physical schema stores update descriptor
+both Thread and Semaphore metadata complete. ThreadManager activation
+`80023A30 -> 800755F8` now enters the original pool lookup, manager factory
+and concrete metadata redirect. Actual `igGamecubeThreadManager` registration,
+probe and defaults bring the cold composition to twenty-four published types
+and ten prototypes. The reached manager allocation still requires its runtime
+object implementation; no manager or main thread is fabricated.
+See [IGB_THREAD_STARTUP.md](docs/IGB_THREAD_STARTUP.md).
+Physical schema stores update descriptor
 `+1C/+08/+18` in original order as well as the canonical field members.
 Enum metadata remains null while the prerequisite chain is incomplete.
 This is still incomplete startup. Further reference operations, method fields,

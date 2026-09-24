@@ -288,12 +288,15 @@ backing supplied to native memory construction and zero fill. The inherited
 memory-field clone finishes object-list specialization. DataList, object-list
 and thread-list metadata complete. Deferred `igThread` registration then runs
 its actual named-object parent, probe and `_name` schema. The cold composition
-has 84 descriptors, 94 default buffers, twenty-three published types, ten
-prototypes and 73 enabled allocations; four default buffers were copied by the
+has 84 descriptors, 94 default buffers, twenty-four published types, ten
+prototypes and 76 enabled allocations; four default buffers were copied by the
 reflected clone path. Unsigned-integer registration `80022CD8`, probe and
 reflected prototype complete through the original canonical cells. Thread's
 ten-field batch, enum/stack defaults and schema finish, followed by Semaphore
-registration. It now requires **ThreadManager startup `80023A30`**.
+registration. Actual ThreadManager startup now executes its manager factory,
+concrete metadata redirect, registration, probe and defaults. It reaches the
+**16-byte concrete manager allocation**, which still needs a native runtime
+object binding and the actual recursive member initialization.
 The physical schema stores preserve `+1C/+08/+18`
 publication order and the completed prefix when address resolution is pending.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
@@ -304,14 +307,17 @@ See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md) and
 [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and
 [IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
-Recover `80023A30 -> 800755F8` with its two live pool-handle loads, reflected
-manager/thread construction, singleton publication and original release order.
-Metadata redirects select concrete platform classes; they are not allocation
-callbacks. Add typed runtime object representations before claiming their
+The recovered `80023A30 -> 800755F8` caller preserves its two live pool-handle
+loads, actual factory calls, singleton publication and original release order.
+The cold composition has entered its first factory; focused endpoint tests
+cover the subsequent caller behavior separately. Metadata redirects select
+concrete platform classes; they are not allocation callbacks.
+Add typed runtime object representations before claiming their
 initializers or virtuals complete. The original thread startup captures the
 current main-thread record; a synthetic ready manager or empty callback cannot
 replace it. Thread and Semaphore metadata have flags `7`; enum metadata remains
-null until its prerequisites complete. Preserve
+null until its prerequisites complete. See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md).
+Preserve
 the deferred callback order and the now-reached original transition from disabled
 to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),

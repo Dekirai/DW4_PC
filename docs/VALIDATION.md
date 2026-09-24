@@ -1,5 +1,70 @@
 # Local validation
 
+## Native ThreadManager activation and concrete manager registration
+
+Validated locally on 2026-09-24. The retained cold bootstrap now executes
+`80023A30 -> 800755F8`, original handle-four pool selection, manager factory
+`8002380C`, and reflected metadata redirect `80023A10 -> 8003AE48`.
+`igGamecubeThreadManager` registration, parent inheritance, physical layout
+probe and defaults complete through their native implementations.
+
+The composition contains **24 published types, 84 descriptors, 94 default
+buffers, ten prototypes and 76 enabled allocations**. Four default-buffer
+copies are unchanged. The concrete manager inherits four existing descriptors,
+publishes vtable `804700A8`, and writes original getter `80023920` at canonical
+and physical metadata `+40`. No extra local descriptors or prototype are added.
+
+The actual next boundary is the **16-byte concrete manager allocation** through
+the captured pool's `+D8`. The manager singleton has not been published, the
+main-thread factory has not been reached, and `igMetaEnum` remains null. The
+pool registry and raw allocators are explicit fixture preparation. No ready
+manager, thread, semaphore or list is supplied to bypass runtime construction.
+Repeated resumes preserve completed effects and core snapshots `+04 = 7`,
+`+08 = 1`.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 199/199 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 2,718 checks, including real startup/factory/redirect, concrete registration, physical stores and stable allocator boundary |
+| Startup caller and factories | 110 checks; fresh handle/global/vtable reads, suspended calls, null object/vtable faults, raw publication, full-word release, real registration/reflection orchestration |
+| Concrete manager metadata | 108 checks; prerequisite ordering, canonical aliases, captured core, unknown local bytes, physical defaults and retained redirect |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python verifier | Six tests passed |
+
+The ignored original caller corpus was independently derived and sealed before
+native comparisons while implementation proceeded in parallel: **73 cases,
+4,257 executed DOL instructions and 93 instruction addresses**. Its 15 artifact
+hashes and all 73 reruns verify. It executes the original startup and both
+factory/wrapper callers; pool selection, `66188`, reflected construction,
+virtuals and destruction have explicitly prepared endpoints. The corpus does
+not establish actual runtime-object construction. Its manifest SHA256 is
+`1a07a9a54b4465e4a3948d8fbb75b296e9c5ebef78d16e8294f3927b84d424a9`.
+
+The native comparison scope was fixed before execution: **35/35 caller cases
+match**, with 27 completed calls, five prepared endpoint faults, two null reads
+and one null write; zero pending results or unexpected faults. Each completed
+original registration/reflection pair is projected to its caller-visible
+factory request/result. Native factory endpoints return explicitly prepared
+physical owners and do not fabricate inner registration/reflection traces.
+The comparison checks call ordering, handle/singleton state, complete fixture
+bytes and destruction records. All 20 standalone factory observations and 18
+other observations remain original-only; their exclusions are declared in the
+scope file. No expected observations or native results were corrected after
+comparison. This is caller equivalence, not complete factory or thread behavior.
+
+The native manifest SHA256 is
+`eace564139903f2ea947c36164c9225cb0a6f0a23d98d1b5add14659cb2a40d2`;
+the final Release core SHA256 is
+`ce31d9d64f46e33d8621bea8f51f4713e50d1d044cd56664cd35a2bbeeecfcfd`.
+Local logs and evidence use the ignored `work/native-thread-startup-` prefix:
+`final-build.log`, `cold.log`, `focused.log`, `prefix.log`, `player.log`,
+`verifier.log`, `original-manifest.json`, `comparison-scope.json`,
+`native-manifest.json` and `native-verify.json`.
+No application package, interactive preview or GitHub Actions run was used.
+See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md) for the recovered behavior and
+remaining runtime-owner, recursive member and platform work.
+
 ## Unsigned-integer fields complete Thread and Semaphore metadata
 
 Validated locally on 2026-09-24. The same retained cold invocation now executes

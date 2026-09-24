@@ -192,9 +192,14 @@ finish before the deferred `igThread` wrapper `80023C40`. That wrapper now runs
 its actual named-object parent and schema. Unsigned-integer registration
 `80022CD8`, probe and reflected prototype share the legacy factory/scalar cells
 and resume Thread's ten-field batch. Its defaults and schema complete before
-Semaphore registration; the chain now reaches ThreadManager startup `80023A30`
-with twenty-three types and ten prototypes. Runtime manager/thread object
-construction remains required. Physical descriptor
+Semaphore registration. Native ThreadManager startup `80023A30 -> 800755F8`
+then enters handle-four pool selection and the actual manager factory.
+Its redirect runs concrete `igGamecubeThreadManager` registration, probe and
+defaults, producing twenty-four types and ten prototypes. The caller retains
+physical storage/offset identities and composes the existing reflected factory;
+the reached 16-byte manager allocation still requires a distinct runtime owner.
+Main-thread creation, manager list/semaphore virtuals and teardown remain
+required. See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md). Physical descriptor
 configuration now publishes `+1C/+08/+18` before each canonical update; missing
 declaring-type addresses suspend at the reached store.
 The separate `igMetaEnum` metadata object remains unconstructed.
