@@ -16,13 +16,15 @@ void synchronize_header(const IgbObjectInstance& object,std::uint32_t relative,s
         for(unsigned byte=0;byte<4;++byte)if(!bytes->initialized[static_cast<std::size_t>(at)+byte])return {};
         return igb_buffer_word(bytes,static_cast<std::size_t>(at));
     };
-    if(const auto word=synchronize(0);word && object.field)object.field->vtable_word=*word;
+    if(const auto word=synchronize(0);word){if(object.field)object.field->vtable_word=*word;
+        if(object.runtime_object)object.runtime_object->vtable_word=*word;}
     if(const auto word=synchronize(4)) {
         if(object.file)object.file->reference_word=*word;
         if(object.field)object.field->reference_word=*word;
         if(object.metadata)object.metadata->reference_word=*word;
         if(object.fields)object.fields->reference_word=*word;
         if(object.types)object.types->reference_word=*word;
+        if(object.runtime_object)object.runtime_object->reference_word=*word;
     }
 }
 void write_byte(const IgbObjectInstance& object,std::uint32_t relative,std::uint8_t value) {
@@ -51,13 +53,13 @@ std::shared_ptr<IgbDecodeRuntimeField> physical(const std::shared_ptr<IgbDecodeF
 }
 void igb_object_validate_instance(const IgbObjectInstance& object) {
     const unsigned count=unsigned(bool(object.file))+unsigned(bool(object.field))+unsigned(bool(object.metadata))+
-        unsigned(bool(object.fields))+unsigned(bool(object.types));
+        unsigned(bool(object.fields))+unsigned(bool(object.types))+unsigned(bool(object.runtime_object));
     if(!object.storage || count!=1)fail("Object access requires represented storage and exactly one typed instance.");
     bool found{};
     for(const auto& b:object.storage->bindings)if(b.offset==object.offset){
-        const bool present=b.file || b.field || b.metadata || b.fields || b.types;
+        const bool present=b.file || b.field || b.metadata || b.fields || b.types || b.runtime_object;
         if(!present)continue;
-        if(b.file!=object.file || b.field!=object.field || b.metadata!=object.metadata || b.fields!=object.fields || b.types!=object.types)
+        if(b.file!=object.file || b.field!=object.field || b.metadata!=object.metadata || b.fields!=object.fields || b.types!=object.types || b.runtime_object!=object.runtime_object)
             fail("Object allocation changed its canonical typed binding.");
         found=true;
     }
@@ -68,6 +70,9 @@ void igb_object_validate_instance(const IgbObjectInstance& object) {
             fail("Object owner changed its canonical physical allocation binding.");
     }};
     validate_physical(object.field);validate_physical(object.fields);validate_physical(object.types);
+    if(object.runtime_object && (object.storage->faulted() || !object.runtime_object->physical_storage || object.runtime_object->construction_fault_))
+        fail("Runtime object access requires its unfaulted physical identity.");
+    validate_physical(object.runtime_object);
 }
 std::uint32_t igb_object_reference_word(const IgbObjectInstance& object) {
     igb_object_validate_instance(object);
@@ -114,6 +119,7 @@ IgbObjectInitInvocation::~IgbObjectInitInvocation() {
         if(impl_->object.metadata){impl_->object.metadata->construction_fault_=true;impl_->object.storage->unreleased_.push_back(impl_->object.metadata);}
         if(impl_->object.fields){impl_->object.fields->construction_fault_=true;impl_->object.storage->unreleased_.push_back(impl_->object.fields);}
         if(impl_->object.types){impl_->object.types->construction_fault_=true;impl_->object.storage->unreleased_.push_back(impl_->object.types);}
+        if(impl_->object.runtime_object){impl_->object.runtime_object->construction_fault_=true;impl_->object.storage->unreleased_.push_back(impl_->object.runtime_object);}
     }
 }
 bool IgbObjectInitInvocation::completed() const noexcept {return impl_->phase==Impl::Phase::done;}
@@ -123,19 +129,21 @@ IgbObjectInstance IgbObjectInitInvocation::result_instance() const {
 }
 std::shared_ptr<LoaderRequestFile> IgbObjectInitInvocation::result() const {
     const auto object=result_instance();
-    if(object.field || object.metadata || object.fields || object.types)fail("A non-file instance cannot be returned through the file adapter.");return object.file;
+    if(object.field || object.metadata || object.fields || object.types || object.runtime_object)fail("A non-file instance cannot be returned through the file adapter.");return object.file;
 }
 MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectInitServices> services) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbObjectInitServiceKind;
     const auto invalidate=[&] {s.fault=true;if(s.owns) {s.object.storage->fault_=true;
         if(s.object.field)s.object.field->construction_fault_=true;if(s.object.metadata)s.object.metadata->construction_fault_=true;
-        if(s.object.fields)s.object.fields->construction_fault_=true;if(s.object.types)s.object.types->construction_fault_=true;}};
+        if(s.object.fields)s.object.fields->construction_fault_=true;if(s.object.types)s.object.types->construction_fault_=true;
+        if(s.object.runtime_object)s.object.runtime_object->construction_fault_=true;}};
     if(s.running || s.fault) {invalidate();fail("Object initialization requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     struct Running {bool& v;Running(bool& flag):v(flag){v=true;}~Running(){v=false;}} running(s.running);
     const auto check=[&] {if(s.fault || (s.owns && (s.object.storage->fault_ ||
         (s.object.field && s.object.field->construction_fault_) || (s.object.metadata && s.object.metadata->construction_fault_) ||
-        (s.object.fields && s.object.fields->construction_fault_) || (s.object.types && s.object.types->construction_fault_))))
+        (s.object.fields && s.object.fields->construction_fault_) || (s.object.types && s.object.types->construction_fault_) ||
+        (s.object.runtime_object && s.object.runtime_object->construction_fault_))))
             fail("Object initialization continuation was invalidated.");
         if(s.owns){
             igb_object_validate_instance(s.object);
@@ -155,6 +163,8 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
         clear();
         const auto word=igb_buffer_word(s.object.storage->bytes,s.object.offset);
         if(s.object.field)s.object.field->vtable_word=word;
+        if(s.object.runtime_object)s.object.runtime_object->vtable_word=word;
+        if(word==0)fail("Object initialization dereferences a null physical vtable.");
         auto& request=select(K::object_virtual,after);request.virtual_slot=slot;request.vtable_word=word;request.argument=argument;
     };
     const auto field_virtual=[&](std::uint32_t slot,P after) {
@@ -167,20 +177,21 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             if(!s.object.storage)fail("Object initialization has no represented allocation.");
             if(s.object.storage->fault_ || !s.object.storage->active_.expired())fail("Object allocation is faulted or already initializing.");
             unsigned selected_kind{};std::shared_ptr<void> selected_owner;
-            s.object.file.reset();s.object.field.reset();s.object.metadata.reset();s.object.fields.reset();s.object.types.reset();
+            s.object.file.reset();s.object.field.reset();s.object.metadata.reset();s.object.fields.reset();s.object.types.reset();s.object.runtime_object.reset();
             for(const auto& binding:s.object.storage->bindings)if(binding.offset==s.object.offset) {
                 const unsigned kind=(binding.file?1u:0u)|(binding.metadata?2u:0u)|(binding.fields?4u:0u)|
-                    (binding.types?8u:0u)|(binding.field?16u:0u);
+                    (binding.types?8u:0u)|(binding.field?16u:0u)|(binding.runtime_object?32u:0u);
                 if(kind && (kind&(kind-1u)))fail("Object offset has conflicting native layout kinds.");
                 std::shared_ptr<void> owner;
                 if(binding.file)owner=binding.file;else if(binding.metadata)owner=binding.metadata;
-                else if(binding.fields)owner=binding.fields;else if(binding.types)owner=binding.types;else if(binding.field)owner=binding.field;
+                else if(binding.fields)owner=binding.fields;else if(binding.types)owner=binding.types;else if(binding.field)owner=binding.field;else if(binding.runtime_object)owner=binding.runtime_object;
                 if(kind && selected_kind && (kind!=selected_kind || owner!=selected_owner))fail("Object offset has conflicting native layout bindings.");
                 if(kind) {selected_kind=kind;selected_owner=owner;}
                 if(binding.file)s.object.file=binding.file;if(binding.field)s.object.field=binding.field;
                 if(binding.metadata)s.object.metadata=binding.metadata;if(binding.fields)s.object.fields=binding.fields;if(binding.types)s.object.types=binding.types;
+                if(binding.runtime_object)s.object.runtime_object=binding.runtime_object;
             }
-            if(!s.object.file && !s.object.field && !s.object.metadata && !s.object.fields && !s.object.types)return pending("Object initialization requires a supported typed binding at its adjusted allocation offset.");
+            if(!s.object.file && !s.object.field && !s.object.metadata && !s.object.fields && !s.object.types && !s.object.runtime_object)return pending("Object initialization requires a supported typed binding at its adjusted allocation offset.");
             if(s.object.field) {
                 const auto field=s.object.field;
                 if(field->construction_fault_ || !field->construction_active_.expired())fail("Object field is faulted or already initializing.");
@@ -198,7 +209,13 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
                 owner->physical_storage=IgbListStorageBinding{s.object.storage,s.object.offset};
             };
             bind_list(s.object.fields);bind_list(s.object.types);
-            acquire(s.object.metadata);acquire(s.object.fields);acquire(s.object.types);
+            if(const auto runtime=s.object.runtime_object){
+                if(runtime->construction_fault_ || !runtime->construction_active_.expired())fail("Runtime object is faulted or already initializing.");
+                if(runtime->physical_storage && (runtime->physical_storage->storage.lock()!=s.object.storage || runtime->physical_storage->offset!=s.object.offset))
+                    fail("Runtime object has a conflicting physical allocation binding.");
+                runtime->physical_storage=IgbRuntimeObjectStorageBinding{s.object.storage,s.object.offset};
+            }
+            acquire(s.object.metadata);acquire(s.object.fields);acquire(s.object.types);acquire(s.object.runtime_object);
             s.object.storage->active_=s.token;s.owns=true;s.phase=P::core;break;
         }
         case P::core:
@@ -303,7 +320,8 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
         case P::done:
             clear();s.object.storage->active_.reset();if(s.object.field)s.object.field->construction_active_.reset();
             if(s.object.metadata)s.object.metadata->construction_active_.reset();if(s.object.fields)s.object.fields->construction_active_.reset();
-            if(s.object.types)s.object.types->construction_active_.reset();s.owns=false;return {true,0,{}};
+            if(s.object.types)s.object.types->construction_active_.reset();
+            if(s.object.runtime_object)s.object.runtime_object->construction_active_.reset();s.owns=false;return {true,0,{}};
         }}
     }catch(...) {invalidate();throw;}
 }

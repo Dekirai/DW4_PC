@@ -9,11 +9,11 @@ struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Runn
 std::uint32_t address(const IgbObjectInstance& object){return igb_bootstrap_address({object.storage,object.offset});}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){
     return a.storage==b.storage && a.offset==b.offset && a.file==b.file && a.field==b.field &&
-        a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;
+        a.metadata==b.metadata && a.fields==b.fields && a.types==b.types && a.runtime_object==b.runtime_object;
 }
 void validate(const IgbObjectInstance& object){
     const unsigned count=unsigned(bool(object.file))+unsigned(bool(object.field))+unsigned(bool(object.metadata))+
-        unsigned(bool(object.fields))+unsigned(bool(object.types));
+        unsigned(bool(object.fields))+unsigned(bool(object.types))+unsigned(bool(object.runtime_object));
     if(!address(object)){
         if(object.storage || count)fail("Null member pointer has a nonnull native identity.");return;
     }

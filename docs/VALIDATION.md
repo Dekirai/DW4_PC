@@ -1,5 +1,79 @@
 # Local validation
 
+## Native runtime owners and completed thread-list construction
+
+The cold bootstrap now allocates distinct runtime manager and thread-list
+identities, then executes the original reflected field passes on initially
+unknown bytes. Both manager pointers are cleared before nested construction.
+The original scalar and memory-member defaults complete the thread list;
+its instance count becomes one and its physical pointer is assigned to manager
+`+08` with balanced retain/temporary release. There is no list backing
+allocation on the reached null-default branch.
+
+The retained invocation reaches **semaphore redirect `80026160`**, with
+24 published types, 84 descriptors, 94 default buffers, ten prototypes and
+78 enabled allocations. The manager still owns its construction lease and
+has instance count zero; its startup singleton remains unpublished.
+`igMetaEnum` remains null. Raw pools and allocation endpoints remain explicit
+fixture preparation; no completed runtime manager or semaphore is supplied.
+
+Focused tests cover the separate `800755C0` manager hook, including its hidden
+four-byte result destination and the fact that the caller does not read the
+returned status. Memory defaults `80062798` use live free flag `+41`, actual
+release/copy/free helpers and post-publication retain `80062638`. A failed
+recursive parent resume now also invalidates nested buffer/element work before
+later allocation, reference changes or publication, even if a callback catches
+the exception. Tests preserve changes completed before each fault.
+
+Validated locally on 2026-09-24:
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 202/202 local CTest suites passed with four build jobs |
+| Cold composition | 2,735 checks; list construction/ownership complete, retained semaphore redirect pending |
+| Runtime allocation identity | 213 checks; physical headers, conflicting/expired bindings, construction leases and faulted storage |
+| Manager/list initialization hooks | 105 checks; live getters, captured semaphore, hidden result, callback retention and fault prefixes |
+| Memory-member defaults and retain | 78 checks; free flag, full-word references, buffer ownership, suspension and nested invalidation |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python verifier | Six tests passed |
+
+Two independent original corpora were sealed before native comparison. The
+runtime-initializer corpus contains **41 cases, 448 executed DOL instructions
+and 46 instruction addresses**; all 41 reruns and 15 artifact hashes verify.
+The predeclared native scope matches **20/20 cases** on its first execution:
+17 completed calls, two null reads and one prepared endpoint fault. There are
+no pending results or unexpected faults. The scope covers ten manager callers,
+six represented metadata getters and four verified return-only hooks. The
+other 21 observations, including all eight semaphore `77434` cases, remain
+original-only. Unwritten original stack bytes are excluded from the hidden
+result projection; native scratch bytes begin unknown.
+
+The memory-defaults corpus contains **40 cases, 4,661 executed DOL instructions
+and 133 instruction addresses**; all 40 reruns and 15 artifact hashes verify.
+Its predeclared native subset matches **6/6 completed cases** on first execution:
+one null-default/free path and five standalone retain cases. Native size/free
+owner lookup plus pool calls are checked and projected to the original
+helper-visible boundary. This does not establish the internals of the original
+prepared helpers. The remaining 34 observations, including prepared helper
+mutation/failure cases, are original-only. Neither comparison changed expected
+observations or corrected native results after execution.
+
+Local manifests and logs use the ignored `work/native-thread-runtime-init-`
+and `work/native-memory-member-defaults-` prefixes. Their SHA256 seals are:
+
+| Artifact | SHA256 |
+| --- | --- |
+| Runtime-init original manifest | `622c9a3206b1c49d1a4b9ec9b00818fba4922fd8732078bb614258c43139adf3` |
+| Runtime-init native manifest | `20baa776c01ad96fcd2da7245d2150bdce148795a573790f3f8301a2272e9e0e` |
+| Memory-defaults original manifest | `2a813d919385b1742b2ebc522e9599364f9d39783db0a2fb30c6a5cea632438d` |
+| Memory-defaults native manifest | `5599dd35d34e22efcd6bc8dde4446fc0c874f70198e4b1a3763dfc664d46e698` |
+| Verified Release core | `dc35203e9bf270496a0e5b8ed32fca9acd27974097b8f1c783a7bb4f664132be` |
+
+See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) for behavior and scope.
+No playable-game or complete-startup claim follows from these checks.
+No application package, interactive preview or GitHub Actions run was used.
+
 ## Native ThreadManager activation and concrete manager registration
 
 Validated locally on 2026-09-24. The retained cold bootstrap now executes

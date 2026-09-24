@@ -189,8 +189,12 @@ both Thread and Semaphore metadata complete. ThreadManager activation
 `80023A30 -> 800755F8` now enters the original pool lookup, manager factory
 and concrete metadata redirect. Actual `igGamecubeThreadManager` registration,
 probe and defaults bring the cold composition to twenty-four published types
-and ten prototypes. The reached manager allocation still requires its runtime
-object implementation; no manager or main thread is fabricated.
+and ten prototypes. Distinct runtime owners now let the real reflected
+initializer allocate the manager and construct its nested thread list. The
+list's scalar and memory defaults complete, and balanced object assignment
+publishes it in the manager. The next reached dependency is concrete semaphore
+metadata through redirect `80026160`; the manager singleton and main thread
+remain uninitialized. See [IGB_RUNTIME_OBJECTS.md](docs/IGB_RUNTIME_OBJECTS.md).
 See [IGB_THREAD_STARTUP.md](docs/IGB_THREAD_STARTUP.md).
 Physical schema stores update descriptor
 `+1C/+08/+18` in original order as well as the canonical field members.

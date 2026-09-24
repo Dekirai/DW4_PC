@@ -79,7 +79,7 @@ struct DescriptorDefaultTail {
             // then reload the object's
             // physical table and selects +8C with a null source pointer.
             if(!captured) {
-                if(!object.field || object.file || !object.storage)fail("Descriptor default tail requires its typed descriptor allocation.");
+                if(!object.field || object.file || object.metadata || object.fields || object.types || object.runtime_object || !object.storage)fail("Descriptor default tail requires its typed descriptor allocation.");
                 call.request.kind=IgbFieldOperationKind::field_virtual;call.request.field=object.field;
                 call.request.vtable_word=igb_buffer_word(object.storage->bytes,object.offset);
                 if(!call.request.vtable_word)fail("Descriptor default tail dereferences a null physical vtable at +8C.");

@@ -66,7 +66,7 @@ IgbObjectInstance IgbReflectedFactoryInvocation::result_instance() const {
 }
 std::shared_ptr<LoaderRequestFile> IgbReflectedFactoryInvocation::result() const {
     const auto object=result_instance();
-    if(object.field || object.metadata || object.fields || object.types)fail("A reflected non-file instance cannot be returned through the file adapter.");return object.file;
+    if(object.field || object.metadata || object.fields || object.types || object.runtime_object)fail("A reflected non-file instance cannot be returned through the file adapter.");return object.file;
 }
 MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFileFactoryServices> services) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbFileFactoryServiceKind;
@@ -221,7 +221,7 @@ IgbObjectInitFactory make_native_igb_file_init_factory(std::shared_ptr<IgbFileFa
             };return operation;
         }
         if(call.virtual_slot==0x34) {
-            if(!call.object.file || call.object.field)fail("IGB file pool initialization requires a file layout binding.");
+            if(!call.object.file || call.object.field || call.object.metadata || call.object.fields || call.object.types || call.object.runtime_object)fail("IGB file pool initialization requires a file layout binding.");
             const auto selected=weak_pools.lock();if(!selected)fail("IGB post-default pools require their live canonical services.");
             auto invocation=std::make_shared<IgbFilePoolsInvocation>(call.object.file);
             auto operation=std::make_shared<IgbObjectInitOperation>();

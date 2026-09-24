@@ -289,14 +289,18 @@ memory-field clone finishes object-list specialization. DataList, object-list
 and thread-list metadata complete. Deferred `igThread` registration then runs
 its actual named-object parent, probe and `_name` schema. The cold composition
 has 84 descriptors, 94 default buffers, twenty-four published types, ten
-prototypes and 76 enabled allocations; four default buffers were copied by the
+prototypes and 78 enabled allocations; four default buffers were copied by the
 reflected clone path. Unsigned-integer registration `80022CD8`, probe and
 reflected prototype complete through the original canonical cells. Thread's
 ten-field batch, enum/stack defaults and schema finish, followed by Semaphore
 registration. Actual ThreadManager startup now executes its manager factory,
 concrete metadata redirect, registration, probe and defaults. It reaches the
-**16-byte concrete manager allocation**, which still needs a native runtime
-object binding and the actual recursive member initialization.
+16-byte concrete manager allocation and nested 20-byte runtime thread list.
+Distinct native runtime identities preserve physical bindings, construction
+leases and reference updates. Original memory defaults `80062798` and retain
+`80062638` complete the list's real empty-state initialization and assignment.
+The next boundary is **semaphore redirect `80026160 -> 8003B238`**; the manager
+remains unfinished and no startup singleton or main thread is supplied.
 The physical schema stores preserve `+1C/+08/+18`
 publication order and the completed prefix when address resolution is pending.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
@@ -312,8 +316,10 @@ loads, actual factory calls, singleton publication and original release order.
 The cold composition has entered its first factory; focused endpoint tests
 cover the subsequent caller behavior separately. Metadata redirects select
 concrete platform classes; they are not allocation callbacks.
-Add typed runtime object representations before claiming their
-initializers or virtuals complete. The original thread startup captures the
+The runtime owner and manager/list initialization hooks now exist; complete
+concrete semaphore registration and initialization before the manager can
+return. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
+The original thread startup captures the
 current main-thread record; a synthetic ready manager or empty callback cannot
 replace it. Thread and Semaphore metadata have flags `7`; enum metadata remains
 null until its prerequisites complete. See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md).

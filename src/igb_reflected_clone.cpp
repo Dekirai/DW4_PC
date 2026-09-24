@@ -14,7 +14,7 @@ std::uint32_t object_table(const IgbObjectInstance& object){
     igb_object_validate_instance(object);
     const auto table=igb_buffer_word(object.storage->bytes,object.offset);
     if(!table)fail("Reflected copy dereferences a null object vtable.");
-    if(object.field)object.field->vtable_word=table;return table;
+    if(object.field)object.field->vtable_word=table;if(object.runtime_object)object.runtime_object->vtable_word=table;return table;
 }
 std::optional<std::uint32_t> field_table(const std::shared_ptr<IgbDecodeRuntimeField>& field){
     if(field->physical_storage){
@@ -254,7 +254,7 @@ IgbFieldCloneFactory make_native_igb_reflected_field_clone_factory(
                 const auto result=state->invocation->result_instance();
                 if(address(result)){
                     igb_object_validate_instance(result);
-                    if(!result.field || result.file || result.metadata || result.fields || result.types)
+                    if(!result.field || result.file || result.metadata || result.fields || result.types || result.runtime_object)
                         fail("Reflected field clone returned a non-field instance.");
                 }
                 out->allocation_result={result.storage,result.offset};

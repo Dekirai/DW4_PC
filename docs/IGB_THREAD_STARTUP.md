@@ -55,12 +55,13 @@ physical allocation. There are no new local field descriptors.
 
 ## Remaining runtime work
 
-The manager allocator needs a distinct native runtime-object binding. Existing
-file, metadata, field and list owners must not impersonate it. Its inherited
-`_threadList` and `_sema` fields require real recursive construction. The
-manager initializer's `+2C` slot performs semaphore work and is not an empty
-callback. The runtime thread list has count/capacity/backing at `+08/+0C/+10`,
-which differs from the metadata-list layouts.
+The manager allocator now uses a distinct native runtime-object binding.
+Its inherited `_threadList` is recursively initialized and assigned through
+the real field passes. `_sema` next requires concrete metadata redirect
+`80026160 -> 8003B238`. The recovered manager initializer's `+2C` caller performs
+semaphore work and retains an explicit method endpoint. The runtime thread
+list has count/capacity/backing at `+08/+0C/+10`, which differs from the
+metadata-list layouts. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 
 Subsequent concrete thread/semaphore registration, initialization, main-thread
 record capture, list operations and teardown remain required. The original

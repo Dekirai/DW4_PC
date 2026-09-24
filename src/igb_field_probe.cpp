@@ -9,7 +9,7 @@ bool scalar(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::unsigned_int |
     kind==IgbMetaFieldKind::signed_byte || kind==IgbMetaFieldKind::enumeration || kind==IgbMetaFieldKind::unsigned_byte;}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){
     return a.storage==b.storage && a.offset==b.offset && a.file==b.file && a.field==b.field &&
-        a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;
+        a.metadata==b.metadata && a.fields==b.fields && a.types==b.types && a.runtime_object==b.runtime_object;
 }
 std::optional<IgbObjectInstance> object_binding(const std::shared_ptr<IgbFieldProbeServices>& services,
     std::uint32_t address,const IgbObjectInstance& local){

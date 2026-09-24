@@ -1,6 +1,7 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_startup.hpp"
+#include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
@@ -33,6 +34,7 @@
 #include "dw4/igb_memory_field_defaults.hpp"
 #include "dw4/igb_string_field_defaults.hpp"
 #include "dw4/igb_memory_member_copy.hpp"
+#include "dw4/igb_memory_member_defaults.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -1261,7 +1263,7 @@ void actual_cold_bootstrap_prefix(){
     const auto enabled_identity=[&](const IgbObjectInstance& object){return std::any_of(enabled_allocations.begin(),enabled_allocations.end(),
         [&](const auto& known){return known.storage==object.storage && known.offset==object.offset &&
             known.metadata==object.metadata && known.fields==object.fields && known.field==object.field &&
-            known.types==object.types && known.file==object.file;});};
+            known.types==object.types && known.file==object.file && known.runtime_object==object.runtime_object;});};
     member_construct->factory=[&](const IgbObjectFieldConstructCall& c){
         member_calls.push_back(c);
         if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool)return std::shared_ptr<IgbObjectFieldConstructOperation>{};
@@ -2485,6 +2487,104 @@ void actual_cold_bootstrap_prefix(){
         !startup->manager && !**meta_enum->metadata &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending concrete manager allocation replayed registration or changed startup snapshots.");
+
+    // Supply raw runtime allocations with distinct native identities. Their
+    // member bytes remain unknown until the real reflected field passes run.
+    auto runtime_init=std::make_shared<IgbThreadRuntimeInitServices>();
+    runtime_init->manager_registration=platform_thread;runtime_init->dependencies=thread_dependencies;
+    runtime_init->objects=member_construct;
+    const auto preceding_runtime_allocator=resumed_reflected_allocations;
+    std::vector<IgbObjectInstance> runtime_allocations;
+    resumed_reflected_allocations=[&,preceding_runtime_allocator](const IgbFileFactoryCall& c){
+        const bool manager=c.metadata==concrete_manager,list=c.metadata==thread_list_metadata;
+        if(!manager && !list)return preceding_runtime_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,manager,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==(manager?16u:20u),
+                "Runtime manager/list allocator changed the reflected size or captured pool.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            raw.storage->bytes->initialized.assign(c.bytes,0);
+            IgbObjectInstance instance;instance.storage=raw.storage;
+            instance.runtime_object=std::make_shared<IgbRuntimeObject>(manager?IgbRuntimeObjectKind::thread_manager:IgbRuntimeObjectKind::thread_list);
+            instance.runtime_object->physical_storage=IgbRuntimeObjectStorageBinding{raw.storage,0};
+            IgbObjectBinding binding;binding.runtime_object=instance.runtime_object;raw.storage->bindings.push_back(binding);
+            enabled_allocations.push_back(instance);runtime_allocations.push_back(instance);
+            igb_bind_object_field_instance(member_construct,instance);reflected_allocations.push_back(c);
+            out->allocation_result=raw.storage;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto preceding_runtime_member=member_construct->factory;
+    member_construct->factory=[&,preceding_runtime_member](const IgbObjectFieldConstructCall& c){
+        if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool || !c.object.runtime_object)return preceding_runtime_member(c);
+        member_calls.push_back(c);auto operation=std::make_shared<IgbObjectFieldConstructOperation>();
+        operation->resume=[&,c,out=operation.get()]{
+            check(c.handle==0 && enabled_identity(c.object) && c.object.runtime_object->kind==IgbRuntimeObjectKind::thread_manager,
+                "Manager member construction did not use its own physical pool tag.");
+            out->pool_result=f.pool;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto preceding_runtime_init=prototypes->reflected->initializer->factory;
+    IgbObjectInitFactory runtime_memory_defaults;
+    prototypes->reflected->initializer->factory=make_native_igb_thread_runtime_init_factory(runtime_init,
+        [&,preceding_runtime_init](const IgbObjectInitCall& c){
+            if(runtime_memory_defaults){const auto operation=runtime_memory_defaults(c);if(operation)return operation;}
+            return preceding_runtime_init(c);
+        });
+    const auto after_runtime_manager=call.resume(bootstrap);
+    std::cout<<"Cold native manager runtime initialization: "<<after_runtime_manager.diagnostic<<"; types="<<f.core->types->count<<
+        ", runtime allocations="<<runtime_allocations.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    if(!reflected_init_calls.empty()){const auto& reached=reflected_init_calls.back();
+        std::cout<<"Runtime reached init kind="<<static_cast<unsigned>(reached.kind)<<", slot="<<reached.virtual_slot<<
+            ", field="<<(reached.field && reached.field->name?*reached.field->name:std::string("none"))<<'\n';}
+    check(!after_runtime_manager.completed && !call.faulted() && runtime_allocations.size()==2 &&
+        !startup->manager && concrete_manager->instance_count==0,
+        "Runtime manager construction skipped nested list initialization or published a premature singleton.");
+    const auto manager_instance=runtime_allocations[0],thread_list_instance=runtime_allocations[1];
+    const IgbBootstrapPointer manager_storage{manager_instance.storage,manager_instance.offset};
+    const IgbBootstrapPointer thread_list_storage{thread_list_instance.storage,thread_list_instance.offset};
+    const auto data_descriptor=thread_list_metadata->fields->backing->at(4);
+    check(reflected_init_calls.back().kind==IgbObjectInitServiceKind::field_virtual &&
+        reflected_init_calls.back().virtual_slot==0x70 && reflected_init_calls.back().field==data_descriptor &&
+        data_descriptor->vtable_word==0x80476088 && data_descriptor->flag_34==0 && data_descriptor->flag_42==0 &&
+        data_descriptor->flag_41==1 && data_descriptor->default_mode==0 &&
+        igb_buffer_word(data_descriptor->default_bytes->buffer,data_descriptor->default_bytes->offset)==0,
+        "Nested thread list did not reach the actual non-owning memory default branch.");
+    check(igb_bootstrap_read_word(manager_storage,0)==0x804700a8 && igb_bootstrap_read_word(manager_storage,4)==1 &&
+        igb_bootstrap_read_word(manager_storage,8)==0 && igb_bootstrap_read_word(manager_storage,12)==0 &&
+        igb_bootstrap_read_word(thread_list_storage,0)==0x80476ce0 && igb_bootstrap_read_word(thread_list_storage,4)==1 &&
+        igb_bootstrap_read_word(thread_list_storage,8)==0 && igb_bootstrap_read_word(thread_list_storage,12)==0 &&
+        igb_bootstrap_read_word(thread_list_storage,16)==0 && thread_list_metadata->instance_count==0 &&
+        !manager_instance.runtime_object->construction_active_.expired() && !thread_list_instance.runtime_object->construction_active_.expired(),
+        "Pending list defaults skipped reflected headers, both manager clears, scalar defaults or construction leases.");
+    const auto before_runtime_buffers=buffer_calls.size(),before_runtime_memory=memory_calls.size();
+    runtime_memory_defaults=make_native_igb_memory_member_defaults_factory(memory_copies);
+    const auto after_runtime_list=call.resume(bootstrap);
+    std::cout<<"Cold native runtime thread-list completion: "<<after_runtime_list.diagnostic<<"; types="<<f.core->types->count<<
+        ", runtime allocations="<<runtime_allocations.size()<<", enabled allocations="<<enabled_allocations.size()<<
+        ", list instances="<<thread_list_metadata->instance_count.value_or(0xffffffffu)<<'\n';
+    check(!after_runtime_list.completed && !call.faulted() && startup_redirects.back().metadata==semaphore_metadata &&
+        startup_redirects.back().redirect==0x80026160 &&
+        after_runtime_list.diagnostic=="Reflected factory requires its captured metadata+3C redirect callback.",
+        "Constructed thread list did not resume actual semaphore construction through its concrete metadata redirect.");
+    check(thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0 &&
+        igb_bootstrap_read_word(manager_storage,8)==igb_bootstrap_address(thread_list_storage) &&
+        igb_bootstrap_read_word(manager_storage,12)==0 && igb_bootstrap_read_word(thread_list_storage,4)==1 &&
+        thread_list_instance.runtime_object->reference_word==1 && thread_list_instance.runtime_object->vtable_word==0x80476ce0 &&
+        thread_list_instance.runtime_object->construction_active_.expired() &&
+        !manager_instance.runtime_object->construction_active_.expired() && !startup->manager,
+        "Runtime list assignment skipped original ownership, physical publication or initializer completion.");
+    check(buffer_calls.size()==before_runtime_buffers && memory_calls.size()==before_runtime_memory &&
+        runtime_allocations.size()==2 && enabled_allocations.size()==78 &&
+        f.core->types->count==24 && descriptors.size()==84 && default_allocations==94 && (**prototypes->registry)->count==10,
+        "Actual null memory default allocated a substitute backing or changed completed registrations.");
+    const auto finished_runtime_members=member_calls.size(),finished_runtime_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_runtime_list.diagnostic && !call.faulted() &&
+        member_calls.size()==finished_runtime_members && reflected_allocations.size()==finished_runtime_reflections &&
+        thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0 &&
+        runtime_allocations.size()==2 && enabled_allocations.size()==78 && !startup->manager && !**meta_enum->metadata &&
+        (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending semaphore redirect replayed runtime construction, list ownership or earlier startup work.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

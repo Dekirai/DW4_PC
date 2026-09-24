@@ -22,6 +22,7 @@ std::shared_ptr<IgbRuntimeMetaType> igb_bootstrap_metadata(const IgbBootstrapPoi
 std::shared_ptr<IgbDecodeFieldRegistry> igb_bootstrap_fields(const IgbBootstrapPointer&);
 std::shared_ptr<IgbRuntimeTypeList> igb_bootstrap_types(const IgbBootstrapPointer&);
 std::shared_ptr<IgbDecodeRuntimeField> igb_bootstrap_field(const IgbBootstrapPointer&);
+std::shared_ptr<IgbRuntimeObject> igb_bootstrap_runtime_object(const IgbBootstrapPointer&);
 
 enum class IgbBootstrapServiceKind {
     pool_for_handle, // Actual800607F4, default handle805621E0.

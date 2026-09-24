@@ -46,6 +46,26 @@ struct IgbListStorageBinding {
     std::weak_ptr<IgbObjectStorage> storage;
     std::uint32_t offset{};
 };
+enum class IgbRuntimeObjectKind {thread_manager,thread_list,thread,semaphore};
+struct IgbRuntimeObjectStorageBinding {
+    std::weak_ptr<IgbObjectStorage> storage;
+    std::uint32_t offset{};
+};
+// Distinct runtime allocation identity. Members after the common header stay
+// in physical storage; this does not initialize manager/list/thread fields.
+struct IgbRuntimeObject {
+    explicit IgbRuntimeObject(IgbRuntimeObjectKind value):kind(value){
+        if(value!=IgbRuntimeObjectKind::thread_manager && value!=IgbRuntimeObjectKind::thread_list &&
+            value!=IgbRuntimeObjectKind::thread && value!=IgbRuntimeObjectKind::semaphore)
+            throw IgbRuntimeTypesError("Unknown native runtime object kind.");
+    }
+    const IgbRuntimeObjectKind kind;
+    std::optional<IgbRuntimeObjectStorageBinding> physical_storage;
+    std::uint32_t reference_word{1};
+    std::optional<std::uint32_t> vtable_word;
+    std::weak_ptr<void> construction_active_;
+    bool construction_fault_{};
+};
 struct IgbDecodeRuntimeField {
     std::shared_ptr<ModelSceneObject> owner;
     std::uint32_t offset{}; // +08.

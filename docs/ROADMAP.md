@@ -191,9 +191,12 @@ registrations. Deferred `igThread` wrapper `80023C40` now executes its actual
 ten-field defaults/schema and semaphore registration `80026098` to finish.
 ThreadManager startup `80023A30 -> 800755F8`, its manager factory and concrete
 manager metadata redirect now execute in the retained cold test. Concrete
-registration completes as the twenty-fourth type before the actual manager
-allocator remains pending. Add its runtime owner and inherited list/semaphore
-construction, then the concrete main thread and reached platform operations.
+registration completes as the twenty-fourth type. Distinct runtime owners now
+enter actual manager allocation and inherited thread-list construction. Native
+memory defaults complete the list and its ownership/publication in the manager.
+Recover the reached semaphore redirect `80026160 -> 8003B238`, its concrete
+registration/defaults and initializer, then the concrete main thread and
+reached platform operations. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 Metadata registration alone does not establish those objects or platform behavior.
 See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md).
 See [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and

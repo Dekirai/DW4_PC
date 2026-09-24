@@ -196,10 +196,15 @@ Semaphore registration. Native ThreadManager startup `80023A30 -> 800755F8`
 then enters handle-four pool selection and the actual manager factory.
 Its redirect runs concrete `igGamecubeThreadManager` registration, probe and
 defaults, producing twenty-four types and ten prototypes. The caller retains
-physical storage/offset identities and composes the existing reflected factory;
-the reached 16-byte manager allocation still requires a distinct runtime owner.
-Main-thread creation, manager list/semaphore virtuals and teardown remain
-required. See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md). Physical descriptor
+physical storage/offset identities and composes the existing reflected factory.
+Distinct runtime identities now participate in its construction lease, field
+passes, reference ownership and strict result adapters. Actual manager allocation
+and nested thread-list initialization complete through the existing native
+callers and the recovered memory default/retain bodies. The list is assigned
+to manager `+08`; the manager remains unfinished at concrete semaphore redirect
+`80026160`. Main-thread creation, manager list/semaphore virtuals and teardown
+remain required. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
+[IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md). Physical descriptor
 configuration now publishes `+1C/+08/+18` before each canonical update; missing
 declaring-type addresses suspend at the reached store.
 The separate `igMetaEnum` metadata object remains unconstructed.

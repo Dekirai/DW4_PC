@@ -1,4 +1,5 @@
 #include "dw4/igb_memory_member_copy.hpp"
+#include "dw4/igb_memory_member_defaults.hpp"
 #include "dw4/igb_field_defaults.hpp"
 
 #include <algorithm>
@@ -11,10 +12,10 @@ struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Runn
 using K=IgbMemoryMemberCopyServiceKind;
 std::uint32_t address(const IgbObjectInstance& object){return igb_bootstrap_address({object.storage,object.offset});}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){return a.storage==b.storage && a.offset==b.offset &&
-    a.file==b.file && a.field==b.field && a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;}
+    a.file==b.file && a.field==b.field && a.metadata==b.metadata && a.fields==b.fields && a.types==b.types && a.runtime_object==b.runtime_object;}
 void validate(const IgbObjectInstance& object){
     if(!object.storage || object.storage->faulted())fail("Memory member access requires an unfaulted allocation.");
-    if(object.field || object.file || object.metadata || object.fields || object.types)igb_object_validate_instance(object);
+    if(object.field || object.file || object.metadata || object.fields || object.types || object.runtime_object)igb_object_validate_instance(object);
     if(object.field && object.field->construction_fault_)fail("Memory member access uses a faulted field.");
 }
 std::shared_ptr<IgbFieldValuesServices> values(const std::shared_ptr<IgbMemoryMemberCopyServices>& services){
@@ -95,7 +96,7 @@ void publish(const IgbObjectInstance& target,std::uint32_t offset,const Buffer& 
         }
     }
     for(const auto& binding:target.storage->bindings){
-        IgbObjectInstance alias{target.storage,binding.offset,binding.file,binding.field,binding.metadata,binding.fields,binding.types};
+        IgbObjectInstance alias{target.storage,binding.offset,binding.file,binding.field,binding.metadata,binding.fields,binding.types,binding.runtime_object};
         if(!binding.field)igb_synchronize_field_storage(alias,static_cast<std::uint32_t>(begin),4);
         else {const auto derived=std::max(begin,std::uint64_t(binding.offset)+0x34);
             if(derived<begin+4)igb_synchronize_field_storage(alias,static_cast<std::uint32_t>(derived),static_cast<std::uint32_t>(begin+4-derived));}
@@ -106,7 +107,7 @@ void publish(const IgbObjectInstance& target,std::uint32_t offset,const Buffer& 
             f.default_bytes=buffer.bytes;f.default_bytes_address=buffer.address;
         }
     }
-    if(!target.field && !target.file && !target.metadata && !target.fields && !target.types)
+    if(!target.field && !target.file && !target.metadata && !target.fields && !target.types && !target.runtime_object)
         igb_synchronize_field_storage(target,static_cast<std::uint32_t>(begin),4);
 }
 template<class T>bool is_null(const std::weak_ptr<T>& owner){const std::weak_ptr<T> empty;return !owner.owner_before(empty) && !empty.owner_before(owner);}
@@ -176,10 +177,11 @@ IgbMemoryMemberReleaseInvocation::~IgbMemoryMemberReleaseInvocation(){auto& s=*i
     preserve(s.owner,s.destination);preserve(s.owner,s.object);if(s.owner && s.backing.bytes.buffer)s.owner->unfinished.push_back(s.backing.bytes.buffer);}}
 bool IgbMemoryMemberReleaseInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbMemoryMemberReleaseInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbMemoryMemberReleaseInvocation::resume(std::shared_ptr<IgbMemoryMemberCopyServices> services){
+MessengerCallResult IgbMemoryMemberReleaseInvocation::resume(std::shared_ptr<IgbMemoryMemberCopyServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Memory release requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Memory release was invalidated by a callback.");};
+    const auto check=[&]{if(s.fault)fail("Memory release was invalidated by a callback.");if(enclosing_check)enclosing_check();};
     try{for(;;){check();switch(s.phase){
     case P::gate:
         if(!s.field)fail("Memory release dereferences a null descriptor.");if(!s.field->flag_42)return pending("Memory release requires live ownership flag+42.");
@@ -193,7 +195,7 @@ MessengerCallResult IgbMemoryMemberReleaseInvocation::resume(std::shared_ptr<Igb
         if(!s.member->poll(services))return pending("Memory release requires its captured destination pointer binding.");
         s.backing=s.member->result;s.member.reset();if(!s.backing.address){s.phase=P::done;break;}
         s.size=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::size,s.backing.bytes,s.backing.address);s.phase=P::size;break;
-    case P::size:{const auto status=s.size->resume(services?services->buffers:nullptr);check();if(!status.completed)return status;
+    case P::size:{const auto status=s.size->resume(services?services->buffers:nullptr,check);check();if(!status.completed)return status;
         s.count=status.value>>2u;s.size.reset();s.phase=P::visit;break;}
     case P::visit:
         if(s.index>=s.count){s.phase=P::done;break;}if(s.index>=262144)fail("Memory release exceeds the represented element visit bound.");
@@ -235,20 +237,20 @@ MessengerCallResult IgbMemoryMemberCopyInvocation::resume(std::shared_ptr<IgbMem
     try{for(;;){check();switch(s.phase){
     case P::release:
         if(!s.release)s.release=std::make_unique<IgbMemoryMemberReleaseInvocation>(s.field,s.destination);
-        {const auto status=s.release->resume(services);check();if(!status.completed)return status;}s.release.reset();s.phase=P::free_gate;break;
+        {const auto status=s.release->resume(services,check);check();if(!status.completed)return status;}s.release.reset();s.phase=P::free_gate;break;
     case P::free_gate:
         if(!s.field->flag_40)return pending("Memory member copy requires its live free flag+40.");s.phase=*s.field->flag_40?P::old:P::source;break;
     case P::old:
         if(!s.member)s.member=std::make_unique<MemberRead>(s.destination,s.field->offset);
         if(!s.member->poll(services))return pending("Memory member copy requires its captured old pointer binding.");s.old=s.member->result;s.member.reset();
         if(!s.old.address){s.phase=P::source;break;}s.buffer_call=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::free,s.old.bytes,s.old.address);s.phase=P::free;break;
-    case P::free:{const auto status=s.buffer_call->resume(buffer());check();if(!status.completed)return status;s.buffer_call.reset();s.phase=P::source;break;}
+    case P::free:{const auto status=s.buffer_call->resume(buffer(),check);check();if(!status.completed)return status;s.buffer_call.reset();s.phase=P::source;break;}
     case P::source:
         if(!s.member)s.member=std::make_unique<MemberRead>(s.source,s.field->offset);
         if(!s.member->poll(services))return pending("Memory member copy requires its captured source pointer binding.");s.original=s.member->result;s.member.reset();
         if(!s.original.address){s.result={};s.phase=P::publish;break;}
         s.buffer_call=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::copy,s.original.bytes,s.original.address);s.phase=P::copy;break;
-    case P::copy:{const auto status=s.buffer_call->resume(buffer());check();if(!status.completed)return status;
+    case P::copy:{const auto status=s.buffer_call->resume(buffer(),check);check();if(!status.completed)return status;
         s.result={s.buffer_call->buffer_result(),s.buffer_call->buffer_address()};s.buffer_call.reset();s.phase=P::publish;break;}
     case P::publish:
         publish(s.destination,s.field->offset,s.result,services);remember(s.result,services);s.phase=P::element;break;
@@ -270,7 +272,7 @@ MessengerCallResult IgbMemoryMemberCopyInvocation::resume(std::shared_ptr<IgbMem
         if(!s.member->poll(services))return pending("Memory element copy requires its captured destination backing pointer.");s.loop_destination=s.member->result;s.member.reset();
         if(s.object_elements && (!s.loop_source.address || !s.loop_destination.address)){s.phase=P::done;break;}
         s.buffer_call=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::size,s.loop_source.bytes,s.loop_source.address);s.phase=P::size;break;
-    case P::size:{const auto status=s.buffer_call->resume(buffer());check();if(!status.completed)return status;s.count=status.value>>2u;s.buffer_call.reset();s.phase=P::visit;break;}
+    case P::size:{const auto status=s.buffer_call->resume(buffer(),check);check();if(!status.completed)return status;s.count=status.value>>2u;s.buffer_call.reset();s.phase=P::visit;break;}
     case P::visit:
         if(s.index>=s.count){s.phase=P::done;break;}if(s.index>=262144)fail("Memory copy exceeds the represented element visit bound.");
         if(!mapped(s.loop_source,services))return pending("Memory element copy requires its captured source buffer storage.");
@@ -286,7 +288,7 @@ MessengerCallResult IgbMemoryMemberCopyInvocation::resume(std::shared_ptr<IgbMem
     case P::after_object:
         s.returned=address(s.cloned);if(s.returned && services && services->objects)igb_bind_object_field_instance(services->objects,s.cloned);
         preserve(services,s.cloned);s.phase=P::store;break;
-    case P::inner_copy:{const auto status=s.buffer_call->resume(buffer());check();if(!status.completed)return status;
+    case P::inner_copy:{const auto status=s.buffer_call->resume(buffer(),check);check();if(!status.completed)return status;
         s.inner={s.buffer_call->buffer_result(),s.buffer_call->buffer_address()};s.returned=s.inner.address;s.buffer_call.reset();remember(s.inner,services);s.phase=P::store;break;}
     case P::store:
         if(!mapped(s.loop_destination,services))return pending("Memory element copy requires its captured destination buffer storage.");
@@ -311,6 +313,117 @@ IgbMemoryMemberCopyFactory make_native_igb_memory_member_virtual_factory(std::sh
         const auto kind=call.vtable_word==0x804762fc?IgbFieldTypeKind::object:IgbFieldTypeKind::memory_reference;
         auto op=std::make_shared<IgbMemoryMemberCopyOperation>();op->resume=[selected,kind,out=op.get()]{const auto cell=igb_field_type_metadata_slot(selected,kind);
             if(!cell || !*cell)return pending("Memory element getter requires its represented class cell.");out->metadata_result=**cell;return MessengerCallResult{true,0,{}};};return op;
+    };
+}
+struct IgbMemoryMemberRetainInvocation::Impl {
+    enum class P {gate,element,test,member,size,visit,object,increment,done};P phase=P::gate;
+    std::shared_ptr<IgbDecodeRuntimeField> field,element;IgbObjectInstance destination,object;
+    std::shared_ptr<IgbMemoryMemberCopyServices> owner;std::unique_ptr<MemberRead> member;Buffer backing;
+    std::unique_ptr<TypeTest> test;std::unique_ptr<IgbBufferCopyInvocation> size;
+    std::uint32_t count{},index{},pointer{};bool running{},fault{};
+};
+IgbMemoryMemberRetainInvocation::IgbMemoryMemberRetainInvocation(std::shared_ptr<IgbDecodeRuntimeField> field,IgbObjectInstance destination)
+    :impl_(std::make_unique<Impl>()){impl_->field=std::move(field);impl_->destination=std::move(destination);}
+IgbMemoryMemberRetainInvocation::~IgbMemoryMemberRetainInvocation(){auto& s=*impl_;if(!completed() || faulted()){
+    preserve(s.owner,s.destination);preserve(s.owner,s.object);if(s.owner && s.backing.bytes.buffer)s.owner->unfinished.push_back(s.backing.bytes.buffer);}}
+bool IgbMemoryMemberRetainInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
+bool IgbMemoryMemberRetainInvocation::faulted()const noexcept{return impl_->fault;}
+MessengerCallResult IgbMemoryMemberRetainInvocation::resume(std::shared_ptr<IgbMemoryMemberCopyServices> services,
+    const std::function<void()>& enclosing_check){
+    auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Memory retain requires an unfaulted nonrecursive invocation.");}
+    if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
+    const auto check=[&]{if(s.fault)fail("Memory retain was invalidated by a callback.");if(enclosing_check)enclosing_check();};
+    try{for(;;){check();switch(s.phase){
+    case P::gate:
+        if(!s.field)fail("Memory retain dereferences a null descriptor.");
+        if(!s.field->flag_42)return pending("Memory retain requires live ownership flag+42.");
+        s.phase=*s.field->flag_42?P::element:P::done;break;
+    case P::element:
+        if(!element(s.field,s.element))return pending("Memory retain requires its live element pointer.");
+        if(!s.element){s.phase=P::done;break;}
+        s.test=std::make_unique<TypeTest>(s.element,IgbFieldTypeKind::object);s.phase=P::test;break;
+    case P::test:{const auto status=s.test->poll(services,check);if(!status.completed)return status;
+        const auto matches=s.test->result;s.test.reset();check();s.phase=matches?P::member:P::done;break;}
+    case P::member:
+        if(!s.member)s.member=std::make_unique<MemberRead>(s.destination,s.field->offset);
+        if(!s.member->poll(services))return pending("Memory retain requires its captured member pointer binding.");
+        s.backing=s.member->result;s.member.reset();if(!s.backing.address){s.phase=P::done;break;}
+        s.size=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::size,s.backing.bytes,s.backing.address);s.phase=P::size;break;
+    case P::size:{const auto status=s.size->resume(services?services->buffers:nullptr,check);check();if(!status.completed)return status;
+        s.count=status.value>>2u;s.size.reset();check();s.phase=P::visit;break;}
+    case P::visit:
+        if(s.index>=s.count){s.phase=P::done;break;}
+        if(s.index>=262144)fail("Memory retain exceeds the represented element visit bound.");
+        if(!mapped(s.backing,services))return pending("Memory retain requires its captured physical backing.");
+        s.pointer=read(s.backing,s.index*4u,services);
+        if(!s.pointer){++s.index;break;}s.phase=P::object;break;
+    case P::object:{const auto object=object_owner(s.pointer,services);
+        if(!object)return pending("Memory retain requires its captured element object binding.");
+        s.object=*object;s.phase=P::increment;break;}
+    case P::increment:
+        igb_object_set_reference_word(s.object,igb_object_reference_word(s.object)+1u);
+        s.object={};++s.index;s.phase=P::visit;break;
+    case P::done:return {true,0,{}};
+    }}}catch(...){s.fault=true;throw;}
+}
+struct IgbMemoryMemberDefaultsInvocation::Impl {
+    enum class P {release,free_gate,old,free,source,copy,publish,retain,done};P phase=P::release;
+    std::shared_ptr<IgbDecodeRuntimeField> field;IgbObjectInstance destination;
+    std::shared_ptr<IgbMemoryMemberCopyServices> owner;
+    std::unique_ptr<IgbMemoryMemberReleaseInvocation> release;
+    std::unique_ptr<IgbMemoryMemberRetainInvocation> retain;
+    std::unique_ptr<MemberRead> member;std::unique_ptr<IgbBufferCopyInvocation> buffer_call;
+    Buffer old,original,result;bool running{},fault{};
+};
+IgbMemoryMemberDefaultsInvocation::IgbMemoryMemberDefaultsInvocation(std::shared_ptr<IgbDecodeRuntimeField> field,IgbObjectInstance destination)
+    :impl_(std::make_unique<Impl>()){impl_->field=std::move(field);impl_->destination=std::move(destination);}
+IgbMemoryMemberDefaultsInvocation::~IgbMemoryMemberDefaultsInvocation(){auto& s=*impl_;if(!completed() || faulted()){
+    preserve(s.owner,s.destination);if(s.owner)for(const auto& b:{s.old,s.original,s.result})if(b.bytes.buffer)s.owner->unfinished.push_back(b.bytes.buffer);}}
+bool IgbMemoryMemberDefaultsInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
+bool IgbMemoryMemberDefaultsInvocation::faulted()const noexcept{return impl_->fault;}
+MessengerCallResult IgbMemoryMemberDefaultsInvocation::resume(std::shared_ptr<IgbMemoryMemberCopyServices> services){
+    auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Memory defaults require an unfaulted nonrecursive invocation.");}
+    if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
+    const auto check=[&]{if(s.fault)fail("Memory defaults were invalidated by a callback.");};
+    const auto buffers=[&]{return services?services->buffers:nullptr;};
+    try{for(;;){check();switch(s.phase){
+    case P::release:
+        if(!s.release)s.release=std::make_unique<IgbMemoryMemberReleaseInvocation>(s.field,s.destination);
+        {const auto status=s.release->resume(services,check);check();if(!status.completed)return status;}
+        s.release.reset();check();s.phase=P::free_gate;break;
+    case P::free_gate:
+        if(!s.field->flag_41)return pending("Memory defaults require live free flag+41.");
+        s.phase=*s.field->flag_41?P::old:P::source;break;
+    case P::old:
+        if(!s.member)s.member=std::make_unique<MemberRead>(s.destination,s.field->offset);
+        if(!s.member->poll(services))return pending("Memory defaults require the captured old pointer binding.");
+        s.old=s.member->result;s.member.reset();
+        if(!s.old.address){s.phase=P::source;break;}
+        s.buffer_call=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::free,s.old.bytes,s.old.address);s.phase=P::free;break;
+    case P::free:{const auto status=s.buffer_call->resume(buffers(),check);check();if(!status.completed)return status;
+        s.buffer_call.reset();check();s.phase=P::source;break;}
+    case P::source:
+        if(!s.field->default_bytes)return pending("Memory defaults require represented descriptor+20 storage.");
+        s.original.address=igb_buffer_word(s.field->default_bytes->buffer,s.field->default_bytes->offset);
+        if(!s.original.address){s.result={};s.phase=P::publish;break;}
+        s.buffer_call=std::make_unique<IgbBufferCopyInvocation>(IgbBufferFunction::copy,s.original.bytes,s.original.address);s.phase=P::copy;break;
+    case P::copy:{const auto status=s.buffer_call->resume(buffers(),check);check();if(!status.completed)return status;
+        s.result={s.buffer_call->buffer_result(),s.buffer_call->buffer_address()};s.buffer_call.reset();check();s.phase=P::publish;break;}
+    case P::publish:
+        publish(s.destination,s.field->offset,s.result,services);remember(s.result,services);
+        s.retain=std::make_unique<IgbMemoryMemberRetainInvocation>(s.field,s.destination);s.phase=P::retain;break;
+    case P::retain:{const auto status=s.retain->resume(services,check);check();if(!status.completed)return status;
+        s.retain.reset();check();s.phase=P::done;break;}
+    case P::done:return {true,0,{}};
+    }}}catch(...){s.fault=true;throw;}
+}
+IgbObjectInitFactory make_native_igb_memory_member_defaults_factory(std::shared_ptr<IgbMemoryMemberCopyServices> services,IgbObjectInitFactory remaining){
+    return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbObjectInitCall& call)->std::shared_ptr<IgbObjectInitOperation>{
+        if(call.kind!=IgbObjectInitServiceKind::field_virtual || call.virtual_slot!=0x70 || !call.field || call.field->vtable_word!=0x80476088u)
+            return remaining?remaining(call):nullptr;
+        const auto selected=weak.lock();if(!selected)fail("Memory defaults services expired before selection.");
+        auto invocation=std::make_shared<IgbMemoryMemberDefaultsInvocation>(call.field,call.object);
+        auto operation=std::make_shared<IgbObjectInitOperation>();operation->resume=[selected,invocation]{return invocation->resume(selected);};return operation;
     };
 }
 } // namespace dw4

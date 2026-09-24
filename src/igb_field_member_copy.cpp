@@ -10,10 +10,10 @@ MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Running(){value=false;}};
 std::uint32_t address(const IgbObjectInstance& object){return igb_bootstrap_address({object.storage,object.offset});}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){return a.storage==b.storage && a.offset==b.offset &&
-    a.file==b.file && a.field==b.field && a.metadata==b.metadata && a.fields==b.fields && a.types==b.types;}
+    a.file==b.file && a.field==b.field && a.metadata==b.metadata && a.fields==b.fields && a.types==b.types && a.runtime_object==b.runtime_object;}
 void validate(const IgbObjectInstance& object){
     if(object.storage && object.storage->faulted())fail("Member copy uses a faulted allocation.");
-    if(object.file || object.field || object.metadata || object.fields || object.types)igb_object_validate_instance(object);
+    if(object.file || object.field || object.metadata || object.fields || object.types || object.runtime_object)igb_object_validate_instance(object);
     if(object.field && object.field->construction_fault_)fail("Member copy uses a faulted field.");
 }
 void readable(const IgbObjectInstance& object,std::uint32_t offset){
@@ -220,6 +220,10 @@ MessengerCallResult IgbFieldMemberCopyInvocation::resume(std::shared_ptr<IgbFiel
             if(s.destination.storage)for(const auto& binding:s.destination.storage->bindings)if(binding.field && at>=binding.offset && at-binding.offset<=0xffffffffu){
                 IgbObjectInstance alias{s.destination.storage,binding.offset,{},binding.field};
                 synchronize_byte(alias,static_cast<std::uint32_t>(at-binding.offset),*byte,s.written,services);
+            }
+            if(s.destination.storage)for(const auto& binding:s.destination.storage->bindings)if(binding.runtime_object){
+                IgbObjectInstance alias;alias.storage=s.destination.storage;alias.offset=binding.offset;alias.runtime_object=binding.runtime_object;
+                igb_synchronize_field_storage(alias,static_cast<std::uint32_t>(at),1);
             }
             if(!s.destination.field)igb_synchronize_field_storage(s.destination,s.destination.offset+relative,1);
         }

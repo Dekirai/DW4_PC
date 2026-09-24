@@ -88,7 +88,8 @@ std::uint32_t IgbBufferCopyInvocation::buffer_address() const {
         fail("Incomplete buffer copy has no allocation address.");
     return impl_->destination_address;
 }
-MessengerCallResult IgbBufferCopyInvocation::resume(std::shared_ptr<IgbBufferServices> services) {
+MessengerCallResult IgbBufferCopyInvocation::resume(std::shared_ptr<IgbBufferServices> services,
+    const std::function<void()>& enclosing_check) {
     auto& s = *impl_;
     using P = Impl::Phase;
     using K = IgbBufferServiceKind;
@@ -100,12 +101,16 @@ MessengerCallResult IgbBufferCopyInvocation::resume(std::shared_ptr<IgbBufferSer
     Running running(s.running);
     if (!s.owner && services) s.owner = services;
     if (!services) services = s.owner;
+    const auto check = [&] {
+        if (s.fault) fail("Buffer helper was invalidated by a callback.");
+        if (enclosing_check) enclosing_check();
+    };
     const auto clear_call = [&] {
         s.callback = {};
         s.operation.reset();
         s.factory = {};
         s.request = {};
-        if (s.fault) fail("Buffer helper operation teardown invalidated its invocation.");
+        check();
     };
     const auto select = [&](K kind, P after, std::uint32_t slot = 0) {
         clear_call();
@@ -128,6 +133,7 @@ MessengerCallResult IgbBufferCopyInvocation::resume(std::shared_ptr<IgbBufferSer
     };
     try {
         for (;;) {
+            check();
             switch (s.phase) {
             case P::entry:
                 switch (s.function) {
@@ -168,13 +174,13 @@ MessengerCallResult IgbBufferCopyInvocation::resume(std::shared_ptr<IgbBufferSer
                 if (!s.factory && services) s.factory = services->factory;
                 if (!s.factory) return pending("Buffer helper requires its selected native pool service.");
                 if (!s.operation) s.operation = s.factory(s.request);
-                if (s.fault) fail("Buffer helper factory invalidated its invocation.");
+                check();
                 if (!s.operation) return pending("Buffer helper reached an unbound native pool operation.");
                 if (!s.callback) s.callback = s.operation->resume;
                 if (!s.callback) return pending("Buffer helper requires its retained pool continuation.");
                 {
                     const auto status = s.callback();
-                    if (s.fault) fail("Buffer helper continuation invalidated its invocation.");
+                    check();
                     if (!status.completed) return status;
                     s.result = status.value;
                 }

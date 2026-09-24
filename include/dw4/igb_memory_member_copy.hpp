@@ -34,7 +34,9 @@ public:
     ~IgbMemoryMemberReleaseInvocation();
     IgbMemoryMemberReleaseInvocation(const IgbMemoryMemberReleaseInvocation&)=delete;
     IgbMemoryMemberReleaseInvocation& operator=(const IgbMemoryMemberReleaseInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbMemoryMemberCopyServices> services={});
+    // Borrow the enclosing continuation's validity check for this resume only.
+    MessengerCallResult resume(std::shared_ptr<IgbMemoryMemberCopyServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

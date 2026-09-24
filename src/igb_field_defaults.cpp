@@ -72,6 +72,10 @@ void igb_synchronize_field_storage(const IgbObjectInstance& object,std::uint32_t
         return static_cast<std::uint16_t>((std::uint16_t(bytes->bytes[i])<<8)|bytes->bytes[i+1]);};
     const auto byte=[&](std::uint32_t relative){return bytes->bytes[std::size_t(object.offset)+relative];};
     if(object.file && ready(4,4))object.file->reference_word=word(4);
+    if(object.runtime_object){
+        if(ready(0,4))object.runtime_object->vtable_word=word(0);
+        if(ready(4,4))object.runtime_object->reference_word=word(4);
+    }
     if(object.metadata){
         auto& m=*object.metadata;
         const auto retain=[&](const auto& owner){if(owner)m.overwritten_constructor_owners_.push_back(owner);};

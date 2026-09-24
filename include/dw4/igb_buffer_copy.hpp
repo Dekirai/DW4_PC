@@ -38,7 +38,9 @@ public:
     ~IgbBufferCopyInvocation();
     IgbBufferCopyInvocation(const IgbBufferCopyInvocation&) = delete;
     IgbBufferCopyInvocation& operator=(const IgbBufferCopyInvocation&) = delete;
-    MessengerCallResult resume(std::shared_ptr<IgbBufferServices> services = {});
+    // Check the enclosing invocation at callback boundaries without retaining it.
+    MessengerCallResult resume(std::shared_ptr<IgbBufferServices> services = {},
+        const std::function<void()>& enclosing_check = {});
     bool completed() const noexcept;
     bool faulted() const noexcept;
     IgbRuntimeFieldDefaultSource buffer_result() const;

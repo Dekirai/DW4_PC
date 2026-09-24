@@ -12,6 +12,7 @@ struct IgbObjectBinding {
     std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbRuntimeTypeList> types;
     std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::shared_ptr<IgbRuntimeObject> runtime_object;
 };
 // An explicit native allocation/layout binding. original_address participates
 // only in original 32-bit pointer arithmetic; it is never a host pointer.
@@ -35,13 +36,13 @@ struct IgbObjectInstance {
     std::shared_ptr<IgbRuntimeMetaType> metadata;
     std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbRuntimeTypeList> types;
+    std::shared_ptr<IgbRuntimeObject> runtime_object;
 };
 // Verify one canonical typed identity at the represented allocation offset.
 void igb_object_validate_instance(const IgbObjectInstance&);
-// While construction owns the allocation, the physical header is authoritative.
-// Bound callbacks must use this writer for packed-reference changes so the typed
-// file, field, metadata or list view and physical word remain synchronized. After construction,
-// the returned owner's canonical reference_word is used by native services.
+// These accessors use the physical header. Bound callbacks must use this writer
+// for packed-reference changes so the typed file, field, metadata, list or
+// runtime view and physical word remain synchronized after construction too.
 std::uint32_t igb_object_reference_word(const IgbObjectInstance&);
 void igb_object_set_reference_word(const IgbObjectInstance&,std::uint32_t value);
 struct IgbObjectInstanceList {
