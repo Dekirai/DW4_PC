@@ -1,5 +1,67 @@
 # Local validation
 
+## Concrete semaphore registration reaches StructMetaField
+
+Validated locally on 2026-09-24. The same retained cold startup now executes
+metadata redirect `80026160 -> 8003B238`, registration `8003B344` and the
+distinct physical probe `8003B274`. The probe returns the captured derived
+type word `80470314` and leaves named-object vtable `8047650C` in its local
+storage. Its name is zero; other derived bytes remain unknown.
+
+The concrete semaphore inherits three descriptors and constructs its first
+three local descriptors. The fourth factory, **`8002450C` for
+`igStructMetaField`**, is the reached missing operation. Its class has flags
+`9`, six fields, size `0x24` and zero instances. It has not published a ready
+class, executed the two value setters, or published any of its four schema
+globals. The manager's semaphore member remains zero, its construction lease
+is active, and the startup singleton/main-thread path remains unreached.
+
+There are **24 published types, 87 descriptors, 94 default buffers, ten
+prototypes and 84 enabled allocations**. Repeated continuation preserves these
+counts and prior physical snapshots. Raw pools, allocations and the original
+reference header in the probe local are explicit fixture preparation.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 203/203 local CTest suites passed with four build jobs |
+| Integrated cold startup | 2,790 checks; concrete probe/inheritance, first three field factories, exact fourth dependency and stable pending prefix |
+| Concrete semaphore registration | 131 checks; prerequisite capture, retained getters/redirect, physical probe ordering, actual default setters/schema with prepared descriptor factories, live registry and fresh final metadata publication |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; original prepared player-frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The original evidence corpus contains **78 cases, 3,690 executed DOL
+instructions and 226 instruction addresses**. All 78 reruns and 15 artifact
+hashes verify. It covers 13 registration prefixes, 22 getters, 18 probes and
+25 defaults callers, with prepared lower registration/batch/schema/virtual
+endpoints explicitly declared. Defaults evidence executes the real stack
+setters and physical size/callback stores; it does not complete the missing
+native struct-field factory.
+
+The native comparison subset was fixed before execution: **27/27 cases match
+on the first run**, with 24 completed calls, two prepared endpoint faults and
+one null-core read fault; no pending results or unexpected faults. It covers
+17 full/redirect/parent getters and ten uninterrupted physical probes. A
+separate public registration-argument check matches the original profile and
+is not counted as another behavioral case. The remaining 51 observations stay
+original-only, including all 25 defaults callers and all 13 registration
+prefixes. Native defaults execute actual batch/schema operations, so their
+focused fixture tests are not mislabeled as differential caller coverage.
+No expected observations or native results were corrected after execution.
+
+Original manifest SHA256:
+`c0d6c11c0c4d9f987abd3003fc709aa0cab61132c374e0f008d379836712e5bb`.
+Native manifest SHA256:
+`70697c1306c20b3fb74093e8eb20d8039d1bf107a6bc514dc7a1664bd74894ab`.
+The verified Release core SHA256 is
+`59c696844d1f1c8720df0dc25de9bfa041b181b2bc2bf10d5ce6a08eb76df6f6`.
+Local logs, frozen scope, original observations, first native results and
+verification reports use the ignored `work/native-platform-semaphore-` prefix.
+
+See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) for current behavior
+and dependencies. No runtime semaphore, host synchronization primitive,
+playable-game build, interactive preview or GitHub Actions run is claimed.
+
 ## Native runtime owners and completed thread-list construction
 
 The cold bootstrap now allocates distinct runtime manager and thread-list

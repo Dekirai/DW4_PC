@@ -192,9 +192,12 @@ probe and defaults bring the cold composition to twenty-four published types
 and ten prototypes. Distinct runtime owners now let the real reflected
 initializer allocate the manager and construct its nested thread list. The
 list's scalar and memory defaults complete, and balanced object assignment
-publishes it in the manager. The next reached dependency is concrete semaphore
-metadata through redirect `80026160`; the manager singleton and main thread
-remain uninitialized. See [IGB_RUNTIME_OBJECTS.md](docs/IGB_RUNTIME_OBJECTS.md).
+publishes it in the manager. Concrete semaphore redirect `80026160` now enters
+its real registration and creates three local descriptors. Its fourth factory,
+`8002450C` for `igStructMetaField`, is the next reached dependency; the manager
+singleton and main thread remain uninitialized. See
+[IGB_PLATFORM_SEMAPHORE.md](docs/IGB_PLATFORM_SEMAPHORE.md) and
+[IGB_RUNTIME_OBJECTS.md](docs/IGB_RUNTIME_OBJECTS.md).
 See [IGB_THREAD_STARTUP.md](docs/IGB_THREAD_STARTUP.md).
 Physical schema stores update descriptor
 `+1C/+08/+18` in original order as well as the canonical field members.

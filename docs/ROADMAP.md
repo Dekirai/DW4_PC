@@ -194,9 +194,12 @@ manager metadata redirect now execute in the retained cold test. Concrete
 registration completes as the twenty-fourth type. Distinct runtime owners now
 enter actual manager allocation and inherited thread-list construction. Native
 memory defaults complete the list and its ownership/publication in the manager.
-Recover the reached semaphore redirect `80026160 -> 8003B238`, its concrete
-registration/defaults and initializer, then the concrete main thread and
-reached platform operations. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
+Semaphore redirect `80026160 -> 8003B238` now executes its concrete registration,
+probe and first three local descriptor factories. Recover the reached
+`igStructMetaField` factory `8002450C`, then complete semaphore defaults and
+initialization, the concrete main thread and reached platform operations. See
+[IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and
+[IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 Metadata registration alone does not establish those objects or platform behavior.
 See [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md).
 See [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and

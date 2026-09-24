@@ -288,8 +288,8 @@ backing supplied to native memory construction and zero fill. The inherited
 memory-field clone finishes object-list specialization. DataList, object-list
 and thread-list metadata complete. Deferred `igThread` registration then runs
 its actual named-object parent, probe and `_name` schema. The cold composition
-has 84 descriptors, 94 default buffers, twenty-four published types, ten
-prototypes and 78 enabled allocations; four default buffers were copied by the
+has 87 descriptors, 94 default buffers, twenty-four published types, ten
+prototypes and 84 enabled allocations; four default buffers were copied by the
 reflected clone path. Unsigned-integer registration `80022CD8`, probe and
 reflected prototype complete through the original canonical cells. Thread's
 ten-field batch, enum/stack defaults and schema finish, followed by Semaphore
@@ -299,8 +299,11 @@ concrete metadata redirect, registration, probe and defaults. It reaches the
 Distinct native runtime identities preserve physical bindings, construction
 leases and reference updates. Original memory defaults `80062798` and retain
 `80062638` complete the list's real empty-state initialization and assignment.
-The next boundary is **semaphore redirect `80026160 -> 8003B238`**; the manager
-remains unfinished and no startup singleton or main thread is supplied.
+Semaphore redirect `80026160 -> 8003B238` now performs concrete registration,
+the distinct physical probe and the first three local descriptor factories.
+The next boundary is **struct-field factory `8002450C`** in that class's field
+batch; the manager remains unfinished and no startup singleton or main thread
+is supplied. See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md).
 The physical schema stores preserve `+1C/+08/+18`
 publication order and the completed prefix when address resolution is pending.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),

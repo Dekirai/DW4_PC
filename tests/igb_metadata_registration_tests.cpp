@@ -3,6 +3,7 @@
 #include "dw4/igb_thread_startup.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
+#include "dw4/igb_platform_semaphore_registration.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
 #include "dw4/igb_data_list_defaults.hpp"
@@ -1203,6 +1204,7 @@ void actual_cold_bootstrap_prefix(){
     std::vector<IgbObjectInstance> enabled_allocations;
     std::shared_ptr<IgbNamedTypeDefaultsServices> named_defaults;
     std::shared_ptr<IgbPlatformThreadRegistrationServices> platform_thread;
+    std::shared_ptr<IgbPlatformSemaphoreRegistrationServices> platform_semaphore;
     bool bind_new_instance_addresses{};
     std::vector<IgbPointerListBacking> enabled_backings;
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
@@ -1234,6 +1236,7 @@ void actual_cold_bootstrap_prefix(){
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
                 if(named_defaults)named_defaults->physical_metadata.push_back(raw);
                 if(platform_thread)platform_thread->physical_metadata.push_back(raw);
+                if(platform_semaphore)platform_semaphore->physical_metadata.push_back(raw);
             }else if(c.metadata==lazy_metadata[0]){
                 check(c.bytes==16,"Lazy enabled field list changed its allocation size.");
                 instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
@@ -2585,6 +2588,68 @@ void actual_cold_bootstrap_prefix(){
         runtime_allocations.size()==2 && enabled_allocations.size()==78 && !startup->manager && !**meta_enum->metadata &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending semaphore redirect replayed runtime construction, list ownership or earlier startup work.");
+
+    // The concrete redirect performs actual class registration. Its fourth
+    // local descriptor still requires the original StructMetaField factory.
+    platform_semaphore=std::make_shared<IgbPlatformSemaphoreRegistrationServices>();
+    platform_semaphore->state=std::make_shared<IgbPlatformSemaphoreRegistrationState>();
+    platform_semaphore->state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    platform_semaphore->dependencies=thread_dependencies;platform_semaphore->types=f.services->types;
+    platform_semaphore->callbacks=f.services->callbacks;platform_semaphore->schema=metadata_defaults->schema;
+    std::vector<IgbBootstrapPointer> platform_semaphore_probes;
+    platform_semaphore->local_storage=[&]{
+        auto raw=allocation(0xc00000+static_cast<std::uint32_t>(platform_semaphore_probes.size())*0x100,0x24);
+        // Only the existing reference header is represented before6665C;
+        // untouched derived fields must not acquire fabricated values.
+        raw.storage->bytes->initialized.assign(0x24,0);
+        for(unsigned i=4;i<8;++i)raw.storage->bytes->initialized[i]=1;
+        platform_semaphore_probes.push_back(raw);return raw;
+    };
+    concrete_redirect=make_native_igb_platform_semaphore_redirect_factory(platform_semaphore,concrete_redirect);
+    additional_callbacks=make_native_igb_platform_semaphore_registration_function_factory(platform_semaphore,additional_callbacks);
+    f.remaining=make_native_igb_platform_semaphore_registration_type_factory(platform_semaphore,f.remaining);
+    const auto after_platform_semaphore=call.resume(bootstrap);
+    std::cout<<"Cold native concrete semaphore registration: "<<after_platform_semaphore.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", probes="<<platform_semaphore_probes.size()<<'\n';
+    check(!after_platform_semaphore.completed && !call.faulted() && platform_semaphore->state->metadata &&
+        *platform_semaphore->state->metadata && !startup->manager && runtime_allocations.size()==2 &&
+        thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0,
+        "Concrete semaphore registration skipped its real field dependency or fabricated a runtime instance.");
+    const auto concrete_semaphore=*platform_semaphore->state->metadata;
+    std::cout<<"Concrete semaphore pending state: flags="<<unsigned(concrete_semaphore->class_flags)<<
+        ", fields="<<(concrete_semaphore->fields?concrete_semaphore->fields->count:-1)<<
+        ", size="<<concrete_semaphore->native_size<<'\n';
+    check(after_platform_semaphore.diagnostic=="Field schema reached an unbound native operation." &&
+        schema_calls.back().kind==IgbFieldSchemaServiceKind::create_field && schema_calls.back().function==0x8002450c &&
+        schema_calls.back().pool==f.pool && concrete_semaphore->class_flags==9 && concrete_semaphore->native_size==0x24 &&
+        concrete_semaphore->type_word==0x80470314 && concrete_semaphore->field_callback==0x80026160 &&
+        concrete_semaphore->fields && concrete_semaphore->fields->count==6 &&
+        concrete_semaphore->instance_count==0 && descriptors.size()==87 && default_allocations==94 && enabled_allocations.size()==84,
+        "Concrete semaphore did not reach its fourth StructMetaField factory after actual parent inheritance and three descriptor allocations.");
+    check(platform_semaphore_probes.size()==1 && platform_semaphore->physical_metadata.size()==1 &&
+        igb_bootstrap_read_word(platform_semaphore_probes.front(),0)==0x8047650c &&
+        igb_bootstrap_read_word(platform_semaphore_probes.front(),4)==1 &&
+        igb_bootstrap_read_word(platform_semaphore_probes.front(),8)==0 &&
+        std::all_of(platform_semaphore_probes.front().storage->bytes->initialized.begin()+12,
+            platform_semaphore_probes.front().storage->bytes->initialized.end(),[](auto byte){return byte==0;}),
+        "Concrete semaphore probe lost the saved derived type, named-table restoration or unknown untouched members.");
+    for(unsigned i=0;i<3;++i)check(concrete_semaphore->fields->backing->at(i)==semaphore_metadata->fields->backing->at(i),
+        "Concrete semaphore replaced its inherited named/base descriptor identity.");
+    for(const auto& global:*platform_semaphore->globals)check(global && global->slot && !*global->slot,
+        "Incomplete semaphore field batch published a schema global prematurely.");
+    const auto semaphore_allocations=enabled_allocations.size(),semaphore_descriptors=descriptors.size();
+    const auto semaphore_names=string_allocations;
+    const auto semaphore_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_platform_semaphore.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==semaphore_allocations && descriptors.size()==semaphore_descriptors &&
+        string_allocations==semaphore_names && freed_callback_lists.size()==semaphore_frees &&
+        platform_semaphore_probes.size()==1 && f.core->types->count==24 && concrete_semaphore->fields->count==6 &&
+        concrete_semaphore->class_flags==9 && concrete_semaphore->instance_count==0 &&
+        runtime_allocations.size()==2 && !startup->manager && !**meta_enum->metadata &&
+        igb_bootstrap_read_word(manager_storage,12)==0 && igb_bootstrap_read_word(ark.allocation,4)==7 &&
+        igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending StructMetaField replayed semaphore registration or fabricated runtime manager completion.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

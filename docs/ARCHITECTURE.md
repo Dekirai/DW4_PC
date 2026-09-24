@@ -201,9 +201,13 @@ Distinct runtime identities now participate in its construction lease, field
 passes, reference ownership and strict result adapters. Actual manager allocation
 and nested thread-list initialization complete through the existing native
 callers and the recovered memory default/retain bodies. The list is assigned
-to manager `+08`; the manager remains unfinished at concrete semaphore redirect
-`80026160`. Main-thread creation, manager list/semaphore virtuals and teardown
-remain required. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
+to manager `+08`; the manager remains unfinished during concrete semaphore
+registration. Its distinct layout probe restores the named-object vtable after
+capturing the derived type word. Three local descriptors are constructed before
+the reached struct-field factory `8002450C`. Main-thread creation, manager
+list/semaphore virtuals and teardown remain required. See
+[IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
+[IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
 [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md). Physical descriptor
 configuration now publishes `+1C/+08/+18` before each canonical update; missing
 declaring-type addresses suspend at the reached store.
