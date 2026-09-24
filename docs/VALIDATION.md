@@ -1,5 +1,62 @@
 # Local validation
 
+## Struct-field defaults reach the unsigned-short clone
+
+Validated locally on 2026-09-24. Factory `8002450C` executes the real always-
+reflected registration path. Registration `80024634`, its prerequisite, the
+base-field parent, physical probe `80024580` and all three local descriptor
+factories now execute in the retained cold startup. Struct defaults `800246C8`
+find inherited `_size`, reload its registry index and reach unsigned-short
+virtual `+54(1)` at `80021EB4`. That operation is the next missing dependency;
+the original size clone and struct prototype are not supplied as ready fixtures.
+
+Struct metadata has flags `9`, 23 fields and zero instances. Its inherited
+20 fields retain their identities and the three derived physical probe words
+remain unknown. The specialized size/global slots and struct prototype remain
+unpublished. Concrete semaphore metadata still has six fields and flags `9`;
+the manager's semaphore member and startup singleton remain uninitialized.
+The composition contains **24 published types, 90 descriptors, 94 default
+buffers, ten prototypes and 89 enabled allocations**. Repeated continuation
+does not replay allocation, probing, interning or completed field construction.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 204/204 local CTest suites passed with four build jobs |
+| Integrated cold startup | 2,896 checks; struct registration/probe/local batch, exact inherited clone dependency and stable pending prefix |
+| Struct defaults | 270 checks; actual batch, two-/four-byte setters, physical/global stores, list replacement, packed temporary release and schema with prepared clone endpoints |
+| Field profiles | 700 probe, 593 registration and 442 factory checks, including retained callbacks, name cleanup, unknown derived words and raw-entry rejection |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 scheduled prepared frames retain their earlier scope |
+| Python verifier | Six tests passed |
+
+The original corpus contains **85 cases, 6,824 executed DOL instructions and
+372 instruction addresses**, with ten registrar prefixes, 16 getters, eight
+factory callers, 23 probes and 28 defaults callers. Prepared lower endpoints
+are declared explicitly. Defaults evidence executes the actual index search,
+setter widths, physical stores and temporary release order; focused native
+defaults tests are separate from differential caller coverage.
+
+The predeclared native subset matches **32/32 cases on its first run**:
+27 completed calls, four prepared endpoint faults and one null-core read fault;
+no pending results or unexpected faults. It covers 14 metadata getters, seven
+factory callers with prepared reflection leaves and 11 uninterrupted physical
+probes. A separate public argument/name/extra-callback profile check also
+matches. The other 53 cases remain original-only, including all 28 defaults
+callers and ten registration prefixes. No expected observations or native
+results were corrected after execution. All 85 original and 32 native reruns,
+and all 15 original plus 15 native artifact hashes verify.
+
+Original manifest SHA256:
+`d4653c0c169151c3db2c223391ae6872466319d950d3cc1899b3d082af86e76c`.
+Native manifest SHA256:
+`ab2654818926fa0ddc696ec1bd5d444b457cc7cf2c7ba7fbfbbf042b17fc8e71`.
+The verified Release core SHA256 is
+`cb9d8e69fc32b9246137ef0cb9481e1a05c62f5444c797d9e5d5ebd2a2d62eb4`.
+Local first-run observations, frozen scope, logs and verification reports use
+the ignored `work/native-struct-field-` prefix. See
+[IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) for behavior and remaining work.
+This is incomplete native startup, not a playable-game build.
+
 ## Concrete semaphore registration reaches StructMetaField
 
 Validated locally on 2026-09-24. The same retained cold startup now executes

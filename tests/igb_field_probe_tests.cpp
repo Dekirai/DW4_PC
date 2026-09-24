@@ -293,7 +293,7 @@ void boolean_probe(){
     rejects([&]{outside.resume(invalid.services);},"Boolean probe accepted an offset beyond its 0x34-byte local.");
 }
 void small_profile_probes(){
-    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int}){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int,IgbMetaFieldKind::structure}){
         const auto profile=igb_meta_field_profile(kind);
         for(std::uint32_t offset=0;offset<profile.bytes;offset+=4){Fixture f;
             f.local.storage->bytes->bytes.resize(profile.bytes);f.local.storage->bytes->initialized.resize(profile.bytes);f.core->vtable_offset=offset;
@@ -305,7 +305,8 @@ void small_profile_probes(){
                 igb_bootstrap_read_word(f.local,0x38)==0x01cccccc,"String reset lost reference flags or changed padding.");
         }
         Fixture f;f.services->runtime->singleton.reset();IgbFieldProbeInvocation run(f.local,kind);
-        check(!run.resume(f.services).completed && f.field->vtable_word==(kind==IgbMetaFieldKind::unsigned_byte?0x80471914u:profile.vtable),
+        check(!run.resume(f.services).completed && f.field->vtable_word==
+            (kind==IgbMetaFieldKind::unsigned_byte || kind==IgbMetaFieldKind::structure?0x80471914u:profile.vtable),
             "New probe failed to suspend after the exact reset.");
         auto name=string(1);igb_meta_field_set_name(f.local,name,0x1008);f.services->runtime->singleton=f.core;unsigned polls{};bool ready{};
         f.action=[&](const IgbDependenciesCall& c,MessengerCallResult& status){++polls;
@@ -336,7 +337,7 @@ void small_profile_probes(){
         Fixture adapter;IgbTypeRegistrationCall request;request.kind=IgbTypeRegistrationServiceKind::layout_probe;
         request.function=kind==IgbMetaFieldKind::string?0x80025348:kind==IgbMetaFieldKind::signed_byte?0x80037c78:
             kind==IgbMetaFieldKind::enumeration?0x800314d4:kind==IgbMetaFieldKind::unsigned_byte?0x80023180:
-            kind==IgbMetaFieldKind::unsigned_int?0x80022c28:0x80027648;
+            kind==IgbMetaFieldKind::unsigned_int?0x80022c28:kind==IgbMetaFieldKind::structure?0x80024580:0x80027648;
         auto operation=make_native_igb_field_probe_factory(adapter.services)(request);
         check(operation && !operation->resume().completed,"New probe guessed the legacy object local.");unsigned allocations{};
         adapter.services->profile_local_storage=[&](IgbMetaFieldKind selected){++allocations;check(selected==kind,"Probe adapter selected another profile.");return adapter.local;};
@@ -400,46 +401,84 @@ void unsigned_int_capture_order(){
     check(invalid.faulted() && padding.field->vtable_word==0x80476e6c && padding.local.storage->bytes->initialized[0x16]==0,
         "Unreadable unsigned integer word changed padding or performed base cleanup.");
 }
-void unsigned_byte_capture_order(){
+void base_reset_capture_order(IgbMetaFieldKind kind){
+    const auto& profile=igb_meta_field_profile(kind);
     Fixture missing;missing.services->runtime->singleton.reset();
-    IgbFieldProbeInvocation first(missing.local,IgbMetaFieldKind::unsigned_byte);
+    IgbFieldProbeInvocation first(missing.local,kind);
     check(!first.resume(missing.services).completed && missing.field->vtable_word==0x80471914 &&
         igb_bootstrap_read_word(missing.local,0)==0x80471914 && missing.field->reference_word==1,
-        "Unsigned-byte probe published its derived table before the original core-pointer load.");
+        "Base-reset probe probe published its derived table before the original core-pointer load.");
     missing.services->runtime->singleton=std::shared_ptr<IgbRuntimeTypeRegistry>{};
-    rejects([&]{first.resume(missing.services);},"Unsigned-byte probe accepted a known-null captured core.");
-    check(first.faulted() && missing.field->vtable_word==0x80470a44 && missing.calls.empty(),
-        "Null core fault skipped the preceding unsigned-byte table store or ran cleanup.");
+    rejects([&]{first.resume(missing.services);},"Base-reset probe probe accepted a known-null captured core.");
+    check(first.faulted() && missing.field->vtable_word==profile.vtable && missing.calls.empty(),
+        "Null core fault skipped the preceding base-reset probe table store or ran cleanup.");
 
     Fixture captured;captured.core->vtable_offset.reset();
-    IgbFieldProbeInvocation wait(captured.local,IgbMetaFieldKind::unsigned_byte);
-    check(!wait.resume(captured.services).completed && captured.field->vtable_word==0x80470a44,
-        "Unknown offset did not retain the unsigned-byte derived-table publication.");
+    IgbFieldProbeInvocation wait(captured.local,kind);
+    check(!wait.resume(captured.services).completed && captured.field->vtable_word==profile.vtable,
+        "Unknown offset did not retain the base-reset probe derived-table publication.");
     auto replacement=std::make_shared<IgbRuntimeTypeRegistry>();replacement->vtable_offset=4;
     captured.services->runtime->singleton=replacement;captured.core->vtable_offset=0;
     igb_bootstrap_write_word(captured.local,0,0x12345678);
     check(wait.resume(captured.services).completed && wait.value()==0x12345678 && captured.field->vtable_word==0x80471914,
-        "Unsigned-byte resume reloaded the core, repeated derived publication, or changed the captured word.");
+        "Base-reset probe resume reloaded the core, repeated derived publication, or changed the captured word.");
 
     Fixture callback;callback.services->fields->dependencies->globals->string_pool.reset();
     auto fresh=std::make_shared<IgbRuntimeTypeRegistry>();fresh->vtable_offset=4;
     callback.action=[&](const IgbDependenciesCall& c,MessengerCallResult&){
         if(c.kind==K::initialize_string_pool)callback.services->runtime->singleton=fresh;
     };
-    IgbFieldProbeInvocation late(callback.local,IgbMetaFieldKind::unsigned_byte);
+    IgbFieldProbeInvocation late(callback.local,kind);
     check(late.resume(callback.services).completed && late.value()==1 && callback.calls.size()==2,
-        "Unsigned-byte probe captured the core before base reset's dependency callbacks.");
+        "Base-reset probe probe captured the core before base reset's dependency callbacks.");
 
-    Fixture padding;padding.local.storage->bytes->bytes.resize(0x34);padding.local.storage->bytes->initialized.resize(0x34);
+    Fixture padding;padding.local.storage->bytes->bytes.resize(profile.bytes);padding.local.storage->bytes->initialized.resize(profile.bytes);
     padding.local.storage->bytes->initialized[0x16]=0;padding.core->vtable_offset=0x14;
-    IgbFieldProbeInvocation invalid(padding.local,IgbMetaFieldKind::unsigned_byte);
-    rejects([&]{invalid.resume(padding.services);},"Unsigned-byte probe fabricated initialized base padding.");
-    check(invalid.faulted() && padding.field->vtable_word==0x80470a44 && padding.local.storage->bytes->initialized[0x16]==0,
-        "Unsigned-byte unreadable-word failure changed padding or performed later cleanup.");
+    IgbFieldProbeInvocation invalid(padding.local,kind);
+    rejects([&]{invalid.resume(padding.services);},"Base-reset probe probe fabricated initialized base padding.");
+    check(invalid.faulted() && padding.field->vtable_word==profile.vtable && padding.local.storage->bytes->initialized[0x16]==0,
+        "Base-reset probe unreadable-word failure changed padding or performed later cleanup.");
+}
+void structure_unknown_members(){
+    constexpr auto kind=IgbMetaFieldKind::structure;
+    Fixture f;f.local.storage->bytes->bytes.resize(0x40);f.local.storage->bytes->initialized.resize(0x40);
+    for(std::size_t i=0x34;i<0x40;++i)f.local.storage->bytes->initialized[i]=0;
+    f.services->runtime->singleton.reset();IgbFieldProbeInvocation run(f.local,kind);
+    check(!run.resume(f.services).completed && f.field->vtable_word==0x80471914 &&
+        f.field->reference_word==1 && f.field->name_string && !*f.field->name_string,
+        "Structure probe did not execute the shared base reset before its missing-core boundary.");
+    for(std::size_t i=0x34;i<0x40;++i)check(f.local.storage->bytes->bytes[i]==0xcc && !f.local.storage->bytes->initialized[i],
+        "Structure reset initialized a derived alignment, constructor or destructor word.");
+    f.services->runtime->singleton=f.core;
+    check(run.resume(f.services).completed && run.value()==0x80470e00 && f.field->vtable_word==0x80471914 && f.calls.empty(),
+        "Structure probe read unrelated unknown members or returned its final base table.");
+    for(std::size_t i=0x34;i<0x40;++i)check(!f.local.storage->bytes->initialized[i],
+        "Structure cleanup converted untouched derived bytes into initialized values.");
+
+    for(const auto offset:{0x34u,0x38u,0x3cu}){Fixture unknown;unknown.local.storage->bytes->bytes.resize(0x40);
+        unknown.local.storage->bytes->initialized.resize(0x40);unknown.local.storage->bytes->initialized[offset+3]=0;
+        unknown.core->vtable_offset.reset();IgbFieldProbeInvocation invalid(unknown.local,kind);
+        check(!invalid.resume(unknown.services).completed && unknown.field->vtable_word==0x80470e00,
+            "Structure probe did not publish its derived table before reading a missing captured offset.");
+        auto name=string(1);igb_meta_field_set_name(unknown.local,name,0x6008);unknown.core->vtable_offset=offset;
+        rejects([&]{invalid.resume(unknown.services);},"Structure probe guessed an unknown derived word.");
+        check(invalid.faulted() && unknown.field->vtable_word==0x80470e00 && name->references==1 && unknown.calls.empty() &&
+            unknown.local.storage->bytes->bytes[offset+3]==0xcc && !unknown.local.storage->bytes->initialized[offset+3],
+            "Structure selected-word failure performed restoration, name release or derived initialization.");
+        rejects([&]{invalid.value();},"Faulted structure probe exposed a captured result.");
+        rejects([&]{invalid.resume(unknown.services);},"Faulted structure probe restarted cleanup.");
+    }
+    Fixture selected;unsigned remaining{};auto adapter=make_native_igb_field_probe_factory(selected.services,
+        [&](const IgbTypeRegistrationCall&){++remaining;return std::shared_ptr<IgbTypeRegistrationOperation>{};});
+    IgbTypeRegistrationCall request;request.kind=IgbTypeRegistrationServiceKind::defaults;request.function=0x80024580;
+    check(!adapter(request) && remaining==1,"Structure probe adapter consumed a defaults request.");
+    request.kind=IgbTypeRegistrationServiceKind::layout_probe;request.function=0x8002450c;
+    check(!adapter(request) && remaining==2,"Structure probe adapter consumed the allocation factory.");
 }
 }
 int main(){try{reset_and_capture();cleanup_order();missing_bindings_and_failures();adapters();signed_int_probe();
     memory_reset_and_capture();memory_cleanup_order();memory_packed_counts_and_bindings();memory_pending_destructor();memory_failures_and_adapter();boolean_probe();
-    small_profile_probes();enum_function_and_pointer_padding();unsigned_byte_capture_order();unsigned_int_capture_order();
+    small_profile_probes();enum_function_and_pointer_padding();base_reset_capture_order(IgbMetaFieldKind::unsigned_byte);
+    base_reset_capture_order(IgbMetaFieldKind::structure);structure_unknown_members();unsigned_int_capture_order();
     std::cout<<"Field layout probe tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

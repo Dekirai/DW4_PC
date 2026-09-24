@@ -182,7 +182,7 @@ void family_constructor_bytes(){
             "Reference base entry omitted reset or overwrote padding.");
     }
     check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
-    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(12));},"Invalid descriptor profile was accepted.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(13));},"Invalid descriptor profile was accepted.");
 }
 void family_reset_prefixes(){
     for(const auto& p:evidence){
@@ -256,14 +256,20 @@ void family_enabled_registration(){
             igb_bootstrap_read_word(f.object,0)==0xcccccccc,"Enabled family path constructed or ran direct factory tails on its reflected result.");
     }
 }
-void unsigned_byte_always_reflects(){
-    constexpr auto kind=IgbMetaFieldKind::unsigned_byte;
+void always_reflected_profiles(IgbMetaFieldKind kind){
     const auto& p=igb_meta_field_profile(kind);
-    check(p.factory==0x8002310c && p.constructor==0 && p.reset==0 && p.vtable==0x80470a44 && p.bytes==0x34 &&
-        p.registration==0x8002320c && p.callback==0x80023234 && p.metadata_global==0x805614d0 &&
-        igb_meta_field_kind_for_factory(0x8002310c)==kind,"Unsigned-byte profile invented a raw entry or changed its original identities.");
+    if(kind==IgbMetaFieldKind::unsigned_byte)
+        check(p.factory==0x8002310c && p.vtable==0x80470a44 && p.bytes==0x34 && p.registration==0x8002320c &&
+            p.callback==0x80023234 && p.metadata_global==0x805614d0,"Unsigned-byte factory profile changed original identities.");
+    else check(kind==IgbMetaFieldKind::structure && p.factory==0x8002450c && p.vtable==0x80470e00 && p.bytes==0x40 &&
+        p.registration==0x8002460c && p.callback==0x80024634 && p.metadata_global==0x80561560,
+        "Structure factory profile changed original identities.");
+    check(p.constructor==0 && p.reset==0 && igb_meta_field_kind_for_factory(p.factory)==kind,
+        "Always-reflected profile invented a specialized raw constructor or reset.");
+    check(static_cast<unsigned>(IgbMetaFieldKind::unsigned_byte)==11 && static_cast<unsigned>(IgbMetaFieldKind::structure)==12,
+        "Structure insertion shifted an existing factory profile.");
     for(unsigned state=0;state<6;++state){
-        Fixture f;auto old=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();
+        Fixture f;resize(f,p.bytes);auto old=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();
         auto slot=std::make_shared<IgbRegistrationMetaSlot>(old);f.services->metadata_slots[static_cast<std::size_t>(kind)]=slot;
         if(state==0)f.services->bootstrap.reset();
         else if(state==1)f.services->bootstrap->runtime.reset();
@@ -272,89 +278,90 @@ void unsigned_byte_always_reflects(){
         else f.core->enabled=state==5;
         f.factory=[&](const IgbMetaFieldCall& c){auto op=std::make_shared<IgbMetaFieldOperation>();
             op->resume=[&,c,out=op.get()]{
-                if(c.kind==K::register_type){check(c.function==0x8002320c,"Unsigned-byte factory skipped its unconditional registration wrapper.");*slot=fresh;}
+                if(c.kind==K::register_type){check(c.function==p.registration,"Factory skipped its unconditional registration wrapper.");*slot=fresh;}
                 else{check(c.kind==K::reflected_factory && c.pool==f.pool && c.metadata==fresh && f.calls.size()==2,
-                        "Unsigned-byte factory did not reload metadata after registration.");out->allocation_result=f.object;}
+                        "Always-reflected factory did not reload metadata after registration.");out->allocation_result=f.object;}
                 return MessengerCallResult{true,0,{}};
             };return op;};
         IgbMetaFieldFactoryInvocation run(f.pool,kind);
         check(run.resume(f.services).completed && run.result()==f.field && !run.faulted() && f.raw.empty() && f.strings.empty(),
-            "Unsigned-byte factory consulted ArkCore or ran a raw constructor.");
+            "Always-reflected factory consulted ArkCore or ran a raw constructor.");
         check(f.calls.size()==2 && f.services->completed_allocations.size()==1 &&
-            f.object.storage->bytes->bytes==std::vector<std::uint8_t>(0x34,0xcc),
-            "Unsigned-byte reflected result ran direct tails or lost its physical allocation owner.");
+            f.object.storage->bytes->bytes==std::vector<std::uint8_t>(p.bytes,0xcc),
+            "Always-reflected reflected result ran direct tails or lost its physical allocation owner.");
         check(run.resume().completed && f.calls.size()==2 && f.services->completed_allocations.size()==1,
-            "Completed unsigned-byte factory repeated registration, reflection or ownership publication.");
+            "Completed always-reflected factory repeated registration, reflection or ownership publication.");
     }
     for(const auto entry:{IgbMetaFieldConstructor::specialized,IgbMetaFieldConstructor::specialized_reset}){
-        Fixture f;rejects([&]{IgbMetaFieldConstructorInvocation invalid(f.object,entry,kind);},
-            "Unsigned-byte profile accepted an unsupported specialized raw constructor or reset.");
-        check(f.object.storage->bytes->bytes==std::vector<std::uint8_t>(0x34,0xcc) && f.field->construction_active_.expired(),
-            "Rejected unsigned-byte constructor changed storage or acquired a construction lease.");
+        Fixture f;resize(f,p.bytes);rejects([&]{IgbMetaFieldConstructorInvocation invalid(f.object,entry,kind);},
+            "Always-reflected profile accepted an unsupported specialized raw constructor or reset.");
+        check(f.object.storage->bytes->bytes==std::vector<std::uint8_t>(p.bytes,0xcc) && f.field->construction_active_.expired(),
+            "Rejected always-reflected constructor changed storage or acquired a construction lease.");
     }
     for(const auto entry:{IgbMetaFieldConstructor::base,IgbMetaFieldConstructor::reset}){
-        Fixture f;IgbMetaFieldConstructorInvocation base(f.object,entry,kind);
+        Fixture f;resize(f,p.bytes);IgbMetaFieldConstructorInvocation base(f.object,entry,kind);
         check(base.resume(f.services).completed && base.result()==f.field && f.field->vtable_word==0x80471914 &&
             f.field->reference_word==1 && igb_bootstrap_read_byte(f.object,0x16)==0xcc && igb_bootstrap_read_byte(f.object,0x2f)==0xcc,
-            "Unsigned-byte profile prevented the actual shared base entry or published a specialized table.");
+            "Always-reflected profile prevented the actual shared base entry or published a specialized table.");
     }
 }
-void unsigned_byte_retained_factory(){
-    constexpr auto index=static_cast<std::size_t>(IgbMetaFieldKind::unsigned_byte);
-    Fixture f;f.services->bootstrap.reset();auto initial=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();
+void retained_reflected_profiles(IgbMetaFieldKind kind){
+    const auto& p=igb_meta_field_profile(kind);const auto index=static_cast<std::size_t>(kind);
+    Fixture f;resize(f,p.bytes);f.services->bootstrap.reset();auto initial=std::make_shared<IgbRuntimeMetaType>(),fresh=std::make_shared<IgbRuntimeMetaType>();
     auto slot=std::make_shared<IgbRegistrationMetaSlot>(initial);f.services->metadata_slots[index]=slot;
     bool registration_ready{},reflection_ready{};unsigned registration_polls{},reflection_polls{};
     std::shared_ptr<IgbMetaFieldOperation> selected_registration,selected_reflection;
     f.factory=[&](const IgbMetaFieldCall& c){auto op=std::make_shared<IgbMetaFieldOperation>();
-        if(c.kind==K::register_type){check(c.function==0x8002320c,"Retained unsigned-byte registration selected another wrapper.");selected_registration=op;
-            op->resume=[&]{++registration_polls;if(!registration_ready)return MessengerCallResult{false,17,"Prepared unsigned-byte registration."};
+        if(c.kind==K::register_type){check(c.function==p.registration,"Retained registration selected another wrapper.");selected_registration=op;
+            op->resume=[&]{++registration_polls;if(!registration_ready)return MessengerCallResult{false,17,"Prepared always-reflected registration."};
                 *slot=fresh;return MessengerCallResult{true,0,{}};};
-        }else{check(c.kind==K::reflected_factory && c.metadata==fresh && c.pool==f.pool,"Unsigned-byte reflection lost captured metadata or pool.");selected_reflection=op;
-            op->resume=[&,out=op.get()]{++reflection_polls;if(!reflection_ready)return MessengerCallResult{false,23,"Prepared unsigned-byte reflection."};
+        }else{check(c.kind==K::reflected_factory && c.metadata==fresh && c.pool==f.pool,"Always-reflected reflection lost captured metadata or pool.");selected_reflection=op;
+            op->resume=[&,out=op.get()]{++reflection_polls;if(!reflection_ready)return MessengerCallResult{false,23,"Prepared always-reflected reflection."};
                 out->allocation_result=f.object;return MessengerCallResult{true,0,{}};};
         }return op;};
-    IgbMetaFieldFactoryInvocation run(f.pool,IgbMetaFieldKind::unsigned_byte);const auto first=run.resume(f.services);
+    IgbMetaFieldFactoryInvocation run(f.pool,kind);const auto first=run.resume(f.services);
     check(!first.completed && first.value==17 && registration_polls==1 && reflection_polls==0 && !run.completed() && !run.faulted(),
-        "Unsigned-byte factory lost its pending registration status or selected reflection early.");
-    rejects([&]{run.result();},"Pending unsigned-byte factory exposed a result.");
-    rejects([&]{run.allocation();},"Pending unsigned-byte factory exposed an allocation.");
+        "Always-reflected factory lost its pending registration status or selected reflection early.");
+    rejects([&]{run.result();},"Pending always-reflected factory exposed a result.");
+    rejects([&]{run.allocation();},"Pending always-reflected factory exposed an allocation.");
     selected_registration->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced registration continuation was used.");};
     registration_ready=true;const auto second=run.resume(f.services);
     check(!second.completed && second.value==23 && registration_polls==2 && reflection_polls==1 && f.calls.size()==2,
-        "Unsigned-byte resume replayed registration selection or lost its reflection status.");
+        "Always-reflected resume replayed registration selection or lost its reflection status.");
     *slot=initial;f.services->factory={};selected_reflection->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced reflection continuation was used.");};
     reflection_ready=true;check(run.resume(f.services).completed && run.result()==f.field && registration_polls==2 && reflection_polls==2 &&
-        f.raw.empty() && f.calls.size()==2,"Unsigned-byte reflection reloaded an already captured cell or replaced its retained callback.");
+        f.raw.empty() && f.calls.size()==2,"Always-reflected reflection reloaded an already captured cell or replaced its retained callback.");
 
     Fixture late;late.services->bootstrap.reset();unsigned registrations{};
     late.factory=[&](const IgbMetaFieldCall& c){auto op=std::make_shared<IgbMetaFieldOperation>();
-        op->resume=[&,c]{if(c.kind==K::register_type){++registrations;check(c.function==0x8002320c,"Late unsigned-byte metadata selected another wrapper.");}
-            else check(c.kind==K::reflected_factory && !c.metadata,"Represented-null unsigned-byte metadata was not forwarded to reflection.");
+        op->resume=[&,c]{if(c.kind==K::register_type){++registrations;check(c.function==p.registration,"Late metadata selected another wrapper.");}
+            else check(c.kind==K::reflected_factory && !c.metadata,"Represented-null always-reflected metadata was not forwarded to reflection.");
             return MessengerCallResult{true,0,{}};};return op;};
-    IgbMetaFieldFactoryInvocation absent(late.pool,IgbMetaFieldKind::unsigned_byte);
+    IgbMetaFieldFactoryInvocation absent(late.pool,kind);
     check(!absent.resume(late.services).completed && !absent.resume(late.services).completed && registrations==1 && late.calls.size()==1,
-        "Missing unsigned-byte metadata became a null reflected allocation or replayed registration.");
+        "Missing always-reflected metadata became a null reflected allocation or replayed registration.");
     late.services->metadata_slots[index]=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
     check(absent.resume(late.services).completed && !absent.result() && !absent.allocation().storage && late.raw.empty() && late.calls.size()==2,
-        "Null unsigned-byte reflected result reached direct factory tails or invented an allocation.");
+        "Null always-reflected reflected result reached direct factory tails or invented an allocation.");
 }
-void unsigned_byte_callback_and_fault(){
+void reflected_profile_callback_and_fault(IgbMetaFieldKind kind){
+    const auto& p=igb_meta_field_profile(kind);
     Fixture f;f.services->bootstrap.reset();f.services->callbacks=std::make_shared<IgbRegistrationCallbacksServices>();
     auto fresh=std::make_shared<IgbRuntimeMetaType>();unsigned bodies{};
     f.services->callbacks->factory=[&](const IgbRegistrationCallbacksCall& c){
-        check(c.kind==IgbRegistrationCallbacksServiceKind::invoke_function && c.function==0x80023234,
-            "Unsigned-byte factory callback runner selected another original body.");
+        check(c.kind==IgbRegistrationCallbacksServiceKind::invoke_function && c.function==p.callback,
+            "Always-reflected factory callback runner selected another original body.");
         auto op=std::make_shared<IgbRegistrationCallbacksOperation>();op->resume=[&]{++bodies;
-            f.services->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::unsigned_byte)]=std::make_shared<IgbRegistrationMetaSlot>(fresh);
+            f.services->metadata_slots[static_cast<std::size_t>(kind)]=std::make_shared<IgbRegistrationMetaSlot>(fresh);
             return MessengerCallResult{true,0,{}};};return op;};
-    f.factory=[&](const IgbMetaFieldCall& c){check(c.kind==K::reflected_factory && c.metadata==fresh,"Unsigned-byte callback path repeated leaf registration.");
+    f.factory=[&](const IgbMetaFieldCall& c){check(c.kind==K::reflected_factory && c.metadata==fresh,"Always-reflected callback path repeated leaf registration.");
         auto op=std::make_shared<IgbMetaFieldOperation>();op->resume=[]()->MessengerCallResult{throw std::runtime_error("Prepared reflected failure.");};return op;};
-    IgbMetaFieldFactoryInvocation run(f.pool,IgbMetaFieldKind::unsigned_byte);
-    rejects([&]{run.resume(f.services);},"Unsigned-byte reflected failure was swallowed.");
+    IgbMetaFieldFactoryInvocation run(f.pool,kind);
+    rejects([&]{run.resume(f.services);},"Always-reflected reflected failure was swallowed.");
     check(run.faulted() && !run.completed() && bodies==1 && f.calls.size()==1 && f.raw.empty() && f.services->completed_allocations.empty(),
-        "Faulted unsigned-byte reflection published a result or ran a raw fallback.");
-    rejects([&]{run.resume(f.services);},"Faulted unsigned-byte factory restarted.");
-    rejects([&]{run.result();},"Faulted unsigned-byte factory exposed a result.");
+        "Faulted always-reflected reflection published a result or ran a raw fallback.");
+    rejects([&]{run.resume(f.services);},"Faulted always-reflected factory restarted.");
+    rejects([&]{run.result();},"Faulted always-reflected factory exposed a result.");
 }
 void native_reflected_adapter(){
     // Explicit empty class isolates adapter/type ownership. Actual object-field
@@ -398,6 +405,7 @@ void native_reflected_adapter(){
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_meta_field_factory_tests");
     exact_constructed_bytes();double_reset_and_pending();injected_name_release_and_owners();enabled_branch_and_faults();
     family_constructor_bytes();family_reset_prefixes();family_factory_tails();family_enabled_registration();native_reflected_adapter();
-    unsigned_byte_always_reflects();unsigned_byte_retained_factory();unsigned_byte_callback_and_fault();
+    for(const auto kind:{IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::structure}){
+        always_reflected_profiles(kind);retained_reflected_profiles(kind);reflected_profile_callback_and_fault(kind);}
     std::cout<<"igb_meta_field_factory_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

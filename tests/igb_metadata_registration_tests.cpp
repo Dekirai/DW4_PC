@@ -4,6 +4,7 @@
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_platform_semaphore_registration.hpp"
+#include "dw4/igb_struct_field_defaults.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
 #include "dw4/igb_data_list_defaults.hpp"
@@ -547,10 +548,11 @@ void actual_cold_bootstrap_prefix(){
     metadata_defaults->schema->pools=f.services->pools;metadata_defaults->schema->dependencies=object_defaults->dependencies;
     metadata_defaults->schema->fields=object_defaults->fields;metadata_defaults->schema->meta_fields=object_defaults->meta_fields;
     metadata_defaults->object_metadata=object_services->metadata;std::vector<IgbFieldSchemaCall> schema_calls;
-    bool schema_constructors_ready{},enumeration_constructor_ready{};
+    bool schema_constructors_ready{},enumeration_constructor_ready{},structure_constructor_ready{};
     const auto schema_constructors=make_native_igb_field_schema_factory(metadata_defaults->schema);
     metadata_defaults->schema->factory=[&](const IgbFieldSchemaCall& c){
-        if(schema_constructors_ready && (c.function!=0x80031378 || enumeration_constructor_ready)){
+        if(schema_constructors_ready && (c.function!=0x80031378 || enumeration_constructor_ready) &&
+            (c.function!=0x8002450c || structure_constructor_ready)){
             const auto operation=schema_constructors(c);if(operation)return operation;}
         schema_calls.push_back(c);return std::shared_ptr<IgbFieldSchemaOperation>{};
     };
@@ -2650,6 +2652,67 @@ void actual_cold_bootstrap_prefix(){
         igb_bootstrap_read_word(manager_storage,12)==0 && igb_bootstrap_read_word(ark.allocation,4)==7 &&
         igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending StructMetaField replayed semaphore registration or fabricated runtime manager completion.");
+
+    // Enable the reached original struct factory and its actual defaults.
+    // The inherited unsigned-short clone remains a distinct real dependency.
+    auto structure_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::structure)]=structure_cell;
+    std::vector<IgbBootstrapPointer> structure_probe_locals;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::structure,"Struct-field registration replayed an earlier field probe.");
+        auto raw=allocation(0xc10000+static_cast<std::uint32_t>(structure_probe_locals.size())*0x100,0x40);
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        std::fill(raw.storage->bytes->initialized.begin()+0x34,raw.storage->bytes->initialized.end(),0);
+        structure_probe_locals.push_back(raw);return raw;
+    };
+    auto structure_defaults=std::make_shared<IgbStructFieldDefaultsServices>();
+    structure_defaults->registration=field_types;structure_defaults->lists=list_defaults;
+    f.remaining=make_native_igb_struct_field_defaults_factory(structure_defaults,f.remaining);
+    structure_constructor_ready=true;
+    const auto after_structure_defaults=call.resume(bootstrap);
+    std::cout<<"Cold native struct-field defaults: "<<after_structure_defaults.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", probes="<<structure_probe_locals.size()<<'\n';
+    check(!after_structure_defaults.completed && !call.faulted() && *structure_cell && **structure_cell &&
+        !startup->manager && runtime_allocations.size()==2 && concrete_semaphore->fields->count==6,
+        "Struct-field registration fabricated its missing clone or completed runtime semaphore construction.");
+    const auto structure_type=**structure_cell;
+    std::cout<<"Struct-field pending state: flags="<<unsigned(structure_type->class_flags)<<
+        ", fields="<<(structure_type->fields?structure_type->fields->count:-1)<<
+        ", size="<<structure_type->native_size<<'\n';
+    check(after_structure_defaults.diagnostic=="Struct-field defaults reached an unbound original clone or field virtual." &&
+        list_defaults_calls.back().kind==IgbListDefaultsServiceKind::clone_field &&
+        list_defaults_calls.back().vtable_word==0x80477054 && list_defaults_calls.back().virtual_slot==0x54 &&
+        list_defaults_calls.back().argument==1 && list_defaults_calls.back().field &&
+        list_defaults_calls.back().field->name && *list_defaults_calls.back().field->name=="_size" &&
+        structure_type->class_flags==9 && structure_type->native_size==0x40 && structure_type->type_word==0x80470e00 &&
+        structure_type->parent==**field_types->base_metadata && structure_type->fields->count==23 &&
+        descriptors.size()==90 && default_allocations==94 && enabled_allocations.size()==89,
+        "Struct-field defaults did not append all three local descriptors before the original unsigned-short size clone.");
+    check(structure_probe_locals.size()==1 && igb_bootstrap_read_word(structure_probe_locals.front(),0)==0x80471914 &&
+        igb_bootstrap_read_word(structure_probe_locals.front(),4)==1 && igb_bootstrap_read_word(structure_probe_locals.front(),12)==0 &&
+        std::all_of(structure_probe_locals.front().storage->bytes->initialized.begin()+0x34,
+            structure_probe_locals.front().storage->bytes->initialized.end(),[](auto byte){return byte==0;}),
+        "Struct probe invented derived field values, skipped name cleanup or returned its final base table as the type word.");
+    for(unsigned i=0;i<20;++i)check(structure_type->fields->backing->at(i)==(**field_types->base_metadata)->fields->backing->at(i),
+        "Pending inherited size clone modified the base schema or replaced an inherited descriptor early.");
+    check(structure_type->fields->backing->at(20)->vtable_word==0x80475b60 &&
+        structure_type->fields->backing->at(21)->vtable_word==0x80476630 && structure_type->fields->backing->at(22)->vtable_word==0x80476630 &&
+        !*structure_defaults->size_descriptor && structure_type->instance_count==0 &&
+        concrete_semaphore->class_flags==9 && concrete_semaphore->fields->count==6 && concrete_semaphore->instance_count==0,
+        "Pending struct defaults fabricated specialization, a ready descriptor instance or semaphore completion.");
+    for(const auto& global:*structure_defaults->globals)check(global && global->slot && !*global->slot,
+        "Pending size clone published a struct local schema global.");
+    const auto structure_allocations=enabled_allocations.size(),structure_reflections=reflected_allocations.size();
+    const auto structure_names=string_allocations;
+    check(call.resume(bootstrap).diagnostic==after_structure_defaults.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==structure_allocations && reflected_allocations.size()==structure_reflections &&
+        string_allocations==structure_names && descriptors.size()==90 && default_allocations==94 && f.core->types->count==24 &&
+        structure_probe_locals.size()==1 && structure_type->fields->count==23 && !*structure_defaults->size_descriptor &&
+        runtime_allocations.size()==2 && thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0 &&
+        !startup->manager && !**meta_enum->metadata && igb_bootstrap_read_word(manager_storage,12)==0 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending unsigned-short clone replayed struct construction or advanced runtime startup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

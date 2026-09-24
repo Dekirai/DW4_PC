@@ -1,0 +1,80 @@
+# Struct-field registration and defaults
+
+`igStructMetaField` is the concrete descriptor used for the inline semaphore
+structure. Its metadata cell `80561560` and vtable `80470E00` are distinct from
+object references, raw references and memory-reference fields. The native
+factory/profile are appended to the existing enums without changing earlier
+indices or canonical cells.
+
+Factory `8002450C` always calls registration wrapper `8002460C`, reloads its
+class cell, and reflects through `8006546C` using the captured pool. There is
+no enabled-state branch, specialized raw constructor or post-factory tail.
+Registration body `80024634` executes the original prerequisite `80021B94`.
+Its class is size `0x40`, inherits `igMetaField`, uses probe `80024580`, defaults
+`800246C8`, and deferred prototype callback `800247E4`. Full and plain getters
+remain separate; the class has no represented lazy-allocation getter.
+
+## Probe
+
+The probe runs actual base-field reset `800638E0`, captures ArkCore, then
+publishes the derived vtable. It reads the selected local word using the
+captured core's `+394` offset, saves that result, and restores the base-field
+vtable before name cleanup. Its three derived words at `+34/+38/+3C` remain
+untouched. Unknown core state, null core and unknown derived bytes preserve
+their different pending/fault prefixes. Name cleanup reads the real physical
+pointer and performs the existing string-reference release.
+
+## Defaults
+
+Original `800246C8` captures the class and inherited field count, then appends
+three descriptors before specializing any inherited field:
+
+| Factory | Field | Instance offset |
+| --- | --- | --- |
+| `8002E1AC` | `_alignment` | `34` |
+| `800274EC` | `_cppConstructor` | `38` |
+| `800274EC` | `_cppDestructor` | `3C` |
+
+It finds inherited `_size`, reloads the registry for the descriptor's index,
+then calls that descriptor's fresh virtual `+54(1)`. The returned clone receives
+the actual two-byte default value `1` through `+8C`. The code clears byte `+26`,
+stores its distinct global destination `80561568` at `+1C`, replaces the
+captured registry position through `8006588C`, and releases the temporary's
+whole packed reference word. A zero low-23-bit count reaches `80066E1C` before
+continuing. A destructor may legitimately release the temporary storage.
+
+The first local descriptor then receives the four-byte alignment default `1`
+through its fresh `+8C`, has byte `+26` cleared, and enters the actual local
+schema publication. Its width differs from the inherited size setter.
+Locals use global slots `8056156C/70/74`; the base class's canonical `_size`
+descriptor and sibling schemas remain separate. The final schema does not
+write a metadata redirect. Pending callbacks retain their selected inputs and
+completed stores are not rolled back on a later fault.
+
+## Current cold dependency
+
+The retained native start test enters this registration and appends all three
+local descriptors. It reaches the inherited unsigned-short descriptor's
+**`+54` clone at `80021EB4`**, with vtable `80477054`. Its enabled branch must
+run unsigned-short registration before reflected cloning. This is an explicit
+missing dependency; prepared clone endpoints in focused defaults tests do not
+establish its cold completion.
+
+At this point struct metadata has flags `9`, 23 fields and zero instances.
+Its inherited 20 descriptor identities are unchanged, its specialized size
+global is unpublished, and its deferred prototype has not run. The outer
+concrete semaphore still has six fields and remains unfinished. There are
+24 published types, 90 descriptors, 94 default buffers, ten prototypes and
+89 enabled allocations. The thread list remains the only completed runtime
+instance in this nested construction.
+
+Continue with the reached unsigned-short class/clone, struct prototype and
+runtime descriptor defaults before claiming the semaphore's field batch is
+complete. Dynamic struct size/alignment, constructor/destructor function words
+and their member handlers require distinct native support; they must not be
+treated as overlapping reference fields or unconditional scalar no-ops.
+See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
+[IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and [VALIDATION.md](VALIDATION.md).
+
+Primary evidence is the supplied USA DOL, SHA1
+`e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Original artifacts remain local.

@@ -195,9 +195,12 @@ registration completes as the twenty-fourth type. Distinct runtime owners now
 enter actual manager allocation and inherited thread-list construction. Native
 memory defaults complete the list and its ownership/publication in the manager.
 Semaphore redirect `80026160 -> 8003B238` now executes its concrete registration,
-probe and first three local descriptor factories. Recover the reached
-`igStructMetaField` factory `8002450C`, then complete semaphore defaults and
+probe and first three local descriptor factories. `igStructMetaField` factory
+`8002450C` now executes registration, its probe and three local descriptors.
+Recover the inherited unsigned-short `_size` clone `80021EB4`, finish struct
+defaults and its reflected prototype, then complete semaphore defaults and
 initialization, the concrete main thread and reached platform operations. See
+[IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 Metadata registration alone does not establish those objects or platform behavior.

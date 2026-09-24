@@ -52,23 +52,26 @@ to metadata `+40`. It does not write a factory redirect at `+3C`.
 
 The integrated cold test executes the concrete probe and parent inheritance,
 then constructs the two unsigned-integer descriptors and Boolean descriptor.
-It reaches the fourth factory, **`8002450C` for `igStructMetaField`**. That
-factory remains an explicit dependency. The class has six fields and flags
+Its fourth factory, **`8002450C` for `igStructMetaField`**, now runs registration,
+its physical probe and three local descriptor factories. Struct defaults reach
+the inherited unsigned-short `_size` clone `80021EB4`. Until that clone and
+struct's reflected prototype complete, the semaphore has six fields and flags
 `9`, has not been published as ready, and has not run its two setters or schema.
 Prepared descriptor factories in focused defaults tests do not establish cold
 completion of this dependency.
 
-The cold composition contains 24 published types, 87 descriptors, 94 default
-buffers, ten prototypes and 84 enabled allocations. The thread-list runtime
+The cold composition contains 24 published types, 90 descriptors, 94 default
+buffers, ten prototypes and 89 enabled allocations. The thread-list runtime
 instance is complete; its manager still owns the construction lease and its
 semaphore member remains zero. No runtime semaphore, startup manager singleton
 or main-thread instance has been supplied.
 
-Continue with the actual struct-field registration, inherited `_size` clone
-and descriptor defaults, then finish this class and its runtime initializer.
+Continue with the actual inherited `_size` clone, struct defaults and reflected
+prototype, then finish this class and its runtime initializer.
 Semaphore activation, wait/signal semantics and host scheduling remain separate
 work. This metadata implementation does not provide a host mutex or a playable
-game. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
+game. See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
+[IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
 [VALIDATION.md](VALIDATION.md).
 
 Primary evidence is the supplied USA DOL, SHA1
