@@ -54,6 +54,7 @@ struct Fixture {
             if(c.kind==IgbDependenciesServiceKind::intern_name){++names;auto value=std::make_shared<IgbInternedString>();value->value=igb_dependency_name(c.name);value->container=pool;out->string_result=value;}
             else check(c.kind==IgbDependenciesServiceKind::release_string,"Unexpected prepared string endpoint.");return MessengerCallResult{true,0,{}};};return op;};
         s.fields=std::make_shared<IgbFieldOperationsServices>();s.fields->dependencies=s.dependencies;s.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        s.fields->pointer_lists->values.push_back({0x600000,target,{}});
         s.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{
             if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=pool;
             else{check(c.kind==PK::allocation_size,"Unexpected prepared list allocation.");out->size_result=32;}
@@ -108,6 +109,9 @@ void complete_defaults(){Fixture f;f.with_physical=true;IgbStringFieldDefaultsIn
     check(f.local->default_bytes->buffer->bytes[0]==1 && f.local->offset==0x38 && f.local->name && *f.local->name=="_refCounted" &&
         f.local->declaring_type->lock()==f.target && f.local->global_slot_address==0x805615c4 && f.local->flag_26==0xab && f.local->flag_27==0xac,
         "Local Boolean schema or unrelated field bytes differ.");
+    const auto local_storage=physical(f.local);
+    check(igb_bootstrap_read_word(local_storage,8)==0x38 && igb_bootstrap_read_word(local_storage,0x18)==0x600000 &&
+        igb_bootstrap_read_word(local_storage,0x1c)==0x805615c4,"String local schema did not publish its physical descriptor words.");
     check(f.value_calls.size()==3 && f.value_calls[0].field==f.clones[0] && f.value_calls[1].field==f.clones[1] && f.value_calls[2].field==f.local,
         "Original scalar call order differs.");
     check(call.resume().completed && f.constructors==1 && f.list_calls.size()==2,"Completed string defaults replayed work.");

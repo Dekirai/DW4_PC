@@ -13,6 +13,12 @@ auto field(){auto out=std::make_shared<IgbDecodeRuntimeField>();out->vtable_word
     out->default_bytes=IgbRuntimeFieldDefaultSource{};out->default_bytes_address=0;out->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>{};return out;}
 auto metadata(){auto out=std::make_shared<IgbRuntimeMetaType>();out->fields=std::make_shared<IgbDecodeFieldRegistry>();
     out->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(16);out->fields->backing_bytes=bytes(64);out->fields->backing_address=0x90000;return out;}
+IgbBootstrapPointer physical_field(const std::shared_ptr<IgbDecodeRuntimeField>& field,std::uint32_t address=0x300008){
+    auto storage=std::make_shared<IgbObjectStorage>();storage->original_address=address-8;storage->bytes=bytes(0x48);
+    for(auto& byte:storage->bytes->bytes)byte=0xcc;
+    storage->bindings.push_back({8,{},{},{},{},field});field->physical_storage=IgbFieldStorageBinding{storage,8};
+    return {storage,8};
+}
 struct Fixture {
     std::shared_ptr<IgbFieldSchemaServices> services=std::make_shared<IgbFieldSchemaServices>();
     std::shared_ptr<ModelSceneObject> pool=std::make_shared<ModelSceneData>();
@@ -119,6 +125,109 @@ void configure_prefix(){
         IgbFieldConfigureInvocation invalid(malformed,nullptr,binding,99,f.meta);fails([&]{invalid.resume(f.services);},"Contradictory global-cell binding was accepted.");
         check(malformed->offset==0 && !malformed->declaring_type,"Malformed global-cell store applied later descriptor fields.");}
 }
+void configure_physical_stores(){
+    Fixture f;auto descriptor=field();auto physical=physical_field(descriptor);auto cell=std::make_shared<IgbRuntimeFieldSlot>();
+    f.services->fields->pointer_lists->values={{0x400008,f.meta,{}},{0x400008,f.meta,{}}};bool buffer_saw_stores{};
+    f.field_action=[&](const auto&){buffer_saw_stores=true;
+        check(igb_bootstrap_read_word(physical,0x1c)==0x80560000 && igb_bootstrap_read_word(physical,8)==0xfffffffc &&
+            igb_bootstrap_read_word(physical,0x18)==0x400008,"Buffer preparation preceded a physical schema store.");};
+    IgbFieldConfigureInvocation run(descriptor,nullptr,{cell,0x80560000},0xfffffffcu,f.meta);
+    check(run.resume(f.services).completed && buffer_saw_stores && f.buffer_allocations==1,"Physically bound configuration did not reach buffer preparation.");
+    check(descriptor->global_slot->lock()==cell && descriptor->global_slot_address==0x80560000 && descriptor->offset==0xfffffffc &&
+        descriptor->declaring_type->lock()==f.meta && !cell->has_value(),"Physical schema configuration changed its canonical fields or finalized the global early.");
+    for(unsigned n=0;n<physical.offset;++n)check(physical.storage->bytes->bytes[n]==0xcc,"Schema store overwrote allocation prefix padding.");
+    for(unsigned n=physical.offset+0x28;n<physical.storage->bytes->bytes.size();++n)check(physical.storage->bytes->bytes[n]==0xcc,"Schema store overwrote trailing allocation padding.");
+    check(igb_bootstrap_read_word(physical,0x0c)==0xcccccccc,"Bounded raw-schema synchronization unexpectedly rewrote physical name storage.");
+    igb_bootstrap_write_word(physical,8,7);check(run.resume().completed && igb_bootstrap_read_word(physical,8)==7,"Completed configuration replayed raw stores.");
+
+    Fixture null;auto empty=field();auto empty_physical=physical_field(empty);null.services->fields->pointer_lists.reset();
+    IgbFieldConfigureInvocation clear(empty,nullptr,{},12,nullptr);
+    check(clear.resume(null.services).completed && igb_bootstrap_read_word(empty_physical,0x1c)==0 &&
+        igb_bootstrap_read_word(empty_physical,0x18)==0 && igb_field_declaring_type_is_null(*empty->declaring_type),
+        "Null raw pointers required an address registry or failed to store physical zero.");
+}
+void configure_physical_pending(){
+    Fixture f;auto descriptor=field();auto physical=physical_field(descriptor);auto cell=std::make_shared<IgbRuntimeFieldSlot>();
+    const auto captured=f.meta;IgbFieldConfigureInvocation run(descriptor,nullptr,{cell,0x80560000},12,captured);
+    check(!run.resume(f.services).completed && igb_bootstrap_read_word(physical,0x1c)==0x80560000 &&
+        igb_bootstrap_read_word(physical,8)==12 && igb_bootstrap_read_word(physical,0x18)==0xcccccccc &&
+        descriptor->global_slot_address==0x80560000 && descriptor->offset==12 && !descriptor->declaring_type && f.buffer_allocations==0,
+        "Missing declaring address did not preserve exactly the completed +1C/+08 prefix.");
+    // The pending +18 operation must not replay either preceding raw store.
+    igb_bootstrap_write_word(physical,8,28);descriptor->offset=28;f.meta=metadata();
+    f.services->fields->pointer_lists->values.push_back({0x400008,captured,{}});
+    check(run.resume(f.services).completed && descriptor->offset==28 && igb_bootstrap_read_word(physical,8)==28 &&
+        igb_bootstrap_read_word(physical,0x18)==0x400008 && descriptor->declaring_type->lock()==captured,
+        "Pending +18 resumed with a different metadata receiver or replayed completed prefix stores.");
+
+    for(unsigned variant=0;variant<4;++variant){Fixture conflict;auto item=field();auto raw=physical_field(item);
+        auto& values=conflict.services->fields->pointer_lists->values;values.push_back({0x400008,conflict.meta,{}});
+        if(variant==0)values.push_back({0x500008,conflict.meta,{}});
+        else if(variant==1)values.push_back({0x400008,metadata(),{}});
+        else if(variant==2)values.push_back({0x400008,{},field()});
+        else values[0].address=0;
+        IgbFieldConfigureInvocation invalid(item,nullptr,{cell,0x80560000},16,conflict.meta);
+        fails([&]{invalid.resume(conflict.services);},"Contradictory metadata arithmetic binding was accepted.");
+        check(invalid.faulted() && item->global_slot_address==0x80560000 && item->offset==16 && !item->declaring_type &&
+            igb_bootstrap_read_word(raw,0x1c)==0x80560000 && igb_bootstrap_read_word(raw,8)==16 &&
+            igb_bootstrap_read_word(raw,0x18)==0xcccccccc && conflict.buffer_allocations==0,
+            "Address conflict lost an earlier store or committed the declaring-type word.");
+    }
+}
+void configure_physical_fault_prefix(){
+    Fixture first;auto descriptor=field();auto physical=physical_field(descriptor);auto cell=std::make_shared<IgbRuntimeFieldSlot>();
+    physical.storage->bytes->bytes.resize(physical.offset+0x1e);physical.storage->bytes->initialized.resize(physical.offset+0x1e);
+    IgbFieldConfigureInvocation short_global(descriptor,nullptr,{cell,0x80560000},12,first.meta);
+    fails([&]{short_global.resume(first.services);},"Short physical +1C store was accepted.");
+    check(!descriptor->global_slot_address && descriptor->offset==0 && !descriptor->declaring_type && first.buffer_allocations==0 &&
+        physical.storage->bytes->bytes[physical.offset+0x1c]==0xcc,"Failed first physical store committed canonical or partial bytes.");
+
+    Fixture last;auto later=field();auto later_physical=physical_field(later);IgbFieldConfigureInvocation short_type(later,nullptr,{cell,0x80560000},24,last.meta);
+    check(!short_type.resume(last.services).completed,"Unrepresented declaring pointer unexpectedly completed.");
+    later_physical.storage->bytes->bytes.resize(later_physical.offset+0x1a);later_physical.storage->bytes->initialized.resize(later_physical.offset+0x1a);
+    last.services->fields->pointer_lists->values.push_back({0x400008,last.meta,{}});
+    fails([&]{short_type.resume(last.services);},"Short physical +18 store was accepted.");
+    check(later->global_slot_address==0x80560000 && later->offset==24 && !later->declaring_type &&
+        igb_bootstrap_read_word(later_physical,8)==24 && later_physical.storage->bytes->bytes[later_physical.offset+0x18]==0xcc && last.buffer_allocations==0,
+        "Failed physical +18 lost earlier canonical stores or committed declaring type.");
+    fails([&]{short_type.resume(last.services);},"Faulted physical schema configuration restarted.");
+}
+void configure_physical_identity(){
+    for(unsigned variant=0;variant<5;++variant){Fixture f;auto descriptor=field();auto physical=physical_field(descriptor);IgbBootstrapPointer replacement;
+        IgbFieldConfigureInvocation run(descriptor,nullptr,{},12,f.meta);check(!run.resume(f.services).completed,"Missing address did not retain the descriptor operation.");
+        if(variant==0)descriptor->physical_storage.reset();
+        else if(variant==1)replacement=physical_field(descriptor,0x500008);
+        else if(variant==2)descriptor->physical_storage->offset+=4;
+        else if(variant==3)physical.storage->original_address+=4;
+        else physical.storage->bindings[0].field=field();
+        f.services->fields->pointer_lists->values.push_back({0x400008,f.meta,{}});
+        fails([&]{run.resume(f.services);},"Pending configuration redirected its captured allocation identity.");
+        check(run.faulted() && !descriptor->declaring_type && f.buffer_allocations==0,
+            "Changed allocation binding reached the declaring-type or buffer publication.");
+        if(replacement.storage)check(igb_bootstrap_read_word(replacement,0x18)==0xcccccccc,"Conflicting replacement allocation received a schema store.");
+    }
+    Fixture expired;auto descriptor=field();auto raw=physical_field(descriptor);raw.storage.reset();
+    IgbFieldConfigureInvocation missing(descriptor,nullptr,{},12,expired.meta);
+    fails([&]{missing.resume(expired.services);},"Expired explicit physical identity became a canonical-only fixture.");
+
+    Fixture retained;std::weak_ptr<IgbObjectStorage> weak_storage;std::weak_ptr<IgbDecodeRuntimeField> weak_field;std::weak_ptr<IgbRuntimeMetaType> weak_type;
+    {auto target=field();auto type=metadata();auto allocation=physical_field(target);weak_storage=allocation.storage;weak_field=target;weak_type=type;
+        IgbFieldConfigureInvocation abandoned(target,nullptr,{},12,type);
+        check(!abandoned.resume(retained.services).completed,"Prepared declaring-address boundary did not suspend.");
+        allocation.storage.reset();target.reset();type.reset();
+        check(!weak_storage.expired() && !weak_field.expired() && !weak_type.expired(),"Pending physical operation lost its captured owners.");}
+    check(!weak_storage.expired() && !weak_field.expired() && !weak_type.expired(),"Abandoned physical configuration discarded its completed prefix owners.");
+    retained.services->unfinished.clear();check(weak_storage.expired() && weak_field.expired() && weak_type.expired(),"Retained physical configuration created an ownership cycle.");
+
+    Fixture naming;auto named=field();auto original=physical_field(named);auto old=std::make_shared<IgbInternedString>();old->references=1;named->name_string=old;
+    naming.services->dependencies->factory=[&](const IgbDependenciesCall&){auto op=std::make_shared<IgbDependenciesOperation>();
+        op->resume=[] {return MessengerCallResult{false,0,"prepared name release"};};return op;};
+    IgbFieldConfigureInvocation releasing(named,nullptr,{},20,naming.meta);
+    check(!releasing.resume(naming.services).completed && old->references==0,"Name release did not suspend before raw stores.");
+    auto other=physical_field(named,0x500008);fails([&]{releasing.resume(naming.services);},"Name callback pause permitted descriptor allocation replacement.");
+    check(named->offset==0 && igb_bootstrap_read_word(original,0x1c)==0xcccccccc && igb_bootstrap_read_word(other,0x1c)==0xcccccccc,
+        "Identity failure during name release reached later raw schema stores.");
+}
 void schema_live_loop(){
     Fixture f;auto inherited=field(),first=field(),unused=field(),second=field();f.meta->fields->count=3;
     *f.meta->fields->backing={inherited,first,unused};auto replacement=metadata()->fields;replacement->count=0;*replacement->backing={nullptr,nullptr,second};
@@ -159,6 +268,7 @@ void adapter_and_reentry(){
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_field_schema_tests");
-    batch_order();batch_pending_and_failures();packed_release();configure_prefix();schema_live_loop();schema_physical_order();adapter_and_reentry();
+    batch_order();batch_pending_and_failures();packed_release();configure_prefix();configure_physical_stores();configure_physical_pending();
+    configure_physical_fault_prefix();configure_physical_identity();schema_live_loop();schema_physical_order();adapter_and_reentry();
     std::cout<<"igb_field_schema_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"Field schema failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

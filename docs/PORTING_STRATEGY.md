@@ -286,19 +286,28 @@ prototype now resume the retained DataList getter and schema. The enabled
 metadata child-list factories use actual reflected initialization, with raw
 backing supplied to native memory construction and zero fill. The inherited
 memory-field clone finishes object-list specialization. DataList, object-list
-and thread-list metadata complete. The cold composition has 73 descriptors,
-82 default buffers, nineteen published types, nine prototypes and 54 enabled
-allocations; four default buffers were copied by the reflected clone path.
-It reaches **deferred `igThread` registration `80023C40`**.
+and thread-list metadata complete. Deferred `igThread` registration then runs
+its actual named-object parent, probe and `_name` schema. The cold composition
+has 80 descriptors, 83 default buffers, twenty published types, nine prototypes
+and 66 enabled allocations; four default buffers were copied by the reflected
+clone path. Thread defaults construct four enum and two raw-reference fields
+before **unsigned-integer registration `80022CD8`** is required for `_stackSize`.
+Those six descriptors have not reached value setters, default-buffer preparation
+or schema publication. The new physical schema stores preserve `+1C/+08/+18`
+publication order and the completed prefix when address resolution is pending.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md),
 [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
 [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
 [IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
-[IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md).
-Recover thread class `80023C40 -> 80023C68`, including its actual named-object
-parent `80029D58`, before `80026098` and actual startup callback
-`80023A30`. Semaphore metadata still has flags zero; enum metadata remains null. Preserve
+[IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md) and
+[IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md).
+Recover unsigned-integer registration, its actual probe and reflected prototype,
+sharing existing canonical metadata `805614BC` and prototype `805614C0` cells.
+Resume the retained thread batch and schema before `80026098` and actual startup
+callback `80023A30`. Semaphore registration/default callers exist but have not
+yet run in this cold chain. Semaphore metadata still has flags zero; enum
+metadata remains null. Preserve
 the deferred callback order and the now-reached original transition from disabled
 to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),

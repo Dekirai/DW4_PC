@@ -1,6 +1,7 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_defaults.hpp"
+#include "dw4/igb_named_type_defaults.hpp"
 #include "dw4/igb_data_list_defaults.hpp"
 #include "dw4/igb_ark_core_bootstrap.hpp"
 #include "dw4/igb_object_registration.hpp"
@@ -473,6 +474,8 @@ void actual_cold_bootstrap_prefix(){
     auto publication=std::make_shared<IgbTypePublicationServices>();publication->runtime=f.services->types->runtime;
     publication->pointer_lists=type_pointers;type_pointers->values.push_back({igb_bootstrap_address(object_allocation),object_type,{}});
     type_pointers->values.push_back({igb_bootstrap_address(f.object),f.constructed,{}});
+    object_defaults->fields->pointer_lists->values.push_back({igb_bootstrap_address(object_allocation),object_type,{}});
+    object_defaults->fields->pointer_lists->values.push_back({igb_bootstrap_address(f.object),f.constructed,{}});
     f.remaining=make_native_igb_type_publication_factory(publication,f.remaining);
     check(!call.resume(bootstrap).completed && !call.faulted(),"Unbound original field layout was skipped.");
     check(object_type->word_0c==0 && object_type->reference_word==1 && f.core->types->count==1 &&
@@ -616,7 +619,8 @@ void actual_cold_bootstrap_prefix(){
             check(f.core->enabled==0 && c.pool==f.pool,"Lazy metadata constructor changed the cold allocation gate.");
             IgbBootstrapPointer physical;
             if(c.bytes==0x64){auto type=std::make_shared<IgbRuntimeMetaType>();physical=allocation(0x790000+static_cast<std::uint32_t>(lazy_metadata.size())*0x100,c.bytes);
-                physical.storage->bindings.push_back({0,{},type,{}});lazy_metadata.push_back(type);}
+                physical.storage->bindings.push_back({0,{},type,{}});lazy_metadata.push_back(type);
+                object_defaults->fields->pointer_lists->values.push_back({igb_bootstrap_address(physical),type,{}});}
             else{check(c.bytes==16,"Lazy metadata requested an unexpected allocation size.");auto fields=std::make_shared<IgbDecodeFieldRegistry>();
                 physical=allocation(0x7a0000+static_cast<std::uint32_t>(lazy_fields.size())*0x100,c.bytes);
                 physical.storage->bindings.push_back({0,{},{},fields});lazy_fields.push_back(fields);}
@@ -1136,6 +1140,7 @@ void actual_cold_bootstrap_prefix(){
     // This is the already allocated metadata's arithmetic identity, not a
     // constructed class or a replacement for its pending reflected initializer.
     type_pointers->values.push_back({0x800000,reflected_metadata,{}});
+    object_defaults->fields->pointer_lists->values.push_back({0x800000,reflected_metadata,{}});
     const auto pending_memory=call.resume(bootstrap);
     check(!pending_memory.completed && !call.faulted() && pending_memory.diagnostic=="prepared aligned field-list backing allocation" &&
         memory_pool_queries==1 && memory_allocation_polls==1 && memory_allocations==0 && memory_calls.size()==5,
@@ -1191,6 +1196,7 @@ void actual_cold_bootstrap_prefix(){
     // identities. Their headers, members and child lists remain the work of
     // the same reflected initializer used above.
     std::vector<IgbObjectInstance> enabled_allocations;
+    std::shared_ptr<IgbNamedTypeDefaultsServices> named_defaults;
     bool bind_new_instance_addresses{};
     std::vector<IgbPointerListBacking> enabled_backings;
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
@@ -1220,6 +1226,7 @@ void actual_cold_bootstrap_prefix(){
                 raw.storage->bindings.push_back({0,{},instance.metadata});
                 type_pointers->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
                 values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),instance.metadata,{}});
+                if(named_defaults)named_defaults->physical_metadata.push_back(raw);
             }else if(c.metadata==lazy_metadata[0]){
                 check(c.bytes==16,"Lazy enabled field list changed its allocation size.");
                 instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
@@ -2194,6 +2201,92 @@ void actual_cold_bootstrap_prefix(){
         f.core->types->count==19 && (**prototypes->registry)->count==9 && descriptors.size()==73 &&
         (*f.core->bootstrap_callbacks)->count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending Thread registration replayed completed native classes, clones, child-list allocation or bootstrap snapshots.");
+
+    // Resume the reached thread-class wrapper through its original NamedObject
+    // parent. The allocator still supplies raw memory and typed identities;
+    // registration, schema, layout and parent attachment establish readiness.
+    auto named_registration=std::make_shared<IgbNamedTypeRegistrationServices>();
+    named_registration->named_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    named_registration->thread_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    named_registration->dependencies=thread_dependencies;
+    named_registration->types=f.services->types;named_registration->callbacks=f.services->callbacks;
+    named_registration->pools=f.services->pools;named_registration->metadata=f.services->metadata;
+    std::vector<IgbBootstrapPointer> named_probe_locals;
+    named_registration->local_storage=[&]{
+        auto raw=allocation(0xbd0000+static_cast<std::uint32_t>(named_probe_locals.size())*0x100,12);
+        named_probe_locals.push_back(raw);return raw;
+    };
+    named_defaults=std::make_shared<IgbNamedTypeDefaultsServices>();
+    named_defaults->registration=named_registration;named_defaults->schema=metadata_defaults->schema;named_defaults->values=values;
+    for(const auto& instance:enabled_allocations)if(instance.metadata)
+        named_defaults->physical_metadata.push_back({instance.storage,instance.offset});
+    additional_callbacks=make_native_igb_named_type_registration_function_factory(named_registration,additional_callbacks);
+    f.remaining=make_native_igb_named_type_registration_type_factory(named_registration,
+        make_native_igb_named_type_defaults_factory(named_defaults,f.remaining));
+    const auto after_named_registration=call.resume(bootstrap);
+    std::cout<<"Cold native named/thread continuation: "<<after_named_registration.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_named_registration.completed && !call.faulted(),"Named/thread schemas incorrectly completed full startup.");
+    const auto named_type=**named_registration->named_metadata,native_thread_type=**named_registration->thread_metadata;
+    check(after_named_registration.diagnostic=="Registration requires original function 0x80022CD8." &&
+        named_type && native_thread_type && named_type->class_flags==7 && native_thread_type->class_flags==9 &&
+        f.core->types->count==20 && f.core->types->backing->at(19)==named_type &&
+        descriptors.size()==80 && default_allocations==83 && enabled_allocations.size()==66 &&
+        (**prototypes->registry)->count==9 && buffer_copy_allocations==4,
+        "NamedObject registration did not reach Thread's original unsigned-integer descriptor dependency.");
+    check(named_type->name && *named_type->name=="igNamedObject" && named_type->parent==object_type &&
+        named_type->native_size==12 && named_type->type_word==0x8047650c && named_type->fields->count==3 &&
+        named_probe_locals.size()==1 && igb_bootstrap_read_word(named_probe_locals.front(),0)==0x8047650c &&
+        igb_bootstrap_read_word(named_probe_locals.front(),4)==1 && igb_bootstrap_read_word(named_probe_locals.front(),8)==0,
+        "NamedObject skipped its actual base-reset probe, name initialization or inherited schema.");
+    const auto name_field=descriptors[73];const auto name_storage=descriptor_allocations[73];
+    const auto& named_tables=named_defaults->tables[static_cast<std::size_t>(IgbNamedTypeKind::named_object)];
+    check(named_type->fields->backing->at(2)==name_field && *named_tables.globals->at(0)->slot==name_field,
+        "NamedObject schema lost its canonical string-field owner or global cell.");
+    check(name_field->name && *name_field->name=="_name" && name_field->vtable_word==0x8047693c &&
+        name_field->offset==8 && name_field->global_slot_address==0x80561748 &&
+        name_field->declaring_type && name_field->declaring_type->lock()==named_type &&
+        igb_bootstrap_read_word(name_storage,0x1c)==0x80561748,
+        "NamedObject string schema changed its name, offset, declaring class or physical global pointer.");
+    check(name_field->default_bytes && name_field->default_bytes->buffer &&
+        name_field->default_bytes->buffer!=string_prototype->default_bytes->buffer &&
+        igb_buffer_word(name_field->default_bytes->buffer,name_field->default_bytes->offset)==0,
+        "NamedObject null-string default did not retain an independent zero-valued buffer.");
+    check(native_thread_type->name && *native_thread_type->name=="igThread" &&
+        native_thread_type->parent==named_type && native_thread_type->native_size==0x30 &&
+        native_thread_type->flag_1a==1 && native_thread_type->fields->count==9 &&
+        named_type->children && *named_type->children && (*named_type->children)->count==1 &&
+        (*named_type->children)->backing->at(0)==native_thread_type &&
+        enabled_type_list_allocations.size()==3 && enabled_type_backings.size()==3 && !pending_type_backing,
+        "Thread metadata skipped native parent linkage, abstract registration or the retained ten-field batch.");
+    for(std::size_t i=0;i<3;++i)check(native_thread_type->fields->backing->at(i)==named_type->fields->backing->at(i),
+        "Thread inherited another canonical descriptor owner.");
+    for(std::size_t i=0;i<6;++i){const auto& descriptor=descriptors[74+i];
+        check(native_thread_type->fields->backing->at(3+i)==descriptor && !descriptor->name &&
+            descriptor->vtable_word==(i<4?0x804758e4u:0x80476630u) && descriptor->default_bytes &&
+            !descriptor->default_bytes->buffer && igb_bootstrap_read_word(descriptor_allocations[74+i],0x20)==0,
+            "Pending Thread batch replaced its real reflected enum/raw-reference descriptor or published a later schema.");
+        if(i<4)check(descriptor->method_function==0 && igb_bootstrap_read_word(descriptor_allocations[74+i],0x34)==0,
+            "Thread stored enum getter methods before its ten-field batch completed.");
+    }
+    const auto& thread_tables=named_defaults->tables[static_cast<std::size_t>(IgbNamedTypeKind::thread)];
+    for(const auto& global:*thread_tables.globals)check(global && !*global->slot,
+        "Pending Thread batch prematurely published a final schema global.");
+    check(native_thread_type->factory_redirect==0 && semaphore_metadata->class_flags==0 &&
+        semaphore_metadata->factory_redirect==0 && **thread_dependencies->semaphore==semaphore_metadata &&
+        !**meta_enum->metadata && (*f.core->bootstrap_callbacks)->count==1 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending Thread dependency fabricated a redirect, advanced Semaphore/startup or altered bootstrap snapshots.");
+    const auto named_names=string_allocations,named_buffers=default_allocations,named_copies=buffer_copy_allocations;
+    const auto named_reflections=reflected_allocations.size(),named_memory_calls=memory_calls.size();
+    const auto named_frees=freed_callback_lists.size(),named_schema_calls=schema_calls.size();
+    check(call.resume(bootstrap).diagnostic==after_named_registration.diagnostic && !call.faulted() &&
+        string_allocations==named_names && default_allocations==named_buffers && buffer_copy_allocations==named_copies &&
+        reflected_allocations.size()==named_reflections && memory_calls.size()==named_memory_calls &&
+        freed_callback_lists.size()==named_frees && schema_calls.size()==named_schema_calls && named_probe_locals.size()==1 &&
+        f.core->types->count==20 && descriptors.size()==80 && enabled_allocations.size()==66,
+        "Pending unsigned-integer registration replayed completed NamedObject work or Thread's partial field batch.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

@@ -28,6 +28,21 @@ template<class T>const std::optional<T>& table_entry(const std::shared_ptr<std::
     if(!table || index>=table->size())fail("Field schema reads an unavailable physical table entry.");
     return (*table)[index];
 }
+std::optional<std::uint32_t> declaring_type_address(const std::shared_ptr<IgbRuntimeMetaType>& metadata,
+    const std::shared_ptr<IgbFieldSchemaServices>& services){
+    if(!metadata)return 0;
+    const auto pointers=services && services->fields?services->fields->pointer_lists:nullptr;
+    if(!pointers)return {};
+    std::optional<std::uint32_t> result;
+    for(const auto& value:pointers->values)if(value.metadata==metadata){
+        if(value.field || !value.address || (result && *result!=value.address))
+            fail("Field configuration has conflicting declaring-type arithmetic identities.");
+        result=value.address;
+    }
+    if(result)for(const auto& value:pointers->values)if(value.address==*result && (value.field || value.metadata!=metadata))
+        fail("Field configuration declaring-type address has conflicting canonical owners.");
+    return result;
+}
 }
 
 struct IgbFieldBatchInvocation::Impl {
@@ -112,13 +127,15 @@ struct IgbFieldConfigureInvocation::Impl {
     IgbFieldGlobalBinding global;
     std::uint32_t offset{};
     std::shared_ptr<IgbRuntimeMetaType> declaring_type;
+    std::optional<IgbBootstrapPointer> physical;
+    std::uint32_t physical_address{};
     std::shared_ptr<IgbFieldSchemaServices> owner;
     std::shared_ptr<ModelSceneObject> pool;
     std::shared_ptr<IgbFieldNameSlot> temporary;
     std::shared_ptr<IgbInternedString> released;
     std::unique_ptr<IgbFieldNameInvocation> name_call;
     std::unique_ptr<IgbFieldBufferInvocation> buffer_call;
-    StringCall call;P phase=P::entry,after=P::done;bool running{},fault{};
+    StringCall call;P phase=P::entry,after=P::done;bool running{},fault{},stores_started{};
 };
 IgbFieldConfigureInvocation::IgbFieldConfigureInvocation(std::shared_ptr<IgbDecodeRuntimeField> field,SystemStageString name,
     IgbFieldGlobalBinding global,std::uint32_t offset,std::shared_ptr<IgbRuntimeMetaType> declaring_type):impl_(std::make_unique<Impl>()){
@@ -127,6 +144,8 @@ IgbFieldConfigureInvocation::IgbFieldConfigureInvocation(std::shared_ptr<IgbDeco
 IgbFieldConfigureInvocation::~IgbFieldConfigureInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.temporary && *s.temporary && **s.temporary)s.owner->unfinished.push_back(**s.temporary);
     if(s.released)s.owner->unfinished.push_back(s.released);if(s.pool)s.owner->unfinished.push_back(s.pool);
+    if(s.physical && s.physical->storage)s.owner->unfinished.push_back(s.physical->storage);
+    if(s.field)s.owner->unfinished.push_back(s.field);if(s.declaring_type)s.owner->unfinished.push_back(s.declaring_type);
 }}
 bool IgbFieldConfigureInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldConfigureInvocation::faulted()const noexcept{return impl_->fault;}
@@ -134,7 +153,24 @@ MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbField
     auto& s=*impl_;using P=Impl::P;using K=IgbDependenciesServiceKind;
     if(s.running || s.fault){s.fault=true;fail("Field configuration requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field configuration continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field configuration continuation was invalidated.");
+        if(s.physical){
+            if(!s.field || !s.field->physical_storage)fail("Field configuration lost its captured allocation binding.");
+            const auto& binding=*s.field->physical_storage;
+            if(binding.storage.lock()!=s.physical->storage || binding.offset!=s.physical->offset ||
+                igb_bootstrap_address(*s.physical)!=s.physical_address || s.physical->storage->faulted() ||
+                igb_bootstrap_field(*s.physical)!=s.field)
+                fail("Field configuration changed its captured descriptor allocation.");
+        }else if(s.stores_started && s.field && s.field->physical_storage)
+            fail("Field configuration acquired a physical binding after canonical-only stores.");
+    };
+    const auto capture_physical=[&]{
+        if(!s.physical && s.field && s.field->physical_storage){
+            const auto& binding=*s.field->physical_storage;
+            auto storage=binding.storage.lock();if(!storage)fail("Field configuration reached expired descriptor storage.");
+            s.physical=IgbBootstrapPointer{std::move(storage),binding.offset};s.physical_address=igb_bootstrap_address(*s.physical);
+        }check();
+    };
     const auto clear=[&]{s.call.clear();check();};
     const auto dependencies=[&]{return services?services->dependencies:std::shared_ptr<IgbDependenciesServices>{};};
     const auto globals=[&]{const auto dep=dependencies();return dep?dep->globals:std::shared_ptr<SystemStageServices>{};};
@@ -142,6 +178,7 @@ MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbField
         if(const auto dep=dependencies())s.call.factory=dep->factory;s.after=after;s.phase=P::call;return s.call.request;};
     try{for(;;){check();switch(s.phase){
     case P::entry:
+        capture_physical();
         if(s.name)s.phase=P::string_pool;
         else{s.temporary=std::make_shared<IgbFieldNameSlot>(std::shared_ptr<IgbInternedString>{});s.phase=P::name;}break;
     case P::string_pool:{const auto global=globals();if(!global)return pending("Field configuration requires string-pool global80562140.");
@@ -170,9 +207,17 @@ MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbField
     case P::global:
         if(!s.field)fail("Field configuration stores through a null descriptor.");
         if((s.global.address==0)!=(!s.global.slot))fail("Field configuration requires consistent global-cell address and owner bindings.");
+        capture_physical();s.stores_started=true;
+        if(s.physical)igb_bootstrap_write_word(*s.physical,0x1c,s.global.address);
         s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(s.global.slot);s.field->global_slot_address=s.global.address;s.phase=P::offset;break;
-    case P::offset:s.field->offset=s.offset;s.phase=P::declaring_type;break;
-    case P::declaring_type:s.field->declaring_type=std::weak_ptr<IgbRuntimeMetaType>(s.declaring_type);
+    case P::offset:
+        if(s.physical)igb_bootstrap_write_word(*s.physical,0x08,s.offset);
+        s.field->offset=s.offset;s.phase=P::declaring_type;break;
+    case P::declaring_type:
+        if(s.physical){const auto address=declaring_type_address(s.declaring_type,services);
+            if(!address)return pending("Field configuration requires its declaring-type arithmetic identity before the physical+18 store.");
+            igb_bootstrap_write_word(*s.physical,0x18,*address);}
+        s.field->declaring_type=std::weak_ptr<IgbRuntimeMetaType>(s.declaring_type);
         s.buffer_call=std::make_unique<IgbFieldBufferInvocation>(s.field);s.phase=P::buffer;break;
     case P::buffer:{const auto status=s.buffer_call->resume(services?services->fields:nullptr);check();if(!status.completed)return status;
         s.buffer_call.reset();check();s.phase=P::done;break;}

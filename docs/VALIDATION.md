@@ -1,5 +1,92 @@
 # Local validation
 
+## Named-object registration and thread field construction
+
+Validated locally on 2026-09-24. The retained cold invocation now runs deferred
+thread registration
+`80023C40 -> 80023C68`, its named-object parent `80029D58`, actual layout probe
+`80029CA8` and `_name` defaults `80029DE8`. The named-object class completes
+with flags `7`. Thread defaults `80023CFC` inherit its three fields and construct
+four enum and two raw-reference descriptors before the seventh local factory
+requires **unsigned-integer registration `80022CD8`** for `_stackSize`.
+
+The composition contains **80 descriptors, 83 default buffers, twenty published
+types, nine prototypes and 66 enabled allocations**, with four reflected buffer
+copies. Thread metadata remains busy at flags `9`; its ten-field batch has not
+yet applied enum setters, schema names/globals, buffers or factory redirect.
+The six new descriptors retain their null default buffers. Semaphore metadata
+still has flags zero, and `igMetaEnum` metadata remains null. Repeated resumes
+preserve completed effects and the bootstrap snapshots `+04 = 7`, `+08 = 1`.
+
+The composed test exposed stale physical descriptor words in common schema
+configuration `80063BA8`. After name ownership completes, that routine now
+writes global-cell address `+1C`, offset `+08` and declaring-type address `+18`
+in original order, updating each canonical member only after its physical store
+succeeds. An unknown declaring address suspends after the first two stores.
+Conflicting identities and expired/rebound allocations fail; completed prefixes
+remain intact. Existing focused fixtures now supply explicit metadata arithmetic
+identities, distinct from their field-list backing addresses. Physical name
+publication and general physical header reads remain outside this change.
+
+Independent original execution supplies 117 named-object/thread registration,
+getter and probe observations over 4,039 instructions. A separate 78-case
+defaults corpus executes 6,442 original instructions, including actual count,
+field-selection and scalar forwarding helpers. That defaults corpus prepares
+whole batch/schema/setter endpoints and remains **original-only evidence**;
+the native defaults tests execute those operations at lower boundaries, so it
+is not presented as 78 native differential matches.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 197/197 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 2,497 checks; actual named-object completion, partial thread batch, physical schema words and unchanged pending continuation |
+| Named registration / defaults | 265 /219 checks, including canonical getters, captured owners, live redirects, enum method words and suspension |
+| Common schema | 130 checks, including physical store order, short writes, missing/conflicting addresses, retained allocation identity and completed prefixes |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+A subset selected before native execution compares **60/60 named lookup/probe
+cases exactly**: 40 full/alias/plain getter cases, six already-nonnull lazy
+getters and fourteen uninterrupted/null-core probe cases. Results distinguish
+55 completions, four prepared faults and one null-core fault; none are pending.
+The other 57 original observations were excluded for declared endpoint/API
+boundaries: 24 registrar cases, twelve null-lazy cases, eighteen read-injection
+probe cases and three unavailable-memory cases. Two additional public
+argument-builder checks match the original ABI observations; they are not
+registrar-body differential comparisons.
+
+The common schema's unchanged **617-case corpus /112,444 original instructions**
+was rerun and independently sealed. All 617 native observations match exactly:
+221 completed callers and 396 legacy bounded/fault stops, with no pending
+results. The three descriptor words `+08/+18/+1C` are now read from bound
+physical storage, while the other projections remain canonical. No prepared
+endpoint repairs those words after fixture setup. The legacy stopped status
+combines endpoint failures, null accesses and unavailable mapped bytes; it is
+not a claim of 396 hardware exceptions. Inter-store interruptions are covered
+by focused native tests, not additional original differential observations.
+Original expectations remain unchanged. The nine historical enum table-overrun
+differences below remain separate.
+
+Final `dw4_core.lib` SHA-256:
+`326342f947dd956f47d25784d538e6b0696b86c3ae7385cc355bb8e9883847e4`.
+The comparison audit verified 60 prior manifest entries and sealed 21 result
+artifacts in ignored `work/native-named-schema-comparison-manifest.json`
+(SHA-256 `03655dfc020dfe731878b44173686e227797fcc219a4348be69cdd7fdf78a238`).
+Build and regression evidence is in `work/native-named-types-final-build-2.log`,
+`work/native-named-types-final-cold.log`, `work/native-named-types-prefix.log`,
+`work/native-named-types-player-frames.log` and
+`work/native-named-types-verifier.log`. No application package, preview launch
+or GitHub Actions run was used.
+
+The next implementation must share canonical unsigned-integer metadata
+`805614BC` and prototype `805614C0` with the existing scalar services, preserve
+the absence of a prerequisite call in `80022CD8`, and execute its actual probe
+and reflected prototype before resuming the same thread batch. The implemented
+thread/semaphore redirect stores do not start platform threads. This remains
+incomplete startup with prepared pool/allocator/address services; original
+gameplay, audio and a playable application are not established.
+
 ## Native unsigned-byte fields and reflected child lists
 
 Validated locally on 2026-09-24. The retained cold invocation now executes

@@ -24,6 +24,7 @@ IgbBootstrapPointer physical(const std::shared_ptr<IgbDecodeRuntimeField>& f,std
     igb_bootstrap_write_word(p,0x20,*f->default_bytes_address);return p;
 }
 struct Fixture {
+    static constexpr std::uint32_t target_address=0x650000;
     std::shared_ptr<IgbMemoryFieldDefaultsServices> services=std::make_shared<IgbMemoryFieldDefaultsServices>();
     std::shared_ptr<IgbRuntimeMetaType> target=metadata(0x900000),base=metadata(0x910000);
     std::shared_ptr<IgbDecodeRuntimeField> inherited_copy=field(0x80473f24,1),inherited_reset=field(0x80473f24,1),clone,method;
@@ -55,6 +56,8 @@ struct Fixture {
             if(c.kind==IgbDependenciesServiceKind::intern_name){++names;auto value=std::make_shared<IgbInternedString>();value->value=igb_dependency_name(c.name);value->container=pool;out->string_result=value;}
             else check(c.kind==IgbDependenciesServiceKind::release_string,"Unexpected prepared name endpoint.");return MessengerCallResult{true,0,{}};};return op;};
         s.fields=std::make_shared<IgbFieldOperationsServices>();s.fields->dependencies=s.dependencies;s.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        // This is the declaring metadata's identity, not its pointer-array address.
+        s.fields->pointer_lists->values.push_back({target_address,target,{}});
         s.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{
             if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=pool;
             else{check(c.kind==PK::allocation_size,"Unexpected prepared list allocation.");out->size_result=64;}
@@ -135,10 +138,15 @@ void complete_defaults(){Fixture f;f.with_physical=true;IgbMemoryFieldDefaultsIn
     for(const auto i:{2u,3u,4u})check(f.created[i]->default_bytes->buffer->bytes[0]==1,"Boolean memory default is not true.");
     check(igb_buffer_word(f.created[5]->default_bytes->buffer,0)==0xffffffff,"Alignment default is not signed minus one.");
     for(std::size_t i=0;i<8;++i)check(*f.services->globals->at(i)->slot==f.created[i] && f.created[i]->offset==*f.services->offsets->at(i) &&
-        *f.created[i]->name==**f.services->names->at(i) && f.created[i]->declaring_type->lock()==f.target,"Eight-field schema changed tables or declaring owner.");
+        *f.created[i]->name==**f.services->names->at(i) && f.created[i]->declaring_type->lock()==f.target &&
+        igb_bootstrap_read_word(f.allocations[i],0x18)==Fixture::target_address &&
+        igb_bootstrap_read_word(f.allocations[i],8)==*f.services->offsets->at(i) &&
+        igb_bootstrap_read_word(f.allocations[i],0x1c)==f.services->globals->at(i)->address,
+        "Eight-field schema changed tables, declaring owner or physical descriptor words.");
     check(igb_bootstrap_read_word(f.allocations[1],0x38)==0x660000 && igb_bootstrap_read_byte(f.allocations[1],0x3c)==0 &&
         igb_bootstrap_read_byte(f.allocations[1],0x28)==1 && igb_bootstrap_read_word(f.allocations[6],0x38)==0x660000 &&
         igb_bootstrap_read_word(f.allocations.back(),0x34)==0x8002a5ec && igb_bootstrap_read_word(f.allocations.back(),0x1c)==0x80561834 &&
+        igb_bootstrap_read_word(f.allocations.back(),8)==0x24 && igb_bootstrap_read_word(f.allocations.back(),0x18)==Fixture::target_address &&
         igb_bootstrap_read_word(f.allocations.back(),4)==1,"Memory default direct physical stores do not match canonical state.");
     check(call.resume().completed && f.created.size()==8 && f.method_factories==1,"Completed defaults replayed constructors.");
 }
@@ -161,6 +169,7 @@ void getter_capture_and_fault_order(){Fixture f;f.with_physical=true;
     check(!call.resume(f.services).completed && f.clone && f.created[0]->flag_26==0 && !f.created[1]->object_type,
         "Unknown lazy type getter skipped the committed shallow replacement/local-zero prefix.");
     const auto captured=f.created[1];auto other=metadata(0x950000);
+    f.services->lists->schema->fields->pointer_lists->values.push_back({0x640000,other,{}});
     *igb_field_type_metadata_slot(f.services->registration,IgbFieldTypeKind::memory_reference)=other;
     *f.services->registration->base_metadata=f.base;
     check(call.resume(f.services).completed && captured->object_type->lock()==f.base && other->fields->count==0 && f.created.size()==8,

@@ -54,6 +54,7 @@ struct Fixture {
             else check(c.kind==IgbDependenciesServiceKind::release_string,"Unexpected string endpoint.");
             if(name_action)name_action(c);return MessengerCallResult{true,0,{}};};return op;};
         schema.fields=std::make_shared<IgbFieldOperationsServices>();schema.fields->dependencies=schema.dependencies;schema.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        schema.fields->pointer_lists->values.push_back({igb_bootstrap_address(thread_allocation),thread,{}});
         schema.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{
             if(c.kind==IgbPointerListServiceKind::allocation_pool)out->pool_result=pool;
             else if(c.kind==IgbPointerListServiceKind::allocation_size)out->size_result=64;
@@ -92,6 +93,9 @@ void tables_and_complete(){
         check(igb_bootstrap_read_byte(f.field_allocations[i],0x35)==0x32 && igb_bootstrap_read_byte(f.field_allocations[i],0x3c)==0x54,"Descriptor store changed adjacent bytes.");
         check(*field->name==(i?"_sema":"_threadList") && field->offset==(i?12u:8u) && field->declaring_type->lock()==f.thread,"Actual schema did not preserve names, offsets and captured owner.");
         check(*f.services->globals->at(i)->slot==field && field->global_slot_address==(i?0x805614f0u:0x805614ecu),"Original descriptor globals were not finalized.");
+        check(igb_bootstrap_read_word(f.field_allocations[i],0x18)==igb_bootstrap_address(f.thread_allocation) &&
+            igb_bootstrap_read_word(f.field_allocations[i],8)==field->offset &&
+            igb_bootstrap_read_word(f.field_allocations[i],0x1c)==*field->global_slot_address,"Thread schema did not publish its physical declaring-type, offset and global words.");
     }
     check(f.callbacks->count==2 && f.callbacks->backing->at(0)==0x1234 && f.callbacks->backing->at(1)==0x80023a50 && (*f.core->registration_callbacks)->count==0,"Defaults appended to the wrong callback list or executed its callback.");
     for(std::size_t i=0;i<before.size();++i)if(i!=8+0x18 && (i<8+0x3c || i>=8+0x40))check(before[i]==f.thread_allocation.storage->bytes->bytes[i],"Metadata store changed unrelated bytes.");

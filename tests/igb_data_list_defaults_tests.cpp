@@ -25,6 +25,7 @@ IgbBootstrapPointer physical(const std::shared_ptr<IgbDecodeRuntimeField>& field
     igb_bootstrap_write_word(p,0x20,*field->default_bytes_address);return p;
 }
 struct Fixture {
+    static constexpr std::uint32_t data_address=0x620000,object_address=0x630000;
     std::shared_ptr<IgbDataListDefaultsServices> services=std::make_shared<IgbDataListDefaultsServices>();
     std::shared_ptr<IgbRuntimeMetaType> data=metadata(0x900000),object=metadata(0x910000);
     std::shared_ptr<IgbDecodeRuntimeField> byte_prototype=field(0x80300000),object_prototype=field(0x804762fc),clone;
@@ -48,6 +49,9 @@ struct Fixture {
             if(c.kind==IgbDependenciesServiceKind::intern_name){++names;auto value=std::make_shared<IgbInternedString>();value->value=igb_dependency_name(c.name);value->container=pool;out->string_result=value;}
             else check(c.kind==IgbDependenciesServiceKind::release_string,"Unexpected prepared name operation.");return MessengerCallResult{true,0,{}};};return op;};
         s.fields=std::make_shared<IgbFieldOperationsServices>();s.fields->dependencies=s.dependencies;s.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        // Prepared metadata identities are distinct from their pointer-array addresses.
+        s.fields->pointer_lists->values.push_back({data_address,data,{}});
+        s.fields->pointer_lists->values.push_back({object_address,object,{}});
         s.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{
             if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=pool;
             else{check(c.kind==PK::allocation_size,"Unexpected prepared list growth.");out->size_result=64;}return MessengerCallResult{true,0,{}};};return op;};
@@ -109,7 +113,10 @@ void wrapped_first_index(){Fixture f;f.with_physical=true;f.bind_prototypes();
         "Wrapped original field index was rejected before selecting its represented physical slot.");
     for(std::size_t i=0;i<3;++i)check(f.data->fields->backing->at(i)==f.created[i] &&
         igb_buffer_word(f.data->fields->backing_bytes,i*4)==0x100000+i*0x100 &&
-        f.created[i]->offset==8+i*4 && *f.services->globals->at(i)->slot==f.created[i],
+        f.created[i]->offset==8+i*4 && *f.services->globals->at(i)->slot==f.created[i] &&
+        igb_bootstrap_read_word(f.allocations[i],0x18)==Fixture::data_address &&
+        igb_bootstrap_read_word(f.allocations[i],8)==8+i*4 &&
+        igb_bootstrap_read_word(f.allocations[i],0x1c)==f.services->globals->at(i)->address,
         "Wrapping batch/schema field offsets lost physical publication or canonical configuration.");
     check(f.created[2]->element_field->lock()==f.byte_prototype && igb_bootstrap_read_word(f.allocations[2],0x3c)==0x660000 &&
         f.created[2]->flag_35==1 && f.created[2]->flag_40==1 && f.created[2]->flag_41==1,
@@ -131,6 +138,7 @@ void prototype_getters(){
     Fixture captured;captured.services->unsigned_char_prototype->reset();IgbDataListDefaultsInvocation call(IgbDataListKind::data_list);
     check(!call.resume(captured.services).completed && captured.created.size()==3 && captured.names==0,"Unknown prototype skipped the completed batch prefix.");
     auto replacement=metadata(0x950000);*captured.services->registration->data_metadata=replacement;
+    captured.services->lists->schema->fields->pointer_lists->values.push_back({0x640000,replacement,{}});
     *captured.services->unsigned_char_prototype=captured.byte_prototype;
     check(call.resume(captured.services).completed && captured.data->fields->count==5 && replacement->fields->count==0 && captured.created.size()==3,
         "Prototype suspension lost the captured metadata receiver or replayed the batch.");

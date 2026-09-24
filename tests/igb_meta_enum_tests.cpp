@@ -57,6 +57,8 @@ struct DefaultsFixture:Fixture {
                 return MessengerCallResult{true,0,{}};};return op;};
         schema.fields=std::make_shared<IgbFieldOperationsServices>();schema.fields->dependencies=schema.dependencies;
         schema.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        // Separate the prepared declaring receiver from the two getter results.
+        schema.fields->pointer_lists->values.push_back({0x600000,meta,{}});
         schema.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();
             op->resume=[this,c,out=op.get()]{if(c.kind==IgbPointerListServiceKind::allocation_pool)out->pool_result=pool;
                 else if(c.kind==IgbPointerListServiceKind::allocation_size)out->size_result=64;
@@ -175,6 +177,8 @@ void defaults_and_suspension(){
     for(unsigned i=0;i<3;++i){const auto field=f.created[i];const auto global=*f.services->globals->at(i);
         check(field->name==*f.services->names->at(i) && field->offset==8+i*4 && field->declaring_type->lock()==f.meta &&
             global.address==0x8056180cu+i*4 && *global.slot==field,"Enum schema changed name/offset/global publication.");
+        check(igb_bootstrap_read_word(f.allocations[i],0x18)==0x600000 && igb_bootstrap_read_word(f.allocations[i],8)==8+i*4 &&
+            igb_bootstrap_read_word(f.allocations[i],0x1c)==global.address,"Enum schema did not publish its physical declaring-type, offset and global words.");
         check(field->flag_26==1 && field->flag_34==7 && field->flag_35==8 && field->flag_3c==9,"Enum defaults fabricated extra reference flags.");}
     check(call.resume().completed && f.getter_polls==2 && f.field_polls==3,"Completed enum defaults replayed ownership work.");
     DefaultsFixture pending;pending.fields_ready=false;IgbMetaEnumDefaultsInvocation paused;

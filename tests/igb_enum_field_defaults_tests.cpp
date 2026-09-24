@@ -55,6 +55,7 @@ struct Fixture {
                 return MessengerCallResult{true,0,{}};};return op;};
         s.fields=std::make_shared<IgbFieldOperationsServices>();s.fields->dependencies=s.dependencies;
         s.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        s.fields->pointer_lists->values.push_back({0x600000,target,{}});
         s.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();
             op->resume=[this,c,out=op.get()]{
                 if(c.kind==PK::allocation_pool)out->pool_result=pool;
@@ -98,7 +99,9 @@ void complete_schema(){
             "Enum defaults omitted native configuration or finalization.");
         check(f.local->default_bytes->buffer->bytes==std::vector<std::uint8_t>(4,0x5a),"Null-source finalization invented a scalar default.");
         if(mapped){const auto p=f.allocations[0];check(igb_bootstrap_read_byte(p,0x26)==0 && igb_bootstrap_read_byte(p,0x27)==0xcc &&
-                igb_bootstrap_read_word(p,0x34)==0x12345678 && p.storage->bytes->bytes.front()==0xcc,"Physical flag store changed neighboring or derived bytes.");}
+                igb_bootstrap_read_word(p,0x34)==0x12345678 && p.storage->bytes->bytes.front()==0xcc,"Physical flag store changed neighboring or derived bytes.");
+            check(igb_bootstrap_read_word(p,8)==0x34 && igb_bootstrap_read_word(p,0x18)==0x600000 &&
+                igb_bootstrap_read_word(p,0x1c)==0x80561c38,"Enum schema did not publish its physical descriptor words.");}
         check(call.resume().completed && f.create_polls==1 && f.interns==1,"Completed enum defaults replayed work.");
     }
 }

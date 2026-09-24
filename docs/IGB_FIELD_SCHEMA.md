@@ -27,11 +27,12 @@ explicit `80066E1C` destruction boundary when the low 23 bits are zero. A null
 factory result is appended before the later unconditional reference read fails.
 Missing metadata fails before the retain; a null list fails after it.
 
-`make_native_igb_field_schema_factory` connects the ten verified factory
+`make_native_igb_field_schema_factory` connects the twelve verified factory
 profiles: unsigned int `80022A90`, signed int `8002E1AC`, boolean `800385E0`,
 string `800251EC`, object `8002879C`, pointer `800274EC`, unsigned short
 `80021E10`, memory reference `8002AC34`, signed short `800259A8` and
-signed byte `80037B1C`. Each runs its actual constructor/reset chain and virtual tails;
+signed byte `80037B1C`, enum `80031378` and unsigned byte `8002310C`.
+Each follows its actual raw or reflected factory path;
 see [IGB_META_FIELD_FACTORY.md](IGB_META_FIELD_FACTORY.md). Other constructor
 identities remain reached operations. The module does not manufacture a generic
 descriptor to complete an unknown class factory. Factory results may supply an
@@ -51,6 +52,16 @@ existing canonical field representation. Global-cell arithmetic addresses and
 owner bindings must agree when the original pointer store is reached. That
 validation occurs after the name operations, without applying subsequent stores
 on failure. Global publication itself belongs to the later finalizer.
+
+For a descriptor with a physical allocation binding, configuration publishes
+`+1C`, `+08` and `+18` to that storage before updating each corresponding
+canonical member. A later failed store preserves the completed prefix. The
+declaring metadata address comes from explicit pointer-list identity bindings;
+missing identity pauses at `+18`, while conflicting mappings fail. The selected
+descriptor allocation remains retained and must keep its original identity
+across callbacks and suspension. Canonical-only descriptors remain supported.
+This does not extend the name setter to physical string-pointer publication
+or make all canonical reads physical memory accesses.
 
 The schema loop reads its field count once through `80065D88`. It begins the
 parallel name/global/offset tables at entry zero, even when its first field index
@@ -80,5 +91,5 @@ The focused helper tests prepare specialized factories, string allocation and
 allocator operations explicitly. Native pool selection, pointer-list append,
 name assignment, unsigned-int field virtuals, buffer preparation and finalization
 execute their existing implementations. Separate cold registration integration
-uses the seven actual descriptor factory profiles. See [VALIDATION.md](VALIDATION.md)
+uses the actual reached descriptor factories. See [VALIDATION.md](VALIDATION.md)
 for the reached boundary; neither fixture establishes a playable native game.

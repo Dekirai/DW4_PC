@@ -46,6 +46,8 @@ struct Fixture {
             if(c.kind==IgbDependenciesServiceKind::intern_name){++names;auto header=std::make_shared<IgbInternedString>();header->value=igb_dependency_name(c.name);header->container=pool;out->string_result=header;}
             else if(c.kind!=IgbDependenciesServiceKind::release_string)throw std::runtime_error("Unexpected prepared string operation");return MessengerCallResult{true,0,{}};};return op;};
         schema.fields=std::make_shared<IgbFieldOperationsServices>();schema.fields->dependencies=schema.dependencies;schema.fields->pointer_lists=std::make_shared<IgbPointerListServices>();
+        // Prepared metadata arithmetic identities for physical schema+18 stores.
+        schema.fields->pointer_lists->values={{0x600000,children,{}},{0x610000,registry,{}}};
         schema.fields->pointer_lists->factory=[this](const IgbPointerListCall& c){pointer_calls.push_back(c);auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{
             if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=pool;
             else if(c.kind==PK::allocation_size){++queries;out->size_result=capacity;}
@@ -151,6 +153,8 @@ void physical_array_publication(){
     f.services->values->object_prototype=field(0x804762fc);f.services->schema->fields->pointer_lists->values.push_back({0x660000,{},captured});
     check(call.resume(f.services).completed && f.created.size()==2 && f.created[0]->element_field->lock()==captured,
         "Late element address replayed creation or reloaded the already captured prototype.");
+    check(igb_bootstrap_read_word(array,0x18)==0x600000 && igb_bootstrap_read_word(array,0x1c)==0x805619d8 &&
+        igb_bootstrap_read_word(array,8)==8,"Physical array schema lost its declaring metadata, global cell or offset.");
     check(igb_bootstrap_read_word(array,0x3c)==0x660000 && igb_bootstrap_read_word(array,0x38)==0x40,
         "Configured array element and element size were not published physically.");
     for(const auto offset:{0x34u,0x35u,0x40u,0x41u})check(igb_bootstrap_read_byte(array,offset)==1,"Array flag physical publication differs.");
