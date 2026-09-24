@@ -37,6 +37,8 @@ struct Fixture {
         services->values->signed_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         auto int_meta=metadata();int_meta->native_size=0x34;int_meta->type_word=0x80475b60;
         r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_int)]=std::make_shared<IgbRegistrationMetaSlot>(int_meta);
+        auto unsigned_meta=metadata();unsigned_meta->native_size=0x34;unsigned_meta->type_word=0x80476e6c;
+        r->meta_fields->metadata=std::make_shared<IgbRegistrationMetaSlot>(unsigned_meta);
         services->values->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         auto memory_meta=metadata();memory_meta->native_size=0x50;memory_meta->type_word=0x80476088;
         r->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::memory_reference)]=std::make_shared<IgbRegistrationMetaSlot>(memory_meta);
@@ -59,6 +61,8 @@ struct Fixture {
         fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>(4);fields->backing_bytes=backing.storage->bytes;fields->backing_address=0x300000;
         services->registry=std::make_shared<std::optional<std::shared_ptr<IgbDecodeFieldRegistry>>>(fields);
         services->schema=std::make_shared<IgbFieldSchemaServices>();services->schema->fields=std::make_shared<IgbFieldOperationsServices>();
+        services->values->fields=services->schema->fields;
+        services->values->fields->unsigned_int_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->schema->fields->pointer_lists=std::make_shared<IgbPointerListServices>();
         services->schema->fields->pointer_lists->factory=[this](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();op->resume=[this,c,out=op.get()]{++pointer_calls;
             if(pointer_action)pointer_action(c);if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=pool;
@@ -72,7 +76,7 @@ struct Fixture {
     auto slot(E kind){return igb_field_prototype_slot(services,kind);}
 };
 void gates_and_native_reflection(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
         check(gate.resume(f.services).completed && f.created->reference_word==1 && f.fields->count==0,"Existing prototype failed null-only gate.");}
     Fixture unknown;unknown.slot(E::object)->reset();IgbFieldPrototypeInvocation missing(E::object);
     check(!missing.resume(unknown.services).completed && unknown.reflected_calls==0,"Unknown prototype was treated as null.");
@@ -163,7 +167,7 @@ void native_registry(){
     *f.services->registry=f.fields;check(get.resume().completed && get.result()==fields,"Completed registry getter reloaded replacement.");
 }
 void append_release_finalize(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte}){Fixture f;
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int}){Fixture f;
         // The nonnull reference case represents a changed live abstract flag;
         // the canonical cold reference profile returns null in the test above.
         if(kind==E::reference)f.services->registration->reference_metadata->value()->flag_1a=0;
@@ -189,7 +193,8 @@ void append_release_finalize(){
 }
 void callbacks_and_missing(){
     Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;*f.slot(E::signed_int)=f.created;*f.slot(E::memory_reference)=f.created;*f.slot(E::boolean)=f.created;*f.slot(E::string)=f.created;*f.slot(E::signed_byte)=f.created;*f.slot(E::enumeration)=f.created;*f.slot(E::pointer)=f.created;*f.slot(E::unsigned_byte)=f.created;
-    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u,0x80025628u,0x80037db0u,0x80031690u,0x8002778cu,0x800232c0u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
+    *f.slot(E::unsigned_int)=f.created;
+    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u,0x80025628u,0x80037db0u,0x80031690u,0x8002778cu,0x800232c0u,0x80022d60u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
         auto op=factory(c);check(op && op->resume().completed && !op->callbacks_result,"Prototype callback fabricated a returned deferred list.");}
     IgbRegistrationCallbacksCall other;other.kind=IgbRegistrationCallbacksServiceKind::invoke_function;other.function=0x800289f8;check(!factory(other),"Prototype adapter swallowed registration wrapper.");
     Fixture retained;retained.services->registration->types->metadata_pool_handle.reset();IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=0x80028b64;
@@ -200,7 +205,7 @@ void callbacks_and_missing(){
     check(!mismatch.slot(E::object)->value() && mismatch.fields->count==0,"Malformed reflected result changed canonical publication.");
 }
 void enum_and_pointer_getters(){
-    for(const auto kind:{E::enumeration,E::pointer}){
+    for(const auto kind:{E::enumeration,E::pointer,E::unsigned_int}){
         Fixture ready;*ready.slot(kind)=ready.created;ready.services->registration.reset();
         IgbFieldPrototypeLookupInvocation existing(kind);
         check(existing.resume(ready.services).completed && existing.result()==ready.created && ready.reflected_calls==0,
@@ -212,7 +217,7 @@ void enum_and_pointer_getters(){
         unsigned selections{},polls{};bool resume{};
         f.services->registration->callbacks->factory=[&](const IgbRegistrationCallbacksCall& request){
             ++selections;check(request.kind==IgbRegistrationCallbacksServiceKind::invoke_function &&
-                request.function==(kind==E::enumeration?0x80031584u:0x80027704u),"Prototype getter selected the wrong registration body.");
+                request.function==(kind==E::enumeration?0x80031584u:kind==E::unsigned_int?0x80022cd8u:0x80027704u),"Prototype getter selected the wrong registration body.");
             auto op=std::make_shared<IgbRegistrationCallbacksOperation>();op->resume=[&]{++polls;if(!resume)return MessengerCallResult{false,0,"prepared registration"};
                 *f.slot(kind)=replacement;return MessengerCallResult{true,0,{}};};return op;};
         IgbFieldPrototypeLookupInvocation call(kind);
@@ -261,8 +266,31 @@ void unsigned_byte_shared_slot(){
         "Retained DataList getter missed native unsigned-byte publication through its shared canonical cell.");
     check(getter.resume().completed && f.reflected_calls==1 && polls==2,"Completed unsigned-byte lookup replayed registration.");
 }
+void unsigned_int_shared_slot(){
+    Fixture f;auto cell=f.slot(E::unsigned_int);
+    check(cell.get()==&f.services->values->fields->unsigned_int_prototype,
+        "Unsigned-integer prototype created a cell separate from the scalar getter.");
+    IgbFieldOperationCall request;request.kind=IgbFieldOperationKind::field_virtual;
+    request.vtable_word=0x80476e6c;request.virtual_slot=0x5c;
+    const auto scalar=make_native_igb_unsigned_int_field_factory(f.services->values->fields)(request);
+    check(scalar && scalar->resume().completed && !scalar->field_result,"Initial scalar prototype getter did not observe represented null.");
+    IgbFieldPrototypeInvocation create(E::unsigned_int);
+    check(create.resume(f.services).completed && scalar->resume().completed && scalar->field_result==f.created &&
+        cell->value()==f.created,"Native unsigned-integer prototype publication did not reach the scalar getter's canonical cell.");
+
+    auto owner=std::make_shared<IgbFieldPrototypeServices>();owner->values=std::make_shared<IgbFieldValuesServices>();
+    owner->values->fields=std::make_shared<IgbFieldOperationsServices>();
+    auto retained=igb_field_prototype_slot(owner,E::unsigned_int);
+    std::weak_ptr<IgbFieldOperationsServices> storage=owner->values->fields;
+    owner->values->fields=std::make_shared<IgbFieldOperationsServices>();
+    check(!storage.expired(),"Aliased unsigned-integer cell lost its nested owner after services replacement.");
+    *retained=f.created;
+    check(retained->value()==f.created && !owner->values->fields->unsigned_int_prototype,
+        "Retained unsigned-integer prototype cell silently switched owners.");
+    retained.reset();check(storage.expired(),"Aliased unsigned-integer cell created a permanent ownership cycle.");
+}
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_field_prototype_tests");
-    gates_and_native_reflection();reflected_instance_publication();native_registry();append_release_finalize();callbacks_and_missing();enum_and_pointer_getters();unsigned_byte_shared_slot();
+    gates_and_native_reflection();reflected_instance_publication();native_registry();append_release_finalize();callbacks_and_missing();enum_and_pointer_getters();unsigned_byte_shared_slot();unsigned_int_shared_slot();
     std::cout<<"igb_field_prototype_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"Field prototype failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

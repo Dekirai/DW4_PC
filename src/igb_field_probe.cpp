@@ -5,7 +5,7 @@ namespace {
 [[noreturn]] void fail(const char* message){throw IgbFieldProbeError(message);}
 MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running {bool& flag;explicit Running(bool& value):flag(value){flag=true;}~Running(){flag=false;}};
-bool scalar(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::signed_int || kind==IgbMetaFieldKind::boolean ||
+bool scalar(IgbMetaFieldKind kind){return kind==IgbMetaFieldKind::unsigned_int || kind==IgbMetaFieldKind::signed_int || kind==IgbMetaFieldKind::boolean ||
     kind==IgbMetaFieldKind::signed_byte || kind==IgbMetaFieldKind::enumeration || kind==IgbMetaFieldKind::unsigned_byte;}
 bool same(const IgbObjectInstance& a,const IgbObjectInstance& b){
     return a.storage==b.storage && a.offset==b.offset && a.file==b.file && a.field==b.field &&
@@ -96,7 +96,8 @@ MessengerCallResult IgbFieldProbeInvocation::resume(std::shared_ptr<IgbFieldProb
         s.after=s.phase==P::cache?(s.kind==IgbMetaFieldKind::memory_reference?P::object:P::base):P::done;
         if((s.kind==IgbMetaFieldKind::memory_reference || s.kind==IgbMetaFieldKind::boolean ||
             s.kind==IgbMetaFieldKind::string || s.kind==IgbMetaFieldKind::signed_byte ||
-            s.kind==IgbMetaFieldKind::enumeration || s.kind==IgbMetaFieldKind::pointer || s.kind==IgbMetaFieldKind::unsigned_byte) &&
+            s.kind==IgbMetaFieldKind::enumeration || s.kind==IgbMetaFieldKind::pointer || s.kind==IgbMetaFieldKind::unsigned_byte ||
+            s.kind==IgbMetaFieldKind::unsigned_int) &&
             igb_bootstrap_address(s.local)+s.slot==0){s.phase=s.after;break;}
         s.address=igb_bootstrap_read_word(s.local,s.slot);s.phase=s.address?P::resolve:s.after;break;
     case P::object:
@@ -154,11 +155,12 @@ IgbTypeRegistrationFactory make_native_igb_field_probe_factory(
         if(call.kind!=IgbTypeRegistrationServiceKind::layout_probe ||
             (call.function!=0x80028934 && call.function!=0x8002e308 && call.function!=0x8002ad90 && call.function!=0x80038778 &&
                 call.function!=0x80025348 && call.function!=0x80037c78 && call.function!=0x800314d4 && call.function!=0x80027648 &&
-                call.function!=0x80023180))
+                call.function!=0x80023180 && call.function!=0x80022c28))
             return remaining?remaining(call):std::shared_ptr<IgbTypeRegistrationOperation>{};
         auto selected=weak.lock();if(!selected)fail("Field probe services expired before selection.");
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();
         const auto kind=call.function==0x8002e308?IgbMetaFieldKind::signed_int:
+            call.function==0x80022c28?IgbMetaFieldKind::unsigned_int:
             call.function==0x8002ad90?IgbMetaFieldKind::memory_reference:
             call.function==0x80038778?IgbMetaFieldKind::boolean:
             call.function==0x80025348?IgbMetaFieldKind::string:

@@ -28,6 +28,13 @@ schema, while its scalar `+2C` has no object-reference default-buffer tail.
 Its class and prototype identities are documented in
 [IGB_INT_FIELD_REGISTRATION.md](IGB_INT_FIELD_REGISTRATION.md).
 
+Unsigned-integer vtable `80476E6C` uses plain metadata getter `80094138`
+at `+58`, sharing the factory's existing `805614BC` cell. Its verified
+`+0C/+24/+2C/+34` entries are the same empty leaves as the signed-integer
+profile. Actual inherited field passes establish reflected contents; existing
+scalar operations supply four-byte defaults. See
+[IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
+
 Memory-reference vtable `80476088` and Boolean vtable `80473E30` share those
 four exact return-only entries. Their `+58` calls are plain getters `80094068`
 and `80093E7C`, observing canonical metadata cells `80561818` and `80561E48`.

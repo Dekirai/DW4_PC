@@ -28,7 +28,9 @@ constexpr std::array profiles{
     IgbFieldTypeProfile{"igRawRefMetaField",0x80561694,0x800276dc,0x80027704,0x38,0,0x80027360,0x80025494,
         0x8002776c,0x80027648,0,0,0x8002760c,0x800940c8,0x8055d180,{0x8002778c,0,0}},
     IgbFieldTypeProfile{"igUnsignedCharMetaField",0x805614d0,0x8002320c,0x80023234,0x34,0,0x8002a6d8,0x80021d70,
-        0x800232a0,0x80023180,0,0,0x80023144,0x80093a20,0x8055cf70,{0x800232c0,0,0}}
+        0x800232a0,0x80023180,0,0,0x80023144,0x80093a20,0x8055cf70,{0x800232c0,0,0}},
+    IgbFieldTypeProfile{"igUnsignedIntMetaField",0x805614bc,0x80022cb0,0x80022cd8,0x34,0,0x8002a6d8,0x80021d70,
+        0x80022d40,0x80022c28,0,0x80022bb0,0x80022bec,0x80094138,0x8055cf50,{0x80022d60,0,0}}
 };
 std::optional<Entry> registration_function(std::uint32_t function,bool wrapper){
     for(std::size_t i=0;i<profiles.size();++i)if(function==(wrapper?profiles[i].wrapper:profiles[i].body))return static_cast<Entry>(i);return {};
@@ -50,6 +52,7 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_field_type_metadata_slot(const std:
     igb_field_type_profile(entry);if(!services)return {};
     if(entry==Entry::base)return services->base_metadata;
     if(entry==Entry::reference)return services->reference_metadata;
+    if(entry==Entry::unsigned_int)return services->meta_fields?services->meta_fields->metadata:nullptr;
     const auto kind=entry==Entry::signed_int?IgbMetaFieldKind::signed_int:
         entry==Entry::memory_reference?IgbMetaFieldKind::memory_reference:
         entry==Entry::boolean?IgbMetaFieldKind::boolean:

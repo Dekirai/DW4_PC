@@ -189,10 +189,12 @@ compose the existing reflected initializer with typed metadata-pointer backing
 and native zero fill. The original reflected memory clone then completes the
 object-list specialization. DataList, object-list and thread-list metadata
 finish before the deferred `igThread` wrapper `80023C40`. That wrapper now runs
-its actual named-object parent and schema, publishing the twentieth type. Thread
-defaults construct four enum and two raw-reference descriptors before their
-unsigned-integer factory requires registration `80022CD8`. The batch retains
-these fields without applying the later setters or schema. Physical descriptor
+its actual named-object parent and schema. Unsigned-integer registration
+`80022CD8`, probe and reflected prototype share the legacy factory/scalar cells
+and resume Thread's ten-field batch. Its defaults and schema complete before
+Semaphore registration; the chain now reaches ThreadManager startup `80023A30`
+with twenty-three types and ten prototypes. Runtime manager/thread object
+construction remains required. Physical descriptor
 configuration now publishes `+1C/+08/+18` before each canonical update; missing
 declaring-type addresses suspend at the reached store.
 The separate `igMetaEnum` metadata object remains unconstructed.
@@ -200,7 +202,8 @@ See [IGB_MEMORY_MEMBER_COPY.md](IGB_MEMORY_MEMBER_COPY.md) and
 [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
 [IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
 [IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md) and
-[IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md).
+[IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and
+[IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
 This transition does not complete startup. Remaining member operations, method
 fields, later registrations and the outer startup remain
 required. Pool/platform and physical allocation services are explicit prepared

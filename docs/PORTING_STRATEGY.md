@@ -288,12 +288,13 @@ backing supplied to native memory construction and zero fill. The inherited
 memory-field clone finishes object-list specialization. DataList, object-list
 and thread-list metadata complete. Deferred `igThread` registration then runs
 its actual named-object parent, probe and `_name` schema. The cold composition
-has 80 descriptors, 83 default buffers, twenty published types, nine prototypes
-and 66 enabled allocations; four default buffers were copied by the reflected
-clone path. Thread defaults construct four enum and two raw-reference fields
-before **unsigned-integer registration `80022CD8`** is required for `_stackSize`.
-Those six descriptors have not reached value setters, default-buffer preparation
-or schema publication. The new physical schema stores preserve `+1C/+08/+18`
+has 84 descriptors, 94 default buffers, twenty-three published types, ten
+prototypes and 73 enabled allocations; four default buffers were copied by the
+reflected clone path. Unsigned-integer registration `80022CD8`, probe and
+reflected prototype complete through the original canonical cells. Thread's
+ten-field batch, enum/stack defaults and schema finish, followed by Semaphore
+registration. It now requires **ThreadManager startup `80023A30`**.
+The physical schema stores preserve `+1C/+08/+18`
 publication order and the completed prefix when address resolution is pending.
 See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_FIELD_MEMBER_COPY.md](IGB_FIELD_MEMBER_COPY.md),
@@ -301,13 +302,16 @@ See [IGB_REFLECTED_CLONE.md](IGB_REFLECTED_CLONE.md),
 [IGB_BUFFER_COPY.md](IGB_BUFFER_COPY.md) and
 [IGB_ENUM_FIELD_DEFAULTS.md](IGB_ENUM_FIELD_DEFAULTS.md) and
 [IGB_UNSIGNED_BYTE_FIELD.md](IGB_UNSIGNED_BYTE_FIELD.md) and
-[IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md).
-Recover unsigned-integer registration, its actual probe and reflected prototype,
-sharing existing canonical metadata `805614BC` and prototype `805614C0` cells.
-Resume the retained thread batch and schema before `80026098` and actual startup
-callback `80023A30`. Semaphore registration/default callers exist but have not
-yet run in this cold chain. Semaphore metadata still has flags zero; enum
-metadata remains null. Preserve
+[IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and
+[IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
+Recover `80023A30 -> 800755F8` with its two live pool-handle loads, reflected
+manager/thread construction, singleton publication and original release order.
+Metadata redirects select concrete platform classes; they are not allocation
+callbacks. Add typed runtime object representations before claiming their
+initializers or virtuals complete. The original thread startup captures the
+current main-thread record; a synthetic ready manager or empty callback cannot
+replace it. Thread and Semaphore metadata have flags `7`; enum metadata remains
+null until its prerequisites complete. Preserve
 the deferred callback order and the now-reached original transition from disabled
 to enabled reflection. See [IGB_DATA_LIST_REGISTRATION.md](IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](IGB_DATA_LIST_DEFAULTS.md),

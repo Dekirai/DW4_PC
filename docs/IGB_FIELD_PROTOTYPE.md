@@ -3,7 +3,8 @@
 `igb_field_prototype` reconstructs reference-field callback `80027454`,
 object-field callback `80028B64`, integer-field callback `8002E440`,
 memory-reference callback `8002B178`, Boolean callback `800388B0`, string
-callback `80025628`, signed-byte callback `80037DB0`, and lazy
+callback `80025628`, signed-byte callback `80037DB0`, unsigned-integer callback
+`80022D60`, and lazy
 field-registry getter `80063B5C`.
 The callbacks run after their descriptor-class metadata registration. They
 publish canonical descriptor instances; those globals are distinct from the
@@ -25,6 +26,7 @@ remain local; committed code and fixtures are authored C++.
 | `800388B0` | `80561E48`, igBoolMetaField | `80561E4C` |
 | `80025628` | `805615B4`, igStringMetaField | `805615B8` |
 | `80037DB0` | `80561E1C`, igCharMetaField | `80561E20` |
+| `80022D60` | `805614BC`, igUnsignedIntMetaField | `805614C0` |
 
 The object prototype aliases `IgbFieldValuesServices::object_prototype`.
 The integer prototype aliases `IgbFieldValuesServices::signed_int_prototype`;
@@ -34,6 +36,10 @@ and `boolean_prototype` on those same services. Plain getters `80094070`
 and `80093E84` consequently share their publication identities.
 String and signed-byte aliases are `string_prototype` and
 `signed_byte_prototype`, also shared by plain getters `80094100` and `80093E94`.
+The unsigned-integer alias retains nested `IgbFieldOperationsServices` and
+shares its `unsigned_int_prototype` cell with plain getter `80094140`.
+Null-only getter `80022DF8` uses the same registration/reload caller as the
+enum and pointer profiles. See [IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
 Reference prototype `80561688` and registry `8056229C` are shared cells that
 can alias the bootstrap's canonical members. The registry contains field
 prototypes, not type metadata. The later bootstrap store at `8003D46C` also
@@ -74,7 +80,7 @@ branch and returns null before allocation. `80027454` publishes that null and
 skips registry creation, append, release and finalization. This is the original
 callback behavior and does not manufacture a reference-field instance.
 
-For all six represented concrete field classes, the same reflected invocation
+For the represented concrete field classes, the same reflected invocation
 preserves redirect handling, pool selection, allocation prefix arithmetic and actual `800667F4`
 initialization. The object initializer now accepts a canonical runtime-field
 binding at the adjusted allocation offset. Its generic result retains that

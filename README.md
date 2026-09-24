@@ -182,12 +182,13 @@ child lists use the actual reflected initializer and memory-member allocation;
 the object-list specialization runs the original reflected memory-field clone.
 DataList, the non-reference-counted object list and the thread list finish
 registration. Deferred `igThread` registration now runs its named-object parent,
-including the original probe and `_name` schema. The cold composition has twenty
-published types and nine prototypes. Thread defaults construct their first six
-local descriptors before unsigned-integer registration `80022CD8` is required
-for `_stackSize`. The ten-field batch has not yet reached its value setters or
-schema publication. Physical schema stores now update descriptor `+1C/+08/+18`
-in their original order as well as the canonical field members.
+including the original probe and `_name` schema. Unsigned-integer registration
+`80022CD8`, its actual probe and reflected prototype now resume `_stackSize`
+construction. The ten-field Thread batch finishes its setters and schema, and
+both Thread and Semaphore metadata complete. The cold composition has
+twenty-three published types and ten prototypes and requires original
+ThreadManager startup `80023A30`. Physical schema stores update descriptor
+`+1C/+08/+18` in original order as well as the canonical field members.
 Enum metadata remains null while the prerequisite chain is incomplete.
 This is still incomplete startup. Further reference operations, method fields,
 remaining registrations and pool/platform allocator
@@ -198,6 +199,7 @@ internals remain required. See [IGB_REFLECTED_CLONE.md](docs/IGB_REFLECTED_CLONE
 [IGB_ENUM_FIELD_DEFAULTS.md](docs/IGB_ENUM_FIELD_DEFAULTS.md),
 [IGB_UNSIGNED_BYTE_FIELD.md](docs/IGB_UNSIGNED_BYTE_FIELD.md),
 [IGB_NAMED_TYPES.md](docs/IGB_NAMED_TYPES.md),
+[IGB_UNSIGNED_INT_FIELD.md](docs/IGB_UNSIGNED_INT_FIELD.md),
 [IGB_DATA_LIST_REGISTRATION.md](docs/IGB_DATA_LIST_REGISTRATION.md),
 [IGB_DATA_LIST_DEFAULTS.md](docs/IGB_DATA_LIST_DEFAULTS.md),
 [IGB_INT_FIELD_REGISTRATION.md](docs/IGB_INT_FIELD_REGISTRATION.md),

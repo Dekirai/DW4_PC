@@ -316,10 +316,11 @@ void actual_cold_bootstrap_prefix(){
     // Retained callback selection still consults the same dynamic binding
     // registry when a reached function body becomes available later.
     IgbRegistrationCallbacksFactory additional_callbacks;
-    bool unsigned_byte_registration_ready{};
+    bool unsigned_byte_registration_ready{},unsigned_int_registration_ready{};
     const auto original_function_bindings=f.services->callbacks->factory;
     f.services->callbacks->factory=[&,original_function_bindings](const IgbRegistrationCallbacksCall& c){
-        if(additional_callbacks && (c.function!=0x80023234 || unsigned_byte_registration_ready)){
+        if(additional_callbacks && (c.function!=0x80023234 || unsigned_byte_registration_ready) &&
+            (c.function!=0x80022cd8 || unsigned_int_registration_ready)){
             auto result=additional_callbacks(c);if(result)return result;}
         return original_function_bindings?original_function_bindings(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
     };
@@ -2287,6 +2288,118 @@ void actual_cold_bootstrap_prefix(){
         freed_callback_lists.size()==named_frees && schema_calls.size()==named_schema_calls && named_probe_locals.size()==1 &&
         f.core->types->count==20 && descriptors.size()==80 && enabled_allocations.size()==66,
         "Pending unsigned-integer registration replayed completed NamedObject work or Thread's partial field batch.");
+
+    // Continue the same Thread batch through its unsigned-integer class.
+    // The legacy factory and scalar getter share these canonical cells.
+    auto unsigned_int_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata=unsigned_int_cell;
+    std::vector<IgbBootstrapPointer> unsigned_int_probe_locals,unsigned_int_prototype_allocations;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::unsigned_int,"Unsigned-integer registration replayed a completed field probe.");
+        auto raw=allocation(0xbe0000+static_cast<std::uint32_t>(unsigned_int_probe_locals.size())*0x100,0x34);
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        unsigned_int_probe_locals.push_back(raw);return raw;
+    };
+    unsigned_int_registration_ready=true;
+    const auto unsigned_int_allocation=call.resume(bootstrap);
+    std::cout<<"Cold unsigned-integer prototype boundary: "<<unsigned_int_allocation.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!unsigned_int_allocation.completed && !call.faulted() && **unsigned_int_cell &&
+        (**unsigned_int_cell)->class_flags==7 && (**unsigned_int_cell)->fields->count==20 &&
+        unsigned_int_probe_locals.size()==1 && !*values->fields->unsigned_int_prototype &&
+        unbound_reflected_allocations.back().metadata==**unsigned_int_cell && unbound_reflected_allocations.back().bytes==0x34,
+        "Unsigned-integer class skipped its actual inherited schema, probe or reflected prototype allocator.");
+    const auto unsigned_int_type=**unsigned_int_cell;
+    check(unsigned_int_type->parent==base_field && unsigned_int_type->name && *unsigned_int_type->name=="igUnsignedIntMetaField" &&
+        unsigned_int_type->type_word==0x80476e6c && unsigned_int_type->native_size==0x34 &&
+        igb_bootstrap_read_word(unsigned_int_probe_locals.front(),0)==0x80471914 &&
+        igb_field_type_metadata_slot(field_types,IgbFieldTypeKind::unsigned_int)==unsigned_int_cell &&
+        igb_field_prototype_slot(prototypes,IgbFieldTypeKind::unsigned_int).get()==&values->fields->unsigned_int_prototype,
+        "Unsigned-integer lifecycle lost its original class or shared factory/scalar cells.");
+
+    const auto before_unsigned_int_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_unsigned_int_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=unsigned_int_type)return before_unsigned_int_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x34,
+                "Unsigned-integer reflected allocation changed its original request.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(!*values->fields->unsigned_int_prototype)unsigned_int_prototype_allocations.push_back(raw);
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto after_unsigned_int=call.resume(bootstrap);
+    std::cout<<"Cold native unsigned-integer continuation: "<<after_unsigned_int.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", buffer clones="<<buffer_copy_allocations<<'\n';
+    check(!after_unsigned_int.completed && !call.faulted(),"Unsigned-integer continuation incorrectly completed full startup.");
+    check(after_unsigned_int.diagnostic=="Registration requires original function 0x80023A30." &&
+        f.core->types->count==23 && descriptors.size()==84 && default_allocations==94 && enabled_allocations.size()==73 &&
+        (**prototypes->registry)->count==10 && buffer_copy_allocations==4 &&
+        f.core->types->backing->at(20)==unsigned_int_type && f.core->types->backing->at(21)==native_thread_type &&
+        f.core->types->backing->at(22)==semaphore_metadata,
+        "Unsigned-integer completion did not retain publication order through the real ThreadManager startup boundary.");
+    check(unsigned_int_prototype_allocations.size()==1 && unsigned_int_type->instance_count==2 &&
+        native_thread_type->class_flags==7 && native_thread_type->fields->count==13 && native_thread_type->factory_redirect==0x80023e20 &&
+        semaphore_metadata->class_flags==7 && semaphore_metadata->fields->count==3 && semaphore_metadata->parent==named_type &&
+        semaphore_metadata->flag_1a==1 && semaphore_metadata->native_size==12 && semaphore_metadata->factory_redirect==0x80026160 &&
+        (*named_type->children)->count==2 && (*named_type->children)->backing->at(1)==semaphore_metadata,
+        "Thread/Semaphore metadata did not complete original inheritance, schema or redirect publication.");
+    const auto unsigned_int_prototype=*values->fields->unsigned_int_prototype;
+    const auto unsigned_int_storage=unsigned_int_prototype_allocations.front();
+    check(unsigned_int_prototype && (**prototypes->registry)->backing->at(9)==unsigned_int_prototype &&
+        unsigned_int_prototype->ordinal==9 && unsigned_int_prototype->type_ordinal==9 && unsigned_int_prototype->size==4 &&
+        unsigned_int_prototype->reference_word==1 && igb_bootstrap_read_word(unsigned_int_storage,0)==0x80476e6c &&
+        igb_bootstrap_read_word(unsigned_int_storage,4)==1 &&
+        igb_bootstrap_read_word(unsigned_int_storage,0x10)==0x00090009,
+        "Unsigned-integer prototype skipped reflected construction, physical ownership or ordinal finalization.");
+    for(const auto& type:{native_thread_type,semaphore_metadata}){
+        const auto found=std::find_if(named_defaults->physical_metadata.begin(),named_defaults->physical_metadata.end(),
+            [&](const auto& allocation){return igb_bootstrap_metadata(allocation)==type;});
+        check(found!=named_defaults->physical_metadata.end(),"Completed named metadata lost its physical identity.");
+        check(igb_bootstrap_read_word(*found,0x3c)==*type->factory_redirect,
+            "Completed thread/semaphore redirect left stale physical metadata.");
+    }
+    const auto thread_identity=std::find_if(values->fields->pointer_lists->values.begin(),values->fields->pointer_lists->values.end(),
+        [&](const auto& value){return value.metadata==native_thread_type;});
+    check(thread_identity!=values->fields->pointer_lists->values.end(),"Thread schema lost its arithmetic declaring-type identity.");
+    for(std::size_t i=0;i<10;++i){const auto& descriptor=descriptors[74+i];const auto raw=descriptor_allocations[74+i];
+        check(native_thread_type->fields->backing->at(3+i)==descriptor && *thread_tables.globals->at(i)->slot==descriptor &&
+            descriptor->name && *descriptor->name==**thread_tables.names->at(i) && descriptor->offset==*thread_tables.offsets->at(i) &&
+            descriptor->declaring_type && descriptor->declaring_type->lock()==native_thread_type &&
+            descriptor->default_bytes && descriptor->default_bytes->buffer &&
+            igb_bootstrap_read_word(raw,8)==descriptor->offset && igb_bootstrap_read_word(raw,0x18)==thread_identity->address &&
+            igb_bootstrap_read_word(raw,0x1c)==thread_tables.globals->at(i)->address,
+            "Thread batch did not finalize its ten original fields and physical schema words.");
+        if(i<4){constexpr std::array<std::uint32_t,4> methods{0x80023a70,0x80023b4c,0x80023b00,0x80023abc};
+            check(descriptor->method_function==methods[i] && igb_bootstrap_read_word(raw,0x34)==methods[i] &&
+                igb_buffer_word(descriptor->default_bytes->buffer,descriptor->default_bytes->offset)==(i==0?0x80u:0u),
+                "Thread enum setter or getter-word publication differs from the original defaults.");}
+    }
+    const auto stack_size=descriptors[80];
+    check(stack_size->vtable_word==0x80476e6c && stack_size->type_ordinal==9 &&
+        igb_buffer_word(stack_size->default_bytes->buffer,stack_size->default_bytes->offset)==0x1000 &&
+        stack_size->default_bytes->buffer!=unsigned_int_prototype->default_bytes->buffer &&
+        descriptors[0]->type_ordinal==0xffff && descriptors[1]->type_ordinal==0xffff,
+        "Thread stack default failed to use its registered unsigned-integer type or rewrote older descriptors.");
+    const auto completed_names=string_allocations,completed_defaults=default_allocations;
+    const auto completed_reflections=reflected_allocations.size(),completed_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_unsigned_int.diagnostic && !call.faulted() &&
+        f.core->types->count==23 && descriptors.size()==84 && default_allocations==completed_defaults &&
+        enabled_allocations.size()==73 && (**prototypes->registry)->count==10 && string_allocations==completed_names &&
+        reflected_allocations.size()==completed_reflections && freed_callback_lists.size()==completed_frees &&
+        unsigned_int_probe_locals.size()==1 && unsigned_int_prototype_allocations.size()==1 &&
+        !**meta_enum->metadata && (*f.core->bootstrap_callbacks)->count==1 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending ThreadManager startup replayed completed classes, prototypes, schemas or bootstrap snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

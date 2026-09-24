@@ -186,12 +186,14 @@ Unsigned-byte registration, its exact probe and reflected prototype now complete
 The same retained getter resumes the DataList schema. Native reflected child-list
 initialization and the memory-field clone complete the object-list and thread-list
 registrations. Deferred `igThread` wrapper `80023C40` now executes its actual
-`igNamedObject` parent and `_name` defaults. Thread defaults retain six local
-descriptors before `_stackSize` requires unsigned-integer registration
-`80022CD8`. Recover that class's probe and reflected prototype, then resume the
-same ten-field batch and schema before semaphore registration `80026098` and
-ThreadManager startup `80023A30`. The named/thread/semaphore callers are described
-in [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md). Enum metadata remains null while these
+`igNamedObject` parent and `_name` defaults. Unsigned-integer registration
+`80022CD8`, its probe and reflected prototype now complete, allowing Thread's
+ten-field defaults/schema and semaphore registration `80026098` to finish.
+Recover the reached ThreadManager startup `80023A30 -> 800755F8`, its concrete
+metadata redirects and actual runtime manager/main-thread objects. Metadata
+registration alone does not establish those objects or platform behavior.
+See [IGB_NAMED_TYPES.md](IGB_NAMED_TYPES.md) and
+[IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md). Enum metadata remains null while these
 prerequisites are pending. Further member/reference branches
 remain explicit, together with pool/platform, allocator, callback deallocation
 and BSS prerequisites. Initial core-list constructors and reserve run in this

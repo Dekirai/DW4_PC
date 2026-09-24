@@ -1,5 +1,87 @@
 # Local validation
 
+## Unsigned-integer fields complete Thread and Semaphore metadata
+
+Validated locally on 2026-09-24. The same retained cold invocation now executes
+unsigned-integer registration `80022CD8`, actual specialized-reset probe
+`80022C28`, and reflected prototype callback `80022D60`. Metadata `805614BC`
+and prototype `805614C0` share the existing factory/scalar cells. No additional
+prerequisite call, ready metadata or completed prototype is supplied.
+
+Thread's pending `_stackSize` factory resumes, then the remaining raw-reference
+and Boolean descriptors complete its ten-field batch. The original enum setters
+publish defaults `80, 0, 0, 0` (hex) and four getter-function words. The unsigned
+stack-size setter writes `1000` (hex) to its own default buffer. Schema
+configuration/finalization publishes all ten names, offsets, declaring-type
+addresses and global cells. Thread and Semaphore metadata finish with flags
+`7`, including physical factory redirects `80023E20` and `80026160`.
+
+The composition now contains **84 descriptors, 94 default buffers, twenty-three
+published types, ten prototypes and 73 enabled allocations**, with four reflected
+buffer copies. The unsigned-integer prototype has ordinal/type ordinal nine;
+its metadata accounts for the prototype and separate Thread descriptor. Earlier
+raw descriptors retain their original `FFFF` type ordinal. Repeated resumes
+preserve completed work and core snapshots `+04 = 7`, `+08 = 1`.
+
+The next actual pending callback is **ThreadManager startup `80023A30`**.
+`igMetaEnum` metadata remains null. Primary DOL inspection identifies its
+`800755F8` implementation, two live pool-handle loads and reflected construction
+through concrete platform metadata redirects. Its thread startup captures the
+existing main-thread record; it does not create a worker in that caller. Typed
+runtime manager/thread objects, concrete class schemas and platform services
+remain required. These are next dependencies, not completed native runtime
+behavior.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 197/197 local CTest suites passed with four build jobs; no compiler warnings |
+| Cold composition | 2,673 checks, including actual unsigned-integer lifecycle, all Thread fields, Semaphore completion, physical redirects and stable startup boundary |
+| Registration / probes | 541 /599 checks, including legacy-cell aliases, missing prerequisite distinction, captured core and wrapped name cleanup |
+| Prototype / initializer | 207 /137 checks; shared scalar cell, nested owner lifetime, actual reflected allocation and inherited physical/canonical scalar defaults |
+| Original decoder prefix | 400 original-inclusive /107 synthetic checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 held/released and 28 prepared scheduled player frames |
+| Python asset verifier | Six synthetic tests passed |
+
+Independent original-only evidence contains **74 cases /6,788 executed DOL
+instructions**, with an exact original rerun and fifteen sealed artifact hashes.
+The oracle was authored from original instructions independently of the parallel
+native extension. Its seal was created after implementation had started and
+before native comparison; it is not described as predating the code changes.
+Three registrar ABI observations, prepared endpoints, null accesses, unavailable
+bytes and a reallocation-entry boundary retain distinct status labels.
+
+The native comparison selected **51 cases before execution**: fourteen
+getter/wrapper cases, seven uninterrupted probes and all thirty prototype
+cases. **51/51 match exactly**, without driver or expectation corrections after
+the first run. Results comprise 38 completions, ten prepared endpoint faults,
+two null-access faults and one deliberately stopped reallocation-entry prefix;
+there are no native pending results or unexpected faults. Ordered endpoint
+calls, returned identities and represented field/list/local state are compared.
+This does not compare every original instruction or read/write trace.
+
+The remaining 23 cases stay original-only: three registrar ABI observations,
+seven lazy-getter cases with a broader prepared metadata-factory endpoint, and
+thirteen probe cases involving observation-boundary injection or unavailable
+and wrapped memory. Focused native tests cover captured core and wrapped cleanup
+without adding production hooks to match those observations. Original expected
+results remain unchanged. The nine historical enum table-overrun differences
+below remain separate.
+
+Final `dw4_core.lib` SHA-256:
+`a734b0a417d099a1276b129fe12dee3242479f32c74b821908fc2528468b3459`.
+Ignored build/regression logs are `work/native-unsigned-int-final-build.log`,
+`work/native-unsigned-int-final-cold.log`, `work/native-unsigned-int-prefix.log`,
+`work/native-unsigned-int-player.log` and `work/native-unsigned-int-verifier.log`.
+The original manifest is `work/native-unsigned-int-original-manifest.json`
+(SHA-256 `824557623ac285272f700237c7d302b81062fd41dd41a72961fd6a920fecef57`).
+The native result seal is `work/native-unsigned-int-native-manifest.json`
+(SHA-256 `4b0423939d8a313154965571234d67ffac05024dec87c4581e6f7e35d5147836`).
+Its verifier checked fourteen native and fifteen original artifact hashes,
+reran all 74 original observations and reproduced all 51 selected native cases.
+No application package, preview launch or GitHub Actions run was used.
+This remains incomplete native startup and does not establish playable original
+gameplay or audio.
+
 ## Named-object registration and thread field construction
 
 Validated locally on 2026-09-24. The retained cold invocation now runs deferred

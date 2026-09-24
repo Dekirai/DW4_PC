@@ -2,7 +2,8 @@
 
 `igb_field_probe` reconstructs the stack-object probes used by
 `igObjectRefMetaField`, `igIntMetaField`, `igMemoryRefMetaField` and
-`igBoolMetaField`, `igStringMetaField` and `igCharMetaField` registration. Its evidence is the
+`igBoolMetaField`, `igStringMetaField`, `igCharMetaField` and
+`igUnsignedIntMetaField` registration. Its evidence is the
 supplied USA DOL,
 SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Original instructions,
 assets and differential fixtures remain local.
@@ -15,12 +16,18 @@ assets and differential fixtures remain local.
 | `igBoolMetaField` | `80038778` | `8003EBC8` | `0x34` bytes | `0` through `0x30` |
 | `igStringMetaField` | `80025348` | `80071E44` | `0x3C` bytes | `0` through `0x38` |
 | `igCharMetaField` | `80037C78` | `8003FF90` | `0x34` bytes | `0` through `0x30` |
+| `igUnsignedIntMetaField` | `80022C28` | `80075A2C` | `0x34` bytes | `0` through `0x30` |
 
 Each probe executes its actual reset through the existing specialized field
 constructor. The allocating factory and default-buffer preparation are separate.
 It then captures the live ArkCore owner, reads its `+394` offset, and reads the
 corresponding physical local word. Uninitialized padding is not replaced with
 an assumed value.
+
+The unsigned-integer probe shares specialized scalar reset and base cleanup,
+including the original wrapped `local + 0C` guard before name release. It does
+not use unsigned-byte's direct-base-reset ordering. Its class and canonical
+cells are described in [IGB_UNSIGNED_INT_FIELD.md](IGB_UNSIGNED_INT_FIELD.md).
 
 After capturing the object-reference probe's return value, the original stores
 vtable `804762FC`, loads the local `+40` string pointer, decrements its full 32-bit reference
