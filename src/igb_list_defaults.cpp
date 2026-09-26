@@ -1,4 +1,5 @@
 #include "dw4/igb_list_defaults.hpp"
+#include "dw4/igb_field_reference.hpp"
 #include "dw4/igb_string_pool.hpp"
 #include "dw4/igb_stream.hpp"
 
@@ -67,9 +68,10 @@ IgbListDefaultsServices::IgbListDefaultsServices(){
     offsets=std::make_shared<IgbFieldOffsetTable>(IgbFieldOffsetTable{8u,12u});
 }
 struct IgbFieldReplaceInvocation::Impl {
-    enum class P {finalize,list,old,release_old,capacity,pool,size,after_size,reserve,store,bind,done};
+    enum class P {finalize,list,old,old_test,release_old,capacity,pool,size,after_size,reserve,store,bind,done};
     std::shared_ptr<IgbRuntimeMetaType> metadata;
     std::shared_ptr<IgbDecodeRuntimeField> field,old;
+    std::shared_ptr<IgbFieldReferenceAccess> incoming_reference,old_reference;
     std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbListDefaultsServices> owner;
     std::unique_ptr<IgbFieldFinalizeInvocation> finalize;
@@ -81,10 +83,12 @@ struct IgbFieldReplaceInvocation::Impl {
 };
 IgbFieldReplaceInvocation::IgbFieldReplaceInvocation(std::shared_ptr<IgbRuntimeMetaType> metadata,std::uint32_t index,std::shared_ptr<IgbDecodeRuntimeField> field):impl_(std::make_unique<Impl>()){
     impl_->metadata=std::move(metadata);impl_->index=index;impl_->field=std::move(field);impl_->finalize=std::make_unique<IgbFieldFinalizeInvocation>(impl_->field);
+    impl_->incoming_reference=std::make_shared<IgbFieldReferenceAccess>(impl_->field);
 }
 IgbFieldReplaceInvocation::~IgbFieldReplaceInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.field)s.owner->unfinished.push_back(s.field);if(s.old)s.owner->unfinished.push_back(s.old);if(s.fields)s.owner->unfinished.push_back(s.fields);
     if(s.captured.bytes)s.owner->unfinished.push_back(s.captured.bytes);if(s.store.bytes)s.owner->unfinished.push_back(s.store.bytes);
+    if(s.incoming_reference)s.owner->unfinished.push_back(s.incoming_reference);if(s.old_reference)s.owner->unfinished.push_back(s.old_reference);
 }}
 bool IgbFieldReplaceInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldReplaceInvocation::faulted()const noexcept{return impl_->fault;}
@@ -105,13 +109,17 @@ MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDef
         s.finalize.reset();check();s.phase=P::list;break;}
     case P::list:
         if(!s.metadata)fail("Finalized field replacement reads a null metadata receiver.");s.fields=s.metadata->fields;
-        if(s.field)field_reference(s.field,s.field->reference_word+1u);s.phase=P::old;break;
+        if(s.field)s.incoming_reference->write(s.incoming_reference->read()+1u);s.phase=P::old;break;
     case P::old:
         if(!s.fields)fail("Field replacement reads a null registry after retaining its replacement.");
         s.old=physical(s.fields->backing,s.index<<2u);
-        if(s.old){field_reference(s.old,s.old->reference_word-1u);if((s.old->reference_word&0x7fffffu)==0){
+        if(s.old){s.old_reference=std::make_shared<IgbFieldReferenceAccess>(s.old);
+            s.old_reference->write(s.old_reference->read()-1u);s.phase=P::old_test;}
+        else s.phase=P::capacity;break;
+    case P::old_test:
+        if((s.old_reference->read()&0x7fffffu)==0){
             s.destroy.request.kind=IgbListDefaultsServiceKind::destroy_field;s.destroy.request.function=0x80066e1c;s.destroy.request.field=s.old;
-            if(services)s.destroy.factory=services->factory;s.phase=P::release_old;break;}}
+            if(services)s.destroy.factory=services->factory;s.phase=P::release_old;break;}
         s.phase=P::capacity;break;
     case P::release_old:{const auto status=s.destroy.poll(services?services->factory:IgbListDefaultsFactory{},check);if(!status.completed)return status;
         s.destroy.clear();check();s.phase=P::capacity;break;}

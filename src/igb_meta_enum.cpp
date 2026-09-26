@@ -1,4 +1,5 @@
 #include "dw4/igb_meta_enum.hpp"
+#include "dw4/igb_data_list_registration.hpp"
 
 #include <bit>
 
@@ -18,6 +19,46 @@ std::optional<std::uint32_t> type_address(const std::shared_ptr<IgbMetaEnumServi
     }
     if(address && *address==0)fail("Nonnull enum field type has a null arithmetic address.");return address;
 }
+std::optional<std::uint32_t> list_metadata_address(const std::shared_ptr<IgbPointerListServices>& pointers,
+    const std::shared_ptr<IgbRuntimeMetaType>& metadata){
+    if(!metadata)return 0;
+    std::optional<std::uint32_t> result;
+    if(pointers)for(const auto& binding:pointers->values)if(binding.metadata==metadata){
+        if(binding.field || !binding.address || (result && *result!=binding.address))
+            fail("Enum list metadata has conflicting arithmetic identities.");
+        result=binding.address;
+    }
+    if(result && pointers)for(const auto& binding:pointers->values)if(binding.address==*result &&
+        (binding.field || binding.metadata!=metadata))fail("Enum list metadata address has conflicting canonical owners.");
+    return result;
+}
+}
+
+IgbMetaEnumFactory make_native_igb_meta_enum_list_factory(std::shared_ptr<IgbDataListRegistrationServices> services,
+    std::shared_ptr<IgbPointerListServices> pointers,IgbMetaEnumFactory remaining){
+    return [weak=std::weak_ptr(services),pointer_weak=std::weak_ptr(pointers),remaining=std::move(remaining)](const IgbMetaEnumCall& call)
+        ->std::shared_ptr<IgbMetaEnumOperation>{
+        if(call.function!=0x80024b94 && call.function!=0x800365b4)return remaining?remaining(call):nullptr;
+        const auto selected=weak.lock();if(!selected)fail("Enum list lookup services expired before selection.");
+        const auto kind=call.function==0x80024b94?IgbDataListKind::string_ref:IgbDataListKind::signed_int;
+        auto invocation=std::make_shared<IgbDataListLookupInvocation>(kind,IgbDataListLookup::allocate_if_null);
+        auto operation=std::make_shared<IgbMetaEnumOperation>();
+        operation->resume=[selected,pointer_weak,invocation,out=operation.get(),running=false,fault=false,done=false]()mutable{
+            if(running || fault){fault=true;fail("Enum list getter adapter requires an unfaulted nonrecursive continuation.");}
+            if(done)return MessengerCallResult{true,0,{}};Running guard(running);
+            try{
+                const auto status=invocation->resume(selected);
+                if(fault)fail("Enum list getter adapter was invalidated by a callback.");
+                if(!status.completed)return status;
+                const auto metadata=invocation->result();
+                const auto address=list_metadata_address(pointer_weak.lock(),metadata);
+                // A completed metadata getter need not know a host physical
+                // mapping. The consuming+38 store waits for that exact address.
+                out->metadata_result=metadata;out->metadata_address=address;done=true;
+                return MessengerCallResult{true,0,{}};
+            }catch(...){fault=true;throw;}
+        };return operation;
+    };
 }
 IgbMetaEnumServices::IgbMetaEnumServices(){
     factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{0x800251ec,0x8002879c,0x8002879c});

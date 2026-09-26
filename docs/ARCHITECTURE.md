@@ -257,7 +257,13 @@ metadata objects. Context-info wrapper `80037330` now registers its concrete
 class using actual metadata/string/prototype defaults and the original local
 probe. Its signed-byte getter aliases the existing prototype owner. Completing
 its extra callbacks lets the second concrete list register and returns startup
-to the pending enum-defaults list getter `80024B94`.
+to enum defaults. The `80024B94 / 800365B4` adapter preserves allocation-only
+lookup; it shares the existing metadata factory and physical pointer mappings.
+Later callbacks register the string-reference and signed-integer list classes.
+Their inherited `_data` clones load physical source vtables, preserve the
+captured index, and store the actual element/global pointers before replacement.
+Replacement and creator release use physical packed references and fresh low23
+tests. The cold chain now reaches malloc-pool body `80039D94` with 39 types.
 `IgbFieldReferenceAccess` captures optional physical descriptor ownership without
 an eager read. The reached batch, finalized append, inheritance and base-default
 operations use its full-width physical reads/writes and separate fresh low23
@@ -266,6 +272,7 @@ never falls back to that cache. Other reference/name producers remain separate.
 Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
 outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),

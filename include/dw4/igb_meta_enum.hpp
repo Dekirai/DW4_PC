@@ -4,6 +4,7 @@
 #include "dw4/igb_registration_callbacks.hpp"
 
 namespace dw4 {
+struct IgbDataListRegistrationServices;
 class IgbMetaEnumError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
 struct IgbMetaEnumCall {
     std::uint32_t function{}; // Exact object-type getter80024B94 or800365B4.
@@ -79,4 +80,9 @@ IgbRegistrationCallbacksFactory make_native_igb_meta_enum_function_factory(
     std::shared_ptr<IgbMetaEnumServices>,IgbRegistrationCallbacksFactory remaining={});
 IgbTypeRegistrationFactory make_native_igb_meta_enum_type_factory(
     std::shared_ptr<IgbMetaEnumServices>,IgbTypeRegistrationFactory remaining={});
+// Exact24B94/365B4 are allocation-only metadata getters. This adapter never
+// substitutes the full class registration wrappers for either call.
+IgbMetaEnumFactory make_native_igb_meta_enum_list_factory(
+    std::shared_ptr<IgbDataListRegistrationServices>,std::shared_ptr<IgbPointerListServices>,
+    IgbMetaEnumFactory remaining={});
 } // namespace dw4

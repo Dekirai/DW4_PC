@@ -1,4 +1,5 @@
 #include "dw4/igb_data_list_defaults.hpp"
+#include "dw4/igb_field_reference.hpp"
 #include "dw4/igb_string_pool.hpp"
 
 #include <bit>
@@ -61,10 +62,25 @@ std::optional<std::uint32_t> field_address(const std::shared_ptr<IgbDecodeRuntim
         result=value.address;
     }return result;
 }
+std::uint32_t prototype_body(IgbDataListPrototypeKind kind){
+    switch(kind){case IgbDataListPrototypeKind::unsigned_char:return 0x80023234;
+    case IgbDataListPrototypeKind::object:return 0x80028a20;
+    case IgbDataListPrototypeKind::string:return 0x80025404;
+    case IgbDataListPrototypeKind::signed_int:return 0x8002e3b8;}
+    fail("Unknown data-list element prototype getter.");
+}
+const char* prototype_missing(IgbDataListPrototypeKind kind){
+    switch(kind){case IgbDataListPrototypeKind::unsigned_char:return "Data-list prototype getter requires represented805614D4.";
+    case IgbDataListPrototypeKind::object:return "Data-list prototype getter requires represented805616EC.";
+    case IgbDataListPrototypeKind::string:return "Data-list prototype getter requires represented805615B8.";
+    case IgbDataListPrototypeKind::signed_int:return "Data-list prototype getter requires represented805619E4.";}
+    fail("Unknown data-list element prototype getter.");
+}
 }
 IgbDataListDefaultsServices::IgbDataListDefaultsServices(){
     unsigned_char_prototype=std::make_shared<IgbRuntimeFieldSlot>();nonref_data=std::make_shared<IgbRuntimeFieldSlot>();
     ref_data=std::make_shared<IgbRuntimeFieldSlot>();
+    string_ref_data=std::make_shared<IgbRuntimeFieldSlot>();signed_int_data=std::make_shared<IgbRuntimeFieldSlot>();
     factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{0x8002e1acu,0x8002e1acu,0x8002ac34u});
     names=std::make_shared<IgbFieldNameTable>(IgbFieldNameTable{std::make_shared<const std::string>("_count"),
         std::make_shared<const std::string>("_capacity"),std::make_shared<const std::string>("_data")});
@@ -81,7 +97,7 @@ struct IgbDataListPrototypeInvocation::Impl {
     bool running{},fault{};
 };
 IgbDataListPrototypeInvocation::IgbDataListPrototypeInvocation(IgbDataListPrototypeKind kind):impl_(std::make_unique<Impl>()){
-    if(kind!=IgbDataListPrototypeKind::unsigned_char && kind!=IgbDataListPrototypeKind::object)fail("Unknown data-list element prototype getter.");
+    (void)prototype_body(kind);
     impl_->kind=kind;
 }
 IgbDataListPrototypeInvocation::~IgbDataListPrototypeInvocation()=default;
@@ -99,13 +115,16 @@ MessengerCallResult IgbDataListPrototypeInvocation::resume(std::shared_ptr<IgbDa
     case P::read:
         if(!s.slot && services){
             if(s.kind==IgbDataListPrototypeKind::unsigned_char)s.slot=services->unsigned_char_prototype;
-            else if(services->lists && services->lists->values)
-                s.slot=std::shared_ptr<IgbRuntimeFieldSlot>(services->lists->values,&services->lists->values->object_prototype);
+            else if(services->lists && services->lists->values){const auto values=services->lists->values;
+                auto member=&values->object_prototype;
+                if(s.kind==IgbDataListPrototypeKind::string)member=&values->string_prototype;
+                else if(s.kind==IgbDataListPrototypeKind::signed_int)member=&values->signed_int_prototype;
+                s.slot=std::shared_ptr<IgbRuntimeFieldSlot>(values,member);
+            }
         }
-        if(!s.slot || !*s.slot)return pending(s.kind==IgbDataListPrototypeKind::unsigned_char?
-            "Data-list prototype getter requires represented805614D4.":"Data-list prototype getter requires represented805616EC.");
+        if(!s.slot || !*s.slot)return pending(prototype_missing(s.kind));
         if(**s.slot)s.phase=P::reload;
-        else{s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(s.kind==IgbDataListPrototypeKind::unsigned_char?0x80023234u:0x80028a20u);s.phase=P::registration;}
+        else{s.registration=std::make_unique<IgbRegistrationCallbacksInvocation>(prototype_body(s.kind));s.phase=P::registration;}
         break;
     case P::registration:{const auto status=s.registration->resume(services?services->callbacks:nullptr);check();if(!status.completed)return status;
         s.registration.reset();check();s.phase=P::reload;break;}
@@ -117,23 +136,38 @@ MessengerCallResult IgbDataListPrototypeInvocation::resume(std::shared_ptr<IgbDa
 }
 struct IgbDataListDefaultsInvocation::Impl {
     enum class P {capture,batch,field,prototype,element,size,flag35,flag40,flag41,flag42,global,schema_setup,schema,
-        find_setup,find_descriptor,find_test,find_field,find_name,find_compare,index,clone,after_clone,replace,release,destroy,call,done};
+        find_setup,find_descriptor,find_test,find_field,find_name,find_compare,index,clone,after_clone,replace,release,release_test,destroy,call,done};
     P phase=P::capture,after=P::done;IgbDataListKind kind{};
     std::shared_ptr<IgbDataListDefaultsServices> owner;std::shared_ptr<IgbRuntimeMetaType> metadata;
     std::shared_ptr<IgbDecodeRuntimeField> field,element,found,name_descriptor;
     std::shared_ptr<IgbDecodeFieldRegistry> find_fields;IgbDependencyName find_name;
     std::optional<IgbBootstrapPointer> field_binding;std::optional<std::uint32_t> address;
+    std::shared_ptr<IgbScratchBuffer> field_bytes, clone_source_bytes;
+    std::optional<IgbBootstrapPointer> clone_source_binding;
+    std::shared_ptr<IgbFieldReferenceAccess> reference;
+    std::uint32_t field_allocation_address{};
     std::unique_ptr<IgbFieldBatchInvocation> batch;std::unique_ptr<IgbFieldSchemaInvocation> schema;
     std::unique_ptr<IgbDataListPrototypeInvocation> prototype;std::unique_ptr<IgbFieldReplaceInvocation> replace;
     Call call;std::uint32_t first{},find_index{},index{};bool running{},fault{},validate_binding{};
 };
 IgbDataListDefaultsInvocation::IgbDataListDefaultsInvocation(IgbDataListKind kind):impl_(std::make_unique<Impl>()){
-    if(kind!=IgbDataListKind::data_list && kind!=IgbDataListKind::nonref_object && kind!=IgbDataListKind::ref_object)
+    if(kind!=IgbDataListKind::data_list && kind!=IgbDataListKind::nonref_object && kind!=IgbDataListKind::ref_object &&
+        kind!=IgbDataListKind::string_ref && kind!=IgbDataListKind::signed_int)
         fail("This data-list class has no defaults body.");impl_->kind=kind;
 }
 IgbDataListDefaultsInvocation::~IgbDataListDefaultsInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.metadata)s.owner->retained.push_back(s.metadata);if(s.field)s.owner->retained.push_back(s.field);
-    if(s.found)s.owner->retained.push_back(s.found);if(s.field_binding)s.owner->retained.push_back(s.field_binding->storage);
+    if(s.found)s.owner->retained.push_back(s.found);
+    if(s.clone_source_binding)s.owner->retained.push_back(s.clone_source_binding->storage);
+    if(s.clone_source_bytes)s.owner->retained.push_back(s.clone_source_bytes);if(s.field_binding)s.owner->retained.push_back(s.field_binding->storage);
+    if(s.field_bytes)s.owner->retained.push_back(s.field_bytes);if(s.reference)s.owner->retained.push_back(s.reference);
+    if(s.call.request.kind==IgbListDefaultsServiceKind::clone_field && s.call.operation &&
+        s.call.operation->field_result && s.call.operation->field_result!=s.field){
+        const auto returned=s.call.operation->field_result;s.owner->retained.push_back(returned);
+        if(returned->physical_storage)if(const auto storage=returned->physical_storage->storage.lock()){
+            s.owner->retained.push_back(storage);if(storage->bytes)s.owner->retained.push_back(storage->bytes);
+        }
+    }
 }}
 bool IgbDataListDefaultsInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbDataListDefaultsInvocation::faulted()const noexcept{return impl_->fault;}
@@ -143,13 +177,20 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
     const auto lists=[&]{return services?services->lists:std::shared_ptr<IgbListDefaultsServices>{};};
     const auto schema=[&]{const auto list=lists();return list?list->schema:std::shared_ptr<IgbFieldSchemaServices>{};};
+    const auto capture_binding=[&]{s.field_binding=capture_field_binding(s.field);
+        if(s.field_binding && s.field_binding->storage){s.field_bytes=s.field_binding->storage->bytes;
+            s.field_allocation_address=s.field_binding->storage->original_address;}
+        s.reference=std::make_shared<IgbFieldReferenceAccess>(s.field);
+    };
     const auto check=[&]{if(s.fault)fail("Data-list defaults were invalidated by a callback.");
-        if(s.validate_binding && s.field_binding){const auto current=physical_field(s.field);
-            if(!current || current->storage!=s.field_binding->storage || current->offset!=s.field_binding->offset)
+        if(s.validate_binding){const auto current=physical_field(s.field);
+            if(bool(current)!=bool(s.field_binding))fail("Data-list defaults changed their captured descriptor storage profile.");
+            if(current && (current->storage!=s.field_binding->storage || current->offset!=s.field_binding->offset ||
+                current->storage->original_address!=s.field_allocation_address || current->storage->bytes!=s.field_bytes ||
+                !s.field_bytes || s.field_bytes->released))
                 fail("Data-list defaults lost their captured descriptor allocation.");}};
     const auto clear=[&]{s.call.clear();check();};
-    const auto pointer=[&]{const auto result=physical_field(s.field);
-        if(result && !s.field_binding)s.field_binding=result;check();return result;};
+    const auto pointer=[&]{check();return s.field_binding;};
     const auto word=[&](std::uint32_t offset,std::uint32_t value){if(const auto p=pointer())igb_bootstrap_write_word(*p,offset,value);};
     const auto byte=[&](std::uint32_t offset,std::uint8_t value){if(const auto p=pointer())igb_bootstrap_write_byte(*p,offset,value);};
     const auto bind=[&]{const auto cfg=schema();if(!s.field || !s.address || !cfg || !cfg->fields || !cfg->fields->pointer_lists)return;
@@ -167,7 +208,7 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
         s.batch.reset();check();s.phase=P::field;break;}
     case P::field:
         if(!s.metadata || !s.metadata->fields)fail("Data-list defaults reload a null field registry.");
-        s.field=physical(s.metadata->fields->backing,s.first+2u);s.field_binding=capture_field_binding(s.field);
+        s.field=physical(s.metadata->fields->backing,s.first+2u);capture_binding();
         s.prototype=std::make_unique<IgbDataListPrototypeInvocation>(IgbDataListPrototypeKind::unsigned_char);s.phase=P::prototype;break;
     case P::prototype:{const auto status=s.prototype->resume(services);check();if(!status.completed)return status;
         s.element=s.prototype->result();s.prototype.reset();check();s.phase=P::element;break;}
@@ -178,14 +219,16 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
         s.field->element_field=std::weak_ptr<IgbDecodeRuntimeField>(s.element);
         s.phase=s.kind==IgbDataListKind::data_list?P::flag35:P::size;break;
     case P::size:word(0x38,0);s.field->word_38=0;
-        s.phase=s.kind==IgbDataListKind::ref_object?P::global:P::flag42;break;
+        s.phase=s.kind==IgbDataListKind::nonref_object?P::flag42:P::global;break;
     case P::flag35:byte(0x35,1);s.field->flag_35=std::uint8_t{1};s.phase=P::flag40;break;
     case P::flag40:byte(0x40,1);s.field->flag_40=std::uint8_t{1};s.phase=P::flag41;break;
     case P::flag41:byte(0x41,1);s.field->flag_41=std::uint8_t{1};s.phase=P::schema_setup;break;
     case P::flag42:byte(0x42,0);s.field->flag_42=std::uint8_t{0};s.phase=P::global;break;
     case P::global:{
-        const auto address=s.kind==IgbDataListKind::ref_object?0x8056170cu:0x80561734u;
-        const auto slot=services?(s.kind==IgbDataListKind::ref_object?services->ref_data:services->nonref_data):nullptr;
+        const auto address=s.kind==IgbDataListKind::string_ref?0x80561590u:s.kind==IgbDataListKind::signed_int?0x80561dc8u:
+            s.kind==IgbDataListKind::ref_object?0x8056170cu:0x80561734u;
+        const auto slot=services?(s.kind==IgbDataListKind::string_ref?services->string_ref_data:s.kind==IgbDataListKind::signed_int?services->signed_int_data:
+            s.kind==IgbDataListKind::ref_object?services->ref_data:services->nonref_data):nullptr;
         if(!slot)return pending("Data-list specialization requires its distinct canonical descriptor cell.");
         word(0x1c,address);s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(slot);s.field->global_slot_address=address;
         s.replace=std::make_unique<IgbFieldReplaceInvocation>(s.metadata,s.index,s.field);s.phase=P::replace;break;}
@@ -217,21 +260,34 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
             s.found=physical(s.find_fields->backing,s.find_index);s.phase=P::index;
         }else{++s.find_index;s.phase=P::find_test;}break;
     case P::index:s.index=std::bit_cast<std::uint32_t>(index_of(s.metadata->fields,s.found));s.phase=P::clone;break;
-    case P::clone:
+    case P::clone:{
         if(!s.found)fail("Data-list specialization calls clone through a null inherited field.");
-        if(!s.found->vtable_word)return pending("Data-list specialization requires its captured source's clone virtual.");
-        if(!*s.found->vtable_word)fail("Data-list specialization dereferences a null clone vtable.");
-        {const auto table=*s.found->vtable_word;auto& request=select(K::clone_field,P::after_clone);
-            request.field=s.found;request.vtable_word=table;request.virtual_slot=0x54;request.argument=1;}break;
+        // Original 80024D64 / 8003677C loads the source vtable before +54.
+        // Retain the selected source allocation without rereading it while the
+        // clone callback is pending. A raw load does not refresh its cache.
+        s.clone_source_binding=physical_field(s.found);
+        std::optional<std::uint32_t> table=s.found->vtable_word;
+        if(s.clone_source_binding){s.clone_source_bytes=s.clone_source_binding->storage->bytes;
+            table=igb_bootstrap_read_word(*s.clone_source_binding,0);}
+        if(!table)return pending("Data-list specialization requires its captured source's clone virtual.");
+        if(!*table)fail("Data-list specialization dereferences a null clone vtable.");
+        auto& request=select(K::clone_field,P::after_clone);
+        request.field=s.found;request.vtable_word=*table;request.virtual_slot=0x54;request.argument=1;break;}
     case P::after_clone:
-        s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;clear();bind();
-        s.field_binding=capture_field_binding(s.field);
-        s.prototype=std::make_unique<IgbDataListPrototypeInvocation>(IgbDataListPrototypeKind::object);s.phase=P::prototype;break;
+        s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;capture_binding();clear();bind();
+        s.prototype=std::make_unique<IgbDataListPrototypeInvocation>(s.kind==IgbDataListKind::string_ref?IgbDataListPrototypeKind::string:
+            s.kind==IgbDataListKind::signed_int?IgbDataListPrototypeKind::signed_int:IgbDataListPrototypeKind::object);s.phase=P::prototype;break;
     case P::replace:{bind();const auto status=s.replace->resume(lists(),check);check();if(!status.completed)return status;
         s.replace.reset();check();s.phase=P::release;break;}
-    case P::release:{const auto reference=s.field->reference_word-1u;word(4,reference);s.field->reference_word=reference;
-        if((s.field->reference_word&0x7fffffu)==0){auto& request=select(K::destroy_field,P::destroy);request.field=s.field;request.function=0x80066e1c;}
-        else s.phase=P::done;break;}
+    case P::release:s.reference->write(s.reference->read()-1u);s.phase=P::release_test;break;
+    case P::release_test:
+        {const auto destroy=(s.reference->read()&0x7fffffu)==0;
+            // No descriptor read follows the final low23 test. A selected
+            // destructor may legitimately release its captured allocation.
+            s.validate_binding=false;
+            if(destroy){auto& request=select(K::destroy_field,P::destroy);request.field=s.field;request.function=0x80066e1c;}
+            else s.phase=P::done;
+        }break;
     case P::destroy:clear();s.phase=P::done;break;
     case P::call:{const auto status=s.call.poll(lists(),check);if(!status.completed)return status;s.phase=s.after;break;}
     case P::done:return {true,0,{}};
@@ -240,10 +296,12 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
 IgbTypeRegistrationFactory make_native_igb_data_list_defaults_factory(std::shared_ptr<IgbDataListDefaultsServices> services,IgbTypeRegistrationFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbTypeRegistrationCall& call)->std::shared_ptr<IgbTypeRegistrationOperation>{
         if(call.kind!=IgbTypeRegistrationServiceKind::defaults ||
-            (call.function!=0x80033aa4 && call.function!=0x80029724 && call.function!=0x8002910c))return remaining?remaining(call):nullptr;
+            (call.function!=0x80033aa4 && call.function!=0x80029724 && call.function!=0x8002910c &&
+             call.function!=0x80024d24 && call.function!=0x8003673c))return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Data-list defaults services expired before selection.");
         const auto kind=call.function==0x80033aa4?IgbDataListKind::data_list:
-            call.function==0x80029724?IgbDataListKind::nonref_object:IgbDataListKind::ref_object;
+            call.function==0x80029724?IgbDataListKind::nonref_object:call.function==0x80024d24?IgbDataListKind::string_ref:
+            call.function==0x8003673c?IgbDataListKind::signed_int:IgbDataListKind::ref_object;
         auto invocation=std::make_shared<IgbDataListDefaultsInvocation>(kind);
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();operation->resume=[invocation,selected]{return invocation->resume(selected);};return operation;
     };

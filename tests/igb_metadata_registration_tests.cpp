@@ -4088,6 +4088,139 @@ void actual_cold_bootstrap_prefix(){
     for(std::size_t i=0;i<2;++i)check(descriptors[i]->reference_word>1 &&
         igb_bootstrap_read_word(descriptor_allocations[i],4)==descriptors[i]->reference_word,
         "Native class inheritance left its persistent base-descriptor retain out of the physical reference header.");
+    meta_enum->factory=make_native_igb_meta_enum_list_factory(data_registration,values->fields->pointer_lists,meta_enum->factory);
+    const auto missing_enum_list_cell=call.resume(bootstrap);
+    check(!missing_enum_list_cell.completed && !call.faulted() &&
+        missing_enum_list_cell.diagnostic=="Data-list lookup requires its canonical metadata cell." &&
+        f.core->types->count==36 && descriptors.size()==111 && enabled_allocations.size()==141,
+        "Enum list adapter fabricated its canonical metadata cell or replayed the completed descriptor batch.");
+    data_registration->string_ref_metadata=std::make_shared<IgbRegistrationMetaSlot>();
+    data_registration->signed_int_metadata=std::make_shared<IgbRegistrationMetaSlot>();
+    check(call.resume(bootstrap).diagnostic=="Data-list lookup requires represented canonical metadata." &&
+        !*data_registration->string_ref_metadata && !*data_registration->signed_int_metadata &&
+        enabled_allocations.size()==141,
+        "Unknown enum list globals were interpreted as initialized null pointers.");
+    *data_registration->string_ref_metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto missing_integer_list_cell=call.resume(bootstrap);
+    check(!missing_integer_list_cell.completed && !call.faulted() &&
+        missing_integer_list_cell.diagnostic=="Data-list lookup requires represented canonical metadata." &&
+        *data_registration->string_ref_metadata && **data_registration->string_ref_metadata &&
+        (**data_registration->string_ref_metadata)->class_flags==0 && !*data_registration->signed_int_metadata,
+        "String list allocation-only lookup forced registration or bypassed the unknown integer list global.");
+    const auto enum_string_list_type=**data_registration->string_ref_metadata;
+    const auto enum_names_descriptor=descriptors[109];
+    check(enum_names_descriptor->object_type && enum_names_descriptor->object_type->lock()==enum_string_list_type &&
+        igb_bootstrap_read_word(descriptor_allocations[109],0x38)!=0 &&
+        f.core->types->count==36 && descriptors.size()==111,
+        "Enum names field did not publish its actual lazy list metadata before the second getter.");
+    *data_registration->signed_int_metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    data_registration->local_storage={};
+    const auto missing_enum_list_probe=call.resume(bootstrap);
+    std::cout<<"Cold native enum list probe: "<<missing_enum_list_probe.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!missing_enum_list_probe.completed && !call.faulted(),
+        "Enum list dependencies incorrectly completed full native startup.");
+    const auto enum_integer_list_type=**data_registration->signed_int_metadata;
+    const auto enum_type=**meta_enum->metadata;
+    check(missing_enum_list_probe.diagnostic=="Data-list probe requires its represented20-byte stack local." &&
+        f.core->types->count==37 && f.core->types->backing->at(36)==enum_type && enum_type->class_flags==7 &&
+        enum_integer_list_type && enum_integer_list_type!=enum_string_list_type && enum_integer_list_type->class_flags==0 &&
+        descriptors.size()==111 && default_allocations==123 && enabled_allocations.size()==145 && enum_probe_locals==1,
+        "Enum completion did not precede its original list registration callbacks or duplicated lazy allocation.");
+    for(std::uint32_t i=0;i<3;++i){const auto descriptor=descriptors[108+i];
+        check(enum_type->fields->backing->at(2+i)==descriptor && descriptor->name &&
+            *descriptor->name==**meta_enum->names->at(i) && descriptor->ordinal==2+i && descriptor->offset==8+4*i &&
+            descriptor->declaring_type && descriptor->declaring_type->lock()==enum_type &&
+            *meta_enum->globals->at(i)->slot==descriptor && descriptor->global_slot_address==0x8056180c+4*i &&
+            igb_bootstrap_read_word(descriptor_allocations[108+i],0x1c)==0x8056180c+4*i,
+            "Completed enum schema changed field order, ownership, offsets or physical global pointers.");}
+    check(enum_type->parent==object_type && enum_type->fields->count==5 &&
+        descriptors[110]->object_type && descriptors[110]->object_type->lock()==enum_integer_list_type &&
+        descriptors[109]->object_type && descriptors[109]->object_type->lock()==enum_string_list_type,
+        "Enum list fields do not share the exact allocation-only metadata owners.");
+    for(const auto i:{109u,110u}){const auto type=i==109?enum_string_list_type:enum_integer_list_type;
+        const auto address=igb_bootstrap_read_word(descriptor_allocations[i],0x38);
+        check(address!=0 && std::any_of(values->fields->pointer_lists->values.begin(),values->fields->pointer_lists->values.end(),
+            [&](const auto& binding){return binding.address==address && binding.metadata==type && !binding.field;}),
+            "Enum object-type store lost the actual physical address of its lazy metadata result.");}
+    std::vector<IgbDataListKind> enum_list_probes;
+    std::vector<IgbBootstrapPointer> enum_list_probe_locals;
+    data_registration->local_storage=[&](IgbDataListKind kind){
+        check(kind==IgbDataListKind::string_ref || kind==IgbDataListKind::signed_int,
+            "Enum list registration replayed a completed class probe.");
+        auto local=allocation(0xc74000+static_cast<std::uint32_t>(enum_list_probe_locals.size())*0x100,0x14);
+        std::fill(local.storage->bytes->initialized.begin(),local.storage->bytes->initialized.end(),0);
+        for(std::size_t i=4;i<8;++i)local.storage->bytes->initialized[i]=1;
+        enum_list_probes.push_back(kind);enum_list_probe_locals.push_back(local);return local;
+    };
+    const auto after_enum_lists=call.resume(bootstrap);
+    std::cout<<"Cold native enum lists: "<<after_enum_lists.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", list probes="<<enum_list_probes.size()<<'\n';
+    check(!after_enum_lists.completed && !call.faulted(),
+        "Enum list registration incorrectly completed full game startup.");
+    check(after_enum_lists.diagnostic=="Registration requires original function 0x80039D94." &&
+        f.core->types->count==39 && descriptors.size()==113 && default_allocations==125 && enabled_allocations.size()==147 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==12 &&
+        f.core->types->backing->at(37)==enum_string_list_type && f.core->types->backing->at(38)==enum_integer_list_type &&
+        **data_registration->string_ref_metadata==enum_string_list_type && **data_registration->signed_int_metadata==enum_integer_list_type,
+        "Native enum lists did not complete in original callback order before the actual malloc-pool registration boundary.");
+    check(enum_list_probes==std::vector<IgbDataListKind>{IgbDataListKind::string_ref,IgbDataListKind::signed_int} &&
+        data_type->children && (*data_type->children)->count==4 &&
+        (*data_type->children)->backing->at(2)==enum_string_list_type && (*data_type->children)->backing->at(3)==enum_integer_list_type,
+        "Enum lists repeated an earlier probe or lost their actual DataList parent linkage.");
+    for(std::size_t i=0;i<2;++i){const auto type=i==0?enum_string_list_type:enum_integer_list_type;
+        const auto descriptor=descriptors[111+i];const auto physical=descriptor_allocations[111+i];
+        const auto element=i==0?*values->string_prototype:*values->signed_int_prototype;
+        const auto global=i==0?0x80561590u:0x80561dc8u;
+        const auto slot=i==0?data_defaults->string_ref_data:data_defaults->signed_int_data;
+        const auto table=i==0?0x80470f5cu:0x80474600u;
+        check(type->parent==data_type && type->name && *type->name==(i==0?"igStringRefList":"igIntList") &&
+            type->native_size==0x14 && type->flag_1a==0 && type->class_flags==7 && type->type_word==table && type->fields->count==5,
+            "Enum list registration lost its exact class identity, size, parent or probe result.");
+        for(std::size_t field_index=0;field_index<4;++field_index)
+            check(type->fields->backing->at(field_index)==data_type->fields->backing->at(field_index),
+                "Enum list specialization replaced an unrelated inherited field.");
+        check(type->fields->backing->at(4)==descriptor && descriptor!=pending_data_descriptor && *slot==descriptor &&
+            descriptor->name && *descriptor->name=="_data" && descriptor->ordinal==4 && descriptor->offset==16 &&
+            descriptor->global_slot_address==global && descriptor->declaring_type && descriptor->declaring_type->lock()==type &&
+            descriptor->element_field && descriptor->element_field->lock()==element && element && element->physical_storage &&
+            descriptor->word_38==0 && descriptor->reference_word==1 && igb_bootstrap_read_word(physical,4)==1,
+            "Enum specialization lost its independent cloned descriptor, canonical element or balanced physical references.");
+        check(igb_bootstrap_read_word(physical,0x1c)==global && igb_bootstrap_read_word(physical,0x38)==0 &&
+            igb_bootstrap_read_word(physical,0x3c)==igb_bootstrap_address({element->physical_storage->storage.lock(),element->physical_storage->offset}) &&
+            descriptor->default_bytes && descriptor->default_bytes->buffer!=pending_data_descriptor->default_bytes->buffer,
+            "Enum specialization lost its ordered physical stores or independent default-buffer owner.");
+        const auto inherited=descriptor_allocations[71];
+        for(const auto offset:{0x35u,0x40u,0x41u,0x42u})
+            check(physical.storage->bytes->bytes[physical.offset+offset]==inherited.storage->bytes->bytes[inherited.offset+offset] &&
+                physical.storage->bytes->initialized[physical.offset+offset]==inherited.storage->bytes->initialized[inherited.offset+offset],
+                "Enum specialization changed an inherited flag byte or invented its knownness.");
+        const auto local=enum_list_probe_locals[i];
+        check(igb_bootstrap_read_word(local,0)==table && igb_bootstrap_read_word(local,4)==1,
+            "Enum list probe lost its final vtable or original packed header reset.");
+        for(std::size_t at=0;at<20;++at)
+            check(local.storage->bytes->initialized[at]==(at<8?1:0) && (at<8 || local.storage->bytes->bytes[at]==0xcc),
+                "Enum list probe fabricated count, capacity or data-pointer initialization.");
+    }
+    check(descriptors[111]!=descriptors[112] &&
+        descriptors[111]->default_bytes->buffer!=descriptors[112]->default_bytes->buffer &&
+        data_type->fields->backing->at(4)==pending_data_descriptor && *data_defaults->ref_data==ref_data &&
+        *data_defaults->nonref_data==specialized_data,
+        "Enum list defaults overwrote an earlier specialization or shared a cloned default buffer.");
+    const auto enum_finished_names=string_allocations;const auto enum_finished_callbacks=freed_callback_lists.size();
+    const auto enum_finished_clones=reached_reflected_clones.size(),enum_finished_members=member_calls.size();
+    const auto enum_finished_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_enum_lists.diagnostic && !call.faulted() &&
+        f.core->types->count==39 && descriptors.size()==113 && default_allocations==125 && enabled_allocations.size()==147 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==12 && enum_list_probes.size()==2 &&
+        string_allocations==enum_finished_names && freed_callback_lists.size()==enum_finished_callbacks &&
+        reached_reflected_clones.size()==enum_finished_clones && member_calls.size()==enum_finished_members &&
+        reflected_allocations.size()==enum_finished_reflections && enum_probe_locals==1 && wake_interrupt_calls.size()==3 &&
+        error_type->instance_count==1 && error_handler->state->singleton->storage==error_storage.storage &&
+        !error_bootstrap_list->released && error_bootstrap_list->count==2 && (**meta_enum->metadata)==enum_type,
+        "Pending malloc registration replayed enum dependencies or earlier startup side effects.");
+
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

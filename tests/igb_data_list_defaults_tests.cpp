@@ -92,7 +92,10 @@ struct Fixture {
     }
     void prepare_parent(){IgbDataListDefaultsInvocation parent(IgbDataListKind::data_list);check(parent.resume(services).completed,"Prepared DataList schema failed.");
         object->fields->count=data->fields->count;*object->fields->backing=*data->fields->backing;
-        for(auto& entry:*object->fields->backing)if(entry)++entry->reference_word;}
+        for(auto& entry:*object->fields->backing)if(entry){
+            if(entry->physical_storage){const auto& binding=*entry->physical_storage;const IgbBootstrapPointer pointer{binding.storage.lock(),binding.offset};
+                igb_bootstrap_write_word(pointer,4,igb_bootstrap_read_word(pointer,4)+1u);}
+            else ++entry->reference_word;}}
     void bind_prototypes(){services->lists->schema->fields->pointer_lists->values.push_back({0x660000,{},byte_prototype});
         services->lists->schema->fields->pointer_lists->values.push_back({0x670000,{},object_prototype});}
 };

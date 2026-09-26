@@ -1,5 +1,66 @@
 # Local validation
 
+## Enum list dependencies complete before malloc-pool registration
+
+Validated locally on 2026-09-27. Native enum defaults now compose the original
+allocation-only `80024B94 / 800365B4` getters. Later callbacks register
+`igStringRefList` and `igIntList`, clone their inherited `_data` descriptors,
+publish the existing string/integer prototype pointers and complete physical
+replacement/reference handling. The cold chain reaches the next original
+registration body `80039D94`, with **39 types, 113 descriptors, 125 default
+buffers, 12 prototypes, 147 enabled allocations and six runtime objects**.
+See [IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md).
+
+| Check | Evidence |
+| --- | --- |
+| Initial and final Release CoreOnly builds | 219/219 local CTest suites passed; four jobs |
+| Enum-list focused suite | 390 checks; exact profiles, lazy/full/plain lookup, probe capture, shared prototypes, physical dispatch/references and pending ownership |
+| Final integrated cold startup | 6,630 checks; unknown-cell boundaries, allocation before registration, exact schema/prototype ownership, inherited flags, physical stores and no replay |
+| Original decoder prefix | 400 original-inclusive checks |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 prepared held/released and 28 scheduled frames |
+| Python verifier | Six tests passed |
+
+Before compilation, source review found a missing physical source-vtable load
+before clone virtual `+54`. IDA confirmed `80024D64 / 8003677C`; the preserved
+v2 candidate adds that reached read and retains its source allocation without
+rereading during a pending callback. Separate focused tests cover stale or
+unknown canonical caches, unknown/short physical words, invalid bindings and
+abandoned owner retention. The original v1 remains preserved. Two existing
+fixture migrations make prepared inherited reference acquisition physical and
+move the old invalid enum input beyond the two newly valid kinds. Assertions
+remain unchanged. The first complete build passed; final cold assertions were
+then strengthened without changing production.
+
+The independent original corpus was sealed before native candidate inspection:
+373 cases, 63,500 instructions, 628 visited addresses, 159 physical replacement
+retains, 156 old releases, 118 creator releases and 1,173 callback snapshots.
+All 373 cases replay exactly; the 15-artifact original seal is
+`62de99ac413a5ebc7ac0103e466e730ab2a2ffb411e2119a9acf51247b6ba63c`.
+
+The frozen native scope matches **268/268** on its first build and first run:
+202 completions (108 defaults), 22 prepared faults, 12 null reads, two null
+writes, eight unknown reads and 22 bounded accesses. It compares physical
+descriptor bytes/knownness, including `+04` and unchanged `+0C`, backing bytes
+and 946 callback snapshots. There are no unexpected faults or pending calls.
+Both class profiles separately match 40 numeric words and four names. Native
+stdout/stderr and profile output replay exactly; no paired case, input, driver,
+expectation or projection changed after execution. The 22-artifact native seal
+is `568f586c335ad4c40816c7f10dd000e6fce8d61a67ce5627c2f93a7afcec6572`.
+Core SHA256:
+`ac16d7d3ee8f85aded7be603054ffe17a87e707e722672cc90d519891a683327`.
+
+The fixed 105 original-only cases comprise 33 isolated `53EA0` calls, 22 null
+lazy allocations, 16 unknown canonical cells, 12 inline mutations, eight probes
+outside the aligned local profile, eight sparse write denials, four prepared
+generic registrar bodies and two reserve boundaries. Canonical metadata/list
+identities and prepared names remain declared projections. The source-VT fault
+cases are focused-only; paired unknown clone-VT cases concern the returned
+destination during finalization. The enclosing enum adapter and full generic
+registration are covered by native composition, not independently paired by
+this corpus. Physical string/name headers, complete pool initialization, full
+startup and playable gameplay remain required. Local artifacts use
+`work/native-enum-list-family-`.
+
 ## Physical descriptor references in native startup
 
 Validated locally on 2026-09-27. Field batch `80065924`, finalized append

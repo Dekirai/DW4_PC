@@ -20,11 +20,13 @@ struct IgbDataListDefaultsServices {
     std::shared_ptr<IgbFieldGlobalTable> globals; //80467490.
     std::shared_ptr<IgbFieldOffsetTable> offsets; //8046749C.
     std::vector<std::shared_ptr<void>> retained;
+    std::shared_ptr<IgbRuntimeFieldSlot> string_ref_data; // Canonical80561590.
+    std::shared_ptr<IgbRuntimeFieldSlot> signed_int_data; // Canonical80561DC8.
 };
-enum class IgbDataListPrototypeKind {unsigned_char,object};
-// Exact23358/28BFC: test the distinct prototype cell, conditionally execute
-// wrapper2320C/289F8 through66188(23234/28A20), then reload that cell.
-// Unsigned-char registration23234 is an explicit unrecovered boundary.
+enum class IgbDataListPrototypeKind {unsigned_char,object,string,signed_int};
+// Exact23358/28BFC/256C0/2E4D8: test the distinct prototype cell,
+// conditionally execute its wrapper through66188, then reload that cell.
+// Registrations use the existing field-class/prototype adapters when bound.
 class IgbDataListPrototypeInvocation {
 public:
     explicit IgbDataListPrototypeInvocation(IgbDataListPrototypeKind);
@@ -36,7 +38,7 @@ public:
     std::shared_ptr<IgbDecodeRuntimeField> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual33AA4/29724/2910C. The data-list caller appends three fields; object
+// Actual33AA4/29724/2910C/24D24/3673C. The data-list caller appends three fields;
 // specializations clone inherited _data. Only29724 clears cloned flag+42.
 class IgbDataListDefaultsInvocation {
 public:

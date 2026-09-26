@@ -225,9 +225,12 @@ its immediate reflected singleton now complete with explicitly prepared global
 and allocator inputs. Its teardown stays deferred in the existing bootstrap
 list. Context-extension wrapper `800374E8` now registers both abstract contexts,
 their original three-field defaults and both concrete list dependencies.
-Context-info `80037330` now completes its original defaults and probe; retained
-startup returns to enum defaults at list getter `80024B94`. Continue through
-that dependency. Batch, finalized append, inheritance and base-default reference
+Context-info `80037330` now completes its original defaults and probe. Enum
+defaults compose the actual allocation-only list getters, followed by registration
+of `igStringRefList` and `igIntList`; the cold chain reaches malloc-pool body
+`80039D94`. Continue through its abstract `igMemoryPool` parent and the reached
+signed-64-bit descriptor dependency, preserving their actual callback order.
+Batch, finalized append, inheritance, replacement and selected creator-release
 operations now preserve physical packed words; other reference/name bindings
 still need recovery. Complete those reached operations,
 and implement actual OS/pool initialization and native rescheduling/sleep.
@@ -235,6 +238,7 @@ IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
 See [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
+[IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),

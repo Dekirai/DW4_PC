@@ -225,12 +225,16 @@ the native state owner does not manufacture successful startup.
 The same cold composition registers both abstract context classes, their two
 concrete lists and the separate context-info class. Its metadata, null string
 default and signed-byte element prototype use the original shared owners.
-The retained startup now reaches the enum-defaults list getter `80024B94`.
+Enum defaults now use the actual allocation-only list getters. Their later
+callbacks register `igStringRefList` and `igIntList`, with separate cloned
+descriptors and shared original element prototypes. The cold composition
+publishes 39 types and reaches malloc-pool registration `80039D94`.
 Shared field/list and string-default continuations retain parent fault checks.
 Field batch, finalized append, inheritance and base defaults now read and update
 the represented physical descriptor reference word. A stale host cache cannot
 replace that original packed value; pending callbacks preserve captured owners.
 Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_ENUM_LISTS.md](docs/IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](docs/IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](docs/IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](docs/IGB_CONTEXT_REGISTRATION.md),
