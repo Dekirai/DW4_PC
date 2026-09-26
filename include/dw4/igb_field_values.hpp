@@ -55,7 +55,9 @@ public:
     ~IgbFieldStringDefaultInvocation();
     IgbFieldStringDefaultInvocation(const IgbFieldStringDefaultInvocation&)=delete;
     IgbFieldStringDefaultInvocation& operator=(const IgbFieldStringDefaultInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldValuesServices> services={});
+    // Borrowed during this resume only, including string-service callbacks.
+    MessengerCallResult resume(std::shared_ptr<IgbFieldValuesServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

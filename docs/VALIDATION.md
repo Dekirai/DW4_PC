@@ -1,5 +1,96 @@
 # Local validation
 
+## Context-info registration resumes startup at enum defaults
+
+Validated locally on 2026-09-27. Original `80037330 / 80037358` now registers
+`igContextExtInfo`, including its actual `800373EC` field defaults, canonical
+metadata dependency, `80071694(NULL)` string default and `80037E48` signed-byte
+prototype getter. The prototype cell stays distinct from class metadata.
+The original local probe and returned metadata callback complete, after which
+the already allocated context-extension list registers. The retained startup
+returns to enum defaults and reaches its missing list getter `80024B94`.
+
+The cold result has **36 published types, 111 descriptors, 123 default buffers,
+12 prototypes, 141 enabled allocations and six runtime objects**. Context-info
+fields inherit the same two base descriptors and publish the correct names,
+ordinals, offsets, globals, metadata pointer, null default, string flag and
+element-prototype pointer. The second list uses its earlier lazy allocation.
+Enum metadata has been constructed and probed, but its defaults remain pending;
+it is not counted as a published type. Repeated resumes preserve allocations,
+callbacks, prototype identities, singleton ownership and earlier thread effects.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 216/216 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,444 checks; canonical cells, real child-list growth, physical defaults, both list probes and original enum continuation |
+| Context-info focused suite | 281 checks; exact profile, lazy aliases, captured/fresh ownership, string callback order, probe cleanup and retained failed results |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames unchanged |
+| Python verifier | Six tests passed |
+
+Pre-build review added three lifetime repairs: unfinished defaults retain their
+captured descriptor byte owner, unfinished probe cleanup retains its captured
+object bytes, and guarded string-default calls retain unconsumed returned pool
+or string owners. No guest release or ownership cycle is introduced. Weak-owner
+tests verify these paths, including caught recursive parent entry before later
+publication. The original manager-presence read precedes default-buffer capture;
+its branch remains captured while interning uses the later fresh manager load.
+
+The first build compiled successfully and passed 215/216 suites. The cold test's
+older prepared allocator accepted only the first `igObject` child-list growth.
+It now also supplies the reached second copied allocation, from 32 to 64 bytes;
+native code still chooses capacity, clears the tail and publishes/appends.
+All suites then passed. A subsequent stricter root fixture made every local
+probe byte unknown and correctly failed because original `8006665C` reads the
+existing packed word at `+04` before resetting it. The final fixture represents
+only those four required input bytes. Native code produces the first 16 bytes;
+the untouched vendor member remains unknown. Both failed logs and initial cold
+test sources are retained. Neither correction changed production behavior.
+
+Core SHA256:
+`9bb779bf3061aca065bb825b1e3d7061b4360a78fe7f576e8b4655fbd8d98556`.
+The original-only corpus captured 294 cases, 115,981 instructions and 590 visited
+addresses before native inspection. It includes 158 defaults cases, 78 completed
+defaults, 134 string-helper entries and 14 object-release observations. Its first
+verifier and exact replay passed. The 15-artifact original seal is
+`438259b59d690ae767d60e5a6fc261918b0b188bfdb7342f0281614fcc65210e`.
+
+The native subset was frozen at 193 cases before execution, scope SHA256
+`2679d35aaee962e0ff1128d00af82bdc117f465fe7e7d3eb669de11266a17aac`.
+The first driver compiled and matched 191/193. Only the error categories differed
+in `info-205 / info-283`: an actual null default source reached the native generic
+buffer-range guard, which the fixture classified as bounded instead of null-read.
+Every endpoint and projected state value already matched. The narrow correction
+checks the prepared null source and physical zero pointer before classifying that
+guard. Cases, projection, exclusions and production remained unchanged. The first
+driver/output replay retains 191/193; the corrected driver/output replay matches
+193/193 exactly, including stdout/stderr.
+
+Outcomes are 155 completions, seven prepared endpoint failures, ten null-read,
+four unknown-read and 17 bounded representation guards. There are no pending or
+unexpected results. The subset includes 88 defaults cases, 71 complete, and 14
+standalone string-default cases. The 27-artifact native seal is
+`1e5de4902eaab8105e94c13c8b9820e37af81a1fc3ff15f4fe5df834a468f8b8`.
+The independent profile audit matches 12 numeric ABI/table values and one class
+name, plus nine numeric schema values and three field names; it is data validation,
+not generic registrar execution.
+
+The 101 original-only cases are 45 prepared original metadata allocations versus
+composed native allocation, 19 unavailable canonical/header cells, 16 inline probe
+mutations, seven sparse write denials, four out-of-profile probes, three unavailable
+physical descriptor reference headers, two generic bodies, two reserve boundaries,
+two unrepresented backing prefixes and one schema-table overrun. Physical descriptor
+reference/name bytes at `+04 / +0C` remain excluded from byte equality; their canonical
+owners/counts are compared explicitly. New `+38 / +35 / +3C` stores, schema stores,
+default buffers, backing words, probes and represented knownness are compared
+physically. Pool/descriptor/manager allocation, nonnull interning, field virtuals
+and releases remain prepared endpoints; null `54094` uses the actual native helper.
+
+These results do not establish full startup, runtime context activation or
+playable gameplay. See
+[IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md).
+Local artifacts use `work/native-context-info-family-`.
+
 ## Context classes and lazy dependencies reach context-info registration
 
 Validated locally on 2026-09-26 and 2026-09-27. Original wrapper `800374E8` now registers

@@ -222,10 +222,13 @@ classes through native clone/defaults. The error-handler class now composes
 original registration, immediate reflected singleton construction and separately
 deferred teardown. Its globals remain unknown until explicitly initialized;
 the native state owner does not manufacture successful startup.
-The same cold composition registers the two abstract context classes and
-their first concrete list dependency, reaching the separate context-info
-class. Shared field/list continuations retain their parent fault checks.
+The same cold composition registers both abstract context classes, their two
+concrete lists and the separate context-info class. Its metadata, null string
+default and signed-byte element prototype use the original shared owners.
+The retained startup now reaches the enum-defaults list getter `80024B94`.
+Shared field/list and string-default continuations retain parent fault checks.
 Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_CONTEXT_INFO_REGISTRATION.md](docs/IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](docs/IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](docs/IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](docs/IGB_REF_COUNTED_LISTS.md),

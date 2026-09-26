@@ -224,12 +224,16 @@ ownership flag and separate descriptor globals. Error-handler registration and
 its immediate reflected singleton now complete with explicitly prepared global
 and allocator inputs. Its teardown stays deferred in the existing bootstrap
 list. Context-extension wrapper `800374E8` now registers both abstract contexts,
-their original three-field defaults and the first concrete list dependency.
-Continue at its context-info callback `80037330`, alongside actual OS/pool initialization and native
-rescheduling/sleep. IDA analysis has located canonical tagged-table setup
+their original three-field defaults and both concrete list dependencies.
+Context-info `80037330` now completes its original defaults and probe; retained
+startup returns to enum defaults at list getter `80024B94`. Continue through
+that dependency, repair remaining physical descriptor reference/name bindings,
+and implement actual OS/pool initialization and native rescheduling/sleep.
+IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
+See [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
+[IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),

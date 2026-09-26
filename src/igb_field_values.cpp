@@ -194,14 +194,20 @@ IgbFieldStringDefaultInvocation::IgbFieldStringDefaultInvocation(std::shared_ptr
 IgbFieldStringDefaultInvocation::~IgbFieldStringDefaultInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.field)s.owner->unfinished.push_back(s.field);if(s.buffer.buffer)s.owner->unfinished.push_back(s.buffer.buffer);
     if(s.incoming)s.owner->unfinished.push_back(s.incoming);if(s.old)s.owner->unfinished.push_back(s.old);if(s.pool)s.owner->unfinished.push_back(s.pool);
+    if(s.call.operation){
+        if(s.call.operation->pool_result && s.call.operation->pool_result!=s.pool)s.owner->unfinished.push_back(s.call.operation->pool_result);
+        if(s.call.operation->string_result && s.call.operation->string_result!=s.incoming)s.owner->unfinished.push_back(s.call.operation->string_result);
+    }
 }}
 bool IgbFieldStringDefaultInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldStringDefaultInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldStringDefaultInvocation::resume(std::shared_ptr<IgbFieldValuesServices> services){
+MessengerCallResult IgbFieldStringDefaultInvocation::resume(std::shared_ptr<IgbFieldValuesServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;using K=IgbDependenciesServiceKind;
     if(s.running || s.fault){s.fault=true;fail("String default requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("String default continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("String default continuation was invalidated.");if(enclosing_check)enclosing_check();
+        if(s.fault)fail("String default was invalidated by its enclosing callback.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto dependencies=[&]{return services && services->fields?services->fields->dependencies:std::shared_ptr<IgbDependenciesServices>{};};
     const auto globals=[&]{const auto dep=dependencies();return dep?dep->globals:std::shared_ptr<SystemStageServices>{};};

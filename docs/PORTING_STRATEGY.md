@@ -330,13 +330,16 @@ inherited descriptor cloning. Their cells stay separate from the nonref lists,
 and original `2910C` preserves the cloned ownership flag. Native error-handler
 registration now appends deferred teardown and separately creates its singleton
 through the original reflected initializer. Context wrapper `800374E8` now
-registers both abstract classes and their first concrete list, retaining all
+registers both abstract classes and their two concrete lists, retaining all
 earlier class and runtime ownership. Its three-field defaults use actual lazy
 metadata allocation for the two separate dependency cells.
-Continue at context-info `80037330` while replacing prepared OS/pool inputs and
-implementing rescheduling/sleep.
+Context-info `80037330` now uses actual metadata/string/prototype defaults and
+its original local probe. The same retained startup reaches enum-defaults list
+getter `80024B94`. Continue there while repairing physical descriptor bindings,
+replacing prepared OS/pool inputs and implementing rescheduling/sleep.
 A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md) and
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md) and
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md) and

@@ -253,10 +253,15 @@ Reflected allocation and object initialization borrow enclosing fault checks
 to prevent publication after caught recursive entry. Abstract `igContext` and
 `igContextExt` now reuse the generic registrar without a synthetic vtable.
 Their defaults create three fields and lazily allocate the two distinct list
-metadata objects. The first concrete list registers and reaches `80037330`.
+metadata objects. Context-info wrapper `80037330` now registers its concrete
+class using actual metadata/string/prototype defaults and the original local
+probe. Its signed-byte getter aliases the existing prototype owner. Completing
+its extra callbacks lets the second concrete list register and returns startup
+to the pending enum-defaults list getter `80024B94`.
 Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
 outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),

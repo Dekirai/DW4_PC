@@ -7,6 +7,7 @@
 #include "dw4/igb_os_thread_wake.hpp"
 #include "dw4/igb_error_handler_registration.hpp"
 #include "dw4/igb_context_registration.hpp"
+#include "dw4/igb_context_info_registration.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -1405,9 +1406,11 @@ void actual_cold_bootstrap_prefix(){
         "Pending dependency registration replayed ThreadManager defaults, lazy construction, publication or callback append.");
 
     // Resume the same actual deferred callback through its real parent chain.
-    // DataList is the fifth child of igObject. Provide the reached allocator
-    // reallocation while leaving growth, zero fill and append to native code.
+    // DataList is the fifth child of igObject. Later classes grow this same
+    // list again. Supply the allocator's copied storage; capacity choice,
+    // zero fill, publication and append remain native work.
     std::optional<IgbPointerListBacking> grown_object_children;
+    std::vector<IgbPointerListBacking> object_child_growths;
     const auto original_type_allocator=type_pointers->factory;
     type_pointers->factory=[&,original_type_allocator](const IgbPointerListCall& c){
         const bool grown_query=c.kind==IgbPointerListServiceKind::allocation_size && grown_object_children &&
@@ -1415,17 +1418,23 @@ void actual_cold_bootstrap_prefix(){
         if(c.kind!=IgbPointerListServiceKind::reallocate && !grown_query)return original_type_allocator(c);
         auto op=std::make_shared<IgbPointerListOperation>();op->resume=[&,c,grown_query,out=op.get()]{
             if(grown_query){check(c.backing.bytes==grown_object_children->bytes && c.pool==f.pool,
-                "Grown child-list query lost its physical allocation.");out->size_result=32;}
+                "Grown child-list query lost its physical allocation.");
+                out->size_result=static_cast<std::uint32_t>(grown_object_children->bytes->bytes.size());}
             else{
-                check(!grown_object_children && object_type->children && c.types==*object_type->children && c.types->count==4 &&
-                    c.pool==f.pool && c.bytes==32 && c.backing.bytes && c.backing.bytes->bytes.size()==16 && c.backing.types,
-                    "Fifth object child changed the original growth request.");
-                auto raw=allocation(0xb20000,c.bytes);raw.storage->bytes->initialized.assign(c.bytes,0);
+                const auto old_bytes=c.backing.bytes?c.backing.bytes->bytes.size():0;
+                check(object_type->children && c.types==*object_type->children && c.pool==f.pool &&
+                    (old_bytes==16 || old_bytes==32) && c.types->count==static_cast<std::int32_t>(old_bytes/4) &&
+                    c.bytes==old_bytes*2 && c.backing.types && c.backing.types->size()==old_bytes/4 &&
+                    (grown_object_children?c.backing.bytes==grown_object_children->bytes:old_bytes==16),
+                    "Object child-list growth changed its original source allocation, count or doubled size.");
+                auto raw=allocation(0xb20000+static_cast<std::uint32_t>(object_child_growths.size())*0x100,c.bytes);
+                raw.storage->bytes->initialized.assign(c.bytes,0);
                 std::copy(c.backing.bytes->bytes.begin(),c.backing.bytes->bytes.end(),raw.storage->bytes->bytes.begin());
                 std::copy(c.backing.bytes->initialized.begin(),c.backing.bytes->initialized.end(),raw.storage->bytes->initialized.begin());
-                auto mapping=std::make_shared<IgbRuntimeTypeList::Storage>(8);
+                auto mapping=std::make_shared<IgbRuntimeTypeList::Storage>(c.bytes/4);
                 std::copy(c.backing.types->begin(),c.backing.types->end(),mapping->begin());
                 grown_object_children=IgbPointerListBacking{raw.storage->bytes,igb_bootstrap_address(raw),0,mapping,{}};
+                object_child_growths.push_back(*grown_object_children);
                 out->backing_result=*grown_object_children;
             }return MessengerCallResult{true,0,{}};
         };return op;
@@ -3979,6 +3988,103 @@ void actual_cold_bootstrap_prefix(){
         error_type->instance_count==1 && error_handler->state->teardown_guard==0 &&
         error_bootstrap_list->count==2 && !error_bootstrap_list->released && wake_interrupt_calls.size()==3,
         "Pending context-info registration replayed completed contexts, lazy allocations, callbacks or prior startup.");
+
+    auto context_info=std::make_shared<IgbContextInfoServices>();
+    context_info->meta_objects=f.services;context_info->values=values;context_info->object_cleanup=member_construct;
+    context_info->types=f.services->types;context_info->callbacks=f.services->callbacks;
+    context_info->schema=metadata_defaults->schema;
+    additional_callbacks=make_native_igb_context_info_registration_function_factory(context_info,additional_callbacks);
+    f.remaining=make_native_igb_context_info_registration_type_factory(context_info,f.remaining);
+    const auto missing_info_cell=call.resume(bootstrap);
+    check(!missing_info_cell.completed && !call.faulted() &&
+        missing_info_cell.diagnostic=="Context-info registration requires canonical metadata after prerequisites." &&
+        enabled_allocations.size()==131 && f.core->types->count==34 && descriptors.size()==105 &&
+        default_allocations==117 && runtime_allocations.size()==6 && error_type->instance_count==1,
+        "Context-info registration fabricated its canonical cell or replayed previous class construction.");
+    context_info->metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    const auto missing_info_probe=call.resume(bootstrap);
+    std::cout<<"Cold native context-info probe: "<<missing_info_probe.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!missing_info_probe.completed && !call.faulted() &&
+        missing_info_probe.diagnostic=="Context-info probe requires represented stack-local storage." &&
+        *context_info->metadata && **context_info->metadata && descriptors.size()==105 &&
+        (**context_info->metadata)->parent==object_type && (**context_info->metadata)->fields->count==2 &&
+        (**prototypes->registry)->count==12 && context_list_probes.size()==1,
+        "Context-info registration bypassed its original layout probe or fabricated later defaults.");
+    std::vector<IgbBootstrapPointer> context_info_locals;
+    context_info->local_storage=[&]{auto local=allocation(0xc73000,0x14);
+        local.storage->bytes->initialized.assign(0x14,0);
+        // Actual6665C reads the existing packed word before its reset stores.
+        for(std::size_t i=4;i<8;++i)local.storage->bytes->initialized[i]=1;
+        context_info_locals.push_back(local);return local;};
+    const auto after_context_info=call.resume(bootstrap);
+    std::cout<<"Cold native context-info registration: "<<after_context_info.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", list probes="<<context_list_probes.size()<<'\n';
+    check(!after_context_info.completed && !call.faulted(),"Context-info registration incorrectly completed full game startup.");
+    const auto context_info_type=**context_info->metadata;
+    check(after_context_info.diagnostic=="Enum defaults require the reached object-type getter." &&
+        f.core->types->count==36 && descriptors.size()==111 && default_allocations==123 && enabled_allocations.size()==141 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==12 && enum_probe_locals==1 &&
+        f.core->types->backing->at(34)==context_info_type && f.core->types->backing->at(35)==context_extension_list_type &&
+        context_info_type->class_flags==7 && context_extension_list_type->class_flags==7,
+        "Context-info completion skipped the original enum continuation or changed class/prototype order.");
+    check(context_info_type->parent==object_type && context_info_type->native_size==0x14 && context_info_type->flag_1a==0 &&
+        context_info_type->type_word==0x804741d4 && context_info_type->instance_count==0 &&
+        context_info_type->name && *context_info_type->name=="igContextExtInfo" && context_info_type->fields->count==5 &&
+        context_info_type->fields->backing->at(0)==object_type->fields->backing->at(0) &&
+        context_info_type->fields->backing->at(1)==object_type->fields->backing->at(1),
+        "Context-info registration lost its original parent, physical layout or inherited descriptors.");
+    const std::array<const char*,3> context_info_names{"_pMeta","_pName","_pVendorName"};
+    for(std::uint32_t i=0;i<3;++i){const auto field=context_info_type->fields->backing->at(2+i);
+        check(field==descriptors[105+i] && field->name && *field->name==context_info_names[i] &&
+            field->ordinal==2+i && field->offset==8+4*i && field->global_slot_address==0x80561dec+4*i &&
+            *context_info->globals->at(i)->slot==field && field->declaring_type && field->declaring_type->lock()==context_info_type &&
+            igb_bootstrap_read_word(descriptor_allocations[105+i],0x1c)==0x80561dec+4*i,
+            "Context-info schema changed its original field order, name, offset, global or declaring owner.");}
+    const auto info_meta=descriptors[105],info_name=descriptors[106],info_vendor=descriptors[107];
+    const auto info_character=*values->signed_byte_prototype;
+    check(info_meta->object_type && info_meta->object_type->lock()==f.constructed &&
+        igb_bootstrap_read_word(descriptor_allocations[105],0x38)==igb_bootstrap_address(f.object) &&
+        info_name->flag_35==1 && igb_bootstrap_read_byte(descriptor_allocations[106],0x35)==1 &&
+        info_name->default_bytes && igb_buffer_word(info_name->default_bytes->buffer,info_name->default_bytes->offset)==0 &&
+        info_vendor->element_field && info_vendor->element_field->lock()==info_character && info_character->physical_storage &&
+        igb_bootstrap_read_word(descriptor_allocations[107],0x3c)==igb_bootstrap_address(
+            {info_character->physical_storage->storage.lock(),info_character->physical_storage->offset}),
+        "Context-info defaults lost their actual metadata, null string or canonical signed-byte prototype publication.");
+    check(context_info_locals.size()==1 && igb_bootstrap_read_word(context_info_locals.front(),0)==0x804741d4 &&
+        igb_bootstrap_read_word(context_info_locals.front(),4)==1 && igb_bootstrap_read_word(context_info_locals.front(),8)==0 &&
+        igb_bootstrap_read_word(context_info_locals.front(),12)==0,
+        "Context-info probe did not produce its original header and null members from unknown storage.");
+    for(std::size_t i=0;i<20;++i)check(context_info_locals.front().storage->bytes->initialized[i]==(i<16?1:0) &&
+        (i<16 || context_info_locals.front().storage->bytes->bytes[i]==0xcc),
+        "Context-info probe fabricated initialization of its untouched vendor member.");
+    check(context_list_probes==std::vector<IgbDataListKind>({IgbDataListKind::context_info,IgbDataListKind::context_extension}) &&
+        context_extension_list_type->parent==ref_object_type && context_extension_list_type->type_word==0x804742f8 &&
+        context_extension_list_type->fields->count==5 && context_extension_list_type->fields->backing->at(4)==ref_data &&
+        igb_bootstrap_read_word(context_list_probe_locals.back(),0)==0x804742f8 &&
+        **data_registration->context_extension_metadata==context_extension_list_type,
+        "Context-info extra callbacks did not resume the same lazily allocated extension-list class.");
+    check(object_child_growths.size()==2 && object_child_growths[0].bytes->bytes.size()==32 &&
+        object_child_growths[1].bytes->bytes.size()==64 && (*object_type->children)->count==10 &&
+        (*object_type->children)->backing==object_child_growths[1].types &&
+        object_child_growths[1].types->at(8)==context_info_type && object_child_growths[1].types->at(9)==**meta_enum->metadata &&
+        (**meta_enum->metadata)->fields->count==5 && ((**meta_enum->metadata)->class_flags&4u)==0,
+        "Resumed startup skipped actual child-list growth or fabricated completion of pending enum defaults.");
+    for(std::size_t at=40;at<64;at+=4)check(igb_buffer_word(object_child_growths[1].bytes,at)==0,
+        "Native child-list growth failed to zero its unused physical tail.");
+    const auto info_finished_names=string_allocations,info_finished_defaults=default_allocations;
+    const auto info_finished_callbacks=freed_callback_lists.size(),info_finished_members=member_calls.size();
+    const auto info_finished_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_context_info.diagnostic && !call.faulted() &&
+        string_allocations==info_finished_names && default_allocations==info_finished_defaults &&
+        freed_callback_lists.size()==info_finished_callbacks && member_calls.size()==info_finished_members &&
+        reflected_allocations.size()==info_finished_reflections && context_info_locals.size()==1 && context_list_probes.size()==2 &&
+        object_child_growths.size()==2 && f.core->types->count==36 && descriptors.size()==111 && enabled_allocations.size()==141 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==12 && error_type->instance_count==1 &&
+        error_handler->state->singleton->storage==error_storage.storage && igb_bootstrap_read_word(error_storage,4)==1 &&
+        error_handler->state->teardown_guard==0 && error_bootstrap_list->count==2 && !error_bootstrap_list->released && wake_interrupt_calls.size()==3,
+        "Pending enum defaults replayed contexts, prototypes, child growth, callbacks or earlier runtime startup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");
