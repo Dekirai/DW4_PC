@@ -215,12 +215,16 @@ the positive semaphore wait before actual data-list growth `80041660`. Native
 wait/signal wrappers preserve count/exclusion/status ordering with explicit
 sleep/wake dependencies. Actual `80041660 -> 8004155C` now composes its canonical
 data descriptor, existing memory allocator and raw copy/release paths. The cold
-composition inserts its first thread and reaches original OS wake after the
-semaphore increment. Recover wake/scheduling and actual OS/pool initialization
-next. IDA analysis has located canonical tagged-table setup
+composition inserts its first thread and executes native OS wake after the
+semaphore increment. With an explicitly prepared zero scheduler hint it completes
+nested restoration and releases the caller's temporary reference, then reaches
+wrapper `800240CC` for the distinct reference-counted `igThreadList`. Continue
+that registration and its `igObjectList` parent, alongside actual OS/pool
+initialization and native rescheduling/sleep. IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
+See [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
+[IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),

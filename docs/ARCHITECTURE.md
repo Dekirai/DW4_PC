@@ -237,9 +237,14 @@ ordinal and list metadata, composes the existing memory-field allocator and
 preserves copy/release/capacity/count order. Raw backing copies reuse that same
 allocation registry. The layout producer also publishes physical ordinal and
 declaring-type stores before later consumers read them. The cold composition
-inserts the first thread and reaches OS wake after signal's increment; exclusion
-remains disabled until wake returns. Original OS/pool initialization, scheduling
-and teardown remain required. See [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
+inserts the first thread and enters native OS wake after signal's increment.
+Wake preserves raw dequeue/enqueue stores, signed suspension, priority arithmetic
+and shared optional scheduler words. Nonzero hints select explicit rescheduling;
+unknown state stays pending. With a declared prepared zero hint, nested interrupt
+restoration and the outer temporary-reference release complete before the next
+reference-counted list registration. Original OS/pool initialization, rescheduling,
+sleep and teardown remain required. See [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
+[IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),

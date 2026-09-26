@@ -59,8 +59,10 @@ The cold composition retains its existing prepared raw OS context and allocator
 endpoints. Actual growth requests sixteen aligned bytes for four pointer slots,
 the existing allocator clears them, and manager insertion writes the first
 thread address. Signal increments the semaphore before reaching the explicit
-OS wake operation. Original OS initialization, tagged-pool producers and
-scheduling remain required. These tests do not establish complete startup or
+OS wake operation. The [native wake continuation](IGB_OS_THREAD_WAKE.md) now
+requires explicit scheduler state before nested restoration and temporary
+reference release. Original OS initialization, tagged-pool producers and
+rescheduling remain required. These tests do not establish complete startup or
 playable gameplay.
 
 Primary evidence is the supplied USA DOL, SHA1

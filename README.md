@@ -214,8 +214,12 @@ reaches manager insertion `80075460`. Its native caller now retains the thread
 and executes the positive semaphore wait. Actual data-list growth
 `80041660 -> 8004155C` now composes the existing memory allocator, publishes the
 backing and inserts the thread. Signal reaches the original OS wake operation
-after incrementing the semaphore. Sleep/wake scheduling and original OS/pool
-initialization remain required. See
+after incrementing the semaphore. Native wake now preserves queue transitions,
+scheduler selection and nested interrupt restoration. With explicitly prepared
+OS state, the first thread remains owned by the manager and the prerequisite
+runner reaches the separate reference-counted `igThreadList` registration.
+Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_OS_THREAD_WAKE.md](docs/IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](docs/IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](docs/IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](docs/IGB_GAMECUBE_THREAD_ADOPT.md),

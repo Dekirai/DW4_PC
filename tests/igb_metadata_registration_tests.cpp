@@ -4,6 +4,7 @@
 #include "dw4/igb_gamecube_thread_adopt.hpp"
 #include "dw4/igb_thread_manager_insert.hpp"
 #include "dw4/igb_data_list_growth.hpp"
+#include "dw4/igb_os_thread_wake.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -3619,6 +3620,62 @@ void actual_cold_bootstrap_prefix(){
         igb_bootstrap_read_word(done_semaphore_storage,0x0c)==0 && igb_bootstrap_read_word(semaphore_storage,0x18)==1 &&
         igb_bootstrap_read_word(runtime_thread_storage,4)==2 && interrupt_state->enabled==false && !**meta_enum->metadata,
         "Pending wake replayed growth/insertion/signal or fabricated completed startup and scheduling.");
+
+    auto os_wake=std::make_shared<IgbOsThreadWakeServices>();
+    os_wake->os=thread_adoption->os;os_wake->scheduler=std::make_shared<IgbOsSchedulerState>();
+    std::vector<IgbInterruptCall> wake_interrupt_calls;
+    const auto original_interrupt_factory=thread_insertion->interrupts;
+    const IgbInterruptFactory observed_interrupts=[&,original_interrupt_factory](const IgbInterruptCall& request){
+        wake_interrupt_calls.push_back(request);return original_interrupt_factory(request);
+    };
+    thread_insertion->interrupts=observed_interrupts;os_wake->interrupts=observed_interrupts;
+    unsigned schedule_selections{};
+    os_wake->factory=[&](const IgbOsThreadWakeCall&){++schedule_selections;return std::shared_ptr<IgbOsThreadWakeOperation>{};};
+    concrete_insertion_lower=make_native_igb_os_thread_wake_factory(os_wake,concrete_insertion_lower);
+    const auto pending_hint=call.resume(bootstrap);
+    std::cout<<"Cold native OS wake: "<<pending_hint.diagnostic<<'\n';
+    check(!pending_hint.completed && !call.faulted() &&
+        pending_hint.diagnostic=="OS wake requires fresh canonical runhint80565F14 after the queue became empty." &&
+        wake_interrupt_calls.size()==1 && wake_interrupt_calls[0].kind==IgbInterruptServiceKind::disable &&
+        interrupt_state->enabled==false && !os_wake->scheduler->run_bits && !os_wake->scheduler->run_hint &&
+        !os_wake->scheduler->disable_count && schedule_selections==0 && insertion_lower_calls.size()==6 &&
+        igb_bootstrap_read_word(semaphore_storage,0x1c)==0 && igb_bootstrap_read_word(semaphore_storage,0x20)==0 &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 && igb_bootstrap_read_word(runtime_thread_storage,4)==2 &&
+        !semaphore_runtime_calls.back().result->initialized[0],
+        "Actual OS wake invented a scheduler hint, restored exclusion or published signal success before the reached global read.");
+    check(call.resume(bootstrap).diagnostic==pending_hint.diagnostic && wake_interrupt_calls.size()==1 &&
+        insertion_lower_calls.size()==6 && growth_allocations==1 && schedule_selections==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && interrupt_state->enabled==false,
+        "Unknown scheduler hint replayed wake selection, its disable prefix, insertion or thread release.");
+
+    // Explicit preparation exercises the proven empty-queue/no-reschedule
+    // branch. Actual entry zeroing and OS initialization remain required.
+    os_wake->scheduler->run_hint=0;
+    const auto after_os_wake=call.resume(bootstrap);
+    std::cout<<"Cold native thread startup after OS wake: "<<after_os_wake.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<'\n';
+    check(!after_os_wake.completed && !call.faulted() &&
+        after_os_wake.diagnostic=="Registration requires original function 0x800240CC." && wake_interrupt_calls.size()==3 &&
+        wake_interrupt_calls[1].kind==IgbInterruptServiceKind::restore && wake_interrupt_calls[1].restore_enabled==0 &&
+        wake_interrupt_calls[2].kind==IgbInterruptServiceKind::restore && wake_interrupt_calls[2].restore_enabled==1 &&
+        interrupt_state->enabled==true && schedule_selections==0 && !os_wake->scheduler->run_bits &&
+        !os_wake->scheduler->disable_count && os_wake->scheduler->run_hint==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==1 && runtime_thread.runtime_object->reference_word==1 &&
+        igb_bootstrap_read_word(thread_list_storage,8)==1 && igb_bootstrap_read_word(thread_list_storage,12)==4 &&
+        igb_buffer_word(growth_backing.bytes,0)==igb_bootstrap_address(runtime_thread_storage) &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 &&
+        igb_buffer_word(semaphore_runtime_calls.back().result,0)==*memory_construct->status_success &&
+        f.core->types->count==28 && descriptors.size()==101 && default_allocations==113 &&
+        enabled_allocations.size()==110 && runtime_allocations.size()==5 && (**prototypes->registry)->count==12 &&
+        !**meta_enum->metadata,
+        "Completed native wake lost nested restore order, signal success, list ownership or the outer temporary-reference release.");
+    const auto after_wake_allocations=enabled_allocations.size(),after_wake_members=member_calls.size();
+    check(call.resume(bootstrap).diagnostic==after_os_wake.diagnostic && !call.faulted() &&
+        wake_interrupt_calls.size()==3 && insertion_lower_calls.size()==6 && growth_allocations==1 &&
+        enabled_allocations.size()==after_wake_allocations && member_calls.size()==after_wake_members &&
+        schedule_selections==0 && thread_stack_frees==1 && igb_bootstrap_read_word(runtime_thread_storage,4)==1,
+        "The next original startup boundary replayed completed manager insertion, wake or temporary-reference release.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

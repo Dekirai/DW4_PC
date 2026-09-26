@@ -321,9 +321,15 @@ manager insertion `80075460`. Its native caller and wait/signal count transition
 now enter actual data-list growth `80041660` after the positive wait. Growth and
 `8004155C` now use canonical field metadata and existing allocation services,
 preserving physical copy/free and capacity/count stores. The cold invocation
-inserts the thread and reaches actual OS wake after semaphore increment. Continue
-with wake/scheduling and original OS/pool initialization. A host thread identifier or blank context does not
+inserts the thread and now executes actual OS wake after semaphore increment.
+The empty-queue branch first requires canonical scheduler state; an explicitly
+prepared zero hint allows nested restoration and temporary-reference release.
+The prerequisite runner then reaches `800240CC`, the separate reference-counted
+`igThreadList` registration. Recover that class and its `igObjectList` parent
+while replacing prepared OS/pool inputs and implementing rescheduling/sleep.
+A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md) and
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md) and
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md) and
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md) and

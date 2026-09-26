@@ -63,7 +63,8 @@ effects or retaining a caller's guard.
 `80041660 -> 8004155C` requires the real data-list descriptor, element-size,
 allocation and copy/free path. Its implementation remains separate from this
 caller and composes the existing memory allocator. Sleep and wake remain
-explicit scheduling operations. An empty wake queue alone
+separate operations. [Native wake](IGB_OS_THREAD_WAKE.md) preserves queue changes
+and explicit rescheduler selection; sleep remains a lower dependency. An empty wake queue alone
 does not establish a no-op: the original still reads the scheduler hint and may
 reschedule. Missing state must remain pending rather than becoming a fabricated
 successful wait or wake.
@@ -72,8 +73,11 @@ The retained cold startup test preserves its earlier growth checkpoint, then
 allocates four pointer slots through the real growth path and writes the first
 thread address. Signal increments inline count from zero to one and reaches
 OS wake before restoring exclusion. Thread reference count is two: the extra
-retain already happened, while wake, signal completion and the outer temporary
-release are still pending. Repeated resumes preserve that prefix.
+retain already happened. The test then installs native wake, first requiring
+its unknown canonical scheduler hint. A declared prepared zero hint completes
+inner/outer restoration and signal success, followed by the outer temporary
+release. The list retains reference one. Repeated resumes at the next registration
+boundary do not replay this sequence.
 There are 28 types, 101 descriptors, 113 default buffers, 12 prototypes,
 110 enabled allocations and five runtime objects at this boundary.
 

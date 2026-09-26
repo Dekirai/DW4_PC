@@ -1,5 +1,71 @@
 # Local validation
 
+## Native OS wake returns through the first thread insertion
+
+Validated locally on 2026-09-26. Actual `8026200C` now performs ordered raw
+dequeue, signed suspend selection, priority runqueue insertion and fresh
+runbits/run-hint publication. It preserves interrupt exclusion through a
+retained optional `8026140C(0)` call and restores the captured prior state
+only after that call returns. Missing canonical words remain unknown.
+
+The cold composition first suspends after reading its actual empty queue,
+because run-hint has no producer yet. An explicitly prepared zero run-hint
+then permits the native empty-queue return, inner restoration to disabled,
+outer restoration to enabled, semaphore success publication and temporary
+thread-reference release from two to one. The list retains its reference.
+The original prerequisite runner next reaches `800240CC`, registration of
+the separate reference-counted `igThreadList`. Repeated resumes preserve the
+completed prefix. Counts remain **28 types, 101 descriptors, 113 default
+buffers, 12 prototypes, 110 enabled allocations and five runtime objects**.
+
+| Check | Evidence |
+| --- | --- |
+| Initial and final Release CoreOnly builds | 213/213 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,024 checks; unknown-hint boundary, nested restoration, ownership release and exact next registration |
+| OS thread wake | 176 checks; queue links, suspend/priority behavior, fresh globals, retained scheduling, alias guards, fault prefixes and cooperative cyclic-queue continuation |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The first build and its 139 focused checks passed. Subsequent source review
+identified that malformed raw mappings could overlap separately represented
+canonical scheduler/current-thread cells. Reached raw accesses now reject
+those overlaps explicitly; they neither normalize priority nor reject an
+unused overlapping allocation. The added regressions preserve earlier stores
+and verify actual fault ordering. The final build and focused runs passed.
+Verified core SHA256:
+`23e293d51572790f3a6c2e66dbadf39ea502714c0484ed9f5efade1ff697178e`.
+
+The independent original corpus was sealed before native source inspection:
+**137 cases, 17,016 executed instructions and 65 instruction addresses**.
+All 137 exact replays and fifteen artifact hashes verify. Interrupt machine
+register endpoints and the scheduler interior remain explicitly prepared.
+Original manifest SHA256:
+`304734a9bcc07985f9ef7290f68f84d2ac45101b5c1343855e6598f8d48d48d0`.
+
+The frozen native subset matches **111/111 on first execution and exact replay**: 72 completions,
+nine prepared endpoint faults, six unknown physical-read guards, 23 bounded
+physical guards and one null-receiver read guard. No pending or unexpected
+outcome occurs. The first driver build passed without repairs. All fifteen
+native artifact hashes verify. Native manifest SHA256:
+`74688e70597e1f4d55634626434d106b3700a30243ed9c125474fec30152c435`.
+
+**26 cases remain original-only**: twelve sparse write-permission faults,
+two artificial between-read mutations, six canonical-global raw aliases, one
+cyclic instruction bound, one unavailable exclusion bit, two unavailable
+canonical scheduler words, one unmapped low thread and one aliased member
+selecting an unrepresented runqueue. Native focused tests separately verify
+that a cyclic queue yields at its original loop head after 256 dequeues and
+continues without replaying disable, restoring early or claiming completion.
+The comparison includes represented bytes/masks, canonical availability and
+ordered prepared endpoints/exclusion changes. Void return-register leftovers
+are excluded.
+
+Original BSS/context initialization and nonzero-hint scheduling still require
+native composition. This milestone is not a playable-game build. See
+[IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md). Local artifacts use
+`work/native-os-thread-wake-`.
+
 ## Data-list growth inserts the thread and reaches OS wake
 
 Validated locally on 2026-09-26. Actual `80041660 -> 8004155C` now selects the
