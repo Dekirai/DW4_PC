@@ -744,8 +744,11 @@ void actual_cold_bootstrap_prefix(){
     list_defaults->schema=metadata_defaults->schema;list_defaults->values=values;
     std::vector<IgbListDefaultsCall> list_defaults_calls;
     IgbListDefaultsFactory reached_list_operations;
+    bool unsigned_short_clone_ready{};
     list_defaults->factory=[&](const IgbListDefaultsCall& c){
         list_defaults_calls.push_back(c);
+        if(c.kind==IgbListDefaultsServiceKind::clone_field && c.vtable_word==0x80477054 && !unsigned_short_clone_ready)
+            return std::shared_ptr<IgbListDefaultsOperation>{};
         if(reached_list_operations)return reached_list_operations(c);
         return std::shared_ptr<IgbListDefaultsOperation>{};};
     values->memory_reference_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
@@ -2713,6 +2716,146 @@ void actual_cold_bootstrap_prefix(){
         !startup->manager && !**meta_enum->metadata && igb_bootstrap_read_word(manager_storage,12)==0 &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending unsigned-short clone replayed struct construction or advanced runtime startup.");
+
+    // Continue the reached clone through actual unsigned-short registration,
+    // prototype construction and reflected copy. Only raw storage is supplied.
+    std::optional<IgbPointerListBacking> expanded_base_field_children;
+    const auto before_unsigned_short_type_allocator=type_pointers->factory;
+    type_pointers->factory=[&,before_unsigned_short_type_allocator](const IgbPointerListCall& c){
+        const bool query=c.kind==IgbPointerListServiceKind::allocation_size && expanded_base_field_children &&
+            c.backing.address==expanded_base_field_children->address;
+        const bool grow=c.kind==IgbPointerListServiceKind::reallocate && base_field->children && c.types==*base_field->children;
+        if(!query && !grow)return before_unsigned_short_type_allocator(c);
+        auto operation=std::make_shared<IgbPointerListOperation>();operation->resume=[&,c,query,out=operation.get()]{
+            if(query){check(c.backing.bytes==expanded_base_field_children->bytes && c.pool==f.pool,
+                "Expanded base-field child query lost its physical allocation.");out->size_result=64;}
+            else{
+                check(!expanded_base_field_children && c.types->count==8 && c.pool==f.pool && c.bytes==64 &&
+                    c.backing.offset==0 && c.backing.bytes==grown_base_field_children->bytes && c.backing.types==grown_base_field_children->types,
+                    "Ninth base-field child changed its original reallocation request.");
+                auto raw=allocation(0xc30000,c.bytes);raw.storage->bytes->initialized.assign(c.bytes,0);
+                std::copy(c.backing.bytes->bytes.begin(),c.backing.bytes->bytes.end(),raw.storage->bytes->bytes.begin());
+                std::copy(c.backing.bytes->initialized.begin(),c.backing.bytes->initialized.end(),raw.storage->bytes->initialized.begin());
+                auto mapping=std::make_shared<IgbRuntimeTypeList::Storage>(16);
+                std::copy(c.backing.types->begin(),c.backing.types->end(),mapping->begin());
+                expanded_base_field_children=IgbPointerListBacking{raw.storage->bytes,igb_bootstrap_address(raw),0,mapping,{}};
+                out->backing_result=*expanded_base_field_children;
+            }return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    auto unsigned_short_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::unsigned_short)]=unsigned_short_cell;
+    values->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> unsigned_short_probe_locals,unsigned_short_prototype_allocations;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::unsigned_short,"Unsigned-short registration replayed an earlier field probe.");
+        auto raw=allocation(0xc20000+static_cast<std::uint32_t>(unsigned_short_probe_locals.size())*0x100,0x34);
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        unsigned_short_probe_locals.push_back(raw);return raw;
+    };
+    const auto before_unsigned_short_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_unsigned_short_allocator](const IgbFileFactoryCall& c){
+        if(!*unsigned_short_cell || c.metadata!=**unsigned_short_cell)return before_unsigned_short_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x34,
+                "Unsigned-short reflected allocation changed its actual pool, size or operation.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(!*values->unsigned_short_prototype)unsigned_short_prototype_allocations.push_back(raw);
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    unsigned_short_clone_ready=true;
+    const auto after_unsigned_short=call.resume(bootstrap);
+    std::cout<<"Cold native unsigned-short continuation: "<<after_unsigned_short.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", copies="<<buffer_copy_allocations<<'\n';
+    check(!after_unsigned_short.completed && !call.faulted(),"Unsigned-short continuation fabricated complete native startup.");
+    const auto unsigned_short_type=**unsigned_short_cell;
+    const auto unsigned_short_prototype=*values->unsigned_short_prototype;
+    check(after_unsigned_short.diagnostic=="Registration requires original function 0x800247E4." &&
+        f.core->types->count==26 && descriptors.size()==91 && default_allocations==99 && enabled_allocations.size()==93 &&
+        (**prototypes->registry)->count==11 && buffer_copy_allocations==5 &&
+        f.core->types->backing->at(24)==unsigned_short_type && f.core->types->backing->at(25)==structure_type,
+        "Unsigned-short registration/clone did not finish struct defaults before its actual prototype callback.");
+    check(unsigned_short_type && unsigned_short_type->class_flags==7 && unsigned_short_type->fields->count==20 &&
+        unsigned_short_type->parent==base_field && unsigned_short_type->native_size==0x34 &&
+        unsigned_short_type->type_word==0x80477054 && unsigned_short_type->instance_count==2 &&
+        unsigned_short_type->name && *unsigned_short_type->name=="igUnsignedShortMetaField" &&
+        igb_field_type_metadata_slot(field_types,IgbFieldTypeKind::unsigned_short)==unsigned_short_cell &&
+        igb_field_prototype_slot(prototypes,IgbFieldTypeKind::unsigned_short).get()==&values->unsigned_short_prototype,
+        "Unsigned-short class changed its inherited schema, physical type or canonical prototype cell.");
+    check(unsigned_short_probe_locals.size()==1 && unsigned_short_prototype_allocations.size()==1 &&
+        igb_bootstrap_read_word(unsigned_short_probe_locals.front(),0)==0x80471914 &&
+        unsigned_short_prototype && unsigned_short_prototype->vtable_word==0x80477054 &&
+        unsigned_short_prototype->reference_word==1 && unsigned_short_prototype->ordinal==10 &&
+        unsigned_short_prototype->type_ordinal==10 && unsigned_short_prototype->size==2 &&
+        (**prototypes->registry)->backing->at(10)==unsigned_short_prototype &&
+        igb_bootstrap_read_word(unsigned_short_prototype_allocations.front(),0x10)==0x000a000a &&
+        unsigned_short_prototype->default_bytes && unsigned_short_prototype->default_bytes->buffer &&
+        unsigned_short_prototype->default_bytes->buffer->bytes.size()==2,
+        "Unsigned-short prototype skipped native initialization, balanced ownership, ordinals or two-byte buffer allocation.");
+    check(expanded_base_field_children && (*base_field->children)->count==9 &&
+        (*base_field->children)->backing==expanded_base_field_children->types &&
+        (*base_field->children)->backing->at(8)==unsigned_short_type,
+        "Unsigned-short registration bypassed the real ninth-child growth and parent publication.");
+    for(std::size_t i=0;i<8;++i)check(expanded_base_field_children->types->at(i)==grown_base_field_children->types->at(i),
+        "Base-field child growth changed a previously registered class identity.");
+    for(std::size_t at=36;at<64;++at)check(expanded_base_field_children->bytes->initialized[at] &&
+        expanded_base_field_children->bytes->bytes[at]==0,"Native child-list growth did not clear its spare physical slots.");
+    check(structure_defaults->size_descriptor && *structure_defaults->size_descriptor,
+        "Struct size clone did not publish its represented canonical cell.");
+    const auto specialized_size=**structure_defaults->size_descriptor;
+    const auto base_size=base_field->fields->backing->at(6);
+    check(specialized_size && specialized_size!=base_size && specialized_size==descriptors.back() &&
+        structure_type->fields->backing->at(6)==specialized_size && specialized_size->name && *specialized_size->name=="_size" &&
+        specialized_size->offset==0x14 && specialized_size->size==2 && specialized_size->reference_word==1 &&
+        specialized_size->type_ordinal==10 && specialized_size->ordinal==6 && specialized_size->flag_26==0 &&
+        specialized_size->global_slot_address==0x80561568 && specialized_size->default_bytes &&
+        std::ranges::equal(igb_buffer_bytes(specialized_size->default_bytes->buffer,specialized_size->default_bytes->offset,2),std::array<std::uint8_t,2>{0,1}),
+        "Struct inherited size clone lost its independent buffer, original width, schema identity or temporary release.");
+    const auto specialized_size_storage=descriptor_allocations.back();
+    check(igb_bootstrap_read_word(specialized_size_storage,4)==1 && igb_bootstrap_read_word(specialized_size_storage,8)==0x14 &&
+        igb_bootstrap_read_word(specialized_size_storage,0x1c)==0x80561568 && igb_bootstrap_read_byte(specialized_size_storage,0x26)==0 &&
+        specialized_size->default_bytes->buffer!=base_size->default_bytes->buffer &&
+        specialized_size->default_bytes->buffer!=unsigned_short_prototype->default_bytes->buffer &&
+        *field_defaults->tables[0].globals->at(4)->slot==base_size && base_size->global_slot_address==0x805617d0 &&
+        std::ranges::equal(igb_buffer_bytes(base_size->default_bytes->buffer,base_size->default_bytes->offset,2),std::array<std::uint8_t,2>{0,0}),
+        "Struct specialization changed the base size global or shared its copied default allocation.");
+    for(unsigned i=0;i<20;++i)if(i!=6)check(structure_type->fields->backing->at(i)==base_field->fields->backing->at(i),
+        "Struct specialization replaced an unrelated inherited descriptor.");
+    for(unsigned i=0;i<3;++i){const auto field=structure_type->fields->backing->at(20+i);
+        check(field==descriptors[87+i] && *structure_defaults->globals->at(i)->slot==field &&
+            field->name && *field->name==**structure_defaults->names->at(i) && field->offset==*structure_defaults->offsets->at(i) &&
+            field->global_slot_address==structure_defaults->globals->at(i)->address && field->declaring_type &&
+            field->declaring_type->lock()==structure_type,
+            "Struct local schema did not publish its original global, offset, name or declaring type.");
+    }
+    const auto alignment_field=structure_type->fields->backing->at(20);
+    check(alignment_field->flag_26==0 && alignment_field->size==4 &&
+        igb_buffer_word(alignment_field->default_bytes->buffer,alignment_field->default_bytes->offset)==1 &&
+        structure_type->class_flags==7 && structure_type->fields->count==23 && structure_type->instance_count==0 &&
+        concrete_semaphore->class_flags==9 && concrete_semaphore->fields->count==6 && concrete_semaphore->instance_count==0 &&
+        !startup->manager && runtime_allocations.size()==2 && igb_bootstrap_read_word(manager_storage,12)==0,
+        "Completed struct defaults changed the alignment width or fabricated its descriptor prototype/semaphore instance.");
+    const auto short_allocations=enabled_allocations.size(),short_reflections=reflected_allocations.size();
+    const auto short_names=string_allocations;const auto short_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_unsigned_short.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==short_allocations && reflected_allocations.size()==short_reflections &&
+        string_allocations==short_names && freed_callback_lists.size()==short_frees && descriptors.size()==91 &&
+        default_allocations==99 && buffer_copy_allocations==5 && f.core->types->count==26 &&
+        (**prototypes->registry)->count==11 && unsigned_short_probe_locals.size()==1 &&
+        structure_probe_locals.size()==1 && !startup->manager && !**meta_enum->metadata &&
+        thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0 &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending struct prototype replayed the completed unsigned-short class/clone or changed runtime startup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

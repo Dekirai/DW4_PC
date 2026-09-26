@@ -69,16 +69,17 @@ count and is assigned to manager `+08` with balanced retain/temporary release.
 The same cold invocation now runs semaphore redirect `80026160` and concrete
 metadata getter `8003B238`. Its registration constructs three local descriptors
 and enters struct-field factory `8002450C`. Its registration, physical probe
-and three local descriptors now execute before inherited unsigned-short `_size`
-clone `80021EB4` becomes the next missing dependency. Struct prototype,
+and three local descriptors now execute. Unsigned-short registration and its
+prototype complete inherited `_size` clone `80021EB4` and struct defaults.
+The next dependency is struct prototype `800247E4`;
 semaphore defaults/schema and runtime initialization remain required.
 The manager still owns its construction lease,
 its instance count remains zero and the startup singleton is unpublished.
 The main-thread factory and manager's semaphore hook have not executed in this
 cold composition. Focused hook tests have explicitly prepared method endpoints.
 
-There are 24 registered types, 90 descriptors, 94 default buffers, ten
-prototypes and 89 enabled allocations. Only the thread-list runtime instance
+There are 26 registered types, 91 descriptors, 99 default buffers, eleven
+prototypes and 93 enabled allocations. Only the thread-list runtime instance
 has completed; this is neither complete startup nor playable gameplay.
 See [VALIDATION.md](VALIDATION.md) for measured checks and comparison scopes.
 See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) for the concrete class

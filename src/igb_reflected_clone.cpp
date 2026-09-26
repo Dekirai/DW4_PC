@@ -211,10 +211,10 @@ IgbReflectedCloneFactory make_native_igb_reflected_clone_virtual_factory(
         ->std::shared_ptr<IgbReflectedCloneOperation>{
         const auto delegate=[&]{return remaining?remaining(call):nullptr;};
         if(call.kind!=K::object_virtual)return delegate();
-        // The memory and unsigned-byte tables also point these three slots
-        // directly at667E8/667AC/667B8; they do not invoke member destruction.
+        // These exact tables point the three slots directly at667E8/667AC/
+        // 667B8; the hooks do not invoke member destruction.
         if((call.vtable_word==0x80473f24 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c ||
-            call.vtable_word==0x80476088 || call.vtable_word==0x80470a44) &&
+            call.vtable_word==0x80476088 || call.vtable_word==0x80470a44 || call.vtable_word==0x80477054) &&
             (call.virtual_slot==0x48 || call.virtual_slot==0x14 || call.virtual_slot==0x18)){
             auto operation=std::make_shared<IgbReflectedCloneOperation>();operation->resume=[]{return MessengerCallResult{true,0,{}};};return operation;
         }

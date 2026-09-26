@@ -11,6 +11,7 @@ CloneProfile profile(IgbMetaFieldKind kind){
     case IgbMetaFieldKind::memory_reference:return {0x8002ae84,0x8002aeac};
     case IgbMetaFieldKind::signed_byte:return {0x80037d00,0x80037d28};
     case IgbMetaFieldKind::boolean:return {0x80038800,0x80038828};
+    case IgbMetaFieldKind::unsigned_short:return {0x80021ff4,0x8002201c};
     case IgbMetaFieldKind::unsigned_byte:return {}; // Vtable+54 is680B4 directly; no registration wrapper.
     default:fail("Unsupported field clone profile.");
     }
@@ -89,6 +90,8 @@ MessengerCallResult IgbFieldCloneConstructorInvocation::resume(std::shared_ptr<I
     case P::base:{const auto status=s.base->resume(services?services->copy:nullptr);check();if(!status.completed)return status;
         s.base.reset();check();s.phase=s.kind==IgbMetaFieldKind::memory_reference?P::reference_table:P::scalar_table;break;}
     case P::scalar_table:
+        // Unsigned-short75F48, like the other admitted scalar copy bodies,
+        // stores its derived table after the completed actual639E4 base copy.
         word(0,igb_meta_field_profile(s.kind).vtable);
         s.field->construction_active_.reset();s.owns=false;s.phase=P::done;return {true,igb_bootstrap_address(s.destination),{}};
     case P::reference_table:word(0,0x80471384);s.phase=P::construct;break;
@@ -198,11 +201,13 @@ MessengerCallResult IgbFieldCloneInvocation::resume(std::shared_ptr<IgbFieldClon
 IgbListDefaultsFactory make_native_igb_list_field_clone_factory(std::shared_ptr<IgbFieldCloneServices> services,IgbListDefaultsFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbListDefaultsCall& call)->std::shared_ptr<IgbListDefaultsOperation>{
         if(call.kind!=IgbListDefaultsServiceKind::clone_field ||
-            (call.vtable_word!=0x80476088 && call.vtable_word!=0x80473f24 && call.vtable_word!=0x80473e30 && call.vtable_word!=0x80470a44) || call.virtual_slot!=0x54)
+            (call.vtable_word!=0x80476088 && call.vtable_word!=0x80473f24 && call.vtable_word!=0x80473e30 &&
+                call.vtable_word!=0x80470a44 && call.vtable_word!=0x80477054) || call.virtual_slot!=0x54)
             return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Field clone services expired before operation selection.");
         const auto kind=call.vtable_word==0x80473f24?IgbMetaFieldKind::signed_byte:
             call.vtable_word==0x80470a44?IgbMetaFieldKind::unsigned_byte:
+            call.vtable_word==0x80477054?IgbMetaFieldKind::unsigned_short:
             call.vtable_word==0x80473e30?IgbMetaFieldKind::boolean:IgbMetaFieldKind::memory_reference;
         auto invocation=std::make_shared<IgbFieldCloneInvocation>(call.field,call.argument,kind);auto operation=std::make_shared<IgbListDefaultsOperation>();
         operation->resume=[invocation,selected,out=operation.get()]{const auto status=invocation->resume(selected);

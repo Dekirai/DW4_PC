@@ -54,7 +54,8 @@ struct Fixture {
         services->values->enumeration_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->values->pointer_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
         services->values->unsigned_byte_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
-        for(const auto kind:{IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte}){
+        services->values->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        for(const auto kind:{IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_short}){
             auto value=metadata();const auto& profile=igb_meta_field_profile(kind);value->native_size=profile.bytes;value->type_word=profile.vtable;
             r->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]=std::make_shared<IgbRegistrationMetaSlot>(value);
         }
@@ -76,7 +77,7 @@ struct Fixture {
     auto slot(E kind){return igb_field_prototype_slot(services,kind);}
 };
 void gates_and_native_reflection(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int,E::unsigned_short}){Fixture f;*f.slot(kind)=f.created;f.services->registration.reset();f.services->factory={};IgbFieldPrototypeInvocation gate(kind);
         check(gate.resume(f.services).completed && f.created->reference_word==1 && f.fields->count==0,"Existing prototype failed null-only gate.");}
     Fixture unknown;unknown.slot(E::object)->reset();IgbFieldPrototypeInvocation missing(E::object);
     check(!missing.resume(unknown.services).completed && unknown.reflected_calls==0,"Unknown prototype was treated as null.");
@@ -167,7 +168,7 @@ void native_registry(){
     *f.services->registry=f.fields;check(get.resume().completed && get.result()==fields,"Completed registry getter reloaded replacement.");
 }
 void append_release_finalize(){
-    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int}){Fixture f;
+    for(const auto kind:{E::reference,E::object,E::signed_int,E::memory_reference,E::boolean,E::string,E::signed_byte,E::enumeration,E::pointer,E::unsigned_byte,E::unsigned_int,E::unsigned_short}){Fixture f;
         // The nonnull reference case represents a changed live abstract flag;
         // the canonical cold reference profile returns null in the test above.
         if(kind==E::reference)f.services->registration->reference_metadata->value()->flag_1a=0;
@@ -176,25 +177,27 @@ void append_release_finalize(){
         check(f.fields->count==1 && f.fields->backing->at(0)==f.created && igb_buffer_word(f.backing.storage->bytes,0)==0x200000,"Prototype skipped actual raw field registry append.");
         check(f.created->reference_word==1 && f.created->ordinal==0 && f.finalized==3,"Prototype retain/release, ordinal or finalization order differs.");
         check(call.resume().completed && f.reflected_calls==1 && f.fields->count==1,"Completed prototype replayed append or reflection.");}
+    for(const auto kind:{E::object,E::unsigned_short}){
     Fixture live;auto old=field(),replacement=field();replacement->reference_word=7;auto registry=std::make_shared<IgbDecodeFieldRegistry>();registry->count=65538;bool changed{},release_ready{};unsigned destroys{};
-    live.pointer_action=[&](const IgbPointerListCall& c){if(!changed && c.kind==PK::allocation_size){changed=true;*live.slot(E::object)=old;}};
+    live.pointer_action=[&](const IgbPointerListCall& c){if(!changed && c.kind==PK::allocation_size){changed=true;*live.slot(kind)=old;}};
     live.remaining=[&](const IgbFieldPrototypeCall& c){auto op=std::make_shared<IgbFieldPrototypeOperation>();
         if(c.kind==K::reflected_field)op->resume=[&,out=op.get()]{out->field_result=live.created;out->field_address=0x200000;return MessengerCallResult{true,0,{}};};
         else{check(c.kind==K::destroy_field && c.function==0x80066e1c && c.field==old,"Prototype release destroyed captured factory result instead of live global.");
-            op->resume=[&]{++destroys;if(!release_ready)return MessengerCallResult{false,0,"prepared destroy"};*live.services->registry=registry;*live.slot(E::object)=replacement;return MessengerCallResult{true,0,{}};};}return op;};
-    IgbFieldPrototypeInvocation call(E::object);check(!call.resume(live.services).completed && old->reference_word==0 && live.created->reference_word==2 && live.fields->count==1,
+            op->resume=[&]{++destroys;if(!release_ready)return MessengerCallResult{false,0,"prepared destroy"};*live.services->registry=registry;*live.slot(kind)=replacement;return MessengerCallResult{true,0,{}};};}return op;};
+    IgbFieldPrototypeInvocation call(kind);check(!call.resume(live.services).completed && old->reference_word==0 && live.created->reference_word==2 && live.fields->count==1,
         "Pending live-global destruction lost completed append or repeated reference changes.");
     release_ready=true;live.services->factory={};check(call.resume(live.services).completed && destroys==2 && old->reference_word==0 && replacement->reference_word==7 && replacement->ordinal==1,
         "Prototype failed fresh registry/global reload or wrapped ordinal after retained destruction.");
     check(live.fields->backing->at(0)==live.created && registry->count==65538 && live.finalized==3,"Prototype appended replacement or changed later registry count.");
-    Fixture null;null.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size)*null.slot(E::object)=std::shared_ptr<IgbDecodeRuntimeField>{};};
-    IgbFieldPrototypeInvocation invalid(E::object);rejects([&]{invalid.resume(null.services);},"Null reloaded prototype release did not fault.");
+    Fixture null;null.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size)*null.slot(kind)=std::shared_ptr<IgbDecodeRuntimeField>{};};
+    IgbFieldPrototypeInvocation invalid(kind);rejects([&]{invalid.resume(null.services);},"Null reloaded prototype release did not fault.");
     check(null.fields->count==1 && null.created->reference_word==2 && invalid.faulted(),"Null release fault lost original append/retain prefix.");
+    }
 }
 void callbacks_and_missing(){
     Fixture f;auto factory=make_native_igb_field_prototype_function_factory(f.services);*f.slot(E::reference)=f.created;*f.slot(E::object)=f.created;*f.slot(E::signed_int)=f.created;*f.slot(E::memory_reference)=f.created;*f.slot(E::boolean)=f.created;*f.slot(E::string)=f.created;*f.slot(E::signed_byte)=f.created;*f.slot(E::enumeration)=f.created;*f.slot(E::pointer)=f.created;*f.slot(E::unsigned_byte)=f.created;
-    *f.slot(E::unsigned_int)=f.created;
-    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u,0x80025628u,0x80037db0u,0x80031690u,0x8002778cu,0x800232c0u,0x80022d60u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
+    *f.slot(E::unsigned_int)=f.created;*f.slot(E::unsigned_short)=f.created;
+    for(const auto address:{0x80027454u,0x80028b64u,0x8002e440u,0x8002b178u,0x800388b0u,0x80025628u,0x80037db0u,0x80031690u,0x8002778cu,0x800232c0u,0x80022d60u,0x800220a4u}){IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=address;
         auto op=factory(c);check(op && op->resume().completed && !op->callbacks_result,"Prototype callback fabricated a returned deferred list.");}
     IgbRegistrationCallbacksCall other;other.kind=IgbRegistrationCallbacksServiceKind::invoke_function;other.function=0x800289f8;check(!factory(other),"Prototype adapter swallowed registration wrapper.");
     Fixture retained;retained.services->registration->types->metadata_pool_handle.reset();IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=0x80028b64;
@@ -205,7 +208,7 @@ void callbacks_and_missing(){
     check(!mismatch.slot(E::object)->value() && mismatch.fields->count==0,"Malformed reflected result changed canonical publication.");
 }
 void enum_and_pointer_getters(){
-    for(const auto kind:{E::enumeration,E::pointer,E::unsigned_int}){
+    for(const auto kind:{E::enumeration,E::pointer,E::unsigned_int,E::unsigned_short}){
         Fixture ready;*ready.slot(kind)=ready.created;ready.services->registration.reset();
         IgbFieldPrototypeLookupInvocation existing(kind);
         check(existing.resume(ready.services).completed && existing.result()==ready.created && ready.reflected_calls==0,
@@ -217,7 +220,7 @@ void enum_and_pointer_getters(){
         unsigned selections{},polls{};bool resume{};
         f.services->registration->callbacks->factory=[&](const IgbRegistrationCallbacksCall& request){
             ++selections;check(request.kind==IgbRegistrationCallbacksServiceKind::invoke_function &&
-                request.function==(kind==E::enumeration?0x80031584u:kind==E::unsigned_int?0x80022cd8u:0x80027704u),"Prototype getter selected the wrong registration body.");
+                request.function==(kind==E::enumeration?0x80031584u:kind==E::unsigned_int?0x80022cd8u:kind==E::unsigned_short?0x8002201cu:0x80027704u),"Prototype getter selected the wrong registration body.");
             auto op=std::make_shared<IgbRegistrationCallbacksOperation>();op->resume=[&]{++polls;if(!resume)return MessengerCallResult{false,0,"prepared registration"};
                 *f.slot(kind)=replacement;return MessengerCallResult{true,0,{}};};return op;};
         IgbFieldPrototypeLookupInvocation call(kind);
@@ -289,8 +292,71 @@ void unsigned_int_shared_slot(){
         "Retained unsigned-integer prototype cell silently switched owners.");
     retained.reset();check(storage.expired(),"Aliased unsigned-integer cell created a permanent ownership cycle.");
 }
+void unsigned_short_shared_slot_and_pending_owner(){
+    Fixture f;auto values=f.services->values;auto cell=f.slot(E::unsigned_short);
+    check(cell.get()==&values->unsigned_short_prototype,
+        "Unsigned-short prototype introduced a second cell beside the scalar value getter.");
+    IgbFieldOperationCall request;request.kind=IgbFieldOperationKind::field_virtual;
+    request.vtable_word=0x80477054;request.virtual_slot=0x5c;
+    auto getter=make_native_igb_field_values_factory(values)(request);
+    check(getter && getter->resume().completed && !getter->field_result,
+        "94160 value getter did not read the represented null unsigned-short prototype.");
+    // Prepared pool availability and reflected result isolate actual220A4's
+    // capture and publication, including a replacement service owner.
+    f.manager->pools[5].reset();IgbFieldPrototypeInvocation create(E::unsigned_short);
+    check(!create.resume(f.services).completed && f.reflected_calls==0 && f.fields->count==0,
+        "Unsigned-short prototype skipped the missing metadata pool.");
+    auto fresh_metadata=metadata();fresh_metadata->native_size=0x34;fresh_metadata->type_word=0x80477054;
+    *igb_field_type_metadata_slot(f.services->registration,E::unsigned_short)=fresh_metadata;
+    unsigned selections{};
+    f.remaining=[&](const IgbFieldPrototypeCall& c){++selections;
+        check(c.kind==K::reflected_field && c.function==0x8006546c && c.metadata==fresh_metadata && c.pool==f.pool,
+            "Unsigned-short prototype captured metadata before the pending pool lookup.");
+        auto op=std::make_shared<IgbFieldPrototypeOperation>();op->resume=[&,out=op.get()]{++f.reflected_calls;
+            out->field_result=f.created;out->field_address=0x200000;return MessengerCallResult{true,0,{}};};return op;
+    };
+    std::weak_ptr<IgbFieldValuesServices> old_owner=values;
+    f.services->values=std::make_shared<IgbFieldValuesServices>();
+    f.services->values->unsigned_short_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    values.reset();f.manager->pools[5]=f.pool;
+    check(create.resume(f.services).completed && selections==1 && f.reflected_calls==1 && cell->value()==f.created &&
+        getter->resume().completed && getter->field_result==f.created && !f.services->values->unsigned_short_prototype.value(),
+        "Pending prototype moved its captured cell to a replacement values owner.");
+    auto fresh_getter=make_native_igb_field_values_factory(f.services->values)(request);
+    check(fresh_getter && fresh_getter->resume().completed && !fresh_getter->field_result && !old_owner.expired(),
+        "Fresh value getter reused the displaced prototype cell or alias lost its owner.");
+    auto fresh=field();f.services->values->unsigned_short_prototype=fresh;
+    IgbFieldPrototypeInvocation existing(E::unsigned_short);
+    check(existing.resume(f.services).completed && selections==1 && fresh_getter->resume().completed &&
+        fresh_getter->field_result==fresh && cell->value()==f.created,
+        "A fresh prototype callback ignored the current values owner or repeated reflection.");
+
+    auto owner=std::make_shared<IgbFieldPrototypeServices>();owner->values=std::make_shared<IgbFieldValuesServices>();
+    auto alias=igb_field_prototype_slot(owner,E::unsigned_short);std::weak_ptr<IgbFieldValuesServices> storage=owner->values;
+    owner->values=std::make_shared<IgbFieldValuesServices>();*alias=f.created;
+    check(!storage.expired() && alias->value()==f.created && !owner->values->unsigned_short_prototype,
+        "Unsigned-short alias switched owners or destroyed its canonical cell.");
+    alias.reset();check(storage.expired(),"Unsigned-short prototype alias retained a permanent ownership cycle.");
+
+    Fixture null;null.remaining=[](const IgbFieldPrototypeCall& c){
+        check(c.kind==K::reflected_field,"Null unsigned-short prototype invented registry or destructor work.");
+        auto op=std::make_shared<IgbFieldPrototypeOperation>();op->resume=[out=op.get()]{out->field_address=0;return MessengerCallResult{true,0,{}};};return op;
+    };
+    IgbFieldPrototypeInvocation null_result(E::unsigned_short);
+    check(null_result.resume(null.services).completed && null.slot(E::unsigned_short)->has_value() &&
+        !null.slot(E::unsigned_short)->value() && null.fields->count==0 && null.pointer_calls==0 && null.finalized==0,
+        "Null reflected unsigned-short result was replaced with a prototype or performed later registry work.");
+    unsigned delegated{};auto adapter=make_native_igb_field_prototype_function_factory(null.services,[&](const auto&){
+        ++delegated;return std::shared_ptr<IgbRegistrationCallbacksOperation>{};});
+    IgbRegistrationCallbacksCall c;c.kind=IgbRegistrationCallbacksServiceKind::invoke_function;c.function=0x8002213c;
+    check(!adapter(c) && delegated==1,"Prototype callback adapter consumed the separate null-only getter.");
+    c.function=0x80094160;check(!adapter(c) && delegated==2,"Prototype callback adapter consumed the plain value getter.");
+    c.function=0x800220a4;c.kind=IgbRegistrationCallbacksServiceKind::allocate_backing;
+    check(!adapter(c) && delegated==3,"Unsigned-short prototype adapter consumed a non-function request.");
+}
+
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_field_prototype_tests");
-    gates_and_native_reflection();reflected_instance_publication();native_registry();append_release_finalize();callbacks_and_missing();enum_and_pointer_getters();unsigned_byte_shared_slot();unsigned_int_shared_slot();
+    gates_and_native_reflection();reflected_instance_publication();native_registry();append_release_finalize();callbacks_and_missing();enum_and_pointer_getters();unsigned_byte_shared_slot();unsigned_int_shared_slot();unsigned_short_shared_slot_and_pending_owner();
     std::cout<<"igb_field_prototype_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"Field prototype failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

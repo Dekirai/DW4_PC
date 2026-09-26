@@ -195,10 +195,12 @@ list's scalar and memory defaults complete, and balanced object assignment
 publishes it in the manager. Concrete semaphore redirect `80026160` now enters
 its real registration and creates three local descriptors. Its fourth factory,
 `8002450C` for `igStructMetaField`, now runs registration, its physical probe and
-three local descriptor factories. Struct defaults reach the inherited
-unsigned-short `_size` clone `80021EB4`; that class/clone is the next dependency.
+three local descriptor factories. Unsigned-short registration and its prototype
+now complete the inherited `_size` clone `80021EB4` and the struct schema.
+Struct prototype callback `800247E4` is the next dependency.
 The manager singleton and main thread remain uninitialized. See
 [IGB_STRUCT_FIELDS.md](docs/IGB_STRUCT_FIELDS.md),
+[IGB_UNSIGNED_SHORT_FIELD.md](docs/IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](docs/IGB_PLATFORM_SEMAPHORE.md) and
 [IGB_RUNTIME_OBJECTS.md](docs/IGB_RUNTIME_OBJECTS.md).
 See [IGB_THREAD_STARTUP.md](docs/IGB_THREAD_STARTUP.md).

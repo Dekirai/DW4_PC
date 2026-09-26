@@ -75,15 +75,16 @@ struct CopyFixture:Fixture {
     }
 };
 void scalar_fixture(CopyFixture& f,IgbMetaFieldKind kind){
+    const auto bytes=kind==IgbMetaFieldKind::unsigned_short?2u:1u;
     f.storage.storage->bytes->bytes.resize(0x34);f.storage.storage->bytes->initialized.resize(0x34);
-    f.source->vtable_word=igb_meta_field_profile(kind).vtable;f.source->size=1;
+    f.source->vtable_word=igb_meta_field_profile(kind).vtable;f.source->size=static_cast<std::uint16_t>(bytes);
     f.source->flag_34.reset();f.source->flag_35.reset();f.source->element_field.reset();f.source->flag_42.reset();
-    f.original_default->bytes.resize(1);f.original_default->initialized.resize(1);
-    f.copied_default->bytes.resize(1);f.copied_default->initialized.resize(1);
-    f.copy_action=[&f](const IgbFieldCopyCall& c,IgbFieldCopyOperation& out){
+    f.original_default->bytes.resize(bytes);f.original_default->initialized.resize(bytes);
+    f.copied_default->bytes.resize(bytes);f.copied_default->initialized.resize(bytes);
+    f.copy_action=[&f,bytes](const IgbFieldCopyCall& c,IgbFieldCopyOperation& out){
         if(c.kind==IgbFieldCopyServiceKind::tagged_pool)out.pool_result=f.pool;
-        else{check(c.kind==IgbFieldCopyServiceKind::allocate_default && c.bytes==1 && c.pool==f.pool,
-                "Scalar copy changed the one-byte default allocation.");out.buffer_result={f.copied_default,0};out.buffer_address=0x750000;}
+        else{check(c.kind==IgbFieldCopyServiceKind::allocate_default && c.bytes==bytes && c.pool==f.pool,
+                "Scalar copy changed its exact default allocation size.");out.buffer_result={f.copied_default,0};out.buffer_address=0x750000;}
         return MessengerCallResult{true,0,{}};
     };
 }
@@ -228,15 +229,16 @@ void replaced_destination_binding(){
     }
 }
 void scalar_cold_clones(){
-    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean})for(const auto argument:{0u,1u,2u,0xffffffffu}){
+    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean,IgbMetaFieldKind::unsigned_short})for(const auto argument:{0u,1u,2u,0xffffffffu}){
         CopyFixture f;scalar_fixture(f,kind);IgbFieldCloneInvocation run(f.source,argument,kind);
         check(run.resume(f.services).completed && run.result()==f.destination && f.destination->vtable_word==igb_meta_field_profile(kind).vtable,
             "Scalar clone did not publish its exact derived table after the shared copy.");
         check(f.allocations.size()==2 && f.allocations.back().bytes==0x34 && f.calls.empty() && f.copy_calls.size()==2 &&
             f.destination->reference_word==0x800001 && f.name->references==8 && f.element->reference_word==99,
             "Scalar cold wrapper changed its allocation, name ownership or nonowning source state.");
-        check(f.destination->default_bytes->buffer==f.copied_default && f.copied_default->bytes==std::vector<std::uint8_t>{1} &&
-            f.destination->size==1 && !f.destination->flag_34 && !f.destination->flag_35 && !f.destination->word_48,
+        const auto expected=kind==IgbMetaFieldKind::unsigned_short?std::vector<std::uint8_t>{1,2}:std::vector<std::uint8_t>{1};
+        check(f.destination->default_bytes->buffer==f.copied_default && f.copied_default->bytes==expected &&
+            f.destination->size==expected.size() && !f.destination->flag_34 && !f.destination->flag_35 && !f.destination->word_48,
             "Scalar copy used an ordinary reset or entered memory-reference derived copying.");
         for(const auto at:{0x16u,0x17u,0x2du,0x2eu,0x2fu})check(f.storage.storage->bytes->bytes[at]==0xcc,"Scalar copy changed unwritten padding.");
         check(run.resume().completed && f.name->references==8 && f.services->completed_allocations.size()==1 &&
@@ -245,7 +247,7 @@ void scalar_cold_clones(){
         check(null.resume(empty.services).completed && !null.result() && empty.allocations.back().bytes==0x34 && empty.calls.empty(),
             "Scalar null allocation dereferenced the source or invoked a constructor.");
     }
-    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean}){
+    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean,IgbMetaFieldKind::unsigned_short}){
         CopyFixture direct;scalar_fixture(direct,kind);direct.storage.storage->bytes->bytes.resize(0x50,0x5a);
         direct.storage.storage->bytes->initialized.resize(0x50,1);IgbFieldCloneConstructorInvocation constructor(direct.storage,direct.source,kind);
         check(constructor.resume(direct.services).completed && direct.allocations.empty() &&
@@ -254,20 +256,21 @@ void scalar_cold_clones(){
     }
 }
 void scalar_pending_copy_and_faults(){
-    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean}){
+    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean,IgbMetaFieldKind::unsigned_short}){
         CopyFixture f;scalar_fixture(f,kind);bool ready{};unsigned polls{};
         f.copy_action=[&](const IgbFieldCopyCall& c,IgbFieldCopyOperation& out){
             if(c.kind==IgbFieldCopyServiceKind::tagged_pool){out.pool_result=f.pool;return MessengerCallResult{true,0,{}};}
             ++polls;if(!ready)return MessengerCallResult{false,0,"prepared scalar default allocation"};
-            f.original_default->bytes[0]=9;out.buffer_result={f.copied_default,0};out.buffer_address=0x750000;return MessengerCallResult{true,0,{}};
+            f.original_default->bytes.back()=9;out.buffer_result={f.copied_default,0};out.buffer_address=0x750000;return MessengerCallResult{true,0,{}};
         };
         IgbFieldCloneInvocation run(f.source,1,kind);
         check(!run.resume(f.services).completed && f.destination->vtable_word==0x80471914 && polls==1 && f.name->references==8,
             "Pending scalar base copy prematurely published its derived table.");
         f.core->enabled=1;f.services->copy->factory={};ready=true;
         check(run.resume(f.services).completed && polls==2 && f.copy_calls.size()==2 && f.allocations.size()==2 && f.calls.empty() &&
-            f.copied_default->bytes[0]==9 && f.name->references==8,"Scalar copy resume repeated gate selection, allocation or retain.");
-        CopyFixture fault;scalar_fixture(fault,kind);fault.original_default->initialized[0]=0;IgbFieldCloneInvocation invalid(fault.source,1,kind);
+            f.copied_default->bytes.back()==9 && f.copied_default->bytes==f.original_default->bytes && f.name->references==8,
+            "Scalar copy resume repeated gate selection, allocation or retain, or omitted its final byte.");
+        CopyFixture fault;scalar_fixture(fault,kind);fault.original_default->initialized.back()=0;IgbFieldCloneInvocation invalid(fault.source,1,kind);
         rejects([&]{invalid.resume(fault.services);},"Scalar base-copy read accepted uninitialized default bytes.");
         check(invalid.faulted() && fault.destination->construction_fault_ && fault.destination->vtable_word==0x80471914 &&
             fault.services->completed_allocations.empty(),"Scalar copy failure published a derived table or completed descriptor.");
@@ -279,9 +282,9 @@ void scalar_pending_copy_and_faults(){
     }
 }
 void scalar_enabled_boundaries_and_adapters(){
-    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean}){
-        const auto wrapper=kind==IgbMetaFieldKind::signed_byte?0x80037d00u:0x80038800u;
-        const auto body=kind==IgbMetaFieldKind::signed_byte?0x80037d28u:0x80038828u;
+    for(const auto kind:{IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::boolean,IgbMetaFieldKind::unsigned_short}){
+        const auto wrapper=kind==IgbMetaFieldKind::signed_byte?0x80037d00u:kind==IgbMetaFieldKind::unsigned_short?0x80021ff4u:0x80038800u;
+        const auto body=kind==IgbMetaFieldKind::signed_byte?0x80037d28u:kind==IgbMetaFieldKind::unsigned_short?0x8002201cu:0x80038828u;
         Fixture f;f.core->enabled=1;bool ready{};unsigned polls{};
         f.remaining=[&](const IgbFieldCloneCall& c)->std::shared_ptr<IgbFieldCloneOperation>{
             if(c.kind==K::reflected_clone)return {};
@@ -307,8 +310,60 @@ void scalar_enabled_boundaries_and_adapters(){
         check(operation && !operation->resume().completed && registrations==1 && callback.calls.size()==1 &&
             callback.calls.front().kind==K::reflected_clone && callback.calls.front().function==0x800680b4 &&
             callback.calls.front().argument==2 && callback.allocations.empty(),"Scalar adapter reloaded its captured table or bypassed registration/680B4.");
+        request.virtual_slot=0x58;check(!make_native_igb_list_field_clone_factory(callback.services)(request),
+            "Scalar clone adapter consumed an adjacent metadata getter.");
+        request.virtual_slot=0x54;request.vtable_word=igb_meta_field_profile(kind).vtable+4;
+        check(!make_native_igb_list_field_clone_factory(callback.services)(request),
+            "Scalar clone adapter accepted a neighboring unverified table.");
+        request.vtable_word=igb_meta_field_profile(kind).vtable;
+        request.virtual_slot=0x54;request.kind=IgbListDefaultsServiceKind::destroy_field;
+        check(!make_native_igb_list_field_clone_factory(callback.services)(request),"Scalar clone adapter consumed a destruction request.");
     }
     Fixture f;rejects([&]{IgbFieldCloneInvocation unsupported(f.source,1,IgbMetaFieldKind::string);},"Scalar clone extension accepted an unimplemented string clone.");
+}
+void unsigned_short_core_and_retained_result(){
+    constexpr auto kind=IgbMetaFieldKind::unsigned_short;
+    for(unsigned missing_state=0;missing_state<3;++missing_state){Fixture f;
+        const auto fields=f.services->fields;const auto bootstrap=fields->bootstrap;const auto runtime=bootstrap->runtime;
+        if(missing_state==0)f.services->fields.reset();
+        else if(missing_state==1)fields->bootstrap.reset();else bootstrap->runtime.reset();
+        IgbFieldCloneInvocation pending(f.source,1,kind);
+        check(!pending.resume(f.services).completed && f.calls.empty() && f.allocations.empty(),
+            "Unsigned-short clone treated missing field, bootstrap or runtime services as a disabled branch.");
+        f.services->fields=fields;fields->bootstrap=bootstrap;bootstrap->runtime=runtime;f.storage={};
+        check(pending.resume(f.services).completed && !pending.result() && f.calls.empty() && f.allocations.size()==2,
+            "Unsigned-short clone did not resume its gate after the missing runtime binding was restored.");
+    }
+    Fixture missing;missing.services->fields->bootstrap->runtime->singleton.reset();
+    IgbFieldCloneInvocation unavailable(missing.source,1,kind);
+    check(!unavailable.resume(missing.services).completed && missing.calls.empty() && missing.allocations.empty(),
+        "Unsigned-short clone treated unknown ArkCore as disabled reflection.");
+    missing.services->fields->bootstrap->runtime->singleton=std::shared_ptr<IgbRuntimeTypeRegistry>{};
+    rejects([&]{unavailable.resume(missing.services);},"Unsigned-short clone accepted a represented null core.");
+    check(unavailable.faulted() && missing.calls.empty() && missing.allocations.empty(),
+        "Unsigned-short core dereference failure executed a later registration or allocation.");
+    Fixture f;f.core->enabled=1;bool registration_ready{},reflection_ready{};unsigned registrations{},reflections{};
+    std::shared_ptr<IgbFieldCloneOperation> registration,reflection;const auto source=f.source;
+    f.remaining=[&](const IgbFieldCloneCall& c){auto op=std::make_shared<IgbFieldCloneOperation>();
+        if(c.kind==K::register_type){check(c.function==0x80021ff4,"Unsigned-short clone changed its unconditional enabled wrapper.");registration=op;
+            op->resume=[&]{++registrations;return MessengerCallResult{registration_ready,17,"Prepared ushort registration."};};}
+        else{check(c.kind==K::reflected_clone && c.function==0x800680b4 && c.source==source && c.argument==0xffffffffu,
+                "Unsigned-short clone lost its captured source or full mode word.");reflection=op;
+            op->resume=[&,out=op.get()]{++reflections;if(!reflection_ready)return MessengerCallResult{false,23,"Prepared ushort reflection."};
+                out->allocation_result=f.storage;return MessengerCallResult{true,0,{}};};}return op;};
+    IgbFieldCloneInvocation run(source,0xffffffffu,kind);const auto first=run.resume(f.services);
+    check(!first.completed && first.value==17 && registrations==1 && reflections==0,"Unsigned-short clone lost pending registration status.");
+    f.source=std::make_shared<IgbDecodeRuntimeField>();f.core->enabled=0;registration_ready=true;
+    registration->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced ushort registration callback.");};
+    const auto second=run.resume(f.services);
+    check(!second.completed && second.value==23 && registrations==2 && reflections==1 && f.allocations.empty(),
+        "Unsigned-short clone replayed its enabled gate or lost the retained callback.");
+    reflection->resume=[]()->MessengerCallResult{throw std::runtime_error("Replaced ushort reflection callback.");};
+    f.services->factory={};reflection_ready=true;
+    check(run.resume(f.services).completed && run.result()==f.destination && registrations==2 && reflections==2 &&
+        f.calls.size()==2 && f.allocations.empty() && f.services->completed_allocations.size()==1 &&
+        f.storage.storage->bytes->bytes==std::vector<std::uint8_t>(0x50,0xcc),
+        "Unsigned-short reflected result replayed registration, executed raw-copy tails or lost storage ownership.");
 }
 void unsigned_byte_direct_clone(){
     for(unsigned state=0;state<5;++state)for(const auto argument:{0u,1u,2u,0xffffffffu}){
@@ -381,7 +436,7 @@ void unsigned_byte_clone_pending_and_adapter(){
 }
 }
 int main(){try{null_allocation_and_gates();enabled_order_and_adapters();missing_base_and_constructor_lifetime();complete_cold_copy();live_derived_reads_and_pointer_binding();replaced_destination_binding();
-    scalar_cold_clones();scalar_pending_copy_and_faults();scalar_enabled_boundaries_and_adapters();
+    scalar_cold_clones();scalar_pending_copy_and_faults();scalar_enabled_boundaries_and_adapters();unsigned_short_core_and_retained_result();
     unsigned_byte_direct_clone();unsigned_byte_clone_pending_and_adapter();
     std::cout<<"igb_field_clone_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Field clone failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

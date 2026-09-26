@@ -324,12 +324,13 @@ void member_adapter_profiles(){
         auto op=std::make_shared<IgbFieldMemberCopyOperation>();op->resume=[] {return MessengerCallResult{true,0,{}};};return op;};
     check(memory->resume().completed && prepared==1,"Unbound member prerequisite could not acquire its explicit late endpoint.");
 }
-void memory_and_unsigned_byte_hooks(){
-    for(const auto table:{0x80476088u,0x80470a44u}){
+void concrete_field_copy_hooks(){
+    for(const auto table:{0x80476088u,0x80470a44u,0x80477054u}){
         auto init_services=std::make_shared<IgbFieldInitServices>();
         init_services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
         init_services->registration->meta_fields=std::make_shared<IgbMetaFieldFactoryServices>();
-        const auto kind=table==0x80476088?IgbMetaFieldKind::memory_reference:IgbMetaFieldKind::unsigned_byte;
+        const auto kind=table==0x80476088?IgbMetaFieldKind::memory_reference:
+            table==0x80477054?IgbMetaFieldKind::unsigned_short:IgbMetaFieldKind::unsigned_byte;
         auto cell=std::make_shared<IgbRegistrationMetaSlot>();
         init_services->registration->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]=cell;
         auto initializer=std::make_shared<IgbObjectInitServices>();
@@ -377,6 +378,6 @@ void memory_and_unsigned_byte_hooks(){
 }
 int main(){try{all_signed_policies();modes_and_original_order();live_hooks_registry_and_backing();retained_operations_and_teardown();
     physical_access_and_faults();outer_reflection_and_null_results();actual_reflected_factory_composition();adapters();strict_field_result();member_adapter_profiles();
-    memory_and_unsigned_byte_hooks();
+    concrete_field_copy_hooks();
     std::cout<<"IGB reflected clone tests passed: "<<checks<<" checks\n";return 0;
 }catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}}

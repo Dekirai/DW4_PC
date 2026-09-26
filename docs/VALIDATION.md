@@ -1,5 +1,75 @@
 # Local validation
 
+## Unsigned-short clone completes struct defaults
+
+Validated locally on 2026-09-26. The retained cold startup executes actual
+unsigned-short registration `8002201C`, probe `80021F6C`, prototype callback
+`800220A4`, reflected initialization and clone `80021EB4 -> 800680B4`.
+Struct defaults now replace inherited `_size` with an independently owned
+two-byte default `1`, finish the four-byte alignment default and publish their
+three local schema fields. The base class's original descriptor, global and
+default buffer remain unchanged.
+
+The next missing operation is **struct prototype callback `800247E4`**.
+The unsigned-short and struct classes are ready, with instance counts two and
+zero respectively. The former has one prototype and the inherited clone;
+the latter has no supplied descriptor instance. Concrete semaphore remains
+unfinished with six fields. The manager still owns its construction lease,
+its semaphore member is zero, and its startup singleton remains unpublished.
+
+The composed test reaches **26 published types, 91 descriptors, 99 default
+buffers, 11 prototypes and 93 enabled allocations**, including five actual
+default-buffer copies. Raw allocation/pool endpoints remain explicit fixture
+preparation. A newly reached ninth base-field child uses the native list growth
+caller, preserved earlier identities and zeroed spare slots. Repeated pending
+continuation does not replay registration, allocation, cloning or schema work.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 204/204 local CTest suites passed with four build jobs |
+| Integrated cold startup | 3,072 checks, including actual unsigned-short prototype, independent inherited clone, parent-list growth and stable struct-prototype boundary |
+| Clone / reflected copy | 383 /1,779 checks; enabled wrapper order, actual disabled base copy, null allocation without factory tails, captured inputs and exact virtual leaves |
+| Prototype / initializer | 252 /156 checks; shared canonical prototype cell, live reloads, retained owner, physical defaults and no replay |
+| Registration / probe | 643 /764 checks; original arguments, no added prerequisite, captured core and name cleanup/fault prefixes |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames retain their existing scope |
+| Python verifier | Six tests passed |
+
+The original corpus was sealed before native observation: **91 cases, 8,598
+executed DOL instructions and 575 instruction addresses**. Its scope includes
+three registrar argument profiles, 14 getters, 20 probes, 30 prototype callers
+and 24 clone/raw-copy callers. Lower allocators and enabled registration/
+reflected-copy endpoints are explicitly prepared. Disabled cases execute the
+actual `80075F48/800639E4` base copy, name retain and `800031E8` byte copying.
+
+The subset fixed before execution matches **74/74 cases on its first run**:
+14 getters, seven probes, 30 prototype callers and 23 clone/raw-copy callers.
+There are 55 completed calls, 14 prepared endpoint faults, four matching
+null-read prefixes and one bounded reserve prefix; zero pending results or
+unexpected faults. The null cases compare the original read's preceding state
+with the corresponding native guard, not host hardware exceptions. They cover
+null ArkCore in the probe, clone gate and base copy, plus a freshly null
+prototype after registry append. The reserve case compares a full 16-entry
+registry's prefix up to original `800682A4` and the native object-pool service;
+it does not claim allocation or reserve completion. Allocator helper interiors
+are excluded by the predeclared outer-endpoint projection.
+
+Seventeen cases remain original-only: three registrar profiles, 13 injected
+or unavailable probe states and one unavailable core cell. All 91 original
+and 74 native reruns, 15 original hashes and 16 native artifact hashes verify.
+No original expectations or first native results were changed after execution.
+
+Original manifest SHA256:
+`2c2cfe25db0e11c96e0d348d80af70948c9c049295eb305744adbb7bef808d38`.
+Native manifest SHA256:
+`741e14324413d85672673009f30fda0bf9fa8d9035205363ca03ae3afaa322a4`.
+The verified Release core SHA256 is
+`438927605b6687e48deb286f6e7aea2dccdf61eb8f98a6e99a068b9e4517ac4a`.
+Local build, integration and focused logs use the ignored
+`work/native-unsigned-short-` prefix. See
+[IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md). This remains
+incomplete native startup and does not provide a playable-game build.
+
 ## Struct-field defaults reach the unsigned-short clone
 
 Validated locally on 2026-09-24. Factory `8002450C` executes the real always-

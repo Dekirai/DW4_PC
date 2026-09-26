@@ -119,7 +119,7 @@ void object_virtuals() {
 }
 
 void string_and_byte_virtuals(){
-    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int}){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int,IgbMetaFieldKind::unsigned_short}){
         Fixture f;const bool string=kind==IgbMetaFieldKind::string;
         f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=igb_meta_field_profile(kind).vtable;
         f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
@@ -162,10 +162,11 @@ void string_and_byte_virtuals(){
     }
 }
 
-void unsigned_int_reflected_initialization(){
+void scalar_reflected_initialization(IgbMetaFieldKind kind){
+    const auto table=igb_meta_field_profile(kind).vtable;
     Fixture f;auto type=std::make_shared<IgbRuntimeMetaType>(),base=std::make_shared<IgbRuntimeMetaType>();
     base->instance_count=0;f.call.object.storage->bytes->bytes.resize(0x44);f.call.object.storage->bytes->initialized.resize(0x44);
-    type->type_word=0x80476e6c;type->native_size=0x34;type->allocation_prefix=0x10;type->factory_redirect=0;
+    type->type_word=table;type->native_size=0x34;type->allocation_prefix=0x10;type->factory_redirect=0;
     type->class_flags=4;type->flag_1a=0;type->instance_count=0;type->instances=std::shared_ptr<IgbObjectInstanceList>{};
     type->fields=std::make_shared<IgbDecodeFieldRegistry>();type->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
     base->fields=std::make_shared<IgbDecodeFieldRegistry>();
@@ -181,8 +182,10 @@ void unsigned_int_reflected_initialization(){
     add(0x80476e6c,8,4,0x12345678);add(0x80477054,0x14,2,4);add(0x80473f24,0x24,1,2);
     f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
     auto fields=std::make_shared<IgbMetaFieldFactoryServices>();f.services->registration->meta_fields=fields;
-    fields->metadata=std::make_shared<IgbRegistrationMetaSlot>();
-    fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::unsigned_int)]=std::make_shared<IgbRegistrationMetaSlot>(base);
+    auto canonical=std::make_shared<IgbRegistrationMetaSlot>();
+    fields->metadata=kind==IgbMetaFieldKind::unsigned_int?canonical:std::make_shared<IgbRegistrationMetaSlot>(base);
+    fields->metadata_slots[static_cast<std::size_t>(kind)]=kind==IgbMetaFieldKind::unsigned_int?
+        std::make_shared<IgbRegistrationMetaSlot>(base):canonical;
     auto reflected=std::make_shared<IgbFileFactoryServices>();reflected->initializer=std::make_shared<IgbObjectInitServices>();
     auto init=reflected->initializer;init->runtime=std::make_shared<IgbRuntimeTypesServices>();
     auto core=std::make_shared<IgbRuntimeTypeRegistry>();core->enabled=1;core->vtable_offset=0;core->field_initialization_enabled=1;
@@ -190,37 +193,38 @@ void unsigned_int_reflected_initialization(){
     unsigned allocations{},queries{};
     init->factory=make_native_igb_scalar_field_factory(make_native_igb_field_init_factory(f.services,[&](const IgbObjectInitCall& c){
         check(c.kind==IgbObjectInitServiceKind::allocation_pool && c.address==0x100000,
-            "Unsigned integer initializer changed the allocation-base lookup or invented a virtual.");
+            "Scalar initializer changed the allocation-base lookup or invented a virtual.");
         auto op=std::make_shared<IgbObjectInitOperation>();op->resume=[&]{++queries;return MessengerCallResult{true,0,{}};};return op;
     }));
     auto pool=std::make_shared<ModelSceneData>();
     reflected->factory=[&](const IgbFileFactoryCall& c){
         check(c.kind==IgbFileFactoryServiceKind::allocate && c.metadata==type && c.pool==pool && c.bytes==0x44,
-            "Unsigned integer reflected factory changed its original allocation arguments.");
+            "Scalar reflected factory changed its original allocation arguments.");
         auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++allocations;
             out->allocation_result=f.call.object.storage;return MessengerCallResult{true,0,{}};};return op;
     };
     IgbReflectedFactoryInvocation run(type,pool);
     check(!run.resume(reflected).completed && allocations==1 && queries==0 &&
-        igb_buffer_word(f.call.object.storage->bytes,0x10)==0x80476e6c && f.call.object.field->reference_word==1 &&
+        igb_buffer_word(f.call.object.storage->bytes,0x10)==table && f.call.object.field->reference_word==1 &&
         f.call.object.storage->bytes->initialized[0x18]==0,
-        "Unknown canonical unsigned integer metadata skipped header writes or executed later field work.");
-    *fields->metadata=type;
-    check(run.resume(reflected).completed && allocations==1 && queries==1,"Unsigned integer reflected initialization did not resume its retained allocation.");
+        "Unknown canonical scalar metadata skipped header writes or executed later field work.");
+    *canonical=type;
+    check(run.resume(reflected).completed && allocations==1 && queries==1,"Scalar reflected initialization did not resume its retained allocation.");
     const auto result=run.result_instance();
     check(result.field==f.call.object.field && result.storage==f.call.object.storage && result.offset==0x10 &&
-        result.field->vtable_word==0x80476e6c && result.field->offset==0x12345678 && result.field->size==4 && result.field->default_mode==2,
-        "Unsigned integer inherited descriptor defaults lost physical or canonical publication.");
+        result.field->vtable_word==table && result.field->offset==0x12345678 && result.field->size==4 && result.field->default_mode==2,
+        "Scalar inherited descriptor defaults lost physical or canonical publication.");
     check(igb_buffer_word(result.storage->bytes,0x18)==0x12345678 && result.storage->bytes->bytes[0x25]==4 &&
         result.storage->bytes->bytes[0x34]==2 && result.storage->bytes->initialized[0x26]==0 &&
         result.storage->bytes->initialized[0xf]==0 && type->instance_count==1 && base->instance_count==0,
-        "Unsigned integer initializer changed padding, prefix, field bytes or final canonical instance count.");
+        "Scalar initializer changed padding, prefix, field bytes or final canonical instance count.");
     check(run.resume(reflected).completed && allocations==1 && queries==1 && type->instance_count==1,
-        "Completed unsigned integer initializer replayed allocation or fields.");
-    f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=0x80476e6c;
-    for(const auto slot:{0x08u,0x40u,0x54u})check(!f.select(slot),"Unsigned integer initializer claimed an unrecovered destructor or clone surface.");
+        "Completed scalar initializer replayed allocation or fields.");
+    f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=table;
+    for(const auto slot:{0x08u,0x38u,0x40u,0x54u})check(!f.select(slot),"Scalar initializer claimed an unrecovered destructor or clone surface.");
 }
 }
-int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();string_and_byte_virtuals();unsigned_int_reflected_initialization();
+int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();string_and_byte_virtuals();scalar_reflected_initialization(IgbMetaFieldKind::unsigned_int);
+    scalar_reflected_initialization(IgbMetaFieldKind::unsigned_short);
     std::cout<<"igb_field_init_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

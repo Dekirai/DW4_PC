@@ -32,7 +32,9 @@ constexpr std::array profiles{
     IgbFieldTypeProfile{"igUnsignedIntMetaField",0x805614bc,0x80022cb0,0x80022cd8,0x34,0,0x8002a6d8,0x80021d70,
         0x80022d40,0x80022c28,0,0x80022bb0,0x80022bec,0x80094138,0x8055cf50,{0x80022d60,0,0}},
     IgbFieldTypeProfile{"igStructMetaField",0x80561560,0x8002460c,0x80024634,0x40,0,0x8002a6d8,0x80021d70,
-        0x800246a8,0x80024580,0x800246c8,0,0x80024544,0x80093aa4,0x8055d090,{0x800247e4,0,0}}
+        0x800246a8,0x80024580,0x800246c8,0,0x80024544,0x80093aa4,0x8055d090,{0x800247e4,0,0}},
+    IgbFieldTypeProfile{"igUnsignedShortMetaField",0x80561494,0x80021ff4,0x8002201c,0x34,0,0x8002a6d8,0x80021d70,
+        0x80022084,0x80021f6c,0,0,0x80021f30,0x80094158,0x8055cf08,{0x800220a4,0,0}}
 };
 std::optional<Entry> registration_function(std::uint32_t function,bool wrapper){
     for(std::size_t i=0;i<profiles.size();++i)if(function==(wrapper?profiles[i].wrapper:profiles[i].body))return static_cast<Entry>(i);return {};
@@ -67,6 +69,7 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_field_type_metadata_slot(const std:
     case Entry::pointer:kind=IgbMetaFieldKind::pointer;break;
     case Entry::unsigned_byte:kind=IgbMetaFieldKind::unsigned_byte;break;
     case Entry::structure:kind=IgbMetaFieldKind::structure;break;
+    case Entry::unsigned_short:kind=IgbMetaFieldKind::unsigned_short;break;
     default:fail("Field-type profile has no concrete descriptor metadata mapping.");
     }
     return services->meta_fields?services->meta_fields->metadata_slots[static_cast<std::size_t>(kind)]:nullptr;

@@ -197,10 +197,12 @@ memory defaults complete the list and its ownership/publication in the manager.
 Semaphore redirect `80026160 -> 8003B238` now executes its concrete registration,
 probe and first three local descriptor factories. `igStructMetaField` factory
 `8002450C` now executes registration, its probe and three local descriptors.
-Recover the inherited unsigned-short `_size` clone `80021EB4`, finish struct
-defaults and its reflected prototype, then complete semaphore defaults and
+Unsigned-short registration, its prototype and inherited `_size` clone
+`80021EB4` now finish struct defaults. Recover struct prototype `800247E4`,
+its distinct physical words and dynamic descriptor operations, then complete semaphore defaults and
 initialization, the concrete main thread and reached platform operations. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
+[IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 Metadata registration alone does not establish those objects or platform behavior.

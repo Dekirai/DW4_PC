@@ -205,10 +205,13 @@ to manager `+08`; the manager remains unfinished during concrete semaphore
 registration. Its distinct layout probe restores the named-object vtable after
 capturing the derived type word. Three local descriptors are constructed before
 struct-field factory `8002450C` runs its registration, probe and local field batch.
-Its defaults now reach inherited unsigned-short `_size` clone `80021EB4`.
+Unsigned-short registration/prototype and inherited `_size` clone `80021EB4`
+now complete struct defaults and its schema. Struct prototype `800247E4`
+is the next reached dependency.
 Main-thread creation, manager
 list/semaphore virtuals and teardown remain required. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
+[IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
 [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md). Physical descriptor

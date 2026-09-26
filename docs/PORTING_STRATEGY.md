@@ -288,8 +288,8 @@ backing supplied to native memory construction and zero fill. The inherited
 memory-field clone finishes object-list specialization. DataList, object-list
 and thread-list metadata complete. Deferred `igThread` registration then runs
 its actual named-object parent, probe and `_name` schema. The cold composition
-has 90 descriptors, 94 default buffers, twenty-four published types, ten
-prototypes and 89 enabled allocations; four default buffers were copied by the
+has 91 descriptors, 99 default buffers, twenty-six published types, eleven
+prototypes and 93 enabled allocations; five default buffers were copied by the
 reflected clone path. Unsigned-integer registration `80022CD8`, probe and
 reflected prototype complete through the original canonical cells. Thread's
 ten-field batch, enum/stack defaults and schema finish, followed by Semaphore
@@ -302,11 +302,13 @@ leases and reference updates. Original memory defaults `80062798` and retain
 Semaphore redirect `80026160 -> 8003B238` now performs concrete registration,
 the distinct physical probe and the first three local descriptor factories.
 Struct-field factory `8002450C` now runs its actual registration, physical probe
-and three local descriptor factories. Its defaults reach the inherited
-**unsigned-short `_size` clone `80021EB4`**. Complete that class/clone, struct
-defaults and its reflected prototype next; the manager remains unfinished and
+and three local descriptor factories. Unsigned-short registration/prototype and
+the inherited `_size` clone `80021EB4` now finish struct defaults and schema.
+Complete **struct prototype `800247E4`**, its distinct physical members and
+dynamic descriptor operations next; the manager remains unfinished and
 no startup singleton or main thread is supplied. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) and
+[IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md) and
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md).
 The physical schema stores preserve `+1C/+08/+18`
 publication order and the completed prefix when address resolution is pending.

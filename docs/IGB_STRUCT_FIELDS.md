@@ -53,27 +53,26 @@ completed stores are not rolled back on a later fault.
 
 ## Current cold dependency
 
-The retained native start test enters this registration and appends all three
-local descriptors. It reaches the inherited unsigned-short descriptor's
-**`+54` clone at `80021EB4`**, with vtable `80477054`. Its enabled branch must
-run unsigned-short registration before reflected cloning. This is an explicit
-missing dependency; prepared clone endpoints in focused defaults tests do not
-establish its cold completion.
+The retained native start test now completes unsigned-short registration and
+its prototype before running inherited `_size` clone `80021EB4`. The clone's
+independent two-byte default becomes `1`, its specialized global is published,
+and all three local schema fields complete. The base `_size` descriptor/global
+remain unchanged, as do the other 19 inherited descriptor identities.
 
-At this point struct metadata has flags `9`, 23 fields and zero instances.
-Its inherited 20 descriptor identities are unchanged, its specialized size
-global is unpublished, and its deferred prototype has not run. The outer
+Struct metadata now has flags `7`, 23 fields and zero instances. Its deferred
+**prototype callback `800247E4`** is the next missing operation. The outer
 concrete semaphore still has six fields and remains unfinished. There are
-24 published types, 90 descriptors, 94 default buffers, ten prototypes and
-89 enabled allocations. The thread list remains the only completed runtime
+26 published types, 91 descriptors, 99 default buffers, eleven prototypes and
+93 enabled allocations. The thread list remains the only completed runtime
 instance in this nested construction.
 
-Continue with the reached unsigned-short class/clone, struct prototype and
+Continue with the reached struct prototype and
 runtime descriptor defaults before claiming the semaphore's field batch is
 complete. Dynamic struct size/alignment, constructor/destructor function words
 and their member handlers require distinct native support; they must not be
 treated as overlapping reference fields or unconditional scalar no-ops.
-See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
+See [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
+[IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and [VALIDATION.md](VALIDATION.md).
 
 Primary evidence is the supplied USA DOL, SHA1
