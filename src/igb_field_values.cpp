@@ -18,6 +18,49 @@ IgbRuntimeFieldSlot* prototype(IgbFieldValuesServices& s,std::size_t index){
     case 5:return &s.pointer_prototype;case 6:return &s.unsigned_short_prototype;case 7:return &s.memory_reference_prototype;case 8:return &s.signed_short_prototype;
     case 9:return &s.signed_byte_prototype;case 10:return &s.enumeration_prototype;case 11:return &s.unsigned_byte_prototype;default:return nullptr;}
 }
+// These dynamic leaves read the selected descriptor's live physical member.
+// Retain its allocation while a caller is suspended; a canonical-only fixture
+// remains distinct from an expired or replaced physical binding.
+struct StructFieldAccess {
+    std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::optional<IgbBootstrapPointer> physical;
+    explicit StructFieldAccess(std::shared_ptr<IgbDecodeRuntimeField> value):field(std::move(value)) {
+        if(field && field->physical_storage)physical=IgbBootstrapPointer{
+            field->physical_storage->storage.lock(),field->physical_storage->offset};
+    }
+    std::optional<IgbBootstrapPointer> pointer() {
+        if(!field)fail("Struct field operation dereferences a null descriptor.");
+        if(field->construction_fault_)fail("Struct field operation reached a faulted descriptor.");
+        if(!field->physical_storage){
+            if(physical)fail("Struct field operation lost its captured physical binding.");
+            return {};
+        }
+        const auto& binding=*field->physical_storage;
+        IgbBootstrapPointer current{binding.storage.lock(),binding.offset};
+        if(!current.storage || current.storage->faulted())fail("Struct field operation requires unfaulted live physical storage.");
+        if(!current.storage->bytes || current.storage->bytes->released)
+            fail("Struct field operation reached unavailable physical allocation bytes.");
+        if(physical && (physical->storage!=current.storage || physical->offset!=current.offset))
+            fail("Struct field operation changed its captured physical binding.");
+        IgbObjectInstance object;object.storage=current.storage;object.offset=current.offset;object.field=field;
+        igb_object_validate_instance(object);
+        if(!physical)physical=current;
+        return current;
+    }
+    std::uint16_t size() {
+        if(const auto storage=pointer()){
+            //7496C reads only+14/+15; padding+16/+17 may remain unknown.
+            const auto high=igb_bootstrap_read_byte(*storage,0x14);
+            const auto low=igb_bootstrap_read_byte(*storage,0x15);
+            field->size=static_cast<std::uint16_t>((std::uint16_t(high)<<8)|low);
+        }
+        return field->size;
+    }
+    std::optional<std::uint32_t> alignment() {
+        if(const auto storage=pointer())field->struct_alignment=igb_bootstrap_read_word(*storage,0x34);
+        return field->struct_alignment;
+    }
+};
 bool range(const IgbRuntimeFieldDefaultSource& view,std::uint32_t count,bool read){
     if(!view.buffer || view.buffer->released)return false;
     const auto end=std::uint64_t(view.offset)+count;
@@ -94,12 +137,13 @@ IgbFieldValueInvocation::~IgbFieldValueInvocation(){auto& s=*impl_;if((!complete
 }}
 bool IgbFieldValueInvocation::completed()const noexcept{return impl_->phase==3;}
 bool IgbFieldValueInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldValueInvocation::resume(std::shared_ptr<IgbFieldValuesServices> services){
+MessengerCallResult IgbFieldValueInvocation::resume(std::shared_ptr<IgbFieldValuesServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;if(s.running || s.fault){s.fault=true;fail("Field default copy requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field default copy continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field default copy continuation was invalidated.");if(enclosing_check)enclosing_check();};
     try{for(;;){check();switch(s.phase){
-    case 0:{const auto status=s.buffer->resume(services?services->fields:nullptr);check();if(!status.completed)return status;
+    case 0:{const auto status=s.buffer->resume(services?services->fields:nullptr,check);check();if(!status.completed)return status;
         s.buffer.reset();check();
         if(s.source_address && ((*s.source_address==0)==bool(s.source)))fail("Field copy source pointer and arithmetic identity disagree.");
         s.phase=s.source?1:3;break;}
@@ -202,24 +246,56 @@ IgbFieldOperationsFactory make_native_igb_field_values_factory(std::shared_ptr<I
     std::weak_ptr<IgbFieldValuesServices> weak=services;
     return [weak,remaining=std::move(remaining)](const IgbFieldOperationCall& call){
         const auto known=profile(call.vtable_word);
-        if(call.kind!=IgbFieldOperationKind::field_virtual || !known ||
+        const bool structure=call.vtable_word==0x80470e00;
+        if(call.kind!=IgbFieldOperationKind::field_virtual || (!known && !structure) ||
             (call.virtual_slot!=0x5c && call.virtual_slot!=0x64 && call.virtual_slot!=0x8c) ||
             (call.virtual_slot==0x8c && !call.source && call.argument!=0))return remaining?remaining(call):std::shared_ptr<IgbFieldOperation>{};
         const auto selected=weak.lock();if(!selected)fail("Field value services expired before selection.");auto operation=std::make_shared<IgbFieldOperation>();
-        if(call.virtual_slot==0x64)operation->resume=[index=*known]{return MessengerCallResult{true,profiles[index].size,{}};};
-        else if(call.virtual_slot==0x5c)operation->resume=[selected,index=*known,out=operation.get()]{
-            const auto slot=prototype(*selected,index);if(!slot || !*slot)return pending("Field prototype getter requires its canonical global cell.");
+        if(structure && call.virtual_slot==0x64){
+            auto access=std::make_shared<StructFieldAccess>(call.field);
+            operation->resume=[access,done=false,fault=false,value=std::uint32_t{}]()mutable{
+                if(fault)fail("Struct size getter requires an unfaulted operation.");
+                if(done)return MessengerCallResult{true,value,{}};
+                try{value=access->size();done=true;return MessengerCallResult{true,value,{}};}
+                catch(...){fault=true;throw;}
+            };
+        }else if(call.virtual_slot==0x64)operation->resume=[index=*known]{return MessengerCallResult{true,profiles[index].size,{}};};
+        else if(call.virtual_slot==0x5c)operation->resume=[selected,known,structure,out=operation.get()]{
+            const auto slot=structure?&selected->struct_prototype:prototype(*selected,*known);
+            if(!slot || !*slot)return pending("Field prototype getter requires its canonical global cell.");
             out->field_result=**slot;return MessengerCallResult{true,0,{}};};
         else{auto invocation=std::make_shared<IgbFieldValueInvocation>(call.field,call.source,call.source_address);
-            operation->resume=[invocation,selected]{return invocation->resume(selected);};}
+            if(structure){auto access=std::make_shared<StructFieldAccess>(call.field);
+                operation->resume=[invocation,selected,access,running=false,fault=false]()mutable{
+                    if(running || fault){fault=true;fail("Struct value adapter requires an unfaulted nonrecursive operation.");}
+                    if(invocation->completed())return invocation->resume(selected);
+                    Running guard(running);
+                    const auto check=[&]{if(fault)fail("Struct value adapter was invalidated by a callback.");access->pointer();};
+                    try{check();const auto result=invocation->resume(selected,check);
+                        check();return result;
+                    }catch(...){fault=true;throw;}
+                };
+            }else operation->resume=[invocation,selected]{return invocation->resume(selected);};}
         return operation;
     };
 }
 IgbMetadataLayoutFactory make_native_igb_field_alignment_factory(IgbMetadataLayoutFactory remaining){
     return [remaining=std::move(remaining)](const IgbMetadataLayoutCall& call){const auto known=profile(call.vtable_word);
-        if(call.kind!=IgbMetadataLayoutKind::field_alignment || call.virtual_slot!=0x6c || !known)
+        const bool structure=call.vtable_word==0x80470e00;
+        if(call.kind!=IgbMetadataLayoutKind::field_alignment || call.virtual_slot!=0x6c || (!known && !structure))
             return remaining?remaining(call):std::shared_ptr<IgbMetadataLayoutOperation>{};
-        auto operation=std::make_shared<IgbMetadataLayoutOperation>();operation->resume=[index=*known]{return MessengerCallResult{true,profiles[index].size,{}};};return operation;};
+        auto operation=std::make_shared<IgbMetadataLayoutOperation>();
+        if(structure){auto access=std::make_shared<StructFieldAccess>(call.field);
+            operation->resume=[access,done=false,fault=false,value=std::uint32_t{}]()mutable{
+                if(fault)fail("Struct alignment getter requires an unfaulted operation.");
+                if(done)return MessengerCallResult{true,value,{}};
+                try{const auto alignment=access->alignment();
+                    if(!alignment)return pending("Struct alignment getter requires its live alignment word+34.");
+                    value=*alignment;done=true;return MessengerCallResult{true,value,{}};
+                }catch(...){fault=true;throw;}
+            };
+        }else operation->resume=[index=*known]{return MessengerCallResult{true,profiles[index].size,{}};};
+        return operation;};
 }
 IgbMetadataDefaultsFactory make_native_igb_metadata_string_default_factory(std::shared_ptr<IgbFieldValuesServices> services,IgbMetadataDefaultsFactory remaining){
     std::weak_ptr<IgbFieldValuesServices> weak=services;

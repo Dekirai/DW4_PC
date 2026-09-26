@@ -179,6 +179,11 @@ void igb_synchronize_field_storage(const IgbObjectInstance& object,std::uint32_t
         field.default_bytes_address=address;
     }
     const auto table=field.vtable_word.value_or(0);
+    if(table==0x80470e00) {
+        if(ready(0x34,4))field.struct_alignment=word(0x34);
+        if(ready(0x38,4))field.struct_constructor=word(0x38);
+        if(ready(0x3c,4))field.struct_destructor=word(0x3c);
+    }
     if(table==0x804758e4 && ready(0x34,4))field.method_function=word(0x34);
     const bool reference=table==0x8047693c || table==0x804762fc || table==0x80476630 || table==0x80476088;
     if(reference && ready(0x34,1))field.flag_34=byte(0x34);

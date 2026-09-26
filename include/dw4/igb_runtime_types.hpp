@@ -101,6 +101,12 @@ struct IgbDecodeRuntimeField {
     std::optional<std::uint32_t> word_38,word_44,word_48,word_4c;
     std::optional<std::weak_ptr<IgbDecodeRuntimeField>> element_field; // +3C.
     std::optional<std::uint8_t> flag_40,flag_41,flag_42;
+    // Struct descriptors have three independent full words, not reference
+    // flags or memory-field members. Guest function addresses are not host
+    // callables; absent words remain unknown until actually initialized.
+    std::optional<std::uint32_t> struct_alignment; // +34.
+    std::optional<std::uint32_t> struct_constructor; // +38.
+    std::optional<std::uint32_t> struct_destructor; // +3C.
     // Constructed descriptors can expose physical bytes during virtual tails.
     // This back-reference does not own the allocation that owns the field.
     std::optional<IgbFieldStorageBinding> physical_storage;

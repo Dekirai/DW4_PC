@@ -55,23 +55,25 @@ then constructs the two unsigned-integer descriptors and Boolean descriptor.
 Its fourth factory, **`8002450C` for `igStructMetaField`**, now runs registration,
 its physical probe and three local descriptor factories. Unsigned-short
 registration/prototype and inherited `_size` clone `80021EB4` now finish struct
-defaults and schema. Until struct prototype `800247E4` and its descriptor
-construction complete, the semaphore has six fields and flags
-`9`, has not been published as ready, and has not run its two setters or schema.
-Prepared descriptor factories in focused defaults tests do not establish cold
-completion of this dependency.
+defaults and schema. Struct prototype `800247E4` and its actual reflected
+descriptor now let the semaphore finish both count setters, the size-12
+specialization and its schema. The class is ready with seven fields and flags
+`7`; its post-schema `+40` callback is `8002612C`.
 
-The cold composition contains 26 published types, 91 descriptors, 99 default
-buffers, eleven prototypes and 93 enabled allocations. The thread-list runtime
+The cold composition contains 27 published types, 92 descriptors, 104 default
+buffers, twelve prototypes and 96 enabled allocations. The thread-list runtime
 instance is complete; its manager still owns the construction lease and its
-semaphore member remains zero. No runtime semaphore, startup manager singleton
+semaphore member remains zero. A distinct raw runtime semaphore allocation now
+has its common header and waits at object `+58`, its metadata getter. Remaining
+member bytes are unknown. No completed semaphore, startup manager singleton
 or main-thread instance has been supplied.
 
-Continue with the actual struct reflected prototype and dynamic descriptor
-operations, then finish this class and its runtime initializer.
+Continue with the runtime semaphore metadata getter and initializer, then the
+inline struct member operations and activation.
 Semaphore activation, wait/signal semantics and host scheduling remain separate
 work. This metadata implementation does not provide a host mutex or a playable
-game. See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
+game. See [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
+[IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
 [VALIDATION.md](VALIDATION.md).
 

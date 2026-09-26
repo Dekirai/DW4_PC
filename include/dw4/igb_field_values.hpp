@@ -22,6 +22,7 @@ struct IgbFieldValuesServices {
     IgbRuntimeFieldSlot signed_byte_prototype; //80561E20 /93E94.
     IgbRuntimeFieldSlot enumeration_prototype; //80561C34 /94008.
     IgbRuntimeFieldSlot unsigned_byte_prototype; //805614D4 /93A28; shared with DataList's23358 getter.
+    IgbRuntimeFieldSlot struct_prototype; //80561564 /93AAC; distinct from metadata80561560.
     // Exact arithmetic addresses identify pointers stored in default buffers.
     // Zero is null and needs no binding; nonzero is never a host pointer cast.
     std::vector<IgbFieldStringBinding> strings;
@@ -40,7 +41,9 @@ public:
     ~IgbFieldValueInvocation();
     IgbFieldValueInvocation(const IgbFieldValueInvocation&)=delete;
     IgbFieldValueInvocation& operator=(const IgbFieldValueInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldValuesServices> services={});
+    // Borrowed only during this resume; never retained by a child callback.
+    MessengerCallResult resume(std::shared_ptr<IgbFieldValuesServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

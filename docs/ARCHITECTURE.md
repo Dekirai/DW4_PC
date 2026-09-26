@@ -206,11 +206,14 @@ registration. Its distinct layout probe restores the named-object vtable after
 capturing the derived type word. Three local descriptors are constructed before
 struct-field factory `8002450C` runs its registration, probe and local field batch.
 Unsigned-short registration/prototype and inherited `_size` clone `80021EB4`
-now complete struct defaults and its schema. Struct prototype `800247E4`
-is the next reached dependency.
+now complete struct defaults and its schema. Struct prototype `800247E4` uses
+distinct physical alignment/constructor/destructor words and dynamic size
+operations. Its concrete descriptor completes semaphore schema registration;
+the real semaphore allocation now reaches its object `+58` metadata getter.
 Main-thread creation, manager
 list/semaphore virtuals and teardown remain required. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
+[IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
 [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and

@@ -61,7 +61,10 @@ public:
     ~IgbFieldBufferInvocation();
     IgbFieldBufferInvocation(const IgbFieldBufferInvocation&)=delete;
     IgbFieldBufferInvocation& operator=(const IgbFieldBufferInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={});
+    // Borrowed only during this resume; guards parent state after callbacks
+    // before this child can publish its size/default-buffer stores.
+    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

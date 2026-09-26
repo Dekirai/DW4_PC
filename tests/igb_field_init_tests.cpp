@@ -119,7 +119,7 @@ void object_virtuals() {
 }
 
 void string_and_byte_virtuals(){
-    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int,IgbMetaFieldKind::unsigned_short}){
+    for(const auto kind:{IgbMetaFieldKind::string,IgbMetaFieldKind::signed_byte,IgbMetaFieldKind::enumeration,IgbMetaFieldKind::pointer,IgbMetaFieldKind::unsigned_byte,IgbMetaFieldKind::unsigned_int,IgbMetaFieldKind::unsigned_short,IgbMetaFieldKind::structure}){
         Fixture f;const bool string=kind==IgbMetaFieldKind::string;
         f.call.kind=IgbObjectInitServiceKind::object_virtual;f.call.vtable_word=igb_meta_field_profile(kind).vtable;
         f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
@@ -164,9 +164,11 @@ void string_and_byte_virtuals(){
 
 void scalar_reflected_initialization(IgbMetaFieldKind kind){
     const auto table=igb_meta_field_profile(kind).vtable;
+    const auto native_bytes=igb_meta_field_profile(kind).bytes;
+    const auto payload_size=kind==IgbMetaFieldKind::structure?1u:4u;
     Fixture f;auto type=std::make_shared<IgbRuntimeMetaType>(),base=std::make_shared<IgbRuntimeMetaType>();
-    base->instance_count=0;f.call.object.storage->bytes->bytes.resize(0x44);f.call.object.storage->bytes->initialized.resize(0x44);
-    type->type_word=table;type->native_size=0x34;type->allocation_prefix=0x10;type->factory_redirect=0;
+    base->instance_count=0;f.call.object.storage->bytes->bytes.resize(native_bytes+0x10);f.call.object.storage->bytes->initialized.resize(native_bytes+0x10);
+    type->type_word=table;type->native_size=native_bytes;type->allocation_prefix=0x10;type->factory_redirect=0;
     type->class_flags=4;type->flag_1a=0;type->instance_count=0;type->instances=std::shared_ptr<IgbObjectInstanceList>{};
     type->fields=std::make_shared<IgbDecodeFieldRegistry>();type->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
     base->fields=std::make_shared<IgbDecodeFieldRegistry>();
@@ -177,9 +179,10 @@ void scalar_reflected_initialization(IgbMetaFieldKind kind){
         member->size=static_cast<std::uint16_t>(size);member->default_mode=0;
         auto bytes=std::make_shared<IgbScratchBuffer>();bytes->bytes.resize(size);bytes->initialized.assign(size,1);
         for(unsigned i=0;i<size;++i)bytes->bytes[i]=static_cast<std::uint8_t>(value>>(8*(size-i-1)));
-        member->default_bytes=IgbRuntimeFieldDefaultSource{bytes,0};type->fields->backing->push_back(member);++type->fields->count;
+        member->default_bytes=IgbRuntimeFieldDefaultSource{bytes,0};member->flag_34=0;type->fields->backing->push_back(member);++type->fields->count;
     };
-    add(0x80476e6c,8,4,0x12345678);add(0x80477054,0x14,2,4);add(0x80473f24,0x24,1,2);
+    add(0x80476e6c,8,4,0x12345678);add(0x80477054,0x14,2,payload_size);add(0x80473f24,0x24,1,2);
+    if(kind==IgbMetaFieldKind::structure){add(0x80475b60,0x34,4,1);add(0x80476630,0x38,4,0x80074a1c);add(0x80476630,0x3c,4,0x80074a5c);}
     f.services->registration=std::make_shared<IgbFieldTypeRegistrationServices>();
     auto fields=std::make_shared<IgbMetaFieldFactoryServices>();f.services->registration->meta_fields=fields;
     auto canonical=std::make_shared<IgbRegistrationMetaSlot>();
@@ -198,7 +201,7 @@ void scalar_reflected_initialization(IgbMetaFieldKind kind){
     }));
     auto pool=std::make_shared<ModelSceneData>();
     reflected->factory=[&](const IgbFileFactoryCall& c){
-        check(c.kind==IgbFileFactoryServiceKind::allocate && c.metadata==type && c.pool==pool && c.bytes==0x44,
+        check(c.kind==IgbFileFactoryServiceKind::allocate && c.metadata==type && c.pool==pool && c.bytes==native_bytes+0x10,
             "Scalar reflected factory changed its original allocation arguments.");
         auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++allocations;
             out->allocation_result=f.call.object.storage;return MessengerCallResult{true,0,{}};};return op;
@@ -211,10 +214,15 @@ void scalar_reflected_initialization(IgbMetaFieldKind kind){
     *canonical=type;
     check(run.resume(reflected).completed && allocations==1 && queries==1,"Scalar reflected initialization did not resume its retained allocation.");
     const auto result=run.result_instance();
+    if(kind==IgbMetaFieldKind::structure)check(result.field->struct_alignment==1 && result.field->struct_constructor==0x80074a1c &&
+        result.field->struct_destructor==0x80074a5c && !result.field->flag_34 && !result.field->word_38 && !result.field->element_field &&
+        igb_buffer_word(result.storage->bytes,result.offset+0x34)==1 && igb_buffer_word(result.storage->bytes,result.offset+0x38)==0x80074a1c &&
+        igb_buffer_word(result.storage->bytes,result.offset+0x3c)==0x80074a5c,
+        "Struct descriptor initialization did not copy local schema words through scalar/raw-reference defaults.");
     check(result.field==f.call.object.field && result.storage==f.call.object.storage && result.offset==0x10 &&
-        result.field->vtable_word==table && result.field->offset==0x12345678 && result.field->size==4 && result.field->default_mode==2,
+        result.field->vtable_word==table && result.field->offset==0x12345678 && result.field->size==payload_size && result.field->default_mode==2,
         "Scalar inherited descriptor defaults lost physical or canonical publication.");
-    check(igb_buffer_word(result.storage->bytes,0x18)==0x12345678 && result.storage->bytes->bytes[0x25]==4 &&
+    check(igb_buffer_word(result.storage->bytes,0x18)==0x12345678 && result.storage->bytes->bytes[0x25]==payload_size &&
         result.storage->bytes->bytes[0x34]==2 && result.storage->bytes->initialized[0x26]==0 &&
         result.storage->bytes->initialized[0xf]==0 && type->instance_count==1 && base->instance_count==0,
         "Scalar initializer changed padding, prefix, field bytes or final canonical instance count.");
@@ -225,6 +233,6 @@ void scalar_reflected_initialization(IgbMetaFieldKind kind){
 }
 }
 int main(){try{reference_clear();gates_and_null_defaults();object_virtuals();string_and_byte_virtuals();scalar_reflected_initialization(IgbMetaFieldKind::unsigned_int);
-    scalar_reflected_initialization(IgbMetaFieldKind::unsigned_short);
+    scalar_reflected_initialization(IgbMetaFieldKind::unsigned_short);scalar_reflected_initialization(IgbMetaFieldKind::structure);
     std::cout<<"igb_field_init_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

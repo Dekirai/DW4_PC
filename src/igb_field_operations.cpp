@@ -112,10 +112,11 @@ IgbFieldBufferInvocation::~IgbFieldBufferInvocation(){auto& s=*impl_;if(!complet
 }}
 bool IgbFieldBufferInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldBufferInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services){
+MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field buffer requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field buffer continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field buffer continuation was invalidated.");if(enclosing_check)enclosing_check();};
     const auto clear=[&]{s.call.clear();check();};
     const auto select=[&](K kind,P after)->IgbFieldOperationCall&{clear();s.call.request.kind=kind;s.call.request.field=s.field;s.phase=P::call;s.after=after;return s.call.request;};
     const auto capture=[&]{if(!s.field->default_bytes)return false;s.buffer=*s.field->default_bytes;s.address=s.field->default_bytes_address;return true;};

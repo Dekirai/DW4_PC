@@ -1,5 +1,77 @@
 # Local validation
 
+## Struct descriptor runtime reaches concrete semaphore initialization
+
+Validated locally on 2026-09-26. The retained cold startup now executes struct
+prototype callback `800247E4`, its reflected descriptor initialization, dynamic
+size/alignment operations and actual default-buffer finalization. Semaphore
+defaults construct a separate `_sema` descriptor with size twelve, complete
+the seven-field schema and publish concrete semaphore metadata with flags `7`.
+
+The composition reaches **27 published types, 92 descriptors, 104 default
+buffers, 12 prototypes and 96 enabled allocations**. Struct metadata has two
+instances: its one-byte prototype and the independently allocated twelve-byte
+`_sema` descriptor. That descriptor originally has a null default pointer; the
+cold path does not resize the prototype. Focused tests cover actual one-to-
+twelve-byte growth, free-before-allocation ordering and source copying.
+
+The next missing operation is **concrete semaphore object `+58` (`80093530`)**.
+Its raw runtime allocation has a distinct native semaphore identity and an
+initialized common header, with its remaining bytes still unknown. The
+semaphore instance count is zero, the manager still owns its construction
+lease, manager `+0C` is zero and the startup singleton remains unpublished.
+Inline struct members and OS semaphore initialization are separate work.
+
+Focused checks cover independent optional alignment/constructor/destructor
+words, exact two-byte size reads with unknown adjacent padding, fresh full-word
+alignment reads, retained physical identity, late prototype changes and stable
+completed operations. Nested buffer callbacks now receive a borrowed parent
+guard: swallowed recursive failure, binding changes and released or missing
+physical byte owners permanently stop publication/copy at the failure prefix.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 205/205 local CTest suites passed with four build jobs |
+| Integrated cold startup | 3,152 checks, including actual struct prototype and separate descriptor construction, completed semaphore schema and stable runtime getter boundary |
+| Struct runtime | 165 checks; exact physical reads, unknown words, independent payloads, resize/copy ordering and callback invalidation |
+| Initializer / prototype | 175 /289 checks, retaining exact admitted leaves and actual canonical prototype ownership |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames retain their existing scope |
+| Python verifier | Six tests passed |
+
+The first full test run exposed an older semaphore fixture whose explicitly
+prepared struct endpoints were intercepted by the newly implemented adapter.
+Its prepared selector now precedes the native fallback; no assertions or
+production behavior were changed for that repair. The final complete run passes.
+
+The original corpus was sealed before native observation: **80 cases, 6,027
+executed DOL instructions and 266 instruction addresses**. The native subset
+fixed before execution matches **76/76 cases on its first run**: 60 completed
+calls, ten prepared endpoint faults, four null-read prefixes, one null-write
+prefix and one bounded reserve prefix. No pending results or unexpected faults
+were observed. Four unavailable-byte cases remain original-only.
+
+The null cases compare state before the original invalid access with native
+representation guards, not host hardware exceptions. The full-registry case
+stops at original `800682A4` and the native object-pool service; it does not
+claim reserve completion. Allocation helper interiors are explicitly excluded
+by the predeclared caller projection. The corpus executes actual prototype,
+finalizer, dynamic descriptor and value/buffer callers; it does not establish
+inline struct member execution or whole startup.
+
+All 80 original and 76 native reruns, 15 original hashes and 15 native artifact
+hashes verify. No original expectations or first native results were changed.
+Original manifest SHA256:
+`a9361a4f337e78aaa3e1651df099f098951ec7025139ecf4a67d1ec70a732e07`.
+Native manifest SHA256:
+`28ac0d205e789eba0b85d84f28cc64501d115da4e075b917bbe1c19df943b91d`.
+The verified Release core SHA256 is
+`77a58724e3cb5426bb551fa90fd96bf83bb6d18e07f11b09b5bf5587bba041da`.
+
+See [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md). Local artifacts
+use the ignored `work/native-struct-runtime-` prefix. This remains incomplete
+native startup and does not provide a playable-game build.
+
 ## Unsigned-short clone completes struct defaults
 
 Validated locally on 2026-09-26. The retained cold startup executes actual

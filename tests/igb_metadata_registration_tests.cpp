@@ -322,11 +322,12 @@ void actual_cold_bootstrap_prefix(){
     // Retained callback selection still consults the same dynamic binding
     // registry when a reached function body becomes available later.
     IgbRegistrationCallbacksFactory additional_callbacks;
-    bool unsigned_byte_registration_ready{},unsigned_int_registration_ready{};
+    bool unsigned_byte_registration_ready{},unsigned_int_registration_ready{},struct_prototype_ready{};
     const auto original_function_bindings=f.services->callbacks->factory;
     f.services->callbacks->factory=[&,original_function_bindings](const IgbRegistrationCallbacksCall& c){
         if(additional_callbacks && (c.function!=0x80023234 || unsigned_byte_registration_ready) &&
-            (c.function!=0x80022cd8 || unsigned_int_registration_ready)){
+            (c.function!=0x80022cd8 || unsigned_int_registration_ready) &&
+            (c.function!=0x800247e4 || struct_prototype_ready)){
             auto result=additional_callbacks(c);if(result)return result;}
         return original_function_bindings?original_function_bindings(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};
     };
@@ -2856,6 +2857,151 @@ void actual_cold_bootstrap_prefix(){
         thread_list_metadata->instance_count==1 && concrete_manager->instance_count==0 &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending struct prototype replayed the completed unsigned-short class/clone or changed runtime startup.");
+
+    // Construct the real struct descriptor prototype from its inherited and
+    // local defaults. Do not supply ready size/alignment/function words.
+    values->struct_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> struct_prototype_allocations,struct_instance_allocations;
+    const auto before_struct_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_struct_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=structure_type)return before_struct_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x40,
+                "Struct reflected allocation changed its actual pool, size or operation.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            raw.storage->bytes->initialized.assign(c.bytes,0);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(!*values->struct_prototype)struct_prototype_allocations.push_back(raw);
+            else{struct_instance_allocations.push_back(raw);descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    std::vector<IgbFieldOperationCall> struct_buffer_calls;
+    const auto before_struct_buffers=object_defaults->fields->factory;
+    object_defaults->fields->factory=[&,before_struct_buffers](const IgbFieldOperationCall& c){
+        const bool structure=c.field && c.field->vtable_word==0x80470e00;
+        if(!structure || (c.kind!=IgbFieldOperationKind::free_default &&
+            !(c.kind==IgbFieldOperationKind::allocate_default && c.bytes==12)))return before_struct_buffers(c);
+        struct_buffer_calls.push_back(c);auto operation=std::make_shared<IgbFieldOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.pool==f.pool,"Struct default-buffer allocation/free changed its selected pool.");
+            if(c.kind==IgbFieldOperationKind::free_default){
+                check(c.buffer.buffer && !c.buffer.buffer->released,"Struct default free lost its live allocation.");
+                c.buffer.buffer->released=true;
+            }else{
+                check(c.alignment==1,"Struct default-buffer allocation used layout alignment instead of the original byte request.");
+                ++default_allocations;auto bytes=std::make_shared<IgbScratchBuffer>();
+                // Same explicit initialized-zero allocator preparation as the
+                // existing arena fixture; not a claim that struct+84 clears it.
+                bytes->bytes.assign(c.bytes,0);bytes->initialized.assign(c.bytes,1);
+                out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;
+            }done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto before_runtime_semaphore_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_runtime_semaphore_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=concrete_semaphore)return before_runtime_semaphore_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x24,
+                "Runtime semaphore allocator changed its reflected size or selected pool.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            raw.storage->bytes->initialized.assign(c.bytes,0);
+            IgbObjectInstance instance;instance.storage=raw.storage;
+            instance.runtime_object=std::make_shared<IgbRuntimeObject>(IgbRuntimeObjectKind::semaphore);
+            instance.runtime_object->physical_storage=IgbRuntimeObjectStorageBinding{raw.storage,0};
+            IgbObjectBinding binding;binding.runtime_object=instance.runtime_object;raw.storage->bindings.push_back(binding);
+            enabled_allocations.push_back(instance);runtime_allocations.push_back(instance);
+            igb_bind_object_field_instance(member_construct,instance);reflected_allocations.push_back(c);
+            out->allocation_result=raw.storage;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    struct_prototype_ready=true;
+    const auto after_struct_prototype=call.resume(bootstrap);
+    std::cout<<"Cold native struct prototype continuation: "<<after_struct_prototype.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", struct prototypes="<<struct_prototype_allocations.size()<<
+        ", struct instances="<<struct_instance_allocations.size()<<", runtime allocations="<<runtime_allocations.size()<<'\n';
+    check(!after_struct_prototype.completed && !call.faulted(),"Struct prototype fabricated complete native startup.");
+    if(!reflected_init_calls.empty()){const auto& reached=reflected_init_calls.back();
+        std::cout<<"After struct prototype reached init: kind="<<static_cast<unsigned>(reached.kind)<<", slot="<<reached.virtual_slot<<
+            ", table="<<reached.vtable_word<<'\n';}
+    check(after_struct_prototype.diagnostic=="Object initialization reached an unbound virtual, allocator or instance-list operation." &&
+        f.core->types->count==27 && descriptors.size()==92 && default_allocations==104 && enabled_allocations.size()==96 &&
+        (**prototypes->registry)->count==12 && struct_prototype_allocations.size()==1 && struct_instance_allocations.size()==1 &&
+        runtime_allocations.size()==3 && structure_type->instance_count==2 && concrete_semaphore->instance_count==0 &&
+        concrete_semaphore->class_flags==7 && f.core->types->backing->at(26)==concrete_semaphore,
+        "Struct prototype and concrete descriptor did not complete the semaphore schema before runtime initialization.");
+    const auto struct_prototype=*values->struct_prototype;
+    const auto semaphore_struct=structure_type->instance_count?concrete_semaphore->fields->backing->at(6):nullptr;
+    check(struct_prototype && struct_prototype->vtable_word==0x80470e00 && struct_prototype->reference_word==1 &&
+        struct_prototype->ordinal==11 && struct_prototype->type_ordinal==11 && struct_prototype->size==1 &&
+        struct_prototype->struct_alignment==1 && struct_prototype->struct_constructor==0 && struct_prototype->struct_destructor==0 &&
+        (**prototypes->registry)->backing->at(11)==struct_prototype &&
+        igb_field_prototype_slot(prototypes,IgbFieldTypeKind::structure).get()==&values->struct_prototype &&
+        igb_bootstrap_read_word(struct_prototype_allocations.front(),0x10)==0x000b000b,
+        "Struct prototype bypassed its schema-derived words, canonical cell, ownership or final ordinals.");
+    check(semaphore_struct && semaphore_struct==descriptors.back() && semaphore_struct!=struct_prototype &&
+        semaphore_struct->vtable_word==0x80470e00 && semaphore_struct->size==12 && semaphore_struct->offset==0x18 &&
+        semaphore_struct->struct_alignment==1 && semaphore_struct->struct_constructor==0 && semaphore_struct->struct_destructor==0 &&
+        semaphore_struct->type_ordinal==11 && semaphore_struct->ordinal==6 && semaphore_struct->reference_word==1 &&
+        semaphore_struct->default_bytes && struct_prototype->default_bytes &&
+        semaphore_struct->default_bytes->buffer!=struct_prototype->default_bytes->buffer &&
+        semaphore_struct->default_bytes->buffer->bytes.size()==12 && struct_prototype->default_bytes->buffer->bytes.size()==1 &&
+        struct_buffer_calls.size()==1 && struct_buffer_calls.front().kind==IgbFieldOperationKind::allocate_default &&
+        struct_buffer_calls.front().field==semaphore_struct && struct_buffer_calls.front().bytes==12,
+        "Semaphore struct descriptor lost its live size specialization or independently allocated twelve-byte default.");
+    for(const auto& pointer:{struct_prototype_allocations.front(),struct_instance_allocations.front()}){
+        const auto field=igb_bootstrap_field(pointer);
+        check(igb_bootstrap_read_word(pointer,0x34)==1 && igb_bootstrap_read_word(pointer,0x38)==0 &&
+            igb_bootstrap_read_word(pointer,0x3c)==0 && !field->flag_34 && !field->flag_35 && !field->method_function &&
+            !field->word_38 && !field->element_field && !field->object_type && !field->flag_3c,
+            "Struct physical defaults were missing or aliased unrelated reference/memory descriptor members.");
+        check(!pointer.storage->bytes->initialized[0x16] && !pointer.storage->bytes->initialized[0x17] &&
+            pointer.storage->bytes->initialized[0x14] && pointer.storage->bytes->initialized[0x15],
+            "Struct size default or getter initialized/required the untouched halfword padding.");
+    }
+    check(concrete_semaphore->fields->count==7 && concrete_semaphore->native_size==0x24 && concrete_semaphore->native_alignment==4 &&
+        concrete_semaphore->word_40==0x8002612c && concrete_semaphore->factory_redirect==0,
+        "Concrete semaphore layout or post-schema callback differs from its original completed metadata.");
+    for(unsigned i=0;i<4;++i){const auto field=concrete_semaphore->fields->backing->at(3+i);
+        check(*platform_semaphore->globals->at(i)->slot==field && field->name && *field->name==**platform_semaphore->names->at(i) &&
+            field->offset==*platform_semaphore->offsets->at(i) && field->global_slot_address==platform_semaphore->globals->at(i)->address &&
+            field->declaring_type && field->declaring_type->lock()==concrete_semaphore,
+            "Concrete semaphore schema failed to publish the original four local fields.");
+        if(i<2)check(igb_buffer_word(field->default_bytes->buffer,field->default_bytes->offset)==1,
+            "Semaphore count setter did not publish its actual four-byte default one.");
+    }
+    const auto semaphore_instance=runtime_allocations.back();
+    const IgbBootstrapPointer semaphore_storage{semaphore_instance.storage,semaphore_instance.offset};
+    check(semaphore_instance.runtime_object && semaphore_instance.runtime_object->kind==IgbRuntimeObjectKind::semaphore &&
+        !semaphore_instance.runtime_object->construction_active_.expired() &&
+        reflected_init_calls.back().kind==IgbObjectInitServiceKind::object_virtual &&
+        reflected_init_calls.back().object.runtime_object==semaphore_instance.runtime_object &&
+        reflected_init_calls.back().vtable_word==0x80470314 && reflected_init_calls.back().virtual_slot==0x58 &&
+        igb_bootstrap_read_word(semaphore_storage,0)==0x80470314 && igb_bootstrap_read_word(semaphore_storage,4)==1 &&
+        !startup->manager && concrete_manager->instance_count==0 && igb_bootstrap_read_word(manager_storage,12)==0,
+        "Runtime semaphore was replaced by a field descriptor or bypassed its first original metadata getter.");
+    for(unsigned at=8;at<0x24;++at)check(!semaphore_storage.storage->bytes->initialized[at],
+        "Pending semaphore metadata getter fabricated runtime defaults or OS initialization bytes.");
+    const auto struct_allocations=enabled_allocations.size(),struct_reflections=reflected_allocations.size();
+    const auto struct_names=string_allocations;const auto struct_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_struct_prototype.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==struct_allocations && reflected_allocations.size()==struct_reflections &&
+        string_allocations==struct_names && freed_callback_lists.size()==struct_frees && default_allocations==104 &&
+        descriptors.size()==92 && f.core->types->count==27 && (**prototypes->registry)->count==12 &&
+        runtime_allocations.size()==3 && struct_prototype_allocations.size()==1 && struct_instance_allocations.size()==1 &&
+        structure_type->instance_count==2 && concrete_semaphore->instance_count==0 && !startup->manager && !**meta_enum->metadata &&
+        thread_list_metadata->instance_count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending runtime semaphore getter replayed struct prototypes, semaphore schema or prior startup effects.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

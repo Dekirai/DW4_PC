@@ -62,7 +62,13 @@ struct Fixture {
         // The four field constructors and struct field virtuals are prepared
         // endpoints. Batch append, unsigned setters and schema execute natively.
         // This fixture is not evidence of a cold igStructMetaField implementation.
-        const auto field_factory=make_native_igb_field_values_factory(values,[this](const IgbFieldOperationCall& call){
+        const auto native_field_factory=make_native_igb_field_values_factory(values,[this](const IgbFieldOperationCall& call){
+            auto op=std::make_shared<IgbFieldOperation>();op->resume=[this,call,out=op.get()]{std::uint32_t result{};
+                if(call.kind==FK::object_pool || call.kind==FK::allocation_pool)out->pool_result=pool;
+                else if(call.kind==FK::allocation_size)result=16;
+                else{check(call.kind==FK::allocate_default,"Unexpected prepared field buffer operation.");++buffer_allocations;out->buffer_result={bytes(call.bytes),0};out->buffer_address=0xa00000+buffer_allocations*0x100;}
+                return MessengerCallResult{true,result,{}};};return op;});
+        const auto field_factory=[this,native_field_factory](const IgbFieldOperationCall& call){
             if(call.kind==FK::field_virtual && call.vtable_word==0x80470e00){++struct_virtuals;
                 auto op=std::make_shared<IgbFieldOperation>();
                 if(call.virtual_slot==0x5c)op->resume=[]{return MessengerCallResult{true,0,{}};};
@@ -70,11 +76,7 @@ struct Fixture {
                 else{check(call.virtual_slot==0x8c && !call.source,"Unexpected prepared struct virtual.");
                     auto invocation=std::make_shared<IgbFieldBufferInvocation>(call.field);op->resume=[this,invocation]{return invocation->resume(services->schema->fields);};}return op;
             }
-            auto op=std::make_shared<IgbFieldOperation>();op->resume=[this,call,out=op.get()]{std::uint32_t result{};
-                if(call.kind==FK::object_pool || call.kind==FK::allocation_pool)out->pool_result=pool;
-                else if(call.kind==FK::allocation_size)result=16;
-                else{check(call.kind==FK::allocate_default,"Unexpected prepared field buffer operation.");++buffer_allocations;out->buffer_result={bytes(call.bytes),0};out->buffer_address=0xa00000+buffer_allocations*0x100;}
-                return MessengerCallResult{true,result,{}};};return op;});
+            return native_field_factory(call);};
         schema.fields->factory=[this,field_factory](const IgbFieldOperationCall& call){const auto selected=field_factory(call);
             if(call.kind!=FK::field_virtual || call.virtual_slot!=0x8c || !call.source)return selected;
             setters.push_back(call);auto op=std::make_shared<IgbFieldOperation>();op->resume=[this,selected,done=false]()mutable{

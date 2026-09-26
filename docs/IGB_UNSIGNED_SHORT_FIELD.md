@@ -50,18 +50,13 @@ two-byte value `1`, replaces the inherited slot, and finishes all three struct
 local schema fields. The base class keeps its original size descriptor/global
 and default buffer. The struct alignment field receives a four-byte value `1`.
 
-The next missing operation is **struct prototype callback `800247E4`**.
-Unsigned-short and struct metadata are ready; struct has no constructed
-descriptor instance yet. The concrete semaphore still waits inside its fourth
-field factory. The manager's semaphore pointer and startup singleton remain
-uninitialized.
-
-The composed test reaches 26 published types, 91 descriptors, 99 default
-buffers, 11 prototypes and 93 enabled allocations. Raw storage/pool services
-remain explicit test preparation. These results do not establish a complete
-native boot or playable gameplay. Continue with the distinct struct descriptor
-words, dynamic size/alignment and prototype, then the inline semaphore member
-and runtime initialization.
+At the unsigned-short milestone this reached struct prototype callback
+`800247E4`, with 26 published types and eleven prototypes. Subsequent struct
+descriptor work now completes that callback and the concrete semaphore schema;
+see [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md). The runtime
+semaphore's metadata getter and member initialization remain required.
+Raw storage/pool services remain explicit test preparation. These results do
+not establish complete native boot or playable gameplay.
 
 See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and

@@ -59,18 +59,18 @@ independent two-byte default becomes `1`, its specialized global is published,
 and all three local schema fields complete. The base `_size` descriptor/global
 remain unchanged, as do the other 19 inherited descriptor identities.
 
-Struct metadata now has flags `7`, 23 fields and zero instances. Its deferred
-**prototype callback `800247E4`** is the next missing operation. The outer
-concrete semaphore still has six fields and remains unfinished. There are
-26 published types, 91 descriptors, 99 default buffers, eleven prototypes and
-93 enabled allocations. The thread list remains the only completed runtime
+Struct metadata has flags `7` and 23 fields. Prototype callback `800247E4`
+and its concrete descriptor construction now finish, producing two struct
+descriptor instances and completing the semaphore's seven-field schema.
+The next missing operation is the runtime semaphore's **object `+58` metadata
+getter**. There are 27 published types, 92 descriptors, 104 default buffers,
+twelve prototypes and 96 enabled allocations. The thread list remains the only completed runtime
 instance in this nested construction.
 
-Continue with the reached struct prototype and
-runtime descriptor defaults before claiming the semaphore's field batch is
-complete. Dynamic struct size/alignment, constructor/destructor function words
-and their member handlers require distinct native support; they must not be
-treated as overlapping reference fields or unconditional scalar no-ops.
+Dynamic descriptor size/alignment and distinct constructor/destructor words
+are implemented through [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md).
+Continue with semaphore runtime initialization and inline struct member handlers.
+The latter must not be treated as unconditional scalar no-ops.
 See [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and [VALIDATION.md](VALIDATION.md).
