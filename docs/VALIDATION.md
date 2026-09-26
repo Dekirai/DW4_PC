@@ -1,5 +1,94 @@
 # Local validation
 
+## Context classes and lazy dependencies reach context-info registration
+
+Validated locally on 2026-09-26 and 2026-09-27. Original wrapper `800374E8` now registers
+abstract `igContextExt` and its `igContext` parent. Actual `8003782C` defaults
+append the three original descriptors, lazily allocate the separate info-list
+and extension-list metadata, configure captured/freshly selected fields in
+order, and run the original schema. Unknown dependency cells first suspend
+independently; only explicit known-null inputs permit their native constructors.
+
+The retained cold invocation then registers `igContextExtInfoList` and reaches
+its extra callback `80037330`. Its already allocated `igContextExtList`
+dependency remains unregistered at flags zero. The result has **34 types,
+105 descriptors, 117 default buffers, 12 prototypes, 131 enabled allocations
+and six runtime objects**. The context classes retain the inherited base
+type word `804717F0`, share the correct parent descriptors and have no runtime
+instances. Their first object descriptor preserves its construct flag; only
+the third receives one. Physical dependency pointers match the actual lazy
+allocations. Repeated resumes do not replay callbacks, allocation, field
+initialization, singleton creation or completed thread startup.
+
+| Check | Evidence |
+| --- | --- |
+| Initial and final Release CoreOnly builds | 215/215 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,286 checks; unknown dependencies, real allocation/registration, inherited layout, physical customization and exact `80037330` boundary |
+| Context focused suite | 353 checks; both abstract profiles, concrete list profiles/probes, actual defaults/schema, captured ownership and nested fault prefixes |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+Pre-build review found a concrete nested-guard gap. Batch/schema/configure/name
+and raw append now borrow the enclosing check through existing finalization,
+buffer allocation and pointer-list growth. A caught recursive outer call cannot
+permit later append, creator release, clearing or publication. The selected
+checked/legacy callback remains stable across suspension, and an unconsumed
+constructor result remains retained. Separate lower legacy APIs retain their
+documented scope limits.
+
+The initial build and 246 focused checks passed. Subsequent review found that
+field configuration retained storage/address but not the selected byte owner.
+It now captures that owner and rejects replacement before later stores, while
+retaining existing unknown-byte and same-owner released-buffer access order.
+The added focused tests pass. Root's stricter cold test initially assumed an
+abstract type word of zero; original `80065690 / 80065694` instead copy the
+parent word, which the skipped derived probe preserves. The test now requires
+that exact inherited word. The failed log is retained; no production behavior
+changed to satisfy this incorrect expectation. Final core SHA256:
+`b88f2ff1c41786cdf48e308f2d64a1343b2d22e989e5601b3c48a03e4119d5d8`.
+
+Independent original capture contains 364 cases, 66,888 instructions and 708
+visited addresses, including 38 completed composed-defaults cases. Its
+15-artifact seal is
+`0be0c6c9723a059b1dfadcb3304a6b6bf74f175e1b9099e0c47ebf8e92d090a3`.
+A separately sealed six-artifact review corrects an overstrict original verifier:
+replacing the field list with one whose count equals the captured first index
+legitimately gives zero schema iterations. All raw observations and the failed
+verifier remain preserved. All 364 cases replay exactly; the review seal is
+`af60de81f197205d93f1ab7ad3cbb212230c9f78bb76d738f63ae1d8226e00bc`.
+This correction preceded native inspection.
+
+The first native execution matches all 286 selected projected observations;
+an exact stdout/stderr replay also passes. These comprise 207 completions,
+45 prepared failures, eight null-read, six unknown-physical-read and 20 bounded
+guards. The 22-artifact native seal is
+`9f47fd7d8d2ed31640f6459bbf41cfb83e4ab28d59b2e07a709ccc779772067e`.
+Before native execution, one missing numeric `list=0` input column was corrected;
+the earlier scope/input files remain retained. Selected cases, projection and
+exclusions did not change. The final scope SHA256 is
+`650979c830f9ea6d4bcc99f4427478a13c99d3a9cdd5898e8bd17b9456e58639`.
+There were no post-execution fixture or production repairs.
+
+The 78 original-only cases cover eight generic registrar bodies, 17 unknown
+canonical cells, 22 null-lazy allocators, eight out-of-profile probes, two inline
+mutations, two reserve boundaries, one table-overrun count mutation, ten defaults
+that allocate dependency metadata, three unavailable physical reference headers
+and five sparse instruction denials. A separate data audit matches 91 numeric
+profile/ABI/table values, eight profile names, nine schema values and three field
+names. This does not establish generic registrar execution. Descriptor factories,
+interning, pool allocation/capacity, virtual calls and destructors retain their
+explicit prepared-service boundaries.
+
+Field reference/name comparison uses their existing canonical owner values.
+Batch references and names do not synchronize every optional physical byte at
+descriptor `+04 / +0C`; no whole-descriptor byte-equivalence claim is made.
+The new dependency pointers/construct byte and represented schema/default
+stores are compared physically. Remaining raw bindings, original BSS/OS/pool
+production and complete startup remain required. See
+[IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md).
+Local artifacts use `work/native-context-family-`.
+
 ## Error-handler startup reaches native context registration
 
 Validated locally on 2026-09-26. Actual `80031250 / 80031278` now registers

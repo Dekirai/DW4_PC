@@ -70,7 +70,7 @@ See [VALIDATION.md](VALIDATION.md) and
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md). Registration and this
 singleton alone do not establish full startup or playable gameplay.
 
-The retained cold composition currently reaches context-extension wrapper
+At this milestone, the retained cold composition reaches context-extension wrapper
 `800374E8` with 31 types, 102 descriptors, 114 default buffers, 12 prototypes,
 119 enabled allocations and six runtime objects. The error handler inherits
 the actual two base descriptors and owns one initialized eight-byte instance.

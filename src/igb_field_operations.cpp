@@ -71,10 +71,13 @@ IgbFieldNameInvocation::~IgbFieldNameInvocation(){auto& s=*impl_;if(!completed()
     keep(s.incoming);keep(s.old);}}
 bool IgbFieldNameInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldNameInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldNameInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services){
+MessengerCallResult IgbFieldNameInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field naming requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field name continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field name continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field name was invalidated by its enclosing callback.");};
     try{for(;;){check();switch(s.phase){
     case P::source:
         if(!s.source)fail("Field naming reads a null source pointer cell.");if(!s.source->has_value())return pending("Field naming requires the captured source pointer cell.");
@@ -213,6 +216,7 @@ struct IgbFieldAppendInvocation::Impl {
     std::shared_ptr<IgbRuntimeMetaType> metadata;std::shared_ptr<IgbDecodeRuntimeField> field;std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbFieldOperationsServices> owner;std::unique_ptr<IgbFieldFinalizeInvocation> finalize;
     std::shared_ptr<IgbMetadataOperation> append;std::function<MessengerCallResult()> callback;
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
     unsigned phase{};bool running{},fault{};
 };
 IgbFieldAppendInvocation::IgbFieldAppendInvocation(std::shared_ptr<IgbRuntimeMetaType> metadata,std::shared_ptr<IgbDecodeRuntimeField> field):impl_(std::make_unique<Impl>()){
@@ -221,12 +225,15 @@ IgbFieldAppendInvocation::IgbFieldAppendInvocation(std::shared_ptr<IgbRuntimeMet
 IgbFieldAppendInvocation::~IgbFieldAppendInvocation(){auto& s=*impl_;if(!completed() && s.owner && s.field)s.owner->unfinished.push_back(s.field);}
 bool IgbFieldAppendInvocation::completed()const noexcept{return impl_->phase==3;}
 bool IgbFieldAppendInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldAppendInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services){
+MessengerCallResult IgbFieldAppendInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;if(s.running || s.fault){s.fault=true;fail("Field append requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field append continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field append continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field append was invalidated by its enclosing callback.");};
     try{for(;;){check();switch(s.phase){
-    case 0:{const auto status=s.finalize->resume(services);check();if(!status.completed)return status;s.finalize.reset();check();s.phase=1;break;}
+    case 0:{const auto status=s.finalize->resume(services,check);check();if(!status.completed)return status;s.finalize.reset();check();s.phase=1;break;}
     case 1:
         if(!s.metadata)fail("Finalized field append dereferences null metadata.");s.fields=s.metadata->fields;
         if(s.field)++s.field->reference_word;s.phase=2;break;
@@ -234,10 +241,10 @@ MessengerCallResult IgbFieldAppendInvocation::resume(std::shared_ptr<IgbFieldOpe
         if(!s.append){if(!services || !services->pointer_lists)return pending("Finalized field append requires native pointer-list services.");
             IgbMetadataOperationCall request;request.kind=IgbMetadataOperationKind::append_field;request.fields=s.fields;request.field=s.field;
             s.append=make_native_igb_pointer_list_metadata_factory(services->pointer_lists)(request);check();}
-        if(!s.callback)s.callback=s.append->resume;
-        if(!s.callback)return pending("Finalized field append requires its retained raw append continuation.");
-        {const auto status=s.callback();check();if(!status.completed)return status;}
-        s.callback={};s.append.reset();check();s.phase=3;break;
+        if(!s.callback && !s.checked_callback){s.checked_callback=s.append->resume_checked;if(!s.checked_callback)s.callback=s.append->resume;}
+        if(!s.callback && !s.checked_callback)return pending("Finalized field append requires its retained raw append continuation.");
+        {const auto status=s.checked_callback?s.checked_callback(check):s.callback();check();if(!status.completed)return status;}
+        s.callback={};s.checked_callback={};s.append.reset();check();s.phase=3;break;
     default:return {true,0,{}};
     }}}catch(...){s.fault=true;throw;}
 }

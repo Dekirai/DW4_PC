@@ -329,12 +329,15 @@ The prerequisite runner now completes `800240CC`, the separate reference-counted
 inherited descriptor cloning. Their cells stay separate from the nonref lists,
 and original `2910C` preserves the cloned ownership flag. Native error-handler
 registration now appends deferred teardown and separately creates its singleton
-through the original reflected initializer. The cold test reaches context
-wrapper `800374E8`, retaining all earlier class and runtime ownership.
-Continue through this context family while replacing prepared OS/pool inputs and
+through the original reflected initializer. Context wrapper `800374E8` now
+registers both abstract classes and their first concrete list, retaining all
+earlier class and runtime ownership. Its three-field defaults use actual lazy
+metadata allocation for the two separate dependency cells.
+Continue at context-info `80037330` while replacing prepared OS/pool inputs and
 implementing rescheduling/sleep.
 A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md) and
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md) and
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md) and
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md) and

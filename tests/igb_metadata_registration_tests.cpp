@@ -6,6 +6,7 @@
 #include "dw4/igb_data_list_growth.hpp"
 #include "dw4/igb_os_thread_wake.hpp"
 #include "dw4/igb_error_handler_registration.hpp"
+#include "dw4/igb_context_registration.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -48,6 +49,7 @@
 #include "dw4/igb_memory_member_defaults.hpp"
 
 #include <algorithm>
+#include <array>
 #include <iostream>
 
 namespace {
@@ -3864,6 +3866,119 @@ void actual_cold_bootstrap_prefix(){
         error_handler->state->singleton->storage==error_storage.storage &&
         igb_bootstrap_read_word(error_storage,4)==1 && error_handler->state->teardown_guard==0 && wake_interrupt_calls.size()==3,
         "Pending context registration replayed error-handler construction, member defaults or callback cleanup.");
+
+    auto context_registration=std::make_shared<IgbContextRegistrationServices>();
+    context_registration->lists=data_registration;context_registration->types=f.services->types;
+    context_registration->callbacks=f.services->callbacks;context_registration->schema=metadata_defaults->schema;
+    additional_callbacks=make_native_igb_context_registration_function_factory(context_registration,additional_callbacks);
+    f.remaining=make_native_igb_context_registration_type_factory(context_registration,f.remaining);
+    const auto missing_context_cell=call.resume(bootstrap);
+    check(!missing_context_cell.completed && !call.faulted() &&
+        missing_context_cell.diagnostic=="Context registration requires its canonical metadata cell after prerequisites." &&
+        enabled_allocations.size()==119 && error_type->instance_count==1 && error_bootstrap_list->count==2,
+        "Context registration fabricated a canonical cell or replayed earlier singleton startup.");
+    context_registration->context_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    context_registration->extension_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    data_registration->context_info_metadata=std::make_shared<IgbRegistrationMetaSlot>();
+    data_registration->context_extension_metadata=std::make_shared<IgbRegistrationMetaSlot>();
+    std::vector<IgbDataListKind> context_list_probes;
+    std::vector<IgbBootstrapPointer> context_list_probe_locals;
+    data_registration->local_storage=[&](IgbDataListKind kind){
+        check(kind==IgbDataListKind::context_info || kind==IgbDataListKind::context_extension,
+            "Context dependencies replayed an earlier concrete list probe.");
+        auto raw=allocation(0xc72000+static_cast<std::uint32_t>(context_list_probe_locals.size())*0x100,0x14);
+        context_list_probes.push_back(kind);context_list_probe_locals.push_back(raw);return raw;
+    };
+    const auto context_missing_first_list=call.resume(bootstrap);
+    std::cout<<"Cold native context first dependency: "<<context_missing_first_list.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!context_missing_first_list.completed && !call.faulted() &&
+        context_missing_first_list.diagnostic=="Data-list lookup requires represented canonical metadata." &&
+        !*data_registration->context_info_metadata && !*data_registration->context_extension_metadata && context_list_probes.empty(),
+        "Context defaults bypassed unknown list metadata or fabricated ready dependency classes.");
+    const auto context_type=**context_registration->context_metadata;
+    check(context_type && context_type->fields && context_type->fields->count==5 && descriptors.size()==105 &&
+        enabled_allocations.size()==126 && f.core->types->count==31,
+        "Context defaults did not append all three original descriptors before lazy dependency allocation.");
+    const auto context_first=context_type->fields->backing->at(2),context_last=context_type->fields->backing->at(4);
+    const auto context_first_flag=context_first->flag_34;
+    const auto context_first_raw=descriptor_allocations[102];
+    const auto context_first_flag_byte=context_first_raw.storage->bytes->bytes[context_first_raw.offset+0x34];
+    const auto context_first_flag_known=context_first_raw.storage->bytes->initialized[context_first_raw.offset+0x34];
+    *data_registration->context_info_metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto context_missing_second_list=call.resume(bootstrap);
+    std::cout<<"Cold native context second dependency: "<<context_missing_second_list.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!context_missing_second_list.completed && !call.faulted() &&
+        context_missing_second_list.diagnostic=="Data-list lookup requires represented canonical metadata." &&
+        *data_registration->context_info_metadata && **data_registration->context_info_metadata &&
+        !*data_registration->context_extension_metadata && context_list_probes.empty(),
+        "Context defaults did not retain its first lazy allocation while reaching the separate second dependency.");
+    *data_registration->context_extension_metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto after_context_registration=call.resume(bootstrap);
+    std::cout<<"Cold native context registration: "<<after_context_registration.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", context probes="<<context_list_probes.size()<<'\n';
+    check(!after_context_registration.completed && !call.faulted(),"Context registration incorrectly completed full game startup.");
+    const auto context_extension_type=**context_registration->extension_metadata;
+    const auto context_info_list_type=**data_registration->context_info_metadata;
+    const auto context_extension_list_type=**data_registration->context_extension_metadata;
+    check(after_context_registration.diagnostic=="Registration requires original function 0x80037330." &&
+        f.core->types->count==34 && descriptors.size()==105 && default_allocations==117 && enabled_allocations.size()==131 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==12 &&
+        f.core->types->backing->at(31)==context_type && f.core->types->backing->at(32)==context_extension_type &&
+        f.core->types->backing->at(33)==context_info_list_type &&
+        context_type->class_flags==7 && context_extension_type->class_flags==7 && context_info_list_type->class_flags==7 &&
+        context_extension_list_type && context_extension_list_type!=context_info_list_type && context_extension_list_type->class_flags==0,
+        "Context registration changed class order or marked its unregistered extension-list allocation ready.");
+    check(context_type->parent==object_type && context_extension_type->parent==context_type &&
+        context_type->flag_1a==1 && context_extension_type->flag_1a==1 && context_type->native_size==20 &&
+        context_extension_type->native_size==20 && context_type->type_word==object_type->type_word &&
+        context_extension_type->type_word==context_type->type_word && context_type->type_word==0x804717f0 &&
+        context_type->instance_count==0 && context_extension_type->instance_count==0 &&
+        context_type->name && *context_type->name=="igContext" && context_extension_type->name &&
+        *context_extension_type->name=="igContextExt" && context_extension_type->fields->count==5,
+        "Abstract context registration fabricated a vtable/instance or lost its native parent/layout.");
+    for(std::uint32_t i=0;i<5;++i)
+        check(context_extension_type->fields->backing->at(i)==context_type->fields->backing->at(i),
+            "Context extension registration replaced its parent's inherited descriptor.");
+    const std::array<const char*,3> context_names{"_pExtList","_iNumExts","_pExtInstances"};
+    for(std::uint32_t i=0;i<3;++i){const auto field=context_type->fields->backing->at(2+i);
+        check(field==descriptors[102+i] && field->name && *field->name==context_names[i] &&
+            field->ordinal==2+i && field->offset==8+4*i && field->global_slot_address==0x80561e04+4*i &&
+            *context_registration->globals->at(i)->slot==field && field->declaring_type && field->declaring_type->lock()==context_type,
+            "Context schema lost its field order, names, globals, physical ordinals or declaring owner.");}
+    check(context_first->object_type && context_first->object_type->lock()==context_info_list_type &&
+        context_last->object_type && context_last->object_type->lock()==context_extension_list_type && context_last->flag_34==1 &&
+        context_first->flag_34==context_first_flag && context_first_raw.storage->bytes->bytes[context_first_raw.offset+0x34]==context_first_flag_byte &&
+        context_first_raw.storage->bytes->initialized[context_first_raw.offset+0x34]==context_first_flag_known,
+        "Context defaults swapped dependency cells or overwrote the first object's preserved construct flag.");
+    const auto info_allocation=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==context_info_list_type;});
+    const auto extension_list_allocation=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==context_extension_list_type;});
+    check(info_allocation!=enabled_allocations.end() && extension_list_allocation!=enabled_allocations.end() &&
+        igb_bootstrap_read_word(context_first_raw,0x38)==igb_bootstrap_address({info_allocation->storage,info_allocation->offset}) &&
+        igb_bootstrap_read_word(descriptor_allocations[104],0x38)==igb_bootstrap_address({extension_list_allocation->storage,extension_list_allocation->offset}) &&
+        igb_bootstrap_read_byte(descriptor_allocations[104],0x34)==1,
+        "Context defaults did not store the actual lazy metadata addresses and construct byte into physical descriptors.");
+    check(context_info_list_type->parent==ref_object_type && context_info_list_type->type_word==0x80474230 &&
+        context_info_list_type->fields->count==5 && context_info_list_type->fields->backing->at(4)==ref_data &&
+        context_list_probes==std::vector<IgbDataListKind>{IgbDataListKind::context_info} &&
+        igb_bootstrap_read_word(context_list_probe_locals.front(),0)==0x80474230 &&
+        context_type->children && (*context_type->children)->count==1 &&
+        (*context_type->children)->backing->front()==context_extension_type,
+        "Context list registration skipped its original extra callback or fabricated the later extension-list probe.");
+    const auto context_finished_names=string_allocations;const auto context_finished_callbacks=freed_callback_lists.size();
+    const auto context_finished_members=member_calls.size(),context_finished_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_context_registration.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==131 && f.core->types->count==34 && descriptors.size()==105 && default_allocations==117 &&
+        runtime_allocations.size()==6 && context_list_probes.size()==1 && string_allocations==context_finished_names &&
+        freed_callback_lists.size()==context_finished_callbacks && member_calls.size()==context_finished_members &&
+        reflected_allocations.size()==context_finished_reflections && error_handler->state->singleton->storage==error_storage.storage &&
+        error_type->instance_count==1 && error_handler->state->teardown_guard==0 &&
+        error_bootstrap_list->count==2 && !error_bootstrap_list->released && wake_interrupt_calls.size()==3,
+        "Pending context-info registration replayed completed contexts, lazy allocations, callbacks or prior startup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

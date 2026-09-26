@@ -223,11 +223,14 @@ registration and `igObjectList` parent now complete, preserving the inherited
 ownership flag and separate descriptor globals. Error-handler registration and
 its immediate reflected singleton now complete with explicitly prepared global
 and allocator inputs. Its teardown stays deferred in the existing bootstrap
-list. Continue at context-extension wrapper `800374E8`, alongside actual OS/pool initialization and native
+list. Context-extension wrapper `800374E8` now registers both abstract contexts,
+their original three-field defaults and the first concrete list dependency.
+Continue at its context-info callback `80037330`, alongside actual OS/pool initialization and native
 rescheduling/sleep. IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
+See [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
+[IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),

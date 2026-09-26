@@ -31,6 +31,8 @@ struct IgbMetadataOperation {
     std::function<MessengerCallResult()> resume;
     std::shared_ptr<ModelSceneObject> pool_result;
     std::shared_ptr<IgbRuntimeTypeList> children_result;
+    // Optional native continuation. Borrow, never retain, the enclosing guard.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbMetadataOperationsFactory=std::function<std::shared_ptr<IgbMetadataOperation>(const IgbMetadataOperationCall&)>;
 struct IgbMetadataOperationsServices {

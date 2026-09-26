@@ -255,7 +255,8 @@ IgbMetadataOperationsFactory make_native_igb_pointer_list_metadata_factory(std::
         if(!fields && call.kind!=IgbMetadataOperationKind::append_child)return remaining?remaining(call):std::shared_ptr<IgbMetadataOperation>{};
         const auto selected=weak.lock();if(!selected)fail("Pointer-list services expired before selection.");
         auto operation=std::make_shared<IgbMetadataOperation>();auto invocation=std::make_shared<std::shared_ptr<IgbPointerListInvocation>>();
-        operation->resume=[selected,call,fields,invocation]{
+        const auto run=[selected,call,fields,invocation](const std::function<void()>& check){
+            if(check)check();
             if(!*invocation){IgbPointerListValue value;bool found=fields?!call.field:!call.metadata;
                 for(const auto& candidate:selected->values)if((fields && call.field && candidate.field==call.field) || (!fields && call.metadata && candidate.metadata==call.metadata)){
                     if(found && (value.address!=candidate.address || value.metadata!=candidate.metadata || value.field!=candidate.field))fail("Pointer-list value has conflicting arithmetic identities.");
@@ -264,8 +265,9 @@ IgbMetadataOperationsFactory make_native_igb_pointer_list_metadata_factory(std::
                 if(!found)return pending("Pointer-list append requires the captured value's original arithmetic identity.");
                 *invocation=fields?std::make_shared<IgbPointerListInvocation>(call.fields,value):std::make_shared<IgbPointerListInvocation>(call.children,value);
             }
-            return (*invocation)->resume(selected);
-        };return operation;
+            return (*invocation)->resume(selected,check);
+        };
+        operation->resume_checked=run;operation->resume=[run]{return run({});};return operation;
     };
 }
 IgbArkCoreFactory make_native_igb_pointer_list_bootstrap_factory(std::shared_ptr<IgbPointerListServices> services,IgbArkCoreFactory remaining){

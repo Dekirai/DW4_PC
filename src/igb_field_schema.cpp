@@ -10,15 +10,20 @@ struct Running{bool& flag;explicit Running(bool& value):flag(value){flag=true;}~
 template<class Request,class Factory,class Operation>struct Call {
     Request request;Factory factory;std::shared_ptr<Operation> operation;
     std::function<MessengerCallResult()> callback;
-    void clear(){callback={};operation.reset();factory={};request={};}
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
+    void clear(){callback={};checked_callback={};operation.reset();factory={};request={};}
     template<class Check>MessengerCallResult poll(const Factory& fallback,Check check){
+        check();
         if(!factory)factory=fallback;
         if(!factory)return pending("Field schema requires its reached native operation.");
         if(!operation){operation=factory(request);check();}
         if(!operation)return pending("Field schema reached an unbound native operation.");
-        if(!callback)callback=operation->resume;
-        if(!callback)return pending("Field schema requires its retained operation continuation.");
-        const auto status=callback();check();return status;
+        if(!callback && !checked_callback){
+            if constexpr(requires{operation->resume_checked;})checked_callback=operation->resume_checked;
+            if(!checked_callback)callback=operation->resume;
+        }
+        if(!callback && !checked_callback)return pending("Field schema requires its retained operation continuation.");
+        const auto status=checked_callback?checked_callback(check):callback();check();return status;
     }
 };
 using SchemaCall=Call<IgbFieldSchemaCall,IgbFieldSchemaFactory,IgbFieldSchemaOperation>;
@@ -57,6 +62,7 @@ struct IgbFieldBatchInvocation::Impl {
     std::unique_ptr<IgbPoolByHandleInvocation> pool_call;
     std::shared_ptr<IgbMetadataOperation> append;
     std::function<MessengerCallResult()> append_callback;
+    std::function<MessengerCallResult(const std::function<void()>&)> append_checked_callback;
     SchemaCall call;P phase=P::test,after=P::done;
     std::uint32_t count{},index{},byte_offset{};bool running{},fault{};
 };
@@ -66,14 +72,20 @@ IgbFieldBatchInvocation::IgbFieldBatchInvocation(std::shared_ptr<IgbRuntimeMetaT
 }
 IgbFieldBatchInvocation::~IgbFieldBatchInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.field)s.owner->unfinished.push_back(s.field);if(s.pool)s.owner->unfinished.push_back(s.pool);
+    if(s.call.request.kind==IgbFieldSchemaServiceKind::create_field && s.call.operation &&
+        s.call.operation->field_result && s.call.operation->field_result!=s.field)
+        s.owner->unfinished.push_back(s.call.operation->field_result);
 }}
 bool IgbFieldBatchInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldBatchInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldBatchInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services){
+MessengerCallResult IgbFieldBatchInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;using K=IgbFieldSchemaServiceKind;
     if(s.running || s.fault){s.fault=true;fail("Field batch requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field batch continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field batch continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field batch was invalidated by its enclosing callback.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto bind=[&]{
         if(!s.address || !s.field || !services || !services->fields || !services->fields->pointer_lists)return;
@@ -102,10 +114,12 @@ MessengerCallResult IgbFieldBatchInvocation::resume(std::shared_ptr<IgbFieldSche
         bind();if(!s.append){if(!services || !services->fields || !services->fields->pointer_lists)return pending("Field batch requires native raw pointer-list append services.");
             IgbMetadataOperationCall request;request.kind=IgbMetadataOperationKind::append_field;request.fields=s.fields;request.field=s.field;
             s.append=make_native_igb_pointer_list_metadata_factory(services->fields->pointer_lists)(request);check();}
-        if(!s.append_callback)s.append_callback=s.append->resume;
-        if(!s.append_callback)return pending("Field batch requires its retained raw append continuation.");
-        {const auto status=s.append_callback();check();if(!status.completed)return status;}
-        s.append_callback={};s.append.reset();check();s.phase=P::release;break;
+        if(!s.append_callback && !s.append_checked_callback){
+            s.append_checked_callback=s.append->resume_checked;if(!s.append_checked_callback)s.append_callback=s.append->resume;
+        }
+        if(!s.append_callback && !s.append_checked_callback)return pending("Field batch requires its retained raw append continuation.");
+        {const auto status=s.append_checked_callback?s.append_checked_callback(check):s.append_callback();check();if(!status.completed)return status;}
+        s.append_callback={};s.append_checked_callback={};s.append.reset();check();s.phase=P::release;break;
     case P::release:
         if(!s.field)fail("Field batch releases a null constructor result after appending it.");
         --s.field->reference_word;
@@ -128,6 +142,7 @@ struct IgbFieldConfigureInvocation::Impl {
     std::uint32_t offset{};
     std::shared_ptr<IgbRuntimeMetaType> declaring_type;
     std::optional<IgbBootstrapPointer> physical;
+    std::shared_ptr<IgbScratchBuffer> physical_bytes;
     std::uint32_t physical_address{};
     std::shared_ptr<IgbFieldSchemaServices> owner;
     std::shared_ptr<ModelSceneObject> pool;
@@ -145,30 +160,35 @@ IgbFieldConfigureInvocation::~IgbFieldConfigureInvocation(){auto& s=*impl_;if((!
     if(s.temporary && *s.temporary && **s.temporary)s.owner->unfinished.push_back(**s.temporary);
     if(s.released)s.owner->unfinished.push_back(s.released);if(s.pool)s.owner->unfinished.push_back(s.pool);
     if(s.physical && s.physical->storage)s.owner->unfinished.push_back(s.physical->storage);
+    if(s.physical_bytes)s.owner->unfinished.push_back(s.physical_bytes);
     if(s.field)s.owner->unfinished.push_back(s.field);if(s.declaring_type)s.owner->unfinished.push_back(s.declaring_type);
 }}
 bool IgbFieldConfigureInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldConfigureInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services){
+MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;using K=IgbDependenciesServiceKind;
     if(s.running || s.fault){s.fault=true;fail("Field configuration requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field configuration continuation was invalidated.");
+    const auto check_local=[&]{if(s.fault)fail("Field configuration continuation was invalidated.");
         if(s.physical){
             if(!s.field || !s.field->physical_storage)fail("Field configuration lost its captured allocation binding.");
             const auto& binding=*s.field->physical_storage;
             if(binding.storage.lock()!=s.physical->storage || binding.offset!=s.physical->offset ||
+                s.physical->storage->bytes!=s.physical_bytes ||
                 igb_bootstrap_address(*s.physical)!=s.physical_address || s.physical->storage->faulted() ||
                 igb_bootstrap_field(*s.physical)!=s.field)
                 fail("Field configuration changed its captured descriptor allocation.");
         }else if(s.stores_started && s.field && s.field->physical_storage)
             fail("Field configuration acquired a physical binding after canonical-only stores.");
     };
+    const auto check=[&]{check_local();if(enclosing_check)enclosing_check();check_local();};
     const auto capture_physical=[&]{
         if(!s.physical && s.field && s.field->physical_storage){
             const auto& binding=*s.field->physical_storage;
             auto storage=binding.storage.lock();if(!storage)fail("Field configuration reached expired descriptor storage.");
             s.physical=IgbBootstrapPointer{std::move(storage),binding.offset};s.physical_address=igb_bootstrap_address(*s.physical);
+            s.physical_bytes=s.physical->storage->bytes;
         }check();
     };
     const auto clear=[&]{s.call.clear();check();};
@@ -194,7 +214,7 @@ MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbField
     case P::after_intern:s.temporary=std::make_shared<IgbFieldNameSlot>(s.call.operation->string_result);clear();s.phase=P::name;break;
     case P::name:
         if(!s.name_call)s.name_call=std::make_unique<IgbFieldNameInvocation>(s.field,s.temporary);
-        {const auto status=s.name_call->resume(services?services->fields:nullptr);check();if(!status.completed)return status;}
+        {const auto status=s.name_call->resume(services?services->fields:nullptr,check);check();if(!status.completed)return status;}
         s.name_call.reset();check();s.phase=P::temporary;break;
     case P::temporary:
         if(!*s.temporary)return pending("Field configuration requires its live temporary string slot.");
@@ -219,7 +239,7 @@ MessengerCallResult IgbFieldConfigureInvocation::resume(std::shared_ptr<IgbField
             igb_bootstrap_write_word(*s.physical,0x18,*address);}
         s.field->declaring_type=std::weak_ptr<IgbRuntimeMetaType>(s.declaring_type);
         s.buffer_call=std::make_unique<IgbFieldBufferInvocation>(s.field);s.phase=P::buffer;break;
-    case P::buffer:{const auto status=s.buffer_call->resume(services?services->fields:nullptr);check();if(!status.completed)return status;
+    case P::buffer:{const auto status=s.buffer_call->resume(services?services->fields:nullptr,check);check();if(!status.completed)return status;
         s.buffer_call.reset();check();s.phase=P::done;break;}
     case P::call:{const auto dep=dependencies();const auto status=s.call.poll(dep?dep->factory:IgbDependenciesFactory{},check);
         if(!status.completed)return status;s.phase=s.after;break;}
@@ -251,10 +271,13 @@ IgbFieldSchemaInvocation::IgbFieldSchemaInvocation(std::shared_ptr<IgbRuntimeMet
 IgbFieldSchemaInvocation::~IgbFieldSchemaInvocation()=default;
 bool IgbFieldSchemaInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldSchemaInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldSchemaInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services){
+MessengerCallResult IgbFieldSchemaInvocation::resume(std::shared_ptr<IgbFieldSchemaServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field schema loop requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);
-    const auto check=[&]{if(s.fault)fail("Field schema loop continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field schema loop continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field schema loop was invalidated by its enclosing callback.");};
     try{for(;;){check();switch(s.phase){
     case P::count:
         if(!s.metadata)fail("Field schema count reads null metadata.");
@@ -273,9 +296,9 @@ MessengerCallResult IgbFieldSchemaInvocation::resume(std::shared_ptr<IgbFieldSch
         s.field=(*s.backing)[index];s.phase=P::offset;break;}
     case P::offset:{const auto& offset=table_entry(s.offsets,s.table_byte_offset);if(!offset)return pending("Field schema requires its live offset-table entry.");
         s.configure=std::make_unique<IgbFieldConfigureInvocation>(s.field,s.name,s.global,*offset,s.metadata);s.phase=P::configure;break;}
-    case P::configure:{const auto status=s.configure->resume(services);check();if(!status.completed)return status;
+    case P::configure:{const auto status=s.configure->resume(services,check);check();if(!status.completed)return status;
         s.configure.reset();check();s.finalize=std::make_unique<IgbFieldFinalizeInvocation>(s.field);s.phase=P::finalize;break;}
-    case P::finalize:{const auto status=s.finalize->resume(services?services->fields:nullptr);check();if(!status.completed)return status;
+    case P::finalize:{const auto status=s.finalize->resume(services?services->fields:nullptr,check);check();if(!status.completed)return status;
         s.finalize.reset();check();s.phase=P::next;break;}
     case P::next:s.field.reset();s.fields.reset();s.backing.reset();s.name.reset();s.global={};++s.index;s.field_byte_offset+=4;s.table_byte_offset+=4;s.phase=P::test;break;
     case P::done:return {true,0,{}};

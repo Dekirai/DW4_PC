@@ -250,8 +250,14 @@ reflected initializer. Its immediate constructor callback uses the same
 canonical pool-handle owner as thread startup; its deferred teardown callback
 is appended to the existing ArkCore list. The two lifetimes remain separate.
 Reflected allocation and object initialization borrow enclosing fault checks
-to prevent publication after caught recursive entry. Original OS/pool
+to prevent publication after caught recursive entry. Abstract `igContext` and
+`igContextExt` now reuse the generic registrar without a synthetic vtable.
+Their defaults create three fields and lazily allocate the two distinct list
+metadata objects. The first concrete list registers and reaches `80037330`.
+Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
+outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),

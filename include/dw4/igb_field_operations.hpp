@@ -51,7 +51,8 @@ public:
     ~IgbFieldNameInvocation();
     IgbFieldNameInvocation(const IgbFieldNameInvocation&)=delete;
     IgbFieldNameInvocation& operator=(const IgbFieldNameInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
@@ -88,7 +89,8 @@ public:
     ~IgbFieldAppendInvocation();
     IgbFieldAppendInvocation(const IgbFieldAppendInvocation&)=delete;
     IgbFieldAppendInvocation& operator=(const IgbFieldAppendInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

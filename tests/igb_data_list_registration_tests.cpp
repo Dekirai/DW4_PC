@@ -73,7 +73,7 @@ void exact_profiles(){
         else check(!args.extra_callbacks,"Parent list invented deferred callbacks.");
         auto value=meta();*f.slot(kind)=value;check(*args.metadata_slot==value,"Arguments copied rather than shared the original cell.");
     }
-    rejects([]{igb_data_list_profile(static_cast<E>(5));},"Unknown class profile was accepted.");
+    rejects([]{igb_data_list_profile(static_cast<E>(7));},"Unknown class profile was accepted.");
     rejects([]{igb_data_list_type_registration_arguments({},E::data_list);},"Unknown canonical storage was manufactured.");
     rejects([]{IgbDataListLookupInvocation bad(E::nonref_object,L::allocate_if_null);},"Unrecovered lazy getter was invented.");
 }

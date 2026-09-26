@@ -25,6 +25,8 @@ struct IgbFieldSchemaOperation {
     std::function<MessengerCallResult()> resume;
     std::shared_ptr<IgbDecodeRuntimeField> field_result;
     std::optional<std::uint32_t> field_address;
+    // Optional native continuation. Borrow, never retain, the enclosing guard.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbFieldSchemaFactory=std::function<std::shared_ptr<IgbFieldSchemaOperation>(const IgbFieldSchemaCall&)>;
 struct IgbFieldSchemaServices {
@@ -44,7 +46,8 @@ public:
     ~IgbFieldBatchInvocation();
     IgbFieldBatchInvocation(const IgbFieldBatchInvocation&)=delete;
     IgbFieldBatchInvocation& operator=(const IgbFieldBatchInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
@@ -57,7 +60,8 @@ public:
     ~IgbFieldConfigureInvocation();
     IgbFieldConfigureInvocation(const IgbFieldConfigureInvocation&)=delete;
     IgbFieldConfigureInvocation& operator=(const IgbFieldConfigureInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
@@ -70,7 +74,8 @@ public:
     ~IgbFieldSchemaInvocation();
     IgbFieldSchemaInvocation(const IgbFieldSchemaInvocation&)=delete;
     IgbFieldSchemaInvocation& operator=(const IgbFieldSchemaInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldSchemaServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
