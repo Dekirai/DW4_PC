@@ -56,8 +56,10 @@ It must not supply a host thread identifier or a blank record in its place.
 The cold integration test uses an explicitly prepared raw context and pool
 services to verify the composed continuation. It preserves the unknown-state
 boundary first, then proves copy, pending free and the next manager insertion
-call. Manager insertion, semaphore wait/signal, original OS initialization,
-pool internals and scheduling remain required for complete startup.
+call. Its subsequent caller and semaphore count/exclusion transitions are now
+implemented in [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md).
+Original list growth, OS initialization, pool internals and scheduling remain
+required for complete startup.
 
 Primary evidence is the supplied USA DOL, SHA1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. Original artifacts and the IDA analysis

@@ -226,9 +226,15 @@ construction. Current-thread adoption `80077EFC` now reads its canonical OS cell
 twice, performs the original grouped context copy, selects tagged stack release
 and clears the stack pointer after release. Unknown OS state stays pending;
 an explicit prepared raw context lets the cold test reach manager `+60` insertion.
-The startup caller lends its fault guard through adoption and release. Original
-OS initialization, manager list/wait/signal operations, scheduling and teardown
-remain required. See [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
+Its native caller retains the incoming thread, performs the active positive
+semaphore wait and reaches actual data-list growth `80041660`. Canonical memory
+allocation mappings supply element destinations; there is no second backing
+registry. Native wait/signal preserve signed versus unsigned count branches,
+fresh status reads and exclusion transitions around explicit sleep/wake calls.
+The startup caller lends its fault guard through adoption, insertion and their
+checked children. Original OS initialization, list growth, scheduling and teardown
+remain required. See [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),

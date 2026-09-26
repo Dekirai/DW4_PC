@@ -68,7 +68,9 @@ Original current-thread adoption `80077EFC` is implemented separately in
 current-thread pointer twice, copies the actual context with its ordered
 word/halfword accesses, then frees the fresh stack and clears `+20`. A blank
 context or a host thread identifier does not implement that behavior.
-Original OS initialization, manager insertion, semaphore wait/signal and scheduling remain required.
+The manager insertion caller and semaphore count transitions are implemented in
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md). Original OS
+initialization, list growth and scheduling remain required.
 These initializers alone do not establish complete startup or playable gameplay.
 
 See [VALIDATION.md](VALIDATION.md) for measured scope. Primary evidence is the

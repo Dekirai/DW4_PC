@@ -2,6 +2,7 @@
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_startup.hpp"
 #include "dw4/igb_gamecube_thread_adopt.hpp"
+#include "dw4/igb_thread_manager_insert.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -3452,6 +3453,59 @@ void actual_cold_bootstrap_prefix(){
         f.core->types->count==28 && descriptors.size()==101 && default_allocations==113 && (**prototypes->registry)->count==12 &&
         igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0 && igb_bootstrap_read_byte(semaphore_storage,0x14)==1,
         "Pending manager insertion replayed completed adoption or changed independent semaphore/runtime state.");
+
+    auto thread_insertion=std::make_shared<IgbThreadManagerInsertServices>();
+    thread_insertion->runtime=runtime_init;thread_insertion->memory=memory_construct;
+    thread_insertion->interrupts=activation_services->interrupts;
+    std::vector<IgbThreadManagerInsertCall> insertion_lower_calls;
+    thread_insertion->factory=[&](const IgbThreadManagerInsertCall& c){
+        insertion_lower_calls.push_back(c);return std::shared_ptr<IgbThreadManagerInsertOperation>{};
+    };
+    concrete_thread_adoption=make_native_igb_thread_manager_insert_factory(thread_insertion,concrete_thread_adoption);
+    const auto at_manager_wait=call.resume(bootstrap);
+    check(!at_manager_wait.completed && !call.faulted() &&
+        at_manager_wait.diagnostic=="Thread insertion reached an unbound semaphore virtual." &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && runtime_thread.runtime_object->reference_word==2 &&
+        semaphore_runtime_calls.back().object.runtime_object==semaphore_instance.runtime_object &&
+        semaphore_runtime_calls.back().virtual_slot==0x8c && semaphore_runtime_calls.back().vtable_word==0x80470314 &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 && igb_bootstrap_read_word(thread_list_storage,8)==0 &&
+        insertion_lower_calls.empty() && interrupt_state->enabled==true,
+        "Manager insertion lost its pre-wait full-word retain or fabricated a completed semaphore wait/list insertion.");
+    const auto manager_wait_result=semaphore_runtime_calls.back().result;
+    check(manager_wait_result && manager_wait_result->initialized==std::vector<std::uint8_t>(4,0) &&
+        manager_wait_result!=activation_result && thread_stack_frees==1,
+        "Manager wait reused an activation result or replayed current-thread adoption.");
+    check(call.resume(bootstrap).diagnostic==at_manager_wait.diagnostic && !call.faulted() &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && semaphore_runtime_calls.back().result==manager_wait_result &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 && insertion_lower_calls.empty(),
+        "Pending manager wait replayed thread retention or changed its captured hidden result.");
+
+    runtime_activation=make_native_igb_semaphore_runtime_access_factory(thread_insertion,runtime_activation);
+    const auto at_manager_growth=call.resume(bootstrap);
+    std::cout<<"Cold native manager insertion: "<<at_manager_growth.diagnostic<<"; thread references="<<
+        igb_bootstrap_read_word(runtime_thread_storage,4)<<", inline semaphore count="<<
+        igb_bootstrap_read_word(semaphore_storage,0x18)<<'\n';
+    check(!at_manager_growth.completed && !call.faulted() &&
+        at_manager_growth.diagnostic=="Thread manager operation reached unbound growth or scheduling." &&
+        insertion_lower_calls.size()==1 && insertion_lower_calls.back().kind==IgbThreadManagerInsertServiceKind::grow_list &&
+        insertion_lower_calls.back().object.runtime_object==thread_list_instance.runtime_object &&
+        insertion_lower_calls.back().count==1 && insertion_lower_calls.back().element_bytes==4 &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==0 && interrupt_state->enabled==true &&
+        igb_buffer_word(manager_wait_result,0)==*memory_construct->status_success &&
+        igb_bootstrap_read_word(thread_list_storage,8)==0 && igb_bootstrap_read_word(thread_list_storage,12)==0 &&
+        igb_bootstrap_read_word(thread_list_storage,16)==0 && igb_bootstrap_read_word(runtime_thread_storage,4)==2,
+        "Native manager wait did not consume/restore the semaphore before reaching actual41660 list growth.");
+    const auto calls_before_growth=semaphore_runtime_calls.size();
+    check(call.resume(bootstrap).diagnostic==at_manager_growth.diagnostic && !call.faulted() &&
+        insertion_lower_calls.size()==2 && insertion_lower_calls.back().kind==IgbThreadManagerInsertServiceKind::grow_list &&
+        semaphore_runtime_calls.size()==calls_before_growth && thread_stack_queries==4 && thread_stack_frees==1 &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==0 && igb_bootstrap_read_byte(semaphore_storage,0x14)==1 &&
+        igb_bootstrap_read_word(done_semaphore_storage,0x0c)==0 && igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && enabled_allocations.size()==110 &&
+        runtime_allocations.size()==5 && f.core->types->count==28 && descriptors.size()==101 && default_allocations==113 &&
+        (**prototypes->registry)->count==12 && concrete_thread->instance_count==1 && concrete_semaphore->instance_count==2 &&
+        interrupt_state->enabled==true && !**meta_enum->metadata,
+        "Pending list growth replayed retain/wait/adoption or fabricated insertion, signal or temporary-reference release.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

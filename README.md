@@ -210,8 +210,11 @@ the `0x388`-byte thread and its separate completion semaphore. Actual initialize
 With prepared tagged-pool/allocation services, construction finishes. Current-
 thread adoption `80077EFC` now preserves the two OS pointer loads, grouped context
 copy and tagged stack release. With an explicit prepared OS context, startup
-reaches manager insertion `80075460`. Original OS initialization, manager
-insertion and scheduling remain required. See
+reaches manager insertion `80075460`. Its native caller now retains the thread
+and executes the positive semaphore wait before reaching actual data-list growth
+`80041660`. Wait/signal count and exclusion transitions are implemented; list
+growth, sleep/wake scheduling and original OS initialization remain required. See
+[IGB_THREAD_MANAGER_INSERT.md](docs/IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](docs/IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](docs/IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](docs/IGB_GAMECUBE_THREAD.md),

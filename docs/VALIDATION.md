@@ -1,5 +1,81 @@
 # Local validation
 
+## Manager insertion reaches original thread-list growth
+
+Validated locally on 2026-09-26. Actual manager caller `80075460` retains the
+incoming thread before selecting semaphore wait `+8C`, freshly captures the
+thread list after wait, preserves signed count/capacity and count-before-element
+publication, then freshly selects signal `+7C`. The two hidden statuses are
+ignored by the manager, with distinct retained result buffers.
+
+Native `8007761C/800774B0` include actual `80260E00/80260EC4` count and exclusion
+transitions. Wait uses a signed positive-count test and a separate fresh
+decrement read. Signal uses an unsigned count/maximum comparison outside
+exclusion, then freshly reads the increment operand after disabling interrupts.
+Sleep/wake operations remain explicit; no empty-queue scheduler behavior is
+assumed. Canonical status cells and exclusion state are shared with the earlier
+construction and activation modules.
+
+The retained cold invocation now reaches original `80041660` with requested
+count one and element size four. The manager semaphore's inline count is zero
+after a completed native positive wait, with prior exclusion state restored.
+Thread reference count is two, preserving the pre-wait retain while list
+growth, signal and outer temporary release remain pending. No list backing or
+count is seeded to bypass growth. Counts remain **28 types, 101 descriptors,
+113 default buffers, 12 prototypes, 110 enabled allocations and five runtime
+objects**; the completion semaphore remains independently inactive.
+
+| Check | Evidence |
+| --- | --- |
+| Initial Release CoreOnly build | 211/211 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,004 checks; actual retain, captured wait, positive count transition, restored exclusion and exact `41660` request without replay |
+| Manager insertion and semaphore access | 158 checks; fresh/captured operands, signed/unsigned arithmetic, hidden results, pending sleep/wake/growth, fault prefixes, physical prefix mapping and parent reentry |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The initial build and focused execution passed without repairs. Physical list
+stores reuse canonical memory allocation mappings; the negative-index test
+also checks access before the logical pointer within its represented byte-owner
+prefix. Verified Release core SHA256:
+`552c00850578a00573b7dc9f14cd44987aa52769ce05089a55c0ce2bef0e9156`.
+
+The independent original corpus was sealed before native source inspection:
+**182 cases, 9,028 executed DOL instructions and 158 instruction addresses**.
+All 182 exact replays and fifteen artifact hashes verify. Actual manager,
+wait/signal wrappers, OS count transitions and count getter execute. Interrupt
+helpers, growth `41660` and sleep/wake are declared prepared boundaries.
+Independent invariants check ownership, signed list selection, fresh backing,
+ignored status, separate wait reads, signal limit, wake/restore order and fault
+prefixes. Original manifest SHA256:
+`6dd276f94ec635c5bbd67ada1075b2045d0d9ce9a81cabc421a2300d68b18bad`.
+
+The frozen native subset matches **133/133 on its first execution and exact
+replay**: 90 completions, ten prepared failures, seventeen physical read guards,
+seven null-read guards, three null-write guards, four hidden-result range guards
+and two backing range guards. The seventeen read cases cover eleven unknown
+physical values and six semaphore extents. No result is pending or has an
+unexpected fault; the first driver build succeeded without repairs. All fifteen
+native artifact hashes verify. Native manifest SHA256:
+`c68047c240324bb48daa4b18166425c2bd7c7e6a776075336762156c1e5361ad`.
+
+**49 cases remain original-only**: 31 standalone OS/count-getter entries,
+five missing canonical statuses, four unavailable interrupt/scheduler states,
+four sparse write-permission faults, two artificial between-load mutations,
+two physical null-method slots and one nonzero unmapped address reached from
+null backing plus index displacement. These lack equivalent public native
+entries or represented boundaries in this scope. Missing native services and
+canonical values deliberately suspend rather than inventing original traps.
+The projection compares physical bytes/masks, ordered prepared calls, explicit
+exclusion transitions and independently owned hidden results. Void register
+leftovers are excluded. Growth, scheduler and machine-register helper interiors
+remain prepared, not native equivalence claims.
+
+See [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md). Original list
+growth, scheduling and OS/pool initialization remain required. This is a
+verified caller/count slice with explicit lower services, not complete startup
+or a playable-game build. Local artifacts use `work/native-thread-manager-insert-`.
+
 ## Current-thread adoption reaches manager insertion
 
 Validated locally on 2026-09-26. Native `80077EFC` reads the canonical current

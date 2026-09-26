@@ -87,6 +87,9 @@ thread and its separate completion semaphore through actual initializer
 `80077E94` and setter `800773AC`. Current-thread adoption `80077EFC` now copies
 the explicit OS context and releases the stack before manager `+60` insertion.
 Pool services and the source OS context are prepared inputs in this test.
+The insertion caller now retains the thread and completes a native positive
+semaphore wait before actual list growth; see
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md).
 Focused hook tests retain their separately
 prepared method endpoints.
 

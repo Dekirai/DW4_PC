@@ -317,9 +317,12 @@ tagged-pool/aligned-allocation services and native count setter `800773AC`.
 Construction finishes before current-thread adoption `80077EFC`, whose ordered
 OS-context copy and tagged stack release now execute natively. Its canonical
 OS state remains unknown until supplied; prepared-context integration reaches
-manager insertion `80075460`. Recover its semaphore/list operations and original
-OS/pool initialization next. A host thread identifier or blank context does not
+manager insertion `80075460`. Its native caller and wait/signal count transitions
+now reach actual data-list growth `80041660` after the positive wait. Recover
+that growth and `8004155C`, then sleep/wake scheduling and original OS/pool
+initialization. A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md) and
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md) and
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md) and
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and

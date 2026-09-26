@@ -72,8 +72,10 @@ preparation. These checks do not establish native startup or playable gameplay.
 
 Object initializer `80077E94` and current-thread adoption `80077EFC` are
 implemented separately. The latter retains its explicit original OS-state
-dependency. OS initialization, manager wait/list/signal operations and scheduling
-remain startup requirements. See
+dependency. The manager insertion caller and semaphore count transitions are
+implemented separately; list growth, OS initialization and scheduling remain
+startup requirements. See
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md) and [VALIDATION.md](VALIDATION.md).

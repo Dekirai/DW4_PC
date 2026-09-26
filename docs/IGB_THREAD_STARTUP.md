@@ -73,8 +73,10 @@ now completes with prepared stack-pool services and the recovered completion
 semaphore setter; see [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md).
 The original `+DC` operation now copies the selected OS record and releases the
 temporary stack in original access order; see
-[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md). Original OS state,
-list operations and teardown remain required. Replacing the OS record with an
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md). The actual manager
+insertion caller now retains the thread and enters the original wait/list/signal
+sequence; see [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md).
+Original OS state, list growth, scheduling and teardown remain required. Replacing the OS record with an
 arbitrary host thread identifier does not reproduce its observable fields.
 Metadata registration and caller reconstruction alone do not satisfy
 the playable native game gate.
