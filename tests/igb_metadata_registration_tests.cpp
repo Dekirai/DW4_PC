@@ -1,6 +1,7 @@
 #include "dw4/igb_metadata_registration.hpp"
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_startup.hpp"
+#include "dw4/igb_gamecube_thread_adopt.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -2429,7 +2430,14 @@ void actual_cold_bootstrap_prefix(){
     startup->manager_metadata=std::shared_ptr<IgbRegistrationMetaSlot>(thread,&thread->metadata);
     startup->thread_metadata=named_registration->thread_metadata;
     startup->callbacks=f.services->callbacks;startup->reflected=prototypes->reflected;startup->pools=f.services->pools;
-    startup->factory=make_native_igb_thread_startup_service_factory(startup);
+    IgbThreadStartupFactory concrete_thread_adoption;
+    std::vector<IgbThreadStartupCall> startup_virtuals;
+    const auto startup_services=make_native_igb_thread_startup_service_factory(startup);
+    startup->factory=[&,startup_services](const IgbThreadStartupCall& c){
+        if(c.kind==IgbThreadStartupServiceKind::object_virtual)startup_virtuals.push_back(c);
+        if(concrete_thread_adoption){const auto operation=concrete_thread_adoption(c);if(operation)return operation;}
+        return startup_services(c);
+    };
     additional_callbacks=make_native_igb_thread_startup_function_factory(startup,additional_callbacks);
     const auto unknown_handle=call.resume(bootstrap);
     check(!unknown_handle.completed && unknown_handle.diagnostic=="Thread startup requires live pool handle805621F0." &&
@@ -3360,6 +3368,90 @@ void actual_cold_bootstrap_prefix(){
         semaphore_runtime_calls.size()==5 && enabled_allocations.size()==110 && concrete_thread->instance_count==1 &&
         concrete_semaphore->instance_count==2 && igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000,
         "Next startup boundary replayed thread initialization, stack allocation or completion-semaphore setup.");
+
+    // The actual+DC continuation needs original OS state. A prepared raw context
+    // below exercises composition; it does not stand in for OS initialization.
+    auto thread_adoption=std::make_shared<IgbGamecubeThreadAdoptServices>();
+    thread_adoption->os=std::make_shared<IgbOsThreadState>();thread_adoption->memory=memory_construct;
+    concrete_thread_adoption=make_native_igb_gamecube_thread_adopt_factory(thread_adoption);
+    const auto unknown_os=call.resume(bootstrap);
+    check(!unknown_os.completed && !call.faulted() &&
+        unknown_os.diagnostic=="Thread adoption requires canonical current OS thread global800000E4." &&
+        !thread_adoption->os->current_thread_address && igb_bootstrap_read_word(runtime_thread_storage,0x350)==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000 && thread_stack_queries==2 &&
+        startup_virtuals.back().vtable_word==0x80470110 && startup_virtuals.back().virtual_slot==0xdc &&
+        startup_virtuals.back().object.storage==runtime_thread.storage,
+        "Current-thread adoption invented OS state or ran stack release before the first canonical load.");
+    check(call.resume(bootstrap).diagnostic==unknown_os.diagnostic && !call.faulted() &&
+        thread_stack_allocations==1 && thread_stack_queries==2 && enabled_allocations.size()==110,
+        "Unavailable OS state replayed thread construction or stack allocation.");
+    thread_adoption->os->current_thread_address=0x805151d0;
+    const auto unknown_os_mapping=call.resume(bootstrap);
+    check(!unknown_os_mapping.completed && !call.faulted() &&
+        unknown_os_mapping.diagnostic=="Thread adoption requires its captured current-thread source mapping." &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x350)==0x805151d0 && thread_stack_queries==2,
+        "Adoption did not publish the first current-thread pointer before requiring its captured copy source.");
+
+    auto prepared_os_context=allocation(0x805151d0,0x318);
+    std::vector<std::uint8_t> expected_os_context(0x318);
+    for(std::size_t i=0;i<expected_os_context.size();++i)expected_os_context[i]=static_cast<std::uint8_t>(11+37*i);
+    prepared_os_context.storage->bytes->bytes=expected_os_context;
+    prepared_os_context.storage->bytes->initialized.assign(0x318,1);
+    thread_adoption->os->mappings.push_back(prepared_os_context);
+    bool thread_stack_free_ready{};unsigned thread_stack_free_polls{},thread_stack_frees{};
+    std::vector<IgbGamecubeThreadAdoptCall> thread_free_calls;
+    thread_adoption->factory=[&](const IgbGamecubeThreadAdoptCall& c){
+        thread_free_calls.push_back(c);auto operation=std::make_shared<IgbGamecubeThreadAdoptOperation>();
+        operation->resume=[&,c,done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.object.storage==runtime_thread.storage && c.pool==f.pool && c.address==0xf00000 && c.virtual_slot==0x108,
+                "Adoption stack release changed its captured stack, tagged pool or original virtual slot.");
+            ++thread_stack_free_polls;
+            if(!thread_stack_free_ready)return MessengerCallResult{false,0,"Prepared thread stack release."};
+            ++thread_stack_frees;thread_stack_bytes->released=true;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    thread_stack_pool_ready=false;
+    const auto copied_os=call.resume(bootstrap);
+    check(!copied_os.completed && !call.faulted() && copied_os.diagnostic=="Prepared thread stack tagged-pool lookup." &&
+        thread_stack_queries==3 && thread_stack_calls.size()==3 && thread_free_calls.empty() &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000 && !thread_stack_bytes->released,
+        "Adoption skipped the separate fresh tagged-pool lookup or freed/cleared the stack before the selected call.");
+    for(std::size_t i=0;i<expected_os_context.size();++i)check(
+        runtime_thread.storage->bytes->bytes[0x38+i]==expected_os_context[i] &&
+        runtime_thread.storage->bytes->initialized[0x38+i],
+        "Current-thread adoption lost an ordered context-copy byte.");
+    prepared_os_context.storage->bytes->bytes.assign(0x318,0xee);
+    thread_adoption->os->current_thread_address=0xdeadbeef;
+    thread_stack_pool_ready=true;
+    const auto awaiting_free=call.resume(bootstrap);
+    check(!awaiting_free.completed && !call.faulted() && awaiting_free.diagnostic=="Prepared thread stack release." &&
+        thread_stack_queries==4 && thread_free_calls.size()==1 && thread_stack_free_polls==1 && thread_stack_frees==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000 &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x350)==0x805151d0 && !thread_stack_bytes->released &&
+        std::equal(expected_os_context.begin(),expected_os_context.end(),runtime_thread.storage->bytes->bytes.begin()+0x38),
+        "Suspended stack release replayed OS loads/copy or cleared the live stack too early.");
+    check(call.resume(bootstrap).diagnostic==awaiting_free.diagnostic && thread_stack_queries==4 &&
+        thread_free_calls.size()==1 && thread_stack_free_polls==2 && thread_stack_frees==0,
+        "Pending adoption reselected its completed pool lookup or retained free operation.");
+    thread_stack_free_ready=true;
+    const auto after_thread_adoption=call.resume(bootstrap);
+    std::cout<<"Cold native current-thread adoption: "<<after_thread_adoption.diagnostic<<"; stack frees="<<thread_stack_frees<<
+        ", next slot="<<startup_virtuals.back().virtual_slot<<'\n';
+    check(!after_thread_adoption.completed && !call.faulted() &&
+        after_thread_adoption.diagnostic=="Thread startup requires its selected physical object virtual." &&
+        thread_stack_frees==1 && thread_stack_free_polls==3 && thread_stack_bytes->released &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x20)==0 && igb_bootstrap_read_word(runtime_thread_storage,4)==1 &&
+        startup_virtuals.back().object.storage==manager_storage.storage && startup_virtuals.back().virtual_slot==0x60 &&
+        startup_virtuals.back().vtable_word==0x804700a8 && startup_virtuals.back().argument.storage==runtime_thread.storage,
+        "Completed adoption failed to clear the freed stack or reach the real manager insertion before releasing the thread.");
+    check(call.resume(bootstrap).diagnostic==after_thread_adoption.diagnostic && !call.faulted() &&
+        thread_stack_frees==1 && thread_stack_queries==4 && thread_free_calls.size()==1 &&
+        thread_stack_allocations==1 && semaphore_runtime_calls.size()==5 && enabled_allocations.size()==110 &&
+        runtime_allocations.size()==5 && concrete_thread->instance_count==1 && concrete_semaphore->instance_count==2 &&
+        f.core->types->count==28 && descriptors.size()==101 && default_allocations==113 && (**prototypes->registry)->count==12 &&
+        igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0 && igb_bootstrap_read_byte(semaphore_storage,0x14)==1,
+        "Pending manager insertion replayed completed adoption or changed independent semaphore/runtime state.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

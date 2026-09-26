@@ -1,5 +1,72 @@
 # Local validation
 
+## Current-thread adoption reaches manager insertion
+
+Validated locally on 2026-09-26. Native `80077EFC` reads the canonical current
+OS-thread pointer twice, stores the first at thread `+350`, and copies `0x318`
+bytes from the captured second source to thread `+38`. The original 105 access
+groups preserve paired read-before-write ordering, separate halfwords, physical
+aliases and partial effects. Actual `80068390` behavior reads the fresh stack
+pointer, skips lookup for null, otherwise selects the fresh reference tag and
+pool `+108`; stack `+20` is cleared only after release returns.
+
+The retained cold invocation first suspends on unknown canonical OS state, then
+on the captured source mapping. With an explicitly prepared raw OS context it
+executes the actual copy, suspends separately at tagged lookup and stack release,
+and reaches original manager insertion `80075460` through fresh virtual `+60`.
+It does not replay the copy if the source bytes or current-thread global change
+during pending release. Thread reference count remains one until insertion;
+manager list ownership has not been fabricated. Counts remain **28 types, 101
+descriptors, 113 default buffers, 12 prototypes, 110 enabled allocations and
+five runtime objects**.
+
+| Check | Evidence |
+| --- | --- |
+| Initial Release CoreOnly build | 210/210 local CTest suites passed with four build jobs |
+| Integrated cold startup | 5,999 checks; unknown OS state, retained source mapping, copied bytes, pending/free order and actual manager insertion boundary |
+| Current-thread adoption | 19,788 checks; 18 source and eight destination fault boundaries, aliases, separate loads, physical identities, null stack and borrowed parent guards |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; existing prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+No correction was needed after the first build or focused execution. An
+independent source review reread the actual instruction groups and confirmed
+the native read/store phases, physical aliases and borrowed guard behavior.
+Verified Release core SHA256:
+`a80dbaa5487e1f14e55f2d21a7d467ea35740837e98f9eb77fba7da74ff15b07`.
+
+The original corpus was sealed before native implementation inspection:
+**92 cases, 32,962 executed DOL instructions and 98 instruction addresses**.
+All 92 exact replays and 15 artifact hashes verify. An independent audit checks
+89 paired groups and sixteen tail groups, aliases, the pointer store between
+the two current-thread getters and final stack-zero ordering. Original manifest
+SHA256: `b03d1225d83e7e81aae75c3a9d39ca901003988314deaa1469f21e9355ae98db`.
+
+The frozen native subset matches **59/59 on its first execution and exact
+replay**: 24 completions, two prepared failures, 29 reached read guards, two
+null-read guards, one null-write guard and one bounded target write. Read
+guards cover seventeen unknown source cases, nine shortened sources, one
+overlapping source boundary and two late unknown tag/stack values. No result
+is pending or has an unexpected fault. The first driver build succeeded.
+All fifteen native artifact hashes verify. Native manifest SHA256:
+`7e98a5346130a328a3dec60150a57a1f423e0b2bdd608c53c5302abc00d17c24`.
+
+**33 cases remain original-only**: fifteen standalone free/getter entries,
+five injected between-load mutations, eight sparse write-permission faults,
+two raw pool-table cases, two indirect method-word faults and one unavailable
+canonical global. These have no equivalent public native entry or represented
+physical boundary in the frozen comparison. Native unknown OS state deliberately
+suspends; separate synthetic tests exercise mutation between canonical loads.
+The comparison uses represented bytes/masks, ordered lower calls and reached
+guard prefixes, excluding incidental register leftovers from void calls.
+Comparison artifacts use ignored `work/native-thread-adopt-`; root build and
+integration records use `work/native-gamecube-thread-adopt-`.
+
+See [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md). Original OS
+initialization, pool internals, manager insertion and wait/signal/scheduling
+remain required. Prepared OS bytes and lower pool operations qualify the stated
+composition only, not full startup or a playable-game build.
+
 ## Concrete thread construction reaches current-thread adoption
 
 Validated locally on 2026-09-26. The same retained cold invocation now constructs

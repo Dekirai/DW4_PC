@@ -70,9 +70,11 @@ current-thread adoption. The existing manager, list and semaphore retain their i
 Raw allocator payloads and the earlier initial exclusion bit are explicit test
 preparation. These checks do not establish native startup or playable gameplay.
 
-Object initializer `80077E94` is implemented separately. Adoption of the
-original current-thread state in `80077EFC`, manager wait/list/signal operations
-and scheduling remain startup requirements. See
+Object initializer `80077E94` and current-thread adoption `80077EFC` are
+implemented separately. The latter retains its explicit original OS-state
+dependency. OS initialization, manager wait/list/signal operations and scheduling
+remain startup requirements. See
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md) and [VALIDATION.md](VALIDATION.md).
 Primary evidence is the supplied USA DOL, SHA1

@@ -71,10 +71,12 @@ Concrete thread registration and its nine local defaults now finish; see
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md). Actual initializer `80077E94`
 now completes with prepared stack-pool services and the recovered completion
 semaphore setter; see [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md).
-Main-thread record capture, list operations and teardown remain required. The original
-`+DC` operation captures the existing main-thread record; replacing it with
-an arbitrary host thread identifier does not reproduce those observable
-fields. Metadata registration and caller reconstruction alone do not satisfy
+The original `+DC` operation now copies the selected OS record and releases the
+temporary stack in original access order; see
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md). Original OS state,
+list operations and teardown remain required. Replacing the OS record with an
+arbitrary host thread identifier does not reproduce its observable fields.
+Metadata registration and caller reconstruction alone do not satisfy
 the playable native game gate.
 
 Validation and explicitly prepared endpoint scope are recorded in

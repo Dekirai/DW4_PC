@@ -63,11 +63,12 @@ instance before the original caller sets byte `+2C` to one and reaches `+DC`.
 The composition has 28 types, 101 descriptors, 113 default buffers, 12 prototypes,
 110 enabled allocations and five runtime objects.
 
-Original current-thread adoption `80077EFC` is separate. It reads the original
+Original current-thread adoption `80077EFC` is implemented separately in
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md). It reads the original
 current-thread pointer twice, copies the actual context with its ordered
 word/halfword accesses, then frees the fresh stack and clears `+20`. A blank
 context or a host thread identifier does not implement that behavior.
-Manager insertion, semaphore wait/signal and scheduling remain required.
+Original OS initialization, manager insertion, semaphore wait/signal and scheduling remain required.
 These initializers alone do not establish complete startup or playable gameplay.
 
 See [VALIDATION.md](VALIDATION.md) for measured scope. Primary evidence is the

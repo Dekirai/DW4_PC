@@ -17,6 +17,9 @@ struct IgbThreadStartupOperation {
     std::function<MessengerCallResult()> resume;
     IgbBootstrapPointer object_result;
     std::shared_ptr<ModelSceneObject> pool_result;
+    // Optional native continuation. Borrow the enclosing guard for this resume
+    // only; do not retain it in a selected operation.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbThreadStartupFactory=std::function<std::shared_ptr<IgbThreadStartupOperation>(const IgbThreadStartupCall&)>;
 struct IgbThreadStartupServices {

@@ -84,15 +84,18 @@ factory then reaches abstract redirect `80023E20` and concrete getter
 `8003AF84`. Its registration, probe and defaults now finish before the concrete
 thread's `0x388` runtime allocation. The reflected factory now constructs that
 thread and its separate completion semaphore through actual initializer
-`80077E94` and setter `800773AC`. With prepared stack-pool services it reaches
-current-thread adoption `80077EFC`. Focused hook tests retain their separately
+`80077E94` and setter `800773AC`. Current-thread adoption `80077EFC` now copies
+the explicit OS context and releases the stack before manager `+60` insertion.
+Pool services and the source OS context are prepared inputs in this test.
+Focused hook tests retain their separately
 prepared method endpoints.
 
 After concrete thread registration there are 28 registered types, 101
 descriptors, 113 default buffers, twelve prototypes and 108 enabled allocations.
 Thread construction raises enabled allocations to 110 and runtime objects to
 five. See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and
-[IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md).
+[IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md) and
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md).
 This is neither complete startup nor
 playable gameplay. See [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md)
 for the explicit platform state and retained callback contract.

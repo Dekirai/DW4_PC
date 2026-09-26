@@ -21,15 +21,16 @@ struct Call {
     IgbThreadStartupFactory factory;
     std::shared_ptr<IgbThreadStartupOperation> operation;
     std::function<MessengerCallResult()> callback;
-    void clear(){callback={};operation.reset();factory={};request={};}
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
+    void clear(){callback={};checked_callback={};operation.reset();factory={};request={};}
     template<class Check> MessengerCallResult poll(const std::shared_ptr<IgbThreadStartupServices>& services,Check check){
-        if(!factory && services)factory=services->factory;
+        check();if(!factory && services)factory=services->factory;
         if(!factory)return pending(boundary(request.kind));
         if(!operation){operation=factory(request);check();}
         if(!operation)return pending(boundary(request.kind));
-        if(!callback)callback=operation->resume;
-        if(!callback)return pending(boundary(request.kind));
-        const auto result=callback();check();return result;
+        if(!callback && !checked_callback){checked_callback=operation->resume_checked;if(!checked_callback)callback=operation->resume;}
+        if(!callback && !checked_callback)return pending(boundary(request.kind));
+        const auto result=checked_callback?checked_callback(check):callback();check();return result;
     }
 };
 }

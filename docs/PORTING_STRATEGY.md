@@ -314,10 +314,13 @@ now enters **concrete thread getter `8003AF84`**, its registration, physical
 probe and nine local defaults. The factory now constructs the concrete thread
 and its completion semaphore. Actual initializer `80077E94` reaches prepared
 tagged-pool/aligned-allocation services and native count setter `800773AC`.
-Construction finishes before the pending current-thread adoption `80077EFC`.
-Recover that ordered OS-context copy and tagged stack release next, retaining
-the explicit dependency on original OS initialization. A host thread identifier
-or blank context does not satisfy it. See
+Construction finishes before current-thread adoption `80077EFC`, whose ordered
+OS-context copy and tagged stack release now execute natively. Its canonical
+OS state remains unknown until supplied; prepared-context integration reaches
+manager insertion `80075460`. Recover its semaphore/list operations and original
+OS/pool initialization next. A host thread identifier or blank context does not
+satisfy OS initialization. See
+[IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md) and
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md) and
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) and

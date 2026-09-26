@@ -222,9 +222,14 @@ Initializer `80077E94` captures alignment, reads the fresh stack size and tag,
 selects the aligned allocation and invokes actual semaphore setter `800773AC`.
 Object initialization lends its fault guard through both native operations.
 Prepared tagged-pool and allocation services let the cold invocation finish
-construction and reach current-thread adoption `80077EFC`. Original OS context,
-manager list/wait/signal operations, scheduling and teardown remain required.
-See [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
+construction. Current-thread adoption `80077EFC` now reads its canonical OS cell
+twice, performs the original grouped context copy, selects tagged stack release
+and clears the stack pointer after release. Unknown OS state stays pending;
+an explicit prepared raw context lets the cold test reach manager `+60` insertion.
+The startup caller lends its fault guard through adoption and release. Original
+OS initialization, manager list/wait/signal operations, scheduling and teardown
+remain required. See [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
+[IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),

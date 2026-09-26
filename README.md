@@ -207,9 +207,12 @@ registration, the physical probe and all nine local defaults, bringing the
 cold composition to 28 published types. Its reflected factory now constructs
 the `0x388`-byte thread and its separate completion semaphore. Actual initializer
 `80077E94` selects aligned stack allocation and sets the completion count to zero.
-With prepared tagged-pool/allocation services, construction finishes and startup
-reaches current-thread adoption `80077EFC`. Original OS state, manager insertion
-and scheduling remain required. See
+With prepared tagged-pool/allocation services, construction finishes. Current-
+thread adoption `80077EFC` now preserves the two OS pointer loads, grouped context
+copy and tagged stack release. With an explicit prepared OS context, startup
+reaches manager insertion `80075460`. Original OS initialization, manager
+insertion and scheduling remain required. See
+[IGB_GAMECUBE_THREAD_ADOPT.md](docs/IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](docs/IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](docs/IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](docs/IGB_SEMAPHORE_ACTIVATION.md),
