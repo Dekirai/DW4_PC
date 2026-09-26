@@ -74,16 +74,21 @@ prototype complete inherited `_size` clone `80021EB4` and struct defaults.
 Struct prototype `800247E4` and the concrete descriptor now complete the
 semaphore schema. Its distinct runtime allocation completes through object
 `+58`, scalar defaults and actual inline struct initialization. The semaphore
-is assigned to manager `+0C`, whose actual `800755C0` hook now reaches activation
-virtual `+5C` with a retained four-byte result destination.
-The manager still owns its construction lease,
-its instance count remains zero and the startup singleton is unpublished.
-The activation body and main-thread factory have not executed in this cold
-composition. Focused hook tests retain their explicitly prepared method endpoints.
+is assigned to manager `+0C`, whose actual `800755C0` hook captures activation
+virtual `+5C` and its four-byte result destination. Activation now executes the
+actual queue/count stores, prior exclusion-bit restore and active/status stores.
+With explicitly prepared initial exclusion state, the same cold invocation ends
+the manager construction lease, increments its instance count to one and
+publishes that manager as the startup singleton. The original main-thread
+factory then reaches abstract redirect `80023E20`, requiring concrete getter
+`8003AF84`. The concrete main thread has not been allocated. Focused hook tests
+retain their separately prepared method endpoints.
 
 There are 27 registered types, 92 descriptors, 104 default buffers, twelve
-prototypes and 96 enabled allocations. The thread-list and semaphore runtime
-instances are constructed; this is neither complete startup nor playable gameplay.
+prototypes and 96 enabled allocations. The manager, thread-list and semaphore
+runtime instances are constructed; this is neither complete startup nor
+playable gameplay. See [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md)
+for the explicit platform state and retained callback contract.
 See [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md) for the inline field path.
 See [VALIDATION.md](VALIDATION.md) for measured checks and comparison scopes.
 See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) for the concrete class

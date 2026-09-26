@@ -14,7 +14,12 @@ struct IgbThreadRuntimeInitCall {
     // the semaphore receiver inr4. Unknown bytes are not zero defaults.
     std::shared_ptr<IgbScratchBuffer> result;
 };
-struct IgbThreadRuntimeInitOperation {std::function<MessengerCallResult()> resume;};
+struct IgbThreadRuntimeInitOperation {
+    std::function<MessengerCallResult()> resume;
+    // Optional native continuation with a borrowed guard for this resume only.
+    // Never retain the enclosing callback in the selected operation.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
+};
 using IgbThreadRuntimeInitFactory=std::function<std::shared_ptr<IgbThreadRuntimeInitOperation>(const IgbThreadRuntimeInitCall&)>;
 struct IgbThreadRuntimeInitServices {
     std::shared_ptr<IgbPlatformThreadRegistrationServices> manager_registration;

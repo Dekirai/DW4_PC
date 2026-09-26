@@ -307,9 +307,13 @@ the inherited `_size` clone `80021EB4` now finish struct defaults and schema.
 Struct prototype `800247E4`, its distinct physical members and dynamic
 descriptor operations now complete concrete semaphore registration. Its runtime
 allocation now completes its metadata getter and actual inline struct members.
-Recover the reached **activation `+5C`** and subsequent platform operations next;
-the manager remains unfinished and
-no startup singleton or main thread is supplied. See
+Activation `+5C` now preserves the original queue/count and status-store order.
+With explicitly prepared initial exclusion state, the same cold invocation
+finishes the manager and publishes its singleton. The next missing operation
+is **concrete thread getter `8003AF84`**, reached through abstract redirect
+`80023E20`. Recover its registration/defaults, actual main-thread construction
+and subsequent platform operations next. No main thread is supplied. See
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) and
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) and
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md) and
 [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md) and

@@ -1,5 +1,71 @@
 # Local validation
 
+## Semaphore activation completes and publishes the native manager
+
+Validated locally on 2026-09-26. The retained cold startup executes activation
+`80077434`, actual OS semaphore initialization `80260DA8`, queue initializer
+`8026110C` and manager hook `800755C0`. Queue tail, queue head and captured
+initial count are written in that order; restoration precedes active and
+fresh canonical status publication. The status shares the existing native
+memory-construction cell rather than assuming zero.
+
+Unknown initial exclusion state keeps the same invocation pending before the
+queue stores. With an explicitly prepared prior bit, it completes activation,
+ends the manager construction lease, increments its instance count to one and
+publishes that same manager through original startup `800755F8`. The original
+main-thread factory reaches abstract redirect `80023E20`, requiring concrete
+getter `8003AF84`. The concrete main thread remains unallocated. Counts remain
+**27 types, 92 descriptors, 104 default buffers, 12 prototypes and 96 enabled
+allocations**. Manager, thread list and semaphore are now constructed.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 207/207 local CTest suites passed with four build jobs |
+| Integrated cold startup | 3,208 checks; retained unknown-state suspension, actual activation, manager publication and concrete thread redirect boundary |
+| Semaphore activation | 1,702 checks; full-width captured count, fresh status, exact store/fault prefixes, interrupt-state transitions, identity and nested callback guards |
+| Runtime initializer | 208 checks; prior object initialization scope preserved |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames retain their existing scope |
+| Python verifier | Six tests passed |
+
+The initial focused test stopped after 1,478 checks because its truncated
+fixture shortened only bytes, leaving an inconsistent initialized-byte mask.
+Both extents now describe the same bounded allocation. The failure log remains
+preserved; neither production store behavior nor the assertion was weakened.
+Nested manager-to-activation continuations now borrow the caller's fault guard,
+so a caught recursive failure cannot permit later child stores. Legacy
+zero-argument callbacks remain supported and selected callbacks stay retained.
+
+The original corpus was sealed before native observation: **64 cases, 2,257
+executed DOL instructions and 60 instruction addresses**. It executes the actual
+activation, OS initializer, queue body and manager caller. Interrupt helpers
+remain explicitly prepared endpoints in this differential harness. Native
+prior-bit and nonzero-restore behavior is covered separately by focused checks
+against the recovered helper contract; no hardware MSR execution is claimed.
+
+The frozen selected set matches **39/39 on its first build/execution and exact
+replay**: 30 completed calls, three prepared endpoint faults, two semaphore
+bounds, two result bounds, one null-result guard and one null-receiver guard.
+There are no pending results or unexpected faults. The 25 original-only cases
+are twelve standalone OS calls, five standalone queue calls, four further
+sparse write-denial cases, one unavailable helper state and three unavailable
+physical/global reads. Native representation guards compare the completed
+write prefix; they are not host hardware exceptions.
+
+All 64 original reruns, 39 native reruns, 15 original hashes and 15 native hashes
+verify. Original expectations, the selected scope and first native observations
+remain unchanged. Original manifest SHA256:
+`f62b0475f868297347ad89032fd3b9d8f91f8366bbd5a0d3e20f74784184cc67`.
+Native manifest SHA256:
+`de37366c16353058c385d1b41a7e815cba5e38d48f71a59f9b82b39366a2f179`.
+The verified Release core SHA256 is
+`329c7120678911a734a91f896437fde574b5b3d815f06ec84441a59bccd03446`.
+
+See [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Local artifacts
+use the ignored `work/native-semaphore-activation-` prefix. Explicit initial
+exclusion state does not establish native scheduling, wait/signal, complete
+startup or playable gameplay.
+
 ## Inline struct members complete runtime semaphore construction
 
 Validated locally on 2026-09-26. The retained cold startup executes concrete

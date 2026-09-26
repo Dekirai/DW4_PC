@@ -33,6 +33,7 @@ struct IgbThreadManagerInitInvocation::Impl {
     IgbThreadRuntimeInitFactory factory;
     std::shared_ptr<IgbThreadRuntimeInitOperation> operation;
     std::function<MessengerCallResult()> callback;
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
     bool running{},fault{};
 };
 IgbThreadManagerInitInvocation::IgbThreadManagerInitInvocation(IgbObjectInstance manager):impl_(std::make_unique<Impl>()){
@@ -75,10 +76,13 @@ MessengerCallResult IgbThreadManagerInitInvocation::resume(std::shared_ptr<IgbTh
         if(!s.factory)return pending("Manager initialization requires semaphore virtual+5C with its stack-result destination.");
         if(!s.operation){s.operation=s.factory(s.request);check();}
         if(!s.operation)return pending("Manager initialization reached an unbound semaphore virtual+5C.");
-        if(!s.callback)s.callback=s.operation->resume;
-        if(!s.callback)return pending("Manager initialization requires its retained semaphore continuation.");
-        {const auto status=s.callback();check();if(!status.completed)return status;}
-        s.callback={};s.operation.reset();s.factory={};check();s.phase=P::done;break;
+        if(!s.callback && !s.checked_callback){
+            s.checked_callback=s.operation->resume_checked;
+            if(!s.checked_callback)s.callback=s.operation->resume;
+        }
+        if(!s.callback && !s.checked_callback)return pending("Manager initialization requires its retained semaphore continuation.");
+        {const auto status=s.checked_callback?s.checked_callback(check):s.callback();check();if(!status.completed)return status;}
+        s.callback={};s.checked_callback={};s.operation.reset();s.factory={};check();s.phase=P::done;break;
     case P::done:return {true,0,{}};
     }}}catch(...){s.fault=true;throw;}
 }

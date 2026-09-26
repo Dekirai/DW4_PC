@@ -63,16 +63,19 @@ Struct metadata has flags `7` and 23 fields. Prototype callback `800247E4`
 and its concrete descriptor construction now finish, producing two struct
 descriptor instances and completing the semaphore's seven-field schema.
 The runtime semaphore's metadata getter and inline member initialization now
-complete. Its manager reaches **activation `+5C`**, the next missing operation.
+complete. Subsequent **activation `+5C`** now initializes queue/count and status
+with explicit exclusion state, allowing its manager to complete and be published.
 There are 27 published types, 92 descriptors, 104 default buffers, twelve
 prototypes and 96 enabled allocations. Both the thread list and semaphore are
-constructed; their manager remains unfinished.
+constructed; concrete main-thread getter `8003AF84` is the next missing operation.
 
 Dynamic descriptor size/alignment and distinct constructor/destructor words
 are implemented through [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md).
 Inline member handlers retain constructor/destructor callbacks and exact byte
-copying; see [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md). Continue with actual
-semaphore activation and the subsequently reached platform operations.
+copying; see [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md). See
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) for activation and its
+explicit platform state. Continue with concrete thread registration and the
+subsequently reached platform operations.
 See [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and [VALIDATION.md](VALIDATION.md).

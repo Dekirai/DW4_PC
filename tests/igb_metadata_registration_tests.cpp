@@ -2,6 +2,7 @@
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_startup.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
+#include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_platform_semaphore_registration.hpp"
@@ -3030,8 +3031,10 @@ void actual_cold_bootstrap_prefix(){
     struct_members->factory=[&](const IgbStructMemberCall&){++inline_callbacks;return std::shared_ptr<IgbStructMemberOperation>{};};
     runtime_struct_defaults=make_native_igb_struct_member_factory(struct_members);
     std::vector<IgbThreadRuntimeInitCall> semaphore_runtime_calls;
+    IgbThreadRuntimeInitFactory runtime_activation;
     runtime_init->factory=[&](const IgbThreadRuntimeInitCall& c){
-        semaphore_runtime_calls.push_back(c);return std::shared_ptr<IgbThreadRuntimeInitOperation>{};
+        semaphore_runtime_calls.push_back(c);
+        return runtime_activation?runtime_activation(c):std::shared_ptr<IgbThreadRuntimeInitOperation>{};
     };
     const auto after_inline_semaphore=call.resume(bootstrap);
     std::cout<<"Cold native semaphore inline initialization: "<<after_inline_semaphore.diagnostic<<
@@ -3068,6 +3071,61 @@ void actual_cold_bootstrap_prefix(){
         f.core->types->count==27 && (**prototypes->registry)->count==12 && concrete_semaphore->instance_count==1 &&
         concrete_manager->instance_count==0 && !startup->manager && !**meta_enum->metadata,
         "Pending semaphore activation replayed construction, default copying, result allocation or singleton publication.");
+
+    // The platform exclusion bit is explicit input, not inferred boot state.
+    // Success status aliases the cell already used by memory construction.
+    auto activation_services=std::make_shared<IgbSemaphoreRuntimeInitServices>();
+    activation_services->status_success=std::shared_ptr<std::optional<std::uint32_t>>(memory_construct,&memory_construct->status_success);
+    auto interrupt_state=std::make_shared<IgbExecutionInterruptState>();
+    activation_services->interrupts=make_native_igb_interrupt_factory(interrupt_state);
+    runtime_activation=make_native_igb_semaphore_runtime_init_factory(activation_services);
+    const auto before_activation_bytes=semaphore_storage.storage->bytes->bytes;
+    const auto before_activation_mask=semaphore_storage.storage->bytes->initialized;
+    const auto missing_interrupt_state=call.resume(bootstrap);
+    check(!missing_interrupt_state.completed && !call.faulted() && !interrupt_state->enabled &&
+        !startup->manager && concrete_manager->instance_count==0 && semaphore_runtime_calls.size()==3 &&
+        semaphore_runtime_calls.back().result==activation_result &&
+        semaphore_storage.storage->bytes->bytes==before_activation_bytes &&
+        semaphore_storage.storage->bytes->initialized==before_activation_mask &&
+        activation_result->initialized==std::vector<std::uint8_t>(4,0),
+        "Unknown execution-exclusion state was inferred or activation advanced past its first interrupt dependency.");
+    check(call.resume(bootstrap).diagnostic==missing_interrupt_state.diagnostic && semaphore_runtime_calls.size()==3 &&
+        !call.faulted() && !startup->manager && semaphore_storage.storage->bytes->bytes==before_activation_bytes,
+        "Pending interrupt state selected another semaphore operation or replayed preceding initialization.");
+    interrupt_state->enabled=true;
+    const auto after_semaphore_activation=call.resume(bootstrap);
+    std::cout<<"Cold native semaphore activation: "<<after_semaphore_activation.diagnostic<<
+        "; manager instances="<<concrete_manager->instance_count.value_or(0xffffffffu)<<
+        ", manager published="<<bool(startup->manager)<<", runtime calls="<<semaphore_runtime_calls.size()<<'\n';
+    if(!startup_redirects.empty())std::cout<<"After activation redirect="<<startup_redirects.back().redirect<<'\n';
+    check(!after_semaphore_activation.completed && !call.faulted() && interrupt_state->enabled==true &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 && igb_bootstrap_read_word(semaphore_storage,0x1c)==0 &&
+        igb_bootstrap_read_word(semaphore_storage,0x20)==0 && igb_bootstrap_read_byte(semaphore_storage,0x14)==1 &&
+        activation_result->initialized==std::vector<std::uint8_t>(4,1) &&
+        igb_buffer_word(activation_result,0)==*memory_construct->status_success &&
+        activation_services->status_success.get()==&memory_construct->status_success,
+        "Semaphore activation missed captured count, queue initialization, restored exclusion state or canonical status publication.");
+    check(startup->manager && startup->manager->storage==manager_storage.storage && startup->manager->offset==manager_storage.offset &&
+        concrete_manager->instance_count==1 && manager_instance.runtime_object->construction_active_.expired() &&
+        concrete_semaphore->instance_count==1 && thread_list_metadata->instance_count==1 &&
+        igb_bootstrap_read_word(manager_storage,12)==igb_bootstrap_address(semaphore_storage),
+        "Completed manager initialization did not publish the same runtime singleton with its actual owned members.");
+    check(after_semaphore_activation.diagnostic=="Reflected factory requires its captured metadata+3C redirect callback." &&
+        startup_redirects.back().redirect==0x80023e20 && startup_redirects.back().metadata==**startup->thread_metadata &&
+        (**startup->thread_metadata)->class_flags==7 && (**startup->thread_metadata)->factory_redirect==0x80023e20 &&
+        startup->pool_handle==4 && f.core->types->count==27 && descriptors.size()==92 && default_allocations==104 &&
+        (**prototypes->registry)->count==12 && enabled_allocations.size()==96 && runtime_allocations.size()==3 &&
+        structure_type->instance_count==2,
+        "Published manager bypassed actual main-thread registration/redirect or fabricated another runtime allocation.");
+    for(unsigned at=0x15;at<0x18;++at)check(!semaphore_storage.storage->bytes->initialized[at],
+        "Semaphore activation initialized unrelated inline padding.");
+    const auto after_activation_allocations=enabled_allocations.size(),after_activation_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_semaphore_activation.diagnostic && !call.faulted() &&
+        semaphore_runtime_calls.size()==3 && enabled_allocations.size()==after_activation_allocations &&
+        reflected_allocations.size()==after_activation_reflections && concrete_manager->instance_count==1 &&
+        concrete_semaphore->instance_count==1 && igb_buffer_word(activation_result,0)==*memory_construct->status_success &&
+        interrupt_state->enabled==true && startup->manager->storage==manager_storage.storage && !**meta_enum->metadata,
+        "The subsequent startup boundary replayed semaphore activation, manager publication or runtime construction.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

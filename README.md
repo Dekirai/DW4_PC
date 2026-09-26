@@ -199,9 +199,12 @@ three local descriptor factories. Unsigned-short registration and its prototype
 now complete the inherited `_size` clone `80021EB4` and the struct schema.
 Struct prototype callback `800247E4` and the concrete descriptor now finish the
 semaphore schema. Its metadata getter and inline struct field passes now
-complete the runtime allocation. The manager assigns that semaphore and reaches
-its activation virtual `+5C`; activation and platform scheduling remain required.
-The manager singleton and main thread remain uninitialized. See
+complete the runtime allocation. Its activation virtual `+5C` now executes the
+original queue/count initialization and status publication. With explicitly
+prepared initial exclusion state, the same cold invocation completes and
+publishes the manager singleton, then reaches concrete thread getter `8003AF84`.
+Main-thread construction and platform scheduling remain required. See
+[IGB_SEMAPHORE_ACTIVATION.md](docs/IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](docs/IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](docs/IGB_STRUCT_FIELD_RUNTIME.md),
 [IGB_UNSIGNED_SHORT_FIELD.md](docs/IGB_UNSIGNED_SHORT_FIELD.md),

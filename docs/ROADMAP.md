@@ -201,8 +201,12 @@ Unsigned-short registration, its prototype and inherited `_size` clone
 `80021EB4` now finish struct defaults. Struct prototype `800247E4`, distinct
 physical words and dynamic descriptor operations complete semaphore defaults.
 The semaphore runtime allocation completes its concrete initializer and inline
-struct members. Recover its reached activation `+5C`, then the concrete main
-thread and reached platform operations. See
+struct members. Its activation `+5C` now completes the original queue/count
+initialization with explicit exclusion state. The retained cold invocation
+publishes the manager singleton and reaches concrete thread getter `8003AF84`.
+Recover that class, the actual main-thread construction and subsequent platform
+operations next. See
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
 [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),

@@ -64,13 +64,15 @@ Concrete semaphore metadata now finishes with seven fields and flags `7`.
 The cold composition has 27 published types, 92 descriptors, 104 default buffers,
 12 prototypes and 96 enabled allocations. Subsequent inline-member work now
 completes the distinct runtime semaphore allocation. The manager assigns its
-semaphore pointer and reaches **activation `+5C`** with an untouched status
-destination; its startup singleton remains unpublished.
+semaphore pointer and calls **activation `+5C`**. With explicitly prepared initial
+exclusion state, that operation now completes and the actual startup caller
+publishes the manager singleton before reaching concrete thread getter `8003AF84`.
 
 Inline constructor/destructor callbacks, default copying and fresh virtual
 dispatch are implemented separately in [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md).
-No scalar fallback implements those operations. Continue with actual semaphore
-activation and the subsequently reached platform operations.
+No scalar fallback implements those operations. Activation is documented in
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Continue with concrete
+thread registration and the subsequently reached platform operations.
 
 See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and

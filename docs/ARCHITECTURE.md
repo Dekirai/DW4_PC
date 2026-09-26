@@ -210,9 +210,15 @@ now complete struct defaults and its schema. Struct prototype `800247E4` uses
 distinct physical alignment/constructor/destructor words and dynamic size
 operations. Its concrete descriptor completes semaphore schema registration;
 the real semaphore allocation now completes through its metadata getter and
-actual inline struct member operations. Its manager reaches activation `+5C`
-with a retained four-byte status destination. Main-thread creation, manager
-list/semaphore virtuals and teardown remain required. See
+actual inline struct member operations. Activation `+5C` now initializes the
+queue/count, restores the captured exclusion bit, publishes active state and
+freshly loads the canonical success status. The manager's checked continuation
+propagates its fault guard through the activation callback. With explicitly
+prepared initial exclusion state, the cold test completes manager construction
+and singleton publication before reaching concrete thread getter `8003AF84`.
+Main-thread creation, manager list/wait/signal operations, scheduling and teardown
+remain required. See
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
 [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),

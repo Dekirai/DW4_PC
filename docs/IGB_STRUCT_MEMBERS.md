@@ -65,6 +65,11 @@ twelve and zero constructor/destructor words; reset mode zero selects actual
 default copying. Allocator-provided payload contents remain explicitly
 prepared test input, not a claim that the original allocator clears memory.
 
+The subsequent activation implementation now completes the manager with
+explicit exclusion state and reaches concrete thread getter `8003AF84`;
+see [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Those effects
+belong to activation, not to these no-op object leaves or inline defaults.
+
 See [VALIDATION.md](VALIDATION.md) for observed boundaries and local evidence,
 and [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) for runtime ownership.
 Primary evidence is the supplied USA DOL, SHA1
