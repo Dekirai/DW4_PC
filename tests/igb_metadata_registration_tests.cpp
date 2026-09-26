@@ -2,6 +2,7 @@
 #include "dw4/igb_thread_registration.hpp"
 #include "dw4/igb_thread_startup.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
+#include "dw4/igb_struct_member.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_platform_semaphore_registration.hpp"
 #include "dw4/igb_struct_field_defaults.hpp"
@@ -2534,12 +2535,19 @@ void actual_cold_bootstrap_prefix(){
         };return operation;
     };
     const auto preceding_runtime_init=prototypes->reflected->initializer->factory;
-    IgbObjectInitFactory runtime_memory_defaults;
-    prototypes->reflected->initializer->factory=make_native_igb_thread_runtime_init_factory(runtime_init,
-        [&,preceding_runtime_init](const IgbObjectInitCall& c){
+    IgbObjectInitFactory runtime_memory_defaults,runtime_struct_defaults;
+    bool semaphore_runtime_ready{};
+    const IgbObjectInitFactory runtime_fallback=[&,preceding_runtime_init](const IgbObjectInitCall& c){
             if(runtime_memory_defaults){const auto operation=runtime_memory_defaults(c);if(operation)return operation;}
+            if(runtime_struct_defaults){const auto operation=runtime_struct_defaults(c);if(operation)return operation;}
             return preceding_runtime_init(c);
-        });
+        };
+    const auto native_runtime_init=make_native_igb_thread_runtime_init_factory(runtime_init,runtime_fallback);
+    prototypes->reflected->initializer->factory=[&,native_runtime_init,runtime_fallback](const IgbObjectInitCall& c){
+        if(c.kind==IgbObjectInitServiceKind::object_virtual && c.vtable_word==0x80470314 && !semaphore_runtime_ready)
+            return runtime_fallback(c);
+        return native_runtime_init(c);
+    };
     const auto after_runtime_manager=call.resume(bootstrap);
     std::cout<<"Cold native manager runtime initialization: "<<after_runtime_manager.diagnostic<<"; types="<<f.core->types->count<<
         ", runtime allocations="<<runtime_allocations.size()<<", enabled allocations="<<enabled_allocations.size()<<'\n';
@@ -3002,6 +3010,64 @@ void actual_cold_bootstrap_prefix(){
         structure_type->instance_count==2 && concrete_semaphore->instance_count==0 && !startup->manager && !**meta_enum->metadata &&
         thread_list_metadata->instance_count==1 && igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending runtime semaphore getter replayed struct prototypes, semaphore schema or prior startup effects.");
+
+    // Resume the same physical semaphore through its actual metadata getter.
+    // Its inline struct member is admitted separately, without prepared data.
+    runtime_init->semaphore_registration=platform_semaphore;semaphore_runtime_ready=true;
+    const auto after_semaphore_identity=call.resume(bootstrap);
+    std::cout<<"Cold native semaphore reflected member: "<<after_semaphore_identity.diagnostic<<'\n';
+    check(!after_semaphore_identity.completed && !call.faulted() && !startup->manager &&
+        reflected_init_calls.back().kind==IgbObjectInitServiceKind::field_virtual &&
+        reflected_init_calls.back().virtual_slot==0x84 && reflected_init_calls.back().field==semaphore_struct &&
+        reflected_init_calls.back().object.runtime_object==semaphore_instance.runtime_object &&
+        concrete_semaphore->instance_count==0 && igb_bootstrap_read_word(semaphore_storage,8)==0,
+        "Semaphore metadata getter bypassed the actual inline struct first pass or named-member clear.");
+    for(unsigned at=12;at<0x24;++at)check(!semaphore_storage.storage->bytes->initialized[at],
+        "Semaphore metadata getter or first pass fabricated scalar, active or inline struct defaults.");
+
+    auto struct_members=std::make_shared<IgbStructMemberServices>();struct_members->values=values;
+    unsigned inline_callbacks{};
+    struct_members->factory=[&](const IgbStructMemberCall&){++inline_callbacks;return std::shared_ptr<IgbStructMemberOperation>{};};
+    runtime_struct_defaults=make_native_igb_struct_member_factory(struct_members);
+    std::vector<IgbThreadRuntimeInitCall> semaphore_runtime_calls;
+    runtime_init->factory=[&](const IgbThreadRuntimeInitCall& c){
+        semaphore_runtime_calls.push_back(c);return std::shared_ptr<IgbThreadRuntimeInitOperation>{};
+    };
+    const auto after_inline_semaphore=call.resume(bootstrap);
+    std::cout<<"Cold native semaphore inline initialization: "<<after_inline_semaphore.diagnostic<<
+        "; instances="<<concrete_semaphore->instance_count.value_or(0xffffffffu)<<
+        ", runtime calls="<<semaphore_runtime_calls.size()<<'\n';
+    check(!after_inline_semaphore.completed && !call.faulted() && concrete_semaphore->instance_count==1 &&
+        semaphore_instance.runtime_object->construction_active_.expired() &&
+        !manager_instance.runtime_object->construction_active_.expired() && concrete_manager->instance_count==0 && !startup->manager,
+        "Inline struct initialization did not finish the actual semaphore before the manager activation boundary.");
+    check(semaphore_runtime_calls.size()==1 && semaphore_runtime_calls.front().object.runtime_object==semaphore_instance.runtime_object &&
+        semaphore_runtime_calls.front().vtable_word==0x80470314 && semaphore_runtime_calls.front().virtual_slot==0x5c &&
+        igb_bootstrap_read_word(manager_storage,12)==igb_bootstrap_address(semaphore_storage),
+        "Manager initialization did not capture its freshly published semaphore and call actual virtual+5C.");
+    const auto activation_result=semaphore_runtime_calls.front().result;
+    check(activation_result && activation_result->bytes.size()==4 &&
+        activation_result->initialized==std::vector<std::uint8_t>(4,0) && inline_callbacks==0,
+        "Unbound semaphore activation fabricated status or invoked a zero inline constructor/destructor.");
+    check(semaphore_struct->default_mode==0 && igb_bootstrap_read_byte(struct_instance_allocations.front(),0x24)==0 &&
+        semaphore_struct->struct_constructor==0 && semaphore_struct->struct_destructor==0 &&
+        igb_bootstrap_read_word(semaphore_storage,8)==0 && igb_bootstrap_read_word(semaphore_storage,12)==1 &&
+        igb_bootstrap_read_word(semaphore_storage,16)==1 && igb_bootstrap_read_byte(semaphore_storage,20)==0,
+        "Semaphore field passes missed actual reset mode, count defaults, name or inactive flag.");
+    for(unsigned at=0;at<12;++at)check(semaphore_storage.storage->bytes->initialized[0x18+at] &&
+        semaphore_storage.storage->bytes->bytes[0x18+at]==semaphore_struct->default_bytes->buffer->bytes[semaphore_struct->default_bytes->offset+at],
+        "Struct zero-constructor branch did not copy its actual twelve default bytes into the runtime semaphore.");
+    for(unsigned at=0x15;at<0x18;++at)check(!semaphore_storage.storage->bytes->initialized[at],
+        "Inline member copy or boolean default initialized unrelated semaphore padding.");
+    const auto completed_runtime_members=member_calls.size();
+    check(call.resume(bootstrap).diagnostic==after_inline_semaphore.diagnostic && !call.faulted() &&
+        semaphore_runtime_calls.size()==2 && semaphore_runtime_calls.back().result==activation_result &&
+        activation_result->initialized==std::vector<std::uint8_t>(4,0) && inline_callbacks==0 &&
+        member_calls.size()==completed_runtime_members && enabled_allocations.size()==struct_allocations &&
+        reflected_allocations.size()==struct_reflections && descriptors.size()==92 && default_allocations==104 &&
+        f.core->types->count==27 && (**prototypes->registry)->count==12 && concrete_semaphore->instance_count==1 &&
+        concrete_manager->instance_count==0 && !startup->manager && !**meta_enum->metadata,
+        "Pending semaphore activation replayed construction, default copying, result allocation or singleton publication.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

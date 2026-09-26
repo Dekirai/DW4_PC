@@ -61,18 +61,18 @@ specialization and its schema. The class is ready with seven fields and flags
 `7`; its post-schema `+40` callback is `8002612C`.
 
 The cold composition contains 27 published types, 92 descriptors, 104 default
-buffers, twelve prototypes and 96 enabled allocations. The thread-list runtime
-instance is complete; its manager still owns the construction lease and its
-semaphore member remains zero. A distinct raw runtime semaphore allocation now
-has its common header and waits at object `+58`, its metadata getter. Remaining
-member bytes are unknown. No completed semaphore, startup manager singleton
-or main-thread instance has been supplied.
+buffers, twelve prototypes and 96 enabled allocations. Both the thread-list
+and semaphore runtime instances are constructed by their actual field passes.
+The semaphore has count defaults one, an inactive flag and the twelve bytes
+copied from its explicitly prepared descriptor payload; padding remains unknown.
+Its manager assigns member `+0C` and reaches activation `+5C`. The manager still
+owns its construction lease and no startup singleton or main thread is supplied.
 
-Continue with the runtime semaphore metadata getter and initializer, then the
-inline struct member operations and activation.
+Continue with semaphore activation and the subsequent platform operations.
 Semaphore activation, wait/signal semantics and host scheduling remain separate
 work. This metadata implementation does not provide a host mutex or a playable
-game. See [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
+game. See [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md),
+[IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) and
 [VALIDATION.md](VALIDATION.md).

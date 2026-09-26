@@ -62,15 +62,15 @@ does not resize a one-byte allocation. Focused tests cover resizing separately.
 
 Concrete semaphore metadata now finishes with seven fields and flags `7`.
 The cold composition has 27 published types, 92 descriptors, 104 default buffers,
-12 prototypes and 96 enabled allocations. Its raw semaphore allocation has a
-distinct runtime identity and only its common header is initialized. The next
-missing operation is **semaphore object `+58`**, its original metadata getter.
-The manager's semaphore pointer and startup singleton remain unpublished.
+12 prototypes and 96 enabled allocations. Subsequent inline-member work now
+completes the distinct runtime semaphore allocation. The manager assigns its
+semaphore pointer and reaches **activation `+5C`** with an untouched status
+destination; its startup singleton remains unpublished.
 
-Continue with the concrete semaphore's reflected initializer, the inline struct
-member operations, and actual semaphore initialization. Inline constructor,
-destructor, copy and synchronization behavior remain separate from constructing
-a descriptor prototype. No scalar fallback implements those operations.
+Inline constructor/destructor callbacks, default copying and fresh virtual
+dispatch are implemented separately in [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md).
+No scalar fallback implements those operations. Continue with actual semaphore
+activation and the subsequently reached platform operations.
 
 See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and

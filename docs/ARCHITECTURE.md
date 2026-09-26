@@ -209,8 +209,9 @@ Unsigned-short registration/prototype and inherited `_size` clone `80021EB4`
 now complete struct defaults and its schema. Struct prototype `800247E4` uses
 distinct physical alignment/constructor/destructor words and dynamic size
 operations. Its concrete descriptor completes semaphore schema registration;
-the real semaphore allocation now reaches its object `+58` metadata getter.
-Main-thread creation, manager
+the real semaphore allocation now completes through its metadata getter and
+actual inline struct member operations. Its manager reaches activation `+5C`
+with a retained four-byte status destination. Main-thread creation, manager
 list/semaphore virtuals and teardown remain required. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

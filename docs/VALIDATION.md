@@ -1,5 +1,83 @@
 # Local validation
 
+## Inline struct members complete runtime semaphore construction
+
+Validated locally on 2026-09-26. The retained cold startup executes concrete
+semaphore metadata getter `80093530`, its verified object initialization
+no-ops, actual inline struct field passes and `80063E50 -> 800031E8` default
+copying. The semaphore's instance count becomes one and its construction lease
+ends. The existing manager member constructor assigns that same instance to
+manager `+0C`, then actual hook `800755C0` captures it and reaches virtual `+5C`.
+
+That activation is the next missing operation. Its four-byte status destination
+is allocated once and remains unwritten across repeated pending continuation.
+The manager retains its construction lease and zero instance count; no startup
+singleton or main thread is published. Counts remain **27 types, 92 descriptors,
+104 default buffers, 12 prototypes and 96 enabled allocations**. The earlier
+thread-list and new semaphore instances are both constructed; this is not
+complete startup or playable gameplay.
+
+The runtime semaphore receives its original count defaults one, inactive flag,
+null name and the twelve bytes from its descriptor's prepared default payload.
+Its padding remains unknown. The actual zero constructor/destructor words
+invoke no guest callback; reset mode zero selects the byte copy. The payload's
+allocator-provided contents are explicitly prepared integration input.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 206/206 local CTest suites passed with four build jobs |
+| Integrated cold startup | 3,199 checks; actual semaphore object/member initialization, publication into the manager and stable activation boundary |
+| Inline struct members | 167 checks; exact leaves, callback capture/reloads, null indirect calls, live virtual dispatch, overlap, partial faults and retained identities |
+| Runtime initializer | 208 checks; concrete semaphore canonical metadata, no-read object leaves and preserved unknown inline bytes |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames retain their existing scope |
+| Python verifier | Six tests passed |
+
+The copy-identity regression was compiled independently against the preceding
+core and failed after 80 checks: a late source binding could redirect the
+captured destination by replacing its byte owner or guest address. The final
+copy operation snapshots that identity without dereferencing it, then validates
+at the reached destination write after the original source-byte read. Already
+written bytes and zero-size no-access behavior are preserved; restoring an
+invalidated binding does not revive the operation.
+
+The independent original corpus was sealed before native source observation:
+**72 cases, 1,687 executed DOL instructions and 118 instruction addresses**.
+It covers concrete semaphore object leaves and inline struct member callers,
+including actual directional byte copying and destructor-before-constructor
+reloads. Nonzero guest callback interiors remain explicit prepared endpoints.
+
+The initial driver attempt failed during fixture setup before producing any
+observation; that source, executable and failure output are retained. Correcting
+the prepared registration state and typed-owner wiring produced 59/63 matches
+in the unchanged selected set. Four null-receiver semaphore no-ops differed
+only in status: the original returned, while the native adapter unnecessarily
+validated unused storage. The semaphore-only admission now follows the proven
+no-read behavior; manager/list validation is unchanged. No selected cases or
+original expectations were removed or rewritten.
+
+The repaired core matches **63/63 cases**: 44 completed calls, four prepared
+endpoint faults, seven null-read equivalents, two null-write equivalents, two
+source-byte bounds, two target-byte bounds and two null indirect-call
+equivalents. There are no pending results or unexpected faults. Nine cases
+remain original-only: six unavailable descriptor/global reads and three
+unrepresented nonzero callback bodies. Null and bounded accesses compare
+caller state and partial write prefixes, not host hardware exceptions.
+
+All 72 original and 63 final native reruns match. The retained old executable
+also reproduces the same 59/63 result and exactly the four original differences.
+Fifteen original artifact hashes, 17 final native artifact hashes and 23
+historical hash entries verify; the native/history set has 34 unique paths.
+Original manifest SHA256:
+`0cc783f43a615c96aaf2f7e21991c4fbdd4ebecde114f70e398c391bac3d8e66`.
+Native manifest SHA256:
+`6733c6795dc7da83e5baa5e1937464e275803cffa568146ea30976ea42efaca2`.
+The verified Release core SHA256 is
+`3e1172520d74fd67a6aa8ab6e12925da41285aa75f0a69ff6ed098ccb88f5b6e`.
+
+See [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md). Local artifacts use the
+ignored `work/native-struct-members-` prefix.
+
 ## Struct descriptor runtime reaches concrete semaphore initialization
 
 Validated locally on 2026-09-26. The retained cold startup now executes struct

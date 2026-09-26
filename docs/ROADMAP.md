@@ -200,8 +200,8 @@ probe and first three local descriptor factories. `igStructMetaField` factory
 Unsigned-short registration, its prototype and inherited `_size` clone
 `80021EB4` now finish struct defaults. Struct prototype `800247E4`, distinct
 physical words and dynamic descriptor operations complete semaphore defaults.
-The semaphore runtime allocation reaches object `+58`; recover its concrete
-initializer, inline struct members and activation, then the concrete main
+The semaphore runtime allocation completes its concrete initializer and inline
+struct members. Recover its reached activation `+5C`, then the concrete main
 thread and reached platform operations. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

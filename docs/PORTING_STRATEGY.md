@@ -306,12 +306,13 @@ and three local descriptor factories. Unsigned-short registration/prototype and
 the inherited `_size` clone `80021EB4` now finish struct defaults and schema.
 Struct prototype `800247E4`, its distinct physical members and dynamic
 descriptor operations now complete concrete semaphore registration. Its runtime
-allocation reaches **object `+58`**, the next metadata getter. Recover the
-semaphore initializer, inline struct operations and activation next;
+allocation now completes its metadata getter and actual inline struct members.
+Recover the reached **activation `+5C`** and subsequent platform operations next;
 the manager remains unfinished and
 no startup singleton or main thread is supplied. See
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) and
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md) and
+[IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md) and
 [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md) and
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md).
 The physical schema stores preserve `+1C/+08/+18`

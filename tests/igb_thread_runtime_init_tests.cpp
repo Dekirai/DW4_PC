@@ -267,11 +267,88 @@ void fresh_plain_metadata_getters(){
     check(factory(virtual_call(manager,0x804700a8,0x0c))->resume().completed,
         "A verified BLR hook acquired an unnecessary registration dependency.");
 }
+
+void concrete_semaphore_object_leaves(){
+    Fixture f;unsigned delegated{};auto sentinel=std::make_shared<IgbObjectInitOperation>();
+    const auto factory=make_native_igb_thread_runtime_init_factory(f.services,[&](const auto&){++delegated;return sentinel;});
+    const auto initial=f.semaphore.storage->bytes->bytes,known=f.semaphore.storage->bytes->initialized;
+    for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u}){
+        const auto operation=factory(virtual_call(f.semaphore,0x80470314,slot));
+        check(operation && operation!=sentinel && operation->resume().completed && operation->resume().completed,
+            "Concrete semaphore object BLR was omitted or replaced by runtime initialization.");
+        check(f.semaphore.storage->bytes->bytes==initial && f.semaphore.storage->bytes->initialized==known && f.selected.empty(),
+            "Semaphore object leaf initialized inline bytes or invoked a runtime endpoint.");
+    }
+    for(const auto slot:{0x38u,0x48u,0x54u,0x5cu,0x60u})
+        check(factory(virtual_call(f.semaphore,0x80470314,slot))==sentinel,"Semaphore initializer claimed unrelated runtime or clone behavior.");
+    auto wrong_service=virtual_call(f.semaphore,0x80470314,0x58);wrong_service.kind=IgbObjectInitServiceKind::field_virtual;
+    check(factory(wrong_service)==sentinel && delegated==6,"Semaphore object getter was confused with a field virtual.");
+    auto load=factory(virtual_call(f.semaphore,0x80470314,0x58));
+    check(load && !load->resume().completed && f.selected.empty(),"Unknown concrete semaphore metadata became a ready or registered class.");
+    f.services->semaphore_registration=std::make_shared<IgbPlatformSemaphoreRegistrationServices>();
+    f.services->semaphore_registration->state=std::make_shared<IgbPlatformSemaphoreRegistrationState>();
+    check(!load->resume().completed,"Unknown canonical semaphore cell became a null pointer.");
+    f.services->semaphore_registration->state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    check(load->resume().completed && !load->metadata_result,"Plain93530 getter registered or rejected known-null metadata.");
+    auto first=std::make_shared<IgbRuntimeMetaType>();first->class_flags=0;
+    f.services->semaphore_registration->state->metadata=first;
+    check(load->resume().completed && !load->metadata_result,"Completed semaphore getter reread the global.");
+    load=factory(virtual_call(f.semaphore,0x80470314,0x58));
+    auto replacement=std::make_shared<IgbPlatformSemaphoreRegistrationServices>();replacement->state=std::make_shared<IgbPlatformSemaphoreRegistrationState>();
+    auto second=std::make_shared<IgbRuntimeMetaType>();second->class_flags=8;replacement->state->metadata=second;
+    f.services->semaphore_registration=replacement;
+    check(load->resume().completed && load->metadata_result==second && f.selected.empty(),
+        "Plain semaphore getter captured an early cell or entered full registration for an unready class.");
+    replacement->state->metadata=first;load=factory(virtual_call(f.semaphore,0x80470314,0x58));
+    check(load->resume().completed && load->metadata_result==first && first->class_flags==0 &&
+        f.semaphore.storage->bytes->bytes==initial && f.semaphore.storage->bytes->initialized==known,
+        "Fresh semaphore metadata lookup changed class readiness, member bytes or canonical identity.");
+    auto services=std::make_shared<IgbThreadRuntimeInitServices>();const auto expired=make_native_igb_thread_runtime_init_factory(services);services.reset();
+    rejects([&]{expired(virtual_call(f.semaphore,0x80470314,0x58));},"Expired semaphore metadata services were silently recreated.");
+    check(expired(virtual_call(f.semaphore,0x80470314,0x2c))->resume().completed,"Semaphore BLR required metadata services after expiry.");
+}
+
+void semaphore_leaves_do_not_read_receivers(){
+    Fixture f;const auto factory=make_native_igb_thread_runtime_init_factory(f.services);
+    f.services->semaphore_registration=std::make_shared<IgbPlatformSemaphoreRegistrationServices>();
+    f.services->semaphore_registration->state=std::make_shared<IgbPlatformSemaphoreRegistrationState>();
+    auto metadata=std::make_shared<IgbRuntimeMetaType>();metadata->class_flags=0;
+    std::vector<IgbObjectInstance> receivers={{},f.manager,object(0x400000,Kind::thread_list,0x80476ce0)};
+    for(unsigned mode=0;mode<7;++mode){auto target=object(0x500000+mode*0x100,Kind::semaphore,0x80470314);
+        if(mode==0)target.runtime_object.reset();
+        if(mode==1)target.storage->bindings.clear();
+        if(mode==2)target.runtime_object->physical_storage.reset();
+        if(mode==3)target.runtime_object->physical_storage->offset+=4;
+        if(mode==4)target.storage->bytes->released=true;
+        if(mode==5)target.storage->bytes.reset();
+        if(mode==6){IgbObjectBinding conflict;conflict.offset=target.offset;conflict.runtime_object=std::make_shared<IgbRuntimeObject>(Kind::thread);
+            target.storage->bindings.push_back(conflict);}
+        receivers.push_back(target);
+    }
+    for(const auto& receiver:receivers){
+        const auto memory=receiver.storage?receiver.storage->bytes:nullptr;
+        const auto before=memory?memory->bytes:std::vector<std::uint8_t>{};
+        const auto known=memory?memory->initialized:std::vector<std::uint8_t>{};
+        // The selected original leaves are literal BLRs. The pure93530 getter
+        // only reads its global; neither function dereferences its receiver.
+        for(const auto slot:{0x0cu,0x24u,0x2cu,0x34u}){const auto operation=factory(virtual_call(receiver,0x80470314,slot));
+            check(operation && operation->resume().completed,"Semaphore BLR inspected an unused null or invalid receiver.");}
+        f.services->semaphore_registration->state->metadata.reset();auto load=factory(virtual_call(receiver,0x80470314,0x58));
+        check(load && !load->resume().completed,"No-read semaphore getter changed unknown global semantics.");
+        f.services->semaphore_registration->state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+        check(load->resume().completed && !load->metadata_result,"No-read semaphore getter rejected a known null global.");
+        f.services->semaphore_registration->state->metadata=metadata;load=factory(virtual_call(receiver,0x80470314,0x58));
+        check(load && load->resume().completed && load->metadata_result==metadata,"No-read semaphore getter did not return the current canonical global.");
+        check((!memory || (memory->bytes==before && memory->initialized==known)) && f.selected.empty() && metadata->class_flags==0,
+            "Semaphore no-read leaf changed represented bytes, registered metadata or invoked runtime services.");
+    }
+    rejects([&]{factory(virtual_call({},0x804700a8,0x2c));},"Real manager initialization lost its required receiver validation.");
+}
 }
 
 int main(){
     try{hidden_result_and_ignored_status();captured_member_and_delayed_resolution();retained_virtual_and_result_destination();
-        invalid_storage_and_partial_failures();reentry_and_abandoned_lifetimes();exact_initializer_adapter();fresh_plain_metadata_getters();
+        invalid_storage_and_partial_failures();reentry_and_abandoned_lifetimes();exact_initializer_adapter();fresh_plain_metadata_getters();concrete_semaphore_object_leaves();semaphore_leaves_do_not_read_receivers();
         std::cout<<"Thread runtime initializer checks passed: "<<checks<<'\n';return 0;
     }catch(const std::exception& error){std::cerr<<"Thread runtime initializer check failed after "<<checks<<": "<<error.what()<<'\n';return 1;}
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/igb_platform_thread_registration.hpp"
+#include "dw4/igb_platform_semaphore_registration.hpp"
 #include "dw4/igb_thread_dependencies.hpp"
 #include "dw4/igb_object_field_construct.hpp"
 
@@ -21,6 +22,7 @@ struct IgbThreadRuntimeInitServices {
     std::shared_ptr<IgbObjectFieldConstructServices> objects;
     IgbThreadRuntimeInitFactory factory;
     std::vector<std::shared_ptr<void>> retained;
+    std::shared_ptr<IgbPlatformSemaphoreRegistrationServices> semaphore_registration;
 };
 // Actual755C0: capture manager+0C, resolve its physical owner, load that
 // semaphore's vtable and call+5C with the explicit hidden result destination.
@@ -35,8 +37,8 @@ public:
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Exact manager804700A8 and thread-list80476CE0 reflected init slots only.
-// Their metadata getters933F0/94128 are plain fresh global loads. Verified
+// Exact manager804700A8, thread-list80476CE0 and semaphore80470314 reflected
+// init slots only. Metadata getters933F0/94128/93530 are plain fresh loads. Verified
 // BLR slots remain distinct from manager+2C and all other runtime operations.
 IgbObjectInitFactory make_native_igb_thread_runtime_init_factory(
     std::shared_ptr<IgbThreadRuntimeInitServices>,IgbObjectInitFactory remaining={});

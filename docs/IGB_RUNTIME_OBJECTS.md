@@ -72,16 +72,19 @@ and enters struct-field factory `8002450C`. Its registration, physical probe
 and three local descriptors now execute. Unsigned-short registration and its
 prototype complete inherited `_size` clone `80021EB4` and struct defaults.
 Struct prototype `800247E4` and the concrete descriptor now complete the
-semaphore schema. Its distinct runtime allocation receives its common header
-and reaches object `+58`; member defaults and activation remain required.
+semaphore schema. Its distinct runtime allocation completes through object
+`+58`, scalar defaults and actual inline struct initialization. The semaphore
+is assigned to manager `+0C`, whose actual `800755C0` hook now reaches activation
+virtual `+5C` with a retained four-byte result destination.
 The manager still owns its construction lease,
 its instance count remains zero and the startup singleton is unpublished.
-The main-thread factory and manager's semaphore hook have not executed in this
-cold composition. Focused hook tests have explicitly prepared method endpoints.
+The activation body and main-thread factory have not executed in this cold
+composition. Focused hook tests retain their explicitly prepared method endpoints.
 
 There are 27 registered types, 92 descriptors, 104 default buffers, twelve
-prototypes and 96 enabled allocations. Only the thread-list runtime instance
-has completed; this is neither complete startup nor playable gameplay.
+prototypes and 96 enabled allocations. The thread-list and semaphore runtime
+instances are constructed; this is neither complete startup nor playable gameplay.
+See [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md) for the inline field path.
 See [VALIDATION.md](VALIDATION.md) for measured checks and comparison scopes.
 See [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) for the concrete class
 and [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) for its reached dependency.

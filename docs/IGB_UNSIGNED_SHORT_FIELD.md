@@ -54,7 +54,8 @@ At the unsigned-short milestone this reached struct prototype callback
 `800247E4`, with 26 published types and eleven prototypes. Subsequent struct
 descriptor work now completes that callback and the concrete semaphore schema;
 see [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md). The runtime
-semaphore's metadata getter and member initialization remain required.
+semaphore now completes its metadata getter and inline member initialization;
+its activation remains required. See [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md).
 Raw storage/pool services remain explicit test preparation. These results do
 not establish complete native boot or playable gameplay.
 

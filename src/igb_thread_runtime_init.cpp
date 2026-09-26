@@ -86,23 +86,29 @@ IgbObjectInitFactory make_native_igb_thread_runtime_init_factory(
     std::shared_ptr<IgbThreadRuntimeInitServices> services,IgbObjectInitFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbObjectInitCall& call)->std::shared_ptr<IgbObjectInitOperation>{
         if(call.kind!=IgbObjectInitServiceKind::object_virtual)return remaining?remaining(call):nullptr;
-        const bool manager=call.vtable_word==0x804700a8u,list=call.vtable_word==0x80476ce0u;
-        if(!manager && !list)return remaining?remaining(call):nullptr;
+        const bool manager=call.vtable_word==0x804700a8u,list=call.vtable_word==0x80476ce0u,
+            semaphore=call.vtable_word==0x80470314u;
+        if(!manager && !list && !semaphore)return remaining?remaining(call):nullptr;
         const auto slot=call.virtual_slot;
         if(slot!=0x0c && slot!=0x24 && slot!=0x2c && slot!=0x34 && slot!=0x58)return remaining?remaining(call):nullptr;
-        igb_object_validate_instance(call.object);
-        if(!call.object.runtime_object || call.object.runtime_object->kind!=
-            (manager?IgbRuntimeObjectKind::thread_manager:IgbRuntimeObjectKind::thread_list))
-            fail("Thread runtime initializer requires its matching native object layout.");
+        // The semaphore's four literal BLRs and plain93530 global getter
+        // never access their receiver. Keep the existing other admissions.
+        if(!semaphore){
+            igb_object_validate_instance(call.object);
+            if(!call.object.runtime_object || call.object.runtime_object->kind!=
+                (manager?IgbRuntimeObjectKind::thread_manager:IgbRuntimeObjectKind::thread_list))
+                fail("Thread runtime initializer requires its matching native object layout.");
+        }
         auto operation=std::make_shared<IgbObjectInitOperation>();
         if(slot!=0x58 && !(manager && slot==0x2c)){
             operation->resume=[] {return MessengerCallResult{true,0,{}};};return operation;
         }
         const auto selected=weak.lock();if(!selected)fail("Thread runtime initialization services expired before selection.");
         if(slot==0x58){
-            operation->resume=[selected,manager,out=operation.get(),done=false]()mutable{
+            operation->resume=[selected,manager,semaphore,out=operation.get(),done=false]()mutable{
                 if(done)return MessengerCallResult{true,0,{}};
                 const auto canonical=manager?igb_platform_thread_metadata_slot(selected->manager_registration):
+                    semaphore?igb_platform_semaphore_metadata_slot(selected->semaphore_registration):
                     (selected->dependencies?selected->dependencies->thread_list:nullptr);
                 if(!canonical || !*canonical)return pending("Thread runtime metadata getter requires its represented canonical global.");
                 out->metadata_result=**canonical;done=true;return MessengerCallResult{true,0,{}};

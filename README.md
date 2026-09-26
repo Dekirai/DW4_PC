@@ -198,8 +198,9 @@ its real registration and creates three local descriptors. Its fourth factory,
 three local descriptor factories. Unsigned-short registration and its prototype
 now complete the inherited `_size` clone `80021EB4` and the struct schema.
 Struct prototype callback `800247E4` and the concrete descriptor now finish the
-semaphore schema. Its runtime allocation reaches the original metadata getter;
-runtime member initialization and semaphore activation remain required.
+semaphore schema. Its metadata getter and inline struct field passes now
+complete the runtime allocation. The manager assigns that semaphore and reaches
+its activation virtual `+5C`; activation and platform scheduling remain required.
 The manager singleton and main thread remain uninitialized. See
 [IGB_STRUCT_FIELDS.md](docs/IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](docs/IGB_STRUCT_FIELD_RUNTIME.md),
