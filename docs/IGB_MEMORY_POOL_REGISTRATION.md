@@ -67,6 +67,35 @@ prototype independently, then performs physical decrement/store and a separate
 fresh low23 test. This repair preserves later fresh registry, ordinal and
 finalization selection; it does not add new reads after a selected destructor.
 
+## Concrete malloc layout probe
+
+`IgbMallocMemoryPoolProbeInvocation` implements `80039CC0` on its represented
+`0xA0` local allocation. The original `8008B264 / 80058ABC / 8006665C` chain
+resets the packed header, stores parent vtable `80471CEC`, stores concrete
+vtable `80473790`, then initializes the `+74` and `+94` pointers to null.
+Only sixteen local bytes become known. The local remains separate from runtime
+allocator instances and carries no synthetic typed object binding.
+
+The probe captures ArkCore after construction and retains its `+394` offset
+owner across a pending read. It captures the selected local word, restores the
+concrete vtable and processes `+94` before `+74`. Each member lookup is fresh;
+the second occurs after the first selected destruction completes. Reference
+handling decrements and stores the physical full word, then separately rereads
+low23 before selecting `80066E1C`. Member pointers remain unchanged.
+
+Cleanup uses explicit numeric-to-typed object bindings and retains the selected
+destructor across suspension. Its polling adds no outer receiver read. Missing
+bindings remain pending; changed captured physical owners fail at their reached
+access. The legacy destruction endpoint still has no borrowed fault-check API,
+so effects inside a callback that catches caller reentry remain outside this
+adapter's guarantee. Unfinished invocations retain byte owners without retaining
+callback closures inside their owning services.
+
+The local profile bounds selected offsets to aligned words through `0x9C`.
+Unknown padding is preserved. The type adapter obtains local storage once,
+returns the captured layout word and lets the generic registrar continue to
+malloc defaults `80039E28`.
+
 ## Scope and provenance
 
 The supplied USA DOL is the primary source, SHA1

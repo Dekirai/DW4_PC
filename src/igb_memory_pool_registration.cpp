@@ -1,4 +1,5 @@
 #include "dw4/igb_memory_pool_registration.hpp"
+#include "dw4/igb_object_field_construct.hpp"
 
 #include <array>
 #include <bit>
@@ -335,6 +336,161 @@ MessengerCallResult IgbMemoryPoolDefaultsInvocation::resume(std::shared_ptr<IgbM
     } } }catch(...) { s.fault=true;throw; }
 }
 
+namespace {
+bool same_probe_object(const IgbObjectInstance& left,const IgbObjectInstance& right) {
+    return left.storage==right.storage && left.offset==right.offset && left.file==right.file &&
+        left.field==right.field && left.metadata==right.metadata && left.fields==right.fields &&
+        left.types==right.types && left.runtime_object==right.runtime_object;
+}
+std::optional<IgbObjectInstance> malloc_probe_object(
+    const std::shared_ptr<IgbMemoryPoolRegistrationServices>& services,std::uint32_t address) {
+    std::optional<IgbObjectInstance> result;
+    if(services && services->object_cleanup)for(const auto& object:services->object_cleanup->objects) {
+        if(igb_bootstrap_address({object.storage,object.offset})!=address)continue;
+        if(!object.storage || object.storage->faulted())fail("Malloc probe cleanup requires an unfaulted object allocation.");
+        igb_object_validate_instance(object);
+        if(result && !same_probe_object(*result,object))fail("Malloc probe cleanup address has conflicting typed identities.");
+        result=object;
+    }
+    return result;
+}
+struct ProbeObjectAccess {
+    IgbObjectInstance object;
+    std::shared_ptr<IgbScratchBuffer> bytes;
+    std::uint32_t allocation_address{};
+    explicit ProbeObjectAccess(IgbObjectInstance value):object(std::move(value)) {
+        if(object.storage) { bytes=object.storage->bytes;allocation_address=object.storage->original_address; }
+    }
+    void validate()const {
+        if(!object.storage || object.storage->faulted() || object.storage->bytes!=bytes ||
+            object.storage->original_address!=allocation_address || !bytes || bytes->released)
+            fail("Malloc probe cleanup lost its captured object allocation identity.");
+        igb_object_validate_instance(object);
+    }
+};
+} // namespace
+
+struct IgbMallocMemoryPoolProbeInvocation::Impl {
+    enum class Phase { reset,parent_vtable,derived_vtable,null_lock,null_tracker,core,tracker_address,
+        offset,word,restore,member,resolve,decrement,test,destroy,next,done };
+    Phase phase=Phase::reset;
+    IgbBootstrapPointer local;
+    std::shared_ptr<IgbScratchBuffer> bytes;
+    std::uint32_t allocation_address{},local_address{},offset{},value{},member_address{},object_address{};
+    std::uint32_t member_offset=0x94;
+    std::unique_ptr<IgbBootstrapBaseInvocation> reset;
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> owner;
+    std::shared_ptr<IgbRuntimeTypeRegistry> core;
+    std::shared_ptr<ProbeObjectAccess> object;
+    IgbObjectFieldConstructCall request;
+    IgbObjectFieldConstructFactory factory;
+    std::shared_ptr<IgbObjectFieldConstructOperation> operation;
+    std::function<MessengerCallResult()> callback;
+    bool running{},fault{};
+};
+IgbMallocMemoryPoolProbeInvocation::IgbMallocMemoryPoolProbeInvocation(IgbBootstrapPointer local)
+    :impl_(std::make_unique<Impl>()) {
+    auto& s=*impl_;s.local=std::move(local);s.local_address=igb_bootstrap_address(s.local);
+    if(s.local.storage) { s.bytes=s.local.storage->bytes;s.allocation_address=s.local.storage->original_address; }
+}
+IgbMallocMemoryPoolProbeInvocation::~IgbMallocMemoryPoolProbeInvocation() {
+    auto& s=*impl_;
+    if((!completed() || faulted()) && s.owner) {
+        if(s.local.storage)s.owner->retained.push_back(s.local.storage);
+        if(s.bytes)s.owner->retained.push_back(s.bytes);
+        if(s.object)s.owner->retained.push_back(s.object);
+        // Result owners may outlive an interrupted call; its callback closure
+        // must not be retained inside the same services it can capture.
+        if(s.operation && s.operation->pool_result)s.owner->retained.push_back(s.operation->pool_result);
+    }
+}
+bool IgbMallocMemoryPoolProbeInvocation::completed()const noexcept { return impl_->phase==Impl::Phase::done; }
+bool IgbMallocMemoryPoolProbeInvocation::faulted()const noexcept { return impl_->fault; }
+std::uint32_t IgbMallocMemoryPoolProbeInvocation::value()const {
+    if(!completed() || faulted())fail("Incomplete malloc probe has no captured layout word.");
+    return impl_->value;
+}
+MessengerCallResult IgbMallocMemoryPoolProbeInvocation::resume(
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> services,const std::function<void()>& enclosing_check) {
+    auto& s=*impl_;using P=Impl::Phase;
+    if(s.running || s.fault) { s.fault=true;fail("Malloc probe requires an unfaulted nonrecursive invocation."); }
+    if(completed())return {true,s.value,{}};
+    Running running(s.running);if(!s.owner && services)s.owner=services;
+    const auto check=[&] {
+        if(s.fault)fail("Malloc probe was invalidated by a callback.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Malloc probe was invalidated by its enclosing callback.");
+    };
+    const auto local_check=[&] {
+        if(!s.local.storage || s.local.storage->faulted() || s.local.storage->bytes!=s.bytes ||
+            s.local.storage->original_address!=s.allocation_address || !s.bytes || s.bytes->released)
+            fail("Malloc probe lost its captured local allocation identity.");
+    };
+    const auto write=[&](std::uint32_t offset,std::uint32_t value) {
+        local_check();igb_bootstrap_write_word(s.local,offset,value);
+    };
+    const auto fallback=[&] {
+        return services && services->object_cleanup?services->object_cleanup->factory:IgbObjectFieldConstructFactory{};
+    };
+    try { for(;;) { check();switch(s.phase) {
+    case P::reset:
+        local_check();
+        if(!s.reset)s.reset=std::make_unique<IgbBootstrapBaseInvocation>(s.local,false);
+        { const auto status=s.reset->resume();check();if(!status.completed)return status; }
+        s.reset.reset();check();s.phase=P::parent_vtable;break;
+    case P::parent_vtable:write(0,0x80471cec);s.phase=P::derived_vtable;break;
+    case P::derived_vtable:write(0,0x80473790);s.phase=P::null_lock;break;
+    case P::null_lock:write(0x74,0);s.phase=P::null_tracker;break;
+    case P::null_tracker:write(0x94,0);s.phase=P::core;break;
+    case P::core:
+        if(!services || !services->types || !services->types->runtime || !services->types->runtime->singleton)
+            return pending("Malloc probe requires represented ArkCore80562100 after local construction.");
+        s.core=*services->types->runtime->singleton;s.phase=P::tracker_address;break;
+    case P::tracker_address:
+        // Original39CE4 computes this condition before loading core+394.
+        s.member_address=s.local_address+0x94u;s.phase=P::offset;break;
+    case P::offset:
+        if(!s.core)fail("Malloc probe dereferences null captured ArkCore at+394.");
+        if(!s.core->vtable_offset)return pending("Malloc probe requires captured ArkCore offset+394.");
+        s.offset=*s.core->vtable_offset;s.phase=P::word;break;
+    case P::word:
+        if(s.offset>0x9cu || (s.offset&3u)!=0)fail("Malloc probe exceeds its aligned0xA0-byte local-object profile.");
+        local_check();s.value=igb_bootstrap_read_word(s.local,s.offset);s.phase=P::restore;break;
+    case P::restore:write(0,0x80473790);s.phase=P::member;break;
+    case P::member:
+        if(!s.member_address) { s.phase=P::next;break; }
+        local_check();s.object_address=igb_bootstrap_read_word(s.local,s.member_offset);
+        s.phase=s.object_address?P::resolve:P::next;break;
+    case P::resolve: {
+        const auto selected=malloc_probe_object(services,s.object_address);
+        if(!selected)return pending("Malloc probe requires a physical binding for its captured cleanup member.");
+        s.object=std::make_shared<ProbeObjectAccess>(*selected);s.phase=P::decrement;break;
+    }
+    case P::decrement:
+        s.object->validate();igb_object_set_reference_word(s.object->object,igb_object_reference_word(s.object->object)-1u);
+        s.phase=P::test;break;
+    case P::test:
+        s.object->validate();
+        if((igb_object_reference_word(s.object->object)&0x7fffffu)!=0) { s.phase=P::next;break; }
+        s.request={};s.request.kind=IgbObjectFieldConstructServiceKind::destroy_object;s.request.object=s.object->object;
+        s.factory=fallback();s.phase=P::destroy;break;
+    case P::destroy:
+        if(!s.factory)s.factory=fallback();
+        if(!s.factory)return pending("Malloc probe requires reached object destruction80066E1C.");
+        if(!s.operation) { s.operation=s.factory(s.request);check(); }
+        if(!s.operation)return pending("Malloc probe reached unbound object destruction80066E1C.");
+        if(!s.callback)s.callback=s.operation->resume;
+        if(!s.callback)return pending("Malloc probe requires its retained object-destruction continuation.");
+        { const auto status=s.callback();check();if(!status.completed)return status; }
+        s.callback={};s.operation.reset();s.factory={};s.request={};check();s.phase=P::next;break;
+    case P::next:
+        s.object.reset();check();
+        if(s.member_offset==0x74) { s.phase=P::done;break; }
+        s.member_offset=0x74;s.member_address=s.local_address+0x74u;s.phase=P::member;break;
+    case P::done:return {true,s.value,{}};
+    } } }catch(...) { s.fault=true;throw; }
+}
+
 IgbRegistrationCallbacksFactory make_native_igb_memory_pool_registration_function_factory(
     std::shared_ptr<IgbMemoryPoolRegistrationServices> services,IgbRegistrationCallbacksFactory remaining) {
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbRegistrationCallbacksCall& call)
@@ -362,7 +518,8 @@ IgbTypeRegistrationFactory make_native_igb_memory_pool_registration_type_factory
         const auto registration=call.kind==IgbTypeRegistrationServiceKind::register_parent?registration_function(call.function,false):std::optional<Kind>{};
         const bool defaults=call.kind==IgbTypeRegistrationServiceKind::defaults && call.function==0x8002bff8;
         const auto lookup=call.kind==IgbTypeRegistrationServiceKind::get_parent?lookup_function(call.function):std::optional<Lookup>{};
-        if(!registration && !defaults && !lookup)return remaining?remaining(call):nullptr;
+        const bool probe=call.kind==IgbTypeRegistrationServiceKind::layout_probe && call.function==0x80039cc0;
+        if(!registration && !defaults && !lookup && !probe)return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Memory-pool registration services expired before type selection.");
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();
         if(registration) {
@@ -374,6 +531,25 @@ IgbTypeRegistrationFactory make_native_igb_memory_pool_registration_type_factory
             auto invocation=std::make_shared<IgbMemoryPoolMetadataLookupInvocation>(*lookup);
             operation->resume=[selected,invocation,out=operation.get()] {
                 const auto status=invocation->resume(selected);if(status.completed)out->metadata_result=invocation->result();return status;
+            };
+        }else if(probe) {
+            struct State {
+                std::shared_ptr<IgbMallocMemoryPoolProbeInvocation> invocation;
+                bool running{},fault{};
+            };
+            auto state=std::make_shared<State>();
+            operation->resume=[selected,state] {
+                if(state->running || state->fault) { state->fault=true;fail("Malloc probe adapter requires an unfaulted nonrecursive operation."); }
+                Running running(state->running);
+                const auto check=[&] { if(state->fault)fail("Malloc probe adapter was invalidated by its local-storage callback."); };
+                try {
+                    if(!state->invocation) {
+                        if(!selected->malloc_probe_storage)return pending("Malloc probe requires its original0xA0-byte local storage.");
+                        auto local=selected->malloc_probe_storage();check();
+                        state->invocation=std::make_shared<IgbMallocMemoryPoolProbeInvocation>(std::move(local));
+                    }
+                    const auto status=state->invocation->resume(selected,check);check();return status;
+                }catch(...) { state->fault=true;throw; }
             };
         }else {
             auto invocation=std::make_shared<IgbMemoryPoolDefaultsInvocation>();

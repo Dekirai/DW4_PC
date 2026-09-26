@@ -4313,8 +4313,7 @@ void actual_cold_bootstrap_prefix(){
         ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
         ", runtime allocations="<<runtime_allocations.size()<<", prototypes="<<(**prototypes->registry)->count<<'\n';
     check(!after_abstract_pool.completed && !call.faulted(),"Abstract memory-pool registration fabricated complete game startup.");
-    check(!remaining_calls.empty() && remaining_calls.back().kind==TK::layout_probe &&
-        remaining_calls.back().function==0x80039cc0 && remaining_calls.back().metadata==malloc_type &&
+    check(after_abstract_pool.diagnostic=="Malloc probe requires its original0xA0-byte local storage." &&
         f.core->types->count==41 && descriptors.size()==127 && default_allocations==140 && enabled_allocations.size()==169 &&
         runtime_allocations.size()==6 && (**prototypes->registry)->count==13 &&
         f.core->types->backing->at(39)==**signed_long_cell && f.core->types->backing->at(40)==abstract_pool_type,
@@ -4377,7 +4376,7 @@ void actual_cold_bootstrap_prefix(){
     const auto pool_finished_callbacks=freed_callback_lists.size(),pool_finished_reflections=reflected_allocations.size();
     const auto pool_finished_clones=reached_reflected_clones.size(),pool_finished_members=member_calls.size();
     check(call.resume(bootstrap).diagnostic==after_abstract_pool.diagnostic && !call.faulted() &&
-        remaining_calls.back().function==0x80039cc0 && f.core->types->count==41 && descriptors.size()==127 &&
+        malloc_type->type_word==abstract_pool_type->type_word && f.core->types->count==41 && descriptors.size()==127 &&
         default_allocations==140 && enabled_allocations.size()==169 && runtime_allocations.size()==6 &&
         (**prototypes->registry)->count==13 && signed_long_probe_locals.size()==1 && signed_long_buffer_calls.size()==13 &&
         string_allocations==pool_finished_names && freed_callback_lists.size()==pool_finished_callbacks &&
@@ -4385,6 +4384,37 @@ void actual_cold_bootstrap_prefix(){
         member_calls.size()==pool_finished_members && wake_interrupt_calls.size()==3 && error_type->instance_count==1 &&
         error_handler->state->singleton->storage==error_storage.storage && error_bootstrap_list->count==2 && !error_bootstrap_list->released,
         "Pending malloc probe repeated pool metadata, prototypes or earlier thread and error-handler startup.");
+
+    std::vector<IgbBootstrapPointer> malloc_probe_locals;
+    memory_pool->malloc_probe_storage=[&]{
+        auto local=allocation(0xc76000,0xa0);
+        local.storage->bytes->initialized.assign(0xa0,0);
+        for(std::size_t i=4;i<8;++i)local.storage->bytes->initialized[i]=1;
+        malloc_probe_locals.push_back(local);return local;
+    };
+    const auto after_malloc_probe=call.resume(bootstrap);
+    std::cout<<"Cold native malloc probe: "<<after_malloc_probe.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", local probes="<<malloc_probe_locals.size()<<'\n';
+    check(!after_malloc_probe.completed && !call.faulted() && !remaining_calls.empty() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80039e28 &&
+        remaining_calls.back().metadata==malloc_type && malloc_type->type_word==0x80473790 && malloc_type->class_flags==9 &&
+        malloc_type->instance_count==0 && malloc_probe_locals.size()==1 && f.core->types->count==41 &&
+        descriptors.size()==127 && default_allocations==140 && enabled_allocations.size()==169 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==13,
+        "Actual malloc probe did not publish its selected type word before the original defaults boundary.");
+    const auto malloc_local=malloc_probe_locals.front();
+    check(igb_bootstrap_read_word(malloc_local,0)==0x80473790 && igb_bootstrap_read_word(malloc_local,4)==1 &&
+        igb_bootstrap_read_word(malloc_local,0x74)==0 && igb_bootstrap_read_word(malloc_local,0x94)==0 &&
+        malloc_local.storage->bindings.empty(),"Malloc layout probe invented a runtime pool instance or changed original local construction.");
+    for(std::size_t i=0;i<0xa0;++i){const bool known=i<8 || (i>=0x74 && i<0x78) || (i>=0x94 && i<0x98);
+        check(malloc_local.storage->bytes->initialized[i]==(known?1:0) && (known || malloc_local.storage->bytes->bytes[i]==0xcc),
+            "Malloc probe initialized unknown padding or fabricated allocator state.");}
+    check(call.resume(bootstrap).diagnostic==after_malloc_probe.diagnostic && !call.faulted() &&
+        malloc_probe_locals.size()==1 && f.core->types->count==41 && descriptors.size()==127 && default_allocations==140 &&
+        enabled_allocations.size()==169 && runtime_allocations.size()==6 && (**prototypes->registry)->count==13 &&
+        string_allocations==pool_finished_names && freed_callback_lists.size()==pool_finished_callbacks &&
+        reflected_allocations.size()==pool_finished_reflections && wake_interrupt_calls.size()==3 && error_type->instance_count==1,
+        "Pending malloc defaults replayed the local probe or earlier native startup.");
 
 }
 }

@@ -1,5 +1,57 @@
 # Local validation
 
+## Concrete malloc layout probe reaches original defaults
+
+Validated locally on 2026-09-27. Native `80039CC0` now composes the original
+local constructor/reset chain, captured ArkCore offset and selected return word,
+then ordered `+94 / +74` cleanup with physical full-word decrements and separate
+fresh low23 reads. The integrated cold chain reaches malloc defaults `80039E28`.
+It retains **41 types, 127 descriptors, 140 default buffers, 13 prototypes,
+169 enabled allocations and six runtime objects**. The one new stack-local
+probe initializes only its original sixteen bytes and creates no runtime pool
+instance. See [IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md).
+
+| Check | Evidence |
+| --- | --- |
+| First Release CoreOnly build | 223/223 local CTest suites passed; four jobs |
+| Focused malloc probe suite | 201 checks; constructor knownness, captured core/result, fresh ordered cleanup, pending callbacks, late mappings, reentry and owner retention |
+| Integrated cold startup | 7,208 checks; actual next defaults boundary, exact sixteen-byte local prefix and no repeated allocation or registration |
+| Original decoder/player regressions | 400 and 447 original-inclusive checks; player suite includes 62 synthetic checks |
+| Python verifier | Six tests passed |
+
+The independent original corpus was sealed before candidate inspection:
+141 cases, 9,123 instructions and 89 visited instruction addresses. Exact replay
+and its separate verifier check 1,156 writes, 844 reads, 71 full-word decrements
+with fresh low23 reads, and 43 prepared destruction calls. There are 81 completed
+original cases, comprising 71 probes and ten constructors. The 25-artifact seal is
+`4fdb7a22f0ca1f92430f1e1d9a5b214ccfbba9a266059b9223045227060dad53`.
+An initial unsealed standalone-constructor fixture overlapped prepared stack
+storage; its original version is preserved separately, and it was corrected
+before this seal. Original destruction remains an explicit `80066E1C` endpoint.
+
+The fixed native subset matches **98/98** on its first build and execution:
+60 completions, 34 represented faults and four pending inputs/endpoints. Native
+output replays byte-for-byte, and the original 141-case corpus also replays
+exactly afterward. Comparison covers represented local/object bytes and
+knownness, selected result, core state and ordered destruction calls. Nonnull
+cleanup inputs use an explicitly prepared post-constructor core suspension;
+the independent original trace validates the instruction read/write sequence.
+The 43 original-only cases comprise 21 standalone constructor entries, ten
+instruction-level low23 mutations, eleven instruction-specific write denials
+and one mutation immediately after the selected-word load. Native instruction
+trace equivalence is not claimed. No paired input, scope, fixture or production
+correction was required after the comparison freeze.
+The 66-artifact native seal is
+`484a2e21aec13feb1d58d23a0410d743f59da373b1f3d7e32e1e60f7447dc01f`.
+
+The reviewed production candidate and focused suite passed their first build
+without repairs. Existing boundary assertions now distinguish the admitted
+probe's missing local storage from the later still-unimplemented defaults.
+Core SHA256:
+`dd39c70764dfae596a6d11fff38a575ae2f7d294adb44c80ae253fd7ac5b3545`.
+Full malloc defaults, allocator/OS initialization and playable startup remain
+required. Local artifacts use `work/native-malloc-probe-`.
+
 ## Abstract memory-pool startup and signed 64-bit fields
 
 Validated locally on 2026-09-27. The original malloc registration body now

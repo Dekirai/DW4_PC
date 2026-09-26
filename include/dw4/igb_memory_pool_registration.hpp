@@ -5,6 +5,7 @@
 #include "dw4/igb_registration_callbacks.hpp"
 
 namespace dw4 {
+struct IgbObjectFieldConstructServices;
 class IgbMemoryPoolRegistrationError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -27,12 +28,15 @@ struct IgbMemoryPoolRegistrationServices {
     // Existing typed metadata allocations, also populated by the lazy getter.
     std::vector<IgbBootstrapPointer> physical_metadata;
     std::vector<std::shared_ptr<void>> retained;
+    // Actual39CC0 uses a0xA0 local whose unknown bytes remain unknown.
+    std::function<IgbBootstrapPointer()> malloc_probe_storage;
+    std::shared_ptr<IgbObjectFieldConstructServices> object_cleanup;
 };
 IgbTypeRegistrationArguments igb_memory_pool_registration_arguments(
     const std::shared_ptr<IgbMemoryPoolRegistrationServices>&,IgbMemoryPoolKind=IgbMemoryPoolKind::abstract_pool);
 
 // Actual2BF70/39D94 directly invoke66204; neither calls21B94. The concrete
-// malloc profile exposes its still-unimplemented39CC0/39E28 probe/defaults.
+// malloc profile reaches native39CC0 and still-unimplemented39E28 defaults.
 class IgbMemoryPoolRegistrationInvocation {
 public:
     explicit IgbMemoryPoolRegistrationInvocation(IgbMemoryPoolKind=IgbMemoryPoolKind::abstract_pool);
@@ -77,6 +81,23 @@ public:
         const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;
     bool faulted()const noexcept;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// Actual39CC0:8B264/58ABC/6665C local construction, captured core+394 word,
+// then fresh+94 and+74 object release. Does not initialize a runtime allocator.
+class IgbMallocMemoryPoolProbeInvocation {
+public:
+    explicit IgbMallocMemoryPoolProbeInvocation(IgbBootstrapPointer);
+    ~IgbMallocMemoryPoolProbeInvocation();
+    IgbMallocMemoryPoolProbeInvocation(const IgbMallocMemoryPoolProbeInvocation&)=delete;
+    IgbMallocMemoryPoolProbeInvocation& operator=(const IgbMallocMemoryPoolProbeInvocation&)=delete;
+    MessengerCallResult resume(std::shared_ptr<IgbMemoryPoolRegistrationServices> services={},
+        const std::function<void()>& enclosing_check={});
+    bool completed()const noexcept;
+    bool faulted()const noexcept;
+    std::uint32_t value()const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

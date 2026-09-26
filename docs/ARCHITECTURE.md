@@ -271,7 +271,9 @@ The signed-long factory always registers and reflects; its probe and eight-byte
 value buffers preserve original order and unknown payload bytes. Prototype
 registration captures physical allocation ownership at reflection return,
 before registry lookup, and retains the fresh creator-release low23 read.
-The cold chain reaches the actual malloc probe `80039CC0` with 41 types;
+The actual malloc probe `80039CC0` now constructs its represented local,
+captures the original selected word and releases fresh `+94 / +74` members in
+that order. The cold chain retains 41 types and reaches defaults `80039E28`;
 concrete pool defaults and allocator initialization remain separate work.
 `IgbFieldReferenceAccess` captures optional physical descriptor ownership without
 an eager read. The reached batch, finalized append, inheritance and base-default

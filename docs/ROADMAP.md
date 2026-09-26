@@ -230,9 +230,10 @@ defaults compose the actual allocation-only list getters, followed by registrati
 of `igStringRefList` and `igIntList`. Malloc-pool body `80039D94` now completes
 its abstract `igMemoryPool` parent and signed-64-bit descriptor dependency,
 including fourteen ordered defaults and the parent's deferred factory redirect.
-The cold chain publishes 41 types and reaches concrete probe `80039CC0`.
-Continue through its actual constructor and ordered member cleanup, then malloc
-defaults `80039E28` and their unsigned-long, event-tracker and enum dependencies.
+Concrete probe `80039CC0` now completes its actual constructor, captured word
+selection and ordered member cleanup. The cold chain publishes 41 types and
+reaches malloc defaults `80039E28`. Continue through their unsigned-long,
+event-tracker and enum dependencies, reusing the existing semaphore metadata.
 Metadata registration does not establish working runtime pool allocation.
 Batch, finalized append, inheritance, replacement and selected creator-release
 operations now preserve physical packed words; other reference/name bindings

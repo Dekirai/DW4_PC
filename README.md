@@ -229,8 +229,9 @@ Enum defaults now use the actual allocation-only list getters. Their later
 callbacks register `igStringRefList` and `igIntList`, with separate cloned
 descriptors and shared original element prototypes. Malloc-pool registration
 now completes its abstract `igMemoryPool` parent and signed 64-bit descriptor
-dependency. The cold composition publishes 41 types and reaches the concrete
-malloc layout probe `80039CC0`; this does not yet initialize a runtime allocator.
+dependency. The concrete malloc layout probe now preserves its original local
+construction and ordered cleanup. The cold composition publishes 41 types and
+reaches malloc defaults `80039E28`; runtime allocator initialization remains pending.
 Shared field/list and string-default continuations retain parent fault checks.
 Field batch, finalized append, inheritance and base defaults now read and update
 the represented physical descriptor reference word. A stale host cache cannot

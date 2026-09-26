@@ -78,7 +78,8 @@ void exact_abstract_contract(){
         "Enclosing malloc registration changed its explicit parent or deferred dependencies.");
     auto factory=make_native_igb_memory_pool_registration_type_factory(services);
     IgbTypeRegistrationCall next;next.kind=IgbTypeRegistrationServiceKind::layout_probe;next.function=0x80039cc0;
-    check(!factory(next),"Parent metadata recovery invented malloc layout-probe behavior.");
+    auto probe=factory(next);
+    check(probe && !probe->resume().completed,"Malloc probe adapter fabricated its missing local storage.");
     next.kind=IgbTypeRegistrationServiceKind::defaults;next.function=0x80039e28;
     check(!factory(next),"Parent metadata recovery invented malloc default behavior.");
 }
