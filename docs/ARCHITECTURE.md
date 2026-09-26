@@ -258,9 +258,15 @@ class using actual metadata/string/prototype defaults and the original local
 probe. Its signed-byte getter aliases the existing prototype owner. Completing
 its extra callbacks lets the second concrete list register and returns startup
 to the pending enum-defaults list getter `80024B94`.
+`IgbFieldReferenceAccess` captures optional physical descriptor ownership without
+an eager read. The reached batch, finalized append, inheritance and base-default
+operations use its full-width physical reads/writes and separate fresh low23
+tests. Successful stores synchronize the canonical cache; lost physical identity
+never falls back to that cache. Other reference/name producers remain separate.
 Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
 outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),

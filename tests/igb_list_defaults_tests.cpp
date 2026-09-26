@@ -20,6 +20,7 @@ std::shared_ptr<IgbObjectStorage> bind_physical(const std::shared_ptr<IgbDecodeR
     std::fill(storage->bytes->bytes.begin(),storage->bytes->bytes.end(),0xcc);storage->bindings.push_back({4,{},{},{},{},field});
     field->physical_storage=IgbFieldStorageBinding{storage,4};const IgbBootstrapPointer pointer{storage,4};
     igb_bootstrap_write_word(pointer,0,*field->vtable_word);igb_bootstrap_write_word(pointer,4,field->reference_word);
+    igb_bootstrap_write_word(pointer,0x1c,field->global_slot_address.value_or(0));
     igb_bootstrap_write_word(pointer,0x20,field->default_bytes_address.value_or(0));return storage;
 }
 struct Fixture {

@@ -4085,6 +4085,9 @@ void actual_cold_bootstrap_prefix(){
         error_handler->state->singleton->storage==error_storage.storage && igb_bootstrap_read_word(error_storage,4)==1 &&
         error_handler->state->teardown_guard==0 && error_bootstrap_list->count==2 && !error_bootstrap_list->released && wake_interrupt_calls.size()==3,
         "Pending enum defaults replayed contexts, prototypes, child growth, callbacks or earlier runtime startup.");
+    for(std::size_t i=0;i<2;++i)check(descriptors[i]->reference_word>1 &&
+        igb_bootstrap_read_word(descriptor_allocations[i],4)==descriptors[i]->reference_word,
+        "Native class inheritance left its persistent base-descriptor retain out of the physical reference header.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

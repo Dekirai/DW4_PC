@@ -77,6 +77,8 @@ void native_defaults(){
         check(field->size==4 && field->type_ordinal==0xffff && field->reference_word==1,"Finalization or creator-reference release differs.");
         check(field->name && *field->name==(i==0?"_refCount":"_memPoolIndex") && field->name_string && (*field->name_string)->references==1,"Name ownership was not retained once after temporary release.");
         check(field->global_slot_address==(i==0?0x805622a8u:0x805622acu) && f.meta->fields->backing->at(i)==field,"Exact global binding or field identity differs.");
+        check(igb_bootstrap_read_word(f.physical[i],0x1c)==(i==0?0x805622a8u:0x805622acu),
+            "Base defaults did not publish the physical global pointer consumed by actual finalization.");
         check(igb_buffer_word(f.meta->fields->backing_bytes,i*4)==igb_bootstrap_address(f.physical[i]),"Raw append did not store the actual allocated pointer.");
     }
     check(call.resume().completed && f.allocations==2,"Completed defaults replayed.");
@@ -85,6 +87,7 @@ void pending_prefixes(){
     Fixture f;f.name_ready=false;IgbObjectDefaultsInvocation call;
     check(!call.resume(f.services).completed && f.created.size()==1,"Pending name allocator did not retain first field.");
     check(f.created[0]->offset==4 && f.created[0]->global_slot_address==0x805622a8 && f.created[0]->default_mode==0 && f.created[0]->flag_26==1,"Name pause committed future flags or omitted earlier pointer stores.");
+    check(igb_bootstrap_read_word(f.physical[0],0x1c)==0x805622a8,"Name suspension preceded the original physical global pointer store.");
     check(!*f.services->ref_count && f.meta->fields->count==0,"Name pause published an unfinalized descriptor.");
     f.name_ready=true;f.buffer_ready=false;check(!call.resume(f.services).completed && f.name_allocations==1 && f.name_polls==2,"Retained name allocator replayed.");
     check(f.created[0]->default_mode==3 && f.created[0]->flag_26==0 && f.created[0]->size==4 && !*f.services->ref_count && f.meta->fields->count==0,"Default-buffer pause lost its reached prefix.");
@@ -92,6 +95,29 @@ void pending_prefixes(){
     Fixture slots;slots.services->ref_count.reset();IgbObjectDefaultsInvocation missing;
     check(!missing.resume(slots.services).completed && slots.created[0]->offset==4 && slots.name_allocations==0,"Missing global cell skipped prior offset or read later name.");
     slots.services->ref_count=std::make_shared<IgbRuntimeFieldSlot>();check(missing.resume(slots.services).completed && slots.allocations==2,"Late canonical slot repeated field construction.");
+}
+void physical_global_store_failure(){
+    for(unsigned mutation=0;mutation<3;++mutation){Fixture f;f.services->ref_count.reset();IgbObjectDefaultsInvocation call;
+        check(!call.resume(f.services).completed && f.created.size()==1 && f.name_allocations==0,
+            "Global store fixture did not stop at its missing canonical cell.");
+        const auto storage=f.physical[0].storage;const auto old=storage->bytes;
+        if(mutation==0){old->bytes.resize(31);old->initialized.resize(31);}
+        else if(mutation==1)storage->bytes=std::make_shared<IgbScratchBuffer>(*old);
+        else f.created[0]->physical_storage.reset();
+        const auto before=old->bytes,known=old->initialized;f.services->ref_count=std::make_shared<IgbRuntimeFieldSlot>();
+        rejects([&]{call.resume(f.services);},"Unavailable physical global destination was accepted.");
+        check(call.faulted() && old->bytes==before && old->initialized==known && f.created[0]->global_slot_address==0 &&
+            f.name_allocations==0 && !*f.services->ref_count && f.meta->fields->count==0,
+            "Failed physical global store published a cache/cell, interned a name or altered its completed prefix.");
+        f.created[0]->physical_storage=IgbFieldStorageBinding{storage,0};storage->bytes=old;
+        rejects([&]{call.resume(f.services);},"Restoring the destination revived a failed original global store.");
+    }
+    Fixture unknown;unknown.services->ref_count.reset();IgbObjectDefaultsInvocation write;
+    check(!write.resume(unknown.services).completed,"Unknown global destination fixture did not pause.");
+    for(std::size_t i=28;i<32;++i)unknown.physical[0].storage->bytes->initialized[i]=0;
+    unknown.services->ref_count=std::make_shared<IgbRuntimeFieldSlot>();
+    check(write.resume(unknown.services).completed && igb_bootstrap_read_word(unknown.physical[0],0x1c)==0x805622a8,
+        "A represented global pointer store incorrectly required its old bytes to be known.");
 }
 void live_globals_and_failure(){
     Fixture f;auto second=metadata(0x910000);bool changed{};
@@ -122,14 +148,14 @@ void temporary_reference_prefix(){
 }
 void destruction_and_adapter(){
     Fixture f;bool injected{},ready{};unsigned releases{};std::weak_ptr<IgbDecodeRuntimeField> weak;
-    f.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size && !injected){injected=true;f.created[0]->reference_word=0x80000001;}};
+    f.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size && !injected){injected=true;igb_bootstrap_write_word(f.physical[0],4,0x80000001);}};
     f.services->factory=[&](const IgbObjectDefaultsCall& c){auto op=std::make_shared<IgbObjectDefaultsOperation>();op->resume=[&,c]{++releases;weak=c.field;
         if(!ready)return MessengerCallResult{false,0,"prepared final field destruction"};return MessengerCallResult{true,0,{}};};return op;};
     IgbObjectDefaultsInvocation call;check(!call.resume(f.services).completed && releases==1 && f.created[0]->reference_word==0x80000000 && f.allocations==1,"Packed creator release boundary differs.");
     ready=true;check(call.resume(f.services).completed && releases==2 && f.allocations==2,"Retained field destructor replayed reference decrement.");
     check(!weak.expired(),"Completed field destruction discarded a still-published canonical owner.");
     Fixture abandoned;std::weak_ptr<IgbDecodeRuntimeField> retained;
-    abandoned.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size)abandoned.created[0]->reference_word=0x80000001;};
+    abandoned.pointer_action=[&](const IgbPointerListCall& c){if(c.kind==PK::allocation_size)igb_bootstrap_write_word(abandoned.physical[0],4,0x80000001);};
     abandoned.services->factory=[&](const IgbObjectDefaultsCall& c){auto operation=std::make_shared<IgbObjectDefaultsOperation>();operation->resume=[&,c]{
         retained=c.field;*abandoned.services->ref_count=std::shared_ptr<IgbDecodeRuntimeField>{};
         abandoned.meta->fields->backing.reset();abandoned.services->fields->pointer_lists->values.clear();
@@ -147,6 +173,6 @@ void destruction_and_adapter(){
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_object_defaults_tests");
-    native_defaults();pending_prefixes();live_globals_and_failure();temporary_reference_prefix();destruction_and_adapter();
+    native_defaults();pending_prefixes();physical_global_store_failure();live_globals_and_failure();temporary_reference_prefix();destruction_and_adapter();
     std::cout<<"igb_object_defaults_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Object defaults failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

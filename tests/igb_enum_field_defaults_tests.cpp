@@ -112,7 +112,7 @@ void captured_receiver_and_live_registry(){
     f.create_ready=false;IgbEnumFieldDefaultsInvocation call;
     check(!call.resume(f.services).completed && f.selected_functions.size()==1,"Constructor did not retain its pending selection.");
     *f.cell=other;f.services->factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{0});
-    f.created_action=[&]{f.local->reference_word=0;};f.destroyed_action=[&]{f.target->fields=replacement;};f.create_ready=true;
+    f.created_action=[&]{igb_bootstrap_write_word(f.allocations[0],4,0);};f.destroyed_action=[&]{f.target->fields=replacement;};f.create_ready=true;
     check(call.resume(f.services).completed && old_fields->count==3 && other->fields->count==0 && f.destroy_polls==1,
         "Defaults recaptured metadata or skipped the original batch release.");
     check(f.local->flag_26==0xa6 && selected->flag_26==0 && selected->offset==0x34 && selected->declaring_type->lock()==f.target &&
@@ -122,7 +122,7 @@ void captured_receiver_and_live_registry(){
 void wrapped_selection(){
     for(const std::uint32_t first:{0x80000000u,0xc0000000u,0x40000000u}){
         Fixture f;f.target->fields->count=std::bit_cast<std::int32_t>(first);
-        f.created_action=[&]{f.target->fields->count=0;f.local->reference_word=0;};
+        f.created_action=[&]{f.target->fields->count=0;igb_bootstrap_write_word(f.allocations[0],4,0);};
         f.destroyed_action=[&]{f.target->fields->count=std::bit_cast<std::int32_t>(first+1u);};
         IgbEnumFieldDefaultsInvocation call;check(call.resume(f.services).completed && f.local->flag_26==0 && f.local->offset==0x34,
             "Enum defaults bounded an unwrapped index instead of the reached slot.");
@@ -151,14 +151,37 @@ void pending_flag_and_tables(){
 void physical_fault_order(){
     for(unsigned mode=0;mode<5;++mode){Fixture f;f.created_action=[&]{auto& p=f.allocations[0];
             if(mode==0)p.storage->bytes->released=true;
-            else if(mode==1)p.storage->bytes->bytes.resize(8+0x26);
+            else if(mode==1){p.storage->bytes->bytes.resize(8+0x26);p.storage->bytes->initialized.resize(8+0x26);}
             else if(mode==2)p.storage->bindings[0].field=field();
             else if(mode==3){f.local->physical_storage->storage.reset();}
             else p.storage->original_address=0xffffffd2u;};
         IgbEnumFieldDefaultsInvocation call;rejects([&]{call.resume(f.services);},"Malformed physical flag destination was accepted.");
-        check(call.faulted() && f.target->fields->count==1 && f.local->reference_word==1 && f.local->flag_26==0xa6 && f.interns==0,
-            "Flag destination was validated before batch completion or received later schema effects.");
+        // Released or invalid typed storage already faults at the batch's +04
+        // reference access. A coherent short tail or wrapped +26 address keeps
+        // that word accessible and reaches the original later flag-store fault.
+        const bool early=mode==0 || mode==2 || mode==3;
+        check(call.faulted() && f.target->fields->count==(early?0:1) && f.local->reference_word==1 && f.local->flag_26==0xa6 && f.interns==0,
+            "Physical failure lost the reached reference/append prefix or received later schema effects.");
         rejects([&]{call.resume(f.services);},"Faulted enum defaults resumed.");
+    }
+    for(unsigned mode=0;mode<3;++mode){Fixture f;f.destroy_ready=false;
+        f.created_action=[&]{igb_bootstrap_write_word(f.allocations[0],4,0);};
+        IgbEnumFieldDefaultsInvocation call;
+        check(!call.resume(f.services).completed && f.target->fields->count==1 && f.destroy_polls==1 &&
+            f.local->reference_word==0 && igb_bootstrap_read_word(f.allocations[0],4)==0 && f.local->flag_26==0xa6,
+            "Pending destruction did not follow the actual physical retain, append and creator release.");
+        const auto p=f.allocations[0];const auto before=p.storage->bytes->bytes,known=p.storage->bytes->initialized;
+        // This genuine lower-operation pause occurs after all batch reference
+        // accesses, so malformed storage still tests the later +26 store.
+        if(mode==0)p.storage->bytes->released=true;
+        else if(mode==1)p.storage->bindings[0].field=field();
+        else f.local->physical_storage->storage.reset();
+        f.destroy_ready=true;rejects([&]{call.resume(f.services);},"Post-release invalid flag destination was accepted.");
+        check(call.faulted() && f.target->fields->count==1 && f.target->fields->backing->at(0)==f.local &&
+            f.destroy_polls==2 && f.local->reference_word==0 && f.local->flag_26==0xa6 && f.interns==0 &&
+            p.storage->bytes->bytes==before && p.storage->bytes->initialized==known,
+            "Later flag fault repeated the creator release, lost append or changed physical/schema state.");
+        rejects([&]{call.resume(f.services);},"Post-release flag failure replayed its retained destructor.");
     }
     Fixture clear;clear.services->names->at(0).reset();clear.created_action=[&]{clear.allocations[0].storage->bytes->initialized[8+0x26]=0;};
     IgbEnumFieldDefaultsInvocation writes;check(!writes.resume(clear.services).completed && clear.local->flag_26==0 &&
@@ -172,7 +195,7 @@ void null_and_unknown_metadata(){
     Fixture no_registry;no_registry.target->fields.reset();IgbEnumFieldDefaultsInvocation invalid;
     rejects([&]{invalid.resume(no_registry.services);},"Null count registry was accepted.");
     check(no_registry.create_polls==0,"Null count registry reached batch construction.");
-    Fixture selected_null;selected_null.created_action=[&]{selected_null.local->reference_word=0;};
+    Fixture selected_null;selected_null.created_action=[&]{igb_bootstrap_write_word(selected_null.allocations[0],4,0);};
     selected_null.destroyed_action=[&]{selected_null.target->fields->backing->at(0).reset();};IgbEnumFieldDefaultsInvocation null_field;
     rejects([&]{null_field.resume(selected_null.services);},"Selected null descriptor bypassed flag dereference.");
     check(selected_null.destroy_polls==1 && selected_null.interns==0,"Null descriptor fault changed callback order.");

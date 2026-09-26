@@ -1,4 +1,5 @@
 #include "dw4/igb_field_operations.hpp"
+#include "dw4/igb_field_reference.hpp"
 
 #include <bit>
 
@@ -171,40 +172,86 @@ MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOpe
 }
 
 struct IgbFieldFinalizeInvocation::Impl {
-    enum class P{type,after_type,size,after_size,defaults,global,call,done};
+    enum class P{type,after_type,size,after_size,defaults,global,physical_publish,call,done};
     std::shared_ptr<IgbDecodeRuntimeField> field;FieldCall call;P phase=P::type,after=P::done;
-    std::uint32_t returned{};bool running{},fault{};
+    std::shared_ptr<IgbFieldOperationsServices> owner;
+    std::optional<IgbBootstrapPointer> physical;std::shared_ptr<IgbScratchBuffer> physical_bytes;
+    std::uint32_t allocation_address{},global_address{},returned{};bool running{},fault{};
+    void validate()const{
+        require_field(field);
+        if(!physical){
+            if(field->physical_storage)fail("Field finalization acquired a physical binding after canonical capture.");
+            return;
+        }
+        if(!physical->storage || !field->physical_storage || field->construction_fault_ || physical->storage->faulted() ||
+            field->physical_storage->storage.lock()!=physical->storage || field->physical_storage->offset!=physical->offset ||
+            physical->storage->original_address!=allocation_address || physical->storage->bytes!=physical_bytes ||
+            !physical_bytes || physical_bytes->released)
+            fail("Field finalization lost its captured physical allocation identity.");
+        IgbObjectInstance object;object.storage=physical->storage;object.offset=physical->offset;object.field=field;
+        igb_object_validate_instance(object);
+    }
+    std::optional<std::uint32_t> table(){
+        validate();
+        // Each original load is fresh; a read never refreshes the typed cache.
+        const auto value=physical?std::optional<std::uint32_t>{igb_bootstrap_read_word(*physical,0)}:field->vtable_word;
+        if(value && !*value)fail("Field finalization dereferences a null vtable.");return value;
+    }
 };
-IgbFieldFinalizeInvocation::IgbFieldFinalizeInvocation(std::shared_ptr<IgbDecodeRuntimeField> field):impl_(std::make_unique<Impl>()){impl_->field=std::move(field);}
-IgbFieldFinalizeInvocation::~IgbFieldFinalizeInvocation()=default;
+IgbFieldFinalizeInvocation::IgbFieldFinalizeInvocation(std::shared_ptr<IgbDecodeRuntimeField> field):impl_(std::make_unique<Impl>()){
+    auto& s=*impl_;s.field=std::move(field);
+    // Capture ownership without accessing the original receiver before63F28.
+    if(s.field && s.field->physical_storage){const auto& binding=*s.field->physical_storage;
+        s.physical=IgbBootstrapPointer{binding.storage.lock(),binding.offset};
+        if(s.physical->storage){s.physical_bytes=s.physical->storage->bytes;s.allocation_address=s.physical->storage->original_address;}
+    }
+}
+IgbFieldFinalizeInvocation::~IgbFieldFinalizeInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
+    if(s.field)s.owner->unfinished.push_back(s.field);
+    if(s.physical && s.physical->storage)s.owner->unfinished.push_back(s.physical->storage);
+    if(s.physical_bytes)s.owner->unfinished.push_back(s.physical_bytes);
+}}
 bool IgbFieldFinalizeInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldFinalizeInvocation::faulted()const noexcept{return impl_->fault;}
 MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
     const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field finalization requires an unfaulted nonrecursive invocation.");}
-    if(completed())return {true,0,{}};Running guard(s.running);
-    const auto check=[&]{if(s.fault)fail("Field finalization continuation was invalidated.");
-        if(enclosing_check)enclosing_check();
-        if(s.fault)fail("Field finalization was invalidated by its enclosing callback.");};
+    if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
+    const auto check_local=[&]{if(s.fault)fail("Field finalization continuation was invalidated.");};
+    const auto check=[&]{check_local();if(enclosing_check)enclosing_check();check_local();};
     const auto clear=[&]{s.call.clear();check();};
-    const auto virtual_call=[&](std::uint32_t slot,P after){const auto table=vtable(s.field);if(!table)return false;
+    const auto virtual_call=[&](std::uint32_t slot,P after){const auto table=s.table();if(!table)return false;
         clear();s.call.request.kind=K::field_virtual;s.call.request.field=s.field;s.call.request.vtable_word=*table;s.call.request.virtual_slot=slot;
         s.phase=P::call;s.after=after;return true;};
     try{for(;;){check();switch(s.phase){
     case P::type:if(!virtual_call(0x5c,P::after_type))return pending("Field finalization requires its live type virtual.");break;
-    case P::after_type:{const auto type=s.call.operation->field_result;clear();const auto ordinal=type?type->ordinal:std::uint16_t{0xffff};
+    case P::after_type:{const auto type=s.call.operation->field_result;clear();const auto ordinal=type?type->ordinal:std::uint16_t{0xffff};s.validate();
         if(s.field->physical_storage){const auto& binding=*s.field->physical_storage;auto storage=binding.storage.lock();
             if(!storage)fail("Field finalization reached expired physical storage.");const IgbBootstrapPointer pointer{storage,binding.offset};
             if(igb_bootstrap_field(pointer)!=s.field)fail("Field finalization reached a changed physical identity.");
             igb_bootstrap_write_halfword(pointer,0x10,ordinal);}
         s.field->type_ordinal=ordinal;s.phase=P::size;break;}
     case P::size:if(!virtual_call(0x64,P::after_size))return pending("Field finalization requires its freshly reloaded size virtual.");break;
-    case P::after_size:clear();igb_field_store_size(s.field,static_cast<std::uint16_t>(s.returned));s.phase=P::defaults;break;
+    case P::after_size:clear();s.validate();igb_field_store_size(s.field,static_cast<std::uint16_t>(s.returned));s.phase=P::defaults;break;
     case P::defaults:if(!virtual_call(0x8c,P::global))return pending("Field finalization requires its freshly reloaded default virtual.");break;
     case P::global:
-        clear();if(!s.field->global_slot)return pending("Field finalization requires its live descriptor-global pointer+1C.");
+        clear();s.validate();
+        if(s.physical){s.global_address=igb_bootstrap_read_word(*s.physical,0x1c);
+            s.phase=s.global_address?P::physical_publish:P::done;break;}
+        if(!s.field->global_slot)return pending("Field finalization requires its live descriptor-global pointer+1C.");
         if(const auto cell=s.field->global_slot->lock()){if(cell->has_value() && **cell && **cell!=s.field)s.field->overwritten_constructor_owners_.push_back(**cell);*cell=s.field;}
         else if(!igb_field_global_slot_is_null(*s.field->global_slot))fail("Field finalization dereferences an expired nonnull descriptor-global cell.");
+        s.phase=P::done;break;
+    case P::physical_publish:
+        //63F84 loaded the destination already; late host bindings must not
+        // reload the receiver or publish through a stale canonical cell.
+        if(!s.field->global_slot_address || *s.field->global_slot_address!=s.global_address)
+            return pending("Field finalization requires the captured physical global address mapping.");
+        if(!s.field->global_slot || igb_field_global_slot_is_null(*s.field->global_slot))
+            return pending("Field finalization requires the captured physical global cell owner.");
+        if(const auto cell=s.field->global_slot->lock()){
+            if(cell->has_value() && **cell && **cell!=s.field)s.field->overwritten_constructor_owners_.push_back(**cell);*cell=s.field;
+        }else fail("Field finalization dereferences an expired nonnull descriptor-global cell.");
         s.phase=P::done;break;
     case P::call:{const auto status=s.call.poll(services?services->factory:IgbFieldOperationsFactory{},check);if(!status.completed)return status;
         s.returned=status.value;s.phase=s.after;break;}
@@ -214,6 +261,7 @@ MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldO
 
 struct IgbFieldAppendInvocation::Impl {
     std::shared_ptr<IgbRuntimeMetaType> metadata;std::shared_ptr<IgbDecodeRuntimeField> field;std::shared_ptr<IgbDecodeFieldRegistry> fields;
+    std::shared_ptr<IgbFieldReferenceAccess> reference;
     std::shared_ptr<IgbFieldOperationsServices> owner;std::unique_ptr<IgbFieldFinalizeInvocation> finalize;
     std::shared_ptr<IgbMetadataOperation> append;std::function<MessengerCallResult()> callback;
     std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
@@ -221,8 +269,11 @@ struct IgbFieldAppendInvocation::Impl {
 };
 IgbFieldAppendInvocation::IgbFieldAppendInvocation(std::shared_ptr<IgbRuntimeMetaType> metadata,std::shared_ptr<IgbDecodeRuntimeField> field):impl_(std::make_unique<Impl>()){
     impl_->metadata=std::move(metadata);impl_->field=std::move(field);impl_->finalize=std::make_unique<IgbFieldFinalizeInvocation>(impl_->field);
+    impl_->reference=std::make_shared<IgbFieldReferenceAccess>(impl_->field);
 }
-IgbFieldAppendInvocation::~IgbFieldAppendInvocation(){auto& s=*impl_;if(!completed() && s.owner && s.field)s.owner->unfinished.push_back(s.field);}
+IgbFieldAppendInvocation::~IgbFieldAppendInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
+    if(s.field)s.owner->unfinished.push_back(s.field);if(s.reference)s.owner->unfinished.push_back(s.reference);
+}}
 bool IgbFieldAppendInvocation::completed()const noexcept{return impl_->phase==3;}
 bool IgbFieldAppendInvocation::faulted()const noexcept{return impl_->fault;}
 MessengerCallResult IgbFieldAppendInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
@@ -236,7 +287,7 @@ MessengerCallResult IgbFieldAppendInvocation::resume(std::shared_ptr<IgbFieldOpe
     case 0:{const auto status=s.finalize->resume(services,check);check();if(!status.completed)return status;s.finalize.reset();check();s.phase=1;break;}
     case 1:
         if(!s.metadata)fail("Finalized field append dereferences null metadata.");s.fields=s.metadata->fields;
-        if(s.field)++s.field->reference_word;s.phase=2;break;
+        if(s.field)s.reference->write(s.reference->read()+1u);s.phase=2;break;
     case 2:
         if(!s.append){if(!services || !services->pointer_lists)return pending("Finalized field append requires native pointer-list services.");
             IgbMetadataOperationCall request;request.kind=IgbMetadataOperationKind::append_field;request.fields=s.fields;request.field=s.field;

@@ -206,16 +206,20 @@ void getter_precedes_destination_fault(){
         };
         if(kind==IgbDataListKind::data_list){
             f.with_physical=true;*f.services->unsigned_char_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
-            const auto factory=f.services->lists->schema->factory;
-            f.services->lists->schema->factory=[&,factory](const IgbFieldSchemaCall& request){auto op=factory(request);const auto run=op->resume;
-                op->resume=[&,run,out=op.get()]{const auto status=run();if(status.completed && f.created.size()==3)damage(out->field_result);return status;};return op;};
         }else{
             f.prepare_parent();f.with_physical=true;f.services->lists->values->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
             f.action=[&](const IgbListDefaultsCall& request){if(request.kind==K::clone_field)damage(f.clone);};
         }
         const auto before_names=f.names;f.registration_ready=false;IgbDataListDefaultsInvocation call(kind);
         check(!call.resume(f.services).completed && !call.faulted() && f.callback_functions.size()==1 && f.registration_polls==1,
-            "Malformed destination storage faulted before the original prototype registration call.");
+            "Defaults did not reach the original prototype registration call.");
+        if(kind==IgbDataListKind::data_list){
+            check(f.created.size()==3 && f.data->fields->count==5 && igb_bootstrap_read_word(f.allocations.back(),4)==1,
+                "Prototype suspension preceded the completed physical batch reference sequence.");
+            // The batch has already read/written +04. Damage the later +3C
+            // destination only after that genuine earlier work has completed.
+            damage(f.created.back());
+        }
         const auto destination=f.allocations.back();const auto before=destination.storage->bytes->bytes;
         check(!call.resume(f.services).completed && f.callback_functions.size()==1 && f.registration_polls==2 && !call.faulted(),
             "Pending prototype getter validated later destination storage or reselected registration.");
@@ -225,6 +229,23 @@ void getter_precedes_destination_fault(){
             (kind==IgbDataListKind::data_list?*f.services->unsigned_char_prototype==f.byte_prototype:
                 f.services->lists->values->object_prototype==f.object_prototype),
             "Destination fault lost completed getter side effects, changed physical bytes or reached later schema work.");
+    }
+}
+void constructor_reference_fault_precedes_prototype(){
+    for(const bool expired:{false,true}){Fixture f;f.with_physical=true;
+        *f.services->unsigned_char_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+        const auto factory=f.services->lists->schema->factory;
+        f.services->lists->schema->factory=[&,factory](const IgbFieldSchemaCall& request){auto op=factory(request);const auto run=op->resume;
+            op->resume=[&,run,out=op.get()]{const auto status=run();if(status.completed && f.created.size()==3){
+                if(expired)out->field_result->physical_storage=IgbFieldStorageBinding{{},8};
+                else f.allocations.back().storage->bindings.front().field=field();
+            }return status;};return op;};
+        IgbDataListDefaultsInvocation call(IgbDataListKind::data_list);
+        rejects([&]{call.resume(f.services);},"Invalid constructor storage skipped the earlier physical batch retain.");
+        check(call.faulted() && f.created.size()==3 && f.data->fields->count==4 && f.created.back()->reference_word==1 &&
+            igb_bootstrap_read_word(f.allocations.back(),4)==1 && f.callback_functions.empty() && f.names==0,
+            "Reference fault appended the invalid third field or reached a later prototype/schema operation.");
+        rejects([&]{call.resume(f.services);},"Faulted constructor reference resumed its batch.");
     }
 }
 void adapters_and_recursion(){Fixture f;auto adapter=make_native_igb_data_list_defaults_factory(f.services);IgbTypeRegistrationCall request;
@@ -400,7 +421,7 @@ void reference_defaults_adapter_limits(){
     rejects([]{IgbDataListDefaultsInvocation bad(IgbDataListKind::ref_thread);},"Reference thread accepted an unrecovered defaults body.");
 }
 }
-int main(){try{data_schema();wrapped_first_index();prototype_getters();physical_data_prefix();object_specialization();retained_clone_and_physical_release();null_clone_and_failures();getter_precedes_destination_fault();adapters_and_recursion();
+int main(){try{data_schema();wrapped_first_index();prototype_getters();physical_data_prefix();object_specialization();retained_clone_and_physical_release();null_clone_and_failures();getter_precedes_destination_fault();constructor_reference_fault_precedes_prototype();adapters_and_recursion();
     reference_defaults_preserve_flag_and_separate_globals();reference_clone_prototype_and_global_pending_order();reference_replacement_and_creator_release_pending();
     reference_prototype_precedes_invalid_destination();reference_lower_callbacks_preserve_parent_fault_prefix();reference_nested_buffer_and_reserve_parent_guards();reference_defaults_adapter_limits();
     std::cout<<"igb_data_list_defaults_tests: "<<checks<<" checks passed\n";return 0;

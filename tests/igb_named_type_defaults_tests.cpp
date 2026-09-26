@@ -176,7 +176,7 @@ void wrapped_indices_and_fault_prefixes(){
     for(const auto first:{0x40000000u,0x80000000u,0xc0000000u}){
         Fixture f;f.target->fields->count=std::bit_cast<std::int32_t>(first);
         f.created_action=[&]{if(f.created.size()==1)f.target->fields->count=0;
-            if(f.created.size()==10)f.created.back()->reference_word=0;};
+            if(f.created.size()==10)igb_bootstrap_write_word(f.allocations.back(),4,0);};
         f.destroy_action=[&]{f.target->fields->count=std::bit_cast<std::int32_t>(first+10u);};
         IgbNamedTypeDefaultsInvocation call(Kind::thread);
         check(call.resume(f.services).completed && f.created[0]->method_function==0x80023a70 && f.created[3]->method_function==0x80023abc &&

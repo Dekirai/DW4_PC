@@ -1,4 +1,5 @@
 #include "dw4/igb_metadata_operations.hpp"
+#include "dw4/igb_field_reference.hpp"
 
 namespace dw4 {
 namespace {
@@ -42,6 +43,7 @@ struct IgbMetadataParentInvocation::Impl {
     std::shared_ptr<IgbRuntimeTypeList> created;
     std::shared_ptr<ModelSceneObject> pool;
     std::shared_ptr<IgbMetadataOperationsServices> owner;
+    std::shared_ptr<IgbFieldReferenceAccess> reference;
     ParentCall call;P phase=P::entry,after=P::done;
     std::int32_t count{},index{};
     bool running{},fault{};
@@ -53,6 +55,7 @@ IgbMetadataParentInvocation::IgbMetadataParentInvocation(std::shared_ptr<IgbRunt
 IgbMetadataParentInvocation::~IgbMetadataParentInvocation(){
     if((!completed() || faulted()) && impl_->owner){
         if(impl_->created)impl_->owner->unfinished.push_back(impl_->created);
+        if(impl_->reference)impl_->owner->unfinished.push_back(impl_->reference);
         if(impl_->call.request.kind==IgbMetadataOperationKind::append_field && impl_->call.request.field)
             impl_->owner->unfinished.push_back(impl_->call.request.field);
     }
@@ -118,10 +121,11 @@ MessengerCallResult IgbMetadataParentInvocation::resume(std::shared_ptr<IgbMetad
             const auto field=igb_runtime_field_at(s.parent,s.index);
             //80065820 loads child+28 before53E6C retains the captured field.
             const auto fields=s.child->fields;
-            if(field)++field->reference_word;
+            s.reference=std::make_shared<IgbFieldReferenceAccess>(field);
+            if(field)s.reference->write(s.reference->read()+1u);
             auto& request=select(K::append_field,P::after_field);request.fields=fields;request.field=field;
         }break;
-    case P::after_field:clear();++s.index;s.phase=P::field;break;
+    case P::after_field:clear();s.reference.reset();++s.index;s.phase=P::field;break;
     case P::call:{const auto status=s.call.poll(services?services->factory:IgbMetadataOperationsFactory{},check);if(!status.completed)return status;s.phase=s.after;break;}
     case P::done:clear();return {true,0,{}};
     }}}catch(...){s.fault=true;throw;}

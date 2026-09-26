@@ -227,12 +227,15 @@ list. Context-extension wrapper `800374E8` now registers both abstract contexts,
 their original three-field defaults and both concrete list dependencies.
 Context-info `80037330` now completes its original defaults and probe; retained
 startup returns to enum defaults at list getter `80024B94`. Continue through
-that dependency, repair remaining physical descriptor reference/name bindings,
+that dependency. Batch, finalized append, inheritance and base-default reference
+operations now preserve physical packed words; other reference/name bindings
+still need recovery. Complete those reached operations,
 and implement actual OS/pool initialization and native rescheduling/sleep.
 IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
 See [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
+[IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),

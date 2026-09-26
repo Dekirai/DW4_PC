@@ -147,7 +147,8 @@ void faults_and_adapters(){
     rejects([&]{bad.resume(null.services);},"Known null ThreadManager global was treated as absent.");check(bad.faulted() && null.created.empty(),"Null volatile store fault constructed fields.");
     Fixture metadata_fault;metadata_fault.thread_allocation.storage->bytes->bytes.resize(8+0x18);IgbThreadDefaultsInvocation short_metadata;
     rejects([&]{short_metadata.resume(metadata_fault.services);},"Truncated metadata byte store was accepted.");check(!metadata_fault.thread->flag_18 && metadata_fault.created.empty(),"Faulting physical metadata store published canonical state.");
-    Fixture descriptor_fault;descriptor_fault.field_action=[&](unsigned i,const auto& f){if(i==0){const auto pointer=descriptor_fault.field_allocations[0];pointer.storage->bytes->bytes.resize(pointer.offset+0x38);}};
+    Fixture descriptor_fault;descriptor_fault.field_action=[&](unsigned i,const auto& f){if(i==0){const auto pointer=descriptor_fault.field_allocations[0];
+        pointer.storage->bytes->bytes.resize(pointer.offset+0x38);pointer.storage->bytes->initialized.resize(pointer.offset+0x38);}};
     IgbThreadDefaultsInvocation short_field;rejects([&]{short_field.resume(descriptor_fault.services);},"Truncated descriptor type store was accepted.");
     check(short_field.faulted() && descriptor_fault.created.size()==2 && descriptor_fault.created[0]->flag_34==0 && !descriptor_fault.created[0]->object_type,"Faulting type store published construct flag or canonical type.");
     Fixture recursive;IgbThreadDefaultsInvocation recursion;recursive.field_action=[&](unsigned,const auto&){try{recursion.resume(recursive.services);}catch(const std::runtime_error&){};};

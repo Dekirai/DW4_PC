@@ -1,5 +1,84 @@
 # Local validation
 
+## Physical descriptor references in native startup
+
+Validated locally on 2026-09-27. Field batch `80065924`, finalized append
+`80065844`, metadata inheritance `80065640` and base defaults `80066B7C`
+now use represented physical descriptor `+04` as the input to their packed
+reference arithmetic. Successful full-word stores synchronize the canonical
+owner. Creator releases retain the separate fresh low23 read before destruction.
+Unknown bytes, unavailable words and changed allocation identities cannot fall
+back to stale cached values. Canonical-only descriptors remain an explicit
+separate profile. See [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 218/218 local CTest suites passed, four build jobs |
+| Physical reference focused suite | 131 checks; stale caches, packed wrapping, callback mutation, failure order and retained allocation owners |
+| Physical finalizer focused suite | 185 checks; fresh virtual dispatch, captured global-pointer resolution, pending order and identity failures |
+| Base defaults focused suite | 159 checks, including both original physical global-pointer stores and atomic failure before cache publication |
+| Cold startup regression | 6,446 checks; persistent inheritance retains also match physical base-descriptor words |
+| Original decoder prefix | 400 original-inclusive checks |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 prepared held/released and 28 scheduled frames |
+| Python verifier | Six tests passed |
+
+The first compile exposed a test helper's `bind` collision with `std::bind`;
+renaming only that helper to `physical_field` resolved it. The first compiled
+run passed 212/217 suites. Five existing defaults fixtures had inconsistent
+physical/cache mutations or corrupted a descriptor before an earlier physical
+reference read newly covered by this change. Their intended later faults now
+use the actual pending getter/destructor boundaries. Separate added cases keep
+constructor-time corruption covered as an earlier reference failure. Short-tail
+fixtures resize bytes and knownness together so the reached later store remains
+the failing access. A subsequent run exposed one more canonical-only zero
+mutation in the enum fixture; its synchronized physical write preserves the
+original null-selection assertions. Failed logs and original fixture sources
+are retained. No production read was weakened for these fixtures.
+
+The independent original corpus was sealed before native inspection: 375 cases,
+63,192 instructions and 340 visited addresses. Its verifier and exact replay
+passed, including a separate root replay. It audits 475 physical retains,
+249 creator releases, 246 fresh low23 reads and 2,403 callback snapshots.
+The original 15-artifact seal is
+`fac47b06cacce0d86d624a83b3a8f1fc50c3e5b8dc0393db8800d26baee08aff`.
+The native comparison subset was frozen at 165 cases, retaining physical `+04`
+bytes and callback snapshots, scope SHA256
+`bb14e4a4e044fd481d50fa4e960817dd01ef68e767ebf57bd4f41890b6620334`.
+The first native execution matched 163/165 cases. The two differences exposed
+real finalizer gaps: an unavailable vtable word must fault before the type
+callback, and an unavailable global-pointer word must fault before retaining
+or appending. The repaired finalizer now performs the original fresh physical
+reads. The next local build passed 212/218 suites: three prepared fixtures
+needed coherent physical global pointers, while the other failures exposed
+the missing physical `+1C` producer in base defaults. That producer now writes
+before canonical publication and name interning. All 218 suites then passed;
+failed sources and logs remain preserved.
+
+Relinking the unchanged driver against the final core matches **165/165**:
+111 completions, 23 prepared endpoint faults, 14 bounded accesses, six unknown
+reads, ten null reads and one null write, with no unexpected faults or pending
+operations. Physical bytes, knownness and 1,048 callback snapshots are compared;
+12 fixtures deliberately leave the canonical reference cache stale. The
+original corpus and both the first and final executables replay exactly.
+No expected output, case selection, projection or driver source changed for
+the production repair. The final 26-artifact native seal is
+`2116e9969a2c5cb7c280a859b34d9f87fd867e5d5a8e3e697ed8feafc9c60b6f`.
+Final core SHA256:
+`834bea1435281a0a60c5df9cc292ac80d70dd761d584b57c7a4f1bf674d60f1d`.
+
+The other 210 cases remain original-only: 90 prepared base-default factories,
+88 isolated retain/append calls without matching public APIs, 11 unknown
+canonical cells, eight reserve boundaries, five inline mutations, five sparse
+access denials and three negative-index backing prefixes. Metadata attributes
+and list ownership retain the declared canonical projection; this comparison
+does not independently pair the composed base-default factory.
+
+The cold boundary remains the enum-default list getter `80024B94`, with 36
+published types, 111 descriptors, 123 default buffers and 12 prototypes.
+Physical names, metadata/string headers and other reference producers remain
+outside this slice. Full startup, original gameplay and a playable native build
+remain unestablished. Local artifacts use `work/native-field-reference-family-`.
+
 ## Context-info registration resumes startup at enum defaults
 
 Validated locally on 2026-09-27. Original `80037330 / 80037358` now registers

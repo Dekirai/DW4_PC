@@ -104,6 +104,9 @@ void reflected_instance_publication(){
     meta->fields=std::make_shared<IgbDecodeFieldRegistry>();meta->fields->backing=std::make_shared<IgbDecodeFieldRegistry::Storage>();
     auto base=metadata();base->fields=std::make_shared<IgbDecodeFieldRegistry>();initializer->object_metadata=base;
     auto bytes=allocation(0x500000,0x4c);bytes.storage->bindings.push_back({8,{},{},{},{},f.created});const auto storage=std::weak_ptr(bytes.storage);
+    // Empty prepared member metadata leaves the descriptor's known-null
+    // global pointer to this fixture, rather than an actual member initializer.
+    igb_bootstrap_write_word({bytes.storage,8},0x1c,0);
     unsigned allocations{},polls{};bool ready{};
     f.services->reflected->factory=[&](const IgbFileFactoryCall& c){check(c.kind==IgbFileFactoryServiceKind::allocate && c.bytes==0x4c,"Reflected prototype lost its allocation prefix.");
         auto op=std::make_shared<IgbFileFactoryOperation>();op->resume=[&,out=op.get()]{++allocations;out->allocation_result=bytes.storage;return MessengerCallResult{true,0,{}};};return op;};

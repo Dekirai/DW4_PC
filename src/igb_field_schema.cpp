@@ -1,4 +1,5 @@
 #include "dw4/igb_field_schema.hpp"
+#include "dw4/igb_field_reference.hpp"
 
 #include <bit>
 
@@ -51,10 +52,11 @@ std::optional<std::uint32_t> declaring_type_address(const std::shared_ptr<IgbRun
 }
 
 struct IgbFieldBatchInvocation::Impl {
-    enum class P{test,handle,pool,factory,after_factory,append_capture,append,release,after_destroy,next,call,done};
+    enum class P{test,handle,pool,factory,after_factory,append_capture,append,release,release_test,after_destroy,next,call,done};
     std::shared_ptr<IgbRuntimeMetaType> metadata;
     std::shared_ptr<IgbFieldFactoryTable> factories;
     std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::shared_ptr<IgbFieldReferenceAccess> reference;
     std::shared_ptr<IgbDecodeFieldRegistry> fields;
     std::shared_ptr<IgbFieldSchemaServices> owner;
     std::shared_ptr<ModelSceneObject> pool;
@@ -72,6 +74,7 @@ IgbFieldBatchInvocation::IgbFieldBatchInvocation(std::shared_ptr<IgbRuntimeMetaT
 }
 IgbFieldBatchInvocation::~IgbFieldBatchInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.field)s.owner->unfinished.push_back(s.field);if(s.pool)s.owner->unfinished.push_back(s.pool);
+    if(s.reference)s.owner->unfinished.push_back(s.reference);
     if(s.call.request.kind==IgbFieldSchemaServiceKind::create_field && s.call.operation &&
         s.call.operation->field_result && s.call.operation->field_result!=s.field)
         s.owner->unfinished.push_back(s.call.operation->field_result);
@@ -105,11 +108,12 @@ MessengerCallResult IgbFieldBatchInvocation::resume(std::shared_ptr<IgbFieldSche
         if(*function==0)fail("Field batch calls a null constructor function.");
         clear();s.call.request.kind=K::create_field;s.call.request.function=*function;s.call.request.pool=s.pool;
         if(services)s.call.factory=services->factory;s.phase=P::call;s.after=P::after_factory;break;}
-    case P::after_factory:s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;clear();
+    case P::after_factory:s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;
+        s.reference=std::make_shared<IgbFieldReferenceAccess>(s.field);clear();
         bind();s.pool.reset();s.phase=P::append_capture;break;
     case P::append_capture:
         if(!s.metadata)fail("Field batch append dereferences null metadata.");
-        s.fields=s.metadata->fields;if(s.field)++s.field->reference_word;s.phase=P::append;break;
+        s.fields=s.metadata->fields;if(s.field)s.reference->write(s.reference->read()+1u);s.phase=P::append;break;
     case P::append:
         bind();if(!s.append){if(!services || !services->fields || !services->fields->pointer_lists)return pending("Field batch requires native raw pointer-list append services.");
             IgbMetadataOperationCall request;request.kind=IgbMetadataOperationKind::append_field;request.fields=s.fields;request.field=s.field;
@@ -122,12 +126,13 @@ MessengerCallResult IgbFieldBatchInvocation::resume(std::shared_ptr<IgbFieldSche
         s.append_callback={};s.append_checked_callback={};s.append.reset();check();s.phase=P::release;break;
     case P::release:
         if(!s.field)fail("Field batch releases a null constructor result after appending it.");
-        --s.field->reference_word;
-        if((s.field->reference_word&0x7fffffu)==0){clear();s.call.request.kind=K::destroy_field;s.call.request.function=0x80066e1c;s.call.request.field=s.field;
+        s.reference->write(s.reference->read()-1u);s.phase=P::release_test;break;
+    case P::release_test:
+        if((s.reference->read()&0x7fffffu)==0){clear();s.call.request.kind=K::destroy_field;s.call.request.function=0x80066e1c;s.call.request.field=s.field;
             if(services)s.call.factory=services->factory;s.phase=P::call;s.after=P::after_destroy;}
         else s.phase=P::next;break;
     case P::after_destroy:clear();s.phase=P::next;break;
-    case P::next:s.field.reset();s.address.reset();s.fields.reset();++s.index;s.byte_offset+=4;s.phase=P::test;break;
+    case P::next:s.reference.reset();s.field.reset();s.address.reset();s.fields.reset();++s.index;s.byte_offset+=4;s.phase=P::test;break;
     case P::call:{const auto status=s.call.poll(services?services->factory:IgbFieldSchemaFactory{},check);if(!status.completed)return status;s.phase=s.after;break;}
     case P::done:return {true,0,{}};
     }}}catch(...){s.fault=true;throw;}

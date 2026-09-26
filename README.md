@@ -227,7 +227,11 @@ concrete lists and the separate context-info class. Its metadata, null string
 default and signed-byte element prototype use the original shared owners.
 The retained startup now reaches the enum-defaults list getter `80024B94`.
 Shared field/list and string-default continuations retain parent fault checks.
+Field batch, finalized append, inheritance and base defaults now read and update
+the represented physical descriptor reference word. A stale host cache cannot
+replace that original packed value; pending callbacks preserve captured owners.
 Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_FIELD_REFERENCES.md](docs/IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](docs/IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_CONTEXT_REGISTRATION.md](docs/IGB_CONTEXT_REGISTRATION.md),
 [IGB_ERROR_HANDLER.md](docs/IGB_ERROR_HANDLER.md),

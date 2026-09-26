@@ -57,6 +57,7 @@ target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src
   src/igb_error_handler_registration.cpp
   src/igb_context_registration.cpp
   src/igb_context_info_registration.cpp
+  src/igb_field_reference.cpp
   src/igb_struct_field_defaults.cpp
   src/igb_struct_member.cpp
   src/igb_data_list_registration.cpp src/igb_data_list_defaults.cpp
@@ -163,6 +164,12 @@ if(BUILD_TESTING)
   add_executable(dw4_igb_context_info_registration_tests tests/igb_context_info_registration_tests.cpp)
   target_link_libraries(dw4_igb_context_info_registration_tests PRIVATE dw4_core)
   add_test(NAME igb_context_info_registration COMMAND dw4_igb_context_info_registration_tests)
+  add_executable(dw4_igb_field_reference_tests tests/igb_field_reference_tests.cpp)
+  target_link_libraries(dw4_igb_field_reference_tests PRIVATE dw4_core)
+  add_test(NAME igb_field_reference COMMAND dw4_igb_field_reference_tests)
+  add_executable(dw4_igb_field_finalize_dispatch_tests tests/igb_field_finalize_dispatch_tests.cpp)
+  target_link_libraries(dw4_igb_field_finalize_dispatch_tests PRIVATE dw4_core)
+  add_test(NAME igb_field_finalize_dispatch COMMAND dw4_igb_field_finalize_dispatch_tests)
   add_executable(dw4_igb_error_handler_registration_tests tests/igb_error_handler_registration_tests.cpp)
   target_link_libraries(dw4_igb_error_handler_registration_tests PRIVATE dw4_core)
   add_test(NAME igb_error_handler_registration COMMAND dw4_igb_error_handler_registration_tests)

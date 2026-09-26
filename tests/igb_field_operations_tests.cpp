@@ -130,7 +130,8 @@ void buffer_live_reads(){
 void physical_buffer_publication(){
     Fixture f;auto storage=std::make_shared<IgbObjectStorage>();storage->original_address=0x110000;storage->bytes=bytes(0x34);
     storage->bindings.push_back({0,{},{},{},{},f.descriptor});f.descriptor->physical_storage=IgbFieldStorageBinding{storage,0};
-    IgbBootstrapPointer physical{storage,0};igb_bootstrap_write_word(physical,0x20,0);
+    IgbBootstrapPointer physical{storage,0};igb_bootstrap_write_word(physical,0,*f.descriptor->vtable_word);
+    igb_bootstrap_write_word(physical,0x1c,0);igb_bootstrap_write_word(physical,0x20,0);
     bool observed{};f.mutate=[&](const IgbFieldOperationCall& c,auto&,auto&){if(c.kind==K::allocate_default){
         check(igb_bootstrap_read_word(physical,0x14)==0x0004a5a5 && igb_bootstrap_read_word(physical,0x20)==0,
             "Pending allocation did not expose the physical size store before pointer publication.");observed=true;}};

@@ -1,4 +1,5 @@
 #include "dw4/igb_object_defaults.hpp"
+#include "dw4/igb_field_reference.hpp"
 
 namespace dw4 {
 namespace {
@@ -24,11 +25,15 @@ using DestroyCall=Call<IgbObjectDefaultsCall,IgbObjectDefaultsFactory,IgbObjectD
 }
 struct IgbObjectDefaultsInvocation::Impl {
     enum class P{handle,pool,create_field,offset,global_slot,string_pool,after_pool_allocate,after_pool_initialize,
-        publish_pool,intern,after_intern,name,temporary,after_temporary,flags,metadata,append,release_field,
+        publish_pool,intern,after_intern,name,temporary,after_temporary,flags,metadata,append,release_field,release_test,
         after_destroy,next,string_call,destroy_call,done};
     std::shared_ptr<IgbObjectDefaultsServices> owner;
     std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::shared_ptr<IgbFieldReferenceAccess> reference;
     IgbBootstrapPointer field_allocation;
+    std::optional<IgbBootstrapPointer> field_binding;
+    std::shared_ptr<IgbScratchBuffer> field_bytes;
+    std::uint32_t field_address{};
     std::shared_ptr<ModelSceneObject> pool;
     std::shared_ptr<IgbFieldNameSlot> temporary;
     std::shared_ptr<IgbInternedString> released_string;
@@ -43,7 +48,9 @@ IgbObjectDefaultsInvocation::IgbObjectDefaultsInvocation():impl_(std::make_uniqu
 IgbObjectDefaultsInvocation::~IgbObjectDefaultsInvocation(){
     auto& s=*impl_;if((!completed() || faulted()) && s.owner){
         if(s.field)s.owner->unfinished.push_back(s.field);
+        if(s.reference)s.owner->unfinished.push_back(s.reference);
         if(s.field_allocation.storage)s.owner->unfinished.push_back(s.field_allocation.storage);
+        if(s.field_bytes)s.owner->unfinished.push_back(s.field_bytes);
         if(s.temporary && *s.temporary && **s.temporary)s.owner->unfinished.push_back(**s.temporary);
         if(s.released_string)s.owner->unfinished.push_back(s.released_string);
         if(s.pool)s.owner->unfinished.push_back(s.pool);
@@ -81,7 +88,14 @@ MessengerCallResult IgbObjectDefaultsInvocation::resume(std::shared_ptr<IgbObjec
     }
     case P::create_field:{
         const auto status=s.factory_call->resume(services?services->meta_fields:nullptr);check();if(!status.completed)return status;
-        s.field=s.factory_call->result();s.field_allocation=s.factory_call->allocation();s.factory_call.reset();check();
+        s.field=s.factory_call->result();s.field_allocation=s.factory_call->allocation();
+        s.field_binding.reset();s.field_bytes.reset();
+        if(s.field && s.field->physical_storage){const auto& binding=*s.field->physical_storage;
+            s.field_binding=IgbBootstrapPointer{binding.storage.lock(),binding.offset};
+            if(s.field_binding->storage){s.field_bytes=s.field_binding->storage->bytes;
+                s.field_address=s.field_binding->storage->original_address;}
+        }
+        s.reference=std::make_shared<IgbFieldReferenceAccess>(s.field);s.factory_call.reset();check();
         bind_pointer();s.pool.reset();s.phase=P::offset;break;
     }
     case P::offset:
@@ -90,7 +104,17 @@ MessengerCallResult IgbObjectDefaultsInvocation::resume(std::shared_ptr<IgbObjec
     case P::global_slot:{
         const auto slot=services?(s.index==0?services->ref_count:services->pool_index):std::shared_ptr<IgbRuntimeFieldSlot>{};
         if(!slot)return pending("igObject defaults require the reached canonical descriptor-global cell.");
-        s.field->global_slot=slot;s.field->global_slot_address=s.index==0?0x805622a8u:0x805622acu;
+        const auto address=s.index==0?0x805622a8u:0x805622acu;
+        //66BB0/66C90 publish the original pointer before name interning.
+        if(s.field_binding){const auto& p=*s.field_binding;
+            if(!p.storage || p.storage->faulted() || !s.field->physical_storage || s.field->construction_fault_ ||
+                s.field->physical_storage->storage.lock()!=p.storage || s.field->physical_storage->offset!=p.offset ||
+                p.storage->original_address!=s.field_address || p.storage->bytes!=s.field_bytes || !s.field_bytes || s.field_bytes->released)
+                fail("igObject global pointer store lost its captured descriptor allocation.");
+            IgbObjectInstance object;object.storage=p.storage;object.offset=p.offset;object.field=s.field;
+            igb_object_validate_instance(object);igb_bootstrap_write_word(p,0x1c,address);
+        }else if(s.field->physical_storage)fail("igObject global pointer store acquired a different storage profile.");
+        s.field->global_slot=slot;s.field->global_slot_address=address;
         s.phase=P::string_pool;break;
     }
     case P::string_pool:{
@@ -138,8 +162,9 @@ MessengerCallResult IgbObjectDefaultsInvocation::resume(std::shared_ptr<IgbObjec
         s.append_call.reset();check();s.phase=P::release_field;break;
     }
     case P::release_field:
-        --s.field->reference_word;
-        if((s.field->reference_word&0x7fffffu)==0){clear_destroy();s.destroy.request.field=s.field;
+        s.reference->write(s.reference->read()-1u);s.phase=P::release_test;break;
+    case P::release_test:
+        if((s.reference->read()&0x7fffffu)==0){clear_destroy();s.destroy.request.field=s.field;
             if(services)s.destroy.factory=services->factory;s.phase=P::destroy_call;}
         else s.phase=P::next;break;
     case P::destroy_call:{
@@ -147,7 +172,7 @@ MessengerCallResult IgbObjectDefaultsInvocation::resume(std::shared_ptr<IgbObjec
         s.phase=P::after_destroy;break;
     }
     case P::after_destroy:clear_destroy();s.phase=P::next;break;
-    case P::next:s.field.reset();s.field_allocation={};++s.index;s.phase=s.index==2?P::done:P::handle;break;
+    case P::next:s.reference.reset();s.field.reset();s.field_allocation={};++s.index;s.phase=s.index==2?P::done:P::handle;break;
     case P::string_call:{
         const auto dep=dependencies();const auto status=s.string.poll(dep?dep->factory:IgbDependenciesFactory{},check);
         if(!status.completed)return status;s.phase=s.after;break;

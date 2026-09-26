@@ -188,6 +188,7 @@ void finalization_and_real_buffer_growth(){
     Values values;BoundField f;const auto field=f.object.field;
     auto prototype=std::make_shared<IgbDecodeRuntimeField>();prototype->ordinal=0x1234;values.services->struct_prototype=prototype;
     auto global=std::make_shared<IgbRuntimeFieldSlot>();field->global_slot=global;
+    field->global_slot_address=0x830000;f.raw(0x1c,0x830000);
     // The raw bootstrap writer synchronizes only headers. Use the actual
     // ushort member copy to prepare a coherent physical/canonical ordinal.
     f.copy(0x12,{0x56,0x78},0x80477054);f.raw(0x14,1,2);f.raw(0x34,0x10010);

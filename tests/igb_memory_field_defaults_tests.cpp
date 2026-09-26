@@ -175,13 +175,25 @@ void getter_capture_and_fault_order(){Fixture f;f.with_physical=true;
     check(call.resume(f.services).completed && captured->object_type->lock()==f.base && other->fields->count==0 && f.created.size()==8,
         "Getter suspension changed captured metadata or replayed fields.");
     Fixture malformed;malformed.with_physical=true;malformed.services->registration->base_metadata->reset();
-    malformed.constructor_action=[&](std::size_t i){if(i==1)malformed.created[1]->physical_storage=IgbFieldStorageBinding{{},12};};
     IgbMemoryFieldDefaultsInvocation delayed;check(!delayed.resume(malformed.services).completed && !delayed.faulted(),
-        "Malformed future type-store destination failed before the original getter.");
+        "Memory defaults did not reach the original unknown type getter.");
+    check(malformed.created.size()==8 && malformed.target->fields->count==10 && igb_bootstrap_read_word(malformed.allocations[1],4)==1,
+        "Type getter was reached before completing the physical field batch.");
+    malformed.created[1]->physical_storage=IgbFieldStorageBinding{{},12};
+    check(!delayed.resume(malformed.services).completed && !delayed.faulted(),
+        "Pending original getter validated its later type-store destination.");
     *malformed.services->registration->base_metadata=malformed.base;
     rejects([&]{delayed.resume(malformed.services);},"Malformed type destination accepted its reached store.");
     check(delayed.faulted() && !malformed.created[1]->object_type && !malformed.created[1]->flag_28,
         "Faulting type store published later canonical fields.");
+    Fixture early;early.with_physical=true;early.services->registration->base_metadata->reset();
+    early.constructor_action=[&](std::size_t i){if(i==1)early.created[1]->physical_storage=IgbFieldStorageBinding{{},12};};
+    IgbMemoryFieldDefaultsInvocation batch;
+    rejects([&]{batch.resume(early.services);},"Expired constructor binding skipped the physical batch retain.");
+    check(batch.faulted() && early.created.size()==2 && early.target->fields->count==3 && early.created[1]->reference_word==1 &&
+        igb_bootstrap_read_word(early.allocations[1],4)==1 && early.list_calls.empty() && early.names==0 && !early.created[1]->object_type,
+        "Early reference failure lost the first completed append or reached later clone/getter operations.");
+    rejects([&]{batch.resume(early.services);},"Faulted constructor reference restarted memory defaults.");
 }
 void physical_and_null_prefixes(){Fixture f;f.with_physical=true;f.method_ready=false;IgbMemoryFieldDefaultsInvocation call;
     check(!call.resume(f.services).completed && f.method_calls.size()==1,"Physical binding fixture did not reach pending method setter.");
