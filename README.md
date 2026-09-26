@@ -202,8 +202,11 @@ semaphore schema. Its metadata getter and inline struct field passes now
 complete the runtime allocation. Its activation virtual `+5C` now executes the
 original queue/count initialization and status publication. With explicitly
 prepared initial exclusion state, the same cold invocation completes and
-publishes the manager singleton, then reaches concrete thread getter `8003AF84`.
-Main-thread construction and platform scheduling remain required. See
+publishes the manager singleton. Concrete thread getter `8003AF84` now runs
+registration, the physical probe and all nine local defaults, bringing the
+cold composition to 28 published types. Its factory reaches the actual `0x388`
+runtime allocation. Main-thread construction and platform scheduling remain
+required. See [IGB_GAMECUBE_THREAD.md](docs/IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](docs/IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](docs/IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](docs/IGB_STRUCT_FIELD_RUNTIME.md),

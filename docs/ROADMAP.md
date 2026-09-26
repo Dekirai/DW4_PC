@@ -203,9 +203,11 @@ physical words and dynamic descriptor operations complete semaphore defaults.
 The semaphore runtime allocation completes its concrete initializer and inline
 struct members. Its activation `+5C` now completes the original queue/count
 initialization with explicit exclusion state. The retained cold invocation
-publishes the manager singleton and reaches concrete thread getter `8003AF84`.
-Recover that class, the actual main-thread construction and subsequent platform
-operations next. See
+publishes the manager singleton. Concrete thread getter `8003AF84` now runs its
+registration, physical probe and nine local defaults; the factory reaches its
+`0x388` allocation. Recover actual main-thread initialization `80077E94`, its
+reached pool/semaphore operations and subsequent current-thread adoption next.
+See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

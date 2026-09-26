@@ -215,9 +215,11 @@ queue/count, restores the captured exclusion bit, publishes active state and
 freshly loads the canonical success status. The manager's checked continuation
 propagates its fault guard through the activation callback. With explicitly
 prepared initial exclusion state, the cold test completes manager construction
-and singleton publication before reaching concrete thread getter `8003AF84`.
-Main-thread creation, manager list/wait/signal operations, scheduling and teardown
-remain required. See
+and singleton publication. Concrete thread getter `8003AF84` now completes its
+registration, distinct physical probe and nine local defaults. The factory
+then reaches the original `0x388` runtime allocation. Main-thread creation,
+manager list/wait/signal operations, scheduling and teardown remain required.
+See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

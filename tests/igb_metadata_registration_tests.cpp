@@ -6,6 +6,7 @@
 #include "dw4/igb_struct_member.hpp"
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_platform_semaphore_registration.hpp"
+#include "dw4/igb_gamecube_thread_registration.hpp"
 #include "dw4/igb_struct_field_defaults.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
@@ -1213,6 +1214,7 @@ void actual_cold_bootstrap_prefix(){
     std::shared_ptr<IgbNamedTypeDefaultsServices> named_defaults;
     std::shared_ptr<IgbPlatformThreadRegistrationServices> platform_thread;
     std::shared_ptr<IgbPlatformSemaphoreRegistrationServices> platform_semaphore;
+    std::shared_ptr<IgbGamecubeThreadRegistrationServices> gamecube_thread;
     bool bind_new_instance_addresses{};
     std::vector<IgbPointerListBacking> enabled_backings;
     std::shared_ptr<IgbRegistrationMetaSlot> signed_int_cell,boolean_cell,signed_byte_cell;
@@ -1245,6 +1247,7 @@ void actual_cold_bootstrap_prefix(){
                 if(named_defaults)named_defaults->physical_metadata.push_back(raw);
                 if(platform_thread)platform_thread->physical_metadata.push_back(raw);
                 if(platform_semaphore)platform_semaphore->physical_metadata.push_back(raw);
+                if(gamecube_thread)gamecube_thread->physical_metadata.push_back(raw);
             }else if(c.metadata==lazy_metadata[0]){
                 check(c.bytes==16,"Lazy enabled field list changed its allocation size.");
                 instance.fields=std::make_shared<IgbDecodeFieldRegistry>();instance.fields->count=37;
@@ -2893,10 +2896,12 @@ void actual_cold_bootstrap_prefix(){
     };
     std::vector<IgbFieldOperationCall> struct_buffer_calls;
     const auto before_struct_buffers=object_defaults->fields->factory;
+    bool gamecube_thread_buffers{};
     object_defaults->fields->factory=[&,before_struct_buffers](const IgbFieldOperationCall& c){
         const bool structure=c.field && c.field->vtable_word==0x80470e00;
+        const bool reached_size=c.bytes==12 || (gamecube_thread_buffers && (c.bytes==0x318 || c.bytes==0x28));
         if(!structure || (c.kind!=IgbFieldOperationKind::free_default &&
-            !(c.kind==IgbFieldOperationKind::allocate_default && c.bytes==12)))return before_struct_buffers(c);
+            !(c.kind==IgbFieldOperationKind::allocate_default && reached_size)))return before_struct_buffers(c);
         struct_buffer_calls.push_back(c);auto operation=std::make_shared<IgbFieldOperation>();
         operation->resume=[&,c,out=operation.get(),done=false]()mutable{
             if(done)return MessengerCallResult{true,0,{}};
@@ -2910,7 +2915,8 @@ void actual_cold_bootstrap_prefix(){
                 // Same explicit initialized-zero allocator preparation as the
                 // existing arena fixture; not a claim that struct+84 clears it.
                 bytes->bytes.assign(c.bytes,0);bytes->initialized.assign(c.bytes,1);
-                out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;
+                out->buffer_result={bytes,0};
+                out->buffer_address=gamecube_thread_buffers?0xd00000+default_allocations*0x1000:0x740000+default_allocations*0x100;
             }done=true;return MessengerCallResult{true,0,{}};
         };return operation;
     };
@@ -3126,6 +3132,87 @@ void actual_cold_bootstrap_prefix(){
         concrete_semaphore->instance_count==1 && igb_buffer_word(activation_result,0)==*memory_construct->status_success &&
         interrupt_state->enabled==true && startup->manager->storage==manager_storage.storage && !**meta_enum->metadata,
         "The subsequent startup boundary replayed semaphore activation, manager publication or runtime construction.");
+
+    // Resume the actual concrete thread redirect in the same startup. The
+    // stack probe and raw allocator bytes remain explicit prepared storage;
+    // registration, field factories and schema publication execute natively.
+    gamecube_thread=std::make_shared<IgbGamecubeThreadRegistrationServices>();
+    gamecube_thread->state=std::make_shared<IgbGamecubeThreadRegistrationState>();
+    gamecube_thread->state->metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    gamecube_thread->parent=named_registration;gamecube_thread->dependencies=thread_dependencies;
+    gamecube_thread->types=f.services->types;gamecube_thread->callbacks=f.services->callbacks;
+    gamecube_thread->schema=metadata_defaults->schema;
+    std::vector<IgbBootstrapPointer> gamecube_thread_probes;
+    gamecube_thread->local_storage=[&]{
+        auto raw=allocation(0xc30000+static_cast<std::uint32_t>(gamecube_thread_probes.size())*0x1000,0x388);
+        raw.storage->bytes->initialized.assign(0x388,0);
+        for(unsigned i=4;i<8;++i)raw.storage->bytes->initialized[i]=1;
+        gamecube_thread_probes.push_back(raw);return raw;
+    };
+    gamecube_thread_buffers=true;
+    concrete_redirect=make_native_igb_gamecube_thread_redirect_factory(gamecube_thread,concrete_redirect);
+    additional_callbacks=make_native_igb_gamecube_thread_registration_function_factory(gamecube_thread,additional_callbacks);
+    f.remaining=make_native_igb_gamecube_thread_registration_type_factory(gamecube_thread,f.remaining);
+    const auto after_gamecube_thread=call.resume(bootstrap);
+    std::cout<<"Cold native concrete thread registration: "<<after_gamecube_thread.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<", runtime allocations="<<runtime_allocations.size()<<'\n';
+    check(!after_gamecube_thread.completed && !call.faulted() && gamecube_thread->state->metadata &&
+        *gamecube_thread->state->metadata && startup->manager && runtime_allocations.size()==3,
+        "Concrete thread registration bypassed the actual factory or supplied a constructed runtime thread.");
+    const auto concrete_thread=*gamecube_thread->state->metadata;
+    check(concrete_thread->name && *concrete_thread->name=="igGamecubeThread" && concrete_thread->class_flags==7 &&
+        concrete_thread->parent==native_thread_type && concrete_thread->native_size==0x388 && concrete_thread->native_alignment==4 &&
+        concrete_thread->flag_1a==0 && concrete_thread->type_word==0x80470110 && concrete_thread->field_callback==0x80023e20 &&
+        concrete_thread->factory_redirect==0 && concrete_thread->word_40==0x80023cd4 && concrete_thread->fields->count==22 &&
+        concrete_thread->instance_count==0 && f.core->types->count==28 && f.core->types->backing->at(27)==concrete_thread,
+        "Concrete thread lost original parent fields, physical layout, registration state or post-schema callback.");
+    check(after_gamecube_thread.diagnostic=="Reflected factory requires the captured pool allocation virtual+D8." &&
+        unbound_reflected_allocations.back().metadata==concrete_thread && unbound_reflected_allocations.back().pool==f.pool &&
+        unbound_reflected_allocations.back().bytes==0x388 && descriptors.size()==101 && default_allocations==113 &&
+        enabled_allocations.size()==108 && (**prototypes->registry)->count==12 && structure_type->instance_count==4 &&
+        struct_instance_allocations.size()==3 && concrete_manager->instance_count==1 && concrete_semaphore->instance_count==1 &&
+        !**meta_enum->metadata && (*f.core->bootstrap_callbacks)->count==1,
+        "Concrete thread registration fabricated allocation or replayed preceding startup instances.");
+    check(gamecube_thread_probes.size()==1 && gamecube_thread->physical_metadata.size()==1 &&
+        igb_bootstrap_read_word(gamecube_thread_probes.front(),0)==0x8047650c &&
+        igb_bootstrap_read_word(gamecube_thread_probes.front(),4)==1 &&
+        igb_bootstrap_read_word(gamecube_thread_probes.front(),8)==0 &&
+        igb_bootstrap_read_word(gamecube_thread_probes.front(),0x380)==0 &&
+        igb_bootstrap_read_word(gamecube_thread->physical_metadata.front(),0x40)==0x80023cd4,
+        "Concrete thread probe or fresh metadata callback store lost its physical output.");
+    for(unsigned at=12;at<0x388;++at)if(at<0x380 || at>=0x384)
+        check(!gamecube_thread_probes.front().storage->bytes->initialized[at],
+            "Thread layout probe fabricated untouched stack, OS-thread, alarm or padding bytes.");
+    for(unsigned i=0;i<13;++i)check(concrete_thread->fields->backing->at(i)==native_thread_type->fields->backing->at(i),
+        "Concrete thread replaced an inherited abstract-thread descriptor.");
+    for(unsigned i=0;i<9;++i){const auto field=concrete_thread->fields->backing->at(13+i);
+        check(*gamecube_thread->globals->at(i)->slot==field && field->name && *field->name==**gamecube_thread->names->at(i) &&
+            field->offset==gamecube_thread->offsets->at(i) && field->declaring_type && field->declaring_type->lock()==concrete_thread,
+            "Concrete thread schema did not publish its actual names, offsets, globals or declaring owner.");
+    }
+    const auto thread_struct=concrete_thread->fields->backing->at(13),alarm_struct=concrete_thread->fields->backing->at(15),
+        thread_done_semaphore=concrete_thread->fields->backing->at(17),deferred=concrete_thread->fields->backing->at(18);
+    check(thread_struct->size==0x318 && alarm_struct->size==0x28 && thread_struct->struct_alignment==1 && alarm_struct->struct_alignment==1 &&
+        thread_struct->default_bytes && alarm_struct->default_bytes && thread_struct->default_bytes->buffer->bytes.size()==0x318 &&
+        alarm_struct->default_bytes->buffer->bytes.size()==0x28 && thread_struct->default_bytes->buffer!=alarm_struct->default_bytes->buffer &&
+        thread_struct->default_bytes->buffer!=semaphore_struct->default_bytes->buffer &&
+        alarm_struct->default_bytes->buffer!=struct_prototype->default_bytes->buffer &&
+        thread_done_semaphore->object_type && thread_done_semaphore->object_type->lock()==semaphore_metadata && thread_done_semaphore->flag_34==1 &&
+        deferred->default_bytes && deferred->default_bytes->buffer->bytes.at(deferred->default_bytes->offset)==1,
+        "Concrete thread defaults lost independent inline buffers, abstract semaphore construction type or deferred-byte value.");
+    const auto thread_allocations=enabled_allocations.size(),thread_reflections=reflected_allocations.size();
+    const auto thread_names=string_allocations,thread_default_count=default_allocations;
+    const auto thread_frees=freed_callback_lists.size();
+    check(call.resume(bootstrap).diagnostic==after_gamecube_thread.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==thread_allocations && reflected_allocations.size()==thread_reflections &&
+        string_allocations==thread_names && default_allocations==thread_default_count && freed_callback_lists.size()==thread_frees &&
+        gamecube_thread_probes.size()==1 && gamecube_thread->physical_metadata.size()==1 &&
+        concrete_thread->instance_count==0 && concrete_thread->class_flags==7 && descriptors.size()==101 &&
+        f.core->types->count==28 && structure_type->instance_count==4 && runtime_allocations.size()==3 &&
+        semaphore_runtime_calls.size()==3 && startup->manager->storage==manager_storage.storage && interrupt_state->enabled==true &&
+        igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
+        "Pending native thread allocation replayed registration/defaults, manager activation or startup snapshots.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

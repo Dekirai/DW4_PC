@@ -309,10 +309,12 @@ descriptor operations now complete concrete semaphore registration. Its runtime
 allocation now completes its metadata getter and actual inline struct members.
 Activation `+5C` now preserves the original queue/count and status-store order.
 With explicitly prepared initial exclusion state, the same cold invocation
-finishes the manager and publishes its singleton. The next missing operation
-is **concrete thread getter `8003AF84`**, reached through abstract redirect
-`80023E20`. Recover its registration/defaults, actual main-thread construction
-and subsequent platform operations next. No main thread is supplied. See
+finishes the manager and publishes its singleton. Abstract redirect `80023E20`
+now enters **concrete thread getter `8003AF84`**, its registration, physical
+probe and nine local defaults. The factory reaches its actual `0x388` allocation.
+Continue through main-thread initialization `80077E94`, the reached aligned
+pool allocation/semaphore setter and subsequent current-thread adoption. No
+main thread is supplied. See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) and
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) and
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md) and

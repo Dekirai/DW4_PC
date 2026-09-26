@@ -68,10 +68,11 @@ the twelve bytes copied from its explicitly prepared descriptor payload.
 Its manager assigns member `+0C` and calls activation `+5C`. That operation now
 initializes queue/count and active/status state, with an explicitly prepared
 prior exclusion bit; padding remains unknown. The manager completes and is
-published by the actual startup caller, which next reaches concrete thread
-getter `8003AF84`. The main thread remains unallocated.
+published by the actual startup caller. Subsequent concrete thread registration
+now reaches its runtime allocation; see [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
+The main thread remains unallocated.
 
-Continue with concrete thread registration and subsequent platform operations.
+Continue with concrete thread initialization and subsequent platform operations.
 Activation is implemented separately in
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Wait/signal semantics
 and host scheduling remain required. This metadata implementation does not

@@ -67,14 +67,16 @@ complete. Subsequent **activation `+5C`** now initializes queue/count and status
 with explicit exclusion state, allowing its manager to complete and be published.
 There are 27 published types, 92 descriptors, 104 default buffers, twelve
 prototypes and 96 enabled allocations. Both the thread list and semaphore are
-constructed; concrete main-thread getter `8003AF84` is the next missing operation.
+constructed at that milestone. Subsequent concrete thread getter `8003AF84`
+now finishes registration and reaches its runtime allocation; see
+[IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
 
 Dynamic descriptor size/alignment and distinct constructor/destructor words
 are implemented through [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md).
 Inline member handlers retain constructor/destructor callbacks and exact byte
 copying; see [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md). See
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) for activation and its
-explicit platform state. Continue with concrete thread registration and the
+explicit platform state. Continue with concrete thread initialization and the
 subsequently reached platform operations.
 See [IGB_UNSIGNED_SHORT_FIELD.md](IGB_UNSIGNED_SHORT_FIELD.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md),

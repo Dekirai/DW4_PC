@@ -80,12 +80,14 @@ actual queue/count stores, prior exclusion-bit restore and active/status stores.
 With explicitly prepared initial exclusion state, the same cold invocation ends
 the manager construction lease, increments its instance count to one and
 publishes that manager as the startup singleton. The original main-thread
-factory then reaches abstract redirect `80023E20`, requiring concrete getter
-`8003AF84`. The concrete main thread has not been allocated. Focused hook tests
+factory then reaches abstract redirect `80023E20` and concrete getter
+`8003AF84`. Its registration, probe and defaults now finish before the concrete
+thread's `0x388` runtime allocation. That instance has not been allocated. Focused hook tests
 retain their separately prepared method endpoints.
 
-There are 27 registered types, 92 descriptors, 104 default buffers, twelve
-prototypes and 96 enabled allocations. The manager, thread-list and semaphore
+After concrete thread registration there are 28 registered types, 101
+descriptors, 113 default buffers, twelve prototypes and 108 enabled allocations.
+See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md). The manager, thread-list and semaphore
 runtime instances are constructed; this is neither complete startup nor
 playable gameplay. See [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md)
 for the explicit platform state and retained callback contract.

@@ -69,6 +69,8 @@ The subsequent activation implementation now completes the manager with
 explicit exclusion state and reaches concrete thread getter `8003AF84`;
 see [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Those effects
 belong to activation, not to these no-op object leaves or inline defaults.
+Subsequent concrete thread registration now reaches its runtime allocation;
+see [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
 
 See [VALIDATION.md](VALIDATION.md) for observed boundaries and local evidence,
 and [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md) for runtime ownership.

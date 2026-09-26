@@ -58,7 +58,8 @@ semaphore now completes its metadata getter and inline member initialization;
 its activation now finishes the manager with explicit exclusion state and
 reaches concrete thread getter `8003AF84`. See
 [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md) and
-[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md).
+[IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Subsequent concrete
+thread registration is documented in [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
 Raw storage/pool services remain explicit test preparation. These results do
 not establish complete native boot or playable gameplay.
 

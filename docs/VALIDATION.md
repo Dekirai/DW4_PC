@@ -1,5 +1,76 @@
 # Local validation
 
+## Concrete thread registration reaches its runtime allocation
+
+Validated locally on 2026-09-26. The retained cold startup resumes abstract
+thread redirect `80023E20`, full concrete getter `8003AF84`, registration body
+`8003B0E0`, physical probe `8003AFC0` and nine-field defaults `8003B15C`.
+The actual registrar appends and runs extra semaphore callback `80026098`.
+Concrete thread metadata finishes with flags `7`, 22 fields, size `0x388`,
+alignment four, type word `80470110` and post-schema callback `80023CD4`.
+
+The original factory next reaches its captured pool's `+D8` allocation for
+the real `0x388`-byte thread. No runtime thread is supplied and its instance
+count remains zero. Counts are **28 types, 101 descriptors, 113 default buffers,
+12 prototypes and 108 enabled allocations**. The manager, thread list and
+semaphore remain the same three constructed runtime instances. Repeated
+pending resumes do not replay registration, defaults or preceding activation.
+
+The thread and alarm struct descriptors own independent `0x318`-byte and
+`0x28`-byte default buffers. The done-semaphore descriptor retains the abstract
+semaphore type and construction flag one; the deferred Boolean default is one.
+The temporary layout probe initializes only its common header, name and
+done-semaphore pointer. Other bytes, including OS-thread and alarm storage,
+remain unknown. Allocator payload contents and earlier exclusion state remain
+explicit prepared inputs, not evidence of complete native startup.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 208/208 local CTest suites passed with four build jobs |
+| Integrated cold startup | 4,268 checks; completed class/defaults, physical probe bytes, independent buffers and stable runtime allocation boundary |
+| Concrete thread registration | 227 checks; exact profile, actual callback-list execution, fresh/captured lookups, nine-field schema, physical faults and runtime non-admission |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frames retain their existing scope |
+| Python verifier | Six tests passed |
+
+The initial full build passed. Adding stronger cold assertions introduced a
+duplicate local variable name in the test; renaming that counter restored the
+build without production changes. Its compiler log remains preserved.
+
+The original corpus was sealed before native observation: **91 cases, 4,986
+executed DOL instructions and 255 instruction addresses**. It includes actual
+registration arguments/tables, getters, probe and defaults, with explicit
+lower boundaries for the registrar, batch, schema and field-value services.
+
+The frozen natural getter/probe subset matches **28/28 on its first build and
+execution**, then on exact replay: 25 completed calls, two prepared failures
+and one null captured-core guard. There are no pending results or unexpected
+faults. A separate independent **158-word configuration audit** matches the
+public registration arguments and all nine names/factories/globals/offsets,
+including the extra callback terminator.
+
+The other **63 cases remain original-only**: thirteen registration cases,
+32 defaults cases, nine probe injections, six unavailable reads and three
+plain runtime-getter cases. The native API composes actual registrar/batch/
+schema callers; it does not expose equivalent no-effect endpoints for those
+original prepared boundaries. Their exclusion is explicit, and the native
+defaults instead have focused and composed cold integration checks. Profile
+agreement is not labelled a differential execution of those defaults.
+
+All 91 original and 28 native reruns, 15 original hashes and 17 native hashes
+verify. Original expectations, native selection and first observations remain
+unchanged. Original manifest SHA256:
+`f5c1aa20336a9474927e0f52d607928728c50af5d55396220983f8f88cfc14d9`.
+Native manifest SHA256:
+`259e6152eebddb98cb999d5dc7211313068dcec91334164f4323c6423bd2593a`.
+The verified Release core SHA256 is
+`a817c6801bd27c101f2609c4092c4b7938916a6dbd0f937dc75e2a55ace0d004`.
+
+See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md). Local artifacts use the
+ignored `work/native-gamecube-thread-` prefix. Runtime initialization, actual
+current-thread adoption, manager insertion, wait/signal and scheduling remain
+required; this does not provide a playable-game build.
+
 ## Semaphore activation completes and publishes the native manager
 
 Validated locally on 2026-09-26. The retained cold startup executes activation

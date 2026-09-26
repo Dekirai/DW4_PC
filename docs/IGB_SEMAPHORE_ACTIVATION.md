@@ -51,11 +51,13 @@ The cold integration first stops with unknown exclusion state. With an
 explicitly prepared prior bit, the same retained invocation completes
 activation, ends manager construction and publishes the original manager
 singleton. Original thread factory caller `80023B90` then reaches abstract
-thread redirect `80023E20`, which requires concrete getter `8003AF84`.
+thread redirect `80023E20`, which selects concrete getter `8003AF84`.
 
 The manager, thread list and semaphore are constructed; the concrete main
-thread is not allocated. There are 27 registered types, 92 descriptors, 104
-default buffers, twelve prototypes and 96 enabled allocations at this boundary.
+thread is not allocated at this activation milestone. There are 27 registered
+types, 92 descriptors, 104 default buffers, twelve prototypes and 96 enabled
+allocations at that boundary. Subsequent concrete thread registration now
+reaches its actual runtime allocation; see [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
 No wait/signal implementation, host scheduling, complete startup or playable
 game is established by activation alone.
 

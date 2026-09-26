@@ -72,7 +72,8 @@ Inline constructor/destructor callbacks, default copying and fresh virtual
 dispatch are implemented separately in [IGB_STRUCT_MEMBERS.md](IGB_STRUCT_MEMBERS.md).
 No scalar fallback implements those operations. Activation is documented in
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md). Continue with concrete
-thread registration and the subsequently reached platform operations.
+thread initialization and the subsequently reached platform operations; its
+registration is documented in [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md).
 
 See [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md) and
