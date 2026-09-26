@@ -218,8 +218,12 @@ after incrementing the semaphore. Native wake now preserves queue transitions,
 scheduler selection and nested interrupt restoration. With explicitly prepared
 OS state, the first thread remains owned by the manager. The prerequisite
 runner registers separate reference-counted `igObjectList` and `igThreadList`
-classes through native clone/defaults and reaches the error-handler prerequisite.
+classes through native clone/defaults. The error-handler class now composes
+original registration, immediate reflected singleton construction and separately
+deferred teardown. Its globals remain unknown until explicitly initialized;
+the native state owner does not manufacture successful startup.
 Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_ERROR_HANDLER.md](docs/IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](docs/IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](docs/IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](docs/IGB_DATA_LIST_GROWTH.md),

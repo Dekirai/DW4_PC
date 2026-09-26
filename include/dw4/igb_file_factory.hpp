@@ -26,6 +26,8 @@ struct IgbFileFactoryOperation {
     std::shared_ptr<IgbRuntimeMetaType> metadata_result;
     std::shared_ptr<ModelSceneObject> object_result;
     std::shared_ptr<IgbObjectStorage> allocation_result;
+    // Borrow the enclosing guard for this resume only. Legacy operations remain valid.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbFileFactoryFactory=std::function<std::shared_ptr<IgbFileFactoryOperation>(const IgbFileFactoryCall&)>;
 struct IgbFileFactoryServices {
@@ -47,7 +49,8 @@ public:
     ~IgbReflectedFactoryInvocation();
     IgbReflectedFactoryInvocation(const IgbReflectedFactoryInvocation&)=delete;
     IgbReflectedFactoryInvocation& operator=(const IgbReflectedFactoryInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFileFactoryServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFileFactoryServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed() const noexcept;
     bool faulted() const noexcept;
     IgbObjectInstance result_instance() const;

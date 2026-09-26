@@ -91,7 +91,8 @@ public:
     ~IgbObjectInitInvocation();
     IgbObjectInitInvocation(const IgbObjectInitInvocation&)=delete;
     IgbObjectInitInvocation& operator=(const IgbObjectInitInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbObjectInitServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbObjectInitServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed() const noexcept;
     bool faulted() const noexcept;
     IgbObjectInstance result_instance() const;

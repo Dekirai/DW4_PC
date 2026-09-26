@@ -220,12 +220,15 @@ semaphore increment. With an explicitly prepared zero scheduler hint it complete
 nested restoration and releases the caller's temporary reference, then reaches
 wrapper `800240CC` for the distinct reference-counted `igThreadList`. Its native
 registration and `igObjectList` parent now complete, preserving the inherited
-ownership flag and separate descriptor globals. Continue at error-handler
-wrapper `80031250`, alongside actual OS/pool initialization and native
+ownership flag and separate descriptor globals. Error-handler registration and
+its immediate reflected singleton now complete with explicitly prepared global
+and allocator inputs. Its teardown stays deferred in the existing bootstrap
+list. Continue at context-extension wrapper `800374E8`, alongside actual OS/pool initialization and native
 rescheduling/sleep. IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
+See [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
+[IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),

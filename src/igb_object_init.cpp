@@ -132,7 +132,8 @@ std::shared_ptr<LoaderRequestFile> IgbObjectInitInvocation::result() const {
     const auto object=result_instance();
     if(object.field || object.metadata || object.fields || object.types || object.runtime_object)fail("A non-file instance cannot be returned through the file adapter.");return object.file;
 }
-MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectInitServices> services) {
+MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectInitServices> services,
+    const std::function<void()>& enclosing_check) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbObjectInitServiceKind;
     const auto invalidate=[&] {s.fault=true;if(s.owns) {s.object.storage->fault_=true;
         if(s.object.field)s.object.field->construction_fault_=true;if(s.object.metadata)s.object.metadata->construction_fault_=true;
@@ -141,7 +142,7 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
     if(s.running || s.fault) {invalidate();fail("Object initialization requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     struct Running {bool& v;Running(bool& flag):v(flag){v=true;}~Running(){v=false;}} running(s.running);
-    const auto check=[&] {if(s.fault || (s.owns && (s.object.storage->fault_ ||
+    const auto check_local=[&] {if(s.fault || (s.owns && (s.object.storage->fault_ ||
         (s.object.field && s.object.field->construction_fault_) || (s.object.metadata && s.object.metadata->construction_fault_) ||
         (s.object.fields && s.object.fields->construction_fault_) || (s.object.types && s.object.types->construction_fault_) ||
         (s.object.runtime_object && s.object.runtime_object->construction_fault_))))
@@ -153,6 +154,7 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             if((s.object.fields && !s.object.fields->physical_storage) || (s.object.types && !s.object.types->physical_storage))
                 fail("Object list lost its physical allocation binding during initialization.");
         }};
+    const auto check=[&] {check_local();if(enclosing_check)enclosing_check();check_local();};
     const auto clear=[&] {s.callback={};s.checked_callback={};s.factory={};s.operation.reset();s.request={};check();};
     const auto select=[&](K kind,P after)->IgbObjectInitCall& {
         clear();s.request.kind=kind;s.request.object=s.object;s.request.metadata=s.metadata;

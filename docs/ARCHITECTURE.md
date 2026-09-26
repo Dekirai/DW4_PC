@@ -245,8 +245,14 @@ restoration and the outer temporary-reference release complete. The next two
 reference-counted list classes reuse native registration and clone/defaults with
 separate canonical cells; their original ownership flag survives. Borrowed fault
 checks reach nested field finalization, buffer allocation and list reserve.
-The cold runner reaches error-handler wrapper `80031250`. Original OS/pool
+Error-handler wrapper `80031250` now composes the existing registrar and
+reflected initializer. Its immediate constructor callback uses the same
+canonical pool-handle owner as thread startup; its deferred teardown callback
+is appended to the existing ArkCore list. The two lifetimes remain separate.
+Reflected allocation and object initialization borrow enclosing fault checks
+to prevent publication after caught recursive entry. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md),
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),

@@ -46,7 +46,7 @@ struct IgbListStorageBinding {
     std::weak_ptr<IgbObjectStorage> storage;
     std::uint32_t offset{};
 };
-enum class IgbRuntimeObjectKind {thread_manager,thread_list,thread,semaphore};
+enum class IgbRuntimeObjectKind {thread_manager,thread_list,thread,semaphore,error_handler};
 struct IgbRuntimeObjectStorageBinding {
     std::weak_ptr<IgbObjectStorage> storage;
     std::uint32_t offset{};
@@ -56,7 +56,8 @@ struct IgbRuntimeObjectStorageBinding {
 struct IgbRuntimeObject {
     explicit IgbRuntimeObject(IgbRuntimeObjectKind value):kind(value){
         if(value!=IgbRuntimeObjectKind::thread_manager && value!=IgbRuntimeObjectKind::thread_list &&
-            value!=IgbRuntimeObjectKind::thread && value!=IgbRuntimeObjectKind::semaphore)
+            value!=IgbRuntimeObjectKind::thread && value!=IgbRuntimeObjectKind::semaphore &&
+            value!=IgbRuntimeObjectKind::error_handler)
             throw IgbRuntimeTypesError("Unknown native runtime object kind.");
     }
     const IgbRuntimeObjectKind kind;

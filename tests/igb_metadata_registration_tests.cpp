@@ -5,6 +5,7 @@
 #include "dw4/igb_thread_manager_insert.hpp"
 #include "dw4/igb_data_list_growth.hpp"
 #include "dw4/igb_os_thread_wake.hpp"
+#include "dw4/igb_error_handler_registration.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -3753,6 +3754,116 @@ void actual_cold_bootstrap_prefix(){
         ref_list_probes.size()==2 && descriptors.size()==102 && default_allocations==114 && f.core->types->count==30 &&
         wake_interrupt_calls.size()==3 && runtime_allocations.size()==5,
         "Pending error-handler registration replayed the completed reference classes, clone or callback cleanup.");
+
+    const auto error_bootstrap_list=*f.core->bootstrap_callbacks;
+    const auto error_bootstrap_backing=error_bootstrap_list->backing;
+    auto error_handler=std::make_shared<IgbErrorHandlerServices>();
+    error_handler->metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    error_handler->state=std::make_shared<IgbErrorHandlerState>();
+    error_handler->pool_handle=std::shared_ptr<std::optional<std::uint32_t>>(startup,&startup->pool_handle);
+    error_handler->types=f.services->types;error_handler->callbacks=f.services->callbacks;
+    error_handler->pools=f.services->pools;error_handler->reflected=prototypes->reflected;
+    std::vector<IgbBootstrapPointer> error_handler_probes;
+    error_handler->local_storage=[&]{auto raw=allocation(0xc71000,8);error_handler_probes.push_back(raw);return raw;};
+    error_handler->factory=make_native_igb_error_handler_service_factory(error_handler);
+    additional_callbacks=make_native_igb_error_handler_function_factory(error_handler,additional_callbacks);
+    f.remaining=make_native_igb_error_handler_type_factory(error_handler,f.remaining);
+    prototypes->reflected->initializer->factory=make_native_igb_error_handler_object_init_factory(error_handler,
+        prototypes->reflected->initializer->factory);
+    const auto missing_error_singleton=call.resume(bootstrap);
+    std::cout<<"Cold native error-handler registration: "<<missing_error_singleton.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", bootstrap callbacks="<<(*f.core->bootstrap_callbacks)->count<<'\n';
+    check(!missing_error_singleton.completed && !call.faulted() &&
+        missing_error_singleton.diagnostic=="Error-handler lookup requires singleton80562120." &&
+        !error_handler->state->singleton && !error_handler->state->teardown_guard && error_handler_probes.size()==1,
+        "Error-handler registration fabricated singleton/guard state or skipped its original immediate constructor callback.");
+    check(*f.core->bootstrap_callbacks==error_bootstrap_list && error_bootstrap_list->backing==error_bootstrap_backing &&
+        error_bootstrap_list->count==2 && error_bootstrap_list->backing->at(0)==0x80023a50 &&
+        error_bootstrap_list->backing->at(1)==0x80031358 && !error_bootstrap_list->released &&
+        startup->manager && igb_bootstrap_address(*startup->manager)==igb_bootstrap_address(manager_storage),
+        "Error-handler defaults changed callback-list ownership, executed teardown or confused its two callback lifetimes.");
+
+    // These are explicitly prepared original BSS values, not effects of
+    // allocating the native state owner. Each remains missing until reached.
+    error_handler->state->singleton=IgbBootstrapPointer{};
+    const auto missing_error_guard=call.resume(bootstrap);
+    check(!missing_error_guard.completed && !call.faulted() &&
+        missing_error_guard.diagnostic=="Error-handler lookup requires guard byte80562124." &&
+        !error_handler->state->teardown_guard && error_handler_probes.size()==1,
+        "Known-null error singleton bypassed the fresh guard-byte read or replayed registration.");
+    error_handler->state->teardown_guard=0;
+    const auto error_allocation=call.resume(bootstrap);
+    check(!error_allocation.completed && !call.faulted() &&
+        error_allocation.diagnostic=="Reflected factory requires the captured pool allocation virtual+D8." &&
+        !unbound_reflected_allocations.empty() && unbound_reflected_allocations.back().metadata==**error_handler->metadata &&
+        unbound_reflected_allocations.back().bytes==8 && unbound_reflected_allocations.back().pool==f.pool &&
+        error_handler->state->singleton && !igb_bootstrap_address(*error_handler->state->singleton),
+        "Error-handler singleton did not enter actual reflected construction with its captured original pool and eight-byte size.");
+
+    const auto before_error_allocator=resumed_reflected_allocations;
+    std::vector<IgbObjectInstance> error_handler_allocations;
+    resumed_reflected_allocations=[&,before_error_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=**error_handler->metadata)return before_error_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==8 && error_handler_allocations.empty(),
+                "Error-handler reflected allocation changed its original pool/size or replayed the endpoint.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            raw.storage->bytes->initialized.assign(c.bytes,0);
+            IgbObjectInstance instance;instance.storage=raw.storage;
+            instance.runtime_object=std::make_shared<IgbRuntimeObject>(IgbRuntimeObjectKind::error_handler);
+            instance.runtime_object->physical_storage=IgbRuntimeObjectStorageBinding{raw.storage,0};
+            IgbObjectBinding binding;binding.runtime_object=instance.runtime_object;raw.storage->bindings.push_back(binding);
+            enabled_allocations.push_back(instance);runtime_allocations.push_back(instance);error_handler_allocations.push_back(instance);
+            igb_bind_object_field_instance(member_construct,instance);reflected_allocations.push_back(c);
+            out->allocation_result=raw.storage;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto after_error_handler=call.resume(bootstrap);
+    std::cout<<"Cold native error-handler singleton: "<<after_error_handler.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", error objects="<<error_handler_allocations.size()<<'\n';
+    check(!after_error_handler.completed && !call.faulted(),"Error-handler construction incorrectly completed full game startup.");
+    const auto error_type=**error_handler->metadata;
+    check(after_error_handler.diagnostic=="Registration requires original function 0x800374E8." &&
+        f.core->types->count==31 && descriptors.size()==102 && default_allocations==114 &&
+        enabled_allocations.size()==119 && runtime_allocations.size()==6 && (**prototypes->registry)->count==12 &&
+        error_handler_allocations.size()==1 && error_type && f.core->types->backing->at(30)==error_type &&
+        error_type->parent==object_type && error_type->class_flags==7 && error_type->native_size==8 &&
+        error_type->type_word==0x804759d8 && error_type->name && *error_type->name=="igErrorHandler" &&
+        error_type->fields && error_type->fields->count==object_type->fields->count && error_type->instance_count==1,
+        "Native error-handler registration or construction changed its class ownership or next context prerequisite.");
+    for(std::uint32_t i=0;i<error_type->fields->count;++i)
+        check(error_type->fields->backing->at(i)==object_type->fields->backing->at(i),
+            "Error-handler registration replaced its inherited original base descriptors.");
+    const auto error_instance=error_handler_allocations.front();
+    const IgbBootstrapPointer error_storage{error_instance.storage,error_instance.offset};
+    check(error_handler->state->singleton && error_handler->state->singleton->storage==error_storage.storage &&
+        error_handler->state->singleton->offset==error_storage.offset && error_handler->state->teardown_guard==0 &&
+        error_instance.runtime_object->kind==IgbRuntimeObjectKind::error_handler &&
+        igb_bootstrap_read_word(error_storage,0)==0x804759d8 && igb_bootstrap_read_word(error_storage,4)==1 &&
+        error_instance.runtime_object->reference_word==1 && error_instance.runtime_object->construction_active_.expired() &&
+        std::all_of(error_storage.storage->bytes->initialized.begin(),error_storage.storage->bytes->initialized.end(),
+            [](auto byte){return byte==1;}),
+        "Reflected initialization failed to produce the physical error-handler header and publish its exact singleton.");
+    check(*f.core->bootstrap_callbacks==error_bootstrap_list && error_bootstrap_list->backing==error_bootstrap_backing &&
+        error_bootstrap_list->count==2 && error_bootstrap_list->backing->at(1)==0x80031358 && !error_bootstrap_list->released &&
+        wake_interrupt_calls.size()==3 && schedule_selections==0 && thread_stack_frees==1 && interrupt_state->enabled==true &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==1 && !**meta_enum->metadata,
+        "Immediate error-handler creation replayed thread startup or consumed deferred teardown callbacks.");
+    const auto error_finished_names=string_allocations;const auto error_finished_callbacks=freed_callback_lists.size();
+    const auto error_finished_members=member_calls.size(),error_finished_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_error_handler.diagnostic && !call.faulted() &&
+        error_handler_probes.size()==1 && error_handler_allocations.size()==1 && error_type->instance_count==1 &&
+        enabled_allocations.size()==119 && runtime_allocations.size()==6 && f.core->types->count==31 &&
+        descriptors.size()==102 && default_allocations==114 && error_bootstrap_list->count==2 &&
+        string_allocations==error_finished_names && freed_callback_lists.size()==error_finished_callbacks &&
+        member_calls.size()==error_finished_members && reflected_allocations.size()==error_finished_reflections &&
+        error_handler->state->singleton->storage==error_storage.storage &&
+        igb_bootstrap_read_word(error_storage,4)==1 && error_handler->state->teardown_guard==0 && wake_interrupt_calls.size()==3,
+        "Pending context registration replayed error-handler construction, member defaults or callback cleanup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

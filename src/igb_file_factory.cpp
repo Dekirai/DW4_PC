@@ -21,7 +21,8 @@ struct Call {
     IgbFileFactoryFactory factory;
     std::shared_ptr<IgbFileFactoryOperation> operation;
     std::function<MessengerCallResult()> callback;
-    void clear() {callback={};factory={};operation.reset();request={};}
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
+    void clear() {callback={};checked_callback={};factory={};operation.reset();request={};}
     void select(IgbFileFactoryCall value,const std::shared_ptr<IgbFileFactoryServices>& services) {
         clear();request=std::move(value);factory=services?services->factory:IgbFileFactoryFactory{};
     }
@@ -30,9 +31,9 @@ struct Call {
         if(!factory)return pending(boundary(request.kind));
         if(!operation) {operation=factory(request);check();}
         if(!operation)return pending(boundary(request.kind));
-        if(!callback)callback=operation->resume;
-        if(!callback)return pending(boundary(request.kind));
-        const auto result=callback();check();return result;
+        if(!callback && !checked_callback){checked_callback=operation->resume_checked;if(!checked_callback)callback=operation->resume;}
+        if(!callback && !checked_callback)return pending(boundary(request.kind));
+        const auto result=checked_callback?checked_callback(check):callback();check();return result;
     }
 };
 }
@@ -68,12 +69,15 @@ std::shared_ptr<LoaderRequestFile> IgbReflectedFactoryInvocation::result() const
     const auto object=result_instance();
     if(object.field || object.metadata || object.fields || object.types || object.runtime_object)fail("A reflected non-file instance cannot be returned through the file adapter.");return object.file;
 }
-MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFileFactoryServices> services) {
+MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFileFactoryServices> services,
+    const std::function<void()>& enclosing_check) {
     auto& s=*impl_;using P=Impl::Phase;using K=IgbFileFactoryServiceKind;
     if(s.running || s.fault) {s.fault=true;fail("Reflected factory requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};
     Running running(s.running);
-    const auto check=[&]{if(s.fault)fail("Reflected factory continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Reflected factory continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Reflected factory continuation was invalidated.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto select=[&](K kind,P after)->IgbFileFactoryCall& {
         clear();IgbFileFactoryCall call;call.kind=kind;call.metadata=s.metadata;
@@ -124,7 +128,7 @@ MessengerCallResult IgbReflectedFactoryInvocation::resume(std::shared_ptr<IgbFil
             s.phase=P::initialize;break;
         }
         case P::initialize: {
-            const auto result=s.initializer->resume(services?services->initializer:nullptr);check();if(!result.completed)return result;
+            const auto result=s.initializer->resume(services?services->initializer:nullptr,check);check();if(!result.completed)return result;
             s.result=s.initializer->result_instance();return finish();
         }
         case P::call: {

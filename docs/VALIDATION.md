@@ -1,5 +1,81 @@
 # Local validation
 
+## Error-handler startup reaches native context registration
+
+Validated locally on 2026-09-26. Actual `80031250 / 80031278` now registers
+the eight-byte `igErrorHandler` class in canonical cell `80561C2C`. Defaults
+append `80031358` to the existing ArkCore bootstrap callback list; the separate
+immediate callback `80031338 -> 80047080 -> 800470F4` constructs and publishes
+the singleton through actual `8003119C -> 8006546C -> 800667F4`.
+
+The retained cold invocation first exposes unknown singleton and guard state,
+then the required allocation from its captured pool. Explicit preparation
+supplies known-null/zero globals and raw eight-byte storage with every byte
+initially unknown. Native initialization produces the physical header, inherits
+the original two base descriptors, publishes one instance and releases its
+construction lease. Deferred teardown remains queued alongside the existing
+thread-manager teardown. The next original boundary is `800374E8`.
+
+The composed result has **31 types, 102 descriptors, 114 default buffers,
+12 prototypes, 119 enabled allocations and six runtime objects**. Repeated
+resumes at the context boundary preserve class, singleton, callback, member
+and allocation identities without replaying the completed thread startup.
+
+| Check | Evidence |
+| --- | --- |
+| Initial and final Release CoreOnly builds | 214/214 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,149 checks; separate callback lifetimes, physical construction, ownership and exact `800374E8` boundary |
+| Error-handler focused suite | 176 checks; registrar arguments, lookup/probe, suspended construction, packed references, deferred destruction and caught nested reentry |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The first build and its focused tests passed. Root review then added stricter
+cold ownership/no-replay checks and changed the teardown guard literal to an
+explicit byte to remove a compiler conversion warning. No behavior repair
+was needed. Final core SHA256:
+`b824f3e67ea1898a5ec133a0175cd52477c7b44960a64cc88d66fd0d9750d155`.
+
+Reflected allocation and initialization now borrow the enclosing invocation's
+fault check. A nested callback that catches recursive outer entry cannot
+allow later native initialization or singleton publication. Earlier original
+stores remain visible. Registrar/prerequisite/bootstrap-append APIs retain
+their existing local guards; complete parent propagation through those APIs
+is not claimed.
+
+The independent original corpus was sealed before native source inspection:
+**261 cases, 17,013 instructions and 512 instruction addresses**. All cases
+replay exactly and fifteen artifact hashes verify. It includes 26 completed
+zero-field reflected constructors and 38 deferred-append callers, with actual
+factory/initializer/member-loop bodies executed. Registration, pool, allocator,
+owner/tag, backing allocation and destruction endpoints remain explicitly
+prepared. All 23 vtable words and the eleven original registrar arguments are
+audited. Original seal SHA256:
+`52cae7883306ee935bd095c082061f0e7eb1a981811af42dfacd7686a03681fa`.
+
+The native subset was frozen before execution and matches **203/203 on first
+execution and exact replay**, without repairs: 160 completions, twenty prepared
+failures, six null-read guards, two null-write guards, two unknown physical-read
+guards and thirteen bounded physical guards. There are no pending or unexpected
+outcomes. The subset includes 22 completed zero-field constructors and 24
+deferred-append callers. These metadata fixtures are distinct from the cold
+test's real inherited base descriptors. A separate audit checks nine native
+numeric registration arguments, the class name and canonical metadata-slot
+alias; original metadata/name addresses are explicit fixture mappings.
+All nineteen native artifact hashes verify. Native seal SHA256:
+`39fb57aa581a2d2bf8cb661ceb7662145765d1c484259306f2008ed6da2f3e56`.
+
+**58 cases remain original-only**: 42 unknown canonical states, six sparse
+instruction write denials, three artificial inline mutations, three unaligned
+or out-of-profile probes, two callback stores into a negative backing prefix,
+and two generic registrar bodies audited separately for arguments. These
+exclusions were declared before native execution. Native representation guards
+are compared by their observable prefix, not described as original CPU traps.
+
+Original BSS, OS, pool and context production remain required. This milestone
+does not establish playable gameplay. See [IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md).
+Local artifacts use `work/native-error-handler-`.
+
 ## Reference-counted lists reach the error-handler prerequisite
 
 Validated locally on 2026-09-26. The retained cold runner now registers

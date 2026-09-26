@@ -327,11 +327,15 @@ prepared zero hint allows nested restoration and temporary-reference release.
 The prerequisite runner now completes `800240CC`, the separate reference-counted
 `igThreadList`, and its `igObjectList` parent through native registration and
 inherited descriptor cloning. Their cells stay separate from the nonref lists,
-and original `2910C` preserves the cloned ownership flag. Continue with reached
-error-handler wrapper `80031250` while replacing prepared OS/pool inputs and
+and original `2910C` preserves the cloned ownership flag. Native error-handler
+registration now appends deferred teardown and separately creates its singleton
+through the original reflected initializer. The cold test reaches context
+wrapper `800374E8`, retaining all earlier class and runtime ownership.
+Continue through this context family while replacing prepared OS/pool inputs and
 implementing rescheduling/sleep.
 A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_ERROR_HANDLER.md](IGB_ERROR_HANDLER.md) and
 [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md) and
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md) and
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md) and

@@ -54,6 +54,7 @@ target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src
   src/igb_data_list_growth.cpp
   src/igb_allocation_copy.cpp
   src/igb_os_thread_wake.cpp
+  src/igb_error_handler_registration.cpp
   src/igb_struct_field_defaults.cpp
   src/igb_struct_member.cpp
   src/igb_data_list_registration.cpp src/igb_data_list_defaults.cpp
@@ -154,6 +155,9 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(dw4_igb_error_handler_registration_tests tests/igb_error_handler_registration_tests.cpp)
+  target_link_libraries(dw4_igb_error_handler_registration_tests PRIVATE dw4_core)
+  add_test(NAME igb_error_handler_registration COMMAND dw4_igb_error_handler_registration_tests)
   # The prepared draw adapter owns CPU data only; no graphics context is needed.
   add_executable(dw4_weapon_preview_tests tests/weapon_preview_tests.cpp src/weapon_preview.cpp)
   target_include_directories(dw4_weapon_preview_tests PRIVATE src)
