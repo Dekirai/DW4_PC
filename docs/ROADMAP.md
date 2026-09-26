@@ -227,9 +227,13 @@ list. Context-extension wrapper `800374E8` now registers both abstract contexts,
 their original three-field defaults and both concrete list dependencies.
 Context-info `80037330` now completes its original defaults and probe. Enum
 defaults compose the actual allocation-only list getters, followed by registration
-of `igStringRefList` and `igIntList`; the cold chain reaches malloc-pool body
-`80039D94`. Continue through its abstract `igMemoryPool` parent and the reached
-signed-64-bit descriptor dependency, preserving their actual callback order.
+of `igStringRefList` and `igIntList`. Malloc-pool body `80039D94` now completes
+its abstract `igMemoryPool` parent and signed-64-bit descriptor dependency,
+including fourteen ordered defaults and the parent's deferred factory redirect.
+The cold chain publishes 41 types and reaches concrete probe `80039CC0`.
+Continue through its actual constructor and ordered member cleanup, then malloc
+defaults `80039E28` and their unsigned-long, event-tracker and enum dependencies.
+Metadata registration does not establish working runtime pool allocation.
 Batch, finalized append, inheritance, replacement and selected creator-release
 operations now preserve physical packed words; other reference/name bindings
 still need recovery. Complete those reached operations,
@@ -238,6 +242,7 @@ IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
 See [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
+[IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md),
 [IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),

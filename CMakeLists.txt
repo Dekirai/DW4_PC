@@ -57,6 +57,7 @@ target_sources(dw4_core PRIVATE src/igb_stream.cpp src/igb_decode_tables.cpp src
   src/igb_error_handler_registration.cpp
   src/igb_context_registration.cpp
   src/igb_context_info_registration.cpp
+  src/igb_memory_pool_registration.cpp
   src/igb_field_reference.cpp
   src/igb_struct_field_defaults.cpp
   src/igb_struct_member.cpp
@@ -164,6 +165,15 @@ if(BUILD_TESTING)
   add_executable(dw4_igb_context_info_registration_tests tests/igb_context_info_registration_tests.cpp)
   target_link_libraries(dw4_igb_context_info_registration_tests PRIVATE dw4_core)
   add_test(NAME igb_context_info_registration COMMAND dw4_igb_context_info_registration_tests)
+  add_executable(dw4_igb_memory_pool_registration_tests tests/igb_memory_pool_registration_tests.cpp)
+  target_link_libraries(dw4_igb_memory_pool_registration_tests PRIVATE dw4_core)
+  add_test(NAME igb_memory_pool_registration COMMAND dw4_igb_memory_pool_registration_tests)
+  add_executable(dw4_igb_signed_long_field_tests tests/igb_signed_long_field_tests.cpp)
+  target_link_libraries(dw4_igb_signed_long_field_tests PRIVATE dw4_core)
+  add_test(NAME igb_signed_long_field COMMAND dw4_igb_signed_long_field_tests)
+  add_executable(dw4_igb_field_prototype_reference_tests tests/igb_field_prototype_reference_tests.cpp)
+  target_link_libraries(dw4_igb_field_prototype_reference_tests PRIVATE dw4_core)
+  add_test(NAME igb_field_prototype_reference COMMAND dw4_igb_field_prototype_reference_tests)
   add_executable(dw4_igb_enum_list_dependency_tests tests/igb_enum_list_dependency_tests.cpp)
   target_link_libraries(dw4_igb_enum_list_dependency_tests PRIVATE dw4_core)
   add_test(NAME igb_enum_list_dependency COMMAND dw4_igb_enum_list_dependency_tests)

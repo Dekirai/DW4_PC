@@ -263,7 +263,16 @@ Later callbacks register the string-reference and signed-integer list classes.
 Their inherited `_data` clones load physical source vtables, preserve the
 captured index, and store the actual element/global pointers before replacement.
 Replacement and creator release use physical packed references and fresh low23
-tests. The cold chain now reaches malloc-pool body `80039D94` with 39 types.
+tests. Malloc-pool body `80039D94` now enters the original abstract pool parent.
+Its fourteen defaults comprise twelve signed 64-bit fields and two separately
+initialized Booleans. The parent's final redirect store reloads the canonical
+owner and updates represented physical metadata before its host cache.
+The signed-long factory always registers and reflects; its probe and eight-byte
+value buffers preserve original order and unknown payload bytes. Prototype
+registration captures physical allocation ownership at reflection return,
+before registry lookup, and retains the fresh creator-release low23 read.
+The cold chain reaches the actual malloc probe `80039CC0` with 41 types;
+concrete pool defaults and allocator initialization remain separate work.
 `IgbFieldReferenceAccess` captures optional physical descriptor ownership without
 an eager read. The reached batch, finalized append, inheritance and base-default
 operations use its full-width physical reads/writes and separate fresh low23
@@ -272,6 +281,7 @@ never falls back to that cache. Other reference/name producers remain separate.
 Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
 outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
+[IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md),
 [IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),

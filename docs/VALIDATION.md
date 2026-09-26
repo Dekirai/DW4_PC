@@ -1,5 +1,90 @@
 # Local validation
 
+## Abstract memory-pool startup and signed 64-bit fields
+
+Validated locally on 2026-09-27. The original malloc registration body now
+completes its abstract `igMemoryPool` parent, including fourteen descriptors,
+two separate Boolean defaults and the fresh physical metadata redirect store.
+The signed-long dependency uses actual registration, reflection, probe, value
+handling and the shared prototype cell. Prototype callbacks now capture the
+returned physical allocation before registry lookup and use physical packed
+references for retain and fresh creator release. See
+[IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md).
+
+The integrated cold chain reaches the actual next malloc probe `80039CC0` with
+**41 types, 127 descriptors, 140 default buffers, 13 prototypes, 169 enabled
+allocations and six runtime objects**. The abstract pool inherits the original
+parent type word, has sixteen fields including its two inherited fields, and
+publishes the deferred arena factory redirect. No runtime pool instance is
+created. Null-source long defaults retain unknown eight-byte allocation contents.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 222/222 local CTest suites passed; four jobs |
+| Pool registration focused suite | 484 checks; lookup modes, schema, Boolean calls, fresh physical redirect and pending ownership |
+| Signed-long focused suite | 57 checks; exact profiles, eight-byte copy, null-source knownness, partial-copy fault and actual probe cleanup |
+| Separate prototype reference suite | 54 checks; physical retains, captured owners, late header faults, fresh creator/registry selection and full-word wrap |
+| Integrated cold startup | 7,045 checks; exact schema, inherited ownership, physical stores, unknown defaults and no replay |
+| Original decoder prefix | 400 original-inclusive checks |
+| Player regression | 447 original-inclusive /62 synthetic checks; 48 prepared held/released and 28 scheduled frames |
+| Python verifier | Six tests passed |
+
+Source review before compilation corrected the prototype's physical-owner
+capture point and avoided retaining callback closures in their owning services.
+The initial compile found a new metadata-lookup class name colliding with the
+existing runtime pool lookup; a name-only repair resolved it. The first expanded
+test run passed 219/222 suites. Three new fixture assumptions were corrected:
+the Boolean-tail fixture had not represented its expected canonical null
+redirect, the long probe's earlier packed-header input was unknown, and the
+cold assertion expected zero instead of the inherited parent type word.
+Original sources and failed logs are retained. Those corrections changed no
+production behavior. Two existing invalid-enum test inputs move beyond the
+newly admitted kinds without changing their assertions.
+
+Independent original corpora were sealed before native inspection. The pool
+corpus has 302 cases and 474,260 instructions; its seal is
+`8f832507d2e649a3ecd191b28cb0a6aab30278ad0b0bc7dc214e3eabf15c4fed`.
+The signed-long corpus has 187 cases and 11,587 instructions; its seal is
+`60fd1bcb8205f054023883c3560742a85ee71d038381f61045fd8f793d840cb9`.
+Both retain the original outputs and replay evidence, including original-only
+cases outside the declared native representations.
+
+The fixed signed-long native scope matches **158/158** on its first execution:
+142 completions, thirteen prepared faults, two null guards and one unknown
+physical probe read. It includes all 35 selected prototype cases and their
+physical reference words. Twenty-nine original cases remain outside that scope,
+including the separate lazy prototype getter and unsupported local/reserve paths.
+
+The fixed pool scope matches **264/265**, with one known bounded-table difference.
+Its first run matched 126/265 because the comparison driver omitted prepared
+pool-capacity services and a prepared Boolean endpoint's physical buffer-pointer
+read. Correcting only those lower fixture effects produced 264 matches; inputs,
+expected original behavior, scope and production stayed unchanged. Case 097
+mutates a live list count so the original schema walks past its fourteen-row
+tables into adjacent DOL data, executes further callbacks and eventually faults.
+The native representation stops at the first out-of-range table entry. That
+case remains a mismatch in the original 265-case selection; it is not removed
+or counted as an exact match. The 37 previously excluded original-only cases
+remain unchanged.
+
+The pool comparison includes physical descriptor references, represented schema
+stores, Boolean buffers and the fresh metadata `+3C` store. Descriptor factories,
+selected virtuals and name/pool services are explicit prepared endpoints;
+canonical name identity is not physical string-header synchronization. Actual
+eight-byte `63D04` value copying is covered separately by the focused suite.
+Separate profile audits match 52 numeric words/fifteen strings for the pool
+and 25 numeric words/two names for signed-long. The original corpora and both
+native outputs replay exactly, including the preserved first pool run and its
+final known mismatch. The 35-artifact pool native seal is
+`995522f683f469109510a5c506b6eed64a715deb826b79272e507ca56f8f73f0`;
+the 26-artifact signed-long seal is
+`3fc1895832c9200b3733a786cc1de0742e9a3d6f9f6cb21d56ebc968456326a3`.
+Core SHA256:
+`5290556697a993a9e56ebd150a6966a22114143f453a9e7324c2eff9643ead28`.
+Concrete malloc probe/defaults, original allocator and OS initialization,
+complete startup and playable gameplay remain required. Local artifacts use
+`work/native-memory-pool-family-` and `work/native-signed-long-family-`.
+
 ## Enum list dependencies complete before malloc-pool registration
 
 Validated locally on 2026-09-27. Native enum defaults now compose the original

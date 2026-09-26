@@ -29,6 +29,7 @@
 #include "dw4/igb_metadata_layout.hpp"
 #include "dw4/igb_metadata_probe.hpp"
 #include "dw4/igb_metadata_defaults.hpp"
+#include "dw4/igb_memory_pool_registration.hpp"
 #include "dw4/igb_field_values.hpp"
 #include "dw4/igb_list_registration.hpp"
 #include "dw4/igb_list_defaults.hpp"
@@ -4220,6 +4221,170 @@ void actual_cold_bootstrap_prefix(){
         error_type->instance_count==1 && error_handler->state->singleton->storage==error_storage.storage &&
         !error_bootstrap_list->released && error_bootstrap_list->count==2 && (**meta_enum->metadata)==enum_type,
         "Pending malloc registration replayed enum dependencies or earlier startup side effects.");
+
+    auto memory_pool=std::make_shared<IgbMemoryPoolRegistrationServices>();
+    memory_pool->types=f.services->types;memory_pool->callbacks=f.services->callbacks;
+    memory_pool->schema=metadata_defaults->schema;memory_pool->pools=f.services->pools;memory_pool->metadata=f.services->metadata;
+    additional_callbacks=make_native_igb_memory_pool_registration_function_factory(memory_pool,additional_callbacks);
+    f.remaining=make_native_igb_memory_pool_registration_type_factory(memory_pool,f.remaining);
+    const auto missing_malloc_cell=call.resume(bootstrap);
+    std::cout<<"Cold native malloc canonical boundary: "<<missing_malloc_cell.diagnostic<<'\n';
+    check(!missing_malloc_cell.completed && !call.faulted() && enabled_allocations.size()==147 && f.core->types->count==39,
+        "Malloc registration fabricated a canonical cell or replayed completed enum work.");
+    memory_pool->malloc_metadata_slot=std::make_shared<IgbRegistrationMetaSlot>();
+    check(!call.resume(bootstrap).completed && !call.faulted() && !*memory_pool->malloc_metadata_slot && enabled_allocations.size()==147,
+        "Unknown malloc metadata was treated as an initialized null pointer.");
+    *memory_pool->malloc_metadata_slot=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto missing_parent_cell=call.resume(bootstrap);
+    std::cout<<"Cold native abstract pool canonical boundary: "<<missing_parent_cell.diagnostic<<'\n';
+    check(!missing_parent_cell.completed && !call.faulted() && *memory_pool->malloc_metadata_slot &&
+        **memory_pool->malloc_metadata_slot && f.core->types->count==39 && descriptors.size()==113,
+        "The real malloc registrar did not retain its metadata before entering its abstract parent.");
+    const auto malloc_type=**memory_pool->malloc_metadata_slot;
+    memory_pool->metadata_slot=std::make_shared<IgbRegistrationMetaSlot>();
+    const auto before_parent_allocations=enabled_allocations.size();
+    check(!call.resume(bootstrap).completed && !call.faulted() && !*memory_pool->metadata_slot &&
+        enabled_allocations.size()==before_parent_allocations,
+        "Unknown abstract pool metadata was silently initialized.");
+    *memory_pool->metadata_slot=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto missing_long_class=call.resume(bootstrap);
+    std::cout<<"Cold native signed-long dependency: "<<missing_long_class.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!missing_long_class.completed && !call.faulted() && *memory_pool->metadata_slot && **memory_pool->metadata_slot &&
+        descriptors.size()==113 && f.core->types->count==39,
+        "Pool defaults bypassed the first original signed-long descriptor factory.");
+    const auto abstract_pool_type=**memory_pool->metadata_slot;
+    for(const auto& instance:enabled_allocations)if(instance.metadata)
+        memory_pool->physical_metadata.push_back({instance.storage,instance.offset});
+    auto signed_long_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::signed_long)]=signed_long_cell;
+    values->signed_long_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> signed_long_probe_locals,signed_long_prototype_allocations;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::signed_long,"Signed-long registration repeated an earlier field probe.");
+        auto raw=allocation(0xc75000+static_cast<std::uint32_t>(signed_long_probe_locals.size())*0x100,0x34);
+        raw.storage->bytes->initialized.assign(0x34,0);
+        for(std::size_t i=4;i<8;++i)raw.storage->bytes->initialized[i]=1;
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        signed_long_probe_locals.push_back(raw);return raw;
+    };
+    const auto before_long_buffers=values->fields->factory;
+    std::vector<IgbFieldOperationCall> signed_long_buffer_calls;
+    values->fields->factory=[&,before_long_buffers](const IgbFieldOperationCall& c){
+        if(c.kind!=IgbFieldOperationKind::allocate_default || !c.field || c.field->vtable_word!=0x80472100)
+            return before_long_buffers(c);
+        signed_long_buffer_calls.push_back(c);auto operation=std::make_shared<IgbFieldOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.pool==f.pool && c.bytes==8 && c.alignment==1,
+                "Signed-long default storage lost the original eight-byte request or pool.");
+            ++default_allocations;auto bytes=std::make_shared<IgbScratchBuffer>();
+            bytes->bytes.assign(8,0xcc);bytes->initialized.assign(8,0);
+            out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto missing_long_allocation=call.resume(bootstrap);
+    std::cout<<"Cold native signed-long prototype allocation: "<<missing_long_allocation.diagnostic<<'\n';
+    check(!missing_long_allocation.completed && !call.faulted() && *signed_long_cell && **signed_long_cell &&
+        (**signed_long_cell)->class_flags==7 && !*values->signed_long_prototype && signed_long_probe_locals.size()==1,
+        "Signed-long registration bypassed its reflected prototype allocation or repeated its layout probe.");
+    const auto before_long_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_long_allocator](const IgbFileFactoryCall& c){
+        if(!*signed_long_cell || c.metadata!=**signed_long_cell)return before_long_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x34,
+                "Signed-long reflected allocation changed its exact size, pool or operation.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(!*values->signed_long_prototype)signed_long_prototype_allocations.push_back(raw);
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto after_abstract_pool=call.resume(bootstrap);
+    std::cout<<"Cold native abstract memory pool: "<<after_abstract_pool.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", prototypes="<<(**prototypes->registry)->count<<'\n';
+    check(!after_abstract_pool.completed && !call.faulted(),"Abstract memory-pool registration fabricated complete game startup.");
+    check(!remaining_calls.empty() && remaining_calls.back().kind==TK::layout_probe &&
+        remaining_calls.back().function==0x80039cc0 && remaining_calls.back().metadata==malloc_type &&
+        f.core->types->count==41 && descriptors.size()==127 && default_allocations==140 && enabled_allocations.size()==169 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==13 &&
+        f.core->types->backing->at(39)==**signed_long_cell && f.core->types->backing->at(40)==abstract_pool_type,
+        "The actual malloc registrar did not finish its parent and signed-long dependency before the original local probe.");
+    check(abstract_pool_type->name && *abstract_pool_type->name=="igMemoryPool" &&
+        abstract_pool_type->class_flags==7 && abstract_pool_type->flag_1a==1 && abstract_pool_type->native_size==0x70 &&
+        abstract_pool_type->native_alignment==8 && abstract_pool_type->parent==object_type &&
+        abstract_pool_type->fields->count==16 && abstract_pool_type->factory_redirect==0x8002c0a0 &&
+        abstract_pool_type->field_callback==0x8002bfd8 && abstract_pool_type->type_word==object_type->type_word &&
+        abstract_pool_type->type_word==0x804717f0 && abstract_pool_type->instance_count==0,
+        "Abstract pool registration invented an instance/probe or lost its exact layout and deferred redirect.");
+    const auto physical_parent=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==abstract_pool_type;});
+    check(physical_parent!=enabled_allocations.end() &&
+        igb_bootstrap_read_word({physical_parent->storage,physical_parent->offset},0x3c)==0x8002c0a0,
+        "Abstract pool redirect was published only to the canonical cache.");
+    check(malloc_type->name && *malloc_type->name=="igMallocMemoryPool" && malloc_type->class_flags==9 &&
+        malloc_type->native_size==0xa0 && malloc_type->flag_1a==0 && malloc_type->parent==abstract_pool_type &&
+        malloc_type->fields->count==16 && malloc_type->instance_count==0 &&
+        abstract_pool_type->children && (*abstract_pool_type->children)->count==1 &&
+        (*abstract_pool_type->children)->backing->at(0)==malloc_type,
+        "Pending malloc probe skipped parent attachment, allocated a pool instance or completed later defaults.");
+    for(std::size_t i=0;i<2;++i)
+        check(abstract_pool_type->fields->backing->at(i)==object_type->fields->backing->at(i),
+            "Abstract memory pool replaced an inherited object field.");
+    const auto signed_long_type=**signed_long_cell;const auto signed_long_prototype=*values->signed_long_prototype;
+    check(signed_long_type->name && *signed_long_type->name=="igLongMetaField" && signed_long_type->parent==base_field &&
+        signed_long_type->class_flags==7 && signed_long_type->native_size==0x34 && signed_long_type->type_word==0x80472100 &&
+        signed_long_type->fields->count==20 && signed_long_type->instance_count==13 &&
+        signed_long_probe_locals.size()==1 && signed_long_prototype_allocations.size()==1 && signed_long_buffer_calls.size()==13 &&
+        igb_bootstrap_read_word(signed_long_probe_locals.front(),0)==0x80471914,
+        "Signed-long registration lost its base schema, reflected instance count or actual probe cleanup.");
+    check(signed_long_prototype && signed_long_prototype->ordinal==12 && signed_long_prototype->type_ordinal==12 &&
+        signed_long_prototype->size==8 && signed_long_prototype->reference_word==1 &&
+        igb_bootstrap_read_word(signed_long_prototype_allocations.front(),4)==1 &&
+        (**prototypes->registry)->backing->at(12)==signed_long_prototype &&
+        igb_field_prototype_slot(prototypes,IgbFieldTypeKind::signed_long).get()==&values->signed_long_prototype,
+        "Signed-long prototype lost its shared canonical cell, eight-byte size, ordinal or physical ownership.");
+    for(std::size_t i=0;i<14;++i){const auto descriptor=descriptors[113+i];const auto physical=descriptor_allocations[113+i];
+        const auto size=i<12?8u:1u;const auto offset=i<12?8u+static_cast<std::uint32_t>(8*i):0x68u+static_cast<std::uint32_t>(i-12);
+        const auto global=0x805618b8u+static_cast<std::uint32_t>(4*i);
+        check(abstract_pool_type->fields->backing->at(2+i)==descriptor && malloc_type->fields->backing->at(2+i)==descriptor &&
+            descriptor->name && *descriptor->name==**memory_pool->names->at(i) && descriptor->ordinal==2+i &&
+            descriptor->offset==offset && descriptor->size==size && descriptor->declaring_type &&
+            descriptor->declaring_type->lock()==abstract_pool_type && descriptor->global_slot_address==global &&
+            *memory_pool->globals->at(i)->slot==descriptor && descriptor->reference_word==2 &&
+            igb_bootstrap_read_word(physical,4)==2 && igb_bootstrap_read_word(physical,8)==offset &&
+            igb_bootstrap_read_word(physical,0x1c)==global,
+            "Pool schema lost descriptor order, physical offsets/globals or persistent inherited ownership.");
+        check(descriptor->vtable_word==(i<12?0x80472100u:0x80473e30u) && descriptor->default_bytes &&
+            descriptor->default_bytes->buffer && descriptor->default_bytes->buffer->bytes.size()==size,
+            "Pool statistics field used a truncated host integer or the wrong Boolean profile.");
+        const auto& bytes=*descriptor->default_bytes->buffer;
+        if(i<12){for(std::size_t at=0;at<8;++at)
+            check(bytes.bytes[at]==0xcc && bytes.initialized[at]==0,
+                "Null-source long default preparation fabricated initialized counter bytes.");}
+        else check(bytes.bytes[0]==1 && bytes.initialized[0]==1,"Original Boolean pool defaults were not separately set to true.");
+    }
+    const auto pool_finished_names=string_allocations;
+    const auto pool_finished_callbacks=freed_callback_lists.size(),pool_finished_reflections=reflected_allocations.size();
+    const auto pool_finished_clones=reached_reflected_clones.size(),pool_finished_members=member_calls.size();
+    check(call.resume(bootstrap).diagnostic==after_abstract_pool.diagnostic && !call.faulted() &&
+        remaining_calls.back().function==0x80039cc0 && f.core->types->count==41 && descriptors.size()==127 &&
+        default_allocations==140 && enabled_allocations.size()==169 && runtime_allocations.size()==6 &&
+        (**prototypes->registry)->count==13 && signed_long_probe_locals.size()==1 && signed_long_buffer_calls.size()==13 &&
+        string_allocations==pool_finished_names && freed_callback_lists.size()==pool_finished_callbacks &&
+        reflected_allocations.size()==pool_finished_reflections && reached_reflected_clones.size()==pool_finished_clones &&
+        member_calls.size()==pool_finished_members && wake_interrupt_calls.size()==3 && error_type->instance_count==1 &&
+        error_handler->state->singleton->storage==error_storage.storage && error_bootstrap_list->count==2 && !error_bootstrap_list->released,
+        "Pending malloc probe repeated pool metadata, prototypes or earlier thread and error-handler startup.");
 
 }
 }

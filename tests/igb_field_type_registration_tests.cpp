@@ -96,7 +96,7 @@ void exact_profiles(){
     check(static_cast<unsigned>(E::unsigned_int)==11 && static_cast<unsigned>(E::structure)==12 &&
         static_cast<unsigned>(E::unsigned_short)==13 && static_cast<unsigned>(IgbMetaFieldKind::unsigned_short)==6 &&
         static_cast<unsigned>(IgbMetaFieldKind::structure)==12,"Unsigned-short admission shifted an existing field-type or raw profile.");
-    rejects([]{igb_field_type_profile(static_cast<E>(14));},"Unknown field-type profile was accepted.");
+    rejects([]{igb_field_type_profile(static_cast<E>(15));},"Unknown field-type profile was accepted.");
     rejects([]{igb_field_type_registration_arguments({},E::base);},"Arguments accepted absent canonical storage.");
     rejects([]{IgbFieldTypeLookupInvocation invalid(E::reference,IgbFieldTypeLookup::allocate_if_null);},"An unsupported reference-field lazy getter was invented.");
     rejects([]{IgbFieldTypeLookupInvocation invalid(E::object,IgbFieldTypeLookup::plain);},"An unsupported object-field plain getter was invented.");

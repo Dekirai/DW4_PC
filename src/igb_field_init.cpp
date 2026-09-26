@@ -105,11 +105,12 @@ IgbObjectInitFactory make_native_igb_field_init_factory(std::shared_ptr<IgbField
         if(call.kind==IgbObjectInitServiceKind::object_virtual && (call.vtable_word==0x804762fc ||
             call.vtable_word==0x80475b60 || call.vtable_word==0x80476088 || call.vtable_word==0x80473e30 || call.vtable_word==0x8047693c || call.vtable_word==0x80473f24 ||
             call.vtable_word==0x804758e4 || call.vtable_word==0x80476630 || call.vtable_word==0x80470a44 ||
-            call.vtable_word==0x80476e6c || call.vtable_word==0x80477054 || call.vtable_word==0x80470e00)) {
+            call.vtable_word==0x80476e6c || call.vtable_word==0x80477054 || call.vtable_word==0x80470e00 || call.vtable_word==0x80472100)) {
             const auto kind=call.vtable_word==0x80475b60?IgbFieldTypeKind::signed_int:
                 call.vtable_word==0x80476e6c?IgbFieldTypeKind::unsigned_int:
                 call.vtable_word==0x80477054?IgbFieldTypeKind::unsigned_short:
                 call.vtable_word==0x80470e00?IgbFieldTypeKind::structure:
+                call.vtable_word==0x80472100?IgbFieldTypeKind::signed_long:
                 call.vtable_word==0x80476088?IgbFieldTypeKind::memory_reference:
                 call.vtable_word==0x80473e30?IgbFieldTypeKind::boolean:
                 call.vtable_word==0x8047693c?IgbFieldTypeKind::string:

@@ -6,7 +6,7 @@
 
 namespace dw4 {
 class IgbFieldTypeRegistrationError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
-enum class IgbFieldTypeKind {base,reference,object,signed_int,memory_reference,boolean,string,signed_byte,enumeration,pointer,unsigned_byte,unsigned_int,structure,unsigned_short};
+enum class IgbFieldTypeKind {base,reference,object,signed_int,memory_reference,boolean,string,signed_byte,enumeration,pointer,unsigned_byte,unsigned_int,structure,unsigned_short,signed_long};
 struct IgbFieldTypeProfile {
     const char* name{};
     std::uint32_t metadata_global{},wrapper{},body{},size{},flag{},parent_body{},parent_getter{};
