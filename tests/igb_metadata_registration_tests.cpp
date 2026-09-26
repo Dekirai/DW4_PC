@@ -3,6 +3,7 @@
 #include "dw4/igb_thread_startup.hpp"
 #include "dw4/igb_gamecube_thread_adopt.hpp"
 #include "dw4/igb_thread_manager_insert.hpp"
+#include "dw4/igb_data_list_growth.hpp"
 #include "dw4/igb_thread_runtime_init.hpp"
 #include "dw4/igb_semaphore_runtime_init.hpp"
 #include "dw4/igb_struct_member.hpp"
@@ -510,6 +511,7 @@ void actual_cold_bootstrap_prefix(){
             return c.kind==IgbMetadataOperationKind::append_field?append_fields(c):append_children(c);
         }));
     auto layout=std::make_shared<IgbMetadataLayoutServices>();layout->runtime=f.services->types->runtime;
+    layout->pointer_lists=object_defaults->fields->pointer_lists;
     f.remaining=make_native_igb_metadata_layout_factory(layout,f.remaining);
     const auto next=call.resume(bootstrap);
     check(!next.completed && !call.faulted(),"Missing metadata layout probe was treated as completed startup.");
@@ -2212,6 +2214,11 @@ void actual_cold_bootstrap_prefix(){
         specialized_data->default_bytes && pending_data_descriptor->default_bytes &&
         specialized_data->default_bytes->buffer!=pending_data_descriptor->default_bytes->buffer,
         "Object-list specialization skipped its actual reflected memory clone or modified the DataList source descriptor.");
+    check(igb_bootstrap_read_byte(descriptor_allocations[71],0x12)==0 &&
+        igb_bootstrap_read_byte(descriptor_allocations[71],0x13)==4 && pending_data_descriptor->ordinal==4 &&
+        igb_bootstrap_read_byte(specialized_storage,0x12)==0 && igb_bootstrap_read_byte(specialized_storage,0x13)==4 &&
+        specialized_data->ordinal==4,
+        "Original layout failed to publish physical ordinals before derived-list lookup consumed the canonical data descriptor.");
     const auto finished_names=string_allocations,finished_defaults=default_allocations,finished_copies=buffer_copy_allocations;
     const auto finished_reflections=reflected_allocations.size(),finished_memory_calls=memory_calls.size();
     const auto finished_buffer_calls=buffer_calls.size(),finished_clones=reached_reflected_clones.size();
@@ -3458,8 +3465,10 @@ void actual_cold_bootstrap_prefix(){
     thread_insertion->runtime=runtime_init;thread_insertion->memory=memory_construct;
     thread_insertion->interrupts=activation_services->interrupts;
     std::vector<IgbThreadManagerInsertCall> insertion_lower_calls;
+    IgbThreadManagerInsertFactory concrete_insertion_lower;
     thread_insertion->factory=[&](const IgbThreadManagerInsertCall& c){
-        insertion_lower_calls.push_back(c);return std::shared_ptr<IgbThreadManagerInsertOperation>{};
+        insertion_lower_calls.push_back(c);
+        return concrete_insertion_lower?concrete_insertion_lower(c):std::shared_ptr<IgbThreadManagerInsertOperation>{};
     };
     concrete_thread_adoption=make_native_igb_thread_manager_insert_factory(thread_insertion,concrete_thread_adoption);
     const auto at_manager_wait=call.resume(bootstrap);
@@ -3506,6 +3515,110 @@ void actual_cold_bootstrap_prefix(){
         (**prototypes->registry)->count==12 && concrete_thread->instance_count==1 && concrete_semaphore->instance_count==2 &&
         interrupt_state->enabled==true && !**meta_enum->metadata,
         "Pending list growth replayed retain/wait/adoption or fabricated insertion, signal or temporary-reference release.");
+
+    auto native_growth=std::make_shared<IgbDataListGrowthServices>();
+    native_growth->data_defaults=data_defaults;native_growth->objects=prototypes->reflected->initializer;
+    native_growth->memory=memory_construct;
+    unsigned growth_frees{};
+    native_growth->factory=[&](const IgbDataListGrowthCall&){++growth_frees;return std::shared_ptr<IgbDataListGrowthOperation>{};};
+    concrete_insertion_lower=make_native_igb_data_list_growth_factory(native_growth);
+    const auto before_growth_memory=memory_construct->factory;
+    bool growth_pool_ready{},growth_allocation_ready{},growth_allocation_selected{};
+    unsigned growth_pool_polls{},growth_allocation_polls{},growth_allocations{};
+    std::vector<IgbMemoryFieldConstructCall> growth_memory_calls;
+    IgbPointerListBacking growth_backing;
+    memory_construct->factory=[&,before_growth_memory](const IgbMemoryFieldConstructCall& c){
+        growth_memory_calls.push_back(c);
+        const bool list_pool=c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool &&
+            c.object.runtime_object==thread_list_instance.runtime_object;
+        if(!list_pool && !(c.kind==IgbMemoryFieldConstructServiceKind::allocate && growth_allocation_selected))
+            return before_growth_memory(c);
+        memory_calls.push_back(c);auto operation=std::make_shared<IgbMemoryFieldConstructOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool){
+                ++growth_pool_polls;
+                check(c.handle==0 && c.object.storage==thread_list_storage.storage,
+                    "Data-list growth changed the original one-byte list pool tag or physical receiver.");
+                if(!growth_pool_ready)return MessengerCallResult{false,0,"Prepared thread-list backing pool."};
+                check(!growth_allocation_selected,"List backing overlapped an earlier prepared allocation.");
+                growth_allocation_selected=true;out->pool_result=f.pool;
+            }else{
+                ++growth_allocation_polls;
+                check(c.pool==f.pool && c.bytes==16 && c.alignment==4 && c.virtual_slot==0xdc,
+                    "Actual list growth changed its four-element aligned allocation request.");
+                if(!growth_allocation_ready)return MessengerCallResult{false,0,"Prepared thread-list backing allocation."};
+                auto raw=allocation(0x01000000,c.bytes);
+                raw.storage->bytes->bytes.assign(c.bytes,0xcd);raw.storage->bytes->initialized.assign(c.bytes,0);
+                out->backing_result={raw.storage->bytes,igb_bootstrap_address(raw),0,{},{}};
+                growth_backing=out->backing_result;
+                // This endpoint supplies raw memory only. The original allocator
+                // body decides whether to clear it and publishes the list pointer.
+                igb_bind_memory_field_allocation(memory_construct,out->backing_result);
+                growth_allocation_selected=false;++growth_allocations;
+            }
+            done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto at_growth_pool=call.resume(bootstrap);
+    std::cout<<"Cold native list growth pool: "<<at_growth_pool.diagnostic<<'\n';
+    check(!at_growth_pool.completed && !call.faulted() && at_growth_pool.diagnostic=="Prepared thread-list backing pool." &&
+        growth_pool_polls==1 && growth_allocations==0 && growth_memory_calls.size()==1 &&
+        igb_bootstrap_read_word(thread_list_storage,8)==0 && igb_bootstrap_read_word(thread_list_storage,12)==0 &&
+        igb_bootstrap_read_word(thread_list_storage,16)==0 && insertion_lower_calls.size()==3 &&
+        semaphore_runtime_calls.size()==calls_before_growth && interrupt_state->enabled==true,
+        "Data-list growth did not reach its actual metadata/ordinal/tag lookup before element allocation.");
+    growth_pool_ready=true;
+    const auto at_growth_allocation=call.resume(bootstrap);
+    std::cout<<"Cold native list growth allocation: "<<at_growth_allocation.diagnostic<<'\n';
+    check(!at_growth_allocation.completed && !call.faulted() &&
+        at_growth_allocation.diagnostic=="Prepared thread-list backing allocation." && growth_pool_polls==2 &&
+        growth_allocation_polls==1 && growth_allocations==0 && growth_memory_calls.size()==5 &&
+        growth_memory_calls[1].virtual_slot==0x64 && growth_memory_calls[2].virtual_slot==0x64 &&
+        growth_memory_calls[3].virtual_slot==0x6c && growth_memory_calls[4].kind==IgbMemoryFieldConstructServiceKind::allocate &&
+        growth_memory_calls[1].field==growth_memory_calls[2].field &&
+        igb_bootstrap_read_word(thread_list_storage,16)==0 && igb_bootstrap_read_word(thread_list_storage,12)==0 &&
+        igb_bootstrap_read_word(thread_list_storage,8)==0 && growth_frees==0,
+        "Capacity growth merged the outer size with actual62BB8 size/alignment or published before allocation.");
+    check(call.resume(bootstrap).diagnostic==at_growth_allocation.diagnostic && growth_pool_polls==2 &&
+        growth_allocation_polls==2 && growth_memory_calls.size()==5 && insertion_lower_calls.size()==3 &&
+        semaphore_runtime_calls.size()==calls_before_growth && igb_bootstrap_read_word(runtime_thread_storage,4)==2,
+        "Pending list backing allocation replayed metadata/pool/size queries, growth selection or thread retention.");
+    growth_allocation_ready=true;
+    const auto at_manager_wake=call.resume(bootstrap);
+    std::cout<<"Cold native list inserted: "<<at_manager_wake.diagnostic<<"; count="<<
+        igb_bootstrap_read_word(thread_list_storage,8)<<", capacity="<<igb_bootstrap_read_word(thread_list_storage,12)<<
+        ", inline semaphore count="<<igb_bootstrap_read_word(semaphore_storage,0x18)<<'\n';
+    check(!at_manager_wake.completed && !call.faulted() &&
+        at_manager_wake.diagnostic=="Thread manager operation reached unbound growth or scheduling." &&
+        growth_allocations==1 && growth_allocation_polls==3 && growth_pool_polls==2 && growth_memory_calls.size()==6 &&
+        growth_memory_calls.back().virtual_slot==0x58 && growth_memory_calls.back().field==growth_memory_calls[2].field &&
+        growth_frees==0 && growth_backing.bytes && !growth_backing.fields && !growth_backing.types &&
+        igb_bootstrap_read_word(thread_list_storage,8)==1 && igb_bootstrap_read_word(thread_list_storage,12)==4 &&
+        igb_bootstrap_read_word(thread_list_storage,16)==growth_backing.address &&
+        igb_buffer_word(growth_backing.bytes,0)==igb_bootstrap_address(runtime_thread_storage) &&
+        igb_buffer_word(growth_backing.bytes,4)==0 && igb_buffer_word(growth_backing.bytes,8)==0 &&
+        igb_buffer_word(growth_backing.bytes,12)==0 &&
+        std::all_of(growth_backing.bytes->initialized.begin(),growth_backing.bytes->initialized.end(),[](auto b){return b==1;}),
+        "Real growth failed to clear/publish the raw backing, store the first thread, or preserve capacity/count order.");
+    check(insertion_lower_calls.size()==4 && insertion_lower_calls.back().kind==IgbThreadManagerInsertServiceKind::wake_thread &&
+        insertion_lower_calls.back().queue.storage==semaphore_storage.storage &&
+        insertion_lower_calls.back().queue.offset==semaphore_storage.offset+0x1c &&
+        semaphore_runtime_calls.size()==calls_before_growth+1 && semaphore_runtime_calls.back().virtual_slot==0x7c &&
+        semaphore_runtime_calls.back().object.runtime_object==semaphore_instance.runtime_object &&
+        semaphore_runtime_calls.back().result!=manager_wait_result &&
+        !semaphore_runtime_calls.back().result->initialized[0] &&
+        igb_bootstrap_read_word(semaphore_storage,0x18)==1 && interrupt_state->enabled==false &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && runtime_thread.runtime_object->reference_word==2,
+        "Manager signal skipped its actual pending wake or restored exclusion/released the temporary thread too early.");
+    check(call.resume(bootstrap).diagnostic==at_manager_wake.diagnostic && !call.faulted() && insertion_lower_calls.size()==5 &&
+        growth_allocations==1 && growth_memory_calls.size()==6 && growth_frees==0 && thread_stack_queries==4 && thread_stack_frees==1 &&
+        enabled_allocations.size()==110 && runtime_allocations.size()==5 && f.core->types->count==28 && descriptors.size()==101 &&
+        default_allocations==113 && (**prototypes->registry)->count==12 && concrete_thread->instance_count==1 &&
+        concrete_semaphore->instance_count==2 && igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0 &&
+        igb_bootstrap_read_word(done_semaphore_storage,0x0c)==0 && igb_bootstrap_read_word(semaphore_storage,0x18)==1 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==2 && interrupt_state->enabled==false && !**meta_enum->metadata,
+        "Pending wake replayed growth/insertion/signal or fabricated completed startup and scheduling.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

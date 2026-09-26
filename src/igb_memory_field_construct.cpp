@@ -11,15 +11,17 @@ struct Running {bool& value;explicit Running(bool& v):value(v){value=true;}~Runn
 struct Call {
     IgbMemoryFieldConstructCall request;IgbMemoryFieldConstructFactory factory;
     std::shared_ptr<IgbMemoryFieldConstructOperation> operation;std::function<MessengerCallResult()> callback;
-    void clear(){callback={};operation.reset();factory={};request={};}
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
+    void clear(){callback={};checked_callback={};operation.reset();factory={};request={};}
     template<class Check>MessengerCallResult poll(const std::shared_ptr<IgbMemoryFieldConstructServices>& services,Check check){
+        check();
         if(!factory && services)factory=services->factory;
         if(!factory)return pending("Memory member construction requires its reached field or allocator service.");
         if(!operation){operation=factory(request);check();}
         if(!operation)return pending("Memory member construction reached an unbound field or allocator operation.");
-        if(!callback)callback=operation->resume;
-        if(!callback)return pending("Memory member construction requires its retained continuation.");
-        const auto status=callback();check();return status;
+        if(!callback && !checked_callback){checked_callback=operation->resume_checked;if(!checked_callback)callback=operation->resume;}
+        if(!callback && !checked_callback)return pending("Memory member construction requires its retained continuation.");
+        const auto status=checked_callback?checked_callback(check):callback();check();return status;
     }
 };
 std::shared_ptr<IgbDecodeRuntimeField> element(const std::shared_ptr<IgbDecodeRuntimeField>& descriptor){
@@ -102,11 +104,13 @@ IgbMemoryFieldAllocateInvocation::~IgbMemoryFieldAllocateInvocation(){auto& s=*i
 bool IgbMemoryFieldAllocateInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbMemoryFieldAllocateInvocation::faulted()const noexcept{return impl_->fault;}
 std::uint32_t IgbMemoryFieldAllocateInvocation::result()const{if(!completed() || faulted())fail("Incomplete memory allocation helper has no status result.");return impl_->result;}
-MessengerCallResult IgbMemoryFieldAllocateInvocation::resume(std::shared_ptr<IgbMemoryFieldConstructServices> services){
+MessengerCallResult IgbMemoryFieldAllocateInvocation::resume(std::shared_ptr<IgbMemoryFieldConstructServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;using K=IgbMemoryFieldConstructServiceKind;
     if(s.running || s.fault){s.fault=true;fail("Memory allocation helper requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,s.result,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Memory allocation helper was invalidated by a callback.");};
+    const auto check=[&]{if(s.fault)fail("Memory allocation helper was invalidated by a callback.");
+        if(enclosing_check)enclosing_check();if(s.fault)fail("Memory allocation helper was invalidated by its enclosing callback.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto capture=[&](P next)->bool{if(!s.descriptor)fail("Memory allocation helper reads a null descriptor.");
         if(!s.descriptor->element_field)return false;s.element=element(s.descriptor);s.phase=next;return true;};
@@ -141,7 +145,7 @@ MessengerCallResult IgbMemoryFieldAllocateInvocation::resume(std::shared_ptr<Igb
         s.visited.push_back(s.metadata);s.metadata=*s.metadata->parent;break;
     case P::zero:
         refresh(s.backing,services);if(!s.backing.bytes && s.bytes)return pending("Memory zero fill requires its allocated physical buffer binding.");
-        while(s.zero_at<s.bytes){const auto remaining=s.bytes-s.zero_at;const unsigned width=s.bytes>=32 && ((s.backing.address+s.zero_at)&3u)==0 && remaining>=4?4u:1u;
+        while(s.zero_at<s.bytes){check();const auto remaining=s.bytes-s.zero_at;const unsigned width=s.bytes>=32 && ((s.backing.address+s.zero_at)&3u)==0 && remaining>=4?4u:1u;
             const auto at=physical(s.backing,s.zero_at,width);for(unsigned i=0;i<width;++i){s.backing.bytes->bytes[at+i]=0;s.backing.bytes->initialized[at+i]=1;}
             synchronize_zero(s.backing,s.zero_at,width,services);s.zero_at+=width;
         }

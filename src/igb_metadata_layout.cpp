@@ -1,4 +1,5 @@
 #include "dw4/igb_metadata_layout.hpp"
+#include "dw4/igb_pointer_list.hpp"
 
 #include <bit>
 #include <iomanip>
@@ -36,6 +37,19 @@ std::shared_ptr<IgbRegistrationCallbackList> callback_list(const std::shared_ptr
     if(!list)fail("Metadata callbacks dereference a null registration list.");
     if(list->released)fail("Metadata callbacks dereference a released registration list.");
     return list;
+}
+std::optional<std::uint32_t> metadata_address(const std::shared_ptr<IgbRuntimeMetaType>& metadata,
+    const std::shared_ptr<IgbMetadataLayoutServices>& services){
+    if(!metadata)return 0;const auto pointers=services?services->pointer_lists:nullptr;
+    std::optional<std::uint32_t> result;
+    if(pointers)for(const auto& value:pointers->values)if(value.metadata==metadata){
+        if(value.field || !value.address || (result && *result!=value.address))
+            fail("Metadata layout has conflicting declaring-type arithmetic identities.");
+        result=value.address;
+    }
+    if(result)for(const auto& value:pointers->values)if(value.address==*result && (value.field || value.metadata!=metadata))
+        fail("Metadata layout declaring-type address has conflicting canonical owners.");
+    return result;
 }
 }
 
@@ -75,8 +89,11 @@ MessengerCallResult IgbMetadataCallbacksInvocation::resume(std::shared_ptr<IgbMe
 }
 
 struct IgbMetadataLayoutInvocation::Impl {
-    enum class P{count,initial_parent,next,alignment,after_alignment,parent_count,parent_field,ordinal,normal_alignment,extent,publish_alignment,prefix,flag,core,callbacks,call,done};
+    enum class P{count,initial_parent,next,alignment,after_alignment,parent_count,parent_field,ordinal,declaring_type,normal_alignment,extent,publish_alignment,prefix,flag,core,callbacks,call,done};
     std::shared_ptr<IgbRuntimeMetaType> metadata;std::shared_ptr<IgbDecodeRuntimeField> field;
+    std::optional<IgbBootstrapPointer> field_binding;
+    std::shared_ptr<IgbScratchBuffer> field_bytes;
+    std::uint32_t field_allocation_address{};
     std::int32_t count{};std::uint32_t index{},negative_cursor{},special_count{},maximum_extent{};
     std::uint16_t maximum_alignment{4},normal_maximum_alignment{4},alignment{};
     std::unique_ptr<IgbMetadataCallbacksInvocation> callbacks;Call call;P phase=P::count;
@@ -92,6 +109,22 @@ MessengerCallResult IgbMetadataLayoutInvocation::resume(std::shared_ptr<IgbMetad
     if(completed())return {true,0,{}};Running running(s.running);
     const auto check=[&]{if(s.fault)fail("Metadata layout continuation was invalidated.");};
     const auto clear=[&]{s.call.clear();check();};
+    const auto physical_field=[&]()->std::optional<IgbBootstrapPointer>{
+        if(!s.field->physical_storage){
+            if(s.field_binding)fail("Metadata layout lost its captured descriptor allocation.");return {};
+        }
+        const auto& binding=*s.field->physical_storage;
+        IgbBootstrapPointer pointer{binding.storage.lock(),binding.offset};
+        if(!pointer.storage || pointer.storage->faulted() || !pointer.storage->bytes || pointer.storage->bytes->released)
+            fail("Metadata layout requires live physical descriptor storage.");
+        if(s.field_binding && (s.field_binding->storage!=pointer.storage || s.field_binding->offset!=pointer.offset ||
+            s.field_bytes!=pointer.storage->bytes || s.field_allocation_address!=pointer.storage->original_address))
+            fail("Metadata layout changed its captured physical descriptor identity.");
+        IgbObjectInstance object;object.storage=pointer.storage;object.offset=pointer.offset;object.field=s.field;
+        igb_object_validate_instance(object);
+        if(!s.field_binding){s.field_binding=pointer;s.field_bytes=pointer.storage->bytes;s.field_allocation_address=pointer.storage->original_address;}
+        return pointer;
+    };
     try{for(;;){check();switch(s.phase){
     case P::count:s.count=igb_runtime_slot_count(s.metadata);s.phase=P::initial_parent;break;
     case P::initial_parent:
@@ -102,7 +135,12 @@ MessengerCallResult IgbMetadataLayoutInvocation::resume(std::shared_ptr<IgbMetad
     case P::next:
         if(std::bit_cast<std::int32_t>(s.index)>=s.count){s.phase=P::publish_alignment;break;}
         s.field=igb_runtime_field_at(s.metadata,std::bit_cast<std::int32_t>(s.index));
-        if(!s.field)fail("Metadata layout dereferences a null field.");s.phase=P::alignment;break;
+        if(!s.field)fail("Metadata layout dereferences a null field.");
+        s.field_binding.reset();s.field_bytes.reset();s.field_allocation_address=0;
+        if(s.field->physical_storage){const auto& binding=*s.field->physical_storage;
+            s.field_binding=IgbBootstrapPointer{binding.storage.lock(),binding.offset};
+            if(s.field_binding->storage){s.field_bytes=s.field_binding->storage->bytes;s.field_allocation_address=s.field_binding->storage->original_address;}}
+        s.phase=P::alignment;break;
     case P::alignment:
         if(!s.field->vtable_word)return pending("Metadata layout requires its captured field vtable.");
         if(!*s.field->vtable_word)fail("Metadata layout dereferences a null field vtable.");
@@ -129,8 +167,18 @@ MessengerCallResult IgbMetadataLayoutInvocation::resume(std::shared_ptr<IgbMetad
         const auto parent_field=igb_runtime_field_at(*s.metadata->parent,std::bit_cast<std::int32_t>(s.index));
         s.phase=parent_field==s.field?P::normal_alignment:P::ordinal;break;
     }
-    case P::ordinal:
-        s.field->ordinal=static_cast<std::uint16_t>(s.index-s.special_count);s.field->declaring_type=s.metadata;s.phase=P::normal_alignment;break;
+    case P::ordinal:{
+        const auto ordinal=static_cast<std::uint16_t>(s.index-s.special_count);
+        if(const auto pointer=physical_field())igb_bootstrap_write_halfword(*pointer,0x12,ordinal);
+        s.field->ordinal=ordinal;s.phase=P::declaring_type;break;
+    }
+    case P::declaring_type:
+        if(const auto pointer=physical_field()){
+            const auto address=metadata_address(s.metadata,services);
+            if(!address)return pending("Metadata layout requires its declaring metadata address after ordinal publication.");
+            igb_bootstrap_write_word(*pointer,0x18,*address);
+        }
+        s.field->declaring_type=s.metadata;s.phase=P::normal_alignment;break;
     case P::normal_alignment:
         if(s.alignment>s.normal_maximum_alignment)s.normal_maximum_alignment=s.alignment;s.phase=P::extent;break;
     case P::extent:{

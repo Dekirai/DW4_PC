@@ -3,6 +3,7 @@
 #include "dw4/igb_registration_callbacks.hpp"
 
 namespace dw4 {
+struct IgbPointerListServices;
 class IgbMetadataLayoutError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
 enum class IgbMetadataLayoutKind {
     field_alignment, //Captured descriptor virtual+6C.
@@ -22,6 +23,8 @@ using IgbMetadataLayoutFactory=std::function<std::shared_ptr<IgbMetadataLayoutOp
 struct IgbMetadataLayoutServices {
     std::shared_ptr<IgbRuntimeTypesServices> runtime;
     IgbMetadataLayoutFactory factory;
+    // Reuse canonical metadata arithmetic identities for physical field+18.
+    std::shared_ptr<IgbPointerListServices> pointer_lists;
 };
 // Actual8003E574. The core and initial signed count are captured; list and
 // backing are reloaded at every reached callback. No cleanup is implied.

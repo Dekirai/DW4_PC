@@ -232,8 +232,15 @@ allocation mappings supply element destinations; there is no second backing
 registry. Native wait/signal preserve signed versus unsigned count branches,
 fresh status reads and exclusion transitions around explicit sleep/wake calls.
 The startup caller lends its fault guard through adoption, insertion and their
-checked children. Original OS initialization, list growth, scheduling and teardown
-remain required. See [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
+checked children. Actual data-list growth now selects the canonical descriptor
+ordinal and list metadata, composes the existing memory-field allocator and
+preserves copy/release/capacity/count order. Raw backing copies reuse that same
+allocation registry. The layout producer also publishes physical ordinal and
+declaring-type stores before later consumers read them. The cold composition
+inserts the first thread and reaches OS wake after signal's increment; exclusion
+remains disabled until wake returns. Original OS/pool initialization, scheduling
+and teardown remain required. See [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),

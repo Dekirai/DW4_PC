@@ -20,6 +20,8 @@ struct IgbMemoryFieldConstructOperation {
     std::shared_ptr<ModelSceneObject> pool_result;
     std::shared_ptr<IgbRuntimeMetaType> metadata_result;
     IgbPointerListBacking backing_result;
+    // Optional native continuation; borrow the enclosing guard for one resume.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbMemoryFieldConstructFactory=std::function<std::shared_ptr<IgbMemoryFieldConstructOperation>(const IgbMemoryFieldConstructCall&)>;
 struct IgbMemoryFieldConstructServices {
@@ -42,7 +44,8 @@ public:
     ~IgbMemoryFieldAllocateInvocation();
     IgbMemoryFieldAllocateInvocation(const IgbMemoryFieldAllocateInvocation&)=delete;
     IgbMemoryFieldAllocateInvocation& operator=(const IgbMemoryFieldAllocateInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbMemoryFieldConstructServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbMemoryFieldConstructServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
     std::uint32_t result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;

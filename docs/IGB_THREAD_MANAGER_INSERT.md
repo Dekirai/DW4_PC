@@ -17,8 +17,8 @@ After wait returns, the manager's current thread-list pointer is captured.
 Signed count `+08` is compared with signed capacity `+0C`. Available capacity
 allows the count increment immediately. Otherwise actual growth `80041660`
 is selected with requested count `old_count+1` and element size four. Growth
-remains a reached lower operation; metadata pointer-list growth has a different
-layout and is not a substitute.
+uses [the native data-list adapter](IGB_DATA_LIST_GROWTH.md); metadata pointer-list
+growth has a different layout and is not a substitute.
 
 The backing at captured list `+10` is read fresh after count/growth work. The
 captured thread address is written at the original wrapped four-byte element
@@ -58,20 +58,22 @@ same explicit exclusion state used by semaphore activation. Selected callbacks
 and borrowed fault guards survive pending resumes without replaying completed
 effects or retaining a caller's guard.
 
-## Remaining growth and scheduling dependencies
+## Growth composition and scheduling dependencies
 
 `80041660 -> 8004155C` requires the real data-list descriptor, element-size,
-allocation and copy/free path. It remains separate from this caller. Sleep and
-wake likewise remain explicit scheduling operations. An empty wake queue alone
+allocation and copy/free path. Its implementation remains separate from this
+caller and composes the existing memory allocator. Sleep and wake remain
+explicit scheduling operations. An empty wake queue alone
 does not establish a no-op: the original still reads the scheduler hint and may
 reschedule. Missing state must remain pending rather than becoming a fabricated
 successful wait or wake.
 
-The retained cold startup test reaches the original growth request for one
-four-byte element after the native wait changes inline count from one to zero
-and restores the prior exclusion state. Thread reference count is two: the
-extra retain already happened, while list publication, signal and the outer
-temporary release are still pending. Repeated resumes preserve that prefix.
+The retained cold startup test preserves its earlier growth checkpoint, then
+allocates four pointer slots through the real growth path and writes the first
+thread address. Signal increments inline count from zero to one and reaches
+OS wake before restoring exclusion. Thread reference count is two: the extra
+retain already happened, while wake, signal completion and the outer temporary
+release are still pending. Repeated resumes preserve that prefix.
 There are 28 types, 101 descriptors, 113 default buffers, 12 prototypes,
 110 enabled allocations and five runtime objects at this boundary.
 

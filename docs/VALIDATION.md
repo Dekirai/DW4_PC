@@ -1,5 +1,77 @@
 # Local validation
 
+## Data-list growth inserts the thread and reaches OS wake
+
+Validated locally on 2026-09-26. Actual `80041660 -> 8004155C` now selects the
+canonical data descriptor and the list's own metadata, composes the existing
+`80062BB8` allocator, copies and frees old backing when reached, and publishes
+capacity before requested count. The independent raw-copy entry `800031E8`
+preserves byte direction, overlap, partial effects and destination return.
+The allocator and manager share the existing physical allocation registry.
+
+The retained cold composition requests sixteen aligned bytes, clears all four
+pointer slots through the actual memory allocator, stores the first thread
+address and reaches `8026200C` after the semaphore signal increment. Its list
+count is one, capacity four, semaphore count one and thread reference two.
+Exclusion is still disabled because wake has not returned. Repeated resumes
+do not repeat allocation, insertion or the signal increment. The earlier
+prepared OS context and tagged-pool/allocation endpoints remain explicit.
+Counts remain **28 types, 101 descriptors, 113 default buffers, 12 prototypes,
+110 enabled allocations and five runtime objects**.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 212/212 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,017 checks; original growth and first thread insertion, separate size/alignment/ancestry calls, raw backing zeroing and pending wake prefix |
+| Growth and raw copy | 171 checks; signed growth, overflow cycle, captured and fresh operands, copy/free ordering, physical ranges, meaningful copy return and nested parent faults |
+| Metadata layout | 127 checks including ordered physical ordinal/declaring-type publication, inherited skip, missing address and failed-store prefixes |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The initial build compiled but its cold test exposed an earlier producer defect:
+metadata layout changed the canonical ordinal while physical descriptor `+12`
+still contained its constructor value. Primary `80065A58` stores the ordinal
+halfword, then declaring metadata pointer `+18`. Both physical effects now
+publish in that order through the existing canonical address map. A subsequent
+test compilation found a nonexistent halfword-read convenience function; the
+fixture now explicitly reads its two bytes. Both failed logs are retained.
+The final build, cold composition and focused executions passed. Verified core
+SHA256: `ccbda2f981df167dd5020a9278e81183f7b906f495bde0fbb8f690f786e1a892`.
+
+The independent original corpus was sealed before native source inspection:
+**181 cases, 33,951 executed instructions and 260 instruction addresses**.
+All 181 exact replays and fifteen artifact hashes verify. Actual growth,
+capacity, metadata field selection, memory allocation body, ancestry, zero fill,
+copy and free caller execute. Metadata and element virtuals, tag lookup and pool
+allocation/free endpoints remain explicitly prepared. Two zero-divisor cases
+stop without inventing a CPU result; one repeating growth case reaches an
+instruction bound. Original manifest SHA256:
+`ba22f5e9e09be46e7604f78bc436e4b8d3cebbdc93a03b12f91ff6356af07761`.
+
+The frozen native subset matches **169/169 on first execution and exact replay**:
+sixteen growth, 94 capacity and 59 standalone copy cases. Outcomes comprise
+123 completions, eight prepared failures, eight null reads, seventeen unknown
+reads, six buffer-read bounds, six buffer-write bounds and one null write. No
+case remains pending or faults unexpectedly. The first driver build succeeded;
+no driver or production repairs followed comparison. Fifteen native hashes
+verify. Native manifest SHA256:
+`784589dec528566c0c125223b84075349b120a7805cc06734bec9ea0632e03be`.
+
+**Twelve cases remain original-only**: one bounded repeating growth loop, two
+undefined division results, two negative ordinals outside the native registry
+representation, four sparse write-permission faults and three unavailable
+canonical globals. The comparison includes physical bytes/masks, ordered
+prepared calls, allocation status and copy destination returns. Void growth
+register leftovers are excluded. Pool and virtual interiors remain prepared
+boundaries; the separate physical metadata-layout regression is not counted
+as part of these 169 comparisons.
+
+See [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md) and
+[IGB_METADATA_LAYOUT.md](IGB_METADATA_LAYOUT.md). Scheduling and original OS/pool
+initialization remain required; this composition is not a playable-game build.
+Local artifacts use `work/native-data-list-growth-`.
+
 ## Manager insertion reaches original thread-list growth
 
 Validated locally on 2026-09-26. Actual manager caller `80075460` retains the

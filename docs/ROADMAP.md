@@ -213,12 +213,15 @@ stack release. With explicitly prepared OS state, the cold invocation reaches
 manager insertion `80075460`. That caller now retains the thread and completes
 the positive semaphore wait before actual data-list growth `80041660`. Native
 wait/signal wrappers preserve count/exclusion/status ordering with explicit
-sleep/wake dependencies. Recover `80041660 -> 8004155C` through its canonical
-data descriptor and existing memory allocator next, followed by wake/scheduling
-and actual OS/pool initialization. IDA analysis has located canonical tagged-table setup
+sleep/wake dependencies. Actual `80041660 -> 8004155C` now composes its canonical
+data descriptor, existing memory allocator and raw copy/release paths. The cold
+composition inserts its first thread and reaches original OS wake after the
+semaphore increment. Recover wake/scheduling and actual OS/pool initialization
+next. IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
+See [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
+[IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),
 [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
 [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),

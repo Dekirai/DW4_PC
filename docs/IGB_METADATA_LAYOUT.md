@@ -20,6 +20,15 @@ receive the 16-bit ordinal `index - special_count` and a nonowning declaring
 metadata binding. That weak binding distinguishes unknown, null and expired
 nonnull identities without a metadata/field ownership cycle.
 
+Physically bound descriptors also receive the actual halfword store at `+12`,
+followed by the declaring metadata address at `+18`. The address comes from
+the existing canonical pointer-list identities. An unavailable address suspends
+after ordinal publication; an invalid later destination preserves the completed
+halfword store. Identical inherited descriptors skip both writes. This physical
+publication was added when native data-list growth exposed a stale constructor
+ordinal; the earlier comparison below exercised the canonical representation.
+The new focused tests and cold composition cover these physical effects.
+
 After iteration, the caller publishes maximum alignment at metadata `+58`.
 When native size `+48` differs from `0xFFFFFFFF`, it also writes the original
 rounded negative-prefix size at `+20`. The original signed maximum-extent
