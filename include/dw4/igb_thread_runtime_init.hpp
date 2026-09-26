@@ -13,6 +13,7 @@ struct IgbThreadRuntimeInitCall {
     // Original755C0 passes a four-byte stack-result destination inr3 and
     // the semaphore receiver inr4. Unknown bytes are not zero defaults.
     std::shared_ptr<IgbScratchBuffer> result;
+    std::uint32_t argument{}; // Actual77E94 passes0 inr5 to semaphore+68.
 };
 struct IgbThreadRuntimeInitOperation {
     std::function<MessengerCallResult()> resume;

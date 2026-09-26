@@ -58,16 +58,20 @@ physical allocation. There are no new local field descriptors.
 The manager allocator now uses a distinct native runtime-object binding.
 Its inherited `_threadList` is recursively initialized and assigned through
 the real field passes. `_sema` follows concrete metadata redirect
-`80026160 -> 8003B238`; its registration reaches struct-field factory `8002450C`
-after the first three local descriptors. See
+`80026160 -> 8003B238`; its metadata, struct dependency and runtime initializer
+now complete. See
 [IGB_PLATFORM_SEMAPHORE.md](IGB_PLATFORM_SEMAPHORE.md).
-The recovered manager initializer's `+2C` caller performs
-semaphore work and retains an explicit method endpoint. The runtime thread
+The recovered manager initializer's `+2C` caller now activates that semaphore
+through the actual queue/count/status sequence with explicit initial exclusion
+state. Original startup then publishes the completed manager. The runtime thread
 list has count/capacity/backing at `+08/+0C/+10`, which differs from the
 metadata-list layouts. See [IGB_RUNTIME_OBJECTS.md](IGB_RUNTIME_OBJECTS.md).
 
-Subsequent concrete thread/semaphore registration, initialization, main-thread
-record capture, list operations and teardown remain required. The original
+Concrete thread registration and its nine local defaults now finish; see
+[IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md). Actual initializer `80077E94`
+now completes with prepared stack-pool services and the recovered completion
+semaphore setter; see [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md).
+Main-thread record capture, list operations and teardown remain required. The original
 `+DC` operation captures the existing main-thread record; replacing it with
 an arbitrary host thread identifier does not reproduce those observable
 fields. Metadata registration and caller reconstruction alone do not satisfy

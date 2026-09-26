@@ -204,10 +204,16 @@ The semaphore runtime allocation completes its concrete initializer and inline
 struct members. Its activation `+5C` now completes the original queue/count
 initialization with explicit exclusion state. The retained cold invocation
 publishes the manager singleton. Concrete thread getter `8003AF84` now runs its
-registration, physical probe and nine local defaults; the factory reaches its
-`0x388` allocation. Recover actual main-thread initialization `80077E94`, its
-reached pool/semaphore operations and subsequent current-thread adoption next.
-See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
+registration, physical probe and nine local defaults. The reflected factory now
+constructs its `0x388` runtime object and separate completion semaphore, executing
+initializer `80077E94` and initial-count setter `800773AC`. Tagged-pool lookup and
+aligned allocation remain prepared lower services. Recover current-thread
+adoption `80077EFC`, its actual OS state and stack release, then manager insertion
+and semaphore wait/signal. IDA analysis has located canonical tagged-table setup
+inside memory-manager `+A8` and the initial OS-thread construction; these are
+dependencies to implement, not substitutes for initialized state.
+See [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
+[IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

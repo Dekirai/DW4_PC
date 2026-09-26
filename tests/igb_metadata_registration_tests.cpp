@@ -7,6 +7,7 @@
 #include "dw4/igb_platform_thread_registration.hpp"
 #include "dw4/igb_platform_semaphore_registration.hpp"
 #include "dw4/igb_gamecube_thread_registration.hpp"
+#include "dw4/igb_gamecube_thread_init.hpp"
 #include "dw4/igb_struct_field_defaults.hpp"
 #include "dw4/igb_thread_defaults.hpp"
 #include "dw4/igb_named_type_defaults.hpp"
@@ -3213,6 +3214,152 @@ void actual_cold_bootstrap_prefix(){
         semaphore_runtime_calls.size()==3 && startup->manager->storage==manager_storage.storage && interrupt_state->enabled==true &&
         igb_bootstrap_read_word(ark.allocation,4)==7 && igb_bootstrap_read_word(ark.allocation,8)==1,
         "Pending native thread allocation replayed registration/defaults, manager activation or startup snapshots.");
+
+    // Allocate only raw thread storage. The same original reflected initializer
+    // must establish its header, inherited defaults and owned done semaphore.
+    IgbObjectInitFactory concrete_thread_initializer;
+    const auto before_thread_initializer=prototypes->reflected->initializer->factory;
+    prototypes->reflected->initializer->factory=[&,before_thread_initializer](const IgbObjectInitCall& c){
+        if(concrete_thread_initializer){const auto operation=concrete_thread_initializer(c);if(operation)return operation;}
+        return before_thread_initializer(c);
+    };
+    const auto before_thread_runtime_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_thread_runtime_allocator](const IgbFileFactoryCall& c){
+        if(c.metadata!=concrete_thread)return before_thread_runtime_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x388,
+                "Concrete thread allocation changed its original pool or layout size.");
+            auto raw=allocation(0xe00000,c.bytes);raw.storage->bytes->initialized.assign(c.bytes,0);
+            IgbObjectInstance instance;instance.storage=raw.storage;
+            instance.runtime_object=std::make_shared<IgbRuntimeObject>(IgbRuntimeObjectKind::thread);
+            instance.runtime_object->physical_storage=IgbRuntimeObjectStorageBinding{raw.storage,0};
+            IgbObjectBinding binding;binding.runtime_object=instance.runtime_object;raw.storage->bindings.push_back(binding);
+            enabled_allocations.push_back(instance);runtime_allocations.push_back(instance);
+            igb_bind_object_field_instance(member_construct,instance);reflected_allocations.push_back(c);
+            out->allocation_result=raw.storage;done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto at_thread_getter=call.resume(bootstrap);
+    std::cout<<"Cold native concrete thread object: "<<at_thread_getter.diagnostic<<"; runtime allocations="<<runtime_allocations.size()<<'\n';
+    check(!at_thread_getter.completed && !call.faulted() && runtime_allocations.size()==4 && concrete_thread->instance_count==0 &&
+        reflected_init_calls.back().kind==IgbObjectInitServiceKind::object_virtual &&
+        reflected_init_calls.back().vtable_word==0x80470110 && reflected_init_calls.back().virtual_slot==0x58,
+        "Raw thread allocation skipped its first actual metadata getter or fabricated completed construction.");
+    const auto runtime_thread=runtime_allocations.back();const IgbBootstrapPointer runtime_thread_storage{runtime_thread.storage,runtime_thread.offset};
+    check(runtime_thread.runtime_object->kind==IgbRuntimeObjectKind::thread && igb_bootstrap_read_word(runtime_thread_storage,0)==0x80470110 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==1,
+        "Reflected thread header lost its distinct runtime identity or original type word.");
+    for(unsigned at=8;at<0x388;++at)check(!runtime_thread.storage->bytes->initialized[at],
+        "Raw thread allocation or metadata boundary fabricated a runtime member.");
+
+    auto concrete_thread_init=std::make_shared<IgbGamecubeThreadInitServices>();
+    concrete_thread_init->registration=gamecube_thread;concrete_thread_init->runtime=runtime_init;concrete_thread_init->memory=memory_construct;
+    concrete_thread_initializer=make_native_igb_gamecube_thread_init_factory(concrete_thread_init);
+    runtime_activation=make_native_igb_gamecube_thread_runtime_factory(concrete_thread_init,runtime_activation);
+    const auto before_thread_member_pool=member_construct->factory;
+    member_construct->factory=[&,before_thread_member_pool](const IgbObjectFieldConstructCall& c){
+        if(c.kind!=IgbObjectFieldConstructServiceKind::tagged_pool || !c.object.runtime_object ||
+            c.object.runtime_object->kind!=IgbRuntimeObjectKind::thread)return before_thread_member_pool(c);
+        member_calls.push_back(c);auto operation=std::make_shared<IgbObjectFieldConstructOperation>();
+        operation->resume=[&,c,out=operation.get()]{
+            check(c.handle==0 && c.object.storage==runtime_thread.storage && enabled_identity(c.object),
+                "Thread done-semaphore construction lost its captured physical pool tag.");
+            out->pool_result=f.pool;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto before_thread_stack_pool=memory_construct->factory;
+    bool thread_stack_pool_ready{},thread_stack_allocation_ready{};
+    unsigned thread_stack_queries{},thread_stack_allocations{},thread_stack_polls{};
+    std::vector<IgbMemoryFieldConstructCall> thread_stack_calls;
+    auto thread_stack_bytes=std::make_shared<IgbScratchBuffer>();
+    memory_construct->factory=[&,before_thread_stack_pool](const IgbMemoryFieldConstructCall& c){
+        if(!c.object.runtime_object || c.object.runtime_object->kind!=IgbRuntimeObjectKind::thread)return before_thread_stack_pool(c);
+        thread_stack_calls.push_back(c);auto operation=std::make_shared<IgbMemoryFieldConstructOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.object.storage==runtime_thread.storage,"Thread stack service changed its captured receiver.");
+            if(c.kind==IgbMemoryFieldConstructServiceKind::tagged_pool){
+                ++thread_stack_queries;check(c.handle==0,"Thread stack lookup changed the original one-byte reference tag.");
+                if(!thread_stack_pool_ready)return MessengerCallResult{false,0,"Prepared thread stack tagged-pool lookup."};
+                out->pool_result=f.pool;
+            }else{
+                check(c.kind==IgbMemoryFieldConstructServiceKind::allocate && c.pool==f.pool && c.virtual_slot==0xdc &&
+                    c.bytes==0x1000 && c.alignment==0x20,"Thread stack allocation lost original size, alignment or pool+DC.");
+                ++thread_stack_polls;
+                if(!thread_stack_allocation_ready)return MessengerCallResult{false,0,"Prepared aligned thread stack allocation."};
+                ++thread_stack_allocations;thread_stack_bytes->bytes.assign(c.bytes,0xcc);thread_stack_bytes->initialized.assign(c.bytes,0);
+                out->backing_result={thread_stack_bytes,0xf00000,0,{},{}};
+            }
+            done=true;return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto at_thread_stack_pool=call.resume(bootstrap);
+    std::cout<<"Cold native concrete thread initializer: "<<at_thread_stack_pool.diagnostic<<"; runtime allocations="<<runtime_allocations.size()<<
+        ", thread instances="<<concrete_thread->instance_count.value_or(0xffffffffu)<<'\n';
+    if(!reflected_init_calls.empty()){const auto& reached=reflected_init_calls.back();
+        std::cout<<"Thread initialization pending: kind="<<static_cast<unsigned>(reached.kind)<<", table="<<reached.vtable_word<<
+            ", slot="<<reached.virtual_slot<<", field="<<(reached.field && reached.field->name?*reached.field->name:"<none>")<<'\n';}
+    check(!at_thread_stack_pool.completed && !call.faulted() &&
+        at_thread_stack_pool.diagnostic=="Prepared thread stack tagged-pool lookup." &&
+        runtime_allocations.size()==5 && runtime_allocations.back().runtime_object->kind==IgbRuntimeObjectKind::semaphore &&
+        concrete_thread->instance_count==0 && concrete_semaphore->instance_count==2 &&
+        !runtime_thread.runtime_object->construction_active_.expired() && thread_stack_calls.size()==1 &&
+        thread_stack_queries==1 && thread_stack_allocations==0 && semaphore_runtime_calls.size()==4 &&
+        semaphore_runtime_calls.back().object.runtime_object==runtime_thread.runtime_object &&
+        semaphore_runtime_calls.back().virtual_slot==0xa8 && igb_bootstrap_read_word(runtime_thread_storage,0x20)==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x24)==0x1000 && igb_bootstrap_read_byte(runtime_thread_storage,0x2c)==0 &&
+        igb_bootstrap_read_byte(runtime_thread_storage,0x34)==1,
+        "Thread field initialization skipped its owned semaphore, stack defaults or actual aligned-pool lookup.");
+    const auto done_semaphore=runtime_allocations.back();const IgbBootstrapPointer done_semaphore_storage{done_semaphore.storage,done_semaphore.offset};
+    check(done_semaphore.runtime_object!=semaphore_instance.runtime_object &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x380)==igb_bootstrap_address(done_semaphore_storage) &&
+        igb_bootstrap_read_word(done_semaphore_storage,0x0c)==1 && igb_bootstrap_read_word(done_semaphore_storage,0x10)==1 &&
+        igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0 && done_semaphore.runtime_object->construction_active_.expired() &&
+        igb_bootstrap_read_byte(semaphore_storage,0x14)==1,
+        "Thread completion semaphore reused the manager semaphore or ran activation before the count setter.");
+    thread_stack_pool_ready=true;
+    const auto at_thread_stack_allocation=call.resume(bootstrap);
+    check(!at_thread_stack_allocation.completed && !call.faulted() &&
+        at_thread_stack_allocation.diagnostic=="Prepared aligned thread stack allocation." &&
+        thread_stack_calls.size()==2 && thread_stack_queries==2 && thread_stack_polls==1 && thread_stack_allocations==0 &&
+        igb_bootstrap_read_word(runtime_thread_storage,0x20)==0 && igb_bootstrap_read_word(done_semaphore_storage,0x0c)==1 &&
+        concrete_thread->instance_count==0 && semaphore_runtime_calls.size()==4,
+        "Pending aligned allocation published a stack or ran the semaphore setter prematurely.");
+    check(call.resume(bootstrap).diagnostic==at_thread_stack_allocation.diagnostic && thread_stack_calls.size()==2 &&
+        thread_stack_queries==2 && thread_stack_polls==2 && thread_stack_allocations==0 && runtime_allocations.size()==5 &&
+        concrete_thread->instance_count==0 && semaphore_runtime_calls.size()==4,
+        "Pending stack allocation repeated pool lookup, object construction or a selected runtime virtual.");
+    thread_stack_allocation_ready=true;
+    const auto after_thread_init=call.resume(bootstrap);
+    std::cout<<"Cold native concrete thread initialized: "<<after_thread_init.diagnostic<<"; thread instances="<<
+        concrete_thread->instance_count.value_or(0xffffffffu)<<", stack allocations="<<thread_stack_allocations<<
+        ", enabled allocations="<<enabled_allocations.size()<<", runtime calls="<<semaphore_runtime_calls.size()<<'\n';
+    check(!after_thread_init.completed && !call.faulted() && concrete_thread->instance_count==1 &&
+        runtime_thread.runtime_object->construction_active_.expired() && thread_stack_allocations==1 &&
+        thread_stack_queries==2 && thread_stack_polls==3 && igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000 &&
+        igb_bootstrap_read_byte(runtime_thread_storage,0x2c)==1 && semaphore_runtime_calls.size()==5 &&
+        semaphore_runtime_calls.back().object.runtime_object==done_semaphore.runtime_object &&
+        semaphore_runtime_calls.back().virtual_slot==0x68 && semaphore_runtime_calls.back().argument==0 &&
+        semaphore_runtime_calls.back().result && igb_buffer_word(semaphore_runtime_calls.back().result,0)==*memory_construct->status_success &&
+        igb_bootstrap_read_word(done_semaphore_storage,0x0c)==0 && igb_bootstrap_read_word(done_semaphore_storage,0x10)==1 &&
+        igb_bootstrap_read_byte(done_semaphore_storage,0x14)==0,
+        "Thread initializer lost stack publication, actual semaphore setter, constructor completion or startup master publication.");
+    check(std::all_of(thread_stack_bytes->initialized.begin(),thread_stack_bytes->initialized.end(),[](auto byte){return byte==0;}) &&
+        std::all_of(thread_stack_bytes->bytes.begin(),thread_stack_bytes->bytes.end(),[](auto byte){return byte==0xcc;}) &&
+        enabled_allocations.size()==110 && runtime_allocations.size()==5 && f.core->types->count==28 &&
+        descriptors.size()==101 && default_allocations==113 && (**prototypes->registry)->count==12 &&
+        concrete_manager->instance_count==1 && concrete_semaphore->instance_count==2 && !**meta_enum->metadata &&
+        startup->manager->storage==manager_storage.storage && interrupt_state->enabled==true,
+        "Thread initialization touched unread stack contents or changed completed manager/class state.");
+    const auto after_thread_init_members=member_calls.size(),after_thread_init_reflections=reflected_allocations.size();
+    check(call.resume(bootstrap).diagnostic==after_thread_init.diagnostic && !call.faulted() &&
+        member_calls.size()==after_thread_init_members && reflected_allocations.size()==after_thread_init_reflections &&
+        thread_stack_allocations==1 && thread_stack_queries==2 && thread_stack_polls==3 &&
+        semaphore_runtime_calls.size()==5 && enabled_allocations.size()==110 && concrete_thread->instance_count==1 &&
+        concrete_semaphore->instance_count==2 && igb_bootstrap_read_word(runtime_thread_storage,0x20)==0xf00000,
+        "Next startup boundary replayed thread initialization, stack allocation or completion-semaphore setup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

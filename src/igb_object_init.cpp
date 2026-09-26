@@ -98,6 +98,7 @@ struct IgbObjectInitInvocation::Impl {
     IgbObjectInitFactory factory;
     std::shared_ptr<IgbObjectInitOperation> operation;
     std::function<MessengerCallResult()> callback;
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
     Phase phase=Phase::bind,after=Phase::done;
     std::uint32_t type_word{},allocation_address{},returned{},visits{};
     std::int32_t index{},count{};
@@ -152,7 +153,7 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             if((s.object.fields && !s.object.fields->physical_storage) || (s.object.types && !s.object.types->physical_storage))
                 fail("Object list lost its physical allocation binding during initialization.");
         }};
-    const auto clear=[&] {s.callback={};s.factory={};s.operation.reset();s.request={};check();};
+    const auto clear=[&] {s.callback={};s.checked_callback={};s.factory={};s.operation.reset();s.request={};check();};
     const auto select=[&](K kind,P after)->IgbObjectInitCall& {
         clear();s.request.kind=kind;s.request.object=s.object;s.request.metadata=s.metadata;
         s.factory=services?services->factory:IgbObjectInitFactory{};s.after=after;s.phase=P::call;return s.request;
@@ -313,9 +314,12 @@ MessengerCallResult IgbObjectInitInvocation::resume(std::shared_ptr<IgbObjectIni
             if(!s.factory)return pending("Object initialization requires its selected native engine operation.");
             if(!s.operation) {s.operation=s.factory(s.request);check();}
             if(!s.operation)return pending("Object initialization reached an unbound virtual, allocator or instance-list operation.");
-            if(!s.callback)s.callback=s.operation->resume;
-            if(!s.callback)return pending("Object initialization requires its retained operation continuation.");
-            {const auto result=s.callback();check();if(!result.completed)return result;s.returned=result.value;s.phase=s.after;}
+            if(!s.callback && !s.checked_callback){
+                s.checked_callback=s.operation->resume_checked;
+                if(!s.checked_callback)s.callback=s.operation->resume;
+            }
+            if(!s.callback && !s.checked_callback)return pending("Object initialization requires its retained operation continuation.");
+            {const auto result=s.checked_callback?s.checked_callback(check):s.callback();check();if(!result.completed)return result;s.returned=result.value;s.phase=s.after;}
             break;
         case P::done:
             clear();s.object.storage->active_.reset();if(s.object.field)s.object.field->construction_active_.reset();

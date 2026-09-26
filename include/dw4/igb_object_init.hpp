@@ -70,6 +70,9 @@ struct IgbObjectInitOperation {
     std::function<MessengerCallResult()> resume;
     std::shared_ptr<IgbRuntimeMetaType> metadata_result;
     std::shared_ptr<ModelSceneObject> pool_result;
+    // Optional native continuation. The guard is borrowed for this resume
+    // only; a child must never retain its caller's callback.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbObjectInitFactory=std::function<std::shared_ptr<IgbObjectInitOperation>(const IgbObjectInitCall&)>;
 struct IgbObjectInitServices {

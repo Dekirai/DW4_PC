@@ -311,10 +311,15 @@ Activation `+5C` now preserves the original queue/count and status-store order.
 With explicitly prepared initial exclusion state, the same cold invocation
 finishes the manager and publishes its singleton. Abstract redirect `80023E20`
 now enters **concrete thread getter `8003AF84`**, its registration, physical
-probe and nine local defaults. The factory reaches its actual `0x388` allocation.
-Continue through main-thread initialization `80077E94`, the reached aligned
-pool allocation/semaphore setter and subsequent current-thread adoption. No
-main thread is supplied. See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and
+probe and nine local defaults. The factory now constructs the concrete thread
+and its completion semaphore. Actual initializer `80077E94` reaches prepared
+tagged-pool/aligned-allocation services and native count setter `800773AC`.
+Construction finishes before the pending current-thread adoption `80077EFC`.
+Recover that ordered OS-context copy and tagged stack release next, retaining
+the explicit dependency on original OS initialization. A host thread identifier
+or blank context does not satisfy it. See
+[IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md) and
+[IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md) and
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md) and
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md) and
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md) and

@@ -217,9 +217,15 @@ propagates its fault guard through the activation callback. With explicitly
 prepared initial exclusion state, the cold test completes manager construction
 and singleton publication. Concrete thread getter `8003AF84` now completes its
 registration, distinct physical probe and nine local defaults. The factory
-then reaches the original `0x388` runtime allocation. Main-thread creation,
+then constructs the `0x388` runtime object and its owned completion semaphore.
+Initializer `80077E94` captures alignment, reads the fresh stack size and tag,
+selects the aligned allocation and invokes actual semaphore setter `800773AC`.
+Object initialization lends its fault guard through both native operations.
+Prepared tagged-pool and allocation services let the cold invocation finish
+construction and reach current-thread adoption `80077EFC`. Original OS context,
 manager list/wait/signal operations, scheduling and teardown remain required.
-See [IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
+See [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md),
+[IGB_GAMECUBE_THREAD.md](IGB_GAMECUBE_THREAD.md),
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_STRUCT_FIELDS.md](IGB_STRUCT_FIELDS.md),
 [IGB_STRUCT_FIELD_RUNTIME.md](IGB_STRUCT_FIELD_RUNTIME.md),

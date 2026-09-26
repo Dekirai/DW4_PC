@@ -1,5 +1,78 @@
 # Local validation
 
+## Concrete thread construction reaches current-thread adoption
+
+Validated locally on 2026-09-26. The same retained cold invocation now constructs
+the actual thread through the reflected factory, inherited field passes and
+initializer `80077E94`. It allocates a separate completion semaphore through its
+real redirect and initializer. The stack path reads only reference-tag byte
+`+04`, captures the requested size/alignment and retains the selected tagged-pool
+and aligned-allocation operations. Their lower services are explicitly prepared.
+Actual semaphore setter `800773AC` stores initial count zero and the fresh
+canonical success status while leaving that semaphore inactive.
+
+The cold test first suspends tagged lookup, then aligned allocation, and proves
+that repeated resumes do not reselect completed calls or allocate twice. Thread
+construction finishes with one published instance and no active construction
+lease. The original startup caller sets byte `+2C` to one and reaches its next
+physical virtual `+DC`, current-thread adoption `80077EFC`. The unknown stack
+payload remains untouched. Counts are **28 types, 101 descriptors, 113 default
+buffers, 12 prototypes, 110 enabled allocations and five runtime objects**.
+The manager and completion semaphores have independent identities and state.
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 209/209 local CTest suites passed with four build jobs |
+| Integrated cold startup | 5,192 checks; construction, separate semaphore ownership, pending stack operations and stable adoption boundary |
+| Thread initialization | 4,826 checks; exact setter branches, partial effects, fresh/captured reads, null allocation, byte-only tag, identity and nested fault guards |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled `8002A0A8` boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; existing prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+The initial focused-test build used an unavailable base constructor for a
+prepared pool. Correcting that fixture restored compilation. The initial cold
+wiring installed its adapter after the caller had correctly captured the old
+factory; a late-bound fixture wrapper fixed the integration. Initial build and
+cold diagnostics are retained. Neither correction changed production semantics.
+
+The original corpus was sealed before native observation: **110 cases, 3,619
+executed DOL instructions and 72 instruction addresses**. It executes actual
+`80077E94`, allocation caller `80068204`, tag reader `80068430`, count setter
+`800773AC` and verified getter/BLR/alignment leaves. Tagged lookup `8005929C`,
+pool `+DC` and custom selected virtuals are declared prepared boundaries.
+
+The frozen native subset matches **88/88 on first execution and exact replay**:
+74 completions, four prepared failures, six null-read guards, two null-result
+guards and two result-range guards. There are no pending or unexpected faults.
+Comparison includes represented physical bytes and initialized masks, ordered
+calls, canonical status and reached hidden results. The first driver compilation
+had the same prepared pool-constructor issue; its original source/log are
+preserved and its fixture was corrected before any native execution.
+
+**22 cases remain original-only**: twelve unavailable reads, four standalone
+allocation-caller entries, three null indirect methods, one unrepresented
+callback and two raw pool-table cases. The native service boundary does not
+expose those physical pool internals, so these are not equivalence claims.
+All 110 original replays, 88 native replays, 15 original hashes and 17 native
+hashes verify. Original manifest SHA256:
+`c8599e71ee3d6062bcd72fbc2eb48658ab06a752748baee91fa4832890a98fb3`.
+Native manifest SHA256:
+`57bf4df455c60d526b925fb79cbecbdc3751c525c7fa51e55a8d6138c2c75425`.
+Verified Release core SHA256:
+`ba1631c4b9e0da6e4477e1618e6e31df76c057e846363a6965fa6186d90f7c81`.
+
+IDA analysis now uses a local ELF32 big-endian PowerPC wrapper whose loaded
+section payloads match the supplied USA DOL. The initial direct DOL load had
+no usable segments and is not treated as evidence. Validated mapped bytes and
+assembly identify tagged-table setup inside memory-manager `+A8`, initial OS
+thread construction and the ordered context copy in `80077EFC`. These findings
+do not establish implemented OS initialization. Local IDA artifacts stay under
+ignored `work/ida/`; comparison artifacts use `work/native-gamecube-thread-init-`.
+
+See [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md). Current-thread
+adoption, original OS state, manager insertion, wait/signal and scheduling remain
+required. This milestone does not provide a playable-game build.
+
 ## Concrete thread registration reaches its runtime allocation
 
 Validated locally on 2026-09-26. The retained cold startup resumes abstract

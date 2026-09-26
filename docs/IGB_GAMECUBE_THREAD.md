@@ -63,14 +63,16 @@ inherited fields and nine local fields. There are 28 registered types, 101
 descriptors, 113 default buffers, twelve prototypes and 108 enabled allocations.
 The two struct defaults have distinct `0x318`-byte and `0x28`-byte payloads.
 The original factory next reaches its pool's `+D8` allocation for a `0x388`-byte
-thread. No thread instance is supplied; its instance count remains zero.
-The already constructed manager, list and semaphore retain their identities.
+thread. At that registration boundary its instance count is zero.
+The continuation in [IGB_GAMECUBE_THREAD_INIT.md](IGB_GAMECUBE_THREAD_INIT.md)
+now constructs the instance and its owned completion semaphore, reaching
+current-thread adoption. The existing manager, list and semaphore retain their identities.
 Raw allocator payloads and the earlier initial exclusion bit are explicit test
 preparation. These checks do not establish native startup or playable gameplay.
 
-Registration does not implement object initializer `80077E94`, adoption of the
+Object initializer `80077E94` is implemented separately. Adoption of the
 original current-thread state in `80077EFC`, manager wait/list/signal operations
-or host scheduling. These remain separate startup requirements. See
+and scheduling remain startup requirements. See
 [IGB_SEMAPHORE_ACTIVATION.md](IGB_SEMAPHORE_ACTIVATION.md),
 [IGB_THREAD_STARTUP.md](IGB_THREAD_STARTUP.md) and [VALIDATION.md](VALIDATION.md).
 Primary evidence is the supplied USA DOL, SHA1
