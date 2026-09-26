@@ -1,5 +1,86 @@
 # Local validation
 
+## Reference-counted lists reach the error-handler prerequisite
+
+Validated locally on 2026-09-26. The retained cold runner now registers
+`igObjectList` and `igThreadList` through actual `8002907C / 800240F4`, using
+distinct canonical cells `80561708 / 80561534`. Actual `8002910C` clones the
+inherited `_data` descriptor, preserves its ownership flag at `+42`, publishes
+the separate `8056170C` descriptor and completes replacement/temporary release.
+Both actual probes and the thread's extra `80023C40` callback execute through
+the existing registration composition. The next boundary is original wrapper
+`80031250`, for `igErrorHandler`.
+
+The composed result has **30 types, 102 descriptors, 114 default buffers,
+12 prototypes, 116 enabled allocations and five runtime objects**. The
+ref-object child list is constructed through the reflected initializer,
+increasing the existing child-list allocation count from six to seven.
+The new classes retain independent metadata, correct parent/type words and
+physical descriptor ordinal. Nonref/global/parent descriptors remain separate.
+Repeated resumes at the next boundary do not replay either class, its clone,
+callbacks or the completed thread startup.
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 213/213 local CTest suites passed with four build jobs |
+| Integrated cold startup | 6,110 checks; native registration/defaults/physical layout/child construction through exact `80031250` boundary |
+| List registration | 886 checks; all five profiles, separate cells, lazy/full/plain lookup, ordered probes and real extra-callback append/execution/cleanup |
+| List defaults | 678 checks; preserved known/unknown `+42`, distinct globals, capture across suspension, physical stores, destruction and nested parent faults |
+| Original decoder prefix | 400 original-inclusive checks; separate enabled metadata boundary unchanged |
+| Player regression | 447 original-inclusive /62 synthetic checks; prepared 48 held/released and 28 scheduled frame scope unchanged |
+| Python verifier | Six tests passed |
+
+Review for the new recursion regressions identified an existing composition gap in field
+replacement. Replacement, finalization, scalar/struct value and buffer
+continuations, and pointer-list reserve now borrow the enclosing fault check
+for each resume. A callback that catches a recursive outer call cannot permit
+later child buffer/backing/list publication. Completed original prefixes
+remain visible; guards are not retained beyond the resume.
+
+Three test repairs preceded the final pass. The first compilation found an
+incorrect direct `lock()` on an optional weak pointer. The next run caught a
+fixture inspecting a callback result after actual `66188` had moved the list;
+the test now captures the produced list before that transfer while keeping its
+ordering assertions. The stricter cold test initially used an obsolete absolute
+child-list count; it now captures the pre-ref count and verifies exactly one
+new allocation and its actual owner. These failed logs are retained. No
+production changes were needed after the first build. Verified core SHA256:
+`5bc57732a6577beb9ec6e2960fead854d34b1b439d1af28b2c8bb5229caef947`.
+
+The independent original corpus was sealed before native extension inspection:
+**222 cases, 27,471 executed instructions and 608 instruction addresses**.
+All 222 exact replays and fifteen artifact hashes verify. Actual defaults
+compose lookup, index, prototype getter, finalization and replacement; clone,
+descriptor virtuals, prototype registration, pools and destruction remain
+prepared endpoints. Paired original `2910C / 29724` cases distinguish preserved
+and cleared `+42`, including unknown bytes. The two exact registrar argument
+profiles are audited independently. Original manifest SHA256:
+`ca674b550ccb6320d939c178fcfaa2c5de85eb3bc480aec33c23fd8b4de0ec00`.
+
+The frozen native subset matches **166/166 on first execution and exact replay**: 126
+completions, fourteen prepared endpoint faults, seven null-read guards, four
+unknown-read guards, fourteen bounded physical guards and one null-write guard.
+No pending or unexpected outcome occurs. The first driver build passed without
+repairs. The selected scope comprises 63 composed defaults cases (58 ref and
+five paired nonref), 38 aligned probes and 65 wrapper/full/alias/non-null-lazy/
+plain lookups. Prepared lower bodies remain explicit comparison boundaries.
+All nineteen native artifact hashes verify. A separate ABI audit checks 42
+numeric words and four strings across both profiles, including distinct
+canonical metadata slots. Native manifest SHA256:
+`5cb8c0e594b1839f29f8f07a1c9148e3631831dd7097cea15db97c8b8fc1f028`.
+
+**56 cases remain original-only**: 22 lazy allocation cases with mismatched
+prepared lower scope, fourteen unavailable canonical cells, eight probes
+outside the native local profile, four generic registrar bodies audited
+separately for arguments, four sparse write denials, three artificial inline
+read mutations and one reserve boundary. Native missing-state suspension and
+representation guards are not relabeled as successful original behavior.
+
+Original OS/pool/context inputs remain explicitly prepared in this cold
+composition. Full startup, scheduling and playable gameplay are still required.
+See [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md). Local artifacts use
+`work/native-ref-list-`.
+
 ## Native OS wake returns through the first thread insertion
 
 Validated locally on 2026-09-26. Actual `8026200C` now performs ordered raw

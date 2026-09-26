@@ -65,6 +65,9 @@ reaches registration wrapper `800240CC` for the separate reference-counted
 `igThreadList` class. This proves the composed branch with its declared
 prerequisites, not full OS startup or executable gameplay.
 
+The subsequent native class registration and retained cold continuation are
+documented in [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md).
+
 Actual runtime zero initialization `8000542C` and later thread initialization
 `80260FB4` produce scheduler globals. They still need native integration; a C++
 owner allocation or ELF BSS declaration is not their execution. Nonzero-hint

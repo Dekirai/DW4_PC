@@ -218,12 +218,15 @@ data descriptor, existing memory allocator and raw copy/release paths. The cold
 composition inserts its first thread and executes native OS wake after the
 semaphore increment. With an explicitly prepared zero scheduler hint it completes
 nested restoration and releases the caller's temporary reference, then reaches
-wrapper `800240CC` for the distinct reference-counted `igThreadList`. Continue
-that registration and its `igObjectList` parent, alongside actual OS/pool
-initialization and native rescheduling/sleep. IDA analysis has located canonical tagged-table setup
+wrapper `800240CC` for the distinct reference-counted `igThreadList`. Its native
+registration and `igObjectList` parent now complete, preserving the inherited
+ownership flag and separate descriptor globals. Continue at error-handler
+wrapper `80031250`, alongside actual OS/pool initialization and native
+rescheduling/sleep. IDA analysis has located canonical tagged-table setup
 inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
-See [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
+See [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
+[IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),

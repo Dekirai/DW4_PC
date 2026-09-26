@@ -56,7 +56,8 @@ public:
     ~IgbPointerListInvocation();
     IgbPointerListInvocation(const IgbPointerListInvocation&)=delete;
     IgbPointerListInvocation& operator=(const IgbPointerListInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbPointerListServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbPointerListServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

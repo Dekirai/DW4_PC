@@ -9,12 +9,18 @@ MessengerCallResult pending(const char* message){return {false,0,message};}
 struct Running{bool& flag;explicit Running(bool& f):flag(f){flag=true;}~Running(){flag=false;}};
 template<class Request,class Factory,class Operation>struct Call {
     Request request;Factory factory;std::shared_ptr<Operation> operation;std::function<MessengerCallResult()> callback;
-    void clear(){callback={};operation.reset();factory={};request={};}
+    std::function<MessengerCallResult(const std::function<void()>&)> checked_callback;
+    void clear(){callback={};checked_callback={};operation.reset();factory={};request={};}
     template<class Check>MessengerCallResult poll(const Factory& fallback,Check check){
+        check();
         if(!factory)factory=fallback;if(!factory)return pending("Field operation requires its selected native service.");
         if(!operation){operation=factory(request);check();}if(!operation)return pending("Field operation reached an unbound native service.");
-        if(!callback)callback=operation->resume;if(!callback)return pending("Field operation requires its retained service continuation.");
-        const auto status=callback();check();return status;
+        if(!callback && !checked_callback){
+            if constexpr(requires{operation->resume_checked;})checked_callback=operation->resume_checked;
+            if(!checked_callback)callback=operation->resume;
+        }
+        if(!callback && !checked_callback)return pending("Field operation requires its retained service continuation.");
+        const auto status=checked_callback?checked_callback(check):callback();check();return status;
     }
 };
 using FieldCall=Call<IgbFieldOperationCall,IgbFieldOperationsFactory,IgbFieldOperation>;
@@ -116,7 +122,8 @@ MessengerCallResult IgbFieldBufferInvocation::resume(std::shared_ptr<IgbFieldOpe
     const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field buffer requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field buffer continuation was invalidated.");if(enclosing_check)enclosing_check();};
+    const auto check=[&]{if(s.fault)fail("Field buffer continuation was invalidated.");if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field buffer was invalidated by its enclosing callback.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto select=[&](K kind,P after)->IgbFieldOperationCall&{clear();s.call.request.kind=kind;s.call.request.field=s.field;s.phase=P::call;s.after=after;return s.call.request;};
     const auto capture=[&]{if(!s.field->default_bytes)return false;s.buffer=*s.field->default_bytes;s.address=s.field->default_bytes_address;return true;};
@@ -169,10 +176,13 @@ IgbFieldFinalizeInvocation::IgbFieldFinalizeInvocation(std::shared_ptr<IgbDecode
 IgbFieldFinalizeInvocation::~IgbFieldFinalizeInvocation()=default;
 bool IgbFieldFinalizeInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldFinalizeInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services){
+MessengerCallResult IgbFieldFinalizeInvocation::resume(std::shared_ptr<IgbFieldOperationsServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;if(s.running || s.fault){s.fault=true;fail("Field finalization requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running guard(s.running);
-    const auto check=[&]{if(s.fault)fail("Field finalization continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field finalization continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field finalization was invalidated by its enclosing callback.");};
     const auto clear=[&]{s.call.clear();check();};
     const auto virtual_call=[&](std::uint32_t slot,P after){const auto table=vtable(s.field);if(!table)return false;
         clear();s.call.request.kind=K::field_virtual;s.call.request.field=s.field;s.call.request.vtable_word=*table;s.call.request.virtual_slot=slot;
@@ -242,7 +252,8 @@ IgbFieldOperationsFactory make_native_igb_unsigned_int_field_factory(std::shared
         if(call.virtual_slot==0x64)operation->resume=[]{return MessengerCallResult{true,4,{}};};
         else if(call.virtual_slot==0x5c)operation->resume=[selected,out=operation.get()]{
             if(!selected->unsigned_int_prototype)return pending("Unsigned-int field getter requires canonical805614C0.");out->field_result=*selected->unsigned_int_prototype;return MessengerCallResult{true,0,{}};};
-        else{auto invocation=std::make_shared<IgbFieldBufferInvocation>(call.field);operation->resume=[invocation,selected]{return invocation->resume(selected);};}
+        else{auto invocation=std::make_shared<IgbFieldBufferInvocation>(call.field);operation->resume=[invocation,selected]{return invocation->resume(selected);};
+            operation->resume_checked=[invocation,selected](const std::function<void()>& check){return invocation->resume(selected,check);};}
         return operation;
     };
 }

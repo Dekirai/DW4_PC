@@ -64,6 +64,7 @@ std::optional<std::uint32_t> field_address(const std::shared_ptr<IgbDecodeRuntim
 }
 IgbDataListDefaultsServices::IgbDataListDefaultsServices(){
     unsigned_char_prototype=std::make_shared<IgbRuntimeFieldSlot>();nonref_data=std::make_shared<IgbRuntimeFieldSlot>();
+    ref_data=std::make_shared<IgbRuntimeFieldSlot>();
     factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{0x8002e1acu,0x8002e1acu,0x8002ac34u});
     names=std::make_shared<IgbFieldNameTable>(IgbFieldNameTable{std::make_shared<const std::string>("_count"),
         std::make_shared<const std::string>("_capacity"),std::make_shared<const std::string>("_data")});
@@ -127,7 +128,8 @@ struct IgbDataListDefaultsInvocation::Impl {
     Call call;std::uint32_t first{},find_index{},index{};bool running{},fault{},validate_binding{};
 };
 IgbDataListDefaultsInvocation::IgbDataListDefaultsInvocation(IgbDataListKind kind):impl_(std::make_unique<Impl>()){
-    if(kind!=IgbDataListKind::data_list && kind!=IgbDataListKind::nonref_object)fail("This data-list class has no defaults body.");impl_->kind=kind;
+    if(kind!=IgbDataListKind::data_list && kind!=IgbDataListKind::nonref_object && kind!=IgbDataListKind::ref_object)
+        fail("This data-list class has no defaults body.");impl_->kind=kind;
 }
 IgbDataListDefaultsInvocation::~IgbDataListDefaultsInvocation(){auto& s=*impl_;if((!completed() || faulted()) && s.owner){
     if(s.metadata)s.owner->retained.push_back(s.metadata);if(s.field)s.owner->retained.push_back(s.field);
@@ -175,15 +177,18 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
             if(!address)return pending("Data-list element store requires its captured prototype arithmetic address.");igb_bootstrap_write_word(*p,0x3c,*address);}
         s.field->element_field=std::weak_ptr<IgbDecodeRuntimeField>(s.element);
         s.phase=s.kind==IgbDataListKind::data_list?P::flag35:P::size;break;
-    case P::size:word(0x38,0);s.field->word_38=0;s.phase=P::flag42;break;
+    case P::size:word(0x38,0);s.field->word_38=0;
+        s.phase=s.kind==IgbDataListKind::ref_object?P::global:P::flag42;break;
     case P::flag35:byte(0x35,1);s.field->flag_35=std::uint8_t{1};s.phase=P::flag40;break;
     case P::flag40:byte(0x40,1);s.field->flag_40=std::uint8_t{1};s.phase=P::flag41;break;
     case P::flag41:byte(0x41,1);s.field->flag_41=std::uint8_t{1};s.phase=P::schema_setup;break;
     case P::flag42:byte(0x42,0);s.field->flag_42=std::uint8_t{0};s.phase=P::global;break;
-    case P::global:
-        if(!services || !services->nonref_data)return pending("Data-list specialization requires canonical descriptor cell80561734.");
-        word(0x1c,0x80561734);s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(services->nonref_data);s.field->global_slot_address=0x80561734;
-        s.replace=std::make_unique<IgbFieldReplaceInvocation>(s.metadata,s.index,s.field);s.phase=P::replace;break;
+    case P::global:{
+        const auto address=s.kind==IgbDataListKind::ref_object?0x8056170cu:0x80561734u;
+        const auto slot=services?(s.kind==IgbDataListKind::ref_object?services->ref_data:services->nonref_data):nullptr;
+        if(!slot)return pending("Data-list specialization requires its distinct canonical descriptor cell.");
+        word(0x1c,address);s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(slot);s.field->global_slot_address=address;
+        s.replace=std::make_unique<IgbFieldReplaceInvocation>(s.metadata,s.index,s.field);s.phase=P::replace;break;}
     case P::schema_setup:
         if(!services)return pending("Data-list defaults require their original schema tables.");
         s.schema=std::make_unique<IgbFieldSchemaInvocation>(s.metadata,services->names,services->globals,services->offsets,s.first);s.phase=P::schema;break;
@@ -222,7 +227,7 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
         s.field=s.call.operation->field_result;s.address=s.call.operation->field_address;clear();bind();
         s.field_binding=capture_field_binding(s.field);
         s.prototype=std::make_unique<IgbDataListPrototypeInvocation>(IgbDataListPrototypeKind::object);s.phase=P::prototype;break;
-    case P::replace:{bind();const auto status=s.replace->resume(lists());check();if(!status.completed)return status;
+    case P::replace:{bind();const auto status=s.replace->resume(lists(),check);check();if(!status.completed)return status;
         s.replace.reset();check();s.phase=P::release;break;}
     case P::release:{const auto reference=s.field->reference_word-1u;word(4,reference);s.field->reference_word=reference;
         if((s.field->reference_word&0x7fffffu)==0){auto& request=select(K::destroy_field,P::destroy);request.field=s.field;request.function=0x80066e1c;}
@@ -234,9 +239,12 @@ MessengerCallResult IgbDataListDefaultsInvocation::resume(std::shared_ptr<IgbDat
 }
 IgbTypeRegistrationFactory make_native_igb_data_list_defaults_factory(std::shared_ptr<IgbDataListDefaultsServices> services,IgbTypeRegistrationFactory remaining){
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbTypeRegistrationCall& call)->std::shared_ptr<IgbTypeRegistrationOperation>{
-        if(call.kind!=IgbTypeRegistrationServiceKind::defaults || (call.function!=0x80033aa4 && call.function!=0x80029724))return remaining?remaining(call):nullptr;
+        if(call.kind!=IgbTypeRegistrationServiceKind::defaults ||
+            (call.function!=0x80033aa4 && call.function!=0x80029724 && call.function!=0x8002910c))return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Data-list defaults services expired before selection.");
-        auto invocation=std::make_shared<IgbDataListDefaultsInvocation>(call.function==0x80033aa4?IgbDataListKind::data_list:IgbDataListKind::nonref_object);
+        const auto kind=call.function==0x80033aa4?IgbDataListKind::data_list:
+            call.function==0x80029724?IgbDataListKind::nonref_object:IgbDataListKind::ref_object;
+        auto invocation=std::make_shared<IgbDataListDefaultsInvocation>(kind);
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();operation->resume=[invocation,selected]{return invocation->resume(selected);};return operation;
     };
 }

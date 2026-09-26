@@ -216,9 +216,11 @@ and executes the positive semaphore wait. Actual data-list growth
 backing and inserts the thread. Signal reaches the original OS wake operation
 after incrementing the semaphore. Native wake now preserves queue transitions,
 scheduler selection and nested interrupt restoration. With explicitly prepared
-OS state, the first thread remains owned by the manager and the prerequisite
-runner reaches the separate reference-counted `igThreadList` registration.
+OS state, the first thread remains owned by the manager. The prerequisite
+runner registers separate reference-counted `igObjectList` and `igThreadList`
+classes through native clone/defaults and reaches the error-handler prerequisite.
 Rescheduling, sleep and original OS/pool initialization remain required. See
+[IGB_REF_COUNTED_LISTS.md](docs/IGB_REF_COUNTED_LISTS.md),
 [IGB_OS_THREAD_WAKE.md](docs/IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](docs/IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](docs/IGB_THREAD_MANAGER_INSERT.md),

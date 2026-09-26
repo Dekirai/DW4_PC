@@ -4,7 +4,7 @@
 
 namespace dw4 {
 class IgbDataListRegistrationError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
-enum class IgbDataListKind {data_list,nonref_object,thread_list};
+enum class IgbDataListKind {data_list,nonref_object,thread_list,ref_object,ref_thread};
 enum class IgbDataListLookup {fully_registered,plain,allocate_if_null};
 struct IgbDataListProfile {
     const char* name;
@@ -25,13 +25,16 @@ struct IgbDataListRegistrationServices {
     std::function<IgbBootstrapPointer(IgbDataListKind)> local_storage;
     std::vector<IgbBootstrapPointer> allocations;
     std::vector<std::shared_ptr<void>> retained;
+    // Reference-counted classes have separate globals and descriptors.
+    std::shared_ptr<IgbRegistrationMetaSlot> ref_object_metadata; // Canonical80561708.
+    std::shared_ptr<IgbRegistrationMetaSlot> ref_thread_metadata; // Canonical80561534.
 };
 const IgbDataListProfile& igb_data_list_profile(IgbDataListKind);
 std::shared_ptr<IgbRegistrationMetaSlot> igb_data_list_metadata_slot(
     const std::shared_ptr<IgbDataListRegistrationServices>&,IgbDataListKind);
 IgbTypeRegistrationArguments igb_data_list_type_registration_arguments(
     const std::shared_ptr<IgbDataListRegistrationServices>&,IgbDataListKind);
-// Actual33A14/29694/23F50, including prerequisite21B94 before66204.
+// Actual33A14/29694/23F50/2907C/240F4, with21B94 before66204.
 class IgbDataListTypeRegistrationInvocation {
 public:
     explicit IgbDataListTypeRegistrationInvocation(IgbDataListKind);
@@ -44,7 +47,7 @@ public:
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
 // Full getters compose the actual66188 wrapper. Plain reads do not test ready
-// flags. Lazy DataList33934 and ThreadList23E40 allocate only on known null.
+// flags. Lazy33934/23E40/28F84/23FE4 allocate only on known null.
 class IgbDataListLookupInvocation {
 public:
     IgbDataListLookupInvocation(IgbDataListKind,IgbDataListLookup=IgbDataListLookup::fully_registered);
@@ -56,7 +59,7 @@ public:
     std::shared_ptr<IgbRuntimeMetaType> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual339AC/29614/23EB8:6665C, ordered vtable writes, and the original
+// Actual339AC/29614/23EB8/28FFC/2405C:6665C, ordered vtable writes and
 // interleaved ArkCore capture. Return only the represented local physical word.
 class IgbDataListLayoutProbeInvocation {
 public:

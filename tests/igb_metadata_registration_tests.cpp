@@ -3656,7 +3656,7 @@ void actual_cold_bootstrap_prefix(){
         ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
         ", runtime allocations="<<runtime_allocations.size()<<'\n';
     check(!after_os_wake.completed && !call.faulted() &&
-        after_os_wake.diagnostic=="Registration requires original function 0x800240CC." && wake_interrupt_calls.size()==3 &&
+        after_os_wake.diagnostic=="Data-list registration requires its canonical metadata cell after prerequisites." && wake_interrupt_calls.size()==3 &&
         wake_interrupt_calls[1].kind==IgbInterruptServiceKind::restore && wake_interrupt_calls[1].restore_enabled==0 &&
         wake_interrupt_calls[2].kind==IgbInterruptServiceKind::restore && wake_interrupt_calls[2].restore_enabled==1 &&
         interrupt_state->enabled==true && schedule_selections==0 && !os_wake->scheduler->run_bits &&
@@ -3676,6 +3676,83 @@ void actual_cold_bootstrap_prefix(){
         enabled_allocations.size()==after_wake_allocations && member_calls.size()==after_wake_members &&
         schedule_selections==0 && thread_stack_frees==1 && igb_bootstrap_read_word(runtime_thread_storage,4)==1,
         "The next original startup boundary replayed completed manager insertion, wake or temporary-reference release.");
+
+    // These separate original globals start known null in this prepared cold
+    // fixture. Their classes, fields and ownership are produced by the same
+    // retained registrar; do not alias the already registered nonref lists.
+    const auto ref_prior_child_allocations=enabled_type_list_allocations.size();
+    data_registration->ref_object_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    data_registration->ref_thread_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    std::vector<IgbDataListKind> ref_list_probes;
+    std::vector<IgbBootstrapPointer> ref_list_probe_locals;
+    data_registration->local_storage=[&](IgbDataListKind kind){
+        check(kind==IgbDataListKind::ref_object || kind==IgbDataListKind::ref_thread,
+            "Reference-counted list registration replayed a completed nonref class probe.");
+        auto raw=allocation(0xc70000+static_cast<std::uint32_t>(ref_list_probe_locals.size())*0x100,0x14);
+        ref_list_probes.push_back(kind);ref_list_probe_locals.push_back(raw);return raw;
+    };
+    const auto after_ref_lists=call.resume(bootstrap);
+    std::cout<<"Cold native reference-counted lists: "<<after_ref_lists.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", probes="<<ref_list_probes.size()<<
+        ", child lists="<<ref_prior_child_allocations<<"->"<<enabled_type_list_allocations.size()<<'\n';
+    check(!after_ref_lists.completed && !call.faulted(),
+        "Reference-counted list registration incorrectly completed full game startup.");
+    const auto ref_object_type=**data_registration->ref_object_metadata,ref_thread_type=**data_registration->ref_thread_metadata;
+    check(after_ref_lists.diagnostic=="Registration requires original function 0x80031250." &&
+        f.core->types->count==30 && descriptors.size()==102 && default_allocations==114 && enabled_allocations.size()==116 &&
+        runtime_allocations.size()==5 && (**prototypes->registry)->count==12 && !**meta_enum->metadata &&
+        ref_object_type && ref_thread_type && ref_object_type!=nonref_type && ref_thread_type!=thread_list_metadata &&
+        ref_object_type->class_flags==7 && ref_thread_type->class_flags==7 &&
+        f.core->types->backing->at(28)==ref_object_type && f.core->types->backing->at(29)==ref_thread_type,
+        "Actual reference-counted list registration did not preserve independent classes and reach the original error-handler prerequisite.");
+    check(ref_object_type->parent==data_type && ref_thread_type->parent==ref_object_type &&
+        ref_object_type->name && *ref_object_type->name=="igObjectList" && ref_thread_type->name && *ref_thread_type->name=="igThreadList" &&
+        ref_object_type->native_size==0x14 && ref_thread_type->native_size==0x14 &&
+        ref_object_type->type_word==0x80476c7c && ref_thread_type->type_word==0x80476bb4 &&
+        ref_list_probes==std::vector<IgbDataListKind>{IgbDataListKind::ref_object,IgbDataListKind::ref_thread} &&
+        igb_bootstrap_read_word(ref_list_probe_locals[0],0)==0x80476c7c &&
+        igb_bootstrap_read_word(ref_list_probe_locals[1],0)==0x80476bb4,
+        "Reference classes lost their actual parent chain, names, sizes or ordered native probes.");
+    const auto ref_data=descriptors.back();const auto ref_data_storage=descriptor_allocations.back();
+    check(ref_data!=pending_data_descriptor && ref_data!=specialized_data && *data_defaults->ref_data==ref_data &&
+        *data_defaults->nonref_data==specialized_data && data_type->fields->backing->at(4)==pending_data_descriptor &&
+        nonref_type->fields->backing->at(4)==specialized_data && thread_list_metadata->fields->backing->at(4)==specialized_data &&
+        ref_object_type->fields->count==5 && ref_thread_type->fields->count==5 &&
+        ref_object_type->fields->backing->at(4)==ref_data && ref_thread_type->fields->backing->at(4)==ref_data &&
+        ref_data->name && *ref_data->name=="_data" && ref_data->global_slot_address==0x8056170c &&
+        ref_data->ordinal==4 && ref_data->offset==16 && ref_data->declaring_type && ref_data->declaring_type->lock()==ref_object_type &&
+        ref_data->element_field && ref_data->element_field->lock()==prototype_field && ref_data->word_38==0,
+        "Reference-list defaults reused a nonref descriptor or bypassed actual clone, replacement and physical layout.");
+    check(igb_bootstrap_read_word(ref_data_storage,0x1c)==0x8056170c &&
+        igb_bootstrap_read_word(ref_data_storage,0x38)==0 &&
+        igb_bootstrap_read_word(ref_data_storage,0x3c)==igb_bootstrap_address(prototype_storage) &&
+        igb_bootstrap_read_byte(ref_data_storage,0x12)==0 && igb_bootstrap_read_byte(ref_data_storage,0x13)==4 &&
+        ref_data->flag_42==pending_data_descriptor->flag_42 &&
+        ref_data_storage.storage->bytes->bytes[ref_data_storage.offset+0x42]==
+            descriptor_allocations[71].storage->bytes->bytes[descriptor_allocations[71].offset+0x42] &&
+        ref_data_storage.storage->bytes->initialized[ref_data_storage.offset+0x42]==
+            descriptor_allocations[71].storage->bytes->initialized[descriptor_allocations[71].offset+0x42] &&
+        ref_data->default_bytes && ref_data->default_bytes->buffer!=pending_data_descriptor->default_bytes->buffer &&
+        ref_data->default_bytes->buffer!=specialized_data->default_bytes->buffer,
+        "2910C cleared the inherited reference flag or lost distinct physical descriptor/default-buffer ownership.");
+    check(data_type->children && (*data_type->children)->count==2 &&
+        (*data_type->children)->backing->at(0)==nonref_type && (*data_type->children)->backing->at(1)==ref_object_type &&
+        ref_object_type->children && (*ref_object_type->children)->count==1 &&
+        (*ref_object_type->children)->backing->at(0)==ref_thread_type &&
+        enabled_type_list_allocations.size()==ref_prior_child_allocations+1 &&
+        enabled_type_list_allocations.back().types==*ref_object_type->children &&
+        wake_interrupt_calls.size()==3 && schedule_selections==0 && thread_stack_frees==1 &&
+        igb_bootstrap_read_word(runtime_thread_storage,4)==1 && interrupt_state->enabled==true,
+        "Reference class linkage replayed thread startup or substituted a ready child-list instance.");
+    const auto ref_finished_allocations=enabled_allocations.size();const auto ref_finished_names=string_allocations;
+    const auto ref_finished_callbacks=freed_callback_lists.size(),ref_finished_clones=reached_reflected_clones.size();
+    check(call.resume(bootstrap).diagnostic==after_ref_lists.diagnostic && !call.faulted() &&
+        enabled_allocations.size()==ref_finished_allocations && string_allocations==ref_finished_names &&
+        freed_callback_lists.size()==ref_finished_callbacks && reached_reflected_clones.size()==ref_finished_clones &&
+        ref_list_probes.size()==2 && descriptors.size()==102 && default_allocations==114 && f.core->types->count==30 &&
+        wake_interrupt_calls.size()==3 && runtime_allocations.size()==5,
+        "Pending error-handler registration replayed the completed reference classes, clone or callback cleanup.");
 }
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_metadata_registration_tests");

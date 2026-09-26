@@ -241,9 +241,14 @@ inserts the first thread and enters native OS wake after signal's increment.
 Wake preserves raw dequeue/enqueue stores, signed suspension, priority arithmetic
 and shared optional scheduler words. Nonzero hints select explicit rescheduling;
 unknown state stays pending. With a declared prepared zero hint, nested interrupt
-restoration and the outer temporary-reference release complete before the next
-reference-counted list registration. Original OS/pool initialization, rescheduling,
-sleep and teardown remain required. See [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
+restoration and the outer temporary-reference release complete. The next two
+reference-counted list classes reuse native registration and clone/defaults with
+separate canonical cells; their original ownership flag survives. Borrowed fault
+checks reach nested field finalization, buffer allocation and list reserve.
+The cold runner reaches error-handler wrapper `80031250`. Original OS/pool
+initialization, rescheduling, sleep and teardown remain required. See
+[IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md),
+[IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md),
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md),
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md),
 [IGB_GAMECUBE_THREAD_ADOPT.md](IGB_GAMECUBE_THREAD_ADOPT.md),

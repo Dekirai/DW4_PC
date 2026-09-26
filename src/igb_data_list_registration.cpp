@@ -11,7 +11,9 @@ using E=IgbDataListKind;using L=IgbDataListLookup;
 constexpr std::array profiles{
     IgbDataListProfile{"igDataList",0x80561d3c,0x800339ec,0x80033a14,0x80066b08,0x800237d0,0x80033a84,0x800339ac,0x80033aa4,0x80033970,0x80033934,0x80024d1c},
     IgbDataListProfile{"igNonRefCountedObjectList",0x80561730,0x8002966c,0x80029694,0x80033a14,0x80024d1c,0x80029704,0x80029614,0x80029724,0x800295d8,0,0x80023fdc},
-    IgbDataListProfile{"igNonRefCountedThreadList",0x80561530,0x80023f28,0x80023f50,0x80029694,0x80023fdc,0x80023fbc,0x80023eb8,0,0x80023e7c,0x80023e40,0}
+    IgbDataListProfile{"igNonRefCountedThreadList",0x80561530,0x80023f28,0x80023f50,0x80029694,0x80023fdc,0x80023fbc,0x80023eb8,0,0x80023e7c,0x80023e40,0},
+    IgbDataListProfile{"igObjectList",0x80561708,0x80029054,0x8002907c,0x80033a14,0x80024d1c,0x800290ec,0x80028ffc,0x8002910c,0x80028fc0,0x80028f84,0x80024180},
+    IgbDataListProfile{"igThreadList",0x80561534,0x800240cc,0x800240f4,0x8002907c,0x80024180,0x80024160,0x8002405c,0,0x80024020,0x80023fe4,0}
 };
 std::optional<E> registration_function(std::uint32_t function,bool wrapper){
     for(std::size_t i=0;i<profiles.size();++i)if(function==(wrapper?profiles[i].wrapper:profiles[i].body))return static_cast<E>(i);return {};
@@ -28,9 +30,11 @@ std::optional<Lookup> lookup_function(std::uint32_t function){
 std::optional<E> probe_function(std::uint32_t function){
     for(std::size_t i=0;i<profiles.size();++i)if(function==profiles[i].probe)return static_cast<E>(i);return {};
 }
-constexpr std::array<std::uint32_t,5> probe_words{0x80472fa0,0x80476e0c,0x80476da8,0x80476d44,0x80476ce0};
-unsigned probe_count(E kind){return kind==E::data_list?1u:kind==E::nonref_object?3u:5u;}
-unsigned probe_capture(E kind){return kind==E::data_list?0u:kind==E::nonref_object?1u:3u;}
+constexpr std::array<std::uint32_t,5> nonref_probe_words{0x80472fa0,0x80476e0c,0x80476da8,0x80476d44,0x80476ce0};
+constexpr std::array<std::uint32_t,5> ref_probe_words{0x80472fa0,0x80476e0c,0x80476c7c,0x80476c18,0x80476bb4};
+const auto& probe_words(E kind){return kind==E::ref_object || kind==E::ref_thread?ref_probe_words:nonref_probe_words;}
+unsigned probe_count(E kind){return kind==E::data_list?1u:(kind==E::nonref_object || kind==E::ref_object)?3u:5u;}
+unsigned probe_capture(E kind){return kind==E::data_list?0u:(kind==E::nonref_object || kind==E::ref_object)?1u:3u;}
 }
 const IgbDataListProfile& igb_data_list_profile(E kind){
     const auto index=static_cast<std::size_t>(kind);if(index>=profiles.size())fail("Unknown data-list registration class.");return profiles[index];
@@ -39,6 +43,8 @@ std::shared_ptr<IgbRegistrationMetaSlot> igb_data_list_metadata_slot(const std::
     igb_data_list_profile(kind);if(!services)return {};
     if(kind==E::data_list)return services->data_metadata;
     if(kind==E::nonref_object)return services->object_metadata;
+    if(kind==E::ref_object)return services->ref_object_metadata;
+    if(kind==E::ref_thread)return services->ref_thread_metadata;
     return services->dependencies?services->dependencies->thread_list:nullptr;
 }
 IgbTypeRegistrationArguments igb_data_list_type_registration_arguments(const std::shared_ptr<IgbDataListRegistrationServices>& services,E kind){
@@ -47,7 +53,7 @@ IgbTypeRegistrationArguments igb_data_list_type_registration_arguments(const std
     args.name=std::make_shared<const std::string>(p.name);args.flag=0;args.native_size=0x14;
     args.parent_registration=p.parent;args.parent_getter=p.parent_getter;args.field_callback=p.field_callback;
     args.layout_probe=p.probe;args.defaults_callback=p.defaults;
-    if(kind==E::thread_list)args.extra_callbacks=std::make_shared<std::vector<std::uint32_t>>(std::initializer_list<std::uint32_t>{0x80023c40,0});
+    if(kind==E::thread_list || kind==E::ref_thread)args.extra_callbacks=std::make_shared<std::vector<std::uint32_t>>(std::initializer_list<std::uint32_t>{0x80023c40,0});
     return args;
 }
 struct IgbDataListTypeRegistrationInvocation::Impl {
@@ -167,14 +173,14 @@ MessengerCallResult IgbDataListLayoutProbeInvocation::resume(std::shared_ptr<Igb
         {const auto status=s.reset->resume();check();if(!status.completed)return status;}
         s.reset.reset();check();s.phase=P::before_core;break;
     case P::before_core:
-        while(s.index<probe_capture(s.kind)){igb_bootstrap_write_word(s.local,0,probe_words[s.index]);++s.index;}
+        while(s.index<probe_capture(s.kind)){igb_bootstrap_write_word(s.local,0,probe_words(s.kind)[s.index]);++s.index;}
         s.phase=P::core;break;
     case P::core:
         if(!services || !services->types || !services->types->runtime || !services->types->runtime->singleton)
             return pending("Data-list probe requires fresh ArkCore80562100 at its original capture point.");
         s.core=*services->types->runtime->singleton;s.phase=P::after_core;break;
     case P::after_core:
-        while(s.index<probe_count(s.kind)){igb_bootstrap_write_word(s.local,0,probe_words[s.index]);++s.index;}
+        while(s.index<probe_count(s.kind)){igb_bootstrap_write_word(s.local,0,probe_words(s.kind)[s.index]);++s.index;}
         s.phase=P::offset;break;
     case P::offset:
         if(!s.core)fail("Data-list probe dereferences null captured ArkCore at+394.");

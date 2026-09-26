@@ -237,7 +237,171 @@ void adapters_and_recursion(){Fixture f;auto adapter=make_native_igb_data_list_d
     rejects([&]{call.resume(recursive.services);},"Caught recursive defaults failure did not poison its outer continuation.");
     check(call.faulted() && !*recursive.services->nonref_data,"Recursive failure published an unreached descriptor global.");
 }
+std::shared_ptr<IgbRuntimeMetaType> prepare_reference_parent(Fixture& f){
+    f.prepare_parent();auto target=metadata(0x940000);target->fields->count=f.data->fields->count;
+    *target->fields->backing=*f.data->fields->backing;*target->fields->backing_bytes=*f.data->fields->backing_bytes;
+    for(auto& entry:*target->fields->backing)if(entry){++entry->reference_word;
+        if(entry->physical_storage)igb_bootstrap_write_word({entry->physical_storage->storage.lock(),entry->physical_storage->offset},4,entry->reference_word);}
+    f.services->registration->ref_object_metadata=std::make_shared<IgbRegistrationMetaSlot>(target);
+    f.services->lists->schema->fields->pointer_lists->values.push_back({0x640000,target,{}});return target;
+}
+
+void reference_defaults_preserve_flag_and_separate_globals(){
+    for(const auto flag:{-1,0,1,0xa2,0xff}){Fixture f;f.with_physical=true;f.bind_prototypes();const auto target=prepare_reference_parent(f);
+        const auto source=f.created[2];if(flag<0)source->flag_42.reset();else source->flag_42=static_cast<std::uint8_t>(flag);
+        auto sentinel=field();*f.services->nonref_data=sentinel;*f.services->lists->internal_data=sentinel;
+        f.action=[&](const IgbListDefaultsCall& c){if(c.kind!=K::clone_field)return;const auto p=f.allocations.back();
+            if(flag<0){p.storage->bytes->bytes[p.offset+0x42]=0xd3;p.storage->bytes->initialized[p.offset+0x42]=0;f.clone->flag_42.reset();}
+            else{igb_bootstrap_write_byte(p,0x42,static_cast<std::uint8_t>(flag));f.clone->flag_42=static_cast<std::uint8_t>(flag);}};
+        IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);check(run.resume(f.services).completed && f.created.size()==3 && f.calls.size()==1 &&
+            f.calls[0].field==source && f.calls[0].vtable_word==0x80476088 && f.calls[0].virtual_slot==0x54 && f.calls[0].argument==1,
+            "Reference defaults did not clone the inherited descriptor exactly once without appending a new batch.");
+        const auto p=f.allocations.back();check(igb_bootstrap_read_word(p,0x3c)==0x670000 && igb_bootstrap_read_word(p,0x38)==0 &&
+            igb_bootstrap_read_word(p,0x1c)==0x8056170c && f.clone->element_field->lock()==f.object_prototype && f.clone->word_38==0 &&
+            f.clone->global_slot_address==0x8056170c && f.clone->global_slot && f.clone->global_slot->lock()==f.services->ref_data && *f.services->ref_data==f.clone &&
+            *f.services->nonref_data==sentinel && *f.services->lists->internal_data==sentinel && *f.services->globals->at(2)->slot==source,
+            "Reference specialization reused another descriptor global or missed physical prototype/size/cell-address stores.");
+        check(target->fields->backing->at(4)==f.clone && f.object->fields->backing->at(4)==source && f.data->fields->backing->at(4)==source &&
+            igb_buffer_word(target->fields->backing_bytes,16)==0x180000 && source->reference_word==2 && f.clone->reference_word==1,
+            "Reference defaults changed the nonreference/parent registry or lost replacement/reference publication.");
+        if(flag<0)check(!f.clone->flag_42 && p.storage->bytes->bytes[p.offset+0x42]==0xd3 && !p.storage->bytes->initialized[p.offset+0x42],
+            "2910C read, cleared or initialized the unknown cloned+42 byte.");
+        else check(f.clone->flag_42==flag && igb_bootstrap_read_byte(p,0x42)==flag,"2910C inherited the nonreference29724 flag-clear operation.");
+        const auto before=p.storage->bytes->bytes,mask=p.storage->bytes->initialized;check(run.resume().completed && f.calls.size()==1 &&
+            p.storage->bytes->bytes==before && p.storage->bytes->initialized==mask,"Completed reference defaults replayed clone or physical stores.");
+    }
+    Fixture narrow;narrow.bind_prototypes();const auto target=prepare_reference_parent(narrow);narrow.with_physical=true;narrow.physical_size=0x40;
+    IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);check(run.resume(narrow.services).completed && target->fields->backing->at(4)==narrow.clone &&
+        narrow.clone->flag_42==0xa2,"Reference specialization required destination bytes beyond its actual+3C word store.");
+}
+
+void reference_clone_prototype_and_global_pending_order(){
+    Fixture f;f.bind_prototypes();const auto target=prepare_reference_parent(f);const auto source=f.created[2];f.with_physical=true;f.ready=false;
+    f.services->lists->values->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};f.registration_ready=false;
+    IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);check(!run.resume(f.services).completed && f.calls.size()==1 && !f.clone &&
+        f.callback_functions.empty(),"Reference defaults did not stop at the captured clone before calling its prototype getter.");
+    // The selected constructor supplies its captured concrete field type even
+    // if the source's live dispatch word changes while cloning is suspended.
+    f.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field)igb_bootstrap_write_word(f.allocations.back(),0,c.vtable_word);};
+    source->vtable_word=0x12345678;f.ready=true;check(!run.resume(f.services).completed && f.clone && f.calls.size()==1 && f.polls==2 &&
+        f.callback_functions==std::vector<std::uint32_t>{0x80028a20} && !*f.services->ref_data,
+        "Resumed clone reselected its source virtual or skipped actual object prototype registration.");
+    const auto p=f.allocations.back();const auto bytes_before=p.storage->bytes->bytes;auto other=metadata(0x950000);
+    *f.services->registration->ref_object_metadata=other;f.services->ref_data.reset();f.registration_ready=true;
+    check(!run.resume(f.services).completed && f.registration_polls==2 && igb_bootstrap_read_word(p,0x3c)==0x670000 &&
+        igb_bootstrap_read_word(p,0x38)==0 && igb_bootstrap_read_word(p,0x1c)==0xcccccccc && target->fields->backing->at(4)==source &&
+        other->fields->count==0,"Missing reference descriptor cell did not stop after captured prototype/size and before global/replacement.");
+    check(p.storage->bytes->bytes[p.offset+0x42]==bytes_before[p.offset+0x42],"Pending reference global changed the unstored clone flag.");
+    igb_bootstrap_write_word(p,0x3c,0xfaceb00c);f.services->ref_data=std::make_shared<IgbRuntimeFieldSlot>();
+    check(run.resume(f.services).completed && target->fields->backing->at(4)==f.clone && other->fields->count==0 &&
+        igb_bootstrap_read_word(p,0x3c)==0xfaceb00c && f.calls.size()==1 && *f.services->ref_data==f.clone,
+        "Late reference global recaptured metadata, replayed earlier stores, or repeated the clone.");
+}
+
+void reference_replacement_and_creator_release_pending(){
+    Fixture f;f.bind_prototypes();f.with_physical=true;const auto target=prepare_reference_parent(f);const auto source=f.created[2];
+    source->reference_word=1;igb_bootstrap_write_word(f.allocations[2],4,1);
+    f.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field)f.ready=false;};
+    IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);check(!run.resume(f.services).completed && f.calls.size()==2 &&
+        f.calls[1].kind==K::destroy_field && f.calls[1].field==source && source->reference_word==0 && f.clone->reference_word==2 &&
+        target->fields->backing->at(4)==source && *f.services->ref_data==f.clone,
+        "Pending old-field destruction changed reference replacement's original retain/global/store prefix.");
+    const auto p=f.allocations.back();check(igb_bootstrap_read_word(p,0x1c)==0x8056170c && igb_bootstrap_read_byte(p,0x42)==0xcc &&
+        igb_bootstrap_read_word(p,4)==2,"Reference destruction boundary lost physical stores or cleared cloned+42.");
+    f.ready=true;check(run.resume(f.services).completed && target->fields->backing->at(4)==f.clone && f.clone->reference_word==1 &&
+        source->reference_word==0 && f.calls.size()==2,"Resuming old-field destruction repeated clone references or failed the final creator release.");
+
+    for(const auto initial:{0u,0x00800000u,0xff800000u}){Fixture creator;creator.bind_prototypes();const auto owner=prepare_reference_parent(creator);creator.with_physical=true;
+        creator.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field){igb_bootstrap_write_word(creator.allocations.back(),4,initial);creator.ready=false;}};
+        IgbDataListDefaultsInvocation release(IgbDataListKind::ref_object);check(!release.resume(creator.services).completed && creator.clone->reference_word==initial &&
+            owner->fields->backing->at(4)==creator.clone && *creator.services->ref_data==creator.clone && creator.calls.size()==2 &&
+            creator.calls[1].kind==K::destroy_field && creator.calls[1].field==creator.clone && creator.calls[1].function==0x80066e1c,
+            "Creator release tested the full packed reference instead of low23 after wrapping retain/release.");
+        creator.ready=true;check(release.resume(creator.services).completed && creator.clone->reference_word==initial && creator.calls.size()==2,
+            "Pending creator destruction replayed the completed decrement or destructor selection.");
+    }
+}
+
+void reference_prototype_precedes_invalid_destination(){
+    Fixture f;f.bind_prototypes();prepare_reference_parent(f);f.with_physical=true;f.registration_ready=false;
+    f.services->lists->values->object_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    f.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field)f.clone->physical_storage=IgbFieldStorageBinding{{},8};};
+    IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);check(!run.resume(f.services).completed && !run.faulted() &&
+        f.callback_functions==std::vector<std::uint32_t>{0x80028a20},"Invalid reference clone faulted before the original prototype getter.");
+    const auto p=f.allocations.back();const auto before=p.storage->bytes->bytes;f.registration_ready=true;
+    rejects([&]{run.resume(f.services);},"Invalid reference clone accepted its first element-pointer store.");
+    check(run.faulted() && p.storage->bytes->bytes==before && f.services->lists->values->object_prototype==f.object_prototype && !*f.services->ref_data,
+        "Destination failure discarded the completed prototype getter or published later reference globals.");
+}
+
+void reference_lower_callbacks_preserve_parent_fault_prefix(){
+    for(bool destructor:{false,true}){Fixture f;f.bind_prototypes();f.with_physical=true;const auto target=prepare_reference_parent(f);
+        const auto source=f.created[2];source->reference_word=1;igb_bootstrap_write_word(f.allocations[2],4,1);
+        IgbDataListDefaultsInvocation run(IgbDataListKind::ref_object);f.action=[&](const IgbListDefaultsCall& c){
+            if((!destructor && c.kind==K::clone_field) || (destructor && c.kind==K::destroy_field)){
+                try{run.resume(f.services);}catch(const std::runtime_error&){};}};
+        rejects([&]{run.resume(f.services);},"Caught recursive reference defaults completed through a lower callback.");
+        check(run.faulted() && target->fields->backing->at(4)==source,
+            "Caught parent fault allowed the nested replacement to publish the descriptor registry.");
+        if(destructor)check(f.clone->reference_word==2 && source->reference_word==0 && *f.services->ref_data==f.clone && f.calls.size()==2,
+            "Replacement parent fault lost the completed retain/global/old-release prefix or performed creator release.");
+        else check(source->reference_word==1 && !*f.services->ref_data && f.calls.size()==1,
+            "Clone parent fault reached later descriptor configuration/global publication.");
+        rejects([&]{run.resume(f.services);},"Reference defaults parent fault revived after the caught callback.");
+    }
+}
+
+void reference_nested_buffer_and_reserve_parent_guards(){
+    Fixture buffer;buffer.bind_prototypes();const auto target=prepare_reference_parent(buffer);const auto source=buffer.created[2];buffer.with_physical=true;
+    IgbDataListDefaultsInvocation outer(IgbDataListKind::ref_object);std::shared_ptr<IgbScratchBuffer> incoming;unsigned allocations{};
+    buffer.action=[&](const IgbListDefaultsCall& c){if(c.kind==K::clone_field){buffer.clone->default_bytes=IgbRuntimeFieldDefaultSource{};
+        buffer.clone->default_bytes_address=0;igb_bootstrap_write_word(buffer.allocations.back(),0x20,0);}};
+    const auto native=buffer.services->lists->schema->fields->factory;
+    buffer.services->lists->schema->fields->factory=[&,native](const IgbFieldOperationCall& c){if(c.kind!=FK::allocate_default)return native(c);
+        ++allocations;check(c.bytes==4,"Memory field+8C requested a different default buffer size.");auto op=std::make_shared<IgbFieldOperation>();
+        op->resume=[&,out=op.get()]{incoming=bytes(4,0xd5);incoming->initialized.assign(4,0);out->buffer_result={incoming,0};out->buffer_address=0x750000;
+            try{outer.resume(buffer.services);}catch(const std::runtime_error&){};return MessengerCallResult{true,0,{}};};return op;};
+    rejects([&]{outer.resume(buffer.services);},"Caught outer defaults recursion escaped through native memory+8C buffer allocation.");
+    check(outer.faulted() && allocations==1 && incoming && incoming->bytes==std::vector<std::uint8_t>(4,0xd5) &&
+        incoming->initialized==std::vector<std::uint8_t>(4,0) && buffer.clone->default_bytes && !buffer.clone->default_bytes->buffer &&
+        buffer.clone->default_bytes_address==0 && igb_bootstrap_read_word(buffer.allocations.back(),0x20)==0 &&
+        target->fields->backing->at(4)==source && !*buffer.services->ref_data && source->reference_word==3 && buffer.clone->reference_word==1,
+        "Nested buffer parent fault allowed allocation publication/default copy/global publication or later replacement references.");
+
+    Fixture reserve;reserve.bind_prototypes();const auto owner=prepare_reference_parent(reserve);const auto old=reserve.created[2];
+    const auto old_backing=owner->fields->backing;const auto old_bytes=owner->fields->backing_bytes;const auto old_address=owner->fields->backing_address;
+    const auto previous_bytes=old_bytes->bytes;IgbPointerListBacking allocation;unsigned reallocations{};
+    IgbDataListDefaultsInvocation replace(IgbDataListKind::ref_object);
+    reserve.services->lists->schema->fields->pointer_lists->factory=[&](const IgbPointerListCall& c){auto op=std::make_shared<IgbPointerListOperation>();
+        op->resume=[&,c,out=op.get()]{if(c.kind==PK::allocation_pool || c.kind==PK::object_pool)out->pool_result=reserve.pool;
+            else if(c.kind==PK::allocation_size)out->size_result=4;
+            else{check(c.kind==PK::reallocate && c.bytes==32 && c.fields==owner->fields,"Reference replacement did not reach original pointer-list reserve growth.");
+                ++reallocations;allocation.address=0x980000;allocation.bytes=bytes(c.bytes,0xd5);allocation.bytes->initialized.assign(c.bytes,0);
+                allocation.fields=std::make_shared<IgbDecodeFieldRegistry::Storage>(c.bytes/4);out->backing_result=allocation;
+                try{replace.resume(reserve.services);}catch(const std::runtime_error&){};}
+            return MessengerCallResult{true,0,{}};};return op;};
+    rejects([&]{replace.resume(reserve.services);},"Caught outer defaults recursion returned through nested pointer-list reallocation.");
+    check(replace.faulted() && reallocations==1 && owner->fields->backing==old_backing && owner->fields->backing_bytes==old_bytes &&
+        owner->fields->backing_address==old_address && old_bytes->bytes==previous_bytes && owner->fields->count==5 && old_backing->at(4)==old &&
+        *reserve.services->ref_data==reserve.clone && reserve.clone->reference_word==2 && old->reference_word==2 &&
+        allocation.bytes->bytes==std::vector<std::uint8_t>(32,0xd5) && allocation.bytes->initialized==std::vector<std::uint8_t>(32,0),
+        "Nested reserve parent fault published/zeroed incoming backing or discarded the existing finalize/reference prefix.");
+    rejects([&]{replace.resume(reserve.services);},"Nested reserve parent fault resumed after callback return.");
+}
+
+void reference_defaults_adapter_limits(){
+    Fixture f;const auto target=prepare_reference_parent(f);auto other=metadata(0x950000);unsigned delegated{};
+    auto adapter=make_native_igb_data_list_defaults_factory(f.services,[&](const IgbTypeRegistrationCall&){++delegated;return std::shared_ptr<IgbTypeRegistrationOperation>{};});
+    IgbTypeRegistrationCall call;call.kind=IgbTypeRegistrationServiceKind::defaults;call.function=0x8002910c;call.metadata=other;
+    const auto operation=adapter(call);check(operation && operation->resume().completed && target->fields->backing->at(4)==f.clone && other->fields->count==0 && delegated==0,
+        "2910C adapter used its generic caller metadata rather than canonical80561708.");
+    call.function=0x800240f4;check(!adapter(call) && delegated==1,"Reference defaults adapter consumed a registration body.");
+    call.function=0;check(!adapter(call) && delegated==2,"Reference thread's missing defaults callback was fabricated.");
+    rejects([]{IgbDataListDefaultsInvocation bad(IgbDataListKind::ref_thread);},"Reference thread accepted an unrecovered defaults body.");
+}
 }
 int main(){try{data_schema();wrapped_first_index();prototype_getters();physical_data_prefix();object_specialization();retained_clone_and_physical_release();null_clone_and_failures();getter_precedes_destination_fault();adapters_and_recursion();
+    reference_defaults_preserve_flag_and_separate_globals();reference_clone_prototype_and_global_pending_order();reference_replacement_and_creator_release_pending();
+    reference_prototype_precedes_invalid_destination();reference_lower_callbacks_preserve_parent_fault_prefix();reference_nested_buffer_and_reserve_parent_guards();reference_defaults_adapter_limits();
     std::cout<<"igb_data_list_defaults_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& e){std::cerr<<"Data-list defaults failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

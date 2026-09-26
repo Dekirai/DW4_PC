@@ -141,7 +141,8 @@ MessengerCallResult IgbFieldValueInvocation::resume(std::shared_ptr<IgbFieldValu
     const std::function<void()>& enclosing_check){
     auto& s=*impl_;if(s.running || s.fault){s.fault=true;fail("Field default copy requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field default copy continuation was invalidated.");if(enclosing_check)enclosing_check();};
+    const auto check=[&]{if(s.fault)fail("Field default copy continuation was invalidated.");if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field default copy was invalidated by its enclosing callback.");};
     try{for(;;){check();switch(s.phase){
     case 0:{const auto status=s.buffer->resume(services?services->fields:nullptr,check);check();if(!status.completed)return status;
         s.buffer.reset();check();
@@ -266,16 +267,23 @@ IgbFieldOperationsFactory make_native_igb_field_values_factory(std::shared_ptr<I
             out->field_result=**slot;return MessengerCallResult{true,0,{}};};
         else{auto invocation=std::make_shared<IgbFieldValueInvocation>(call.field,call.source,call.source_address);
             if(structure){auto access=std::make_shared<StructFieldAccess>(call.field);
-                operation->resume=[invocation,selected,access,running=false,fault=false]()mutable{
-                    if(running || fault){fault=true;fail("Struct value adapter requires an unfaulted nonrecursive operation.");}
+                struct State{bool running{},fault{};};auto state=std::make_shared<State>();
+                operation->resume_checked=[invocation,selected,access,state](const std::function<void()>& enclosing_check){
+                    if(state->running || state->fault){state->fault=true;fail("Struct value adapter requires an unfaulted nonrecursive operation.");}
                     if(invocation->completed())return invocation->resume(selected);
-                    Running guard(running);
-                    const auto check=[&]{if(fault)fail("Struct value adapter was invalidated by a callback.");access->pointer();};
+                    Running guard(state->running);
+                    const auto check=[&]{if(state->fault)fail("Struct value adapter was invalidated by a callback.");
+                        if(enclosing_check)enclosing_check();
+                        if(state->fault)fail("Struct value adapter was invalidated by its enclosing callback.");access->pointer();};
                     try{check();const auto result=invocation->resume(selected,check);
                         check();return result;
-                    }catch(...){fault=true;throw;}
+                    }catch(...){state->fault=true;throw;}
                 };
-            }else operation->resume=[invocation,selected]{return invocation->resume(selected);};}
+                operation->resume=[callback=operation->resume_checked]{return callback({});};
+            }else{
+                operation->resume=[invocation,selected]{return invocation->resume(selected);};
+                operation->resume_checked=[invocation,selected](const std::function<void()>& check){return invocation->resume(selected,check);};
+            }}
         return operation;
     };
 }

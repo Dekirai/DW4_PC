@@ -51,7 +51,9 @@ public:
     ~IgbFieldReplaceInvocation();
     IgbFieldReplaceInvocation(const IgbFieldReplaceInvocation&)=delete;
     IgbFieldReplaceInvocation& operator=(const IgbFieldReplaceInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbListDefaultsServices> services={});
+    // Borrowed for one resume only; child stores must observe parent faults.
+    MessengerCallResult resume(std::shared_ptr<IgbListDefaultsServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

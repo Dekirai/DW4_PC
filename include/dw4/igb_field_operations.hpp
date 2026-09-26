@@ -32,6 +32,8 @@ struct IgbFieldOperation {
     std::shared_ptr<ModelSceneObject> pool_result;
     IgbRuntimeFieldDefaultSource buffer_result;
     std::uint32_t buffer_address{};
+    // Preferred native continuation; never retain the borrowed parent guard.
+    std::function<MessengerCallResult(const std::function<void()>&)> resume_checked;
 };
 using IgbFieldOperationsFactory=std::function<std::shared_ptr<IgbFieldOperation>(const IgbFieldOperationCall&)>;
 struct IgbFieldOperationsServices {
@@ -74,7 +76,8 @@ public:
     ~IgbFieldFinalizeInvocation();
     IgbFieldFinalizeInvocation(const IgbFieldFinalizeInvocation&)=delete;
     IgbFieldFinalizeInvocation& operator=(const IgbFieldFinalizeInvocation&)=delete;
-    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={});
+    MessengerCallResult resume(std::shared_ptr<IgbFieldOperationsServices> services={},
+        const std::function<void()>& enclosing_check={});
     bool completed()const noexcept;bool faulted()const noexcept;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };

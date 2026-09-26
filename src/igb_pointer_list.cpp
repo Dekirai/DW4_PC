@@ -95,11 +95,14 @@ IgbPointerListInvocation::~IgbPointerListInvocation(){
 }
 bool IgbPointerListInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbPointerListInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerListServices> services){
+MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerListServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;
     if(s.running || s.fault){s.fault=true;fail("Pointer list requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
     const auto check=[&]{if(s.fault)fail("Pointer-list continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Pointer-list continuation was invalidated by its enclosing callback.");
         if(s.physical_captured){
             const auto& binding=s.field_list?s.fields->physical_storage:s.types->physical_storage;
             if(binding && !s.physical_object.storage){
@@ -203,6 +206,7 @@ MessengerCallResult IgbPointerListInvocation::resume(std::shared_ptr<IgbPointerL
         //03130 uses byte stores for lengths below32, otherwise alignment bytes,
         //full words, then a byte tail. Preserve partial malformed-store prefixes.
         while(s.zero_left){
+            check();
             const auto width=s.zero_total>=32u && ((b.address+s.zero_at)&3u)==0 && s.zero_left>=4u?4u:1u;
             const auto before=s.zero_at;write(b,s.zero_at,0,width);synchronize_alias(b,s.zero_at,width);s.zero_at+=width;s.zero_left-=width;
             for(auto at=before/4u;at<s.zero_at/4u;++at){

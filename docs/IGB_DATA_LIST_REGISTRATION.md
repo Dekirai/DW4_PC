@@ -1,14 +1,15 @@
 # Native data-list registration
 
 This module reconstructs the three registration bodies reached from the first
-ThreadManager extension callback. Evidence is the supplied USA `main.dol`,
+ThreadManager extension callback and the two reference-counted list classes
+reached later by the prerequisite runner. Evidence is the supplied USA `main.dol`,
 SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. It preserves the previously
 allocated ThreadManager dependency metadata and composes the existing native
 registration, callback, pool, metadata factory, and base reset implementations.
 
 ## Exact profiles
 
-All three bodies call prerequisite guard `80021B94` before generic registrar
+All five bodies call prerequisite guard `80021B94` before generic registrar
 `80066204`. They pass abstract flag zero and native size `0x14`.
 
 | Class | Canonical cell | Wrapper / body | Parent body / plain getter | Field callback | Probe | Defaults |
@@ -16,19 +17,25 @@ All three bodies call prerequisite guard `80021B94` before generic registrar
 | `igDataList` | `80561D3C` | `339EC` / `33A14` | `66B08` / `237D0` | `33A84` | `339AC` | `33AA4` |
 | `igNonRefCountedObjectList` | `80561730` | `2966C` / `29694` | `33A14` / `24D1C` | `29704` | `29614` | `29724` |
 | `igNonRefCountedThreadList` | `80561530` | `23F28` / `23F50` | `29694` / `23FDC` | `23FBC` | `23EB8` | zero |
+| `igObjectList` | `80561708` | `29054` / `2907C` | `33A14` / `24D1C` | `290EC` | `28FFC` | `2910C` |
+| `igThreadList` | `80561534` | `240CC` / `240F4` | `2907C` / `24180` | `24160` | `2405C` | zero |
 
 Function addresses in the table have prefix `800`. None passes a trailing
-callback. The thread-list extension table at `8055D080` contains `80023C40`
-and a zero terminator; the other two have no extension table. The native
+callback. The nonref-thread extension table at `8055D080` and ref-thread table
+at `8055D088` each contain `80023C40` and a zero terminator; the other classes
+have no extension table. The native
 generic registrar builds its returned callback list, and the actual `66188`
 wrapper handles deferred callbacks and cleanup.
 
 Thread-list services resolve `80561530` directly through the shared
 `IgbThreadDependenciesServices::thread_list` cell. Registration consequently
 operates on the metadata previously allocated by ThreadManager defaults.
-The two other cells are explicit shared `IgbRegistrationMetaSlot` bindings.
+The four other cells are explicit shared `IgbRegistrationMetaSlot` bindings.
 No internal-list profile or preconstructed ready class substitutes for these
 data-list classes.
+
+Reference-counted getters, distinct descriptor ownership and cold composition
+are described in [IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md).
 
 ## Getters and publication
 
@@ -58,6 +65,8 @@ The subsequent vtable stores and ArkCore capture differ:
 | `339AC` | none | `80472FA0` |
 | `29614` | `80472FA0` | `80476E0C`, `80476DA8` |
 | `23EB8` | `80472FA0`, `80476E0C`, `80476DA8` | `80476D44`, `80476CE0` |
+| `28FFC` | `80472FA0` | `80476E0C`, `80476C7C` |
+| `2405C` | `80472FA0`, `80476E0C`, `80476C7C` | `80476C18`, `80476BB4` |
 
 After the remaining stores, each reads the captured ArkCore's `+0x394` byte
 offset and returns the selected physical word. Offset zero observes the final

@@ -88,17 +88,20 @@ IgbFieldReplaceInvocation::~IgbFieldReplaceInvocation(){auto& s=*impl_;if((!comp
 }}
 bool IgbFieldReplaceInvocation::completed()const noexcept{return impl_->phase==Impl::P::done;}
 bool IgbFieldReplaceInvocation::faulted()const noexcept{return impl_->fault;}
-MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDefaultsServices> services){
+MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDefaultsServices> services,
+    const std::function<void()>& enclosing_check){
     auto& s=*impl_;using P=Impl::P;using K=IgbPointerListServiceKind;
     if(s.running || s.fault){s.fault=true;fail("Field replacement requires an unfaulted nonrecursive invocation.");}
     if(completed())return {true,0,{}};Running running(s.running);if(!s.owner && services)s.owner=services;
-    const auto check=[&]{if(s.fault)fail("Field replacement continuation was invalidated.");};
+    const auto check=[&]{if(s.fault)fail("Field replacement continuation was invalidated.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Field replacement was invalidated by its enclosing callback.");};
     const auto pointers=[&]{return services && services->schema && services->schema->fields?services->schema->fields->pointer_lists:std::shared_ptr<IgbPointerListServices>{};};
     const auto clear=[&]{s.call.clear();check();};
     const auto select=[&](K kind){clear();s.call.request.kind=kind;s.call.request.backing=s.captured;s.call.request.fields=s.fields;
         if(const auto p=pointers())s.call.factory=p->factory;};
     try{for(;;){check();switch(s.phase){
-    case P::finalize:{const auto status=s.finalize->resume(services && services->schema?services->schema->fields:nullptr);check();if(!status.completed)return status;
+    case P::finalize:{const auto status=s.finalize->resume(services && services->schema?services->schema->fields:nullptr,check);check();if(!status.completed)return status;
         s.finalize.reset();check();s.phase=P::list;break;}
     case P::list:
         if(!s.metadata)fail("Finalized field replacement reads a null metadata receiver.");s.fields=s.metadata->fields;
@@ -124,7 +127,7 @@ MessengerCallResult IgbFieldReplaceInvocation::resume(std::shared_ptr<IgbListDef
     case P::after_size:
         if(std::bit_cast<std::int32_t>(s.index)<std::bit_cast<std::int32_t>(s.capacity))s.phase=P::store;
         else{s.reserve=std::make_unique<IgbPointerListInvocation>(s.fields,std::bit_cast<std::int32_t>(s.index));s.phase=P::reserve;}break;
-    case P::reserve:{const auto status=s.reserve->resume(pointers());check();if(!status.completed)return status;s.reserve.reset();check();s.phase=P::store;break;}
+    case P::reserve:{const auto status=s.reserve->resume(pointers(),check);check();if(!status.completed)return status;s.reserve.reset();check();s.phase=P::store;break;}
     case P::store:s.store=backing(s.fields);s.phase=P::bind;break;
     case P::bind:{
         const auto relative=s.index<<2u,slot=relative>>2u;const auto at=physical_store(s.store,relative);
@@ -250,7 +253,7 @@ MessengerCallResult IgbListDefaultsInvocation::resume(std::shared_ptr<IgbListDef
         field_word(s.field,0x1c,0x805619d0);
         s.field->global_slot=std::weak_ptr<IgbRuntimeFieldSlot>(services->internal_data);s.field->global_slot_address=0x805619d0;
         s.replace=std::make_unique<IgbFieldReplaceInvocation>(s.metadata,s.index,s.field);s.phase=P::replace;break;
-    case P::replace:{bind();const auto status=s.replace->resume(services);check();if(!status.completed)return status;s.replace.reset();check();s.phase=P::release;break;}
+    case P::replace:{bind();const auto status=s.replace->resume(services,check);check();if(!status.completed)return status;s.replace.reset();check();s.phase=P::release;break;}
     case P::release:
         field_reference(s.field,s.field->reference_word-1u);if((s.field->reference_word&0x7fffffu)==0){const auto field=s.field;auto& call=select(K::destroy_field,P::after_destroy);
             call.field=field;call.function=0x80066e1c;}else s.phase=P::done;break;

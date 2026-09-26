@@ -1,13 +1,15 @@
 # Data-list class defaults
 
 This module reconstructs the original USA `igDataList` defaults at
-`80033AA4` and `igNonRefCountedObjectList` defaults at `80029724`. Evidence
+`80033AA4`, `igNonRefCountedObjectList` defaults at `80029724`, and
+`igObjectList` defaults at `8002910C`. Evidence
 was read from the supplied `sys/main.dol`, SHA-1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. The implementation is authored
 native C++; original instructions are research and validation evidence.
 
 The canonical class cells belong to `IgbDataListRegistrationServices`:
-`80561D3C` for `igDataList` and `80561730` for its object specialization.
+`80561D3C` for `igDataList`, `80561730` for its nonref object specialization,
+and separate `80561708` for its reference-counted object specialization.
 These differ from the existing internal field-list classes and globals.
 
 ## DataList: 80033AA4
@@ -64,6 +66,15 @@ including finalization, global publication, retain/release, allocator size
 queries, and physical list replacement. Finally it decrements the clone's
 live packed reference word and calls `80066E1C` only when its low 23 bits
 become zero. Parent descriptors and internal-list globals stay distinct.
+
+## ObjectList: 8002910C
+
+The reference-counted specialization shares the clone/prototype/replacement
+pipeline, but uses descriptor cell `8056170C` and never writes clone `+42`.
+The inherited byte's value and initialized state survive. Its metadata and
+descriptor cells do not alias the nonref specialization. The same replacement
+and final release ordering applies. See
+[IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md).
 
 ## Composition and validation
 

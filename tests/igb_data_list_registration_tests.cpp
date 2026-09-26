@@ -6,7 +6,7 @@
 namespace {
 using namespace dw4;using E=IgbDataListKind;using L=IgbDataListLookup;
 using TK=IgbTypeRegistrationServiceKind;using CK=IgbRegistrationCallbacksServiceKind;using MK=IgbMetadataFactoryServiceKind;
-constexpr std::array entries{E::data_list,E::nonref_object,E::thread_list};
+constexpr std::array entries{E::data_list,E::nonref_object,E::thread_list,E::ref_object,E::ref_thread};
 unsigned checks{};
 void check(bool value,const char* why){++checks;if(!value)throw std::runtime_error(why);}
 template<class F>void rejects(F&& fn,const char* why){bool caught{};try{fn();}catch(const std::runtime_error&){caught=true;}check(caught,why);}
@@ -28,6 +28,8 @@ struct Fixture {
     Fixture(){
         services->data_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
         services->object_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+        services->ref_object_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+        services->ref_thread_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
         services->dependencies=std::make_shared<IgbThreadDependenciesServices>();
         services->dependencies->thread_list=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
         services->types=std::make_shared<IgbTypeRegistrationServices>();services->types->metadata_pool_handle=5;
@@ -58,24 +60,32 @@ struct Fixture {
     auto slot(E kind){return igb_data_list_metadata_slot(services,kind);}
 };
 void exact_profiles(){
-    constexpr std::array<std::uint32_t,3> globals{0x80561d3c,0x80561730,0x80561530},bodies{0x80033a14,0x80029694,0x80023f50};
-    constexpr std::array<std::uint32_t,3> parents{0x80066b08,0x80033a14,0x80029694},getters{0x800237d0,0x80024d1c,0x80023fdc};
-    constexpr std::array<std::uint32_t,3> probes{0x800339ac,0x80029614,0x80023eb8},defaults{0x80033aa4,0x80029724,0};
+    constexpr std::array<std::uint32_t,5> globals{0x80561d3c,0x80561730,0x80561530,0x80561708,0x80561534},bodies{0x80033a14,0x80029694,0x80023f50,0x8002907c,0x800240f4};
+    constexpr std::array<std::uint32_t,5> parents{0x80066b08,0x80033a14,0x80029694,0x80033a14,0x8002907c},getters{0x800237d0,0x80024d1c,0x80023fdc,0x80024d1c,0x80024180};
+    constexpr std::array<std::uint32_t,5> probes{0x800339ac,0x80029614,0x80023eb8,0x80028ffc,0x8002405c},defaults{0x80033aa4,0x80029724,0,0x8002910c,0};
     for(unsigned i=0;i<entries.size();++i){Fixture f;const auto kind=entries[i];const auto& p=igb_data_list_profile(kind);
         const auto args=igb_data_list_type_registration_arguments(f.services,kind);
         check(p.global==globals[i] && p.body==bodies[i] && args.metadata_slot==f.slot(kind),"Profile lost its original identity or canonical cell.");
         check(*args.name==p.name && args.flag==0 && args.native_size==20 && args.parent_registration==parents[i] && args.parent_getter==getters[i],"Original name/flags/layout/ancestry changed.");
         check(args.layout_probe==probes[i] && args.defaults_callback==defaults[i] && args.field_callback==p.field_callback && args.trailing_callback==0,"Original callback identities changed.");
-        if(kind==E::thread_list)check(args.extra_callbacks && *args.extra_callbacks==std::vector<std::uint32_t>({0x80023c40,0}) && args.metadata_slot==f.services->dependencies->thread_list,"Thread list duplicated the lazy-getter cell or extension table.");
+        if(kind==E::thread_list || kind==E::ref_thread)check(args.extra_callbacks && *args.extra_callbacks==std::vector<std::uint32_t>({0x80023c40,0}) &&
+            args.metadata_slot==(kind==E::thread_list?f.services->dependencies->thread_list:f.services->ref_thread_metadata),"Thread list duplicated the lazy-getter cell or extension table.");
         else check(!args.extra_callbacks,"Parent list invented deferred callbacks.");
         auto value=meta();*f.slot(kind)=value;check(*args.metadata_slot==value,"Arguments copied rather than shared the original cell.");
     }
-    rejects([]{igb_data_list_profile(static_cast<E>(3));},"Unknown class profile was accepted.");
+    rejects([]{igb_data_list_profile(static_cast<E>(5));},"Unknown class profile was accepted.");
     rejects([]{igb_data_list_type_registration_arguments({},E::data_list);},"Unknown canonical storage was manufactured.");
     rejects([]{IgbDataListLookupInvocation bad(E::nonref_object,L::allocate_if_null);},"Unrecovered lazy getter was invented.");
 }
 void prerequisites_and_registration(){
     for(const auto kind:entries){Fixture f;*f.slot(kind)=meta(4);f.services->callbacks->prerequisites->initialized.reset();
+        // This fixture explicitly prepares prerequisite leaves. Keep240CC at
+        // that boundary now that its independent full registrar is admitted.
+        const auto native=f.services->callbacks->factory;
+        f.services->callbacks->factory=[&,native](const IgbRegistrationCallbacksCall& c){
+            if(c.kind==CK::invoke_function && c.function==0x800240cc){f.functions.push_back(c.function);
+                return f.callback_remaining?f.callback_remaining(c):std::shared_ptr<IgbRegistrationCallbacksOperation>{};}
+            return native(c);};
         IgbDataListTypeRegistrationInvocation call(kind);check(!call.resume(f.services).completed && f.calls.empty(),"Ready metadata bypassed earlier prerequisite state.");
         f.services->callbacks->prerequisites->initialized=std::uint8_t{0};unsigned polls{};bool ready{};
         f.callback_remaining=[&](const IgbRegistrationCallbacksCall& c){check(c.kind==CK::invoke_function,"Prerequisite selected an unrelated service.");
@@ -108,19 +118,21 @@ void getters_and_retained_calls(){
                 check(full.resume(f.services).completed && full.result()==replacement && selections==1 && polls==2,"Full getter reselected or failed to reload after its captured call.");}
         }
     }
-    for(const auto kind:{E::data_list,E::thread_list}){Fixture f;f.allocation_ready=false;const auto selected=f.slot(kind);
+    for(const auto kind:{E::data_list,E::thread_list,E::ref_object,E::ref_thread}){Fixture f;f.allocation_ready=false;const auto selected=f.slot(kind);
         IgbDataListLookupInvocation lazy(kind,L::allocate_if_null);check(!lazy.resume(f.services).completed && f.allocations==1,"Lazy actual metadata allocation failed to suspend.");
         auto displaced=meta(17);displaced->reference_word=73;std::weak_ptr<IgbRuntimeMetaType> weak=displaced;*selected=displaced;
         auto alternate=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
-        if(kind==E::data_list)f.services->data_metadata=alternate;else f.services->dependencies->thread_list=alternate;
+        if(kind==E::data_list)f.services->data_metadata=alternate;else if(kind==E::thread_list)f.services->dependencies->thread_list=alternate;
+        else if(kind==E::ref_object)f.services->ref_object_metadata=alternate;else f.services->ref_thread_metadata=alternate;
         f.allocation_ready=true;f.services->metadata.reset();
         check(lazy.resume(f.services).completed && lazy.result()==f.constructed && *selected==f.constructed && !**alternate && f.allocation_polls==2,"Lazy publication replaced captured canonical cell or factory.");
         displaced.reset();check(!weak.expired() && weak.lock()->reference_word==73,"Raw lazy publication destroyed or released displaced owner.");
-        check((kind==E::data_list?f.services->allocations:f.services->dependencies->allocations).size()==1,"Lazy result lost its physical allocation lifetime.");
+        check((kind==E::thread_list?f.services->dependencies->allocations:f.services->allocations).size()==1,"Lazy result lost its physical allocation lifetime.");
         check(lazy.resume().completed && f.allocations==1,"Completed lazy getter repeated allocation.");
     }
 }
-std::uint32_t final_word(E kind){return kind==E::data_list?0x80472fa0u:kind==E::nonref_object?0x80476da8u:0x80476ce0u;}
+std::uint32_t final_word(E kind){return kind==E::data_list?0x80472fa0u:kind==E::nonref_object?0x80476da8u:
+    kind==E::thread_list?0x80476ce0u:kind==E::ref_object?0x80476c7cu:0x80476bb4u;}
 void physical_probes(){
     for(const auto kind:entries)for(const auto offset:{0u,4u,8u,12u,16u}){Fixture f;auto local=f.services->local_storage(kind);auto before=local.storage->bytes->bytes;
         for(unsigned n=8;n<20;++n)local.storage->bytes->bytes[local.offset+n]=static_cast<std::uint8_t>(n+1);
@@ -133,7 +145,8 @@ void physical_probes(){
     }
     for(const auto kind:entries){Fixture f;auto local=f.services->local_storage(kind);f.services->types->runtime->singleton.reset();
         IgbDataListLayoutProbeInvocation probe(local,kind);check(!probe.resume(f.services).completed,"Missing ArkCore was replaced with a guess.");
-        const auto prefix=kind==E::data_list?0x804717f0u:kind==E::nonref_object?0x80472fa0u:0x80476da8u;
+        const auto prefix=kind==E::data_list?0x804717f0u:(kind==E::nonref_object || kind==E::ref_object)?0x80472fa0u:
+            kind==E::thread_list?0x80476da8u:0x80476c7cu;
         check(igb_bootstrap_read_word(local,0)==prefix,"Probe captured ArkCore after the wrong number of stores.");
         f.services->types->runtime->singleton=f.core;check(!probe.resume(f.services).completed && igb_bootstrap_read_word(local,0)==final_word(kind),"Missing offset skipped remaining stores.");
         auto replacement=std::make_shared<IgbRuntimeTypeRegistry>();replacement->vtable_offset=0;f.services->types->runtime->singleton=replacement;f.core->vtable_offset=16;
@@ -172,8 +185,84 @@ void adapters_and_faults(){
     recursion.remaining=[&](const auto&){try{run.resume(recursion.services);}catch(const std::runtime_error&){}return std::shared_ptr<IgbTypeRegistrationOperation>{};};
     rejects([&]{run.resume(recursion.services);},"Swallowed recursive body did not poison outer invocation.");check(run.faulted(),"Reentrant fault was lost.");
 }
+void reference_profiles_and_separate_lazy_cells(){
+    struct Expected{E kind;const char* name;std::uint32_t wrapper,body,field,full,lazy,plain;};
+    constexpr std::array<Expected,2> expected{{{E::ref_object,"igObjectList",0x80029054,0x8002907c,0x800290ec,0x80028fc0,0x80028f84,0x80024180},
+        {E::ref_thread,"igThreadList",0x800240cc,0x800240f4,0x80024160,0x80024020,0x80023fe4,0}}};
+    for(const auto& e:expected){Fixture f;const auto& p=igb_data_list_profile(e.kind);
+        check(std::string(p.name)==e.name && p.wrapper==e.wrapper && p.body==e.body && p.field_callback==e.field &&
+            p.full_getter==e.full && p.lazy_getter==e.lazy && p.plain_getter==e.plain,
+            "Reference-counted list's exact wrapper/getter/field callback identity changed.");
+        auto old_object=meta(4),old_thread=meta(4);*f.services->object_metadata=old_object;*f.services->dependencies->thread_list=old_thread;
+        const auto original_object=f.services->object_metadata,original_thread=f.services->dependencies->thread_list;
+        f.services->dependencies.reset();IgbDataListLookupInvocation lazy(e.kind,L::allocate_if_null);
+        check(lazy.resume(f.services).completed && lazy.result()==f.constructed && **original_object==old_object && **original_thread==old_thread &&
+            f.allocations==1 && f.services->allocations.size()==1 && f.slot(e.kind)!=original_object && f.slot(e.kind)!=original_thread,
+            "Reference list used the old nonreference-thread dependency getter or shared its metadata cell.");
+    }
+    Fixture missing;missing.services->ref_thread_metadata.reset();*missing.services->dependencies->thread_list=meta(4);
+    IgbDataListLookupInvocation wait(E::ref_thread,L::allocate_if_null);check(!wait.resume(missing.services).completed && missing.allocations==0,
+        "Missing80561534 storage fell back to ready80561530 metadata.");
+    missing.services->ref_thread_metadata=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    check(wait.resume(missing.services).completed && wait.result()==missing.constructed,"Late reference-thread canonical storage did not resume.");
+}
+
+void reference_probe_unknown_bytes_and_capture_order(){
+    for(const auto kind:{E::ref_object,E::ref_thread}){Fixture f;auto local=f.services->local_storage(kind);
+        for(unsigned at=8;at<20;++at)local.storage->bytes->initialized[local.offset+at]=0;
+        const auto before=local.storage->bytes->bytes,mask=local.storage->bytes->initialized;
+        f.services->types->runtime->singleton.reset();IgbDataListLayoutProbeInvocation run(local,kind);
+        check(!run.resume(f.services).completed && igb_bootstrap_read_word(local,0)==(kind==E::ref_object?0x80472fa0u:0x80476c7cu) &&
+            igb_bootstrap_read_word(local,4)==1,"Reference probe crossed the wrong vtable boundary before ArkCore capture.");
+        f.services->types->runtime->singleton=f.core;
+        check(!run.resume(f.services).completed && igb_bootstrap_read_word(local,0)==final_word(kind),
+            "Reference probe did not finish its post-capture vtable stores before reading the unknown offset.");
+        for(unsigned at=8;at<20;++at)check(local.storage->bytes->bytes[local.offset+at]==before[local.offset+at] &&
+            local.storage->bytes->initialized[local.offset+at]==mask[local.offset+at],"Reference probe initialized unused count/capacity/backing bytes.");
+        auto different=std::make_shared<IgbRuntimeTypeRegistry>();different->vtable_offset=0;f.services->types->runtime->singleton=different;
+        f.core->vtable_offset=8;rejects([&]{run.resume(f.services);},"Captured core's unknown local count was replaced with a fresh-core vtable result.");
+        igb_bootstrap_write_word(local,8,7);rejects([&]{run.resume(f.services);},"Reference probe unknown-byte fault revived after repair.");
+    }
+}
+
+void reference_thread_extra_callback_composition(){
+    Fixture f;auto object=meta();object->reference_word=2;object->post_layout_callback=0;*f.slot(E::ref_thread)=object;
+    f.core->registration_filter_enabled=0;f.core->registration_callback_pool=f.pool;auto parent=meta(4);
+    f.remaining=[&](const IgbTypeRegistrationCall& c){auto op=std::make_shared<IgbTypeRegistrationOperation>();op->resume=[&,c,out=op.get()]{
+        if(c.kind==TK::get_parent){check(c.function==0x80024180,"Reference thread requested the nonreference parent getter.");out->metadata_result=parent;}
+        else if(c.kind==TK::register_parent)check(c.function==0x8002907c,"Reference thread registered the nonreference object parent.");
+        else if(c.kind==TK::set_name)c.metadata->name=c.name;
+        else if(c.kind==TK::layout_probe){check(c.function==0x8002405c,"Reference thread selected another probe.");return MessengerCallResult{true,0x80476bb4,{}};}
+        else if(c.kind==TK::compute_layout)c.metadata->class_flags|=4;
+        else if(c.kind==TK::create_callbacks)out->callbacks_result=std::make_shared<IgbRegistrationCallbackList>();
+        else check(c.kind==TK::attach_parent || c.kind==TK::publish_type,"Reference thread invented defaults or an unrelated registrar operation.");
+        return MessengerCallResult{true,0,{}};};return op;};
+    f.services->types->factory=make_native_igb_registration_list_factory(f.services->callbacks,f.services->types->factory);
+    bool ready{};unsigned selections{},polls{},backing_frees{},list_frees{};
+    f.callback_remaining=[&](const IgbRegistrationCallbacksCall& c){auto op=std::make_shared<IgbRegistrationCallbacksOperation>();
+        if(c.kind==CK::invoke_function){check(c.function==0x80023c40,"Extra callback table selected another function.");++selections;}
+        op->resume=[&,c,out=op.get()]{
+            if(c.kind==CK::allocate_backing || c.kind==CK::reallocate_backing){out->backing_result=std::make_shared<IgbRegistrationCallbackList::Storage>(c.bytes/4);return MessengerCallResult{true,0,{}};}
+            if(c.kind==CK::invoke_function){++polls;return MessengerCallResult{ready,0,"Prepared deferred thread callback."};}
+            if(c.kind==CK::free_backing)++backing_frees;else if(c.kind==CK::free_list)++list_frees;else throw std::runtime_error("Unexpected callback cleanup.");
+            return MessengerCallResult{true,0,{}};};return op;};
+    const auto factory=f.services->callbacks->factory;std::shared_ptr<IgbRegistrationCallbackList> produced;
+    f.services->callbacks->factory=[&,factory](const IgbRegistrationCallbacksCall& c){auto op=factory(c);
+        if(c.kind==CK::invoke_function && c.function==0x800240f4 && op){const auto resume=op->resume;
+            op->resume=[&,resume,out=op.get()]{const auto result=resume();
+                //66188 moves the returned list into its own continuation.
+                // Retain the observation before that ownership transfer.
+                if(result.completed)produced=out->callbacks_result;return result;};}return op;};
+    IgbRegistrationCallbacksInvocation wrapper(0x800240f4);check(!wrapper.resume(f.services->callbacks).completed && produced &&
+        produced->count==1 && produced->backing->at(0)==0x80023c40 && selections==1 && polls==1 &&
+        (object->class_flags&4)!=0 && object->native_size==20 && object->field_callback==0x80024160 && backing_frees==0 && list_frees==0,
+        "Actual reference-thread registrar did not append its extra callback before deferred execution/cleanup.");
+    const auto list=produced;ready=true;check(wrapper.resume(f.services->callbacks).completed && selections==1 && polls==2 &&
+        backing_frees==1 && list_frees==1 && list->released,"Deferred reference-thread callback was reselected or omitted original list cleanup.");
+}
 }
 int main(int argc,char**){try{if(argc!=1)throw std::runtime_error("Usage: igb_data_list_registration_tests");
     exact_profiles();prerequisites_and_registration();getters_and_retained_calls();physical_probes();adapters_and_faults();
+    reference_profiles_and_separate_lazy_cells();reference_probe_unknown_bytes_and_capture_order();reference_thread_extra_callback_composition();
     std::cout<<"igb_data_list_registration_tests: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception& error){std::cerr<<"Data-list registration failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

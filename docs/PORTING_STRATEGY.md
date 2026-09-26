@@ -324,11 +324,15 @@ preserving physical copy/free and capacity/count stores. The cold invocation
 inserts the thread and now executes actual OS wake after semaphore increment.
 The empty-queue branch first requires canonical scheduler state; an explicitly
 prepared zero hint allows nested restoration and temporary-reference release.
-The prerequisite runner then reaches `800240CC`, the separate reference-counted
-`igThreadList` registration. Recover that class and its `igObjectList` parent
-while replacing prepared OS/pool inputs and implementing rescheduling/sleep.
+The prerequisite runner now completes `800240CC`, the separate reference-counted
+`igThreadList`, and its `igObjectList` parent through native registration and
+inherited descriptor cloning. Their cells stay separate from the nonref lists,
+and original `2910C` preserves the cloned ownership flag. Continue with reached
+error-handler wrapper `80031250` while replacing prepared OS/pool inputs and
+implementing rescheduling/sleep.
 A host thread identifier or blank context does not
 satisfy OS initialization. See
+[IGB_REF_COUNTED_LISTS.md](IGB_REF_COUNTED_LISTS.md) and
 [IGB_OS_THREAD_WAKE.md](IGB_OS_THREAD_WAKE.md) and
 [IGB_DATA_LIST_GROWTH.md](IGB_DATA_LIST_GROWTH.md) and
 [IGB_THREAD_MANAGER_INSERT.md](IGB_THREAD_MANAGER_INSERT.md) and

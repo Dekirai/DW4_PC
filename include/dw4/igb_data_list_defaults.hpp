@@ -14,6 +14,7 @@ struct IgbDataListDefaultsServices {
     std::shared_ptr<IgbRegistrationCallbacksServices> callbacks;
     std::shared_ptr<IgbRuntimeFieldSlot> unsigned_char_prototype; // Canonical805614D4.
     std::shared_ptr<IgbRuntimeFieldSlot> nonref_data; // Canonical80561734.
+    std::shared_ptr<IgbRuntimeFieldSlot> ref_data; // Canonical8056170C.
     std::shared_ptr<IgbFieldFactoryTable> factories; //80467478.
     std::shared_ptr<IgbFieldNameTable> names; //80467484.
     std::shared_ptr<IgbFieldGlobalTable> globals; //80467490.
@@ -35,8 +36,8 @@ public:
     std::shared_ptr<IgbDecodeRuntimeField> result()const;
 private:struct Impl;std::unique_ptr<Impl> impl_;
 };
-// Actual33AA4 and29724. The data-list caller appends three fields; the
-// non-reference-counted specialization clones its inherited _data descriptor.
+// Actual33AA4/29724/2910C. The data-list caller appends three fields; object
+// specializations clone inherited _data. Only29724 clears cloned flag+42.
 class IgbDataListDefaultsInvocation {
 public:
     explicit IgbDataListDefaultsInvocation(IgbDataListKind);
