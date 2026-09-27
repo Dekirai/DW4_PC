@@ -31,12 +31,22 @@ struct IgbMemoryPoolRegistrationServices {
     // Actual39CC0 uses a0xA0 local whose unknown bytes remain unknown.
     std::function<IgbBootstrapPointer()> malloc_probe_storage;
     std::shared_ptr<IgbObjectFieldConstructServices> object_cleanup;
+    // Separate actual39E28 tables; the abstract fourteen-field tables above
+    // remain independent. Canonical cells begin unknown, including the inputs.
+    std::shared_ptr<IgbFieldFactoryTable> malloc_factories;
+    std::shared_ptr<IgbFieldNameTable> malloc_names;
+    std::shared_ptr<IgbFieldGlobalTable> malloc_globals;
+    std::shared_ptr<IgbFieldOffsetTable> malloc_offsets;
+    std::shared_ptr<IgbRegistrationMetaSlot> event_tracker_metadata; //80561BA4.
+    std::optional<std::uint32_t> malloc_message_level; //Live8055DDAC.
+    std::optional<std::uint32_t> malloc_pool_option_flags; //Live8055DDB0.
 };
 IgbTypeRegistrationArguments igb_memory_pool_registration_arguments(
     const std::shared_ptr<IgbMemoryPoolRegistrationServices>&,IgbMemoryPoolKind=IgbMemoryPoolKind::abstract_pool);
 
 // Actual2BF70/39D94 directly invoke66204; neither calls21B94. The concrete
-// malloc profile reaches native39CC0 and still-unimplemented39E28 defaults.
+// malloc profile reaches native39CC0 and39E28; deferred EventTracker class
+// registration30D50 remains an explicit later boundary.
 class IgbMemoryPoolRegistrationInvocation {
 public:
     explicit IgbMemoryPoolRegistrationInvocation(IgbMemoryPoolKind=IgbMemoryPoolKind::abstract_pool);
@@ -98,6 +108,39 @@ public:
     bool completed()const noexcept;
     bool faulted()const noexcept;
     std::uint32_t value()const;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// Actual30C50: null-only80561BA4,607F4,29E64,publish,fresh reload.
+// Allocating its metadata does not register the EventTracker class.
+class IgbEventTrackerMetadataLookupInvocation {
+public:
+    IgbEventTrackerMetadataLookupInvocation();
+    ~IgbEventTrackerMetadataLookupInvocation();
+    IgbEventTrackerMetadataLookupInvocation(const IgbEventTrackerMetadataLookupInvocation&)=delete;
+    IgbEventTrackerMetadataLookupInvocation& operator=(const IgbEventTrackerMetadataLookupInvocation&)=delete;
+    MessengerCallResult resume(std::shared_ptr<IgbMemoryPoolRegistrationServices> services={},
+        const std::function<void()>& enclosing_check={});
+    bool completed()const noexcept;
+    bool faulted()const noexcept;
+    std::shared_ptr<IgbRuntimeMetaType> result()const;
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// Actual39E28, including captured descriptors, explicit big-endian sources,
+// lazy metadata results, original schema and fresh malloc metadata+40 tail.
+class IgbMallocMemoryPoolDefaultsInvocation {
+public:
+    IgbMallocMemoryPoolDefaultsInvocation();
+    ~IgbMallocMemoryPoolDefaultsInvocation();
+    IgbMallocMemoryPoolDefaultsInvocation(const IgbMallocMemoryPoolDefaultsInvocation&)=delete;
+    IgbMallocMemoryPoolDefaultsInvocation& operator=(const IgbMallocMemoryPoolDefaultsInvocation&)=delete;
+    MessengerCallResult resume(std::shared_ptr<IgbMemoryPoolRegistrationServices> services={},
+        const std::function<void()>& enclosing_check={});
+    bool completed()const noexcept;
+    bool faulted()const noexcept;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

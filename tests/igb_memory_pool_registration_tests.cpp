@@ -81,7 +81,8 @@ void exact_abstract_contract(){
     auto probe=factory(next);
     check(probe && !probe->resume().completed,"Malloc probe adapter fabricated its missing local storage.");
     next.kind=IgbTypeRegistrationServiceKind::defaults;next.function=0x80039e28;
-    check(!factory(next),"Parent metadata recovery invented malloc default behavior.");
+    auto malloc_defaults=factory(next);
+    check(malloc_defaults && !malloc_defaults->resume().completed,"Malloc defaults fabricated their missing canonical metadata input.");
 }
 
 void distinct_lookup_modes(){

@@ -4395,13 +4395,11 @@ void actual_cold_bootstrap_prefix(){
     const auto after_malloc_probe=call.resume(bootstrap);
     std::cout<<"Cold native malloc probe: "<<after_malloc_probe.diagnostic<<"; types="<<f.core->types->count<<
         ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", local probes="<<malloc_probe_locals.size()<<'\n';
-    check(!after_malloc_probe.completed && !call.faulted() && !remaining_calls.empty() &&
-        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80039e28 &&
-        remaining_calls.back().metadata==malloc_type && malloc_type->type_word==0x80473790 && malloc_type->class_flags==9 &&
-        malloc_type->instance_count==0 && malloc_probe_locals.size()==1 && f.core->types->count==41 &&
-        descriptors.size()==127 && default_allocations==140 && enabled_allocations.size()==169 &&
+    check(!after_malloc_probe.completed && !call.faulted() && malloc_type->type_word==0x80473790 &&
+        malloc_type->class_flags==9 && malloc_type->instance_count==0 && malloc_probe_locals.size()==1 &&
+        f.core->types->count==41 && descriptors.size()==129 && default_allocations==140 && enabled_allocations.size()==171 &&
         runtime_allocations.size()==6 && (**prototypes->registry)->count==13,
-        "Actual malloc probe did not publish its selected type word before the original defaults boundary.");
+        "Actual malloc defaults did not retain their first two descriptors before the unsigned-long dependency.");
     const auto malloc_local=malloc_probe_locals.front();
     check(igb_bootstrap_read_word(malloc_local,0)==0x80473790 && igb_bootstrap_read_word(malloc_local,4)==1 &&
         igb_bootstrap_read_word(malloc_local,0x74)==0 && igb_bootstrap_read_word(malloc_local,0x94)==0 &&
@@ -4409,12 +4407,182 @@ void actual_cold_bootstrap_prefix(){
     for(std::size_t i=0;i<0xa0;++i){const bool known=i<8 || (i>=0x74 && i<0x78) || (i>=0x94 && i<0x98);
         check(malloc_local.storage->bytes->initialized[i]==(known?1:0) && (known || malloc_local.storage->bytes->bytes[i]==0xcc),
             "Malloc probe initialized unknown padding or fabricated allocator state.");}
+    const auto before_malloc_names=string_allocations;
+    const auto before_malloc_reflections=reflected_allocations.size();
+    const auto before_malloc_callbacks=freed_callback_lists.size();
     check(call.resume(bootstrap).diagnostic==after_malloc_probe.diagnostic && !call.faulted() &&
-        malloc_probe_locals.size()==1 && f.core->types->count==41 && descriptors.size()==127 && default_allocations==140 &&
-        enabled_allocations.size()==169 && runtime_allocations.size()==6 && (**prototypes->registry)->count==13 &&
-        string_allocations==pool_finished_names && freed_callback_lists.size()==pool_finished_callbacks &&
-        reflected_allocations.size()==pool_finished_reflections && wake_interrupt_calls.size()==3 && error_type->instance_count==1,
-        "Pending malloc defaults replayed the local probe or earlier native startup.");
+        malloc_probe_locals.size()==1 && f.core->types->count==41 && descriptors.size()==129 && default_allocations==140 &&
+        enabled_allocations.size()==171 && runtime_allocations.size()==6 && (**prototypes->registry)->count==13 &&
+        string_allocations==before_malloc_names && freed_callback_lists.size()==before_malloc_callbacks &&
+        reflected_allocations.size()==before_malloc_reflections && wake_interrupt_calls.size()==3 && error_type->instance_count==1,
+        "Pending malloc defaults replayed their completed prefix or earlier native startup.");
+
+    auto unsigned_long_cell=std::make_shared<IgbRegistrationMetaSlot>(std::shared_ptr<IgbRuntimeMetaType>{});
+    object_defaults->meta_fields->metadata_slots[static_cast<std::size_t>(IgbMetaFieldKind::unsigned_long)]=unsigned_long_cell;
+    values->unsigned_long_prototype=std::shared_ptr<IgbDecodeRuntimeField>{};
+    std::vector<IgbBootstrapPointer> unsigned_long_probe_locals,unsigned_long_prototype_allocations;
+    field_probe->profile_local_storage=[&](IgbMetaFieldKind kind){
+        check(kind==IgbMetaFieldKind::unsigned_long,"Unsigned-long registration repeated an earlier field probe.");
+        auto raw=allocation(0xc77000+static_cast<std::uint32_t>(unsigned_long_probe_locals.size())*0x100,0x34);
+        raw.storage->bytes->initialized.assign(0x34,0);
+        for(std::size_t i=4;i<8;++i)raw.storage->bytes->initialized[i]=1;
+        raw.storage->bindings.push_back({0,{},{},{},{},std::make_shared<IgbDecodeRuntimeField>()});
+        unsigned_long_probe_locals.push_back(raw);return raw;
+    };
+    const auto before_unsigned_long_buffers=values->fields->factory;
+    std::vector<IgbFieldOperationCall> unsigned_long_buffer_calls;
+    values->fields->factory=[&,before_unsigned_long_buffers](const IgbFieldOperationCall& c){
+        if(c.kind!=IgbFieldOperationKind::allocate_default || !c.field || c.field->vtable_word!=0x80476f60)
+            return before_unsigned_long_buffers(c);
+        unsigned_long_buffer_calls.push_back(c);auto operation=std::make_shared<IgbFieldOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.pool==f.pool && c.bytes==8 && c.alignment==1,
+                "Unsigned-long default storage lost its eight-byte request or selected pool.");
+            ++default_allocations;auto bytes=std::make_shared<IgbScratchBuffer>();
+            bytes->bytes.assign(8,0xcc);bytes->initialized.assign(8,0);
+            out->buffer_result={bytes,0};out->buffer_address=0x740000+default_allocations*0x100;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto before_unsigned_long_allocator=resumed_reflected_allocations;
+    resumed_reflected_allocations=[&,before_unsigned_long_allocator](const IgbFileFactoryCall& c){
+        if(!*unsigned_long_cell || c.metadata!=**unsigned_long_cell)return before_unsigned_long_allocator(c);
+        auto operation=std::make_shared<IgbFileFactoryOperation>();
+        operation->resume=[&,c,out=operation.get(),done=false]()mutable{
+            if(done)return MessengerCallResult{true,0,{}};
+            check(c.kind==IgbFileFactoryServiceKind::allocate && c.pool==f.pool && c.bytes==0x34,
+                "Unsigned-long reflected allocation changed its original size, pool or operation.");
+            auto raw=allocation(0x900000+static_cast<std::uint32_t>(enabled_allocations.size())*0x100,c.bytes);
+            IgbObjectInstance instance;instance.storage=raw.storage;instance.field=std::make_shared<IgbDecodeRuntimeField>();
+            raw.storage->bindings.push_back({0,{},{},{},{},instance.field});
+            if(!*values->unsigned_long_prototype)unsigned_long_prototype_allocations.push_back(raw);
+            else{descriptors.push_back(instance.field);descriptor_allocations.push_back(raw);}
+            values->fields->pointer_lists->values.push_back({igb_bootstrap_address(raw),{},instance.field});
+            enabled_allocations.push_back(instance);igb_bind_object_field_instance(member_construct,instance);
+            reflected_allocations.push_back(c);out->allocation_result=raw.storage;done=true;
+            return MessengerCallResult{true,0,{}};
+        };return operation;
+    };
+    const auto missing_event_tracker=call.resume(bootstrap);
+    std::cout<<"Cold native malloc EventTracker getter: "<<missing_event_tracker.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", prototypes="<<(**prototypes->registry)->count<<'\n';
+    check(!missing_event_tracker.completed && !call.faulted() && !memory_pool->event_tracker_metadata &&
+        missing_event_tracker.diagnostic=="EventTracker getter requires canonical80561BA4 storage." &&
+        f.core->types->count==42 && descriptors.size()==137 && default_allocations==146 && enabled_allocations.size()==182 &&
+        (**prototypes->registry)->count==14 && malloc_type->fields->count==26 && malloc_type->class_flags==9,
+        "Malloc defaults did not complete their ten-field batch before the original EventTracker getter.");
+    memory_pool->event_tracker_metadata=std::make_shared<IgbRegistrationMetaSlot>();
+    const auto event_unknown_allocations=enabled_allocations.size();
+    check(!call.resume(bootstrap).completed && !call.faulted() && !*memory_pool->event_tracker_metadata &&
+        enabled_allocations.size()==event_unknown_allocations,
+        "An unknown EventTracker pointer was treated as initialized null.");
+    *memory_pool->event_tracker_metadata=std::shared_ptr<IgbRuntimeMetaType>{};
+    const auto missing_message_level=call.resume(bootstrap);
+    std::cout<<"Cold native malloc live enum input: "<<missing_message_level.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!missing_message_level.completed && !call.faulted() && !memory_pool->malloc_message_level &&
+        missing_message_level.diagnostic=="Malloc enum default requires live8055DDAC." &&
+        *memory_pool->event_tracker_metadata && **memory_pool->event_tracker_metadata &&
+        (**memory_pool->event_tracker_metadata)->class_flags==0 &&
+        f.core->types->count==42 && descriptors.size()==137 && default_allocations==146 && enabled_allocations.size()==184,
+        "Malloc lazy metadata allocation registered its class or fabricated the live message-level input.");
+    // Explicit prepared image inputs; this does not recover their startup producer.
+    memory_pool->malloc_message_level=1;
+    const auto missing_pool_options=call.resume(bootstrap);
+    std::cout<<"Cold native malloc live option input: "<<missing_pool_options.diagnostic<<'\n';
+    check(!missing_pool_options.completed && !call.faulted() && !memory_pool->malloc_pool_option_flags &&
+        missing_pool_options.diagnostic=="Malloc option default requires live8055DDB0.",
+        "Malloc defaults fabricated the live pool-option input.");
+    memory_pool->malloc_pool_option_flags=0x0c;
+    const auto after_malloc_defaults=call.resume(bootstrap);
+    std::cout<<"Cold native malloc defaults: "<<after_malloc_defaults.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", prototypes="<<(**prototypes->registry)->count<<'\n';
+    check(!after_malloc_defaults.completed && !call.faulted(),"Malloc defaults fabricated complete original startup.");
+    check(after_malloc_defaults.diagnostic=="Registration requires original function 0x80030D50." &&
+        f.core->types->count==43 && descriptors.size()==137 && default_allocations==151 && enabled_allocations.size()==184 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==14 &&
+        f.core->types->backing->at(41)==**unsigned_long_cell && f.core->types->backing->at(42)==malloc_type,
+        "Malloc registration did not publish its class before the actual deferred EventTracker wrapper.");
+    const auto unsigned_long_type=**unsigned_long_cell;const auto unsigned_long_prototype=*values->unsigned_long_prototype;
+    check(unsigned_long_type->name && *unsigned_long_type->name=="igUnsignedLongMetaField" &&
+        unsigned_long_type->class_flags==7 && unsigned_long_type->parent==base_field && unsigned_long_type->native_size==0x34 &&
+        unsigned_long_type->type_word==0x80476f60 && unsigned_long_type->fields->count==20 && unsigned_long_type->instance_count==3 &&
+        unsigned_long_probe_locals.size()==1 && unsigned_long_prototype_allocations.size()==1 && unsigned_long_buffer_calls.size()==3 &&
+        igb_bootstrap_read_word(unsigned_long_probe_locals.front(),0)==0x80471914,
+        "Unsigned-long dependency lost its inherited layout, actual probe or three reflected instances.");
+    check(unsigned_long_prototype && unsigned_long_prototype->size==8 && unsigned_long_prototype->ordinal==13 &&
+        unsigned_long_prototype->type_ordinal==13 && unsigned_long_prototype->reference_word==1 &&
+        igb_bootstrap_read_word(unsigned_long_prototype_allocations.front(),4)==1 &&
+        (**prototypes->registry)->backing->at(13)==unsigned_long_prototype &&
+        igb_field_prototype_slot(prototypes,IgbFieldTypeKind::unsigned_long).get()==&values->unsigned_long_prototype,
+        "Unsigned-long prototype lost its separate canonical cell, ordinal or balanced physical ownership.");
+    check(malloc_type->class_flags==7 && malloc_type->parent==abstract_pool_type && malloc_type->native_size==0xa0 &&
+        malloc_type->native_alignment==8 && malloc_type->type_word==0x80473790 && malloc_type->instance_count==0 &&
+        malloc_type->fields->count==26 && malloc_type->word_40==0x8002bfd8 && malloc_type->field_callback==0x80039e08,
+        "Malloc class completion lost its layout or confused the final callback with its field getter.");
+    const auto physical_malloc=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==malloc_type;});
+    check(physical_malloc!=enabled_allocations.end() &&
+        igb_bootstrap_read_word({physical_malloc->storage,physical_malloc->offset},0x40)==0x8002bfd8,
+        "Malloc defaults published the final callback only to a host cache.");
+    for(std::size_t i=0;i<16;++i)
+        check(malloc_type->fields->backing->at(i)==abstract_pool_type->fields->backing->at(i),
+            "Malloc defaults replaced an inherited abstract-pool descriptor.");
+    constexpr std::array<std::uint32_t,10> malloc_sizes={4,4,8,8,2,4,1,4,4,4};
+    constexpr std::array<std::uint32_t,10> malloc_offsets={0x78,0x7c,0x80,0x88,0x90,0x94,0x70,0x74,0x98,0x9c};
+    for(std::size_t i=0;i<10;++i){const auto descriptor=descriptors[127+i];const auto physical=descriptor_allocations[127+i];
+        const auto global=0x80561fb4u+static_cast<std::uint32_t>(4*i);
+        check(malloc_type->fields->backing->at(16+i)==descriptor && descriptor->name &&
+            *descriptor->name==**memory_pool->malloc_names->at(i) && descriptor->ordinal==16+i &&
+            descriptor->offset==malloc_offsets[i] && descriptor->size==malloc_sizes[i] && descriptor->declaring_type &&
+            descriptor->declaring_type->lock()==malloc_type && descriptor->global_slot_address==global &&
+            *memory_pool->malloc_globals->at(i)->slot==descriptor && descriptor->reference_word==1 &&
+            igb_bootstrap_read_word(physical,4)==1 && igb_bootstrap_read_word(physical,8)==malloc_offsets[i] &&
+            igb_bootstrap_read_word(physical,0x1c)==global,
+            "Malloc schema lost field order, widths, physical publication or balanced descriptor references.");
+        check(descriptor->default_bytes && descriptor->default_bytes->buffer &&
+            descriptor->default_bytes->buffer->bytes.size()==malloc_sizes[i],
+            "Malloc schema omitted an actual default buffer or used a host-width size.");
+    }
+    for(const auto index:{0u,2u,4u,8u,9u}){const auto& bytes=*descriptors[127+index]->default_bytes->buffer;
+        for(std::size_t i=0;i<bytes.bytes.size();++i){
+            const auto expected=index==0 || index==2?0xffu:(i+1==bytes.bytes.size()?(index==4?4u:index==8?1u:0x0cu):0u);
+            check(bytes.initialized[i] && bytes.bytes[i]==expected,
+                "Malloc scalar default lost its original big-endian width or captured input.");
+        }
+    }
+    const auto& untouched_size=*descriptors[130]->default_bytes->buffer;
+    for(std::size_t i=0;i<8;++i)check(untouched_size.bytes[i]==0xcc && untouched_size.initialized[i]==0,
+        "Malloc current-size preparation invented a scalar value without an original setter.");
+    const auto event_metadata=**memory_pool->event_tracker_metadata;
+    const auto event_allocation=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==event_metadata;});
+    const auto semaphore_allocation=std::find_if(enabled_allocations.begin(),enabled_allocations.end(),
+        [&](const auto& instance){return instance.metadata==semaphore_metadata;});
+    check(event_allocation!=enabled_allocations.end() && semaphore_allocation!=enabled_allocations.end() &&
+        descriptors[132]->object_type && descriptors[132]->object_type->lock()==event_metadata &&
+        descriptors[134]->object_type && descriptors[134]->object_type->lock()==semaphore_metadata &&
+        igb_bootstrap_read_word(descriptor_allocations[132],0x38)==igb_bootstrap_address({event_allocation->storage,event_allocation->offset}) &&
+        igb_bootstrap_read_word(descriptor_allocations[134],0x38)==igb_bootstrap_address({semaphore_allocation->storage,semaphore_allocation->offset}) &&
+        event_metadata->class_flags==0 && descriptors[135]->method_function==0x80039b88 &&
+        igb_bootstrap_read_word(descriptor_allocations[135],0x34)==0x80039b88,
+        "Malloc defaults skipped physical type pointers, registered the lazy EventTracker, or executed its deferred enum provider.");
+    const auto malloc_finished_names=string_allocations;
+    const auto malloc_finished_callbacks=freed_callback_lists.size(),malloc_finished_reflections=reflected_allocations.size();
+    const auto malloc_finished_members=member_calls.size(),malloc_finished_clones=reached_reflected_clones.size();
+    check(call.resume(bootstrap).diagnostic==after_malloc_defaults.diagnostic && !call.faulted() &&
+        f.core->types->count==43 && descriptors.size()==137 && default_allocations==151 && enabled_allocations.size()==184 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==14 && malloc_probe_locals.size()==1 &&
+        unsigned_long_probe_locals.size()==1 && unsigned_long_prototype_allocations.size()==1 && unsigned_long_buffer_calls.size()==3 &&
+        string_allocations==malloc_finished_names && freed_callback_lists.size()==malloc_finished_callbacks &&
+        reflected_allocations.size()==malloc_finished_reflections && member_calls.size()==malloc_finished_members &&
+        reached_reflected_clones.size()==malloc_finished_clones && wake_interrupt_calls.size()==3 &&
+        error_type->instance_count==1 && error_handler->state->singleton->storage==error_storage.storage &&
+        error_bootstrap_list->count==2 && !error_bootstrap_list->released && event_metadata->class_flags==0,
+        "Pending EventTracker registration repeated earlier startup, field allocation or malloc initialization.");
 
 }
 }

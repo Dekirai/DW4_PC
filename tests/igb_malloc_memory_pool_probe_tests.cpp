@@ -136,7 +136,8 @@ void adapter_selects_local_once_and_guards_reentry(){
     check(!operation->resume().completed && selections==1,"Probe did not retain its local selection across missing offset.");
     f.core->vtable_offset=0;f.services->malloc_probe_storage={};
     check(operation->resume().completed && operation->resume().value==0x80473790 && selections==1,"Probe adapter repeated local allocation.");
-    call.function=0x80039e28;call.kind=IgbTypeRegistrationServiceKind::defaults;check(!factory(call),"Probe adapter invented malloc defaults.");
+    call.function=0x80039e28;call.kind=IgbTypeRegistrationServiceKind::defaults;auto defaults=factory(call);
+    check(defaults && !defaults->resume().completed,"Malloc defaults fabricated their missing canonical metadata input.");
 
     Fixture recursive;auto selected=make_native_igb_memory_pool_registration_type_factory(recursive.services);
     call.function=0x80039cc0;call.kind=IgbTypeRegistrationServiceKind::layout_probe;auto target=selected(call);

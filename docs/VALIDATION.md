@@ -1,5 +1,70 @@
 # Local validation
 
+## Malloc defaults reach EventTracker registration
+
+Validated locally on 2026-09-27. Native `80039E28` now composes the ten-field
+batch, five scalar setters, captured object-type publications, actual schema
+and fresh metadata callback store. Allocation-only `80030C50` shares its
+canonical EventTracker cell with the later class registration. The cold chain
+reaches the actual missing full wrapper `80030D50`, with **43 types, 137
+descriptors, 151 default buffers, 14 prototypes, 184 enabled allocations and
+six runtime objects**. Malloc class registration completes; a runtime pool
+instance or complete allocator is not thereby created.
+See [IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md).
+
+| Check | Evidence |
+| --- | --- |
+| Final Release CoreOnly build | 225/225 local CTest suites passed; four jobs |
+| Focused malloc-defaults suite | 682 checks passed on its first execution; actual batch/schema/value composition, ordering, physical stores, pending ownership and caught recursion |
+| Integrated cold startup | 7,472 checks; real next callback, exact fields/defaults/type pointers and no repeated completed startup effects |
+| Original decoder/player regressions | 400 and 447 original-inclusive checks; player suite includes 62 synthetic checks |
+| Python verifier | Six tests passed |
+
+The original corpus was sealed before candidate inspection: 107 cases,
+113,246 instructions and 453 visited addresses. Actual `80065924/800659C0`
+execute their reached retain, append, configuration and finalization helpers.
+The independent audit verifies 20,339 stores, 23,795 reads, 542 physical retains,
+539 creator releases, 231 setter sources, eighty captured type stores,
+33 enum-provider stores and 25 fresh metadata tails. All 107 cases replay
+exactly; the 33-artifact seal is
+`74ad24ac896fdd40e5be5b1847b6ad1926dd2c5b6fa5a4cb265852e294285ff8`.
+
+The fixed native scope matches **72/72**, with 35 completions, 25 represented
+faults and twelve pending inputs/endpoints. Native output replays byte-for-byte,
+and original replay remains exact. Its 109-artifact seal is
+`441b9c0ab111de3f762a25940a82ab5a7462c406d361112ff7a50579df425c7d`.
+The 35 original-only cases comprise 32
+standalone setter entries without an equivalent public native entry and three
+unknown raw list headers without optional canonical counterparts.
+
+The first driver compile failed on generated C++ pointer declarators. After
+that syntax correction, the first comparison matched 59/72. Thirteen differences
+came from two driver fixture assumptions: slot mutation used replacement field2
+instead of the original default field20; direct lazy cases initialized an unused
+malloc cell to metadata1 instead of the original case input. Those fixtures were
+corrected with scope, original inputs and expected observations unchanged.
+All first sources, outputs and freezes are preserved; production needed no fix.
+
+Prepared descriptor factories, pool/capacity, strings and scalar `+8C` copies
+remain explicit lower endpoints. Original whole-function `80029E64` results
+are adapted through the native reflected-result fixture; its private internal
+calls are outside this comparison. Canonical name identity substitutes for raw
+descriptor name pointers, and metadata flags use the existing canonical model.
+Other represented descriptor bytes, payloads, list backing bytes and their
+knownness remain compared. Exact whole-program or instruction-trace parity is
+not claimed.
+
+The initial core build passed 221/224 suites. Two old tests still expected an
+unsupported defaults callback, and the first cold assertion prematurely expected
+two default buffers before schema. Only those fixture assumptions changed.
+The next baseline passed 224/224; the added focused suite and strengthened cold
+checks then passed 225/225. The two live scalar inputs `1` and `0C` are explicit
+prepared image values; their startup producer is still unfinished.
+Core SHA256:
+`2bfd190112337caf43e69b5484f03bcf66bdca8a5e9e7243ff4bfbfff6e50a48`.
+Local evidence uses `work/native-malloc-defaults-`. Full EventTracker defaults,
+runtime allocation, complete original startup and playable gameplay remain open.
+
 ## Unsigned 64-bit field dependency
 
 Validated locally on 2026-09-27. The native scalar helpers now admit the exact

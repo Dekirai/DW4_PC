@@ -118,16 +118,63 @@ Unknown padding is preserved. The type adapter obtains local storage once,
 returns the captured layout word and lets the generic registrar continue to
 malloc defaults `80039E28`.
 
+## Concrete malloc defaults
+
+`IgbMallocMemoryPoolDefaultsInvocation` implements `80039E28`. It captures the
+canonical malloc metadata and first field index, then uses the actual batch and
+schema operations for ten additional fields. The concrete tables are separate
+from the fourteen abstract-pool rows.
+
+| Field | Factory | Offset | Explicit default |
+| --- | --- | --- | --- |
+| `_poolIndex` | `8002E1AC` | `78` | Four-byte `FFFFFFFF` |
+| `_elementSize` | `80022A90` | `7C` | No scalar setter |
+| `_maxSize` | `80022450` | `80` | Eight-byte `FFFFFFFFFFFFFFFF` |
+| `_size` | `80022450` | `88` | No scalar setter |
+| `_alignment` | `80021E10` | `90` | Two-byte `0004` |
+| `_eventTracker` | `8002879C` | `94` | Object type from lazy `80030C50` |
+| `_isActive` | `800385E0` | `70` | No scalar setter |
+| `_allocationLock` | `8002879C` | `74` | Object type from existing lazy `80026020` |
+| `_messageLevel` | `80031378` | `98` | Captured live word `8055DDAC` |
+| `_poolOptionFlags` | `8002E1AC` | `9C` | Later live word `8055DDB0` |
+
+The five scalar calls retain explicit big-endian source bytes and the selected
+descriptor virtual `+8C` across suspension. Each later field selection is fresh.
+The two type lookups retain their already selected descriptors and publish the
+returned numeric metadata pointers at physical `+38`. Existing typed metadata
+mappings supply those identities; absent mappings stay pending. Publishing a
+pointer does not read the pointed-to metadata payload.
+
+After the enum value callback returns, the captured enum descriptor receives
+provider `80039B88` at physical `+34`; the provider is deferred. Schema completion
+is followed by a fresh canonical malloc metadata read and physical
+`+40=8002BFD8`, then the matching host cache update. This callback is separate
+from the abstract pool's `+3C` factory redirect.
+
+`IgbEventTrackerMetadataLookupInvocation` implements allocation-only `80030C50`.
+Unknown canonical `80561BA4` remains pending. Known null uses actual pool lookup
+`800607F4` and metadata factory `80029E64`, publishes their result, then reloads
+the cell. A nonnull pointer returns without requiring class readiness. The
+getter does not implement full EventTracker registration `80030D50`.
+
+The two live scalar globals are optional service inputs. The local cold fixture
+explicitly supplies the verified initialized-image values `1` and `0C`; their
+original startup producer is still separate work. Legacy type-getter and
+metadata-factory child callbacks do not receive a borrowed parent fault check.
+The new caller prevents later caller stores after a fault, without claiming to
+guard effects inside those older callbacks. Setter source spans do not invent
+guest stack addresses, and the existing bounded value-copy profile applies.
+
 ## Scope and provenance
 
 The supplied USA DOL is the primary source, SHA1
 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. IDA and direct DOL checks establish
 the exact profiles, tables and callback order. Research artifacts remain local.
 Canonical metadata mappings and legacy lower parent-guard limits stay explicit.
-Schema tables contain the fourteen recovered rows. A mutated live list count
+Schema tables contain fourteen abstract and ten concrete rows. A mutated live list count
 that drives the original beyond those tables is rejected at the native table
 boundary; adjacent DOL bytes are not represented as additional schema rows.
-Concrete malloc/arena defaults, runtime pool allocation, tagged-table production,
+Arena defaults, full EventTracker registration, runtime pool allocation, tagged-table production,
 remaining scalar member operations and complete startup are separate requirements.
 Class metadata alone is not an initialized memory manager or playable game.
 Measured results belong in [VALIDATION.md](VALIDATION.md).

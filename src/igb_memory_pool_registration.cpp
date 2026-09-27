@@ -103,6 +103,19 @@ IgbMemoryPoolRegistrationServices::IgbMemoryPoolRegistrationServices() {
     }
     offsets=std::make_shared<IgbFieldOffsetTable>(IgbFieldOffsetTable{
         0x08,0x10,0x18,0x20,0x28,0x30,0x38,0x40,0x48,0x50,0x58,0x60,0x68,0x69});
+    malloc_factories=std::make_shared<IgbFieldFactoryTable>(IgbFieldFactoryTable{
+        0x8002e1ac,0x80022a90,0x80022450,0x80022450,0x80021e10,
+        0x8002879c,0x800385e0,0x8002879c,0x80031378,0x8002e1ac});
+    malloc_names=std::make_shared<IgbFieldNameTable>();malloc_globals=std::make_shared<IgbFieldGlobalTable>();
+    constexpr std::array malloc_labels={"_poolIndex","_elementSize","_maxSize","_size","_alignment",
+        "_eventTracker","_isActive","_allocationLock","_messageLevel","_poolOptionFlags"};
+    for(std::size_t i=0;i<malloc_labels.size();++i) {
+        malloc_names->push_back(std::make_shared<const std::string>(malloc_labels[i]));
+        malloc_globals->push_back(IgbFieldGlobalBinding{
+            std::make_shared<IgbRuntimeFieldSlot>(),0x80561fb4u+static_cast<std::uint32_t>(4*i)});
+    }
+    malloc_offsets=std::make_shared<IgbFieldOffsetTable>(IgbFieldOffsetTable{
+        0x78,0x7c,0x80,0x88,0x90,0x94,0x70,0x74,0x98,0x9c});
 }
 IgbTypeRegistrationArguments igb_memory_pool_registration_arguments(
     const std::shared_ptr<IgbMemoryPoolRegistrationServices>& services,Kind kind) {
@@ -491,6 +504,300 @@ MessengerCallResult IgbMallocMemoryPoolProbeInvocation::resume(
     } } }catch(...) { s.fault=true;throw; }
 }
 
+namespace {
+IgbRuntimeFieldDefaultSource malloc_source(std::initializer_list<std::uint32_t> words) {
+    auto bytes=std::make_shared<IgbScratchBuffer>();
+    for(const auto word:words)for(const auto shift:{24u,16u,8u,0u})
+        bytes->bytes.push_back(static_cast<std::uint8_t>(word>>shift));
+    bytes->initialized.assign(bytes->bytes.size(),1);return {bytes,0};
+}
+IgbRuntimeFieldDefaultSource malloc_alignment_source() {
+    auto bytes=std::make_shared<IgbScratchBuffer>();
+    bytes->bytes={0,4};bytes->initialized={1,1};return {bytes,0};
+}
+std::optional<std::uint32_t> malloc_metadata_address(
+    const std::shared_ptr<IgbRuntimeMetaType>& metadata,
+    const std::shared_ptr<IgbMemoryPoolRegistrationServices>& services) {
+    if(!metadata)return 0;
+    std::optional<std::uint32_t> result;
+    const auto accept=[&](std::uint32_t address) {
+        if(!address || (result && *result!=address))fail("Malloc dependency metadata has conflicting arithmetic identities.");
+        result=address;
+    };
+    if(services)for(const auto& pointer:services->physical_metadata) {
+        if(!pointer.storage)continue;
+        bool matches=false;
+        for(const auto& binding:pointer.storage->bindings)
+            if(binding.offset==pointer.offset && binding.metadata==metadata)matches=true;
+        if(!matches)continue;
+        // Publishing a returned pointer does not read the metadata's bytes.
+        if(igb_bootstrap_metadata(pointer)!=metadata)fail("Malloc dependency has a conflicting typed metadata binding.");
+        accept(igb_bootstrap_address(pointer));
+    }
+    const auto pointers=services && services->schema && services->schema->fields?
+        services->schema->fields->pointer_lists:nullptr;
+    if(pointers)for(const auto& binding:pointers->values)if(binding.metadata==metadata) {
+        if(binding.field)fail("Malloc dependency metadata also identifies a descriptor.");
+        accept(binding.address);
+    }
+    if(result) {
+        if(pointers)for(const auto& binding:pointers->values)if(binding.address==*result &&
+            (binding.field || (binding.metadata && binding.metadata!=metadata)))
+            fail("Malloc dependency address conflicts with another canonical object.");
+        if(services)for(const auto& pointer:services->physical_metadata)
+            if(pointer.storage && igb_bootstrap_address(pointer)==*result && igb_bootstrap_metadata(pointer)!=metadata)
+                fail("Malloc dependency address conflicts with another physical metadata owner.");
+    }
+    return result;
+}
+}
+
+struct IgbEventTrackerMetadataLookupInvocation::Impl {
+    enum class Phase { read,handle,pool,construct,publish,reload,done };
+    Phase phase=Phase::read;
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> owner;
+    std::shared_ptr<IgbRegistrationMetaSlot> slot;
+    std::shared_ptr<IgbMetadataFactoryServices> metadata_services;
+    std::shared_ptr<IgbRuntimeMetaType> result;
+    std::shared_ptr<ModelSceneObject> pool;
+    IgbBootstrapPointer allocation;
+    std::unique_ptr<IgbPoolByHandleInvocation> pool_call;
+    std::unique_ptr<IgbMetadataFactoryInvocation> factory;
+    bool running{},fault{};
+};
+IgbEventTrackerMetadataLookupInvocation::IgbEventTrackerMetadataLookupInvocation():impl_(std::make_unique<Impl>()) {}
+IgbEventTrackerMetadataLookupInvocation::~IgbEventTrackerMetadataLookupInvocation() {
+    auto& s=*impl_;if((!completed() || faulted()) && s.owner) {
+        if(s.result)s.owner->retained.push_back(s.result);
+        if(s.pool)s.owner->retained.push_back(s.pool);
+        if(s.allocation.storage)s.owner->retained.push_back(s.allocation.storage);
+        // A borrowed check can fail after a child returned but before its
+        // result was consumed. Retain result owners, never child callbacks.
+        if(s.pool_call && s.pool_call->completed() && !s.pool_call->faulted())
+            if(const auto pool=s.pool_call->result())s.owner->retained.push_back(pool);
+        if(s.factory && s.factory->completed() && !s.factory->faulted()) {
+            if(const auto metadata=s.factory->result())s.owner->retained.push_back(metadata);
+            if(const auto allocation=s.factory->allocation();allocation.storage)s.owner->retained.push_back(allocation.storage);
+        }
+    }
+}
+bool IgbEventTrackerMetadataLookupInvocation::completed()const noexcept { return impl_->phase==Impl::Phase::done; }
+bool IgbEventTrackerMetadataLookupInvocation::faulted()const noexcept { return impl_->fault; }
+std::shared_ptr<IgbRuntimeMetaType> IgbEventTrackerMetadataLookupInvocation::result()const {
+    if(!completed() || faulted())fail("Incomplete EventTracker metadata getter has no result.");
+    return impl_->result;
+}
+MessengerCallResult IgbEventTrackerMetadataLookupInvocation::resume(
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> services,const std::function<void()>& enclosing_check) {
+    auto& s=*impl_;using P=Impl::Phase;
+    if(s.running || s.fault) { s.fault=true;fail("EventTracker metadata getter requires an unfaulted nonrecursive invocation."); }
+    if(completed())return {true,0,{}};
+    Running running(s.running);if(!s.owner && services)s.owner=services;
+    const auto check=[&] {
+        if(s.fault)fail("EventTracker metadata getter was invalidated by a callback.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("EventTracker metadata getter was invalidated by its enclosing callback.");
+    };
+    try { for(;;) { check();switch(s.phase) {
+    case P::read:
+        if(!s.slot) {
+            if(!services || !services->event_tracker_metadata)return pending("EventTracker getter requires canonical80561BA4 storage.");
+            s.slot=services->event_tracker_metadata;
+        }
+        if(!*s.slot)return pending("EventTracker getter requires represented metadata80561BA4.");
+        s.phase=**s.slot?P::reload:P::handle;break;
+    case P::handle:
+        if(!services || !services->types || !services->types->metadata_pool_handle)
+            return pending("EventTracker lazy metadata requires live pool handle805621F4.");
+        s.pool_call=std::make_unique<IgbPoolByHandleInvocation>(*services->types->metadata_pool_handle);
+        s.phase=P::pool;break;
+    case P::pool: {
+        const auto status=s.pool_call->resume(services?services->pools:nullptr);check();if(!status.completed)return status;
+        s.pool=s.pool_call->result();s.pool_call.reset();check();s.phase=P::construct;break;
+    }
+    case P::construct:
+        if(!s.factory) {
+            if(!services || !services->metadata)return pending("EventTracker lazy metadata requires actual29E64 services.");
+            s.metadata_services=services->metadata;s.factory=std::make_unique<IgbMetadataFactoryInvocation>(s.pool);
+        }
+        { const auto status=s.factory->resume(s.metadata_services);check();if(!status.completed)return status; }
+        s.result=s.factory->result();s.allocation=s.factory->allocation();
+        if(s.owner && s.allocation.storage)s.owner->physical_metadata.push_back(s.allocation);
+        s.factory.reset();check();s.phase=P::publish;break;
+    case P::publish:
+        if(*s.slot && **s.slot && **s.slot!=s.result && s.owner)s.owner->retained.push_back(**s.slot);
+        *s.slot=s.result;s.phase=P::reload;break;
+    case P::reload:
+        if(!*s.slot)return pending("EventTracker metadata getter requires its fresh post-call canonical pointer.");
+        s.result=**s.slot;s.phase=P::done;break;
+    case P::done:return {true,0,{}};
+    } } }catch(...) { s.fault=true;throw; }
+}
+
+struct IgbMallocMemoryPoolDefaultsInvocation::Impl {
+    enum class Phase { receiver,count,batch,field,input,table,value,getter,type_store,enum_store,next,
+        schema_setup,schema,callback_owner,callback_store,done };
+    enum class Step { pool_index,max_size,alignment,event_tracker,allocation_lock,message_level,pool_options };
+    Phase phase=Phase::receiver;Step step=Step::pool_index;
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> owner;
+    std::shared_ptr<IgbRuntimeMetaType> metadata,related,callback_owner;
+    std::shared_ptr<FieldAccess> access;
+    std::unique_ptr<IgbFieldBatchInvocation> batch;
+    std::unique_ptr<IgbFieldSchemaInvocation> schema;
+    IgbFieldOperationCall request;
+    IgbFieldOperationsFactory factory;
+    std::shared_ptr<IgbFieldOperation> operation;
+    std::function<MessengerCallResult()> callback;
+    std::function<MessengerCallResult(const std::function<void()>&)> checked;
+    IgbTypeRegistrationCall type_request;
+    IgbTypeRegistrationFactory type_factory;
+    std::shared_ptr<IgbTypeRegistrationOperation> type_operation;
+    std::function<MessengerCallResult()> type_callback;
+    std::uint32_t first{};
+    bool selected{},running{},fault{};
+};
+IgbMallocMemoryPoolDefaultsInvocation::IgbMallocMemoryPoolDefaultsInvocation():impl_(std::make_unique<Impl>()) {}
+IgbMallocMemoryPoolDefaultsInvocation::~IgbMallocMemoryPoolDefaultsInvocation() {
+    auto& s=*impl_;if((!completed() || faulted()) && s.owner) {
+        if(s.metadata)s.owner->retained.push_back(s.metadata);
+        if(s.related)s.owner->retained.push_back(s.related);
+        if(s.callback_owner)s.owner->retained.push_back(s.callback_owner);
+        if(s.access)s.owner->retained.push_back(s.access);
+        if(s.request.source && s.request.source->buffer)s.owner->retained.push_back(s.request.source->buffer);
+        if(s.operation) {
+            if(s.operation->field_result)s.owner->retained.push_back(s.operation->field_result);
+            if(s.operation->pool_result)s.owner->retained.push_back(s.operation->pool_result);
+            if(s.operation->buffer_result.buffer)s.owner->retained.push_back(s.operation->buffer_result.buffer);
+        }
+        if(s.type_operation) {
+            if(s.type_operation->metadata_result)s.owner->retained.push_back(s.type_operation->metadata_result);
+            if(s.type_operation->object_result)s.owner->retained.push_back(s.type_operation->object_result);
+            if(s.type_operation->callbacks_result)s.owner->retained.push_back(s.type_operation->callbacks_result);
+        }
+    }
+}
+bool IgbMallocMemoryPoolDefaultsInvocation::completed()const noexcept { return impl_->phase==Impl::Phase::done; }
+bool IgbMallocMemoryPoolDefaultsInvocation::faulted()const noexcept { return impl_->fault; }
+MessengerCallResult IgbMallocMemoryPoolDefaultsInvocation::resume(
+    std::shared_ptr<IgbMemoryPoolRegistrationServices> services,const std::function<void()>& enclosing_check) {
+    auto& s=*impl_;using P=Impl::Phase;using S=Impl::Step;
+    if(s.running || s.fault) { s.fault=true;fail("Malloc defaults require an unfaulted nonrecursive invocation."); }
+    if(completed())return {true,0,{}};
+    Running running(s.running);if(!s.owner && services)s.owner=services;
+    const auto check=[&] {
+        if(s.fault)fail("Malloc defaults were invalidated by a callback.");
+        if(enclosing_check)enclosing_check();
+        if(s.fault)fail("Malloc defaults were invalidated by their enclosing callback.");
+    };
+    const auto clear_value=[&] {
+        s.callback={};s.checked={};s.operation.reset();s.factory={};s.request={};s.selected=false;check();
+    };
+    try { for(;;) { check();switch(s.phase) {
+    case P::receiver:
+        if(!services || !services->malloc_metadata_slot || !*services->malloc_metadata_slot)
+            return pending("Malloc defaults require represented canonical80561FB0 metadata.");
+        s.metadata=**services->malloc_metadata_slot;s.phase=P::count;break;
+    case P::count:
+        s.first=std::bit_cast<std::uint32_t>(igb_runtime_slot_count(s.metadata));
+        s.batch=std::make_unique<IgbFieldBatchInvocation>(s.metadata,services?services->malloc_factories:nullptr,10);
+        s.phase=P::batch;break;
+    case P::batch: {
+        const auto status=s.batch->resume(services?services->schema:nullptr,check);check();if(!status.completed)return status;
+        s.batch.reset();check();s.phase=P::field;break;
+    }
+    case P::field: {
+        constexpr std::array<std::uint32_t,7> indices={0,2,4,5,7,8,9};
+        const auto index=indices[static_cast<std::size_t>(s.step)];
+        s.access=std::make_shared<FieldAccess>(igb_runtime_field_at(s.metadata,
+            static_cast<std::int32_t>(((s.first+index)<<2u)>>2u)));
+        if(s.step==S::event_tracker || s.step==S::allocation_lock) {
+            s.type_request={};s.type_request.kind=IgbTypeRegistrationServiceKind::get_parent;
+            s.type_request.function=s.step==S::event_tracker?0x80030c50u:0x80026020u;
+            if(services && services->types)s.type_factory=services->types->factory;
+            s.phase=P::getter;
+        }else s.phase=P::input;
+        break;
+    }
+    case P::input:
+        s.request={};s.request.kind=IgbFieldOperationKind::field_virtual;
+        s.request.field=s.access->field;s.request.virtual_slot=0x8c;
+        if(s.step==S::pool_index)s.request.source=malloc_source({0xffffffffu});
+        else if(s.step==S::max_size)s.request.source=malloc_source({0xffffffffu,0xffffffffu});
+        else if(s.step==S::alignment)s.request.source=malloc_alignment_source();
+        else if(s.step==S::message_level) {
+            if(!services || !services->malloc_message_level)return pending("Malloc enum default requires live8055DDAC.");
+            s.request.source=malloc_source({*services->malloc_message_level});
+        }else {
+            if(!services || !services->malloc_pool_option_flags)return pending("Malloc option default requires live8055DDB0.");
+            s.request.source=malloc_source({*services->malloc_pool_option_flags});
+        }
+        s.phase=P::table;break;
+    case P::table: {
+        const auto table=s.access->table();
+        if(!table)return pending("Malloc scalar setter requires the captured descriptor's live vtable.");
+        if(!*table)fail("Malloc scalar setter dereferences a null descriptor vtable.");
+        s.request.vtable_word=*table;
+        if(services && services->schema && services->schema->fields)s.factory=services->schema->fields->factory;
+        s.phase=P::value;break;
+    }
+    case P::value:
+        if(!s.factory && services && services->schema && services->schema->fields)s.factory=services->schema->fields->factory;
+        if(!s.factory)return pending("Malloc scalar setter requires its reached virtual+8C factory.");
+        if(!s.operation) { s.operation=s.factory(s.request);check(); }
+        if(!s.operation)return pending("Malloc scalar setter reached an unbound virtual+8C.");
+        if(!s.selected && (s.operation->resume_checked || s.operation->resume)) {
+            s.checked=s.operation->resume_checked;if(!s.checked)s.callback=s.operation->resume;s.selected=true;
+        }
+        if(!s.selected)return pending("Malloc scalar setter requires its retained virtual continuation.");
+        { check();const auto status=s.checked?s.checked(check):s.callback();check();if(!status.completed)return status; }
+        clear_value();s.phase=s.step==S::message_level?P::enum_store:P::next;break;
+    case P::getter:
+        if(!s.type_factory && services && services->types)s.type_factory=services->types->factory;
+        if(!s.type_factory)return pending("Malloc object descriptor requires its reached allocation-only metadata getter.");
+        if(!s.type_operation) { s.type_operation=s.type_factory(s.type_request);check(); }
+        if(!s.type_operation)return pending("Malloc object descriptor reached an unbound metadata getter.");
+        if(!s.type_callback)s.type_callback=s.type_operation->resume;
+        if(!s.type_callback)return pending("Malloc object descriptor requires its retained metadata continuation.");
+        { const auto status=s.type_callback();check();if(!status.completed)return status; }
+        s.related=s.type_operation->metadata_result;
+        s.type_callback={};s.type_operation.reset();s.type_factory={};s.type_request={};check();s.phase=P::type_store;break;
+    case P::type_store:
+        s.access->validate();
+        if(s.access->physical) {
+            const auto address=malloc_metadata_address(s.related,services);
+            if(!address)return pending("Malloc object type store requires its captured metadata arithmetic identity.");
+            igb_bootstrap_write_word(*s.access->physical,0x38,*address);
+        }
+        s.access->field->object_type=std::weak_ptr<IgbRuntimeMetaType>(s.related);s.phase=P::next;break;
+    case P::enum_store:
+        s.access->validate();
+        if(s.access->physical)igb_bootstrap_write_word(*s.access->physical,0x34,0x80039b88);
+        s.access->field->method_function=0x80039b88;s.phase=P::next;break;
+    case P::next:
+        s.access.reset();s.related.reset();check();
+        if(s.step==S::pool_options)s.phase=P::schema_setup;
+        else { s.step=static_cast<S>(static_cast<unsigned>(s.step)+1u);s.phase=P::field; }
+        break;
+    case P::schema_setup:
+        if(!services)return pending("Malloc defaults require their original schema tables.");
+        s.schema=std::make_unique<IgbFieldSchemaInvocation>(s.metadata,services->malloc_names,
+            services->malloc_globals,services->malloc_offsets,s.first);s.phase=P::schema;break;
+    case P::schema: {
+        const auto status=s.schema->resume(services?services->schema:nullptr,check);check();if(!status.completed)return status;
+        s.schema.reset();check();s.phase=P::callback_owner;break;
+    }
+    case P::callback_owner:
+        if(!services || !services->malloc_metadata_slot || !*services->malloc_metadata_slot)
+            return pending("Malloc defaults require freshly reloaded80561FB0 for their final callback store.");
+        s.callback_owner=**services->malloc_metadata_slot;s.phase=P::callback_store;break;
+    case P::callback_store:
+        if(!s.callback_owner)fail("Malloc defaults store+40 through null reloaded metadata.");
+        if(const auto pointer=metadata_storage(s.callback_owner,services))igb_bootstrap_write_word(*pointer,0x40,0x8002bfd8);
+        s.callback_owner->word_40=0x8002bfd8;s.phase=P::done;break;
+    case P::done:return {true,0,{}};
+    } } }catch(...) { s.fault=true;throw; }
+}
+
 IgbRegistrationCallbacksFactory make_native_igb_memory_pool_registration_function_factory(
     std::shared_ptr<IgbMemoryPoolRegistrationServices> services,IgbRegistrationCallbacksFactory remaining) {
     return [weak=std::weak_ptr(services),remaining=std::move(remaining)](const IgbRegistrationCallbacksCall& call)
@@ -517,9 +824,11 @@ IgbTypeRegistrationFactory make_native_igb_memory_pool_registration_type_factory
         ->std::shared_ptr<IgbTypeRegistrationOperation> {
         const auto registration=call.kind==IgbTypeRegistrationServiceKind::register_parent?registration_function(call.function,false):std::optional<Kind>{};
         const bool defaults=call.kind==IgbTypeRegistrationServiceKind::defaults && call.function==0x8002bff8;
+        const bool malloc_defaults=call.kind==IgbTypeRegistrationServiceKind::defaults && call.function==0x80039e28;
+        const bool event_tracker=call.kind==IgbTypeRegistrationServiceKind::get_parent && call.function==0x80030c50;
         const auto lookup=call.kind==IgbTypeRegistrationServiceKind::get_parent?lookup_function(call.function):std::optional<Lookup>{};
         const bool probe=call.kind==IgbTypeRegistrationServiceKind::layout_probe && call.function==0x80039cc0;
-        if(!registration && !defaults && !lookup && !probe)return remaining?remaining(call):nullptr;
+        if(!registration && !defaults && !lookup && !probe && !malloc_defaults && !event_tracker)return remaining?remaining(call):nullptr;
         const auto selected=weak.lock();if(!selected)fail("Memory-pool registration services expired before type selection.");
         auto operation=std::make_shared<IgbTypeRegistrationOperation>();
         if(registration) {
@@ -532,6 +841,14 @@ IgbTypeRegistrationFactory make_native_igb_memory_pool_registration_type_factory
             operation->resume=[selected,invocation,out=operation.get()] {
                 const auto status=invocation->resume(selected);if(status.completed)out->metadata_result=invocation->result();return status;
             };
+        }else if(event_tracker) {
+            auto invocation=std::make_shared<IgbEventTrackerMetadataLookupInvocation>();
+            operation->resume=[selected,invocation,out=operation.get()] {
+                const auto status=invocation->resume(selected);if(status.completed)out->metadata_result=invocation->result();return status;
+            };
+        }else if(malloc_defaults) {
+            auto invocation=std::make_shared<IgbMallocMemoryPoolDefaultsInvocation>();
+            operation->resume=[selected,invocation] { return invocation->resume(selected); };
         }else if(probe) {
             struct State {
                 std::shared_ptr<IgbMallocMemoryPoolProbeInvocation> invocation;
