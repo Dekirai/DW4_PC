@@ -67,6 +67,28 @@ prototype independently, then performs physical decrement/store and a separate
 fresh low23 test. This repair preserves later fresh registry, ordinal and
 finalization selection; it does not add new reads after a selected destructor.
 
+## Unsigned 64-bit dependency
+
+The separate `igUnsignedLongMetaField` profile uses factory `80022450`,
+wrapper/body `80022634 / 8002265C`, metadata `805614A8`, prototype `805614AC`
+and vtable `80476F60`. The factory captures its pool and reads the ArkCore gate:
+the enabled branch registers then reflects using freshly loaded metadata;
+the disabled branch allocates `0x34` bytes and runs the original constructor
+and freshly selected virtual tails. The class body enters the generic registrar
+directly. Its size is `0x34`, with the existing base-field parent and no defaults.
+
+Probe `800225AC` uses specialized reset `80075C84` before capturing ArkCore.
+It captures the selected local word, restores the derived and base vtables,
+and performs the original fresh string cleanup. Callback `800226E4` shares the
+existing physical prototype-reference implementation while keeping its metadata
+and prototype cells distinct from signed-long. Plain getters and the null-only
+prototype lookup retain their different registration conditions.
+
+Size and alignment are eight. Existing `80063D04` handles the represented
+eight-byte source without host-width or byte-order conversion. The standalone
+`80075D1C` setter and clone `800224F4` are separate entries; this profile alone
+does not implement them or scalar object-member operations.
+
 ## Concrete malloc layout probe
 
 `IgbMallocMemoryPoolProbeInvocation` implements `80039CC0` on its represented

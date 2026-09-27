@@ -29,6 +29,7 @@ struct IgbFieldValuesServices {
     std::vector<IgbFieldBufferBinding> buffers; // Optional late arithmetic bindings for partial copies.
     std::vector<std::shared_ptr<void>> unfinished;
     IgbRuntimeFieldSlot signed_long_prototype; //80561990 /93BF4; original signed 64-bit scalar.
+    IgbRuntimeFieldSlot unsigned_long_prototype; //805614AC /94150; distinct original unsigned 64-bit scalar.
 };
 void igb_bind_field_string(const std::shared_ptr<IgbFieldValuesServices>&,
     std::uint32_t address,const std::shared_ptr<IgbInternedString>&);

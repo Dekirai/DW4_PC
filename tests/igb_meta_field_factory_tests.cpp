@@ -182,7 +182,7 @@ void family_constructor_bytes(){
             "Reference base entry omitted reset or overwrote padding.");
     }
     check(!igb_meta_field_kind_for_factory(0) && !igb_meta_field_kind_for_factory(0x8006388c),"Unknown factory identity was guessed.");
-    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(14));},"Invalid descriptor profile was accepted.");
+    rejects([]{igb_meta_field_profile(static_cast<IgbMetaFieldKind>(15));},"Invalid descriptor profile was accepted.");
 }
 void family_reset_prefixes(){
     for(const auto& p:evidence){

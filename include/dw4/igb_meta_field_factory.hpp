@@ -9,7 +9,7 @@
 namespace dw4 {
 struct IgbFieldOperationsServices;
 class IgbMetaFieldFactoryError : public std::runtime_error {public:using std::runtime_error::runtime_error;};
-enum class IgbMetaFieldKind {unsigned_int,signed_int,boolean,string,object,pointer,unsigned_short,memory_reference,signed_short,signed_byte,enumeration,unsigned_byte,structure,signed_long};
+enum class IgbMetaFieldKind {unsigned_int,signed_int,boolean,string,object,pointer,unsigned_short,memory_reference,signed_short,signed_byte,enumeration,unsigned_byte,structure,signed_long,unsigned_long};
 struct IgbMetaFieldProfile {
     // Zero constructor/reset means no specialized raw entry exists in this
     // recovered profile. Factories2310C/2450C/2CEA8 always register and reflect.
@@ -46,7 +46,7 @@ struct IgbMetaFieldFactoryServices {
     std::shared_ptr<IgbRegistrationMetaSlot> metadata; //Legacy unsigned-int alias805614BC.
     // Distinct canonical cells for the other profiles; unsigned_int always
     // uses metadata above, retaining the existing API's single global identity.
-    std::array<std::shared_ptr<IgbRegistrationMetaSlot>,14> metadata_slots;
+    std::array<std::shared_ptr<IgbRegistrationMetaSlot>,15> metadata_slots;
     std::shared_ptr<IgbFieldOperationsServices> fields;
     IgbMetaFieldFactory factory;
     std::vector<IgbBootstrapPointer> completed_allocations;

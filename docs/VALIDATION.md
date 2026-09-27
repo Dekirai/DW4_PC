@@ -1,5 +1,55 @@
 # Local validation
 
+## Unsigned 64-bit field dependency
+
+Validated locally on 2026-09-27. The native scalar helpers now admit the exact
+`igUnsignedLongMetaField` factory, constructor/reset, registration, probe,
+prototype, getter and eight-byte value profiles. Its core-gated factory and
+specialized reset preserve their original differences from signed-long; its
+registration body enters `80066204` directly. Metadata and prototype cells
+remain distinct. The shared prototype reference state machine is unchanged.
+See [IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md).
+
+| Check | Evidence |
+| --- | --- |
+| First Release CoreOnly build | 224/224 local CTest suites passed; four jobs |
+| Focused unsigned-long suite | 55 checks; exact identities, gate/registration order, shared cells, actual probe and retained eight-byte copy |
+| Cold startup regression | 7,208 checks; unchanged reached malloc-defaults boundary `80039E28` |
+| Original decoder/player regressions | 400 and 447 original-inclusive checks; player suite includes 62 synthetic checks |
+| Python verifier | Six tests passed |
+
+The independent original corpus has 271 cases, 22,788 instructions and 566
+visited addresses. Its 24-artifact seal is
+`c1c0207d29cc397d07963d2d634837c7889d6f468217279ed67a284fb0f038cb`.
+An initial missing base-metadata fixture and one pre-seal verifier correction
+are preserved. Exact original replay passed before native candidate inspection.
+
+The fixed native scope matches **232/232** on its first compile and execution:
+57 constructor/reset cases, 55 getters, 36 literal leaves, 35 prototype cases,
+33 enabled factories and sixteen probes. Outcomes comprise 194 completions,
+twenty prepared faults, five null reads, ten null writes and three unknown reads.
+The separate profile audit matches 33 numeric identities and two strings.
+Production, driver, inputs and scope required no execution-time repair.
+The original, native and profile outputs replay exactly. The native comparison
+includes 369 callback observations and thirty physical retains with 27 creator
+releases. Its 28-artifact seal is
+`8bbc17a05bc984e50f75fab52149a376c934d3c271522af35d4a3ef64699d747`.
+
+The 39 original-only cases retain eight disabled factories whose raw allocator
+boundary differs from native composition, eight standalone setter calls, ten
+inline/wrapped probe cases, seven unknown canonical cells, four unrepresented
+local profiles, one generic registrar body and one reserve boundary. Prepared
+allocator, pool, reflection and destruction effects remain explicit. The
+standalone `80075D1C` setter, clone and scalar object-member operations remain
+separate work. Two invalid-kind fixture inputs move past the appended enum
+values with their assertions unchanged.
+
+Core SHA256:
+`e16d38b5bda937e2b91e43d225cf5fe9ccdc507984d189211eb6615abea6df9d`.
+The dependency is available to the next malloc-defaults implementation; this
+profile-only change does not advance the integrated cold boundary or establish
+allocator initialization. Local artifacts use `work/native-unsigned-long-family-`.
+
 ## Concrete malloc layout probe reaches original defaults
 
 Validated locally on 2026-09-27. Native `80039CC0` now composes the original
