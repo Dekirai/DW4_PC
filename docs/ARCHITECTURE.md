@@ -273,8 +273,12 @@ registration captures physical allocation ownership at reflection return,
 before registry lookup, and retains the fresh creator-release low23 read.
 The actual malloc probe `80039CC0` now constructs its represented local,
 captures the original selected word and releases fresh `+94 / +74` members in
-that order. The cold chain retains 41 types and reaches defaults `80039E28`;
-concrete pool defaults and allocator initialization remain separate work.
+that order. Malloc's ten-field defaults now compose actual batch/schema, scalar
+setters and object metadata stores. EventTracker's allocation-only and full
+getters share one canonical cell. Its full registration executes prerequisites,
+the generic registrar and a probe with early ArkCore capture and twelve fresh
+member releases. The cold chain retains 43 types and reaches its defaults
+`80030E10`; their 33-field schema and allocator initialization remain separate work.
 `IgbFieldReferenceAccess` captures optional physical descriptor ownership without
 an eager read. The reached batch, finalized append, inheritance and base-default
 operations use its full-width physical reads/writes and separate fresh low23
@@ -284,6 +288,7 @@ Batch/schema/configure/name/finalize and raw pointer-list growth borrow the
 outer defaults fault check through retained child operations. Original OS/pool
 initialization, rescheduling, sleep and teardown remain required. See
 [IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md),
+[IGB_EVENT_TRACKER_REGISTRATION.md](IGB_EVENT_TRACKER_REGISTRATION.md),
 [IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),

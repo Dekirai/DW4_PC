@@ -1,5 +1,61 @@
 # Local validation
 
+## EventTracker registration reaches its field defaults
+
+Validated locally on 2026-09-27. Native `80030D78` composes prerequisites and
+the generic registrar; its full/plain getters share the malloc module's
+canonical metadata cell. Probe `80030CC8` preserves early ArkCore capture,
+twelve null stores, its captured result and twelve fresh member releases.
+The integrated cold composition reaches defaults `80030E10` with **43 types,
+137 descriptors, 151 default buffers, 14 prototypes, 184 enabled allocations
+and six runtime objects**. The probe initializes exactly 56 local bytes and
+creates no runtime EventTracker instance. See
+[IGB_EVENT_TRACKER_REGISTRATION.md](IGB_EVENT_TRACKER_REGISTRATION.md).
+
+| Check | Evidence |
+| --- | --- |
+| Release CoreOnly build | 226/226 local CTest suites passed; four jobs |
+| Focused registration/probe suite | 9,658 checks on first compile/execution, including 9,520 local byte-mask checks |
+| Integrated cold startup | 7,486 checks; actual generic registration, inherited fields, captured type word and reached defaults callback |
+| Original decoder/player regressions | 400 and 447 original-inclusive checks; player suite includes 62 synthetic checks |
+| Python verifier | Six tests passed |
+
+The original-first corpus contains 439 cases, 43,139 interpreted instructions
+and 366 visited addresses. All cases replay exactly. Its audit covers ninety
+registrar argument records, 2,854 fresh member reads, 367 full32 decrements
+with separate fresh low23 reads, 210 prepared destructions and twelve wrapped
+zero-member skips. The 76-artifact seal is
+`3da1d7553fb13bd2650a3653c43cee088a6eacaf30bd9ac151f7e207376cdaa9`.
+Static evidence verifies 114 IDA/DOL regions and fifty artifact hashes.
+
+The fixed native scope matches **304/304**, with 215 completions, twenty
+pending states and 69 represented faults. A separate registration-profile
+audit also matches. Native output replays byte-for-byte, and the original
+439-case replay remains exact. The 132-artifact native seal is
+`97dd7ede3612938e3d1505b331e7c80c3467d61e01797ce710507871359b8590`.
+The initial driver emitted malformed JSON because argument-dependent lookup
+selected `std::quoted`; its source, compiler warnings, executable and output
+are preserved. Renaming only that serializer allowed the first parseable
+comparison to pass. Production, scope, inputs and expected values did not change.
+
+Wrapper and unready-getter comparisons compose actual native prerequisites
+with the original harness's prepared `80066204` result. They do not establish
+parity of the new registration body or generic registrar; focused and cold
+tests exercise that real native composition separately. Probe comparisons
+include represented bytes and knownness, captured result, canonical cells
+and ordered destruction calls. Post-construction mutations use an explicitly
+declared unknown-offset suspension, without claiming instruction-time parity.
+The 135 original-only cases retain standalone bodies, general cleanup flags,
+individual read/write interventions and unavailable raw class-flag profiles.
+Prepared registration dependencies, callback frees and destructors remain
+explicit lower endpoints.
+
+No production repair was needed. Core SHA256:
+`f57e275228d6190b6697a0c5ef2b2c0809d6701146c9d6954b243fbb49f68cca`.
+Local artifacts use `work/native-event-tracker-`. The reached 33-field defaults,
+runtime initialization, complete original startup and playable gameplay remain
+required; this milestone does not establish an executable-game boot.
+
 ## Malloc defaults reach EventTracker registration
 
 Validated locally on 2026-09-27. Native `80039E28` now composes the ten-field

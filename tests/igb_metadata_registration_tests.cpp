@@ -30,6 +30,7 @@
 #include "dw4/igb_metadata_probe.hpp"
 #include "dw4/igb_metadata_defaults.hpp"
 #include "dw4/igb_memory_pool_registration.hpp"
+#include "dw4/igb_event_tracker_registration.hpp"
 #include "dw4/igb_field_values.hpp"
 #include "dw4/igb_list_registration.hpp"
 #include "dw4/igb_list_defaults.hpp"
@@ -4583,6 +4584,69 @@ void actual_cold_bootstrap_prefix(){
         error_type->instance_count==1 && error_handler->state->singleton->storage==error_storage.storage &&
         error_bootstrap_list->count==2 && !error_bootstrap_list->released && event_metadata->class_flags==0,
         "Pending EventTracker registration repeated earlier startup, field allocation or malloc initialization.");
+
+    auto event_registration=std::make_shared<IgbEventTrackerRegistrationServices>();
+    event_registration->memory_pool=memory_pool;
+    additional_callbacks=make_native_igb_event_tracker_registration_function_factory(event_registration,additional_callbacks);
+    f.remaining=make_native_igb_event_tracker_registration_type_factory(event_registration,f.remaining);
+    const auto missing_event_local=call.resume(bootstrap);
+    std::cout<<"Cold native EventTracker local: "<<missing_event_local.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<'\n';
+    check(!missing_event_local.completed && !call.faulted() &&
+        missing_event_local.diagnostic=="EventTracker probe requires its original0x2530-byte local storage." &&
+        igb_event_tracker_metadata_slot(event_registration)==memory_pool->event_tracker_metadata &&
+        **memory_pool->event_tracker_metadata==event_metadata && event_metadata->class_flags==9 &&
+        f.core->types->count==43 && descriptors.size()==137 && default_allocations==151 && enabled_allocations.size()==184,
+        "EventTracker registration did not reuse lazy metadata before entering its original local probe.");
+    std::vector<IgbBootstrapPointer> event_probe_locals;
+    event_registration->local_storage=[&]{
+        auto local=allocation(0xc78000,0x2530);
+        local.storage->bytes->initialized.assign(0x2530,0);
+        for(std::size_t i=4;i<8;++i)local.storage->bytes->initialized[i]=1;
+        event_probe_locals.push_back(local);return local;
+    };
+    const auto after_event_probe=call.resume(bootstrap);
+    std::cout<<"Cold native EventTracker probe: "<<after_event_probe.diagnostic<<"; types="<<f.core->types->count<<
+        ", descriptors="<<descriptors.size()<<", defaults="<<default_allocations<<", enabled allocations="<<enabled_allocations.size()<<
+        ", runtime allocations="<<runtime_allocations.size()<<", prototypes="<<(**prototypes->registry)->count<<'\n';
+    check(!after_event_probe.completed && !call.faulted() && !remaining_calls.empty() &&
+        remaining_calls.back().kind==TK::defaults && remaining_calls.back().function==0x80030e10 &&
+        remaining_calls.back().metadata==event_metadata && event_probe_locals.size()==1 &&
+        event_metadata->type_word==0x80472a58 && event_metadata->class_flags==9 &&
+        f.core->types->count==43 && descriptors.size()==137 && default_allocations==151 && enabled_allocations.size()==184 &&
+        runtime_allocations.size()==6 && (**prototypes->registry)->count==14,
+        "EventTracker probe did not reach its real defaults callback with the captured original type word.");
+    check(event_metadata->name && *event_metadata->name=="igEventTracker" &&
+        event_metadata->parent==object_type && event_metadata->native_size==0x2530 && event_metadata->flag_1a==0 &&
+        event_metadata->fields->count==2 && event_metadata->field_callback==0x80030df0 && event_metadata->instance_count==0,
+        "Pending EventTracker defaults fabricated runtime instances or lost original registration arguments.");
+    for(std::size_t i=0;i<2;++i)check(event_metadata->fields->backing->at(i)==object_type->fields->backing->at(i),
+        "EventTracker registration changed an inherited object descriptor.");
+    const auto event_local=event_probe_locals.front();
+    check(igb_bootstrap_read_word(event_local,0)==0x80472a58 && igb_bootstrap_read_word(event_local,4)==1 &&
+        event_local.storage->bindings.empty(),"EventTracker probe changed its nondeleting cleanup or invented a runtime typed local.");
+    std::size_t event_known_bytes{};bool event_local_exact=true;
+    for(std::size_t i=0;i<0x2530;++i){const bool known=i<12 || (i>=0x30 && i<0x58) || (i>=0x5c && i<0x60);
+        event_local_exact=event_local_exact && event_local.storage->bytes->initialized[i]==(known?1:0) &&
+            (known?i<8 || event_local.storage->bytes->bytes[i]==0:event_local.storage->bytes->bytes[i]==0xcc);
+        event_known_bytes+=event_local.storage->bytes->initialized[i]?1u:0u;
+    }
+    check(event_local_exact && event_known_bytes==56,
+        "EventTracker probe changed unknown padding or missed an original null-member store.");
+    const auto event_finished_names=string_allocations;
+    const auto event_finished_callbacks=freed_callback_lists.size(),event_finished_reflections=reflected_allocations.size();
+    const auto event_finished_members=member_calls.size(),event_finished_clones=reached_reflected_clones.size();
+    const auto event_finished_allocations=enabled_allocations.size();const auto event_finished_types=f.core->types->count;
+    check(call.resume(bootstrap).diagnostic==after_event_probe.diagnostic && !call.faulted() &&
+        f.core->types->count==event_finished_types && descriptors.size()==137 && default_allocations==151 &&
+        enabled_allocations.size()==event_finished_allocations && runtime_allocations.size()==6 && (**prototypes->registry)->count==14 &&
+        event_probe_locals.size()==1 && malloc_probe_locals.size()==1 && unsigned_long_probe_locals.size()==1 &&
+        string_allocations==event_finished_names && freed_callback_lists.size()==event_finished_callbacks &&
+        reflected_allocations.size()==event_finished_reflections && member_calls.size()==event_finished_members &&
+        reached_reflected_clones.size()==event_finished_clones && wake_interrupt_calls.size()==3 &&
+        error_type->instance_count==1 && error_handler->state->singleton->storage==error_storage.storage &&
+        error_bootstrap_list->count==2 && !error_bootstrap_list->released && event_metadata->class_flags==9 && malloc_type->class_flags==7,
+        "Pending EventTracker defaults repeated earlier native startup or falsely completed the class.");
 
 }
 }

@@ -231,9 +231,12 @@ of `igStringRefList` and `igIntList`. Malloc-pool body `80039D94` now completes
 its abstract `igMemoryPool` parent and signed-64-bit descriptor dependency,
 including fourteen ordered defaults and the parent's deferred factory redirect.
 Concrete probe `80039CC0` now completes its actual constructor, captured word
-selection and ordered member cleanup. The cold chain publishes 41 types and
-reaches malloc defaults `80039E28`. Continue through their unsigned-long,
-event-tracker and enum dependencies, reusing the existing semaphore metadata.
+selection and ordered member cleanup. Malloc's ten defaults, unsigned-long
+dependency and allocation-only EventTracker getter now complete. Full
+EventTracker registration shares that cell and executes its original layout
+probe. The cold chain retains 43 types and reaches defaults `80030E10`.
+Recover their 33-field batch, integer/character arrays and subsequent class
+dependencies, reusing the existing semaphore metadata.
 Metadata registration does not establish working runtime pool allocation.
 Batch, finalized append, inheritance, replacement and selected creator-release
 operations now preserve physical packed words; other reference/name bindings
@@ -244,6 +247,7 @@ inside memory-manager `+A8` and the initial OS-thread construction; these are
 dependencies to implement, not substitutes for initialized state.
 See [IGB_CONTEXT_INFO_REGISTRATION.md](IGB_CONTEXT_INFO_REGISTRATION.md),
 [IGB_MEMORY_POOL_REGISTRATION.md](IGB_MEMORY_POOL_REGISTRATION.md),
+[IGB_EVENT_TRACKER_REGISTRATION.md](IGB_EVENT_TRACKER_REGISTRATION.md),
 [IGB_ENUM_LISTS.md](IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_REGISTRATION.md](IGB_CONTEXT_REGISTRATION.md),

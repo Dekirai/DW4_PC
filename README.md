@@ -230,14 +230,18 @@ callbacks register `igStringRefList` and `igIntList`, with separate cloned
 descriptors and shared original element prototypes. Malloc-pool registration
 now completes its abstract `igMemoryPool` parent and signed 64-bit descriptor
 dependency. The concrete malloc layout probe now preserves its original local
-construction and ordered cleanup. The cold composition publishes 41 types and
-reaches malloc defaults `80039E28`; runtime allocator initialization remains pending.
+construction and ordered cleanup. Malloc's ten-field defaults now complete,
+including the unsigned-long dependency and shared EventTracker metadata.
+EventTracker registration executes its original local probe and reaches defaults
+`80030E10`. The cold composition retains 43 types; its next 33-field schema and
+runtime allocator initialization remain pending.
 Shared field/list and string-default continuations retain parent fault checks.
 Field batch, finalized append, inheritance and base defaults now read and update
 the represented physical descriptor reference word. A stale host cache cannot
 replace that original packed value; pending callbacks preserve captured owners.
 Rescheduling, sleep and original OS/pool initialization remain required. See
 [IGB_MEMORY_POOL_REGISTRATION.md](docs/IGB_MEMORY_POOL_REGISTRATION.md),
+[IGB_EVENT_TRACKER_REGISTRATION.md](docs/IGB_EVENT_TRACKER_REGISTRATION.md),
 [IGB_ENUM_LISTS.md](docs/IGB_ENUM_LISTS.md),
 [IGB_FIELD_REFERENCES.md](docs/IGB_FIELD_REFERENCES.md),
 [IGB_CONTEXT_INFO_REGISTRATION.md](docs/IGB_CONTEXT_INFO_REGISTRATION.md),
