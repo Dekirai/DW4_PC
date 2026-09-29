@@ -34,9 +34,9 @@ void CollisionWorld::index_triangle(std::size_t index) {
     for (auto k : keys) grid_[k].push_back(std::uint32_t(index));
 }
 
-void CollisionWorld::add_graph(const ObjectView& root) { add_node(root, Mat4{}, 0); }
+void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind); }
 
-void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth) {
+void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind) {
     if (!node || depth > 64) return;
     Mat4 model = parent;
     if (node.is_a("igTransform")) {
@@ -55,13 +55,14 @@ void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int de
                 const Vec3f n = cross(t.b - t.a, t.c - t.a);
                 if (length(n) < 1e-8f) continue;
                 t.normal = normalize(n);
+                t.kind = kind;
                 triangles_.push_back(t);
                 index_triangle(triangles_.size() - 1);
             }
         }
     }
     if (node.is_a("igGroup"))
-        for (const auto& child : node.list(7)) add_node(child, model, depth + 1);
+        for (const auto& child : node.list(7)) add_node(child, model, depth + 1, kind);
 }
 
 namespace {
@@ -105,7 +106,8 @@ bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& h
         for (auto index : list) {
             if (!seen.insert(index).second) continue;
             const auto& t = triangles_[index];
-            if (t.normal.y < 0.25f) continue; // floors only
+            // CHECKLAND (80300444) queries kind bit 1 only.
+            if (!(t.kind & 1u) || t.normal.y < 0.25f) continue;
             float y;
             if (!vertical_hit(t, p.x, p.z, y)) continue;
             if (y > p.y + up || y < p.y - down) continue;
@@ -134,7 +136,8 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
             if (it == grid_.end()) continue;
             for (auto index : it->second) {
                 const auto& t = triangles_[index];
-                if (std::abs(t.normal.y) > 0.7f) continue; // walls only
+                // CHECKWALL (802FE7F0) excludes the floor bit: wall geometry only.
+                if (!(t.kind & 2u) || std::abs(t.normal.y) > 0.7f) continue;
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {
                     const Vec3f center{p.x, p.y + h, p.z};
                     const Vec3f q = closest_point(center, t);

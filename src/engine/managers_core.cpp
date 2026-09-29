@@ -530,7 +530,8 @@ bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet
 // ---------------------------------------------------------------------------
 void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
-    if (const auto graph = info.ref(8)) world_.add_graph(graph);
+    // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
+    if (const auto graph = info.ref(8)) world_.add_graph(graph, std::uint32_t(info.i32(10)));
 }
 
 void HitLandManager::clear_stage(Engine&) {
