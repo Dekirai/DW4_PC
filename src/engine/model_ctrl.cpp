@@ -439,6 +439,55 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
         }
     }
+    // 8034C4E8: while a direction is held, its octant counter restarts at 30
+    // (804E7C30) and every counter counts down; all eight still running means
+    // the stick circled, and A then starts the Spiral Attack (SQ_ATCK2).
+    bool spiral = false;
+    if (const auto mask = pad.left_directions.held; mask != 0) {
+        static constexpr int octant[16] = {-1, 0, 2, 1, 4, -1, 3, -1, 6, 7, -1, -1, 5, -1, -1, -1};
+        if (const int slot = octant[mask & 15u]; slot >= 0) ram.spin[std::size_t(slot)] = 30;
+        int running = 0;
+        for (auto& counter : ram.spin)
+            if (counter > 0) {
+                --counter;
+                ++running;
+            }
+        spiral = running >= 8;
+    }
+    // 8034C770: with B held, tapping one direction twice within 15 frames
+    // starts the Slam Attack (SQ_ATCK3).
+    const auto direction = pad.left_directions.held;
+    const bool stick = direction != 0;
+    if (ram.control_enabled && !engine.main_lobby() && (pad.buttons.held & dw4::pad_button::b)) {
+        if (ram.slam_timer > 0) ram.slam_timer = std::max(0.0f, ram.slam_timer - 1.0f);
+        switch (ram.slam_state) {
+        case 0: if (!stick) ram.slam_state = 1; break;
+        case 1:
+            if (stick) {
+                ram.slam_timer = 15.0f;
+                ram.slam_direction = direction;
+                ram.slam_state = 2;
+            }
+            break;
+        case 2:
+            if (ram.slam_timer == 0) ram.slam_state = 0;
+            else if (!stick) ram.slam_state = 3;
+            break;
+        case 3:
+            if (ram.slam_timer == 0) ram.slam_state = 0;
+            else if (stick) {
+                ram.slam_state = 0;
+                if (direction == ram.slam_direction && ram.seq_name != "SQ_JUMP" && ram.seq_name != "SQ_FALL") {
+                    select_sequence(engine, ram, "SQ_ATCK3");
+                    return;
+                }
+            }
+            break;
+        default: ram.slam_state = 0; break;
+        }
+    } else {
+        ram.slam_state = 0;
+    }
     // 8034C3C8 buttons while standing or walking: B guards (outside the main
     // lobby), X jumps, A attacks - or, in the main lobby, appends the talk
     // hitbox (kind 60000, delay 1, length 1, offset (0,4,7), size 3).
@@ -468,7 +517,8 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 if (auto* sys = engine.get<GameSystem>()) delay = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats.attack_delay;
                 ram.attack_ready = engine.time() + frames_to_time(float(delay));
                 ram.combo_phase = 0;
-                select_sequence(engine, ram, "SQ_ATCK1");
+                if (spiral) ram.spin.fill(0);
+                select_sequence(engine, ram, spiral ? "SQ_ATCK2" : "SQ_ATCK1");
                 return;
             }
         }

@@ -622,6 +622,10 @@ public:
         bool previous_live{};        // enemy AI: generated last frame
         int ai_timer{};              // PROVISIONAL enemy AI cooldown
         std::string lua_bhit;        // LUACALL BHit script prefix
+        std::array<int, 8> spin{};   // player work +114: direction history (Spiral Attack)
+        int slam_state{};            // player work +118..+120: Slam Attack double tap
+        std::uint32_t slam_direction{};
+        float slam_timer{};
     };
 
     const ModelRam* player(int index) const;
