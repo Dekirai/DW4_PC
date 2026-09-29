@@ -308,6 +308,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (!model) return number(0);
         if (method == "MDLaddHp") {
             model->hp = std::clamp(model->hp + to_int(arg(0)), 0, std::max(model->max_hp, model->hp + to_int(arg(0))));
+            // 8030B6EC publishes a player's HP to its game RAM row.
+            if (model->is_player)
+                if (auto* sys = get<GameSystem>()) sys->players[std::size_t(std::clamp(model->index, 0, 3))].hp = model->hp;
             return {};
         }
         return number(model->hp);
@@ -385,16 +388,41 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return {};
     }
     if ((method.starts_with("BLTget") || method.starts_with("BLPget")) && method.ends_with("Time")) return number(0);
-    // Enemy-to-player hits (E2P*): PROVISIONAL until those FIGHTCALC paths are
-    // reconstructed. The hit lands and reports a value; no HP is removed.
-    if (method == "BLPisHitCheck") return number(1);
-    if (method == "BLPcalcKoukaMagic") return number(0);
-    if (method == "BLPgetDamageValue") {
+    // Enemy-to-player hits (E2P*): the target is the player RAM, the shooter's
+    // GETRECNO is its enemy record.
+    auto target_stats = [&]() -> const GameSystem::Stats* {
+        auto* sys = get<GameSystem>();
+        auto* model = context_model();
+        if (!sys || !model || !model->is_player) return nullptr;
+        auto& slot = sys->players[std::size_t(std::clamp(model->index, 0, 3))];
+        if (!slot.stats.ready) sys->prepare_player(*this, model->index);
+        return &slot.stats;
+    };
+    auto shooter_record = [&]() {
         auto* models = get<ModelCtrlManager>();
-        auto* db = get<DatabaseManager>();
         const auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
-        int strength = shooter && db ? db->number("enemy", shooter->record, "TSUYOSA").value_or(10) : 10;
-        return number(std::max(1, strength / 4));
+        return shooter ? (shooter->record >= 0 ? shooter->record : shooter->index) : -1;
+    };
+    if (method == "BLPisHitCheck") {
+        const auto* stats = target_stats();
+        return number(!stats || fight::enemy_hits(*this, *stats, shooter_record(), bullet_kind) ? 1 : 0);
+    }
+    if (method == "BLPcalcKoukaMagic") return number(0); // technique effects are not reconstructed
+    if (method == "BLPgetDamageValue") {
+        const auto* stats = target_stats();
+        auto* model = context_model();
+        if (!stats || !model || !context) return number(0);
+        const auto result = fight::enemy_damage(*this, *stats, model->max_hp, shooter_record(), bullet_kind);
+        context->damage = result.damage;
+        context->attribute = result.attribute;
+        context->damage_flag = result.flag;
+        return number(result.damage);
+    }
+    if (method == "BLPgetDamageRank") {
+        auto* model = context_model();
+        FightResult result;
+        if (context) result = {context->damage, context->attribute, context->damage_flag};
+        return number(fight::enemy_damage_rank(*this, bullet_kind, to_int(arg(0)), to_int(arg(1)), model ? model->max_hp : 0, result));
     }
 
     // --- System queries ---

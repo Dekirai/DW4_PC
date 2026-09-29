@@ -39,6 +39,35 @@ std::mt19937& rng() {
 namespace fight {
 std::uint32_t random() { return rng()(); }
 
+namespace {
+int database(Engine& engine, std::string_view table, int row, std::string_view column, int fallback = 0) {
+    auto* db = engine.get<DatabaseManager>();
+    return db ? db->number(table, row, column).value_or(fallback) : fallback;
+}
+
+int attribute_index(Engine& engine, int attack) {
+    auto* db = engine.get<DatabaseManager>();
+    const auto zokusei = db ? db->text("eneatk", attack, "ZOKUSEI") : std::string();
+    static const char* names[] = {"fire", "ice", "thunder", "dark"};
+    for (int i = 0; i < 4; ++i)
+        if (zokusei == names[i]) return i;
+    return -1;
+}
+
+// Shared tail of both damage paths: 95/97.5/100/102.5 percent plus up to 2.5.
+int variance(int damage, int& flag) {
+    damage = std::clamp(damage, 0, 99999);
+    if (damage == 0) return 0;
+    const std::uint32_t pick = random() & 3u;
+    const std::uint32_t span = std::uint32_t(damage) * 25u;
+    const int extra = span ? int(random() % span) : 0;
+    static const int percent[] = {950, 975, 1000, 1025};
+    damage = (damage * percent[pick] + extra) / 1000;
+    if (pick == 3) flag = 1;
+    return std::clamp(damage, 0, 99999);
+}
+} // namespace
+
 // 804DD2A0: MDLgetBulletName selects by kind / 10000.
 const char* bullet_name(int kind) {
     static const char* names[] = {"PCWA", "PCCA", "PCSA", "PCMA", "PCBA", "PCTK", "ENAT", "PCMK", "ENSP"};
@@ -94,16 +123,95 @@ FightResult player_damage(Engine& engine, const GameSystem::Stats& stats, int en
             else bonus = (skill - 2000) / 100 + 100;
             damage += damage * bonus / 100;
         }
-        // Four-way variance: 95.0 / 97.5 / 100 / 102.5 percent plus up to 2.5 percent.
-        const std::uint32_t pick = random() & 3u;
-        const std::uint32_t span = std::uint32_t(damage) * 25u;
-        const int extra = span ? int(random() % span) : 0;
-        static const int percent[] = {950, 975, 1000, 1025};
-        damage = (damage * percent[pick] + extra) / 1000;
-        if (pick == 3) result.flag = 1;
     }
-    result.damage = std::clamp(damage, 0, 99999);
+    result.damage = variance(damage, result.flag);
     return result;
+}
+
+
+bool enemy_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind) {
+    const int attack = kind % 10000;
+    if (database(engine, "eneatk", attack, "TYPE") != 0) return true;
+    if (stats.bougyoritsu > int(random() % 100u)) return false;
+    const int enemy_speed = database(engine, "enemy", enemy_record, "SUBAYASA");
+    const int accuracy = database(engine, "eneatk", attack, "MEICHURITSU");
+    const int divisor = stats.subayasa * (stats.kaihiritsu + 100) / 100;
+    const int value = divisor != 0 ? accuracy * enemy_speed / divisor : 100;
+    return value > int(random() % 100u);
+}
+
+FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind) {
+    FightResult result;
+    const int attack = kind % 10000;
+    const int type = database(engine, "eneatk", attack, "TYPE");
+    const int power = database(engine, "eneatk", attack, "TSUYOSA");
+    const int attribute = attribute_index(engine, attack);
+    const int resist = attribute >= 0 ? stats.resist[std::size_t(attribute)] : 0;
+    result.attribute = attribute;
+    int damage = 0;
+    if (type == 0) {
+        // Physical: enemy TSUYOSA * attack power / player MAMORI.
+        const int strength = database(engine, "enemy", enemy_record, "TSUYOSA");
+        damage = stats.mamori != 0 ? std::clamp(strength * power / stats.mamori, 0, 99999) : 0;
+        if (resist != 0 && !(resist / 5 > int(random() % 1000u))) {
+            if (resist <= 1000) damage += damage * ((1000 - resist) / 20 + 50) / 100;
+            else if (resist <= 5000) damage += damage * ((5000 - resist) / 80) / 100;
+        }
+        if (damage != 0) {
+            const int enemy_critical = database(engine, "enemy", enemy_record, "CHIMEIRITSU");
+            const int attack_critical = database(engine, "eneatk", attack, "CHIMEIRITSU");
+            if (!((100 - enemy_critical) * (100 - attack_critical) > int(random() % 10000u)))
+                damage += damage * (attack_critical / 2 + 90) / 100;
+        }
+    } else if (type == 1) {
+        // Magic: attack power * enemy KASHIKOSA / player SEISHIN, scaled by resistance.
+        if (power == 0) return result;
+        const int wisdom = database(engine, "enemy", enemy_record, "KASHIKOSA");
+        damage = stats.seishin != 0 ? std::clamp(wisdom * power / stats.seishin, 0, 99999) : 0;
+        if (resist != 0) {
+            if (resist <= 1000) damage = damage * ((1000 - resist) / 20 + 50) / 100;
+            else if (resist <= 4200) damage = damage * ((5000 - resist) / 80) / 100;
+            else damage = damage / 10;
+        }
+        const int attack_critical = database(engine, "eneatk", attack, "CHIMEIRITSU");
+        if (damage != 0 && attack_critical != 0) {
+            const int chance = resist <= 1000 ? (1000 - resist) + attack_critical * 100 : attack_critical * 100 - (resist - 1000) / 10;
+            if (!(chance > int(random() % 10000u))) damage += (attack_critical / 2 + damage + 90) / 100;
+        }
+    } else if (type == 2) {
+        // Proportional: a percentage of the player's maximum HP.
+        damage = std::clamp(max_hp * power / 100, 0, 99999);
+        if (resist != 0) {
+            if (resist <= 1000) damage += damage * ((1000 - resist) / 20 + 50) / 100;
+            else if (resist <= 5000) damage += damage * ((5000 - resist) / 80) / 100;
+        }
+    }
+    result.damage = variance(damage, result.flag);
+    return result;
+}
+
+// E2PDAMAGERANK: the eneatk SEQUENCE column picks the reaction; -1 is none.
+int enemy_damage_rank(Engine& engine, int kind, int hp, int damage, int max_hp, const FightResult& fight) {
+    if (hp <= 0) return 3;
+    const int attack = kind % 10000;
+    int rank = 0;
+    switch (database(engine, "eneatk", attack, "SEQUENCE")) {
+    case 0: {
+        if (database(engine, "eneatk", attack, "TSUYOSA") == 0) {
+            rank = -1;
+            break;
+        }
+        const int percent = max_hp != 0 ? damage * 100 / max_hp : 0;
+        rank = percent < 10 ? 0 : percent < 40 ? 1 : 2;
+        break;
+    }
+    case 1: rank = -1; break;
+    case 3: rank = 2; break;
+    case 4: rank = 1; break;
+    default: rank = 0; break;
+    }
+    if (rank == 0 && fight.flag == 1) rank = 1;
+    return rank;
 }
 
 // BLTgetDamageRank (802EE91C): 3 when dead, 2 above half, 1 above a quarter
@@ -156,6 +264,8 @@ void GameSystem::prepare_player(Engine& engine, int slot) {
     stats.kashikosa = clamp_stat(attribute("INT_INI", "INT_GROW") + cell("weapon", weapon, "KASHIKOSA"));
     stats.seishin = clamp_stat(attribute("MND_INI", "MND_GROW") + cell("weapon", weapon, "SEISHIN"));
     stats.subayasa = clamp_stat(attribute("DEX_INI", "DEX_GROW") + cell("weapon", weapon, "SUBAYASA"));
+    static const char* resists[] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK"};
+    for (std::size_t i = 0; i < 4; ++i) stats.resist[i] = clamp_stat(cell("shinka", row, resists[i]));
     player.max_hp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), 0, 99999);
     player.max_mp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), 0, 99999);
     if (!stats.ready || player.hp > player.max_hp) player.hp = player.max_hp;

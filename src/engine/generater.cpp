@@ -42,6 +42,8 @@ void GeneraterManager::add_info(Engine& engine, const ObjectView& info) {
         ram->info_name = std::string(info.str(2));
         ram->index = index;
         ram->active = record ? record.boolean(5) : false;
+        // RAM +14 is the authored active byte: active generators run at once.
+        ram->started = ram->active;
         if (std::size_t(index) < data.size()) ram->data = data[std::size_t(index)];
         engine.messenger().add_row("GENERATER", ram->info_name, ram->index, ram.get());
         rams_.push_back(std::move(ram));
@@ -180,14 +182,16 @@ void GeneraterManager::update(Engine& engine) {
                 if (ram.timer_end < 0) ram.timer_end = engine.time() + frames_to_time(ram.data.f32(10));
                 else if (engine.time() >= ram.timer_end) { go = true; ram.timer_end = -1; }
             } else if (start_mode.starts_with('r')) {
-                // NEAR: a player within _startData of the base position.
-                Packet near;
-                engine.messenger().send(engine, "PLAYER", std::nullopt, -1, "GETMATRIX", near);
+                // "radar" (802FD288): the nearest live player's squared distance to
+                // the base position is at most _startData.
                 const auto base = ram.data.vec3(3).value_or(Vec3f{});
-                for (const auto& m : near.matrices) {
-                    const float dx = m(3, 0) - base.x, dy = m(3, 1) - base.y, dz = m(3, 2) - base.z;
-                    if (std::sqrt(dx * dx + dy * dy + dz * dz) <= ram.data.f32(10)) go = true;
-                }
+                if (auto* models = engine.get<ModelCtrlManager>())
+                    for (int slot = 0; slot < 4; ++slot)
+                        if (const auto* player = models->player(slot); player && player->node) {
+                            const auto& m = player->node->matrix;
+                            const float dx = m(3, 0) - base.x, dy = m(3, 1) - base.y, dz = m(3, 2) - base.z;
+                            if (dx * dx + dy * dy + dz * dz <= ram.data.f32(10)) go = true;
+                        }
             }
             if (!go) break;
             ram.state = 1;

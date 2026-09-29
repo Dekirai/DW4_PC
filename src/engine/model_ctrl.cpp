@@ -260,7 +260,11 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             const float frames = command.f32(3);
             ram.muteki = name == "OFF" ? 0.0f : frames;
             ++ram.cursor;
-        } else if (type == "beModelCtrlLABELCTRL" || type == "beModelCtrlAIMAP") {
+        } else if (type == "beModelCtrlLABELCTRL") {
+            // The label section a later sequence starts from (like SETLABEL).
+            ram.labels[std::string(command.str(3))] = name;
+            ++ram.cursor;
+        } else if (type == "beModelCtrlAIMAP") {
             ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
             // An empty mode runs "<name>_<info>.lua" now (e.g. ded_g_tcounter00);
@@ -300,18 +304,26 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
         ram.muteki = 0;
+        ram.capsule_on = ram.capsule_ended = false;
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
-                const auto& stats = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats;
+                const auto& slot = sys->players[std::size_t(std::clamp(ram.index, 0, 3))];
+                const auto& stats = slot.stats;
+                // A defeated player comes back with full HP (DEADRESTART).
+                if (slot.hp <= 0) sys->players[std::size_t(std::clamp(ram.index, 0, 3))].hp = slot.max_hp;
+                ram.max_hp = std::max(1, slot.max_hp);
+                ram.hp = std::max(1, slot.hp);
                 if (auto* weapons = engine.get<WeaponManager>())
                     if (const auto* rows = weapons->labels(stats.weapon_model))
                         for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;
             }
         }
-        // Position / rotation vectors supplied with GENERATE place the model.
+        // Position / rotation vectors (or a matrix) supplied with GENERATE place the model.
         if (ram.node && !packet.vectors.empty())
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
+        else if (ram.node && !packet.matrices.empty())
+            ram.node->matrix = packet.matrices[0];
         if (ram.is_player && ram.node) {
             if (auto* points = engine.get<PlayerPointManager>())
                 if (auto m = points->point_matrix(points->point_no(), ram.index)) ram.node->matrix = *m;
@@ -626,12 +638,24 @@ void ModelCtrlManager::update(Engine& engine) {
         // 8030CB2C: an erased model is removed on its next update.
         if (ram.seq_name == "SQ_ERAS") {
             Packet p;
+            const Mat4 last = ram.node ? ram.node->matrix : Mat4{};
             command(engine, ram, "REMOVE", p);
+            if (ram.is_player) {
+                // Player erase hook (vtable +B4, 8034E3C0): the defeated player
+                // leaves its bit capsule, whose script ends the attempt.
+                static const char* entries[] = {"SQ_ENTR1P", "SQ_ENTR2P", "SQ_ENTR3P", "SQ_ENTR4P"};
+                Packet capsule;
+                capsule.matrices.push_back(last);
+                capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
+                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
+                engine.log("player " + std::to_string(ram.index) + " defeated");
+            }
             continue;
         }
         if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         if (ram.is_player) update_player(engine, ram);
         else if (ram.category == "ENEMY") update_enemy(engine, ram);
+        else if (ram.category == "PLAYER2") update_capsule(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.generated || !ram.wait_name) continue;
@@ -760,6 +784,37 @@ bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_vi
         return action_done();
     }
     return !held;
+}
+
+// KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
+// live player is within 30 units; with no live player left it runs
+// end_g_000bcaps.lua, the stage's game over.
+void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
+    if (!ram.node) return;
+    const auto& m = ram.node->matrix;
+    bool any = false;
+    float best = 1e30f;
+    for (const auto& other : rams_) {
+        if (!other->is_player || !other->generated || !other->node) continue;
+        const auto& o = other->node->matrix;
+        const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
+        best = std::min(best, dx * dx + dy * dy + dz * dz);
+        any = true;
+    }
+    if (!any) {
+        if (!ram.capsule_ended && engine.demo().running() == 0) {
+            ram.capsule_ended = true;
+            engine.run_script("end_g_000bcaps.lua");
+        }
+        return;
+    }
+    if (!ram.capsule_on && best < 900.0f) {
+        ram.capsule_on = true;
+        select_sequence(engine, ram, "SQ_SWON");
+    } else if (ram.capsule_on && best > 900.0f) {
+        ram.capsule_on = false;
+        select_sequence(engine, ram, "SQ_SWOF");
+    }
 }
 
 // PROVISIONAL enemy behaviour until the original enemy controller (AIMAP,

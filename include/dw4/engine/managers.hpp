@@ -626,10 +626,13 @@ public:
         int slam_state{};            // player work +118..+120: Slam Attack double tap
         std::uint32_t slam_direction{};
         float slam_timer{};
+        bool capsule_on{};           // KIND_PLAYER2 work +EC: a player is close
+        bool capsule_ended{};        // end_g_000bcaps.lua already started
     };
 
     const ModelRam* player(int index) const;
     ModelRam* find(std::string_view name, int index);
+    const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
 
 private:
     void update_player(Engine& engine, ModelRam& ram);
@@ -638,6 +641,7 @@ private:
     void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
     void update_enemy(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
+    void update_capsule(Engine& engine, ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
     void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
@@ -731,6 +735,8 @@ public:
         int tsuyosa{}, mamori{}, kashikosa{}, seishin{}, subayasa{};
         int meichuritsu{}, chimeiritsu{}, attack_delay = 30;
         int attack_zokusei = -1;
+        std::array<int, 4> resist{}; // HONOOTEIKO, KOORITEIKO, KAMINARITEIKO, YAMITEIKO
+        int kaihiritsu{}, bougyoritsu{};
         int weapon_record = -1, weapon_skill_no{};
         std::array<int, 9> skill{1, 1, 1, 1, 1, 1, 1, 1, 1};
         std::string weapon_model;
@@ -775,6 +781,11 @@ bool player_critical(const GameSystem::Stats& stats, int kind);
 FightResult player_damage(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, bool critical,
                           int defense_down);
 int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int kind);
+// E2P* (803750B8, 8037526C, 80375C60): enemy attacks; the attack id is kind % 10000
+// in the DATABASE eneatk table.
+bool enemy_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind);
+FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind);
+int enemy_damage_rank(Engine& engine, int kind, int hp, int damage, int max_hp, const FightResult& fight);
 } // namespace fight
 
 } // namespace dw4::engine

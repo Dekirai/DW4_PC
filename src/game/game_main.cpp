@@ -256,9 +256,15 @@ int run(const Options& options) {
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
-                        if (const auto* p = models->player(0); p && p->node)
-                            std::printf("[%d] player0 %s (%.2f, %.2f, %.2f)\n", frame, p->seq_name.c_str(), p->node->matrix(3, 0),
-                                        p->node->matrix(3, 1), p->node->matrix(3, 2));
+                        if (const auto* p = models->player(0); p && p->node) {
+                            std::printf("[%d] player0 %s hp=%d (%.2f, %.2f, %.2f)\n", frame, p->seq_name.c_str(), p->hp,
+                                        p->node->matrix(3, 0), p->node->matrix(3, 1), p->node->matrix(3, 2));
+                            for (const auto& e : models->rams())
+                                if (e->generated && e->category == "ENEMY" && e->node)
+                                    std::printf("      %s#%d %s hp=%d (%.1f, %.1f, %.1f)\n", e->info_name.c_str(), e->index,
+                                                e->seq_name.c_str(), e->hp, e->node->matrix(3, 0), e->node->matrix(3, 1),
+                                                e->node->matrix(3, 2));
+                        }
             }
             if (rendered_stage != engine.stage_name()) {
                 renderer.clear_cache();
