@@ -443,6 +443,52 @@ private:
     std::map<std::string, ObjectView, std::less<>> tables_;
 };
 
+// NUMBERCTRL (beNumberCtrl): HUD digits drawn by texture columns.
+class NumberCtrlManager final : public Manager {
+public:
+    NumberCtrlManager() : Manager("beNumberCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNumberCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct NumberRam : Ram {
+        Node* geometry{};
+        float step{};
+        int maximum = 9999;
+        bool blank_leading{};
+        std::vector<std::vector<std::pair<int, int>>> places;
+        int shown{}, target{}, rate{};
+        bool drawn{};
+    };
+    void draw(Engine& engine, NumberRam& ram, int value);
+    std::vector<std::unique_ptr<NumberRam>> rams_;
+};
+
+// METERCTRL (beMeterCtrl): HUD meters whose clips play at the meter's time.
+class MeterCtrlManager final : public Manager {
+public:
+    MeterCtrlManager() : Manager("beMeterCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beMeterCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct MeterRam : Ram {
+        Node* node{};
+        float maximum = 100, target{}, shown{};
+        std::int64_t low_time{}, high_time{};
+        bool continuous = true, dirty = true;
+        std::string model_name;
+        int model_index{};
+    };
+    std::vector<std::unique_ptr<MeterRam>> rams_;
+};
+
 // GENERATER (beGenerater, update 802FCF68, commands 802FD5C4, spawn 802FC9FC):
 // one RAM per beGeneraterData. START creates the work (enemy name and max HP
 // from DATABASE enemy[_geneEnemyId]); the start mode (direct / timer / range)

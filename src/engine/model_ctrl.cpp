@@ -317,6 +317,21 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 if (auto* weapons = engine.get<WeaponManager>())
                     if (const auto* rows = weapons->labels(stats.weapon_model))
                         for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;
+                // 8034DCFC..8034DE94: level, HP and MP meters and numbers.
+                auto hud = [&](const char* category, const char* name, const char* command, Packet p) {
+                    engine.messenger().send(engine, category, name, ram.index, command, p);
+                };
+                Packet level, hp_percent, hp_value, mp_percent, mp_value;
+                level.ints.push_back(stats.level);
+                hp_percent.floats.push_back(float(slot.hp * 100 / std::max(1, slot.max_hp)));
+                hp_value.ints.push_back(slot.hp);
+                mp_percent.floats.push_back(float(slot.mp * 100 / std::max(1, slot.max_mp)));
+                mp_value.ints.push_back(slot.mp);
+                hud("NUMBERCTRL", "lvnm", "SETVALUE", level);
+                hud("METERCTRL", "hpmt", "SETPERCENT", hp_percent);
+                hud("NUMBERCTRL", "hpnm", "SETVALUE", hp_value);
+                hud("METERCTRL", "mpmt", "SETPERCENT", mp_percent);
+                hud("NUMBERCTRL", "mpnm", "SETVALUE", mp_value);
             }
         }
         // Position / rotation vectors (or a matrix) supplied with GENERATE place the model.

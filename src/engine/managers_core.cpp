@@ -690,6 +690,8 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<DatabaseManager>());
     engine.add_manager(std::make_unique<MatCtrlManager>());
     engine.add_manager(std::make_unique<GeneraterManager>());
+    engine.add_manager(std::make_unique<NumberCtrlManager>());
+    engine.add_manager(std::make_unique<MeterCtrlManager>());
     engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }

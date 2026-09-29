@@ -96,6 +96,8 @@ struct Node {
     float time_scale = 1.0f;
     std::int64_t time_bias{};
     bool time_override{};
+    // beMeterCtrlNode: children are evaluated at this time (METERCTRL).
+    std::optional<std::int64_t> fixed_time;
     // Runtime overrides applied by managers (ACTION2 appearance, MODELCTRL).
     std::optional<Vec4f> color_override;
     std::optional<bool> blend_override, texture_override, lighting_override;

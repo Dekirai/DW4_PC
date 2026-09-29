@@ -718,7 +718,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     apply_overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        visit(n->children[i], ctx, model, state, time, scope, depth + 1);
+        visit(n->children[i], ctx, model, state, n->fixed_time ? *n->fixed_time : time, scope, depth + 1);
     }
 }
 } // namespace
