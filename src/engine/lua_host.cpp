@@ -397,12 +397,16 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "MDLisStatus") return number(0); // status effects are not reconstructed
 
     // --- Battle queries of hit scripts (FIGHTCALC P2E*, 802EE5C4..802EEA2C) ---
-    auto shooter_stats = [&]() -> const GameSystem::Stats* {
+    auto shooter_slot = [&]() -> const GameSystem::PlayerSlot* {
         auto* sys = get<GameSystem>();
         if (!sys || !context || !context->shooter_name.starts_with('p') || context->shooter < 0 || context->shooter > 3) return nullptr;
         auto& slot = sys->players[std::size_t(context->shooter)];
         if (!slot.stats.ready) sys->prepare_player(*this, context->shooter);
-        return &slot.stats;
+        return &slot;
+    };
+    auto shooter_stats = [&]() -> const GameSystem::Stats* {
+        const auto* slot = shooter_slot();
+        return slot ? &slot->stats : nullptr;
     };
     const int bullet_kind = context ? context->bullet_kind : 0;
     if (method == "MDLgetBulletName") return string_result(fight::bullet_name(bullet_kind));
@@ -414,17 +418,24 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return number(fight::player_hits(*this, *stats, model->record, bullet_kind, 0) ? 1 : 0);
     }
     if (method == "BLTisCritical") {
-        const auto* stats = shooter_stats();
-        return number(stats && fight::player_critical(*stats, bullet_kind) ? 1 : 0);
+        const auto* slot = shooter_slot();
+        auto* model = context_model();
+        return number(slot && model && fight::player_critical(*this, *slot, model->record, bullet_kind) ? 1 : 0);
     }
     if (method == "BLTgetDamageValue") {
-        const auto* stats = shooter_stats();
+        const auto* slot = shooter_slot();
         auto* model = context_model();
-        if (!stats || !model || !context) return number(0);
-        const auto result = fight::player_damage(*this, *stats, model->record, bullet_kind, to_int(arg(0)) != 0, 0);
+        if (!slot || !model || !context) return number(0);
+        const auto result = fight::player_damage(*this, *slot, model->record, bullet_kind, to_int(arg(0)) != 0, 0);
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;
+        // HPDRAIN / MPDRAIN of the weapon chips return a share of weapon damage.
+        if (bullet_kind / 10000 != 4 && result.damage > 0) {
+            auto* sys = get<GameSystem>();
+            if (slot->stats.hp_drain) sys->change_hp(*this, context->shooter, result.damage * slot->stats.hp_drain / 100);
+            if (slot->stats.mp_drain) sys->change_mp(*this, context->shooter, result.damage * slot->stats.mp_drain / 100);
+        }
         return number(result.damage);
     }
     if (method == "BLTgetDamageRank") {

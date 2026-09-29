@@ -733,6 +733,7 @@ public:
         std::int64_t attack_ready{}; // player ATDELAY timer end
         int combo_phase{};           // player work +128
         bool combo_released{};       // player work +12C
+        bool panel_open{};           // player work +124: an NDMWPANEL panel is up
         bool previous_live{};        // enemy AI: generated last frame
         int ai_timer{};              // PROVISIONAL enemy AI cooldown
         std::string lua_bhit;        // LUACALL BHit script prefix
@@ -798,6 +799,46 @@ private:
 // beActionStarter (registration 802F2244, handler 802F228C): on the
 // ACTION_BROADCAST of a target model's action, SETEFFECT this effect model on
 // that model (hit sparks, defeat smoke, ...).
+// NDMWPANEL (beNDMWPanelWaza, vtable 804E71E8): the per-player quick panels
+// opened with R (techniques), L (disks) and Z (status), and Y's emergency
+// heal. A picks the line; the panel stays open for the next use after the
+// technique's DELAY (one second for disks).
+class PanelManager final : public Manager {
+public:
+    PanelManager() : Manager("beNDMWPanelWaza") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWPanelWazaInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct List {
+        int kind{};                        // 0 techniques, 1 disks, 2 status
+        int cursor{}, scroll{}, line_mode{}, count{};
+        bool fire_request{};               // emergency heal: fire the preselected line
+        std::vector<int> rows, colors;
+    };
+    struct PanelRam : Ram {
+        bool running{}, reopen{}, cursor_shown{}, decided{};
+        int state{}, fire{}, counter{}, kind{};
+        std::int64_t fire_end{}, emergency_ng{};
+        std::string label;
+        std::array<List, 3> lists;
+        bool no_gate_disk{}, no_healing{}, no_para_up{}, no_cureling{};
+        std::array<std::optional<std::string>, 48> line_text{};
+        std::array<int, 48> line_color{};
+    };
+    void open(PanelRam& ram, int kind);
+    bool emergency_item(Engine& engine, PanelRam& ram);
+    bool emergency_waza(Engine& engine, PanelRam& ram);
+    void display(Engine& engine, PanelRam& ram, List& list);
+    std::int64_t select(Engine& engine, PanelRam& ram, List& list);
+    void set_line(Engine& engine, PanelRam& ram, int font, int line, const std::string* text, int color);
+    void model(Engine& engine, PanelRam& ram, const char* name, const char* command, bool place, const char* sequence);
+    std::vector<std::unique_ptr<PanelRam>> rams_;
+};
+
 class ActionStarterManager final : public Manager {
 public:
     ActionStarterManager() : Manager("beActionStarter") {}
@@ -929,6 +970,10 @@ public:
     // defeating player the full share), levels up past NEXTEXP with full HP/MP.
     // Returns the defeating player's gain.
     int experience_up(Engine& engine, int killer, int enemy_record);
+    // 8036F220 / 8036F364: HP (not for a defeated player) and MP changes with
+    // the hpmt/hpnm and mpmt/mpnm HUD and the player model's HP.
+    void change_hp(Engine& engine, int slot, int delta);
+    void change_mp(Engine& engine, int slot, int delta);
     std::array<PlayerSlot, 4> players{};
     GameSystem() : Manager("beSystem") { players[0].joined = true; }
     std::int32_t difficulty{};
@@ -955,8 +1000,8 @@ namespace fight {
 std::uint32_t random();
 const char* bullet_name(int kind);
 bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int speed_down);
-bool player_critical(const GameSystem::Stats& stats, int kind);
-FightResult player_damage(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, bool critical,
+bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
+FightResult player_damage(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, bool critical,
                           int defense_down);
 int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int kind);
 // E2P* (803750B8, 8037526C, 80375C60): enemy attacks; the attack id is kind % 10000

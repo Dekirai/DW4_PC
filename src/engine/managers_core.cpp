@@ -794,6 +794,9 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<SwitchCtrlManager>());
     engine.add_manager(std::make_unique<LogoManager>());
     engine.add_manager(std::make_unique<SoundManager>());
+    // The quick panels run before the models, so the opening trigger is not
+    // seen again by the panel in the frame the player opens it.
+    engine.add_manager(std::make_unique<PanelManager>());
     engine.add_manager(std::make_unique<ModelCtrlManager>());
     engine.add_manager(std::make_unique<ActionManager>());
     engine.add_manager(std::make_unique<CameraManager>());

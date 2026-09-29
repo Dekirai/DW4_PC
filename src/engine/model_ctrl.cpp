@@ -598,6 +598,52 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const bool free = ram.seq_name != "SQ_JUMP" && ram.seq_name != "SQ_FALL";
     if (ram.control_enabled && free) {
         const auto trigger = pad.buttons.trigger;
+        auto& messenger = engine.messenger();
+        auto panel = [&](const char* command) {
+            Packet p;
+            messenger.send(engine, "NDMWPANEL", std::nullopt, ram.index, command, p);
+            return p;
+        };
+        const bool has_panel = messenger.count("NDMWPANEL", std::nullopt, ram.index) != 0;
+        // 8034C960: with a panel up, ISCHECK reports a decided line: a disk
+        // plays SQ_ITEM, a technique sets its label on SQ_WAZA and plays it.
+        // X still jumps, Y asks for the emergency heal, START is refused.
+        if (ram.panel_open) {
+            Packet check = panel("ISCHECK");
+            if (check.bools.empty() || !check.bools[0]) {
+                ram.panel_open = false;
+            } else if (check.bools.size() > 2 && check.bools[2]) {
+                if (check.bools[1]) {
+                    select_sequence(engine, ram, "SQ_ITEM");
+                } else {
+                    ram.labels["SQ_WAZA"] = std::string(check.string(0));
+                    select_sequence(engine, ram, "SQ_WAZA");
+                }
+                return;
+            }
+        }
+        if (ram.panel_open) {
+            if (trigger & dw4::pad_button::x) {
+                select_sequence(engine, ram, "SQ_JUMP");
+            } else if (trigger & dw4::pad_button::y) {
+                if (!panel("GENEEMGHEAL").bools.empty()) ram.panel_open = true;
+            } else if (trigger & dw4::pad_button::start) {
+                Packet sound;
+                sound.strings.emplace_back("CURSOR_NG");
+                messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
+            }
+            return;
+        }
+        if (has_panel && (trigger & dw4::pad_button::y)) {
+            if (!panel("GENEEMGHEAL").bools.empty()) ram.panel_open = true;
+            return;
+        }
+        if (has_panel && (trigger & (dw4::pad_button::l | dw4::pad_button::r | dw4::pad_button::z))) {
+            const char* command = (trigger & dw4::pad_button::l) ? "GENERATEITEM"
+                                  : (trigger & dw4::pad_button::r) ? "GENERATEWAZA" : "GENERATESTAT";
+            if (!panel(command).bools.empty()) ram.panel_open = true;
+            return;
+        }
         if (!engine.main_lobby() && (trigger & dw4::pad_button::b)) {
             select_sequence(engine, ram, "SQ_GUARD");
             return;
@@ -871,11 +917,14 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     else if (group == 6) mode = 1;
     else if (group == 7 || group == 8) mode = 2;
     static const char* categories[] = {"HITPLAYERBULLET", "HITPLAYERTALK", "HITENEMYBULLET"};
+    // An effect bullet (a technique's x_... model) shoots for the model that
+    // generated it (the GENERATE source strings / RAM of 80310340).
+    const bool owned = !ram.attach_name.empty() && ram.attach_index >= 0;
     Packet packet;
-    packet.ints = {box.kind, ram.index};
+    packet.ints = {box.kind, owned ? ram.attach_index : ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
-    packet.strings.emplace_back(ram.info_name);
+    packet.strings.emplace_back(owned ? ram.attach_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
     if (!packet.bools.empty() && !ram.lua_bhit.empty()) run_model_script(engine, ram, ram.lua_bhit);

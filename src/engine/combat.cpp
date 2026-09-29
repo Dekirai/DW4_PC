@@ -90,19 +90,78 @@ bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_recor
     return value > int(roll);
 }
 
-// P2EISCRITICAL (80372C00), weapon path: CHIMEIRITSU > random % 200.
-bool player_critical(const GameSystem::Stats& stats, int kind) {
-    if (kind / 10000 == 4) return false; // magic path (80371524 table lookup) not reconstructed
-    return stats.chimeiritsu > int(random() % 200u);
+// 80371524: a technique bullet carries its family (kind % 1000, the TECHn
+// base row); the player's WAZALIST entry of that family gives the rank row.
+int technique_row(const GameSystem::PlayerSlot& player, int kind) {
+    const int family = kind % 1000;
+    for (const int row : player.wazalist)
+        if (row >= family && row < family + 5) return row;
+    return family;
 }
 
-// P2EDAMAGE (80372EC4), weapon path.
-FightResult player_damage(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, bool critical,
+// pcTech ZOKUSEI -> 0 fire, 1 ice, 2 thunder, 3 dark, 4 poison, -1 none.
+int technique_element(DatabaseManager& db, int row) {
+    static const char* names[] = {"fire", "ice", "thunder", "dark", "poison"};
+    const auto element = db.text("pcTech", row, "ZOKUSEI");
+    for (int i = 0; i < 5; ++i)
+        if (element == names[i]) return i;
+    return -1;
+}
+
+const char* const kResistColumns[5] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK", "RES_POISON"};
+
+// P2EISCRITICAL (80372C00): weapons CHIMEIRITSU > random % 200; techniques
+// (kind group 4) scale the pcTech CHIMEIRITSU by the enemy's resistance to the
+// element, or compare it with random % 100 without one.
+bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind) {
+    if (kind / 10000 != 4) return player.stats.chimeiritsu > int(random() % 200u);
+    auto* db = engine.get<DatabaseManager>();
+    if (!db) return false;
+    const int row = technique_row(player, kind);
+    const int element = technique_element(*db, row);
+    const int critical = db->number("pcTech", row, "CHIMEIRITSU").value_or(0);
+    if (element < 0) return critical > int(random() % 100u);
+    const int resist = db->number("enemy", enemy_record, kResistColumns[element]).value_or(0);
+    const int value = (critical + 100) * (10000 / (resist * 12 / 10 + 50)) / 100;
+    return value > int(random() % 1000u);
+}
+
+// P2EDAMAGE (80372EC4).
+FightResult player_damage(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, bool critical,
                           int defense_down) {
     FightResult result;
-    if (kind / 10000 == 4) return result; // magic damage (80371524) not reconstructed
     auto* db = engine.get<DatabaseManager>();
     if (!db) return result;
+    const auto& stats = player.stats;
+    if (kind / 10000 == 4) {
+        // Techniques: (KASHIKOSA*10 + skill*5 - HP*20) / enemy SEISHIN, the
+        // element resistance in thousandths, the skill critical bonus.
+        const int row = technique_row(player, kind);
+        const int power = -db->number("pcTech", row, "HP").value_or(0);
+        const int skill = stats.skill[std::size_t(std::clamp(db->number("pcTech", row, "SKILL").value_or(0), 0, 8))];
+        int damage = 0;
+        if (power != 0) {
+            const int spirit = db->number("enemy", enemy_record, "SEISHIN").value_or(1);
+            damage = spirit != 0 ? (stats.kashikosa * 10 + skill * 5 + power * 20) / spirit : 0;
+            damage = std::clamp(damage, 0, 99999);
+        }
+        if (damage != 0) {
+            const int element = technique_element(*db, row);
+            const int resist = element >= 0 ? db->number("enemy", enemy_record, kResistColumns[element]).value_or(0) : 0;
+            damage = damage * (1000 - resist) / 1000;
+            result.attribute = element;
+        }
+        damage = std::clamp(damage, 0, 99999);
+        if (damage != 0 && critical) {
+            int bonus;
+            if (skill <= 1000) bonus = skill / 20 + 30;
+            else if (skill <= 2000) bonus = (skill - 1000) / 50 + 80;
+            else bonus = (skill - 2000) / 100 + 100;
+            damage += damage * bonus / 100;
+        }
+        result.damage = variance(damage, result.flag);
+        return result;
+    }
     const int skill = stats.skill[std::size_t(std::clamp(stats.weapon_skill_no, 0, 8))];
     const int defense = db->number("enemy", enemy_record, "MAMORI").value_or(1) - defense_down;
     int damage = defense != 0 ? (stats.tsuyosa * 6 + skill * 4) / defense : 0;
@@ -405,6 +464,29 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     for (std::size_t i = 0; i < player.power_socket.size() && i < 3; ++i)
         player.weapons[i] = db->text("weapon", player.power_socket[i].record, "MODEL");
     stats.weapon_model = player.weapons[0];
+}
+
+void GameSystem::change_hp(Engine& engine, int slot, int delta) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    if (player.hp == 0) return;
+    player.hp = std::clamp(player.hp + delta, 0, player.max_hp);
+    if (auto* models = engine.get<ModelCtrlManager>())
+        if (auto* model = models->find(player.digimon, slot)) model->hp = player.hp;
+    Packet percent, value;
+    percent.floats.push_back(100.0f * float(player.hp) / float(std::max(player.max_hp, 1)));
+    value.ints.push_back(player.hp);
+    engine.messenger().send(engine, "METERCTRL", "hpmt", slot, "SETPERCENT", percent);
+    engine.messenger().send(engine, "NUMBERCTRL", "hpnm", slot, "SETVALUE", value);
+}
+
+void GameSystem::change_mp(Engine& engine, int slot, int delta) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    player.mp = std::clamp(player.mp + delta, 0, player.max_mp);
+    Packet percent, value;
+    percent.floats.push_back(100.0f * float(player.mp) / float(std::max(player.max_mp, 1)));
+    value.ints.push_back(player.mp);
+    engine.messenger().send(engine, "METERCTRL", "mpmt", slot, "SETPERCENT", percent);
+    engine.messenger().send(engine, "NUMBERCTRL", "mpnm", slot, "SETVALUE", value);
 }
 
 int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
