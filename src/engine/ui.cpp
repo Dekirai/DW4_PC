@@ -22,13 +22,6 @@ void register_rams(Engine& engine, Manager* manager, const ObjectView& info, std
     }
 }
 
-int font_line_index(std::string_view name) {
-    // "font00" -> 0
-    int value = 0;
-    for (char c : name) if (c >= '0' && c <= '9') value = value * 10 + (c - '0');
-    return value;
-}
-
 Node* find_geometry(Node* node, int depth = 0) {
     if (!node || depth > 8) return nullptr;
     if (node->kind == NodeKind::geometry) return node;
@@ -36,18 +29,6 @@ Node* find_geometry(Node* node, int depth = 0) {
     return nullptr;
 }
 
-Node* find_parent_switch(Node* root, const std::string& child_name, int& index, int depth = 0) {
-    if (!root || depth > 64) return nullptr;
-    for (std::size_t i = 0; i < root->children.size(); ++i) {
-        Node* child = root->children[i];
-        if (root->kind == NodeKind::switch_node && child->name == child_name) {
-            index = int(i);
-            return root;
-        }
-        if (auto* found = find_parent_switch(child, child_name, index, depth + 1)) return found;
-    }
-    return nullptr;
-}
 } // namespace
 
 // ===========================================================================
@@ -87,7 +68,8 @@ void TextCtlManager::load_fonts(Engine& engine) {
             for (std::uint32_t i = 0; i < count && (i + 1) * 40 <= data.size(); ++i) {
                 const std::size_t o = std::size_t(i) * 40;
                 Glyph g;
-                const auto code = read_u32le(data, o);
+                // The character code is 16 bits; the rest of the word is padding.
+                const auto code = read_u32le(data, o) & 0xFFFFu;
                 g.advance = read_f32le(data, o + 4);
                 g.x_offset = read_f32le(data, o + 8);
                 g.y_offset = read_f32le(data, o + 12);
@@ -107,21 +89,28 @@ void TextCtlManager::load_fonts(Engine& engine) {
 void TextCtlManager::add_info(Engine& engine, const ObjectView& info) {
     load_fonts(engine);
     register_rams(engine, this, info, rams_, "TEXTCTL");
+    auto& strings = strings_[{info.document(), info.reference()}];
+    strings = info.list(7);
     for (const auto& data : info.list(5)) {
         if (!data) continue;
         Line line;
+        line.document = info.document();
+        line.info = info.reference();
         line.layer = std::string(data.str(2));
         line.node = engine.scenes().node(data.ref(4));
-        line.line = data.i32(6);
+        line.name = line.node ? line.node->name : std::string();
+        line.category = data.i32(5);
+        line.index = data.i32(6);
         line.max_width = data.f32(7);
         line.spacing = data.f32(8);
+        line.align = data.i32(9);
         line.style = std::string(data.str(10));
+        line.strings = &strings;
         // Text lines only ever show generated glyphs; hide the authored placeholder.
         if (Node* geometry = find_geometry(line.node); geometry && !geometry->runtime_geometry)
             geometry->runtime_geometry = std::make_shared<GeometryData>();
         lines_.push_back(std::move(line));
     }
-    strings_ = info.list(7);
 }
 
 void TextCtlManager::clear_stage(Engine&) {
@@ -129,45 +118,49 @@ void TextCtlManager::clear_stage(Engine&) {
     lines_.clear();
     strings_.clear();
     geometry_.clear();
-    colors_.clear();
-    align_.clear();
 }
 
-std::u16string TextCtlManager::text(std::size_t index) const {
-    std::u16string out;
-    if (index >= strings_.size() || !strings_[index]) return out;
-    const auto bytes = strings_[index].memory(3);
-    for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) {
-        const char16_t c = char16_t(bytes[i] | (bytes[i + 1] << 8));
-        if (!c) break;
-        out.push_back(c);
+// 802FA900 INITIALIZE: the FONT layer's first child switch holds one child per
+// category; each category's first child switch holds its lines.
+Node* TextCtlManager::root_switch(Engine& engine) {
+    // The host layer group wraps the FONT scene root; descend to the switch.
+    Node* font = engine.find_named_node(engine.global_root(), "FONT");
+    for (int depth = 0; font && !font->children.empty() && depth < 4; ++depth) {
+        if (font->children[0]->kind == NodeKind::switch_node) return font->children[0];
+        font = font->children[0];
     }
-    return out;
+    return nullptr;
 }
 
-Node* TextCtlManager::layer_node(Engine& engine, const std::string& layer) {
-    int index = -1;
-    return find_parent_switch(engine.global_root(), layer, index);
+void TextCtlManager::switch_line(Engine& engine, const Line& line, bool on) {
+    Node* root = root_switch(engine);
+    if (!root || line.category < 0 || std::size_t(line.category) >= root->children.size()) return;
+    Node* category = root->children[std::size_t(line.category)];
+    if (on) root->set_child_enabled(std::size_t(line.category), true);
+    if (category->children.empty()) return;
+    Node* lines = category->children[0];
+    if (lines->kind == NodeKind::switch_node && line.index >= 0) lines->set_child_enabled(std::size_t(line.index), on);
 }
 
-void TextCtlManager::clear_layer(const std::string& layer) {
-    for (auto& line : lines_) {
-        if (line.layer != layer) continue;
-        if (Node* geometry = find_geometry(line.node)) geometry->runtime_geometry = std::make_shared<GeometryData>();
+// A category stays visible exactly while one of its lines is enabled.
+void TextCtlManager::refresh_categories(Engine& engine) {
+    Node* root = root_switch(engine);
+    if (!root) return;
+    for (std::size_t i = 0; i < root->children.size(); ++i) {
+        Node* category = root->children[i];
+        if (category->children.empty() || category->children[0]->kind != NodeKind::switch_node) continue;
+        const Node* lines = category->children[0];
+        bool any = false;
+        for (std::size_t j = 0; j < lines->children.size() && !any; ++j) any = lines->child_enabled(j);
+        root->set_child_enabled(i, any);
     }
 }
 
-void TextCtlManager::set_text(Engine& engine, const std::string& layer, int first_line, const std::u16string& value) {
-    const Line* target = nullptr;
-    for (const auto& line : lines_)
-        if (line.layer == layer && line.line == first_line) { target = &line; break; }
-    if (!target) {
-        engine.note("TEXTCTL line " + layer + "/" + std::to_string(first_line));
-        return;
-    }
-    Node* geometry_node = find_geometry(target->node);
+void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string& value) {
+    (void)engine;
+    Node* geometry_node = find_geometry(target.node);
     if (!geometry_node) return;
-    auto font_it = fonts_.find(target->style.empty() ? "NORMAL" : target->style);
+    auto font_it = fonts_.find(target.style.empty() ? "NORMAL" : target.style);
     if (font_it == fonts_.end()) font_it = fonts_.find("NORMAL");
     if (font_it == fonts_.end()) return;
     const FontImage& font = *font_it->second;
@@ -206,14 +199,13 @@ void TextCtlManager::set_text(Engine& engine, const std::string& layer, int firs
         x += g.advance;
     }
     finish_line();
-    // Alignment within max width.
-    const auto align = align_.count(layer) ? align_[layer] : std::string("LEFT");
-    if (align != "LEFT" && target->max_width > 0) {
+    // Alignment within the line's max width.
+    if (target.align != 0 && target.max_width > 0) {
         for (std::size_t l = 0; l < line_ranges.size(); ++l) {
             const auto begin = line_ranges[l].first;
             const auto end = l + 1 < line_ranges.size() ? line_ranges[l + 1].first : geometry->positions.size();
-            const float shift = align == "CENTER" ? (target->max_width - line_ranges[l].second) * 0.5f
-                                                  : target->max_width - line_ranges[l].second;
+            const float shift = target.align == 1 ? (target.max_width - line_ranges[l].second) * 0.5f
+                                                  : target.max_width - line_ranges[l].second;
             for (auto v = begin; v < end; ++v) geometry->positions[v].x += shift;
         }
     }
@@ -221,51 +213,83 @@ void TextCtlManager::set_text(Engine& engine, const std::string& layer, int firs
     geometry_node->runtime_geometry = geometry;
     geometry_node->runtime_texture = font.binding.get();
     geometry_.push_back(std::move(geometry));
-    if (auto c = colors_.find(layer); c != colors_.end()) target->node->color_override = c->second;
 }
 
-bool TextCtlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
+bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
+    // Each TEXTCTL RAM answers for the lines of its own beFontInfo.
+    auto owned = [&](const Line& line) {
+        return line.document == ram.info.document() && line.info == ram.info.reference();
+    };
     if (command == "INITIALIZE") {
-        for (auto& line : lines_) if (Node* g = find_geometry(line.node)) g->runtime_geometry = std::make_shared<GeometryData>();
+        for (auto& line : lines_)
+            if (owned(line))
+                if (Node* g = find_geometry(line.node)) g->runtime_geometry = std::make_shared<GeometryData>();
         return true;
     }
+    // 802FC5AC / 802FC6F4: select lines by layer ("ALL" = any) and line name.
     const std::string layer(packet.string(0));
-    const int line = font_line_index(packet.string(1));
+    const std::string name(packet.string(1));
+    auto matches = [&](const Line& line) {
+        return owned(line) && (layer == "ALL" || line.layer == layer) && line.name == name;
+    };
     if (command == "TEXTSET") {
-        if (!packet.ints.empty()) set_text(engine, layer, line, text(std::size_t(packet.ints[0])));
-        else if (packet.strings.size() > 2) {
+        std::optional<std::u16string> value;
+        if (packet.strings.size() > 2) {
             std::u16string literal;
             for (char c : packet.string(2)) literal.push_back(char16_t(static_cast<unsigned char>(c)));
-            set_text(engine, layer, line, literal);
+            value = std::move(literal);
+        }
+        for (auto& line : lines_) {
+            if (!matches(line)) continue;
+            if (!value && !packet.ints.empty()) {
+                const auto index = std::size_t(packet.ints[0]);
+                std::u16string text;
+                if (line.strings && index < line.strings->size() && (*line.strings)[index]) {
+                    const auto bytes = (*line.strings)[index].memory(3);
+                    for (std::size_t i = 0; i + 1 < bytes.size(); i += 2) {
+                        const char16_t c = char16_t(bytes[i] | (bytes[i + 1] << 8));
+                        if (!c) break;
+                        text.push_back(c);
+                    }
+                }
+                set_text(engine, line, text);
+            } else if (value) {
+                set_text(engine, line, *value);
+            }
         }
         return true;
     }
     if (command == "SWITCH") {
-        const auto mode = packet.string(2);
-        int index = -1;
-        Node* category = find_parent_switch(engine.global_root(), layer, index);
-        if (mode == "SET") {
-            if (category && index >= 0) category->set_child_enabled(std::size_t(index), true);
-            // Style switches below the layer (e.g. NORMAL) show all their lines.
-            if (category && index >= 0)
-                for (auto* child : category->children[std::size_t(index)]->children)
-                    if (child->kind == NodeKind::switch_node) child->set_all_children(true);
-        } else if (mode == "CLR") {
-            clear_layer(layer);
-            if (category && index >= 0) category->set_child_enabled(std::size_t(index), false);
+        bool on = false;
+        if (packet.strings.size() > 2) {
+            const auto mode = packet.string(2);
+            on = mode == "SET" || mode == "DISPON";
+        } else if (!packet.ints.empty()) {
+            on = packet.ints[0] != 0;
         }
-        return true;
-    }
-    if (command == "COLOR") {
-        if (!packet.vectors.empty()) {
-            const auto v = packet.vectors[0];
-            colors_[layer] = Vec4f{v.x, v.y, v.z, 1.0f};
-            for (auto& l : lines_) if (l.layer == layer && l.node) l.node->color_override = colors_[layer];
-        }
+        for (auto& line : lines_) if (matches(line)) switch_line(engine, line, on);
+        refresh_categories(engine);
         return true;
     }
     if (command == "ALIGN") {
-        align_[layer] = std::string(packet.string(2));
+        const auto mode = packet.string(2);
+        const int align = mode == "CENTER" ? 1 : mode == "RIGHT" ? 2 : 0;
+        for (auto& line : lines_) if (matches(line)) line.align = align;
+        return true;
+    }
+    if (command == "COLOR" || command == "DEFAULTCOLOR" || command == "CANCELCOLOR") {
+        Vec3f rgb{0.9f, 0.9f, 0.9f};
+        if (command == "CANCELCOLOR") rgb = {0.5f, 0.5f, 0.5f};
+        else if (command == "COLOR") {
+            if (packet.vectors.empty()) return true;
+            rgb = packet.vectors[0];
+        }
+        for (auto& line : lines_)
+            if (matches(line) && line.node) line.node->color_override = Vec4f{rgb.x, rgb.y, rgb.z, 1.0f};
+        return true;
+    }
+    if (command == "SETPOSITION") {
+        engine.note("TEXTCTL SETPOSITION");
         return true;
     }
     return false;

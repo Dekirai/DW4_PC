@@ -1,0 +1,706 @@
+#include "dw4/engine/managers.hpp"
+
+#include <algorithm>
+#include <cstdio>
+
+namespace dw4::engine {
+namespace {
+
+bool query(Engine& engine, std::string_view category, std::optional<std::string_view> name, int index,
+           std::string_view command, std::optional<std::string_view> argument = std::nullopt) {
+    Packet packet;
+    if (argument) packet.strings.emplace_back(std::string(*argument));
+    engine.messenger().send(engine, category, name, index, command, packet);
+    return !packet.bools.empty() && packet.bools[0];
+}
+
+std::size_t send(Engine& engine, std::string_view category, std::optional<std::string_view> name, int index,
+                 std::string_view command) {
+    Packet packet;
+    return engine.messenger().send(engine, category, name, index, command, packet);
+}
+
+void text_command(Engine& engine, std::string_view command, std::initializer_list<std::string_view> strings) {
+    Packet packet;
+    for (auto s : strings) packet.strings.emplace_back(std::string(s));
+    engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, command, packet);
+}
+
+// 804EA468: per-player line names, "font" + player digit + two-digit index.
+std::string player_font(int player, int index) {
+    char buffer[16];
+    std::snprintf(buffer, sizeof buffer, "font%d%02d", player, index);
+    return buffer;
+}
+
+// TEXTORDER table 804E93DC (the entries LOADINTF2 uses). Each id names the
+// lines it clears first and a call number that txt_mem.lua / txt_Tar.lua turn
+// into TEXTCTL commands; the call number of player p is p * 10000 + base.
+enum class ClearSet { join, choice, message };
+struct TextOrderEntry {
+    int id;
+    int call;
+    ClearSet clears;
+};
+constexpr TextOrderEntry kTextOrder[] = {
+    {0x400, 160, ClearSet::join},    {0x401, 161, ClearSet::choice},  {0x511, 225, ClearSet::message},
+    {0x517, 232, ClearSet::message}, {0x519, 235, ClearSet::message}, {0x51B, 236, ClearSet::message},
+    {0x51C, 239, ClearSet::message}, {0x51D, 240, ClearSet::message}, {0x51F, 243, ClearSet::message},
+    {0x521, 246, ClearSet::message}, {0x522, 248, ClearSet::message}, {0x523, 250, ClearSet::message},
+    {0x524, 251, ClearSet::message}, {0x52F, 268, ClearSet::message}, {0x530, 270, ClearSet::message},
+};
+
+const TextOrderEntry* text_order_entry(int id) {
+    for (const auto& entry : kTextOrder)
+        if (entry.id == (id & 0xFFFF)) return &entry;
+    return nullptr;
+}
+
+void text_order_clear_lines(Engine& engine, const TextOrderEntry& entry, int player) {
+    auto clear = [&](std::string_view layer, int index) { text_command(engine, "SWITCH", {layer, player_font(player, index), "CLR"}); };
+    switch (entry.clears) {
+    case ClearSet::join: clear("CHRSELFONT01", 0); break;
+    case ClearSet::choice: clear("CHRSELFONT02", 0); clear("CHRSELFONT02", 1); break;
+    case ClearSet::message:
+        for (int i = 0; i < 4; ++i) clear("CHRSELFONT06", i);
+        for (int i = 0; i < 2; ++i) clear("CHRSELFONT16", i);
+        break;
+    }
+}
+
+// 80362614: clear the entry's lines, then run the text script for its call.
+void text_order_show(Engine& engine, int id) {
+    const auto* entry = text_order_entry(id);
+    if (!entry) {
+        engine.note("TEXTORDER id " + std::to_string(id & 0xFFFF));
+        return;
+    }
+    const int player = (id >> 16) & 0xF;
+    text_order_clear_lines(engine, *entry, player);
+    if (auto* sys = engine.get<GameSystem>()) sys->text_call = player * 10000 + entry->call;
+    engine.run_script((id & 0xF000) == 0 ? "txt_mem.lua" : "txt_Tar.lua");
+}
+
+// 803627F4: clear the entry's lines only.
+void text_order_clear(Engine& engine, int id) {
+    if (const auto* entry = text_order_entry(id)) text_order_clear_lines(engine, *entry, (id >> 16) & 0xF);
+}
+
+// 803622B4: set a literal on one player line (alignment, default colour, show).
+void text_set_literal(Engine& engine, std::string_view layer, int player, int index, std::string_view text) {
+    const auto font = player_font(player, index);
+    text_command(engine, "ALIGN", {layer, font, "CENTER"});
+    text_command(engine, "DEFAULTCOLOR", {layer, font});
+    text_command(engine, "TEXTSET", {layer, font, text});
+    text_command(engine, "SWITCH", {layer, font, "SET"});
+}
+
+struct PanelInput {
+    bool up{}, down{}, left{}, right{};
+    std::uint32_t trigger{};
+};
+
+// LOADINTF2 constants (804E8A0C / 804E8A3C / 804E8A4C / 804EA5A8).
+constexpr Vec3f kPanelPositions[4] = {{-315, 240, 0}, {-5, 240, 0}, {-315, 20, 0}, {-5, 20, 0}};
+constexpr const char* kPreviewModels[4] = {"h_agumon", "h_vmon", "h_girumon", "h_dorumon"};
+constexpr const char* kPartners[4] = {"p_agumon", "p_vmon", "p_girumon", "p_dorumon"};
+struct FaceRow {
+    const char* partner;
+    const char* open;
+    const char* change;
+};
+constexpr FaceRow kFaces[4] = {
+    {"p_agumon", "SQ_agumonOPEN", "SQ_p_agumon"},
+    {"p_vmon", "SQ_vmonOPEN", "SQ_p_vmon"},
+    {"p_girumon", "SQ_girumonOPEN", "SQ_p_girumon"},
+    {"p_dorumon", "SQ_dorumonOPEN", "SQ_p_dorumon"},
+};
+
+bool all_confirmed(const CommonIntf& common) {
+    // 80360CF8: every panel that was entered has confirmed its selection.
+    int entered = 0, joined = 0;
+    for (const auto& p : common.players) {
+        entered += p.entered ? 1 : 0;
+        joined += p.joined ? 1 : 0;
+    }
+    return entered == joined;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// MESWIN
+void MessageWindow::open() {
+    open_ = true;
+    closing_ = answered_ = prompt_ = pending_ = clear_request_ = false;
+}
+
+void MessageWindow::close() {
+    clear();
+    closing_ = true;
+}
+
+void MessageWindow::show(int id) {
+    pending_ = true;
+    id_ = id;
+}
+
+void MessageWindow::question(int id, int cursor) {
+    pending_ = prompt_ = true;
+    id_ = id;
+    cursor_ = cursor;
+    mode_ = 0;
+    step_ = 0;
+}
+
+void MessageWindow::next(int id) {
+    pending_ = prompt_ = true;
+    id_ = id;
+    mode_ = 1;
+    step_ = 0;
+}
+
+void MessageWindow::clear() {
+    clear_request_ = true;
+    pending_ = true;
+}
+
+void MessageWindow::update(Engine& engine, int player) {
+    if (!open_) return;
+    auto seq = [&](const std::string& name) {
+        sequence_ = name;
+        send(engine, "MODELCTRL", "j_chrselmesswin", player, name);
+    };
+    auto in_seq = [&] { return query(engine, "MODELCTRL", "j_chrselmesswin", player, "ISSEQNAME", sequence_); };
+    auto finish = [&] {
+        clear();
+        answered_ = true;
+        prompt_ = false;
+    };
+    if (prompt_) {
+        const auto& pad = engine.pads()[std::size_t(std::clamp(player, 0, 3))];
+        if (mode_ == 0) {
+            if (step_ == 0) {
+                seq(cursor_ ? "SQ_LINESL01" : "SQ_LINESL00");
+                step_ = 1;
+            } else if (step_ == 1) {
+                const std::uint32_t sticks = pad.left_directions.trigger | pad.left_directions.repeat;
+                const std::uint32_t buttons = pad.buttons.trigger | pad.buttons.repeat;
+                const bool up = (sticks & dw4::pad_direction::positive_y) || (buttons & dw4::pad_button::up);
+                const bool down = (sticks & dw4::pad_direction::negative_y) || (buttons & dw4::pad_button::down);
+                if (up) {
+                    if (cursor_ == 1) {
+                        cursor_ = 0;
+                        seq("SQ_LINEUP00");
+                        step_ = 2;
+                    }
+                } else if (down) {
+                    if (cursor_ == 0) {
+                        cursor_ = 1;
+                        seq("SQ_LINEDW01");
+                        step_ = 3;
+                    }
+                } else if (pad.buttons.trigger & dw4::pad_button::a) {
+                    seq(cursor_ ? "SQ_LINEON01" : "SQ_LINEON00");
+                    step_ = 4;
+                }
+            } else if (step_ == 2 || step_ == 3) {
+                if (!in_seq()) step_ = 1;
+            } else if (step_ == 4) {
+                if (!in_seq()) finish();
+            }
+        } else {
+            if (step_ == 0) {
+                seq("SQ_NEXTSL00");
+                step_ = 1;
+            } else if (step_ == 1) {
+                if (pad.buttons.trigger & dw4::pad_button::a) {
+                    seq("SQ_NEXTON00");
+                    step_ = 2;
+                }
+            } else if (step_ == 2 && !in_seq()) {
+                finish();
+            }
+        }
+    }
+    if (pending_) {
+        if (clear_request_) {
+            for (int i = 0; i < 4; ++i) text_command(engine, "SWITCH", {"CHRSELFONT06", player_font(player, i), "CLR"});
+            for (int i = 0; i < 2; ++i) text_command(engine, "SWITCH", {"CHRSELFONT16", player_font(player, i), "CLR"});
+            clear_request_ = false;
+            if (closing_) open_ = false;
+        } else {
+            text_order_show(engine, id_);
+        }
+        pending_ = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DEGISTATECTRL
+bool StatusWindow::update(Engine& engine, CommonModelControl& models, int player, const Vec3f& position, int digimon) {
+    if (done_) return true;
+    const auto& face = kFaces[std::size_t(std::clamp(digimon, 0, 3))];
+    if (mode_ == 1) {
+        if (step_ == 0) {
+            models.open_at(engine, player, "j_digifacewin", face.open, position, true);
+            models.open_at(engine, player, "j_mainstatuswin", "SQ_OPEN", position, true);
+            step_ = 1;
+        } else if (models.sequences_done()) {
+            // 80352A38 fills the status values; the text is not reconstructed yet.
+            done_ = true;
+            mode_ = 0;
+        }
+    } else if (mode_ == 2) {
+        if (step_ == 0) {
+            models.close(engine, player, "j_digifacewin", "SQ_CLOSE", true);
+            const char* seq = style_ == 1 ? "SQ_LINEON00" : style_ == 2 ? "SQ_CANCEL" : "SQ_CLOSE";
+            models.close(engine, player, "j_mainstatuswin", seq, true);
+            step_ = 1;
+        } else if (models.closes_done()) {
+            done_ = true;
+            mode_ = 0;
+        }
+    } else {
+        done_ = true;
+    }
+    return done_;
+}
+
+// ---------------------------------------------------------------------------
+// DATABASE
+void DatabaseManager::add_info(Engine& engine, const ObjectView& info) {
+    std::int32_t index = 0;
+    for (const auto& record : info.list(6)) {
+        auto ram = std::make_unique<Ram>();
+        ram->manager = this;
+        ram->info = info;
+        ram->ram = record;
+        ram->info_name = std::string(info.str(2));
+        ram->index = index++;
+        ram->active = record ? record.boolean(5) : false;
+        engine.messenger().add_row("DATABASE", ram->info_name, ram->index, ram.get());
+        rams_.push_back(std::move(ram));
+    }
+    if (const auto table = info.ref(7)) tables_[std::string(info.str(2))] = table;
+}
+
+std::string DatabaseManager::text(std::string_view table, int row, std::string_view column) const {
+    const auto found = tables_.find(table);
+    if (found == tables_.end() || row < 0) return {};
+    const auto names = found->second.list(12);
+    const auto values = found->second.list(13);
+    for (std::size_t c = 0; c < names.size(); ++c) {
+        if (!names[c] || names[c].str(2) != column) continue;
+        const std::size_t at = std::size_t(row) * names.size() + c;
+        return at < values.size() && values[at] ? std::string(values[at].str(2)) : std::string();
+    }
+    return {};
+}
+
+// ---------------------------------------------------------------------------
+// LOADINTF2
+void LoadIntf2Manager::add_info(Engine& engine, const ObjectView& info) {
+    std::int32_t index = 0;
+    for (const auto& record : info.list(6)) {
+        auto ram = std::make_unique<PanelRam>();
+        ram->manager = this;
+        ram->info = info;
+        ram->ram = record;
+        ram->info_name = std::string(info.str(2));
+        ram->index = index++;
+        ram->active = record ? record.boolean(5) : false;
+        engine.messenger().add_row("LOADINTF2_ALL", ram->info_name, ram->index, ram.get());
+        engine.messenger().add_row("LOADINTF2", ram->info_name, ram->index, ram.get());
+        rams_.push_back(std::move(ram));
+    }
+}
+
+bool LoadIntf2Manager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
+    (void)packet;
+    auto& ram = static_cast<PanelRam&>(base);
+    auto* ctrl = engine.get<LoadCtrl2Manager>();
+    if (!ctrl) return false;
+    auto& common = ctrl->common();
+    const auto slot = std::size_t(std::clamp(ram.index, 0, 3));
+    auto& player = common.players[slot];
+    if (command == "GENERATE") {
+        if (ram.created) return true;
+        ram.created = true;
+        ram.state = ram.sub = ram.detail = ram.detail2 = 0;
+        ram.joined_flag = slot == 0; // 803612DC: CTRL +12 preset for controller 1
+        ram.position = kPanelPositions[slot];
+        ram.digimon = 3;
+        return true;
+    }
+    if (command == "SETSELECT_DATA") {
+        if (auto* sys = engine.get<GameSystem>()) {
+            auto& target = sys->players[slot];
+            target.joined = player.joined;
+            if (player.joined) target.digimon = player.digimon;
+        }
+        return true;
+    }
+    return false;
+}
+
+void LoadIntf2Manager::update(Engine& engine) {
+    auto* ctrl = engine.get<LoadCtrl2Manager>();
+    if (!ctrl || !ctrl->common().active) return;
+    for (auto& ram : rams_)
+        if (ram->created) update_panel(engine, *ram, ctrl->common());
+}
+
+void LoadIntf2Manager::update_panel(Engine& engine, PanelRam& ram, CommonIntf& common) {
+    const int idx = std::clamp(ram.index, 0, 3);
+    auto& player = common.players[std::size_t(idx)];
+    auto& models = ram.models;
+    models.update(engine);
+    ram.message.update(engine, idx);
+    ram.status.update(engine, models, idx, ram.position, ram.digimon);
+
+    PanelInput in;
+    const auto& pad = engine.pads()[std::size_t(idx)];
+    if (player.active) {
+        const std::uint32_t sticks = pad.left_directions.trigger | pad.left_directions.repeat;
+        const std::uint32_t buttons = pad.buttons.trigger | pad.buttons.repeat;
+        in.up = (sticks & dw4::pad_direction::positive_y) || (buttons & dw4::pad_button::up);
+        in.down = (sticks & dw4::pad_direction::negative_y) || (buttons & dw4::pad_button::down);
+        in.left = (sticks & dw4::pad_direction::negative_x) || (buttons & dw4::pad_button::left);
+        in.right = (sticks & dw4::pad_direction::positive_x) || (buttons & dw4::pad_button::right);
+        in.trigger = pad.buttons.trigger;
+    }
+    const int id = idx << 16;
+    auto set_state = [&](int state) {
+        ram.state = state;
+        ram.sub = ram.detail = ram.detail2 = 0;
+    };
+    auto next_sub = [&] { ++ram.sub; ram.detail = ram.detail2 = 0; };
+    auto next_detail = [&] { ++ram.detail; ram.detail2 = 0; };
+    auto show_name = [&] {
+        std::string name;
+        if (auto* db = engine.get<DatabaseManager>()) name = db->text("shinka", ram.digimon, "NAME");
+        text_set_literal(engine, "CHRSELFONT14", idx, 0, name);
+    };
+    auto preview = std::string(kPreviewModels[std::size_t(ram.digimon)]);
+    auto spawn_preview = [&] {
+        const auto model = std::string(kPreviewModels[std::size_t(ram.digimon)]);
+        send(engine, "MODELCTRL", model, idx, "GENERATE");
+        Packet probe;
+        const bool live = engine.messenger().send(engine, "MODELCTRL", model, idx, "ISRUN", probe) > 0 &&
+                          !probe.bools.empty() && probe.bools[0];
+        if (live) {
+            Packet move;
+            move.vectors = {Vec3f{}, Vec3f{}};
+            engine.messenger().send(engine, "MODELCTRL", model, idx, "MOVETRANS", move);
+            send(engine, "MODELCTRL", model, idx, "SQ_ENTR");
+            ram.no_model = false;
+        } else {
+            ram.no_model = true;
+        }
+    };
+
+    // Controller-level flow (8035C958 first switch): LOADCTRL2 closes the panels.
+    if (player.state == 2) {
+        if (player.sub == 0) {
+            if (ram.state == 8) {
+                models.close(engine, idx, "j_chrselmesswin", "SQ_CLOSE", true);
+                ram.message.close();
+                ram.status.hide(1);
+                player.sub = 2;
+            } else {
+                player.sub = 1;
+            }
+            models.close(engine, idx, "j_chrselbase", "SQ_CLOSE", true);
+        } else if (player.sub == 1 || player.sub == 2) {
+            if ((player.sub == 1 || ram.status.done()) && models.closes_done()) {
+                player.closed = true;
+                player.sub = 3;
+            }
+        }
+        return;
+    }
+    if (player.state != 0) return; // memory card flows are not reconstructed
+
+    switch (ram.state) {
+    case 0: // open the panel
+        if (ram.sub == 0) {
+            models.open_at(engine, idx, "j_chrselbase", "SQ_OPEN", ram.position, true);
+            next_sub();
+        } else if (ram.sub == 1) {
+            if (models.sequences_done()) next_sub();
+        } else if (ram.sub == 2) {
+            // GAMERAM GETPLAYER ISUSE: every slot was reset by GAMEDATAINIT.
+            if (idx != 0) set_state(pad.connected ? 2 : 1);
+            else set_state(3);
+            ram.fresh = true;
+        }
+        break;
+    case 1: // wait for a controller
+        if (player.active && pad.connected) set_state(2);
+        break;
+    case 2: // "press A" join prompt
+        if (ram.sub == 0) {
+            models.open_at(engine, idx, "j_linewin01", "SQ_OPEN", ram.position, true);
+            next_sub();
+        } else if (ram.sub == 1) {
+            if (models.sequences_done()) {
+                text_order_show(engine, id | 0x400);
+                next_sub();
+            }
+        } else if (ram.sub == 2) {
+            bool leave = false;
+            if (player.active && pad.connected) {
+                if (in.trigger & dw4::pad_button::a) {
+                    player.entered = true;
+                    ram.joined_flag = true;
+                    leave = true;
+                }
+            } else {
+                leave = true;
+            }
+            if (leave) {
+                models.close(engine, idx, "j_linewin01", ram.joined_flag ? "SQ_LINEON00" : "SQ_CLOSE", true);
+                text_order_clear(engine, id | 0x400);
+                next_sub();
+            }
+        } else if (ram.sub == 3) {
+            if (models.closes_done()) set_state(ram.joined_flag ? 3 : 1);
+        }
+        break;
+    case 3: // new game / load
+        if (ram.sub == 0) {
+            if (!ram.message_open) {
+                models.open_at(engine, idx, "j_chrselmesswin", "SQ_OPEN", ram.position, true);
+                ram.message.open();
+                ram.message_open = true;
+            }
+            player.entered = true;
+            models.open_at(engine, idx, "j_linewin02", "SQ_OPEN", ram.position, true);
+            ram.cursor = 0;
+            next_sub();
+        } else if (ram.sub == 1) {
+            if (ram.detail == 0 && !models.in_sequence(engine, idx, "j_linewin02", "SQ_OPEN")) {
+                text_order_show(engine, id | 0x401);
+                next_detail();
+                ram.message.show(id | (idx ? 0x524 : 0x523));
+            }
+            if (models.sequences_done()) next_sub();
+        } else if (ram.sub == 2) {
+            if (ram.detail == 1) {
+                if (models.sequences_done()) ram.detail = 0;
+            } else if (ram.detail == 0) {
+                if (in.up) {
+                    int c = ram.cursor - 1;
+                    if (c >= 0) models.set(engine, idx, "j_linewin02", "SQ_LINEUP00", true);
+                    else c = 0;
+                    ram.cursor = c;
+                    next_detail();
+                } else if (in.down) {
+                    int c = ram.cursor + 1;
+                    if (c <= 1) models.set(engine, idx, "j_linewin02", "SQ_LINEDW01", true);
+                    else c = 1;
+                    ram.cursor = c;
+                    next_detail();
+                } else if (in.trigger & dw4::pad_button::a) {
+                    models.set(engine, idx, "j_linewin02", ram.cursor ? "SQ_LINEON01" : "SQ_LINEON00", true);
+                    next_sub();
+                } else if ((in.trigger & dw4::pad_button::b) && idx != 0) {
+                    models.close(engine, idx, "j_linewin02", "SQ_CANCEL", true);
+                    models.close(engine, idx, "j_chrselmesswin", "SQ_CLOSE", true);
+                    text_order_clear(engine, id | 0x401);
+                    ram.message.close();
+                    ram.sub += 2;
+                    ram.detail = ram.detail2 = 0;
+                }
+            }
+        } else if (ram.sub == 3) {
+            if (models.sequences_done()) {
+                text_order_clear(engine, id | 0x401);
+                if (ram.cursor) {
+                    // Continue needs the memory card slot dialog (SELSLOT/DATASELINTF).
+                    engine.note("LOADINTF2 load game (memory card slots)");
+                    set_state(3);
+                } else {
+                    set_state(4);
+                }
+            }
+        } else if (ram.sub == 4) {
+            if (models.closes_done()) {
+                player.entered = false;
+                ram.joined_flag = false;
+                ram.message_open = false;
+                set_state(2);
+            }
+        }
+        break;
+    case 4: // partner selection
+        if (ram.sub == 0) {
+            models.open_at(engine, idx, "j_digiselcursorleft", "SQ_OPEN", ram.position, true);
+            models.open_at(engine, idx, "j_digiselcursorright", "SQ_OPEN", ram.position, true);
+            models.open_at(engine, idx, "j_namewin02", "SQ_OPEN", ram.position, true);
+            ram.digimon = 3;
+            ram.message.show(id | 0x511);
+            show_name();
+            models.open_at(engine, idx, "j_digifacewin", kFaces[std::size_t(ram.digimon)].open, ram.position, true);
+            spawn_preview();
+            next_sub();
+            ram.cancel = false;
+        } else if (ram.sub == 1) {
+            if (models.sequences_done()) {
+                send(engine, "MODELCTRL", "j_namewin02", idx, "SQ_LINESL00");
+                next_sub();
+            }
+        } else if (ram.sub == 2) {
+            if (ram.detail == 1) {
+                if (models.sequences_done()) ram.detail = 0;
+            } else if (ram.detail == 0) {
+                if (in.right || in.left) {
+                    if (!ram.no_model && query(engine, "MODELCTRL", preview, idx, "ISRUN"))
+                        send(engine, "MODELCTRL", preview, idx, "SQ_EXIT");
+                    ram.digimon = in.right ? (ram.digimon + 1) % 4 : (ram.digimon + 3) % 4;
+                    show_name();
+                    models.set(engine, idx, in.right ? "j_digiselcursorright" : "j_digiselcursorleft", "SQ_ON00", true);
+                    models.set(engine, idx, "j_namewin02", "SQ_LINECG00", false);
+                    models.set(engine, idx, "j_digifacewin", kFaces[std::size_t(ram.digimon)].change, false);
+                    next_detail();
+                } else {
+                    Packet probe;
+                    const bool shown = engine.messenger().send(engine, "MODELCTRL", preview, idx, "ISRUN", probe) > 0
+                                           ? !probe.bools.empty() && probe.bools[0]
+                                           : ram.no_model;
+                    if (shown) {
+                        if (in.trigger & dw4::pad_button::a) next_sub();
+                        else if (in.trigger & dw4::pad_button::b) {
+                            ram.cancel = true;
+                            next_sub();
+                        }
+                    } else {
+                        spawn_preview();
+                    }
+                }
+            }
+        } else if (ram.sub == 3) {
+            models.close(engine, idx, "j_namewin02", ram.cancel ? "SQ_CANCEL" : "SQ_LINEON00", true);
+            if (!ram.no_model) models.close(engine, idx, preview, "SQ_EXIT", true);
+            text_command(engine, "SWITCH", {"CHRSELFONT14", player_font(idx, 0), "CLR"});
+            next_sub();
+        } else if (ram.sub == 4) {
+            if (models.closes_done()) next_sub();
+        } else if (ram.sub == 5) {
+            models.close(engine, idx, "j_digifacewin", "SQ_CLOSE", true);
+            models.close(engine, idx, "j_digiselcursorleft", "SQ_CLOSE", true);
+            models.close(engine, idx, "j_digiselcursorright", "SQ_CLOSE", true);
+            next_sub();
+        } else if (ram.sub == 6) {
+            if (models.closes_done()) {
+                if (ram.cancel) set_state(3);
+                else {
+                    // State 5 (NAMESEL) enters the player name; it is not
+                    // reconstructed yet, so the new game continues directly.
+                    engine.note("LOADINTF2 name entry (NAMESEL)");
+                    ram.new_game = true;
+                    set_state(8);
+                }
+            }
+        }
+        break;
+    case 8: // status window, ready, host START
+        if (ram.sub == 0) {
+            if (ram.detail == 0) {
+                if (ram.detail2 == 0) {
+                    if (ram.fresh && ram.new_game) player.digimon = kPartners[std::size_t(ram.digimon)];
+                    if (idx == 0 && ram.fresh) {
+                        common.difficulty = 0;
+                        engine.run_script("hostLoad.lua");
+                        if (auto* sys = engine.get<GameSystem>(); sys && sys->difficulty_max > 0)
+                            engine.note("LOADINTF2 difficulty selection (DIFFSELECT)");
+                    }
+                    ram.status.show();
+                    next_detail();
+                }
+            } else if (ram.detail == 1) {
+                if (ram.status.done()) {
+                    player.joined = true;
+                    if (idx == 0 && all_confirmed(common)) {
+                        ram.sub = 3;
+                        ram.detail = ram.detail2 = 0;
+                    } else {
+                        ram.sub = 1;
+                        ram.detail = ram.detail2 = 0;
+                    }
+                }
+            }
+        } else if (ram.sub == 1) {
+            bool cancel = false;
+            if (ram.detail == 0) {
+                ram.message.show(id | (ram.fresh ? 0x530 : 0x52F));
+                next_detail();
+            } else if (ram.detail == 1) {
+                const bool back = (in.trigger & dw4::pad_button::b) && ram.fresh;
+                if (ram.detail2 == 1) {
+                    if (!all_confirmed(common)) {
+                        ram.message.show(id | (ram.fresh ? 0x530 : 0x52F));
+                        ram.detail2 = 0;
+                    }
+                    cancel = back;
+                } else if (ram.detail2 == 0) {
+                    if (idx == 0) {
+                        if (all_confirmed(common)) {
+                            ram.sub = 3;
+                            ram.detail = ram.detail2 = 0;
+                        } else {
+                            cancel = back;
+                        }
+                    } else if (all_confirmed(common)) {
+                        ram.message.show(id | (ram.fresh ? 0x51F : 0x522));
+                        ++ram.detail2;
+                    } else {
+                        cancel = back;
+                    }
+                }
+            }
+            if (cancel) {
+                player.joined = false;
+                next_sub();
+            }
+        } else if (ram.sub == 2) { // back out of the status window
+            if (ram.detail == 0) {
+                models.set(engine, idx, "j_mainstatuswin", "SQ_CANCEL", true);
+                next_detail();
+            } else if (ram.detail == 1) {
+                if (models.sequences_done()) next_detail();
+            } else if (ram.detail == 2) {
+                ram.status.hide(0);
+                next_detail();
+            } else if (ram.detail == 3 && ram.status.done()) {
+                set_state(4);
+            }
+        } else if (ram.sub == 3) { // controller 1 starts the game
+            if (ram.detail == 0) {
+                ram.message.show(id | (ram.fresh ? 0x51D : 0x521));
+                next_detail();
+            } else if (ram.detail == 1) {
+                if ((in.trigger & dw4::pad_button::b) && ram.fresh) {
+                    player.joined = false;
+                    ram.sub = 2;
+                    ram.detail = ram.detail2 = 0;
+                } else if (all_confirmed(common)) {
+                    if (in.trigger & dw4::pad_button::start) {
+                        common.state = 3;
+                        for (auto& p : common.players) p.active = false;
+                        next_detail();
+                    }
+                } else {
+                    ram.sub = 1;
+                    ram.detail = ram.detail2 = 0;
+                }
+            }
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+} // namespace dw4::engine

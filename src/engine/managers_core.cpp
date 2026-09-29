@@ -584,6 +584,7 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     if (method == "SYSsetDifficulty") { difficulty = arg_int(0); return true; }
     if (method == "LISsetDifficultMax") { difficulty_max = arg_int(0); return true; }
     if (method == "SYSgetCameraMode") { out = {Lua4Value::number(camera_mode)}; return true; }
+    if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }
     if (method == "SYSgetLightMode") { out = {Lua4Value::number(light_mode)}; return true; }
     if (method == "SYSgetGateStageName") { out = {Lua4Value::string(gate_stage_name)}; return true; }
     if (method == "SYSgetGateStageNo") { out = {Lua4Value::number(gate_stage_no)}; return true; }
@@ -617,6 +618,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<Title2Manager>());
     engine.add_manager(std::make_unique<LoadCtrl2Manager>());
     engine.add_manager(std::make_unique<LoadIntf2Manager>());
+    engine.add_manager(std::make_unique<DatabaseManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 

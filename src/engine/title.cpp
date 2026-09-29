@@ -79,6 +79,19 @@ void CommonModelControl::open(Engine& engine, int index, const std::string& name
     if (track) sequence_waits_.push_back({index, name, seq});
 }
 
+void CommonModelControl::open_at(Engine& engine, int index, const std::string& name, const std::string& seq,
+                                 const Vec3f& position, bool track) {
+    Packet packet;
+    packet.vectors.push_back(position);
+    engine.messenger().send(engine, "MODELCTRL", name, index, "GENERATE", packet);
+    send(engine, "MODELCTRL", name, index, seq);
+    if (track) sequence_waits_.push_back({index, name, seq});
+}
+
+bool CommonModelControl::in_sequence(Engine& engine, int index, const std::string& name, const std::string& seq) {
+    return query(engine, "MODELCTRL", name, index, "ISSEQNAME", seq);
+}
+
 void CommonModelControl::set(Engine& engine, int index, const std::string& name, const std::string& seq, bool track) {
     send(engine, "MODELCTRL", name, index, seq);
     if (track) sequence_waits_.push_back({index, name, seq});
@@ -584,58 +597,6 @@ void LoadCtrl2Manager::update(Engine& engine) {
             break;
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// LOADINTF2
-void LoadIntf2Manager::add_info(Engine& engine, const ObjectView& info) {
-    register_rams(engine, this, info, rams_, {"LOADINTF2_ALL", "LOADINTF2"});
-}
-
-bool LoadIntf2Manager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
-    (void)packet;
-    auto& ram = static_cast<PanelRam&>(base);
-    auto* ctrl = engine.get<LoadCtrl2Manager>();
-    if (!ctrl) return false;
-    auto& common = ctrl->common();
-    const auto slot = std::size_t(std::clamp(ram.index, 0, 3));
-    auto& player = common.players[slot];
-    if (command == "GENERATE") {
-        if (ram.created) return true;
-        ram.created = true;
-        // Pending the panel reconstruction, controller 1 starts a new game
-        // with the default partner; other slots stay out.
-        player.joined = slot == 0;
-        player.state = 1;
-        player.sub = player.step = player.detail = 0;
-        return true;
-    }
-    if (command == "SETSELECT_DATA") {
-        if (auto* sys = engine.get<GameSystem>()) {
-            auto& target = sys->players[slot];
-            target.joined = player.joined;
-            if (player.joined) target.digimon = player.digimon;
-        }
-        return true;
-    }
-    return false;
-}
-
-void LoadIntf2Manager::update(Engine& engine) {
-    auto* ctrl = engine.get<LoadCtrl2Manager>();
-    if (!ctrl || rams_.empty()) return;
-    auto& common = ctrl->common();
-    if (!common.active) return;
-    bool all_ready = true;
-    for (auto& owned : rams_) {
-        auto& ram = *owned;
-        if (!ram.created) { all_ready = false; continue; }
-        auto& player = common.players[std::size_t(std::clamp(ram.index, 0, 3))];
-        if (player.state == 1) player.state = 3; // selection confirmed
-        if (player.state == 2 && !player.closed) player.closed = true;
-        if (player.state < 3 && player.state != 2) all_ready = false;
-    }
-    if (all_ready && common.state == 0) common.state = 3;
 }
 
 } // namespace dw4::engine

@@ -221,7 +221,11 @@ struct FontImage {
     std::map<std::uint32_t, Glyph> glyphs;
 };
 
-// TEXTCTL (beFontInfo): text layers built from pack unicode strings.
+// TEXTCTL (beFontInfo, commands 802FA900): text lines built from pack unicode
+// strings. Every beFontInfoData entry is one line: layer name [2], line node
+// [4] (named fontNNN), category [5] in the FONT layer switch, line index [6]
+// in that category's first child switch, max width [7], line height [8],
+// alignment [9] and style [10]. Commands address lines by layer and name.
 class TextCtlManager final : public Manager {
 public:
     TextCtlManager() : Manager("beFont") {}
@@ -229,29 +233,31 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
-    std::u16string text(std::size_t index) const;
 
 private:
     struct Line {
-        std::string layer;
-        int line{};
+        const IgbDocument* document{};
+        std::uint32_t info{};
+        std::string layer, name;
+        int category{}, index{};
         Node* node{};
         float max_width{};
         float spacing{};
+        int align{};              // 0 left, 1 center, 2 right
         std::string style;
+        std::vector<ObjectView>* strings{};
     };
     void load_fonts(Engine& engine);
-    void set_text(Engine& engine, const std::string& layer, int first_line, const std::u16string& value);
-    void clear_layer(const std::string& layer);
-    Node* layer_node(Engine& engine, const std::string& layer);
+    void set_text(Engine& engine, Line& line, const std::u16string& value);
+    void switch_line(Engine& engine, const Line& line, bool on);
+    void refresh_categories(Engine& engine);
+    Node* root_switch(Engine& engine);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<Line> lines_;
-    std::vector<ObjectView> strings_;
+    std::map<std::pair<const IgbDocument*, std::uint32_t>, std::vector<ObjectView>> strings_;
     std::map<std::string, std::unique_ptr<FontImage>> fonts_;
     std::shared_ptr<const IgbDocument> font_document_;
     std::vector<std::shared_ptr<GeometryData>> geometry_;
-    std::map<std::string, Vec4f> colors_;
-    std::map<std::string, std::string> align_;
 };
 
 // SELECTCTRL (beSelectCtrl, 80313CD4 / 803132C0): cursor menus and prompts.
@@ -283,6 +289,9 @@ private:
 class CommonModelControl {
 public:
     void open(Engine& engine, int index, const std::string& name, const std::string& seq, bool track);  // 8035BE8C
+    void open_at(Engine& engine, int index, const std::string& name, const std::string& seq, const Vec3f& position,
+                 bool track);                                                                            // 8035C0D8
+    bool in_sequence(Engine& engine, int index, const std::string& name, const std::string& seq);        // 8035C490
     void set(Engine& engine, int index, const std::string& name, const std::string& seq, bool track);   // 8035C2DC
     void close(Engine& engine, int index, const std::string& name, const std::string& seq, bool track); // 8035C51C
     bool is_live(Engine& engine, int index, const std::string& name);                                   // 8035C6D0
@@ -337,9 +346,11 @@ private:
 // created by LOADCTRL2 GENERATE / GENERATE_TITLE at 803689A8).
 struct CommonIntf {
     struct Player {
-        bool joined{};   // +13
-        bool closed{};   // +14
-        int state{};     // [9]
+        bool entered{};    // +0C: panel taken by this controller
+        bool joined{};     // +0D: selection confirmed
+        bool closed{};     // +0E: panel closed after the hand-off
+        bool active = true; // +0F: still accepting input
+        int state{};       // +24 [9]: 2 = LOADCTRL2 closes the panel
         int sub{}, step{}, detail{};
         std::string digimon = "p_agumon";
     };
@@ -374,10 +385,59 @@ private:
     CommonIntf common_;
 };
 
+// MESWIN helper (80362B44 / 80363064..803631A8): the panel message window.
+// Messages are TEXTORDER ids; prompts drive j_chrselmesswin's sequences.
+class MessageWindow {
+public:
+    void open();                          // 80363064
+    void close();                         // 8036308C
+    void show(int id);                    // 803630C0
+    void question(int id, int cursor);    // 803630D0: two-choice prompt
+    void next(int id);                    // 803630F4: wait for A
+    void clear();                         // 8036317C
+    bool busy() const { return prompt_; } // 8036316C
+    int answer() const { return cursor_; }
+    void update(Engine& engine, int player);
+
+private:
+    bool open_{}, closing_{}, answered_{}, prompt_{}, pending_{}, clear_request_{};
+    int mode_{}, step_{}, cursor_{}, id_{};
+    std::string sequence_;
+};
+
+// DEGISTATECTRL helper (8035299C / 803529EC / 80353394): face and status windows.
+class StatusWindow {
+public:
+    void show() { mode_ = 1; step_ = 0; done_ = false; }                          // 8035299C
+    void hide(int style) { mode_ = 2; style_ = style; step_ = 0; done_ = false; } // 803529EC
+    bool update(Engine& engine, CommonModelControl& models, int player, const Vec3f& position, int digimon);
+    bool done() const { return done_; }
+
+private:
+    int mode_{}, style_{}, step_{};
+    bool done_ = true;
+};
+
+// DATABASE (beDBManagerInfo): named beDataBase tables with typed columns;
+// string columns are names [12] with row-major values [13].
+class DatabaseManager final : public Manager {
+public:
+    DatabaseManager() : Manager("beDBManager") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beDBManagerInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); tables_.clear(); }
+    std::string text(std::string_view table, int row, std::string_view column) const;
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::string, ObjectView, std::less<>> tables_;
+};
+
 // LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
-// controller slot. The original panel runs data-slot, name, character and
-// difficulty dialogs; this reconstruction currently confirms the default
-// selection so the new-game hand-off to LOADCTRL2 can run.
+// controller slot: join prompt, new game / load choice, partner selection with
+// the 3D model, status window and the host's START. The name entry keyboard
+// (NAMESEL), memory card slots and the difficulty dialog are not reconstructed
+// yet; a new game skips straight from the partner to the status window.
 class LoadIntf2Manager final : public Manager {
 public:
     LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
@@ -390,7 +450,21 @@ public:
 private:
     struct PanelRam : Ram {
         bool created{};
+        int state{}, sub{}, detail{}, detail2{}; // CTRL +24..+30
+        int cursor{};                            // CTRL +18
+        bool joined_flag{};                      // CTRL +12
+        bool cancel{};                           // CTRL +14
+        bool message_open{};                     // CTRL +15
+        bool no_model{};                         // CTRL +17
+        bool new_game{};                         // CTRL +1C
+        bool fresh{};                            // CTRL +1D: no saved player
+        int digimon = 3;                         // MAKECHR +30
+        Vec3f position{};
+        CommonModelControl models;
+        MessageWindow message;
+        StatusWindow status;
     };
+    void update_panel(Engine& engine, PanelRam& ram, CommonIntf& common);
     std::vector<std::unique_ptr<PanelRam>> rams_;
 };
 
@@ -533,6 +607,7 @@ public:
     std::int32_t light_mode{};
     std::int32_t ninzu = 1;
     bool game_started{}; // beSystem byte 4840: set by TITLE2 GAMESTART
+    std::int32_t text_call{}; // TEXTORDER call number read by TXTgetCallNo (80535950)
     std::string gate_stage_name;
     std::int32_t gate_stage_no{};
     std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
