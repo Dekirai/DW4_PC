@@ -86,6 +86,16 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         hit_bodies_[info_key] = std::move(body);
         break;
     }
+    // "AIM" data (beModelCtrlInfoDataAIM [4]): the AI maps selected by AIMAP.
+    std::vector<ObjectView>* ai_maps = nullptr;
+    for (const auto& data : info.list(5)) {
+        if (!data || data.str(2) != "AIM") continue;
+        auto maps = std::make_unique<std::vector<ObjectView>>();
+        for (const auto& map : data.list(4)) if (map) maps->push_back(map);
+        ai_maps = maps.get();
+        ai_maps_[info_key] = std::move(maps);
+        break;
+    }
     const std::string category = category_for_kind(info.str(7));
     std::int32_t index = 0;
     for (const auto& record : info.list(6)) {
@@ -97,6 +107,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         ram->index = index++;
         ram->category = category;
         ram->sequences = seq_ptr;
+        ram->ai_maps = ai_maps;
         ram->is_player = category == "PLAYER";
         if (record) {
             for (const auto& data : record.list(10)) {
@@ -122,6 +133,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
 
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
+    ai_maps_.clear();
     sequences_.clear();
     hit_bodies_.clear();
 }
@@ -265,6 +277,10 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             ram.labels[std::string(command.str(3))] = name;
             ++ram.cursor;
         } else if (type == "beModelCtrlAIMAP") {
+            // Select the AI map by name.
+            if (ram.ai_maps)
+                for (std::size_t i = 0; i < ram.ai_maps->size(); ++i)
+                    if ((*ram.ai_maps)[i].str(2) == name) ram.ai_map = int(i);
             ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
             // An empty mode runs "<name>_<info>.lua" now (e.g. ded_g_tcounter00);
@@ -305,6 +321,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         ram.muteki = 0;
         ram.capsule_on = ram.capsule_ended = false;
+        ram.ai_timer_end = -1;
+        ram.ai_request.clear();
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
@@ -612,6 +630,26 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
             auto& world = hitland->world();
             next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f);
+            // PROVISIONAL model-to-model separation (the original delivers
+            // CHECKWALL between the models' HitLandDeliv cylinders).
+            const float own = std::max(hitland->radius(ram.info_name), 2.0f);
+            for (const auto& other : rams_) {
+                if (other.get() == &ram || !other->generated || !other->node) continue;
+                if (!other->is_player && other->category != "ENEMY") continue;
+                if (other->seq_name == "SQ_ERAS") continue;
+                const auto& o = other->node->matrix;
+                if (std::abs(o(3, 1) - next.y) > 10.0f) continue;
+                const float reach = own + std::max(hitland->radius(other->info_name), 2.0f);
+                const float dx = next.x - o(3, 0), dz = next.z - o(3, 2);
+                const float d = std::sqrt(dx * dx + dz * dz);
+                if (d >= reach) continue;
+                if (d > 1e-4f) {
+                    next.x = o(3, 0) + dx / d * reach;
+                    next.z = o(3, 2) + dz / d * reach;
+                } else {
+                    next.x = o(3, 0) + reach;
+                }
+            }
             float floor = 0;
             const bool rising = next.y > position.y + 0.001f;
             if (!rising && world.floor_height(next, 6.0f, ram.on_ground ? 6.0f : 0.5f, floor)) {
@@ -835,7 +873,53 @@ void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
 // PROVISIONAL enemy behaviour until the original enemy controller (AIMAP,
 // beActionStarter) is reconstructed: face the nearest player, walk towards
 // it and attack at close range after a cooldown.
+// AIM map AI (803084B8), run through the control logic (80309168): when
+// AITIMER expires, the distance to the nearest player picks the map's near /
+// middle / far / outside table; a roll below 16 picks the first entry whose
+// cumulative weight exceeds it. The entry sets the heading (target direction
+// plus its angle), the requested sequence and the next AITIMER; until then the
+// same sequence stays requested.
+void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
+    if (!ram.control_enabled || !ram.node || ram.ai_maps->empty()) return;
+    std::string request = ram.ai_request;
+    if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
+        const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
+        const auto& m = ram.node->matrix;
+        const ModelRam* target = nullptr;
+        float best = 1e30f;
+        for (const auto& other : rams_) {
+            if (!other->is_player || !other->generated || !other->node) continue;
+            const auto& o = other->node->matrix;
+            const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < best) { best = d2; target = other.get(); }
+        }
+        if (!target) return;
+        ram.turn_rate_y = map.f32(6);
+        const std::uint16_t band = best < map.f32(3) ? 7 : best < map.f32(4) ? 8 : best < map.f32(5) ? 9 : 10;
+        const auto entries = map.list(band);
+        if (!entries.empty()) {
+            const int roll = int(fight::random() & 15u);
+            ObjectView pick = entries.back();
+            for (const auto& entry : entries)
+                if (entry && roll < entry.i32(5)) { pick = entry; break; }
+            const auto& o = target->node->matrix;
+            ram.desired[1] = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2)) + pick.f32(3);
+            request = std::string(pick.str(2));
+            ram.ai_timer_end = engine.time() + frames_to_time(pick.f32(4));
+        }
+    }
+    ram.key_input = request == "SQ_WALK";
+    ram.ai_request = request;
+    if (request.empty() || request == "SQ_NONE") apply_control(engine, ram);
+    else if (request != ram.seq_name) select_sequence(engine, ram, request);
+}
+
 void ModelCtrlManager::update_enemy(Engine& engine, ModelRam& ram) {
+    if (ram.ai_maps) {
+        update_ai_map(engine, ram);
+        return;
+    }
     if (ram.ai_timer > 0) --ram.ai_timer;
     ram.key_input = false;
     ram.turn_rate_y = 0.2f;

@@ -200,11 +200,18 @@ private:
 class HitLandManager final : public Manager {
 public:
     HitLandManager() : Manager("beHitLandModel") {}
-    bool accepts(const ObjectView& info) const override { return info.type() == "beHitLandModelInfo"; }
+    bool accepts(const ObjectView& info) const override {
+        return info.type() == "beHitLandModelInfo" || info.type() == "beHitLandDelivInfo";
+    }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     CollisionWorld& world() { return world_; }
+    // beHitLandDelivInfoRam [13]: a model's collision radius (0 when unknown).
+    float radius(std::string_view model) const {
+        const auto found = radii_.find(model);
+        return found != radii_.end() ? found->second : 0.0f;
+    }
 
 private:
     struct HitRam : Ram {
@@ -212,6 +219,7 @@ private:
     };
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::unique_ptr<HitRam>> children_;
+    std::map<std::string, float, std::less<>> radii_;
     CollisionWorld world_;
 };
 
@@ -674,6 +682,11 @@ public:
         float slam_timer{};
         bool capsule_on{};           // KIND_PLAYER2 work +EC: a player is close
         bool capsule_ended{};        // end_g_000bcaps.lua already started
+        // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
+        const std::vector<ObjectView>* ai_maps{};
+        int ai_map{};
+        std::int64_t ai_timer_end = -1; // AITIMER
+        std::string ai_request;         // AI work +58
     };
 
     const ModelRam* player(int index) const;
@@ -686,6 +699,7 @@ private:
     void update_hitboxes(Engine& engine, ModelRam& ram);
     void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
     void update_enemy(Engine& engine, ModelRam& ram);
+    void update_ai_map(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
@@ -696,6 +710,7 @@ private:
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
+    std::map<const void*, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
 };
 
 // PLAYERARMS (beWeapon, commands 80318474): weapon infos. Their sequence rows

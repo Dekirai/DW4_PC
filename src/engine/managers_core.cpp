@@ -549,6 +549,11 @@ bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet
 // HitLand collision geometry
 // ---------------------------------------------------------------------------
 void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
+    if (info.type() == "beHitLandDelivInfo") {
+        const auto rams = info.list(6);
+        if (!rams.empty() && rams.front()) radii_[std::string(info.str(2))] = rams.front().f32(13);
+        return;
+    }
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
     // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
     // Kind bit 0x400 marks model-attached geometry whose children follow the
@@ -589,6 +594,7 @@ bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command
 void HitLandManager::clear_stage(Engine&) {
     rams_.clear();
     children_.clear();
+    radii_.clear();
     world_.clear();
 }
 
