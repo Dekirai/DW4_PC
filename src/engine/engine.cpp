@@ -463,6 +463,12 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     for (auto& m : managers_) m->update(*this);
 }
 
+bool Engine::main_lobby() const {
+    std::string stage = stage_name_;
+    std::transform(stage.begin(), stage.end(), stage.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return stage == "stagml02" || stage == "stagml11" || stage == "stagml12" || stage == "stagml13";
+}
+
 void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color) {
     out.clear();
     clear_color = {0, 0, 0, 1};

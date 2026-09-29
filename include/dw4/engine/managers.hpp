@@ -526,6 +526,11 @@ public:
         std::string name;
         std::vector<ObjectView> commands;
     };
+    // Authored HIT record (first "HIT" data): target categories and local boxes.
+    struct HitBody {
+        bool player_bullet{}, enemy_bullet{}, player_talk{};
+        std::vector<std::pair<Vec3f, Vec3f>> boxes;
+    };
     struct ModelRam : Ram {
         std::string category;
         Node* node{};
@@ -552,17 +557,23 @@ public:
         bool on_ground = true;
         float fall_speed{};
         std::string label;
+        int talk_delay = -1;         // pending lobby talk hitbox (frames)
+        const HitBody* hit{};
     };
 
     const ModelRam* player(int index) const;
+    ModelRam* find(std::string_view name, int index);
 
 private:
     void update_player(Engine& engine, ModelRam& ram);
     void advance_motion(Engine& engine, ModelRam& ram);
+    void check_talk(Engine& engine, ModelRam& ram);
+    bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
+    std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
 };
 
 class ActionManager final : public Manager {

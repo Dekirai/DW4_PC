@@ -69,8 +69,22 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         break;
     }
     auto* seq_ptr = sequences.get();
-    sequences_[reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()))] =
-        std::move(sequences);
+    const void* info_key = reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()));
+    sequences_[info_key] = std::move(sequences);
+    // 803083CC: the first HIT record selects the bullet/talk categories.
+    HitBody* hit = nullptr;
+    for (const auto& data : info.list(5)) {
+        if (!data || data.str(2) != "HIT") continue;
+        auto body = std::make_unique<HitBody>();
+        body->player_bullet = data.boolean(4);
+        body->enemy_bullet = data.boolean(5);
+        body->player_talk = data.boolean(7);
+        for (const auto& box : data.list(6))
+            if (box) body->boxes.emplace_back(box.vec3(2).value_or(Vec3f{}), box.vec3(3).value_or(Vec3f{}));
+        hit = body.get();
+        hit_bodies_[info_key] = std::move(body);
+        break;
+    }
     const std::string category = category_for_kind(info.str(7));
     std::int32_t index = 0;
     for (const auto& record : info.list(6)) {
@@ -95,6 +109,12 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         engine.messenger().add_row(category, ram->info_name, ram->index, ram.get());
         // Every model kind also answers generic MODELCTRL messages.
         if (category != "MODELCTRL") engine.messenger().add_row("MODELCTRL", ram->info_name, ram->index, ram.get());
+        ram->hit = hit;
+        if (hit && !hit->boxes.empty()) {
+            if (hit->player_bullet) engine.messenger().add_row("HITPLAYERBULLET", ram->info_name, ram->index, ram.get());
+            if (hit->player_talk) engine.messenger().add_row("HITPLAYERTALK", ram->info_name, ram->index, ram.get());
+            if (hit->enemy_bullet) engine.messenger().add_row("HITENEMYBULLET", ram->info_name, ram->index, ram.get());
+        }
         rams_.push_back(std::move(ram));
     }
 }
@@ -102,6 +122,13 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     sequences_.clear();
+    hit_bodies_.clear();
+}
+
+ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int index) {
+    for (auto& ram : rams_)
+        if (ram->info_name == name && ram->index == index) return ram.get();
+    return nullptr;
 }
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
@@ -260,6 +287,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         packet.bools.push_back(ram.generated && !packet.strings.empty() && ram.seq_name == packet.string(0) ? 1 : 0);
         return true;
     }
+    if (command == "CHKBULLET") {
+        hit_check(engine, ram, packet);
+        return true;
+    }
     if (command == "GETHP") { packet.ints.push_back(ram.generated ? ram.hp : 0); return true; }
     if (command == "SETHP") {
         if (ram.generated && !packet.ints.empty()) {
@@ -301,7 +332,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
         return true;
     }
-    if (command == "SETLABEL" || command == "SETEFFECT" || command == "SETSOUND" || command == "CHKBULLET" ||
+    if (command == "SETLABEL" || command == "SETEFFECT" || command == "SETSOUND" ||
         command == "GETTRCDATA" || command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
         command == "SETSLIPPEDFLOOR" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
@@ -342,6 +373,10 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
         }
     }
+    // 8034C3C8: in the main lobby, A appends a talk hitbox (kind 60000, delay 1,
+    // length 1, offset (0,4,7), size 3) instead of attacking.
+    if (ram.control_enabled && engine.main_lobby() && (pad.buttons.trigger & dw4::pad_button::a) && ram.talk_delay < 0)
+        ram.talk_delay = 1;
     // 80309168: post-input control transitions.
     std::string request;
     if (ram.ctrl_mode == 1 && ram.channels.allocated()) {
@@ -435,6 +470,7 @@ void ModelCtrlManager::update(Engine& engine) {
         }
         if (ram.is_player) update_player(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
+        if (ram.talk_delay >= 0 && ram.talk_delay-- == 0) check_talk(engine, ram);
         if (!ram.wait_name) continue;
         const auto& wait = *ram.wait_name;
         bool done = false;
@@ -456,6 +492,82 @@ void ModelCtrlManager::update(Engine& engine) {
             run_commands(engine, ram);
         }
     }
+}
+
+// MODEL_HITBOX start routine: world box from the source matrix and authored
+// offset, then CHKBULLET to the category the kind selects (60000 = talk).
+void ModelCtrlManager::check_talk(Engine& engine, ModelRam& ram) {
+    if (!ram.node) return;
+    const auto& m = ram.node->matrix;
+    const Vec3f offset{0, 4, 7};
+    const Vec3f center{offset.x * m(0, 0) + offset.y * m(1, 0) + offset.z * m(2, 0) + m(3, 0),
+                       offset.x * m(0, 1) + offset.y * m(1, 1) + offset.z * m(2, 1) + m(3, 1),
+                       offset.x * m(0, 2) + offset.y * m(1, 2) + offset.z * m(2, 2) + m(3, 2)};
+    const Vec3f half{1.5f, 1.5f, 1.5f};
+    Packet packet;
+    packet.ints = {60000, ram.index};
+    packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
+                      Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
+    packet.strings.emplace_back(ram.info_name);
+    engine.messenger().send(engine, "HITPLAYERTALK", std::nullopt, -1, "CHKBULLET", packet);
+}
+
+// 8030E56C: base CHKBULLET target path. Gates, body overlap, target hit script
+// "hit_<name>.lua" (8030B6EC) and the forced turn toward the source.
+bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) {
+    if (!ram.generated || !ram.control_enabled || ram.seq_name == "SQ_ERAS" || !ram.hit || !ram.node) return false;
+    if (packet.vectors.size() < 2) return false;
+    const Vec3f in_min = packet.vectors[0], in_max = packet.vectors[1];
+    const auto& m = ram.node->matrix;
+    bool overlap = false;
+    for (const auto& [lo, hi] : ram.hit->boxes) {
+        // General AABox transform (80122D04): bounds of the eight transformed corners.
+        Vec3f wmin{1e30f, 1e30f, 1e30f}, wmax{-1e30f, -1e30f, -1e30f};
+        for (int corner = 0; corner < 8; ++corner) {
+            const Vec3f c{corner & 1 ? hi.x : lo.x, corner & 2 ? hi.y : lo.y, corner & 4 ? hi.z : lo.z};
+            const Vec3f w{c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0),
+                          c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1),
+                          c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
+            wmin = {std::min(wmin.x, w.x), std::min(wmin.y, w.y), std::min(wmin.z, w.z)};
+            wmax = {std::max(wmax.x, w.x), std::max(wmax.y, w.y), std::max(wmax.z, w.z)};
+        }
+        if (wmin.x <= in_max.x && wmax.x >= in_min.x && wmin.y <= in_max.y && wmax.y >= in_min.y && wmin.z <= in_max.z &&
+            wmax.z >= in_min.z) {
+            overlap = true;
+            break;
+        }
+    }
+    if (!overlap) return false;
+    ModelScriptContext context;
+    context.category = ram.category;
+    context.name = ram.info_name;
+    context.index = ram.index;
+    context.bullet_kind = packet.integer(0);
+    context.shooter = packet.integer(1, -1);
+    context.shooter_name = std::string(packet.string(0));
+    engine.push_model_context(std::move(context));
+    engine.run_script("hit_" + ram.info_name + ".lua");
+    const auto done = engine.pop_model_context();
+    if (done.turn && done.shooter >= 0) {
+        // 8030E81C: face the captured source position.
+        if (const auto* source = find(done.shooter_name, done.shooter); source && source->node) {
+            const auto& sm = source->node->matrix;
+            const float heading = std::atan2(sm(3, 0) - m(3, 0), sm(3, 2) - m(3, 2));
+            ram.applied[1] = ram.desired[1] = heading;
+            std::array<float, 16> matrix{};
+            std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+            const Vec3f position{matrix[12], matrix[13], matrix[14]};
+            try {
+                dw4::original_model_turn_basis(matrix, ram.applied);
+                matrix[12] = position.x;
+                matrix[13] = position.y;
+                matrix[14] = position.z;
+                std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+            } catch (const std::exception&) {}
+        }
+    }
+    if (packet.bools.empty()) packet.bools.push_back(1);
+    return true;
 }
 
 void ModelCtrlManager::install_actor_hook(Engine&, TraversalContext&) {}

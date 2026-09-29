@@ -153,6 +153,19 @@ struct DiagnosticCounter {
     std::size_t count{};
 };
 
+// Model-script context (8030B6EC): the model a hit/LUACALL script runs for.
+// Context-free MDL* methods and BLT* bullet queries read it.
+struct ModelScriptContext {
+    std::string category = "MODELCTRL";
+    std::string name;
+    std::int32_t index = -1;
+    std::int32_t shooter = -1;     // BLTgetShootRamNo
+    std::string shooter_name;
+    std::int32_t bullet_kind{};
+    bool turn = true;              // cleared by MDLsetDMGTurn(0)
+    std::string call_name;         // MDLisCallName
+};
+
 class Engine {
 public:
     explicit Engine(const std::filesystem::path& data_root);
@@ -209,6 +222,17 @@ public:
     std::int32_t area() const { return 1; }     // USA disc: AUS assets (SYSgetArea)
     std::int32_t country() const { return 1; }  // USA text (SYSgetCountry)
 
+    // Model-script context stack for hit and LUACALL scripts.
+    void push_model_context(ModelScriptContext context) { model_contexts_.push_back(std::move(context)); }
+    ModelScriptContext pop_model_context() {
+        auto context = std::move(model_contexts_.back());
+        model_contexts_.pop_back();
+        return context;
+    }
+    ModelScriptContext* model_context() { return model_contexts_.empty() ? nullptr : &model_contexts_.back(); }
+    // Main lobby stages (80457128): A checks for talk partners instead of attacking.
+    bool main_lobby() const;
+
     // Stage loader view.
     std::string loader_state() const;
     const std::vector<LoadedFile>& loaded_files() const { return files_; }
@@ -250,6 +274,7 @@ private:
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;
     std::vector<DiagnosticCounter> notes_;
+    std::vector<ModelScriptContext> model_contexts_;
     std::deque<std::string> log_;
 };
 

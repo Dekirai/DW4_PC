@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <random>
 
 namespace dw4::engine {
@@ -212,29 +213,88 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "COUNTERset") { counters()[to_int(arg(0))] = to_int(arg(1)); return {}; }
     if (method == "COUNTERget") return number(counters()[to_int(arg(0))]);
 
-    // --- Model queries (routed to whichever model category owns the info) ---
-    if (method == "MDLisLive" || method == "MDLisSeqName" || method == "MDLsetSeq" || method == "MDLgetRamNo") {
+    // --- Model queries ---
+    // Explicit form (name, index): routed to whichever model category owns it.
+    auto explicit_model = [&](std::string_view command, std::optional<std::string> argument) -> std::optional<bool> {
         const auto target = opt_string(arg(0)).value_or("");
         const auto index = to_int(arg(1), 0);
         for (const char* category : {"MODELCTRL", "PLAYER", "ENEMY", "PLAYER2", "EFFECT", "ITEM"}) {
             if (!messenger().count(category, target, index)) continue;
             Packet packet;
-            if (method == "MDLisLive") {
-                messenger().send(*this, category, target, index, "ISRUN", packet);
-                return number(!packet.bools.empty() && packet.bools[0] ? 1 : 0);
-            }
-            if (method == "MDLisSeqName") {
-                packet.strings.emplace_back(opt_string(arg(2)).value_or(""));
-                messenger().send(*this, category, target, index, "ISSEQNAME", packet);
-                return number(!packet.bools.empty() && packet.bools[0] ? 1 : 0);
-            }
-            if (method == "MDLsetSeq") {
-                messenger().send(*this, category, target, index, opt_string(arg(2)).value_or(""), packet);
-                return {};
-            }
-            return number(index);
+            if (argument) packet.strings.emplace_back(*argument);
+            messenger().send(*this, category, target, index, command, packet);
+            return !packet.bools.empty() && packet.bools[0];
         }
-        return number(0);
+        return std::nullopt;
+    };
+    // Context form: the model the running hit/LUACALL script belongs to (8030B6EC).
+    auto* context = model_context();
+    auto context_model = [&]() -> ModelCtrlManager::ModelRam* {
+        auto* models = get<ModelCtrlManager>();
+        return models && context ? models->find(context->name, context->index) : nullptr;
+    };
+    auto vector_string = [](Vec3f v) {
+        char buffer[96];
+        std::snprintf(buffer, sizeof buffer, "V<%g,%g,%g>", v.x, v.y, v.z);
+        return std::string(buffer);
+    };
+    if (method == "MDLisLive") {
+        if (args.size() >= 2) return number(explicit_model("ISRUN", std::nullopt).value_or(false) ? 1 : 0);
+        auto* model = context_model();
+        return number(model && model->generated ? 1 : 0);
+    }
+    if (method == "MDLisSeqName") {
+        if (args.size() >= 3) return number(explicit_model("ISSEQNAME", opt_string(arg(2)).value_or("")).value_or(false) ? 1 : 0);
+        auto* model = context_model();
+        return number(model && model->generated && model->seq_name == opt_string(arg(0)).value_or("") ? 1 : 0);
+    }
+    if (method == "MDLsetSeq") {
+        if (args.size() >= 3) {
+            explicit_model(opt_string(arg(2)).value_or(""), std::nullopt);
+            return {};
+        }
+        if (context) {
+            Packet packet;
+            messenger().send(*this, "MODELCTRL", context->name, context->index, opt_string(arg(0)).value_or(""), packet);
+        }
+        return {};
+    }
+    if (method == "MDLgetRamNo") {
+        if (args.size() >= 2) return number(to_int(arg(1), 0));
+        return number(context ? context->index : 0);
+    }
+    if (method == "MDLsetDMGTurn") {
+        if (context) context->turn = to_int(arg(0)) != 0;
+        return {};
+    }
+    if (method == "MDLisCallName") return number(context && context->call_name == opt_string(arg(0)).value_or("") ? 1 : 0);
+    if (method == "MDLgetBulletKind") return number(context ? context->bullet_kind : 0);
+    if (method == "BLTgetShootRamNo") return number(context ? context->shooter : 0);
+    if (method == "MDLgetPosStr" || method == "MDLgetRotStr") {
+        auto* model = context_model();
+        Vec3f value{};
+        if (model && model->node) {
+            if (method == "MDLgetPosStr") {
+                const auto& m = model->node->matrix;
+                value = {m(3, 0), m(3, 1), m(3, 2)};
+            } else {
+                constexpr float to_degrees = 57.29577951308232f;
+                value = {model->applied[0] * to_degrees, model->applied[1] * to_degrees, model->applied[2] * to_degrees};
+            }
+        }
+        value.x += float(to_number(arg(0)));
+        value.y += float(to_number(arg(1)));
+        value.z += float(to_number(arg(2)));
+        return string_result(vector_string(value));
+    }
+    if (method == "MDLgetHp" || method == "MDLaddHp") {
+        auto* model = context_model();
+        if (!model) return number(0);
+        if (method == "MDLaddHp") {
+            model->hp = std::clamp(model->hp + to_int(arg(0)), 0, std::max(model->max_hp, model->hp + to_int(arg(0))));
+            return {};
+        }
+        return number(model->hp);
     }
 
     // --- System queries ---
