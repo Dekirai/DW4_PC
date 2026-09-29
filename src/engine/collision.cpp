@@ -138,6 +138,9 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {
                     const Vec3f center{p.x, p.y + h, p.z};
                     const Vec3f q = closest_point(center, t);
+                    // Walls below or above the probe (e.g. a ledge being jumped
+                    // over) must not push: test the 3D distance, push horizontally.
+                    if (std::abs(q.y - center.y) >= radius) continue;
                     Vec3f d{center.x - q.x, 0, center.z - q.z};
                     const float dist = length(d);
                     if (dist < radius && dist > 1e-5f) {

@@ -377,6 +377,12 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     // length 1, offset (0,4,7), size 3) instead of attacking.
     if (ram.control_enabled && engine.main_lobby() && (pad.buttons.trigger & dw4::pad_button::a) && ram.talk_delay < 0)
         ram.talk_delay = 1;
+    // X publishes SQ_JUMP unless the player is already airborne.
+    if (ram.control_enabled && (pad.buttons.trigger & dw4::pad_button::x) &&
+        (ram.seq_name == "SQ_WAIT" || ram.seq_name == "SQ_WALK")) {
+        select_sequence(engine, ram, "SQ_JUMP");
+        return;
+    }
     // 80309168: post-input control transitions.
     std::string request;
     if (ram.ctrl_mode == 1 && ram.channels.allocated()) {
@@ -439,6 +445,15 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                 next.y = floor;
                 ram.on_ground = true;
                 ram.fall_speed = 0;
+                // Landing ends a falling Y channel (CHECKLAND response), which
+                // completes the sequence's Landing wait.
+                if (auto list = ram.channels.list_owner(); list && list->size() > 1) {
+                    auto& y = list->mutable_entries()[1];
+                    if (y && y->active && y->speed <= 0) {
+                        y->active = false;
+                        y->speed = 0;
+                    }
+                }
             } else if (!rising && ram.fall_check) {
                 ram.on_ground = false;
                 ram.fall_speed = std::min(ram.fall_speed + 0.12f, 4.0f);

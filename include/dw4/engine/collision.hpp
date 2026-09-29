@@ -23,6 +23,7 @@ public:
     void clear();
     void add_graph(const ObjectView& root);
     std::size_t triangle_count() const { return triangles_.size(); }
+    const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // Highest floor at (x, z) within [y - down, y + up]; false when none.
     bool floor_height(const Vec3f& position, float up, float down, float& height, Vec3f* normal = nullptr) const;
     // Push a vertical capsule (radius, from y+step to y+height) out of walls.
