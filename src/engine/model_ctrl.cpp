@@ -121,6 +121,8 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         engine.messenger().add_row(category, ram->info_name, ram->index, ram.get());
         // Every model kind also answers generic MODELCTRL messages.
         if (category != "MODELCTRL") engine.messenger().add_row("MODELCTRL", ram->info_name, ram->index, ram.get());
+        // beNDMWMdlItem registration (803AAAC4): pickups answer DROPITEM.
+        if (category == "ITEM") engine.messenger().add_row("DROPITEM", ram->info_name, ram->index, ram.get());
         ram->hit = hit;
         if (hit && !hit->boxes.empty()) {
             if (hit->player_bullet) engine.messenger().add_row("HITPLAYERBULLET", ram->info_name, ram->index, ram.get());
@@ -134,6 +136,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     ai_maps_.clear();
+    item_labels_.fill(false);
     sequences_.clear();
     hit_bodies_.clear();
 }
@@ -320,8 +323,19 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (packet.strings.size() == 1 && packet.strings[0]) seq = *packet.strings[0];
         else if (packet.strings.size() >= 2 && packet.strings[1]) seq = *packet.strings[1];
         if (ram.hp == 0) ram.hp = ram.max_hp = 100;
-        // Generator form: I<record>/I<max HP> (802FC9FC).
-        if (packet.ints.size() >= 2) {
+        if (ram.item_label >= 0) item_label(engine, ram, false);
+        ram.item_table = -1;
+        ram.item_player = -1;
+        // Drop form (802FCE60): I<record>/I<drop table id>.
+        if (ram.category == "ITEM" && packet.ints.size() >= 2) {
+            ram.item_record = packet.ints[0];
+            ram.item_table = packet.ints[1];
+            ram.item_label = -1;
+            int level = 1;
+            if (auto* sys = engine.get<GameSystem>()) level = std::max(1, sys->players[0].stats.level);
+            ram.item_device = roll_item_device(ram.item_table, ram.item_record, level);
+        } else if (packet.ints.size() >= 2) {
+            // Generator form: I<record>/I<max HP> (802FC9FC).
             ram.record = packet.ints[0];
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
@@ -462,6 +476,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
         return true;
     }
+    if (command == "ACTION1" && ram.category == "ITEM") {
+        if (pick_item(engine, ram, packet.integer(0, -1))) packet.bools.push_back(1);
+        return true;
+    }
     if (command == "SETEFFECT") {
         // 8030DD34: model, sequence, delay, offset (+ rotation when two vectors),
         // sequence-dead and position-lock flags.
@@ -590,6 +608,9 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 talk.offset = {0, 4, 7};
                 talk.size = {3, 3, 3};
                 ram.hitboxes.push_back(talk);
+            } else if (Packet pick; (pick.ints.push_back(ram.index), engine.messenger().count("DROPITEM", std::nullopt, -1)) &&
+                       (engine.messenger().send(engine, "DROPITEM", std::nullopt, -1, "ACTION1", pick), !pick.bools.empty())) {
+                return; // 8034CEB0: DROPITEM ACTION1 took an item instead of attacking
             } else if (engine.time() >= ram.attack_ready) {
                 // ATDELAY: the next attack waits the player's ATTACKDELAY frames.
                 int delay = 30;
@@ -741,6 +762,7 @@ void ModelCtrlManager::update(Engine& engine) {
             Packet p;
             const Mat4 last = ram.node ? ram.node->matrix : Mat4{};
             command(engine, ram, "REMOVE", p);
+            if (ram.item_label >= 0) item_label(engine, ram, false);
             if (ram.is_player) {
                 // Player erase hook (vtable +B4, 8034E3C0): the defeated player
                 // leaves its bit capsule, whose script ends the attempt.
@@ -765,6 +787,7 @@ void ModelCtrlManager::update(Engine& engine) {
             if (ram.ai_maps) ram.ai_timer_end = -1;
             if (ram.is_player) ram.key_input = false;
         }
+        if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);

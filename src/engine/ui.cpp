@@ -30,7 +30,67 @@ Node* find_geometry(Node* node, int depth = 0) {
     return nullptr;
 }
 
+// Shift JIS runs of the 802FB59C conversion table: (code, UTF-16, count).
+struct SjisRun { std::uint16_t sjis, unicode, count; };
+constexpr SjisRun kSjisRuns[] = {
+    {0x8140, 0x3000, 1}, {0x8141, 0x3001, 2}, {0x8143, 0xFF0C, 1}, {0x8144, 0xFF0E, 1}, {0x8145, 0x30FB, 1},
+    {0x8146, 0xFF1A, 1}, {0x8148, 0xFF1F, 1}, {0x8149, 0xFF01, 1}, {0x814F, 0xFF3E, 1}, {0x8151, 0xFF3F, 1},
+    {0x815B, 0x30FC, 1}, {0x8160, 0xFF5E, 1}, {0x8162, 0xFF5C, 1}, {0x8163, 0x2026, 1}, {0x8166, 0x2019, 1},
+    {0x8168, 0x201D, 1}, {0x8169, 0xFF08, 2}, {0x8171, 0x3008, 2}, {0x8175, 0x300C, 4}, {0x817B, 0xFF0B, 1},
+    {0x817C, 0xFF0D, 1}, {0x817E, 0x00D7, 1}, {0x8187, 0x221E, 1}, {0x8195, 0xFF06, 1}, {0x819B, 0x25CB, 1},
+    {0x81A0, 0x25A1, 1}, {0x81A2, 0x25B3, 1}, {0x81AA, 0x2191, 1}, {0x81AB, 0x2193, 1}, {0x81B8, 0x2208, 1},
+    {0x81B9, 0x220B, 1}, {0x81BA, 0x2286, 1}, {0x81BC, 0x2282, 2}, {0x81BE, 0x222A, 1}, {0x81BF, 0x2229, 1},
+    {0x81C8, 0x2227, 1}, {0x81C9, 0x2228, 1}, {0x81DA, 0x2220, 1}, {0x81DB, 0x22A5, 1}, {0x81DC, 0x2312, 1},
+    {0x81DE, 0x2207, 1}, {0x81DF, 0x2261, 1}, {0x81E0, 0x2252, 1}, {0x81E1, 0x226A, 2}, {0x81E3, 0x221A, 1},
+    {0x81E6, 0x2235, 1}, {0x81F7, 0x00B6, 1}, {0x824F, 0xFF10, 10}, {0x8260, 0xFF21, 26}, {0x8281, 0xFF41, 26},
+    {0x829F, 0x3041, 79}, {0x82F0, 0x3092, 2}, {0x8340, 0x30A1, 63}, {0x8380, 0x30E0, 16}, {0x8392, 0x30F2, 3},
+    {0x83BF, 0x03B1, 5}, {0x889F, 0x4E9C, 1}, {0x88A1, 0x5A03, 1}, {0x88A2, 0x00B5, 1}, {0x88A3, 0x00BF, 1},
+    {0x88A4, 0x00C3, 5}, {0x88A9, 0x00D1, 1}, {0x88AA, 0x00D5, 2}, {0x88AC, 0x00D8, 1}, {0x88AD, 0x00DC, 1},
+    {0x88AE, 0x00DF, 2}, {0x88B0, 0x00E2, 3}, {0x88B3, 0x00E7, 6}, {0x88B9, 0x00EE, 2}, {0x88BB, 0x00F1, 2},
+    {0x88BD, 0x00F4, 3}, {0x88C0, 0x00F9, 1}, {0x88C1, 0x00FB, 2}, {0x88C3, 0x00E1, 1}, {0x88C4, 0x00ED, 1},
+    {0x88C5, 0x00F3, 1}, {0x88C6, 0x00FA, 1}, {0x88C7, 0x00C2, 1}, {0x88C8, 0x00CA, 1}, {0x88C9, 0x00D4, 1},
+    {0x88CA, 0x00CB, 1}, {0x88CB, 0x00CF, 1}, {0x88CC, 0x00C1, 1}, {0x88CD, 0x00C9, 1}, {0x88CE, 0x00CD, 1},
+    {0x88CF, 0x00D3, 1}, {0x88D0, 0x00DA, 1}, {0x88D1, 0x00C0, 1}, {0x88D2, 0x00C8, 1}, {0x88D3, 0x00CC, 1},
+    {0x88D4, 0x00D2, 1}, {0x88D5, 0x00D9, 1}, {0x88D6, 0x00B0, 1}, {0x88D7, 0x00A1, 1}, {0x88D8, 0x00A3, 1},
+    {0x88D9, 0x00A7, 1}, {0x8A71, 0x8D6B, 1}
+};
+
 } // namespace
+
+std::u16string decode_game_text(std::string_view text) {
+    std::u16string out;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (!(c & 0x80) || i + 1 >= text.size()) {
+            out.push_back(char16_t(c));
+            continue;
+        }
+        const auto code = std::uint16_t((c << 8) | static_cast<unsigned char>(text[++i]));
+        for (const auto& run : kSjisRuns)
+            if (code >= run.sjis && code < run.sjis + run.count) {
+                out.push_back(char16_t(run.unicode + (code - run.sjis)));
+                break;
+            }
+    }
+    return out;
+}
+
+std::string game_text_utf8(std::string_view text) {
+    std::string out;
+    for (const char16_t c : decode_game_text(text)) {
+        if (c < 0x80) {
+            out.push_back(char(c));
+        } else if (c < 0x800) {
+            out.push_back(char(0xC0 | (c >> 6)));
+            out.push_back(char(0x80 | (c & 0x3F)));
+        } else {
+            out.push_back(char(0xE0 | (c >> 12)));
+            out.push_back(char(0x80 | ((c >> 6) & 0x3F)));
+            out.push_back(char(0x80 | (c & 0x3F)));
+        }
+    }
+    return out;
+}
 
 // ===========================================================================
 // TEXTCTL
@@ -245,11 +305,7 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
     };
     if (command == "TEXTSET") {
         std::optional<std::u16string> value;
-        if (packet.strings.size() > 2) {
-            std::u16string literal;
-            for (char c : packet.string(2)) literal.push_back(char16_t(static_cast<unsigned char>(c)));
-            value = std::move(literal);
-        }
+        if (packet.strings.size() > 2) value = decode_game_text(packet.string(2));
         for (auto& line : lines_) {
             if (!matches(line)) continue;
             if (!value && !packet.ints.empty()) {
@@ -300,7 +356,17 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
         return true;
     }
     if (command == "SETPOSITION") {
-        engine.note("TEXTCTL SETPOSITION");
+        // 802FB230: moves the first child transform of each matching line.
+        if (packet.vectors.empty()) return true;
+        const Vec3f v = packet.vectors[0];
+        for (auto& line : lines_) {
+            if (!matches(line) || !line.node || line.node->children.empty()) continue;
+            Node* transform = line.node->children[0];
+            if (transform->kind != NodeKind::transform) continue;
+            transform->matrix(3, 0) = v.x;
+            transform->matrix(3, 1) = v.y;
+            transform->matrix(3, 2) = v.z;
+        }
         return true;
     }
     return false;

@@ -72,7 +72,9 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 
 // Scripted input for automated runs: lines "frame button [duration]" (button:
 // A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R) and "frame GOTO x z [duration]",
-// which steers player 1's stick toward world (x, z) relative to the camera.
+// which steers player 1's stick toward world (x, z) relative to the camera, and
+// "frame SEEK duration", which walks to the nearest pickup or live enemy and
+// presses A next to it.
 struct ScriptedInput {
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -86,6 +88,12 @@ struct ScriptedInput {
             if (name == "GOTO") {
                 Goto g{frame, 0, 0, 600};
                 fields >> g.x >> g.z >> g.duration;
+                gotos.push_back(g);
+                continue;
+            }
+            if (name == "SEEK") {
+                Goto g{frame, 0, 0, 600, true};
+                fields >> g.duration;
                 gotos.push_back(g);
                 continue;
             }
@@ -109,7 +117,7 @@ struct ScriptedInput {
     }
     struct Press { int frame; std::uint32_t bit; int duration; };
     std::vector<Press> presses;
-    struct Goto { int frame; float x, z; int duration; };
+    struct Goto { int frame; float x, z; int duration; bool seek = false; };
     std::vector<Goto> gotos;
     const Goto* active_goto(int frame) const {
         for (const auto& g : gotos) if (frame >= g.frame && frame < g.frame + g.duration) return &g;
@@ -259,8 +267,30 @@ int run(const Options& options) {
                     auto* models = engine.get<dw4::engine::ModelCtrlManager>();
                     auto* cameras = engine.get<dw4::engine::CameraManager>();
                     if (const auto* p = models ? models->player(0) : nullptr; p && p->node && cameras) {
-                        const float dx = g->x - p->node->matrix(3, 0), dz = g->z - p->node->matrix(3, 2);
-                        if (dx * dx + dz * dz > 4.0f) {
+                        float tx = g->x, tz = g->z, reach = 4.0f;
+                        if (g->seek) {
+                            // Pickups first, then the nearest live enemy.
+                            float best = 1e12f;
+                            for (int pass = 0; pass < 2 && best == 1e12f; ++pass)
+                                for (const auto& e : models->rams()) {
+                                    if (!e->generated || !e->node) continue;
+                                    if (pass == 0 ? (e->category != "ITEM" || e->item_table < 0)
+                                                  : (e->category != "ENEMY" || e->hp <= 0))
+                                        continue;
+                                    const float ex = e->node->matrix(3, 0) - p->node->matrix(3, 0);
+                                    const float ez = e->node->matrix(3, 2) - p->node->matrix(3, 2);
+                                    if (ex * ex + ez * ez < best) {
+                                        best = ex * ex + ez * ez;
+                                        tx = e->node->matrix(3, 0);
+                                        tz = e->node->matrix(3, 2);
+                                        reach = pass == 0 ? 9.0f : 64.0f;
+                                    }
+                                }
+                            if (best == 1e12f) { tx = p->node->matrix(3, 0); tz = p->node->matrix(3, 2); }
+                            else if (best <= reach && frame % 20 < 3) input |= dw4::pad_button::a;
+                        }
+                        const float dx = tx - p->node->matrix(3, 0), dz = tz - p->node->matrix(3, 2);
+                        if (dx * dx + dz * dz > reach) {
                             dw4::engine::FrameCamera camera;
                             cameras->frame_camera(engine, camera);
                             dw4::engine::Mat4 inverse;
@@ -292,7 +322,7 @@ int run(const Options& options) {
                             std::printf("[%d] player0 %s hp=%d (%.2f, %.2f, %.2f)\n", frame, p->seq_name.c_str(), p->hp,
                                         p->node->matrix(3, 0), p->node->matrix(3, 1), p->node->matrix(3, 2));
                             for (const auto& e : models->rams())
-                                if (e->generated && e->category == "ENEMY" && e->node)
+                                if (e->generated && (e->category == "ENEMY" || e->category == "ITEM") && e->node)
                                     std::printf("      %s#%d %s hp=%d (%.1f, %.1f, %.1f)\n", e->info_name.c_str(), e->index,
                                                 e->seq_name.c_str(), e->hp, e->node->matrix(3, 0), e->node->matrix(3, 1),
                                                 e->node->matrix(3, 2));

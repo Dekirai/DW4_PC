@@ -15,6 +15,29 @@ namespace dw4::engine {
 
 void register_default_managers(Engine& engine);
 
+// Game text: bytes with the high bit set pair into Shift JIS codes that the
+// 802FB59C table maps to the fonts' UTF-16 codes; other bytes are ASCII.
+std::u16string decode_game_text(std::string_view text);
+std::string game_text_utf8(std::string_view text);
+
+// DEVICEFOLDER entry (pack 803B0D4C / unpack 803B0D94): kind (0 weapon,
+// 1 armor1, 2 armor2, 3 abChip), record, a flag, rank 0..5 and value 0..2047.
+struct ItemDevice {
+    int type{}, record{};
+    bool flag{};
+    int rank{}, value{};
+    std::uint32_t pack() const {
+        return std::uint32_t(record & 0x3FF) | (flag ? 0x400u : 0u) | (std::uint32_t(type & 0xF) << 12) |
+               (std::uint32_t(rank & 0xF) << 16) | (std::uint32_t(value & 0x7FF) << 20);
+    }
+    static ItemDevice unpack(std::uint32_t word) {
+        return {int((word >> 12) & 0xF), int(word & 0x3FF), (word & 0x400u) != 0, int((word >> 16) & 0xF),
+                int((word >> 20) & 0x7FF)};
+    }
+};
+// Drop table id (GameSystem::item_tables order) + record -> rolled equipment.
+ItemDevice roll_item_device(int table, int record, int level);
+
 // Original scaled node/timer clock (8030FA2C / 8031DE44 family).
 struct NodeTimer {
     float scale = 1.0f;
@@ -535,7 +558,8 @@ private:
         std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
-    void refresh(Engine& engine, GeneRam& ram);
+    void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);
+    void drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last);
     std::vector<std::unique_ptr<GeneRam>> rams_;
 };
 
@@ -661,6 +685,13 @@ public:
         bool control_enabled = true; // ONCTRL / OFCTRL
         bool key_input{};
         bool on_ground = true;
+        // KIND_ITEM work (beNDMWMdlItem): drop table id and record (+EC/+10),
+        // the rolled equipment (+F0), the nearest player (+FC), the name line.
+        int item_table = -1, item_record{};
+        ItemDevice item_device;
+        int item_player = -1, item_label = -1;
+        bool item_dim{};
+        std::int64_t item_blink{};
         Vec3f last_ground{};         // PROVISIONAL fall-out recovery
         bool has_ground{};
         float fall_speed{};
@@ -724,6 +755,9 @@ private:
     void update_ai_map(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
+    void update_item(Engine& engine, ModelRam& ram);
+    void item_label(Engine& engine, ModelRam& ram, bool show);
+    bool pick_item(Engine& engine, ModelRam& ram, int player);
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
@@ -735,6 +769,7 @@ private:
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
     std::map<const void*, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
+    std::array<bool, 4> item_labels_{}; // ITNAMEFONT font00..03 in use
 };
 
 // PLAYERARMS (beWeapon, commands 80318474): weapon infos. Their sequence rows
@@ -848,7 +883,16 @@ public:
         std::array<std::string, 3> weapons{};
         int hp = 100, max_hp = 100, mp = 50, max_mp = 50;
         Stats stats;
+        // DEVICEFOLDER: equipment, at most 36.
+        std::vector<ItemDevice> devices;
+        // DISKFOLDER: consumable disks, record -> count (at most 9 each).
+        std::map<int, int> disks;
     };
+    // Drop tables in generator order (804DE098): conItem, insItem, impItem,
+    // weapon, armor1, armor2, abChip.
+    static constexpr const char* item_tables[7] = {"conItem", "insItem", "impItem", "weapon", "armor1", "armor2", "abChip"};
+    std::int32_t bits{};                  // GAMERAM common BIT
+    std::map<int, std::uint8_t> flag_folder; // common FLAGFOLDER, set by impItem pickups
     // GAMESTART / RECALCPLAYER subset: species, level-1 status and the first
     // initial weapon, from the stage's shinka and weapon databases.
     void prepare_player(Engine& engine, int slot);

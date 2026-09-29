@@ -26,13 +26,17 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   hitbox queue, FIGHTCALC damage, critical hits and damage reactions, the
   guard and hold-A attack chains, stage-end demo cameras and the following
   lessons.
+- Death Valley combat: the original AIM enemy AI, enemy attacks and damage,
+  player defeat with the bit capsule, EXP and level-ups with the HUD meters,
+  hit effects, and item drops from the generator tables (bits picked up on
+  contact, disks, key items and rolled equipment picked up with A, floating
+  item names).
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips), text from the original fonts and the HUD layers.
 
-Not yet reconstructed: the original enemy AI (a provisional chase/attack
-stands in), enemy-to-player damage, magic and MP techniques, item drops, EXP
-and levels, audio and movies, name entry, memory card saves, the options'
-text and many smaller managers. Collision uses a provisional host query built
+Not yet reconstructed: magic and MP techniques, the status and item menus,
+homing enemy bullets, particles and shadows, audio and movies, name entry,
+memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

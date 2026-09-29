@@ -324,6 +324,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         }
         const auto view = s.view.value_or(camera.view);
         const auto proj = s.projection.value_or(camera.projection);
+        // 2D layers (orthographic, e.g. the FONT camera with near 10) place
+        // geometry in front of the near plane (item names at z -5); GX draws
+        // it, so clamp depth there instead of clipping.
+        if (proj(2, 3) == 0.0f && proj(3, 3) == 1.0f) glEnable(GL_DEPTH_CLAMP);
+        else glDisable(GL_DEPTH_CLAMP);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         if (item.palette && !item.palette->empty()) {
             const auto count = std::min<std::size_t>(item.palette->size(), 64);
@@ -394,6 +399,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
+    glDisable(GL_DEPTH_CLAMP);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);

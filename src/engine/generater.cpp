@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace dw4::engine {
 namespace {
@@ -128,20 +129,67 @@ int GeneraterManager::spawn(Engine& engine, GeneRam& ram, int count) {
         generate.strings.emplace_back(seq.empty() ? std::string("SQ_ENTR") : std::string(seq));
         generate.ints = {ram.enemy_record, ram.enemy_max_hp};
         engine.messenger().send(engine, "MODELCTRL", ram.enemy_name, index, "GENERATE", generate);
-        engine.log("generator " + std::string(ram.data.str(2)) + " spawns " + ram.enemy_name + "#" + std::to_string(index));
+        char at[64];
+        std::snprintf(at, sizeof(at), " at (%.0f, %.0f, %.0f)", position.x, position.y, position.z);
+        engine.log("generator " + std::string(ram.data.str(2)) + " spawns " + ram.enemy_name + "#" + std::to_string(index) + at);
         ram.point = int((point + 1) % points.size());
     }
     return spawned;
 }
 
-// 802FCC44 (subset): forget enemies that are no longer generated. Item drops
-// at the defeat position are not reconstructed.
-void GeneraterManager::refresh(Engine& engine, GeneRam& ram) {
+// 802FCC44: forget enemies that are no longer generated; a defeated one drops
+// from the player-count entry's item list (the last enemy of a finished wave
+// from the "last" list) for the current difficulty.
+void GeneraterManager::refresh(Engine& engine, GeneRam& ram, bool last_pass) {
     auto* models = engine.get<ModelCtrlManager>();
-    std::erase_if(ram.enemies, [&](int index) {
-        auto* model = models ? models->find(ram.enemy_name, index) : nullptr;
-        return !model || !model->generated;
-    });
+    for (std::size_t i = 0; i < ram.enemies.size();) {
+        auto* model = models ? models->find(ram.enemy_name, ram.enemies[i]) : nullptr;
+        if (model && model->generated) { ++i; continue; }
+        if (model && model->hp <= 0 && model->node) {
+            const auto& m = model->node->matrix;
+            drop(engine, ram, Vec3f{m(3, 0), m(3, 1), m(3, 2)}, last_pass && ram.enemies.size() == 1);
+        }
+        ram.enemies.erase(ram.enemies.begin() + std::ptrdiff_t(i));
+    }
+}
+
+void GeneraterManager::drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last) {
+    const auto players = ram.data.list(14);
+    if (players.empty()) return;
+    const auto& counts = players[std::size_t(std::clamp(ram.player_count, 1, int(players.size())) - 1)];
+    if (!counts) return;
+    const auto lists = counts.list(last ? 5 : 4);
+    int difficulty = 0;
+    if (auto* sys = engine.get<GameSystem>()) difficulty = sys->difficulty;
+    if (lists.empty()) return;
+    const auto& data = lists[std::size_t(std::clamp(difficulty, 0, int(lists.size()) - 1))];
+    if (!data) return;
+    int roll = int(fight::random() % 10000u);
+    for (const auto& one : data.list(3)) {
+        if (!one) continue;
+        roll -= one.i32(5);
+        if (roll > 0) continue;
+        const std::string table(one.str(2));
+        const int record = one.i32(3);
+        int table_id = -1;
+        for (int t = 0; t < 7; ++t)
+            if (table == GameSystem::item_tables[t]) table_id = t;
+        if (table_id < 0) return;
+        static const char* models[7] = {nullptr, nullptr, "g_000key", "g_000weapon", "g_000armor", "g_000armor", "g_000access"};
+        std::string model = models[table_id] ? models[table_id] : std::string();
+        if (model.empty())
+            if (auto* db = engine.get<DatabaseManager>()) model = db->text(table, record, "MODEL");
+        if (model.empty()) return;
+        Packet find;
+        engine.messenger().send(engine, "MODELCTRL", model, -1, "FIND_SPACE", find);
+        if (find.ints.empty()) return;
+        Packet generate;
+        generate.vectors.push_back(position);
+        generate.ints = {record, table_id};
+        engine.messenger().send(engine, "MODELCTRL", model, find.ints[0], "GENERATE", generate);
+        engine.log("drop " + table + " #" + std::to_string(record) + " (" + model + ")");
+        return;
+    }
 }
 
 void GeneraterManager::update(Engine& engine) {
@@ -221,7 +269,7 @@ void GeneraterManager::update(Engine& engine) {
             if (ram.remaining <= 0) ram.state = 3;
             break;
         case 3:
-            refresh(engine, ram);
+            refresh(engine, ram, true);
             if (!ram.enemies.empty()) break;
             // 802FD538: the wave is cleared; run _callLua and finish.
             ram.started = false;

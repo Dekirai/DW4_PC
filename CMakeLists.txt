@@ -31,7 +31,7 @@ add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/sc
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
   src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp
-  src/engine/hud.cpp)
+  src/engine/hud.cpp src/engine/items.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 if(MSVC)
   target_compile_options(dw4_engine PRIVATE /W3 /permissive- /utf-8)
