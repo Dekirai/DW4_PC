@@ -1,4 +1,6 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/model_motion.hpp"
+#include "dw4/motion.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +82,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         ram->index = index++;
         ram->category = category;
         ram->sequences = seq_ptr;
+        ram->is_player = category == "PLAYER";
         if (record) {
             for (const auto& data : record.list(10)) {
                 if (data && data.str(2) == "ONE") {
@@ -119,6 +122,22 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     ram.cursor = 0;
     ram.label_passed = false;
     ram.wait_name.reset();
+    // Ordinary entry: mode/phase and PDMOVE count reset, flagged channel stops.
+    ram.ctrl_mode = 0;
+    ram.ctrl_phase = 0;
+    ram.pdmove_set = false;
+    ram.fall_check = true;
+    try { if (ram.channels.allocated()) ram.channels.on_sequence_change(); } catch (const std::exception&) {}
+    // Weapon label section: start after the selected LABEL when one is set.
+    if (found && !ram.label.empty()) {
+        for (std::size_t i = 0; i < found->commands.size(); ++i) {
+            if (found->commands[i].type() == "beModelCtrlLABEL" && found->commands[i].str(2) == ram.label) {
+                ram.cursor = i + 1;
+                ram.label_passed = true;
+                break;
+            }
+        }
+    }
     if (!found) {
         engine.note("MODELCTRL sequence " + std::string(name) + " missing in " + ram.info_name);
         return;
@@ -149,6 +168,41 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             ++ram.cursor;
         } else if (type == "beModelCtrlMSGBOX") {
             ++ram.cursor;
+        } else if (type == "beModelCtrlCTRL") {
+            // 80308EC0: exact control names.
+            if (name == "onWalk") { ram.ctrl_mode = 1; ram.ctrl_phase = 0; }
+            else if (name == "toWalk") { ram.ctrl_mode = 2; ram.ctrl_phase = 0; }
+            else if (name == "toWait") { ram.ctrl_mode = 3; ram.ctrl_phase = 0; }
+            else if (name == "isLive") { ram.ctrl_mode = 4; ram.ctrl_phase = 0; }
+            else if (name == "onFall") ram.fall_check = true;
+            else if (name == "noFall") ram.fall_check = false;
+            ++ram.cursor;
+        } else if (type == "beModelCtrlPDMOVE") {
+            // 8030AEE0: Stop/Move parameter pairs.
+            if (!ram.pdmove_set) { ram.pdmove = {0, 0, 0, 0}; ram.pdmove_set = true; }
+            if (name == "Stop") { ram.pdmove[0] = command.f32(3); ram.pdmove[1] = command.f32(4); }
+            else if (name == "Move") { ram.pdmove[2] = command.f32(3); ram.pdmove[3] = command.f32(4); }
+            ++ram.cursor;
+        } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
+            try {
+                auto motion = dw4::decode_motion_command(*command.document(), command.reference());
+                if (type == "beModelCtrlMOVE") {
+                    // 8030A6BC: MOVE name selects channel and mode.
+                    if (name == "Move") { motion.channel = 2; motion.setup.mode = dw4::MotionMode::accelerate_positive; }
+                    else if (name == "Stop") { motion.channel = 2; motion.setup.mode = dw4::MotionMode::stop_positive; }
+                    else if (name == "Push") { motion.channel = 2; motion.setup.mode = dw4::MotionMode::impulse_positive; }
+                    else if (name == "Back") { motion.channel = 2; motion.setup.mode = dw4::MotionMode::impulse_negative; }
+                    else if (name == "Jump") { motion.channel = 1; motion.setup.mode = dw4::MotionMode::impulse_positive; }
+                    else if (name == "Fall") { motion.channel = 1; motion.setup.mode = dw4::MotionMode::accelerate_negative; }
+                }
+                ram.channels.apply(motion);
+            } catch (const std::exception& error) {
+                engine.note(std::string("MODELCTRL MOVE decode: ") + error.what());
+            }
+            ++ram.cursor;
+        } else if (type == "beModelCtrlMUTEKI" || type == "beModelCtrlLABELCTRL" || type == "beModelCtrlHITBOX" ||
+                   type == "beModelCtrlAIMAP") {
+            ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
             const auto mode = command.str(3);
             if (mode != "BHit" && mode != "WHit" && mode != "FHit") engine.note("MODELCTRL LUACALL " + std::string(mode));
@@ -172,6 +226,16 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // Position / rotation vectors supplied with GENERATE place the model.
         if (ram.node && !packet.vectors.empty())
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
+        if (ram.is_player && ram.node) {
+            if (auto* points = engine.get<PlayerPointManager>())
+                if (auto m = points->point_matrix(points->point_no(), ram.index)) ram.node->matrix = *m;
+        }
+        if (ram.node) {
+            // 8030DAA4..8030DADC: synchronize the Y heading with the placed matrix.
+            const auto& m = ram.node->matrix;
+            ram.applied = {0, std::atan2(m(2, 0), m(2, 2)), 0};
+            ram.desired = ram.applied;
+        }
         select_sequence(engine, ram, seq);
         return true;
     }
@@ -208,7 +272,11 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (ram.sequences) for (const auto& s : *ram.sequences) packet.strings.emplace_back(s.name);
         return true;
     }
-    if (command == "ONCTRL" || command == "OFCTRL" || command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
+    if (command == "ONCTRL" || command == "OFCTRL") {
+        ram.control_enabled = command == "ONCTRL";
+        return true;
+    }
+    if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
     if (command == "ONFREEZE" || command == "OFFREEZE") {
         if (ram.generated) {
             Packet p;
@@ -242,10 +310,124 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
     return true;
 }
 
+const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
+    for (const auto& ram : rams_)
+        if (ram->is_player && ram->generated && ram->index == index) return ram.get();
+    return nullptr;
+}
+
+namespace {
+float wrap_angle(float a) {
+    constexpr float tau = 6.28318530718f;
+    while (a > 3.14159265f) a -= tau;
+    while (a < -3.14159265f) a += tau;
+    return a;
+}
+} // namespace
+
+void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
+    const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
+    const float sx = pad.stick_x, sy = pad.stick_y;
+    const float magnitude = std::sqrt(sx * sx + sy * sy);
+    ram.key_input = ram.control_enabled && magnitude > 0.25f;
+    if (ram.key_input) {
+        // 8034C67C..8034C6B8: desired heading from the inverse camera matrix and stick.
+        FrameCamera camera;
+        if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
+        Mat4 inverse;
+        if (invert(camera.view, inverse)) {
+            const Vec3f forward{inverse(2, 0), inverse(2, 1), inverse(2, 2)};
+            ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
+        }
+    }
+    // 80309168: post-input control transitions.
+    std::string request;
+    if (ram.ctrl_mode == 1 && ram.channels.allocated()) {
+        std::optional<bool> moving;
+        if (ram.ctrl_phase == 0) moving = ram.key_input;
+        else if (ram.ctrl_phase == 1 && !ram.key_input) moving = false;
+        else if (ram.ctrl_phase == 2 && ram.key_input) moving = true;
+        if (moving) {
+            dw4::MotionCommand motion;
+            motion.type = "beModelCtrlMOVE";
+            motion.channel = 2;
+            const std::size_t first = *moving ? 2 : 0;
+            motion.setup = {*moving ? dw4::MotionMode::accelerate_positive : dw4::MotionMode::stop_positive,
+                            ram.pdmove[first], ram.pdmove[first + 1], 0};
+            try { ram.channels.apply(motion); } catch (const std::exception&) {}
+            ram.ctrl_phase = *moving ? 1 : 2;
+        }
+    } else if (ram.ctrl_mode == 2 && ram.key_input) request = "SQ_WALK";
+    else if (ram.ctrl_mode == 3 && !ram.key_input) request = "SQ_WAIT";
+    if (!request.empty() && request != ram.seq_name) select_sequence(engine, ram, request);
+}
+
+void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
+    if (!ram.node) return;
+    auto& m = ram.node->matrix;
+    const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
+    // Turning (8030C85C): shortest arc at the stored rate per frame.
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (ram.applied[axis] == ram.desired[axis]) continue;
+        const float rate = axis == 1 ? ram.turn_rate_y : 0.0f;
+        if (rate == 0) continue;
+        const float diff = wrap_angle(ram.desired[axis] - ram.applied[axis]);
+        if (std::abs(diff) <= rate) ram.applied[axis] = ram.desired[axis];
+        else ram.applied[axis] += diff > 0 ? rate : -rate;
+    }
+    std::array<float, 16> matrix{};
+    std::copy(m.m.begin(), m.m.end(), matrix.begin());
+    try {
+        dw4::original_model_turn_basis(matrix, ram.applied);
+        matrix[12] = position.x;
+        matrix[13] = position.y;
+        matrix[14] = position.z;
+        if (ram.channels.allocated()) {
+            const auto step = ram.channels.advance(1.0f);
+            if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
+        }
+    } catch (const std::exception& error) {
+        engine.note(std::string("model motion: ") + error.what());
+        return;
+    }
+    Vec3f next{matrix[12], matrix[13], matrix[14]};
+    if (ram.is_player) {
+        // PROVISIONAL collision response (see collision.hpp).
+        if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
+            auto& world = hitland->world();
+            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f);
+            float floor = 0;
+            const bool rising = next.y > position.y + 0.001f;
+            if (!rising && world.floor_height(next, 6.0f, ram.on_ground ? 6.0f : 0.5f, floor)) {
+                next.y = floor;
+                ram.on_ground = true;
+                ram.fall_speed = 0;
+            } else if (!rising && ram.fall_check) {
+                ram.on_ground = false;
+                ram.fall_speed = std::min(ram.fall_speed + 0.12f, 4.0f);
+                const float before = next.y;
+                next.y -= ram.fall_speed;
+                if (world.floor_height({next.x, before, next.z}, 0.5f, ram.fall_speed + 0.5f, floor)) {
+                    next.y = floor;
+                    ram.on_ground = true;
+                    ram.fall_speed = 0;
+                }
+            }
+        }
+    }
+    matrix[12] = next.x;
+    matrix[13] = next.y;
+    matrix[14] = next.z;
+    std::copy(matrix.begin(), matrix.end(), m.m.begin());
+}
+
 void ModelCtrlManager::update(Engine& engine) {
     for (auto& owned : rams_) {
         auto& ram = *owned;
-        if (!ram.generated || !ram.wait_name) continue;
+        if (!ram.generated) continue;
+        if (ram.is_player) update_player(engine, ram);
+        if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
+        if (!ram.wait_name) continue;
         const auto& wait = *ram.wait_name;
         bool done = false;
         if (wait == "Action") {
@@ -253,7 +435,11 @@ void ModelCtrlManager::update(Engine& engine) {
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "ISCOMEND", packet);
             done = !packet.bools.empty() && packet.bools[0];
         } else if (wait == "TurnY" || wait == "Landing" || wait == "Moving" || wait == "Rotation") {
-            done = true; // no motion channels on these models
+            const auto states = ram.channels.states();
+            if (wait == "TurnY" || wait == "Landing") done = !states[1].active;
+            else if (wait == "Moving") done = !states[0].active && !states[1].active && !states[2].active;
+            else done = !states[3].active;
+            if (wait == "Landing" && ram.is_player && !ram.on_ground) done = false;
         } else {
             engine.note("MODELCTRL wait " + wait);
         }

@@ -3,6 +3,7 @@
 #include "gl_renderer.hpp"
 
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -33,6 +35,7 @@ struct Options {
     std::string input_script;
     bool overlay = true;
     std::vector<float> debug_camera; // eye xyz, target xyz
+    std::vector<std::pair<int, int>> flags;
 };
 
 std::filesystem::path default_data_path() {
@@ -69,12 +72,16 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 
 // Scripted input for automated runs: lines "frame button" (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R).
 struct ScriptedInput {
-    std::vector<std::pair<int, std::uint32_t>> presses;
     void load(const std::string& path) {
         std::ifstream in(path);
         int frame;
         std::string name;
-        while (in >> frame >> name) {
+        std::string line;
+        while (std::getline(in, line)) {
+            std::istringstream fields(line);
+            int duration = 6;
+            if (!(fields >> frame >> name)) continue;
+            fields >> duration;
             std::uint32_t bit = 0;
             if (name == "A") bit = dw4::engine::pad_a;
             else if (name == "B") bit = dw4::engine::pad_b;
@@ -88,18 +95,21 @@ struct ScriptedInput {
             else if (name == "Z") bit = dw4::engine::pad_z;
             else if (name == "L") bit = dw4::engine::pad_l;
             else if (name == "R") bit = dw4::engine::pad_r;
-            presses.emplace_back(frame, bit);
+            presses.push_back({frame, bit, duration});
         }
     }
+    struct Press { int frame; std::uint32_t bit; int duration; };
+    std::vector<Press> presses;
     std::uint32_t held(int frame) const {
         std::uint32_t bits = 0;
-        for (const auto& [f, b] : presses) if (frame >= f && frame < f + 6) bits |= b;
+        for (const auto& p : presses) if (frame >= p.frame && frame < p.frame + p.duration) bits |= p.bit;
         return bits;
     }
 };
 
 int run(const Options& options) {
     dw4::engine::Engine engine(options.data);
+    for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
     engine.request_stage(options.stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
@@ -229,12 +239,19 @@ int run(const Options& options) {
             }
             for (int i = 0; i < steps; ++i) {
                 std::uint32_t input = held | scripted.held(frame);
+                float stick_x = sx, stick_y = sy;
+                if (stick_x == 0 && stick_y == 0) {
+                    if (input & dw4::engine::pad_left) stick_x = -1;
+                    if (input & dw4::engine::pad_right) stick_x = 1;
+                    if (input & dw4::engine::pad_up) stick_y = 1;
+                    if (input & dw4::engine::pad_down) stick_y = -1;
+                }
                 pads[0].connected = true;
                 pads[0].held = input;
                 pads[0].pressed = input & ~previous_held;
                 pads[0].released = previous_held & ~input;
-                pads[0].stick_x = sx;
-                pads[0].stick_y = sy;
+                pads[0].stick_x = stick_x;
+                pads[0].stick_y = stick_y;
                 previous_held = input;
                 engine.step(pads);
                 ++frame;
@@ -266,6 +283,14 @@ int run(const Options& options) {
                 ImGui::InputText("##stage", stage, sizeof stage);
                 ImGui::SameLine();
                 if (ImGui::Button("Load stage")) engine.request_stage(stage);
+                if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
+                    if (const auto* p = models->player(0); p && p->node) {
+                        const auto& m = p->node->matrix;
+                        ImGui::Text("Player 0: %s seq=%s pos=(%.1f, %.1f, %.1f) ctrl=%d mode=%d ground=%d", p->info_name.c_str(),
+                                    p->seq_name.c_str(), m(3, 0), m(3, 1), m(3, 2), p->control_enabled ? 1 : 0, p->ctrl_mode,
+                                    p->on_ground ? 1 : 0);
+                    }
+                }
                 if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
                     for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
                 }
@@ -295,6 +320,10 @@ int run(const Options& options) {
             if (options.smoke_frames && frame >= options.smoke_frames) running = false;
         }
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
+        if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+            if (const auto* p = models->player(0); p && p->node)
+                std::printf("player0 seq=%s pos=(%.2f, %.2f, %.2f) ctrl=%d mode=%d ground=%d\n", p->seq_name.c_str(), p->node->matrix(3, 0),
+                            p->node->matrix(3, 1), p->node->matrix(3, 2), p->control_enabled ? 1 : 0, p->ctrl_mode, p->on_ground ? 1 : 0);
         if (std::getenv("DW4_SCENE_REPORT")) for (const auto& line : engine.scene_report()) std::cout << line << '\n';
         if (std::getenv("DW4_DRAW_DUMP")) {
             for (const auto& item : items) {
@@ -347,6 +376,11 @@ int main(int argc, char** argv) {
                     start = comma + 1;
                 }
             } else if (arg == "--input") options.input_script = next();
+            else if (arg == "--flag") {
+                const std::string value = next();
+                const auto eq = value.find('=');
+                options.flags.emplace_back(std::stoi(value.substr(0, eq)), eq == std::string::npos ? 1 : std::stoi(value.substr(eq + 1)));
+            }
             else if (arg == "--debug-camera") {
                 std::string list = next();
                 std::size_t start = 0;

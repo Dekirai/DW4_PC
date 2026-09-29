@@ -103,7 +103,7 @@ endif()
 # stage flow on top of dw4_core. No SDL/ImGui dependency.
 add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
-  src/engine/actor.cpp)
+  src/engine/actor.cpp src/engine/collision.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 if(MSVC)
   target_compile_options(dw4_engine PRIVATE /W3 /permissive- /utf-8)

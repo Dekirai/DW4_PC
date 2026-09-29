@@ -1,6 +1,8 @@
 #pragma once
 
+#include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/motion.hpp"
 
 #include <map>
 #include <memory>
@@ -174,6 +176,38 @@ private:
     bool pending_{};
 };
 
+// bePoint01 (80312A70): PLAYERPOINT generation groups and point matrices.
+class PlayerPointManager final : public Manager {
+public:
+    PlayerPointManager() : Manager("bePoint01") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "bePoint01Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    std::optional<Mat4> point_matrix(int group, int player) const;
+    std::int32_t point_no() const { return point_no_; }
+    void set_point_no(std::int32_t value) { point_no_ = value; }
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::vector<ObjectView> infos_;
+    std::int32_t point_no_{}; // manager-wide _pointNo, survives stage loads
+};
+
+// beHitLandModel: static collision geometry (provisional host queries).
+class HitLandManager final : public Manager {
+public:
+    HitLandManager() : Manager("beHitLandModel") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beHitLandModelInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    CollisionWorld& world() { return world_; }
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    CollisionWorld world_;
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:
@@ -214,9 +248,27 @@ public:
         std::optional<std::string> wait_name;
         std::int32_t hp = 100, max_hp = 100;
         Mat4 base_matrix{};
+        // Motion / control work (beModelCtrlInfoWork subset).
+        dw4::MotionChannels channels;
+        int ctrl_mode{}, ctrl_phase{};
+        std::array<float, 4> pdmove{};
+        bool pdmove_set{};
+        bool fall_check = true;
+        std::array<float, 3> applied{}, desired{};
+        float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
+        bool is_player{};
+        bool control_enabled = true; // ONCTRL / OFCTRL
+        bool key_input{};
+        bool on_ground = true;
+        float fall_speed{};
+        std::string label;
     };
 
+    const ModelRam* player(int index) const;
+
 private:
+    void update_player(Engine& engine, ModelRam& ram);
+    void advance_motion(Engine& engine, ModelRam& ram);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
     std::vector<std::unique_ptr<ModelRam>> rams_;
@@ -294,6 +346,7 @@ public:
     std::int32_t camera_mode{};
     std::string gate_stage_name;
     std::int32_t gate_stage_no{};
+    std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
 };
 
 } // namespace dw4::engine

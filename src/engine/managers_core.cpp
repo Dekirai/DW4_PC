@@ -277,25 +277,44 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
 
 void CameraManager::update(Engine&) {}
 
-void CameraManager::frame_camera(Engine&, FrameCamera& camera) {
+void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     camera.projection = perspective(54.4322f * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
     for (const auto& ram : rams_) {
         if (ram->paths.empty()) continue;
         const auto& path = ram->paths[std::size_t(std::max(0, ram->demo_path))];
-        Mat4 world;
+        // World matrices along the path; the last transform places the camera
+        // relative to its parent group, whose origin is the look-at pivot.
+        Mat4 world, pivot;
+        const Node* last_transform = nullptr;
+        for (auto* node : path.nodes)
+            if (node->kind == NodeKind::transform || node->kind == NodeKind::model_node) last_transform = node;
         for (auto* node : path.nodes) {
-            if (node->kind == NodeKind::transform || node->kind == NodeKind::model_node)
-                world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(0) : node->matrix) * world;
+            if (node->kind != NodeKind::transform && node->kind != NodeKind::model_node) continue;
+            if (node == last_transform) pivot = world;
+            world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(0) : node->matrix) * world;
         }
-        Mat4 view;
-        if (invert(world, view)) camera.view = view;
         if (path.camera) {
             const float fov = path.camera->object.f32(8, 54.4322f);
             const float near_plane = path.camera->object.f32(9, 10.0f);
             const float far_plane = path.camera->object.f32(10, 2000.0f);
             camera.projection = perspective(fov * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, near_plane, far_plane);
         }
+        // Follow the first player: keep the authored angle and distance.
+        if (!ram->demo_active) {
+            if (auto* models = engine.get<ModelCtrlManager>()) {
+                if (const auto* player = models->player(0); player && player->node) {
+                    const auto& pm = player->node->matrix;
+                    const Vec3f offset{world(3, 0) - pivot(3, 0), world(3, 1) - pivot(3, 1), world(3, 2) - pivot(3, 2)};
+                    const Vec3f pivot_local{pivot(3, 0), pivot(3, 1), pivot(3, 2)};
+                    world(3, 0) = pm(3, 0) + pivot_local.x + offset.x;
+                    world(3, 1) = pm(3, 1) + pivot_local.y + offset.y;
+                    world(3, 2) = pm(3, 2) + pivot_local.z + offset.z;
+                }
+            }
+        }
+        Mat4 view;
+        if (invert(world, view)) camera.view = view;
         break;
     }
 }
@@ -450,6 +469,76 @@ void TextureCtrlManager::update(Engine& engine) {
 }
 
 // ---------------------------------------------------------------------------
+// PLAYERPOINT (bePoint01, 80312A70 / 803129E0)
+// ---------------------------------------------------------------------------
+void PlayerPointManager::add_info(Engine& engine, const ObjectView& info) {
+    infos_.push_back(info);
+    make_rams(engine, this, info, rams_, "PLAYERPOINT");
+}
+
+void PlayerPointManager::clear_stage(Engine&) {
+    rams_.clear();
+    infos_.clear();
+}
+
+std::optional<Mat4> PlayerPointManager::point_matrix(int group, int player) const {
+    for (const auto& info : infos_) {
+        const auto groups = info.list(8);
+        if (groups.empty()) continue;
+        if (group > int(groups.size()) - 1) group = 0; // 803129E0 local fallback
+        if (group < 0) return std::nullopt;
+        const auto& g = groups[std::size_t(group)];
+        if (!g) return Mat4{}; // null group: identity (804F89B8)
+        const auto points = g.list(7);
+        if (player < 0 || std::size_t(player) >= points.size() || !points[std::size_t(player)]) return std::nullopt;
+        return points[std::size_t(player)].mat4(8);
+    }
+    return std::nullopt;
+}
+
+bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet& packet) {
+    if (command == "SETGENERATEPOS") {
+        if (!packet.ints.empty()) point_no_ = packet.ints[0];
+        return true;
+    }
+    if (command == "GETGENERATEPOS") {
+        packet.ints.push_back(point_no_);
+        return true;
+    }
+    if (command == "GETMATRIX") {
+        const int player = packet.ints.size() > 1 ? packet.ints[1] : 0;
+        if (auto m = point_matrix(point_no_, player)) packet.matrices.push_back(*m);
+        return true;
+    }
+    if (command == "GETMATRIXDIRECT") {
+        const int group = packet.ints.size() > 0 ? packet.ints[0] : 0;
+        const int player = packet.ints.size() > 1 ? packet.ints[1] : 0;
+        if (auto m = point_matrix(group, player)) packet.matrices.push_back(*m);
+        return true;
+    }
+    if (command == "GETPOINTNAME") {
+        for (const auto& info : infos_)
+            for (const auto& g : info.list(8)) packet.strings.emplace_back(g ? std::string(g.str(2)) : std::string());
+        return true;
+    }
+    if (command == "SHOWPOLYGON" || command == "HIDEPOLYGON") return true;
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// HitLand collision geometry
+// ---------------------------------------------------------------------------
+void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
+    make_rams(engine, this, info, rams_, "HITLANDMODEL");
+    if (const auto graph = info.ref(8)) world_.add_graph(graph);
+}
+
+void HitLandManager::clear_stage(Engine&) {
+    rams_.clear();
+    world_.clear();
+}
+
+// ---------------------------------------------------------------------------
 bool PassiveManager::accepts(const ObjectView& info) const {
     const auto& t = info.type();
     return t.starts_with("be") || t == "ParticleInfo" || t == "igInfo" || t == "igAnimationDatabase";
@@ -491,6 +580,7 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         return true;
     }
     if (method == "SYSgetDifficulty") { out = {Lua4Value::number(difficulty)}; return true; }
+    if (method == "PLAYERgetPos") { out = {Lua4Value::number(player_pos)}; return true; }
     if (method == "SYSsetDifficulty") { difficulty = arg_int(0); return true; }
     if (method == "LISsetDifficultMax") { difficulty_max = arg_int(0); return true; }
     if (method == "SYSgetCameraMode") { out = {Lua4Value::number(camera_mode)}; return true; }
@@ -520,6 +610,8 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<ActionManager>());
     engine.add_manager(std::make_unique<CameraManager>());
     engine.add_manager(std::make_unique<TextureCtrlManager>());
+    engine.add_manager(std::make_unique<PlayerPointManager>());
+    engine.add_manager(std::make_unique<HitLandManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 
