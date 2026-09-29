@@ -1,5 +1,7 @@
 #include "dw4/engine/managers.hpp"
 
+#include <algorithm>
+
 namespace dw4::engine {
 
 void MatCtrlManager::add_info(Engine& engine, const ObjectView& info) {
@@ -70,7 +72,9 @@ void MatCtrlManager::update(Engine& engine) {
         for (auto& mat : ram.mats) {
             if (mat.enabled && (mat.current & 0xFu) != (mat.previous & 0xFu)) {
                 context_ = &mat;
+                pending_run_.reset();
                 engine.run_script(mat.name + ".lua");
+                if (pending_run_) mat.enabled = *pending_run_;
                 context_ = nullptr;
             }
             mat.previous = mat.current;
@@ -80,8 +84,12 @@ void MatCtrlManager::update(Engine& engine) {
 
 bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args,
                                  std::vector<Lua4Value>& out) {
+    if (method == "MATsetRun") {
+        pending_run_ = !args.empty() && args[0].type() == Lua4Type::Number && args[0].as_number() != 0;
+        return true;
+    }
     if (method != "MATisAllPlayer" && method != "MATgetPlayerNo" && method != "MATisRideOffPlayer" &&
-        method != "MATgetPlayerMatStat" && method != "MATisPlayer")
+        method != "MATgetPlayerMatStat" && method != "MATisPlayer" && method != "MATisRidePlayer")
         return false;
     const std::uint32_t current = context_ ? context_->current & 0xFu : 0;
     const std::uint32_t previous = context_ ? context_->previous & 0xFu : 0;
@@ -106,8 +114,13 @@ bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std:
         out = {Lua4Value::number(joined && (current & joined) == joined ? 1 : 0)};
         return true;
     }
-    if (method == "MATisRideOffPlayer") {
-        out = {Lua4Value::number((previous & ~current) ? 1 : 0)};
+    // 80302D08 / MATisRideOffPlayer: the player stepped on / off this frame
+    // (without an argument: any player).
+    if (method == "MATisRidePlayer" || method == "MATisRideOffPlayer") {
+        std::uint32_t mask = 0xFu;
+        if (!args.empty() && args[0].type() == Lua4Type::Number) mask = 1u << std::clamp(int(args[0].as_number()), 0, 3);
+        const std::uint32_t changed = method == "MATisRidePlayer" ? current & ~previous : previous & ~current;
+        out = {Lua4Value::number((changed & mask) ? 1 : 0)};
         return true;
     }
     // The player whose state changed, preferring one that stepped on.

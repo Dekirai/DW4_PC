@@ -15,9 +15,27 @@
 
 namespace dw4::engine {
 
+// A process-unique id that a copy does not share, so host caches keyed by a
+// geometry's address can tell a new object at a reused address apart.
+struct GeometrySerial {
+    std::uint64_t value = next();
+    GeometrySerial() = default;
+    GeometrySerial(const GeometrySerial&) : value(next()) {}
+    GeometrySerial& operator=(const GeometrySerial&) {
+        value = next();
+        return *this;
+    }
+    static std::uint64_t next() {
+        static std::uint64_t counter = 0;
+        return ++counter;
+    }
+};
+
 // Decoded igGeometryAttr1_5 vertex/index data, expanded to an indexed
-// triangle list. The pointer identity is stable for the owning cache.
+// triangle list. Runtime geometry (text, numbers) is replaced often; the
+// serial identifies each instance.
 struct GeometryData {
+    GeometrySerial serial;
     std::vector<Vec3f> positions;
     std::vector<Vec3f> normals;
     std::vector<std::uint32_t> colors; // Original packed RGBA8 bytes in memory order.

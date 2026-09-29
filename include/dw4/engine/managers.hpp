@@ -632,7 +632,8 @@ private:
         std::vector<Mat> mats;
     };
     std::vector<std::unique_ptr<MatRam>> rams_;
-    const Mat* context_{};
+    Mat* context_{};
+    std::optional<bool> pending_run_; // MATsetRun for the running mat (80302DA8)
 };
 
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.

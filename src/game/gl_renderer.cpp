@@ -212,10 +212,29 @@ void GlRenderer::clear_cache() {
     textures_.clear();
 }
 
+void GlRenderer::release(Mesh& m) {
+    auto& gl = *gl_;
+    gl.DeleteBuffers(1, &m.vbo);
+    gl.DeleteBuffers(1, &m.ibo);
+    gl.DeleteVertexArrays(1, &m.vao);
+    m = Mesh{};
+}
+
 const GlRenderer::Mesh* GlRenderer::mesh(const engine::GeometryData* g) {
-    if (auto found = meshes_.find(g); found != meshes_.end()) return &found->second;
+    // The cache is keyed by address; a different serial means a new geometry
+    // (e.g. replaced text digits) now lives at a freed address.
+    if (auto found = meshes_.find(g); found != meshes_.end()) {
+        if (found->second.serial == g->serial.value) {
+            found->second.last_frame = frame_;
+            return &found->second;
+        }
+        release(found->second);
+        meshes_.erase(found);
+    }
     auto& gl = *gl_;
     Mesh m;
+    m.serial = g->serial.value;
+    m.last_frame = frame_;
     m.has_colors = !g->colors.empty();
     m.has_uvs = !g->texcoords.empty();
     m.has_normals = !g->normals.empty();
@@ -406,6 +425,16 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, window_width, window_height);
+    // Drop buffers of geometry not drawn for two seconds (replaced text).
+    ++frame_;
+    for (auto it = meshes_.begin(); it != meshes_.end();) {
+        if (frame_ - it->second.last_frame > 120) {
+            release(it->second);
+            it = meshes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace dw4::game

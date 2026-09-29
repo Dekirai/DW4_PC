@@ -36,7 +36,11 @@ private:
         unsigned vao{}, vbo{}, ibo{};
         int index_count{};
         bool has_colors{}, has_uvs{}, has_normals{};
+        std::uint64_t serial{};       // GeometryData instance the buffers hold
+        std::uint64_t last_frame{};   // eviction of unused runtime geometry
     };
+    void release(Mesh& mesh);
+    std::uint64_t frame_{};
     struct Texture {
         unsigned id{};
         bool alpha{};
