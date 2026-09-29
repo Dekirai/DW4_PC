@@ -261,9 +261,21 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
         } else if (type == "beModelCtrlLABELCTRL" || type == "beModelCtrlAIMAP") {
             ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
+            // An empty mode runs "<name>_<info>.lua" now (e.g. ded_g_tcounter00);
+            // BHit runs it after this model's hitbox hits something. WHit/FHit
+            // (wall and floor hit callbacks) are not reconstructed.
             const auto mode = command.str(3);
-            if (mode != "BHit" && mode != "WHit" && mode != "FHit") engine.note("MODELCTRL LUACALL " + std::string(mode));
             ++ram.cursor;
+            if (mode.empty()) {
+                const auto generation = ram.hitbox_generation;
+                const auto* seq = ram.seq;
+                run_model_script(engine, ram, name);
+                if (ram.seq != seq || ram.hitbox_generation != generation) return;
+            } else if (mode == "BHit") {
+                ram.lua_bhit = name;
+            } else if (mode != "WHit" && mode != "FHit") {
+                engine.note("MODELCTRL LUACALL " + std::string(mode));
+            }
         } else {
             engine.note("MODELCTRL command " + type);
             ++ram.cursor;
@@ -648,6 +660,20 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
     packet.strings.emplace_back(ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
+    // A delivered result (even false) runs the source's BHit script.
+    if (!packet.bools.empty() && !ram.lua_bhit.empty()) run_model_script(engine, ram, ram.lua_bhit);
+}
+
+// "%s_%s.lua" (80426850) with the model as script context (8030B6EC).
+void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix) {
+    ModelScriptContext context;
+    context.category = ram.category;
+    context.name = ram.info_name;
+    context.index = ram.index;
+    context.call_name = std::string(prefix);
+    engine.push_model_context(std::move(context));
+    engine.run_script(std::string(prefix) + "_" + ram.info_name + ".lua");
+    engine.pop_model_context();
 }
 
 // Player controller waits (vtable +A4, 8034D214). Atck01: the attack chain

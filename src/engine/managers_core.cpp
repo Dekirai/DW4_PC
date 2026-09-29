@@ -553,11 +553,36 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
         engine.note("HITLAND model-attached geometry " + std::string(info.str(2)));
         return;
     }
-    if (const auto graph = info.ref(8)) world_.add_graph(graph, kind);
+    // Each check-switch child is its own switchable group, addressed by the
+    // matching name of the info's name list [9] (e.g. "hithideliftz00").
+    const auto groups = world_.add_switch(info.ref(8), kind);
+    const auto names = info.list(9);
+    for (std::size_t i = 0; i < groups.size() && i < names.size(); ++i) {
+        if (!names[i] || names[i].str(2).empty()) continue;
+        auto child = std::make_unique<HitRam>();
+        child->manager = this;
+        child->info = info;
+        child->info_name = std::string(names[i].str(2));
+        child->index = 0;
+        child->active = true;
+        child->group = groups[i];
+        engine.messenger().add_row("HITLANDMODEL", child->info_name, 0, child.get());
+        children_.push_back(std::move(child));
+    }
+}
+
+bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
+    (void)engine;
+    (void)packet;
+    if (command != "ONHIT" && command != "OFFHIT") return false;
+    for (const auto& child : children_)
+        if (child.get() == &base) world_.set_group_enabled(child->group, command == "ONHIT");
+    return true;
 }
 
 void HitLandManager::clear_stage(Engine&) {
     rams_.clear();
+    children_.clear();
     world_.clear();
 }
 

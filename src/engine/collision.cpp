@@ -11,6 +11,24 @@ namespace dw4::engine {
 void CollisionWorld::clear() {
     triangles_.clear();
     grid_.clear();
+    groups_.assign(1, true);
+}
+
+std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_switch, std::uint32_t kind) {
+    std::vector<std::uint32_t> ids;
+    if (!check_switch) return ids;
+    const auto children = check_switch.is_a("igGroup") ? check_switch.list(7) : std::vector<ObjectView>{check_switch};
+    for (const auto& child : children) {
+        const auto group = std::uint32_t(groups_.size());
+        groups_.push_back(true);
+        ids.push_back(group);
+        add_node(child, Mat4{}, 1, kind, group);
+    }
+    return ids;
+}
+
+void CollisionWorld::set_group_enabled(std::uint32_t group, bool enabled) {
+    if (group < groups_.size()) groups_[group] = enabled;
 }
 
 void CollisionWorld::cells(const Vec3f& lo, const Vec3f& hi, std::vector<std::int64_t>& out) const {
@@ -34,9 +52,9 @@ void CollisionWorld::index_triangle(std::size_t index) {
     for (auto k : keys) grid_[k].push_back(std::uint32_t(index));
 }
 
-void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind); }
+void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind, 0); }
 
-void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind) {
+void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group) {
     if (!node || depth > 64) return;
     Mat4 model = parent;
     if (node.is_a("igTransform")) {
@@ -56,13 +74,14 @@ void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int de
                 if (length(n) < 1e-8f) continue;
                 t.normal = normalize(n);
                 t.kind = kind;
+                t.group = group;
                 triangles_.push_back(t);
                 index_triangle(triangles_.size() - 1);
             }
         }
     }
     if (node.is_a("igGroup"))
-        for (const auto& child : node.list(7)) add_node(child, model, depth + 1, kind);
+        for (const auto& child : node.list(7)) add_node(child, model, depth + 1, kind, group);
 }
 
 namespace {
@@ -107,7 +126,7 @@ bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& h
             if (!seen.insert(index).second) continue;
             const auto& t = triangles_[index];
             // CHECKLAND (80300444) queries kind bit 1 only.
-            if (!(t.kind & 1u) || t.normal.y < 0.25f) continue;
+            if (!(t.kind & 1u) || t.normal.y < 0.25f || !enabled(t)) continue;
             float y;
             if (!vertical_hit(t, p.x, p.z, y)) continue;
             if (y > p.y + up || y < p.y - down) continue;
@@ -137,7 +156,7 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
             for (auto index : it->second) {
                 const auto& t = triangles_[index];
                 // CHECKWALL (802FE7F0) excludes the floor bit: wall geometry only.
-                if (!(t.kind & 2u) || std::abs(t.normal.y) > 0.7f) continue;
+                if (!(t.kind & 2u) || std::abs(t.normal.y) > 0.7f || !enabled(t)) continue;
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {
                     const Vec3f center{p.x, p.y + h, p.z};
                     const Vec3f q = closest_point(center, t);

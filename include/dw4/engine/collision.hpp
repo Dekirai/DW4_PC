@@ -12,6 +12,7 @@ struct CollisionTriangle {
     Vec3f a, b, c;
     Vec3f normal;
     std::uint32_t kind{}; // beHitLandModelInfo _kind bits: 1 floor, 2 wall, 4 limit
+    std::uint32_t group{}; // switchable child (HITLANDMODEL ONHIT / OFFHIT)
 };
 
 // Static stage collision built from beHitLandModelInfo geometry graphs.
@@ -23,6 +24,10 @@ class CollisionWorld {
 public:
     void clear();
     void add_graph(const ObjectView& root, std::uint32_t kind);
+    // Adds each child of the check switch as its own group; returns the
+    // group ids in child order.
+    std::vector<std::uint32_t> add_switch(const ObjectView& check_switch, std::uint32_t kind);
+    void set_group_enabled(std::uint32_t group, bool enabled);
     std::size_t triangle_count() const { return triangles_.size(); }
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // Highest floor at (x, z) within [y - down, y + up]; false when none.
@@ -31,9 +36,11 @@ public:
     Vec3f resolve_walls(const Vec3f& position, float radius, float step, float height) const;
 
 private:
-    void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind);
+    void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group);
     void index_triangle(std::size_t index);
+    bool enabled(const CollisionTriangle& t) const { return t.group >= groups_.size() || groups_[t.group]; }
     std::vector<CollisionTriangle> triangles_;
+    std::vector<bool> groups_{true};
     float cell_ = 20.0f;
     std::unordered_map<std::int64_t, std::vector<std::uint32_t>> grid_;
     std::int64_t key(int x, int z) const { return (std::int64_t(x) << 32) ^ std::int64_t(std::uint32_t(z)); }

@@ -203,10 +203,15 @@ public:
     bool accepts(const ObjectView& info) const override { return info.type() == "beHitLandModelInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     CollisionWorld& world() { return world_; }
 
 private:
+    struct HitRam : Ram {
+        std::uint32_t group{};
+    };
     std::vector<std::unique_ptr<Ram>> rams_;
+    std::vector<std::unique_ptr<HitRam>> children_;
     CollisionWorld world_;
 };
 
@@ -616,6 +621,7 @@ public:
         bool combo_released{};       // player work +12C
         bool previous_live{};        // enemy AI: generated last frame
         int ai_timer{};              // PROVISIONAL enemy AI cooldown
+        std::string lua_bhit;        // LUACALL BHit script prefix
     };
 
     const ModelRam* player(int index) const;
@@ -629,6 +635,7 @@ private:
     void update_enemy(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
+    void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
