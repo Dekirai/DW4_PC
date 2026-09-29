@@ -283,7 +283,7 @@ int run(const Options& options) {
                                         best = ex * ex + ez * ez;
                                         tx = e->node->matrix(3, 0);
                                         tz = e->node->matrix(3, 2);
-                                        reach = pass == 0 ? 9.0f : 64.0f;
+                                        reach = pass == 0 ? 9.0f : 400.0f;
                                     }
                                 }
                             if (best == 1e12f) { tx = p->node->matrix(3, 0); tz = p->node->matrix(3, 2); }

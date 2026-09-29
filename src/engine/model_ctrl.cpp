@@ -455,6 +455,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
     }
     if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
     if (command == "ONFREEZE" || command == "OFFREEZE") {
+        ram.frozen = command == "ONFREEZE" && ram.generated;
         if (ram.generated) {
             Packet p;
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, std::string(command), p);
@@ -632,6 +633,14 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 sound.strings.emplace_back("CURSOR_NG");
                 messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
             }
+            return;
+        }
+        // 8034D0CC: START opens the status window, refused while a panel runs.
+        if ((trigger & dw4::pad_button::start) && messenger.count("SUBWND", std::nullopt, -1)) {
+            Packet status;
+            status.ints.push_back(ram.index);
+            status.strings.emplace_back("STATUS");
+            messenger.send(engine, "SUBWND", std::nullopt, 0, "GENERATE", status);
             return;
         }
         if (has_panel && (trigger & dw4::pad_button::y)) {
@@ -828,6 +837,7 @@ void ModelCtrlManager::update(Engine& engine) {
             }
             continue;
         }
+        if (ram.frozen) continue;
         if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         // 8030CCDC: input, AI and the control transitions run only while the
         // sequence has a CTRL mode; otherwise a running AITIMER is dropped.

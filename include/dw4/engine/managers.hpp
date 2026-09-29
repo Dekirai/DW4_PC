@@ -735,6 +735,7 @@ public:
         int combo_phase{};           // player work +128
         bool combo_released{};       // player work +12C
         bool panel_open{};           // player work +124: an NDMWPANEL panel is up
+        bool frozen{};               // ONFREEZE: control, AI and motion paused
         bool previous_live{};        // enemy AI: generated last frame
         int ai_timer{};              // PROVISIONAL enemy AI cooldown
         std::string lua_bhit;        // LUACALL BHit script prefix
@@ -800,6 +801,29 @@ private:
 // beActionStarter (registration 802F2244, handler 802F228C): on the
 // ACTION_BROADCAST of a target model's action, SETEFFECT this effect model on
 // that model (hit sparks, defeat smoke, ...).
+// SUBWND (beNDMWStatus, vtable 804E80EC): the status window (START) and the
+// lobby programs (shops, Digi-Lab, bank, card). A program is a tree of
+// windows (framework 8036B278..8036C170) built in subwnd.cpp.
+class SubWindowManager final : public Manager {
+public:
+    SubWindowManager();
+    ~SubWindowManager() override;
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWStatusInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+    struct Window;
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::unique_ptr<Window> window_;
+    bool running_{};
+    int state_{}, program_{}, player_{};
+    std::array<int, 11> shown_{}; // UPDATE snapshot for ONPREVIEW / OFPREVIEW
+    int shown_hp_{}, shown_mp_{};
+};
+
 // NDMWPANEL (beNDMWPanelWaza, vtable 804E71E8): the per-player quick panels
 // opened with R (techniques), L (disks) and Z (status), and Y's emergency
 // heal. A picks the line; the panel stays open for the next use after the
@@ -930,6 +954,7 @@ public:
     };
     struct PlayerSlot {
         bool joined{};
+        std::string name;              // PLAYERNAME (name entry)
         std::string digimon = "p_agumon";
         std::array<std::string, 3> weapons{};
         int hp = 100, max_hp = 100, mp = 50, max_mp = 50;
