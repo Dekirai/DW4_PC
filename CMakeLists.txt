@@ -99,6 +99,15 @@ else()
   target_compile_options(dw4_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Native engine runtime: reconstructed original managers, scene graph and
+# stage flow on top of dw4_core. No SDL/ImGui dependency.
+add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
+  src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp)
+target_link_libraries(dw4_engine PUBLIC dw4_core)
+if(MSVC)
+  target_compile_options(dw4_engine PRIVATE /W3 /permissive- /utf-8)
+endif()
+
 add_executable(dw4_inspect tools/dw4_inspect.cpp)
 target_link_libraries(dw4_inspect PRIVATE dw4_core)
 add_executable(dw4_catalog tools/dw4_catalog.cpp)
@@ -233,6 +242,10 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp)
+  target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
+  target_link_libraries(dw4_game PRIVATE dw4_engine imgui SDL3::SDL3 OpenGL::GL)
+  install(TARGETS dw4_game RUNTIME DESTINATION .)
   add_executable(dw4_pc src/app.cpp src/mesh_renderer.cpp src/weapon_preview.cpp)
   target_compile_definitions(dw4_pc PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_pc PRIVATE dw4_core imgui SDL3::SDL3 OpenGL::GL)

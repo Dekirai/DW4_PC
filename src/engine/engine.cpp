@@ -1,0 +1,461 @@
+#include "dw4/engine/engine.hpp"
+
+#include "dw4/engine/managers.hpp"
+#include "dw4/packages.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <charconv>
+#include <cstdio>
+#include <iostream>
+#include <sstream>
+
+namespace dw4::engine {
+
+// ---------------------------------------------------------------------------
+// Packet argument parsing (802ECA74)
+// ---------------------------------------------------------------------------
+void parse_packet_arguments(std::string_view text, Packet& packet) {
+    if (text.empty()) return;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const auto slash = text.find('/', start);
+        const auto piece = text.substr(start, slash == std::string_view::npos ? std::string_view::npos : slash - start);
+        if (piece.size() >= 2 && piece[1] == '<') {
+            const auto body_end = piece.find('>');
+            const auto body = piece.substr(2, body_end == std::string_view::npos ? std::string_view::npos : body_end - 2);
+            switch (piece[0]) {
+            case 'F': {
+                float value = 0;
+                std::from_chars(body.data(), body.data() + body.size(), value);
+                packet.floats.push_back(value);
+                break;
+            }
+            case 'I': {
+                std::int32_t value = 0;
+                std::from_chars(body.data(), body.data() + body.size(), value);
+                packet.ints.push_back(value);
+                break;
+            }
+            case 'L': {
+                std::int64_t value = 0;
+                std::from_chars(body.data(), body.data() + body.size(), value);
+                packet.longs.push_back(value);
+                break;
+            }
+            case 'V': {
+                Vec3f v{};
+                std::string copy(piece.substr(1));
+                std::sscanf(copy.c_str(), " < %f , %f , %f > ", &v.x, &v.y, &v.z);
+                packet.vectors.push_back(v);
+                break;
+            }
+            default: packet.strings.emplace_back(std::string(piece)); break;
+            }
+        } else {
+            packet.strings.emplace_back(std::string(piece));
+        }
+        if (slash == std::string_view::npos) break;
+        start = slash + 1;
+    }
+}
+
+void Manager::fallback(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
+    (void)packet;
+    engine.note(type_name_ + " command " + std::string(command) + " (" + ram.info_name + ")");
+}
+
+// ---------------------------------------------------------------------------
+// Messenger (803050A8 / 80305344 / 80305A28 / deferred queue)
+// ---------------------------------------------------------------------------
+void Messenger::add_row(std::string category, std::optional<std::string> name, std::int32_t index, Ram* recipient) {
+    rows_.push_back({std::move(category), std::move(name), index, recipient});
+}
+
+void Messenger::remove_rows(Manager* manager) {
+    std::erase_if(rows_, [&](const MessengerRow& row) { return row.recipient && row.recipient->manager == manager; });
+}
+
+void Messenger::clear() {
+    rows_.clear();
+    deferred_.clear();
+}
+
+namespace {
+bool row_matches(const MessengerRow& row, std::string_view category, std::optional<std::string_view> name, std::int32_t index) {
+    if (row.category != category) return false;
+    if (name && row.name && *row.name != *name) return false;
+    if (index != -1 && row.index != -1 && row.index != index) return false;
+    return true;
+}
+} // namespace
+
+std::size_t Messenger::count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const {
+    std::size_t n = 0;
+    for (const auto& row : rows_) if (row_matches(row, category, name, index)) ++n;
+    return n;
+}
+
+std::size_t Messenger::send(Engine& engine, std::string_view category, std::optional<std::string_view> name,
+                            std::int32_t index, std::string_view command, Packet& packet) {
+    if (command == "SEARCH") {
+        const auto n = count(category, name, index);
+        packet.bools.push_back(n != 0);
+        packet.ints.push_back(static_cast<std::int32_t>(n));
+        return n;
+    }
+    // Capture the matching recipients first; handlers may register or send.
+    std::vector<Ram*> recipients;
+    for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    if (recipients.empty()) {
+        engine.note("no recipient: " + std::string(category) + " " + std::string(command));
+        return 0;
+    }
+    for (auto* ram : recipients) {
+        if (!ram || !ram->manager) continue;
+        if (!ram->manager->command(engine, *ram, command, packet)) ram->manager->fallback(engine, *ram, command, packet);
+    }
+    return recipients.size();
+}
+
+void Messenger::post(std::int64_t time, std::string category, std::optional<std::string> name, std::int32_t index,
+                     std::string command, Packet arguments) {
+    DeferredMessage message{time, std::move(category), std::move(name), index, std::move(command), std::move(arguments)};
+    auto it = std::upper_bound(deferred_.begin(), deferred_.end(), message.time,
+                               [](std::int64_t t, const DeferredMessage& m) { return t < m.time; });
+    deferred_.insert(it, std::move(message));
+}
+
+void Messenger::update(Engine& engine) {
+    while (!deferred_.empty() && deferred_.front().time <= engine.time()) {
+        DeferredMessage message = std::move(deferred_.front());
+        deferred_.erase(deferred_.begin());
+        std::optional<std::string_view> name;
+        if (message.name) name = *message.name;
+        send(engine, message.category, name, message.index, message.command, message.arguments);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Demo manager (802F7580, 802F7BDC, 802F7EC0)
+// ---------------------------------------------------------------------------
+void DemoManager::add(DemoRecord record) {
+    if (!current_) {
+        current_ = std::make_unique<DemoWork>();
+        in_switch_ = false;
+    }
+    current_->records.push_back(std::move(record));
+}
+
+void DemoManager::begin_switch(DemoRecord record) {
+    if (in_switch_) return;
+    record.type = 3;
+    add(std::move(record));
+    in_switch_ = true;
+}
+
+void DemoManager::add_case(std::int32_t value) {
+    if (!current_ || !in_switch_) return;
+    DemoRecord record;
+    record.type = 4;
+    record.case_value = value;
+    current_->records.push_back(std::move(record));
+}
+
+void DemoManager::end_switch() {
+    if (!current_ || !in_switch_) return;
+    in_switch_ = false;
+    DemoRecord record;
+    record.type = 5;
+    current_->records.push_back(std::move(record));
+}
+
+void DemoManager::run() {
+    if (!current_ || in_switch_) return;
+    running_.push_back(std::move(current_));
+    current_.reset();
+    in_switch_ = false;
+}
+
+void DemoManager::clear() {
+    current_.reset();
+    running_.clear();
+    in_switch_ = false;
+}
+
+void DemoManager::update(Engine& engine) {
+    for (std::size_t w = running_.size(); w-- > 0;) {
+        if (w >= running_.size()) continue;
+        auto* work = running_[w].get();
+        auto& records = work->records;
+        std::size_t cursor = work->cursor;
+        while (cursor < records.size()) {
+            bool block = false;
+            const DemoRecord record = records[cursor];
+            if (record.type == 4) {
+                while (cursor < records.size()) {
+                    ++cursor;
+                    if (cursor >= records.size() || records[cursor].type == 5) break;
+                }
+            } else if (record.type == 7) {
+                if (record.argument) engine.run_script(*record.argument);
+            } else if (record.type >= 0 && record.type <= 3) {
+                Packet packet;
+                if (record.argument) parse_packet_arguments(*record.argument, packet);
+                std::optional<std::string_view> name;
+                if (record.name) name = *record.name;
+                if (record.delay_frames > 0) {
+                    engine.messenger().post(engine.time() + kFrameNs * record.delay_frames, record.category, record.name,
+                                            record.index, record.command, std::move(packet));
+                } else {
+                    engine.messenger().send(engine, record.category, name, record.index, record.command, packet);
+                }
+                if (record.type == 2) {
+                    if (!packet.bools.empty()) { if (packet.bools[0]) block = true; }
+                    else block = true;
+                } else if (record.type == 1) {
+                    if (!packet.bools.empty()) { if (packet.bools[0] != 1) block = true; }
+                    else block = true;
+                } else if (record.type == 3) {
+                    if (!packet.ints.empty()) {
+                        const auto value = packet.ints[0];
+                        while (cursor < records.size()) {
+                            ++cursor;
+                            if (cursor >= records.size()) break;
+                            if (records[cursor].type == 4 && records[cursor].case_value == value) break;
+                            if (records[cursor].type == 5) break;
+                        }
+                    }
+                }
+            }
+            if (block) break;
+            ++cursor;
+        }
+        if (w < running_.size() && running_[w].get() == work) work->cursor = cursor;
+    }
+    std::erase_if(running_, [](const std::unique_ptr<DemoWork>& work) { return work->cursor >= work->records.size(); });
+}
+
+// ---------------------------------------------------------------------------
+// Engine
+// ---------------------------------------------------------------------------
+Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResources::open(data_root)) {
+    global_root_.kind = NodeKind::group;
+    global_root_.name = "GlobalRoot";
+    register_default_managers(*this);
+}
+
+Engine::~Engine() = default;
+
+void Engine::add_manager(std::unique_ptr<Manager> manager) { managers_.push_back(std::move(manager)); }
+
+Manager* Engine::manager(std::string_view type_name) const {
+    for (const auto& m : managers_) if (m->type_name() == type_name) return m.get();
+    return nullptr;
+}
+
+void Engine::note(std::string text) {
+    for (auto& n : notes_) {
+        if (n.text == text) { ++n.count; return; }
+    }
+    log("unimplemented: " + text);
+    notes_.push_back({std::move(text), 1});
+}
+
+void Engine::log(std::string text) {
+    std::cerr << "[" << frame_ << "] " << text << '\n';
+    log_.push_back(std::move(text));
+    while (log_.size() > 400) log_.pop_front();
+}
+
+void Engine::request_stage(std::string name) {
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    pending_stage_ = std::move(name);
+}
+
+std::string Engine::loader_state() const {
+    if (loader_state_ < 0) return "idle";
+    return "state " + std::to_string(loader_state_);
+}
+
+void Engine::attach_scene_root(Node* root) {
+    if (!root) return;
+    if (std::find(global_root_.children.begin(), global_root_.children.end(), root) != global_root_.children.end()) return;
+    global_root_.children.push_back(root);
+}
+
+Node* Engine::find_named_node(Node* from, std::string_view name) {
+    if (!from) return nullptr;
+    if (from->name == name) return from;
+    for (auto* child : from->children) if (auto* found = find_named_node(child, name)) return found;
+    return nullptr;
+}
+
+void Engine::begin_stage_load() {
+    const std::string next = pending_stage_;
+    pending_stage_.clear();
+    log("stage change -> " + next);
+    for (auto& m : managers_) m->clear_stage(*this);
+    messenger_.clear();
+    demo_.clear();
+    global_root_.children.clear();
+    for (auto& file : files_) retired_.push_back(file.document);
+    for (auto& file : files_) scenes_.release_document(file.document.get());
+    files_.clear();
+    retired_.clear();
+    deferred_infos_.clear();
+    lua_infos_.clear();
+    common_queue_.clear();
+    lua_.reset();
+    stage_name_ = next;
+    stage_folder_ = next;
+    loader_state_ = 0;
+}
+
+void Engine::load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred) {
+    std::shared_ptr<const IgbDocument> document;
+    try {
+        document = std::make_shared<const IgbDocument>(read_igb_document(resources_.read(logical_path)));
+    } catch (const std::exception& error) {
+        log("load failed: " + logical_path + ": " + error.what());
+        return;
+    }
+    files_.push_back({logical_path, document, member});
+    if (!document->info_list_reference) return;
+    for (const auto& element : document->object_list(*document->info_list_reference)) {
+        if (!element) continue;
+        ObjectView info(document.get(), *element);
+        if (info.type() == "beLuaInfo") {
+            lua_infos_.push_back(info);
+            continue;
+        }
+        deferred.push_back(info);
+    }
+}
+
+void Engine::register_info(const ObjectView& info) {
+    bool accepted = false;
+    for (auto& m : managers_) {
+        if (m->accepts(info)) {
+            m->add_info(*this, info);
+            accepted = true;
+            break;
+        }
+    }
+    if (!accepted) note("info type " + info.type());
+}
+
+void Engine::process_stage_loader() {
+    if (loader_state_ < 0) return;
+    switch (loader_state_) {
+    case 0: {
+        try {
+            const auto descriptor = load_package_descriptor(resources_, stage_name_ + ".igb");
+            std::string section = descriptor.section;
+            log("stage " + stage_name_ + " section " + section + ", " + std::to_string(descriptor.members.size()) + " members");
+            // Preliminary "/s" members first (state 1), then the rest (state 2).
+            std::vector<ObjectView> preliminary;
+            for (const auto& member : descriptor.members) {
+                if (member.suffix != "/s") continue;
+                const auto document = std::make_shared<const IgbDocument>(read_package_member(resources_, member));
+                files_.push_back({stage_name_ + member.specifier, document, true});
+                if (document->info_list_reference)
+                    for (const auto& element : document->object_list(*document->info_list_reference))
+                        if (element) preliminary.push_back(ObjectView(document.get(), *element));
+            }
+            for (const auto& info : preliminary) register_info(info);
+            for (const auto& member : descriptor.members) {
+                if (member.suffix == "/s") continue;
+                const auto document = std::make_shared<const IgbDocument>(read_package_member(resources_, member));
+                files_.push_back({stage_name_ + member.specifier, document, true});
+                if (!document->info_list_reference) continue;
+                for (const auto& element : document->object_list(*document->info_list_reference)) {
+                    if (!element) continue;
+                    ObjectView info(document.get(), *element);
+                    if (info.type() == "beLuaInfo") lua_infos_.push_back(info);
+                    else deferred_infos_.push_back(info);
+                }
+            }
+        } catch (const std::exception& error) {
+            log(std::string("stage load failed: ") + error.what());
+            loader_state_ = -1;
+            return;
+        }
+        loader_state_ = 3;
+        break;
+    }
+    case 3:
+        install_lua();
+        run_script("func.lua");
+        run_script("boot.lua");
+        loader_state_ = 4;
+        break;
+    case 4: {
+        auto queue = std::move(common_queue_);
+        common_queue_.clear();
+        for (const auto& path : queue) load_file(path, false, deferred_infos_);
+        loader_state_ = 5;
+        break;
+    }
+    case 5: {
+        auto infos = std::move(deferred_infos_);
+        deferred_infos_.clear();
+        for (const auto& info : infos) register_info(info);
+        loader_state_ = 6;
+        break;
+    }
+    case 6: {
+        Packet packet;
+        messenger_.send(*this, "LAYERCTL", std::nullopt, -1, "ORDER", packet);
+        loader_state_ = 7;
+        break;
+    }
+    case 7: {
+        Packet packet;
+        messenger_.send(*this, "TEXTCTL", std::nullopt, -1, "INITIALIZE", packet);
+        run_script("start.lua");
+        loader_state_ = 8;
+        break;
+    }
+    case 8:
+        loader_state_ = 9;
+        break;
+    case 9:
+        run_script("first.lua");
+        loader_state_ = -1;
+        log("stage " + stage_name_ + " started");
+        break;
+    default:
+        loader_state_ = -1;
+        break;
+    }
+}
+
+void Engine::step(const std::array<PadState, 4>& pads) {
+    pads_ = pads;
+    if (!pad_input_enabled_)
+        for (auto& pad : pads_) { pad.held = pad.pressed = pad.released = 0; pad.stick_x = pad.stick_y = 0; }
+    if (!pending_stage_.empty()) begin_stage_load();
+    process_stage_loader();
+    messenger_.update(*this);
+    demo_.update(*this);
+    for (auto& m : managers_) m->update(*this);
+    time_ += kFrameNs;
+    ++frame_;
+}
+
+void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color) {
+    out.clear();
+    clear_color = {0, 0, 0, 1};
+    if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
+    if (auto* cam = get<CameraManager>()) cam->frame_camera(*this, camera);
+    TraversalContext context;
+    context.cache = &scenes_;
+    context.time = time_;
+    context.camera = camera;
+    context.output = &out;
+    if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
+    traverse(&global_root_, context);
+}
+
+} // namespace dw4::engine

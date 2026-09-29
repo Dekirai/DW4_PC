@@ -1,0 +1,194 @@
+#pragma once
+
+#include "dw4/engine/igb_view.hpp"
+#include "dw4/engine/math.hpp"
+
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace dw4::engine {
+
+// Decoded igGeometryAttr1_5 vertex/index data, expanded to an indexed
+// triangle list. The pointer identity is stable for the owning cache.
+struct GeometryData {
+    std::vector<Vec3f> positions;
+    std::vector<Vec3f> normals;
+    std::vector<std::uint32_t> colors; // Original packed RGBA8 bytes in memory order.
+    std::vector<float> texcoords;      // u,v pairs.
+    std::vector<float> weights;        // weight_count floats per vertex.
+    std::vector<std::uint8_t> blend_indices; // weight_count indices per vertex.
+    std::uint32_t weight_count{};
+    std::vector<std::uint32_t> indices; // Triangles.
+    Vec3f bounds_min{}, bounds_max{};
+    bool valid{};
+    std::string diagnostic;
+};
+
+GeometryData decode_geometry(const ObjectView& geometry_attr);
+
+enum class AttrKind : std::uint8_t {
+    unknown, texture_bind, texture_state, texture_matrix_state, color, material, blend_function, blend_state,
+    alpha_function, alpha_state, depth_state, depth_write_state, depth_function, cull_face, lighting_state,
+    light, light_state, fog, fog_state, shade_model, model_view_matrix, projection_matrix, viewport, color_mask,
+    vertex_blend_state, normalize_normals, geometry
+};
+
+struct TextureSampler {
+    int mag_filter = 1, min_filter = 1, wrap_s = 1, wrap_t = 1;
+};
+
+struct Attribute {
+    AttrKind kind = AttrKind::unknown;
+    ObjectView object;
+    std::int32_t unit{};
+    bool enabled{};
+    std::int32_t e0{}, e1{}, e2{};
+    float f0{}, f1{};
+    Vec4f color{1, 1, 1, 1};
+    Vec4f ambient{}, emission{}, specular{};
+    Mat4 matrix{};
+    ObjectView image;        // texture binding image
+    ObjectView texture;      // igTextureAttr
+    TextureSampler sampler;
+    std::int32_t viewport[4]{};
+    bool mask[4]{true, true, true, true};
+};
+
+enum class NodeKind : std::uint8_t {
+    unknown, group, attr_set, switch_node, transform, geometry, actor, billboard, blend_matrix_select,
+    light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select
+};
+
+struct TransformSequence {
+    std::vector<Vec3f> translations;
+    std::vector<Vec4f> rotations;
+    std::vector<Vec3f> scales;
+    std::vector<std::int64_t> times; // nanoseconds
+    std::uint32_t driven_channels{};
+    std::int32_t play_mode{};
+    std::int64_t time_offset{}, duration{};
+    Vec3f center{};
+    bool valid{};
+    Mat4 evaluate(std::int64_t time) const;
+};
+
+// Runtime mirror of one serialized igNode. Shared DAG nodes stay shared, so a
+// manager state change affects every placement, as in the original engine.
+struct Node {
+    NodeKind kind = NodeKind::unknown;
+    ObjectView object;
+    std::string name;
+    std::vector<Node*> children;
+    std::vector<const Attribute*> attributes;      // igAttrSet state attributes
+    std::vector<const Attribute*> geometries;      // igGeometry payloads
+    Mat4 matrix{};
+    bool has_matrix{};
+    std::shared_ptr<TransformSequence> sequence;
+    std::vector<std::uint32_t> mask;               // igSwitch child bits
+    // beModelCtrlNode2 node clock (original slots 12..14).
+    float time_scale = 1.0f;
+    std::int64_t time_bias{};
+    bool time_override{};
+    // Runtime overrides applied by managers (ACTION2 appearance, MODELCTRL).
+    std::optional<Vec4f> color_override;
+    std::optional<bool> blend_override, texture_override, lighting_override;
+    bool hidden{};
+    // Extra runtime transform post-multiplied onto the node's own matrix.
+    std::optional<Mat4> runtime_matrix;
+    // Billboard axis mode etc.
+    std::int32_t billboard_mode{};
+    // Actor / skin data is attached by the animation module.
+    void* actor{};
+
+    bool child_enabled(std::size_t index) const;
+    void set_child_enabled(std::size_t index, bool enabled);
+    void set_all_children(bool enabled);
+};
+
+struct RenderState {
+    const Attribute* texture{};
+    bool texture_enabled{};
+    bool blend_enabled{};
+    std::int32_t blend_src = 1, blend_dst = 0, blend_equation = 0;
+    bool alpha_test{};
+    std::int32_t alpha_func = 7;
+    float alpha_ref{};
+    bool depth_test = true, depth_write = true;
+    std::int32_t depth_func = 3;
+    bool cull_enabled{};
+    std::int32_t cull_mode = 1;
+    bool lighting{};
+    Vec4f color{1, 1, 1, 1};
+    std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
+    Vec4f diffuse{1, 1, 1, 1}, ambient{0.2f, 0.2f, 0.2f, 1}, emission{0, 0, 0, 1};
+    bool fog{};
+    const Attribute* fog_params{};
+    std::vector<const Attribute*> lights;
+    std::optional<Mat4> projection;
+    std::optional<Mat4> view;
+    std::optional<std::array<std::int32_t, 4>> viewport;
+    bool color_write = true;
+    bool vertex_blend{};
+};
+
+struct DrawItem {
+    const GeometryData* geometry{};
+    const Node* node{};
+    Mat4 model{};
+    RenderState state;
+    std::uint32_t layer{};
+    std::uint32_t order{};
+    // Optional skinning palette (row-vector matrices) for weighted geometry.
+    std::shared_ptr<const std::vector<Mat4>> palette;
+};
+
+struct FrameCamera {
+    Mat4 view{};
+    Mat4 projection{};
+};
+
+class SceneCache {
+public:
+    Node* node(const IgbDocument* document, std::uint32_t reference);
+    Node* node(const ObjectView& view) { return view ? node(view.document(), view.reference()) : nullptr; }
+    const GeometryData* geometry(const Attribute* attribute);
+    Node* find(const IgbDocument* document, std::uint32_t reference) const;
+    void release_document(const IgbDocument* document);
+
+private:
+    const Attribute* attribute(const ObjectView& view);
+    struct Key {
+        const IgbDocument* document;
+        std::uint32_t reference;
+        bool operator==(const Key&) const = default;
+    };
+    struct KeyHash {
+        std::size_t operator()(const Key& key) const noexcept {
+            return std::hash<const void*>{}(key.document) ^ (std::size_t(key.reference) * 0x9e3779b97f4a7c15ull);
+        }
+    };
+    std::unordered_map<Key, std::unique_ptr<Node>, KeyHash> nodes_;
+    std::unordered_map<Key, std::unique_ptr<Attribute>, KeyHash> attributes_;
+    std::unordered_map<const Attribute*, std::unique_ptr<GeometryData>> geometry_;
+};
+
+struct TraversalContext {
+    SceneCache* cache{};
+    std::int64_t time{};            // world time in nanoseconds
+    FrameCamera camera;             // defaults when a scene supplies no matrices
+    std::vector<DrawItem>* output{};
+    std::uint32_t layer{};
+    std::uint32_t order{};
+    std::function<void(const Node&, const Mat4& model, TraversalContext&)> actor_hook;
+};
+
+void traverse(Node* root, TraversalContext& context);
+void traverse(Node* root, TraversalContext& context, const Mat4& model, const RenderState& state, std::int64_t time);
+
+} // namespace dw4::engine
