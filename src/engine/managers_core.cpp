@@ -416,6 +416,12 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "STOP") { movie_playing_ = false; return true; }
         return false;
     }
+    // Audio is not played: streams report ready and nothing as playing, so
+    // scripts waiting on the sound system continue.
+    if (command.starts_with("IS")) {
+        packet.bools.push_back(command.ends_with("READY") ? 1 : 0);
+        return true;
+    }
     engine.note("audio " + std::string(command) + (packet.strings.empty() ? "" : " " + std::string(packet.string(0))));
     return true;
 }

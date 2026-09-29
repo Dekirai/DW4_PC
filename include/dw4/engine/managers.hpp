@@ -526,7 +526,7 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     // MATisAllPlayer / MATgetPlayerNo / MATisRideOffPlayer for the running mat script.
-    bool script_call(Engine& engine, const std::string& method, std::vector<Lua4Value>& out);
+    bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
 
 private:
     struct Mat {

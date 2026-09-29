@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <numbers>
 
 namespace dw4::engine {
@@ -799,6 +801,17 @@ void ModelCtrlManager::update_enemy(Engine& engine, ModelRam& ram) {
 // 8030E56C: base CHKBULLET target path. Gates, body overlap, target hit script
 // "hit_<name>.lua" (8030B6EC) and the forced turn toward the source.
 bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) {
+    // DW4_TRACE_HIT logs every CHKBULLET a target receives.
+    static const bool trace = std::getenv("DW4_TRACE_HIT") != nullptr;
+    if (trace && packet.vectors.size() >= 2) {
+        char line[256];
+        const Vec3f p = ram.node ? Vec3f{ram.node->matrix(3, 0), ram.node->matrix(3, 1), ram.node->matrix(3, 2)} : Vec3f{};
+        std::snprintf(line, sizeof line, "CHKBULLET %d from %s#%d -> %s#%d gen=%d ctrl=%d at (%.1f,%.1f,%.1f) box (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)",
+                      packet.integer(0), std::string(packet.string(0)).c_str(), packet.integer(1, -1), ram.info_name.c_str(), ram.index,
+                      ram.generated ? 1 : 0, ram.control_enabled ? 1 : 0, p.x, p.y, p.z, packet.vectors[0].x, packet.vectors[0].y,
+                      packet.vectors[0].z, packet.vectors[1].x, packet.vectors[1].y, packet.vectors[1].z);
+        engine.log(line);
+    }
     if (!ram.generated || !ram.control_enabled || ram.seq_name == "SQ_ERAS" || !ram.hit || !ram.node) return false;
     if (packet.vectors.size() < 2) return false;
     // A model never hits itself; MUTEKI blocks everything but p-to-p hits.
@@ -817,6 +830,11 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
                           c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
             wmin = {std::min(wmin.x, w.x), std::min(wmin.y, w.y), std::min(wmin.z, w.z)};
             wmax = {std::max(wmax.x, w.x), std::max(wmax.y, w.y), std::max(wmax.z, w.z)};
+        }
+        if (trace) {
+            char line[160];
+            std::snprintf(line, sizeof line, "  body (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)", wmin.x, wmin.y, wmin.z, wmax.x, wmax.y, wmax.z);
+            engine.log(line);
         }
         if (wmin.x <= in_max.x && wmax.x >= in_min.x && wmin.y <= in_max.y && wmax.y >= in_min.y && wmin.z <= in_max.z &&
             wmax.z >= in_min.z) {

@@ -78,10 +78,26 @@ void MatCtrlManager::update(Engine& engine) {
     }
 }
 
-bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std::vector<Lua4Value>& out) {
-    if (method != "MATisAllPlayer" && method != "MATgetPlayerNo" && method != "MATisRideOffPlayer") return false;
+bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args,
+                                 std::vector<Lua4Value>& out) {
+    if (method != "MATisAllPlayer" && method != "MATgetPlayerNo" && method != "MATisRideOffPlayer" &&
+        method != "MATgetPlayerMatStat" && method != "MATisPlayer")
+        return false;
     const std::uint32_t current = context_ ? context_->current & 0xFu : 0;
     const std::uint32_t previous = context_ ? context_->previous & 0xFu : 0;
+    if (method == "MATisPlayer") {
+        // 80302B14: any player on the running mat.
+        out = {Lua4Value::number(current ? 1 : 0)};
+        return true;
+    }
+    if (method == "MATgetPlayerMatStat") {
+        // 80302DB8: 3 staying on, 2 stepped on, 1 stepped off, 0 away.
+        const int slot = !args.empty() && args[0].type() == Lua4Type::Number ? int(args[0].as_number()) : 0;
+        const std::uint32_t bit = slot >= 0 && slot < 4 ? 1u << slot : 0u;
+        const bool now = (current & bit) != 0, before = (previous & bit) != 0;
+        out = {Lua4Value::number(now && before ? 3 : now ? 2 : before ? 1 : 0)};
+        return true;
+    }
     if (method == "MATisAllPlayer") {
         std::uint32_t joined = 0;
         if (auto* sys = engine.get<GameSystem>())

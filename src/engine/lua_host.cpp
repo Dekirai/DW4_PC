@@ -409,7 +409,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method.starts_with("MAT")) {
         if (auto* mats = get<MatCtrlManager>()) {
             std::vector<Lua4Value> out;
-            if (mats->script_call(*this, method, out)) return out;
+            if (mats->script_call(*this, method, args, out)) return out;
         }
     }
     if (auto* sys = get<GameSystem>()) {
