@@ -6,17 +6,17 @@ Source pushes remain part of the development workflow.
 
 The native source port is the active local validation scope:
 
-- Native core/workbench: use `scripts/build.ps1 -Jobs 4`, which runs
-  CTest after building. Add `-Configuration Release -CoreOnly` for portable-core
-  changes. Graphics changes require the existing finite smoke checks.
+- Core, engine and runtime: use `scripts/build.ps1 -Jobs 4`, which runs
+  CTest after building. Add `-CoreOnly` for portable-core changes. Engine and
+  graphics changes require hidden `dw4_game --smoke-test` checks.
 
 The DolRecomp/ModernGekko experiment was removed from the source tree; it
 remains in Git history only. Do not continue that build or optimization queue.
 
 Core CTest success alone does not validate complete original gameplay. Builds never
 start an interactive game. Keep generated builds, packages and original game
-data out of Git. See `docs/PORTING_STRATEGY.md` for the architecture and sequence.
+data out of Git. See `docs/ARCHITECTURE.md` and `docs/PORTING_STRATEGY.md`.
 
 The former hosted build definition remains recoverable in repository history.
-Native-core evidence is recorded in `docs/VALIDATION.md`. Historical recompilation
-results do not establish native gameplay, performance or UI implementation.
+Historical test records of the former core are kept in
+`docs/research/VALIDATION.md`; they do not establish engine gameplay.

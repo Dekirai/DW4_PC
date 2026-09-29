@@ -164,4 +164,9 @@ private:
 // This native matrix boundary rejects non-finite inputs/results atomically;
 // the scalar state above preserves the original arithmetic that produced them.
 void translate_model_local(std::array<float, 16>& matrix, const std::array<float, 3>& translation);
+
+// 8030C85C / 801292D4: model basis for applied Euler turn angles (radians),
+// keeping the original exact-zero branches, single rounding and FMA order.
+// Translation XYZ is retained; the other fourth-column components reset.
+void original_model_turn_basis(std::array<float, 16>& matrix, const std::array<float, 3>& angles);
 } // namespace dw4

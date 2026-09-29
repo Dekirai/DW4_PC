@@ -294,6 +294,69 @@ MotionStep MotionChannels::advance(MotionTimer& timer, std::uint64_t world_time)
     const auto result = advance(motion_timer_frames(candidate,world_time));
     timer = candidate; return result;
 }
+namespace {
+void turn_finite(float value) {
+    if (!std::isfinite(value)) throw MotionError("Model motion cannot publish a non-finite pose.");
+}
+float euler_single(double value) {
+    // Original frsp checks tininess before rounding the returned double trig
+    // value. Trig itself remains the explicitly shared host-libm boundary.
+    return std::abs(value)<std::numeric_limits<float>::min() ?
+        std::copysign(0.0f,static_cast<float>(value)) : static_cast<float>(value);
+}
+float euler_product(float a,float b) {
+    const float rounded=a*b;
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum || (magnitude==minimum &&
+        std::abs(static_cast<double>(a)*static_cast<double>(b))<minimum))
+        return std::copysign(0.0f,rounded);
+    return rounded;
+}
+float euler_fused(float a,float b,float addend) {
+    const float rounded=std::fma(a,b,addend);
+    const float magnitude=std::abs(rounded),minimum=std::numeric_limits<float>::min();
+    if (magnitude<minimum) return std::copysign(0.0f,rounded);
+    if (magnitude!=minimum) return rounded;
+    // A binary32 product is exact in double. TwoSum preserves a deficit that
+    // a double-only sum would lose at the pre-round min-normal boundary.
+    const double product=static_cast<double>(a)*static_cast<double>(b);
+    const double sum=product+static_cast<double>(addend);
+    const double virtual_addend=sum-product;
+    const double error=(product-(sum-virtual_addend))+(static_cast<double>(addend)-virtual_addend);
+    if (std::abs(sum)<minimum || (std::abs(sum)==minimum &&
+        ((sum>0 && error<0) || (sum<0 && error>0))))
+        return std::copysign(0.0f,rounded);
+    return rounded;
+}
+void euler_basis(std::array<float,16>& matrix, const std::array<float,3>& angles) {
+    for (const auto value : angles) turn_finite(value);
+    for (std::size_t i=12;i<15;++i) turn_finite(matrix[i]);
+    // 801292D4 special-cases exact zero before calling double sin/cos. Keep
+    // those branches, their positive-zero products and the original FMA order.
+    const float sx = angles[0] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[0])));
+    const float cx = angles[0] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[0])));
+    const float sy = angles[1] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[1])));
+    const float cy = angles[1] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[1])));
+    const float sxsy = angles[1] == 0 ? 0 : euler_product(sx,sy);
+    const float sz = angles[2] == 0 ? 0 : euler_single(std::sin(static_cast<double>(angles[2])));
+    const float cz = angles[2] == 0 ? 1 : euler_single(std::cos(static_cast<double>(angles[2])));
+    const float cxsz = angles[2] == 0 ? 0 : euler_product(cx,sz);
+    const float cxcz=euler_product(cx,cz),sxsz=euler_product(sx,sz),sxcz=euler_product(sx,cz);
+    matrix[0]=euler_product(cy,cz);matrix[1]=euler_product(cy,sz);matrix[2]=-sy;
+    matrix[4]=euler_fused(sxsy,cz,-cxsz);
+    matrix[5]=euler_fused(sxsy,sz,cxcz);matrix[6]=euler_product(sx,cy);
+    matrix[8]=euler_fused(cxcz,sy,sxsz);
+    matrix[9]=euler_fused(cxsz,sy,-sxcz);matrix[10]=euler_product(cx,cy);
+    // 80129134 resets these components from globals initialized at 8012F57C;
+    // 8030C85C then restores only translation XYZ with 80128D90.
+    matrix[3] = 0; matrix[7] = 0; matrix[11] = 0; matrix[15] = 1;
+    for (const auto value : matrix) turn_finite(value);
+}
+} // namespace
+
+void original_model_turn_basis(std::array<float,16>& matrix, const std::array<float,3>& angles) {
+    euler_basis(matrix,angles);
+}
 void translate_model_local(std::array<float,16>& matrix, const std::array<float,3>& translation) {
     for (const auto value : matrix) finite(value);
     for (const auto value : translation) finite(value);

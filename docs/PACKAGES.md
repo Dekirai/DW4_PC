@@ -59,8 +59,8 @@ members through the same routine in state 2. The `/s` marker changes this
 staging; it does not select another AFS payload.
 
 Consequently, exact `/s` members support bounded byte inspection, with the
-suffix and a stage diagnostic retained. This does not claim that the native
-workbench executes those loading stages. Other suffixes and filename forms
+suffix and a stage diagnostic retained. The engine's stage loader reads the
+`/s` members first, as the original preliminary loading state does. Other suffixes and filename forms
 remain visible as unsupported rows and cannot be opened by the package reader.
 No suffix is silently stripped to turn an unsupported member into a supported
 one.

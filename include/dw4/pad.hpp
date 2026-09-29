@@ -71,7 +71,7 @@ PadStick gamecube_stick(std::int8_t x, std::int8_t y, bool c_stick = false) noex
 // and 10/6 update-count repeats. Direction masks accept either diagonal bit
 // pair; button and each stick channel have separate timers. Native sqrt/atan2
 // reproduce the recovered formulas, without a claim of bitwise PPC libm parity
-// at floating-point angular boundaries. See PLAYER_MOVEMENT_RESEARCH.md.
+// at floating-point angular boundaries. See docs/research/PLAYER_MOVEMENT_RESEARCH.md.
 class OriginalPads {
 public:
     static constexpr std::size_t slot_count = 4;

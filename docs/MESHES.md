@@ -6,7 +6,7 @@ the resulting geometry in its local coordinate space. This includes the
 Agumon geometry in `_common/p_agumon.igb`; it does not implement the character's
 rig, animation, scene transforms, or gameplay. A separate, bounded material
 resolver can associate a stored base image for the textured preview; see
-[MATERIALS.md](MATERIALS.md).
+[MATERIALS.md](research/MATERIALS.md).
 
 The implementation is independent C++20 with no graphics-library dependency.
 Positions are copied from the original little-endian float stream without
@@ -86,7 +86,7 @@ name/value tables. Read-only inspection establishes:
 
 These are format facts recovered from the user's local binary. No table bytes,
 original vertex buffers, or generated disassembly are included in the source.
-Further investigation details are recorded in [MESH_RESEARCH.md](MESH_RESEARCH.md).
+Further investigation details are recorded in [MESH_RESEARCH.md](research/MESH_RESEARCH.md).
 
 For topology 3, geometry slot 5 and slot 13 must be null. Slot 7 is the
 triangle count, and the vertex count must equal three times that count.

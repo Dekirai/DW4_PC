@@ -14,8 +14,8 @@ the original stored mesh positions.
 Version 0.6 also exposes `original_bone_transform()` and
 `evaluate_bone_transforms()` for a complete bone-local transform array. This
 separate path includes helper ancestors and supports the checked original
-animation loader. See [ANIMATIONS.md](ANIMATIONS.md) and the original arithmetic
-evidence in [ANIMATION_POSE.md](ANIMATION_POSE.md).
+animation loader. See [ANIMATIONS.md](research/ANIMATIONS.md) and the original arithmetic
+evidence in [ANIMATION_POSE.md](research/ANIMATION_POSE.md).
 
 ## Public API
 
@@ -153,7 +153,7 @@ The skeleton's separate float3 offset array is deliberately unused. Accumulating
 those offsets does not reproduce the inverse-joint reference space in Agumon.
 Serialized animation-combiner caches are also not treated as an active pose.
 Primary evidence and these limitations are documented in
-[SKINNING_RESEARCH.md](SKINNING_RESEARCH.md).
+[SKINNING_RESEARCH.md](research/SKINNING_RESEARCH.md).
 
 ## Original Agumon validation
 

@@ -203,5 +203,5 @@ does not supply missing gameplay services.
 Original chunks and all comparison traces remain in ignored `work/`. This
 establishes the inspected scripting boundary, not loading completion, controller
 registration, player movement or gameplay. Scheduling and embedded selection
-remain documented in [STARTUP_RESEARCH.md](STARTUP_RESEARCH.md); the caller's
+remain documented in [STARTUP_RESEARCH.md](research/STARTUP_RESEARCH.md); the caller's
 startup integration must stop at any unimplemented native stage.

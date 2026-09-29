@@ -4,67 +4,26 @@ The owner requests the complete USA GameCube game as a native PC version, with
 local multiplayer using separately connected controllers. Original behavior
 comes first; quality-of-life changes and optional enhancements follow it.
 
-The walking preview, extended with original ACTION and weapons in version 0.34,
-is a development aid. Its 120 Hz movement,
-speed, body dimensions, follow camera and visibility silhouette are provisional
-host behavior. They are not evidence of original gameplay compatibility.
+## Systems and current state
 
-## Selected recompilation evidence
-
-DolRecomp with ModernGekko is the active path; the manual-core implementation
-table below remains reference work. The rebuilt original-game package reaches
-the first **Game Start / Option** main menu after controlled Start commands.
-The final short 1x Vulkan window runs near 60 unique counter advances/s at
-normal speed, without audio replay in that window. Original movie playback is
-still slow, and audible quality, player selection, gameplay, saves and
-independent local controllers remain unverified. See
-[RECOMP_AUDIO.md](RECOMP_AUDIO.md#two-controlled-start-presses) for screenshots,
-exact timing and the muted-device scope, and [ROADMAP.md](ROADMAP.md) for the
-active acceptance gates. This does not complete the original-game baseline.
-
-## Retained manual-core completion requirements
-
-| System | Evidence required for the baseline | Current gap |
+| System | Required for the baseline | State in `dw4_engine` |
 | --- | --- | --- |
-| Startup and menus | Original title/start flow, player selection, loading states, transitions and error paths execute through native state | Preliminary loading, Static/Switch callbacks and func/boot inspection exist; full manager preparation, sound gates, start/first and menus remain |
-| Player lifecycle | Original character creation, initial state, equipment, spawn, death, revival and map transitions | Actual RAM/ONE construction, placement, GETPLAYER/GAMESTART, UI/map/status startup, ordinary sequence entry and player callback are connected through GENERATE; state machine scheduling, death/revival and transitions remain; see [MODEL_SEQUENCE_ENTRY.md](MODEL_SEQUENCE_ENTRY.md) |
-| Input and local multiplayer | Independent original button/stick semantics for 1–4 joined slots, device assignment, unplug/reconnect and pause/menu ownership | Actual player input/wait callbacks consume mutable physical pad owners, including original redirected fifth-slot reads; device polling/assignment, fifth-slot production and original multiplayer/player ownership remain |
-| Timing | Measured original update/timer/input semantics and presentation independent of simulation | Original capped per-RAM timers and uncapped system frame deltas exist; scheduler and lifecycle integration remain; preview timing is provisional |
-| Animation | State-driven original clips, blending, events, root motion, weapons, effects, damage/death and all playable character profiles | ACTION2, cached skin deformation, shared body/weapon draws, weapon labels and common child traversal exist alongside Se/Starter queues; compiled/general appearance drawing, effect actors, player scheduling and additional profiles remain |
-| Movement and collision | Recovered movement constants, slopes, walls, body/weapon/enemy interactions, transitions and original collision responses | A prepared neutral original player frame completes native CHECKLAND/CHECKWALL through shared HITFLOOR/HITWALL nodes, with all five stage collision infos, the recovered long timer and verified transform updates. Nonnull inputs, missing bounds, CHECKWALLFULL, hit-script/ride services, scheduling and camera remain; preview solver is provisional |
-| Camera and rendering | Original camera states, shared multiplayer framing, culling, materials, transparency, shadows, effects and HUD | Static/skin/weapon rendering, number UV owners, meter node times and shared HP bindings exist; original HUD traversal, camera and complete GX/material/frame parity remain |
-| Combat and enemies | Original targeting, attacks, timing windows, damage, knockback, enemy AI, bosses, rewards and difficulty behavior | Actual player input/attack waits and status timer updates connect to retained sequences; prepared target collision, Hit chunks and GAMERAM gates exist; remaining native damage/stat recipients, growth, collision scheduling, enemies and combat gameplay remain |
-| Progression and inventory | Original levels, experience, stats, items, weapons, skills, shops, quests, unlocks and endgame | Original GAMESTART base values, initial weapons, represented stats/techniques and names exist with retained DATABASE delivery; other item providers, skill growth, inventory actions and progression remain |
-| World and scripts | Original maps, triggers, doors, object controllers, NPCs, cutscenes and complete transitions | Named packages and selected scripts decode; runtime controller effects are incomplete |
-| Audio | Original music, sound banks, playback, priorities, volume, streaming and scene changes | Original event keys, delayed sound ownership and volume-down cleanup requests exist; real sound manager, bank transfer, playback and streaming remain |
-| Persistence | Correct save/load, slot ownership, inventory/progression round trips, multiplayer saves and interrupted-write behavior | Not implemented |
-| Complete playthrough | Reproducible original-reference runs through the game with 1–4 players and no skipped required native effects | Not established |
+| Startup and menus | Logos, title, Game Start / Option, new game, loading, transitions | Logos, title menu, option window (without text), character select panels and stage loader run; name entry, difficulty and memory card dialogs remain |
+| Player lifecycle | Creation, initial state, equipment, spawn, death, revival, map transitions | Partner choice reaches `gameStart.lua` and spawn points; stats, equipment, death and revival remain |
+| Input and local multiplayer | Original pad semantics for 1–4 slots, device assignment, pause/menu ownership | Original `bePadData` masks for four slots; only controller 1 is mapped by the host so far |
+| Animation | Clips, blending, events, weapons, effects | Skinned actors with Enbaya clips and ACTION2 motions; effects and weapons remain |
+| Movement and collision | Original movement, slopes, walls, jumps, platforms, collision responses | Recovered motion channels, walking and jumping; provisional floor/wall query on the original geometry |
+| World and scripts | Maps, triggers, doors, NPCs, cutscenes | Stage scripts, demo manager, dialogs, NPC talk and floor gates run; demo cameras and moving platforms remain |
+| Combat and enemies | Attacks, damage, AI, bosses, rewards | Talk hitboxes and hit scripts work; attacks, damage and enemies remain |
+| Progression and inventory | Levels, items, weapons, skills, shops, quests | Game flags and counters; the rest remains |
+| Audio | Music, sound effects, streaming | Requests are recorded, nothing is played yet |
+| Persistence | Save/load and slot ownership | Not implemented |
+| Complete playthrough | Reference runs through the whole game | Not established |
 
 ## Evidence discipline
 
-Use the supplied USA revision-0 extraction and matching original DOL checksum.
-Record source addresses and serialized fields for reconstructed behavior.
-Original frames, input traces, save states and generated disassembly remain in
-ignored local research directories. Only independent source and synthetic
-fixtures are published.
-
-Keep observed original behavior, inferred hypotheses and provisional host
-behavior separate. A parser test establishes only its checked format; a
-successful scene render does not establish combat, collision or progression.
-Unknown effects must stop the corresponding original path rather than become
-successful no-ops. Reuse native state implementations in the eventual game
-runtime instead of treating diagnostic reports as initialized engine objects.
-
-## Retained manual-core critical paths
-
-1. Reconstruct manager preparation, per-info/per-RAM initialization and messenger
-   state so deferred original resources acquire their actual native effects.
-2. Recover player input, movement, timing and camera logic while exercising the
-   original game as a behavioral reference.
-3. Resolve audio and layer/text prerequisites, then execute original start/first
-   phases and follow their player/menu/controller transitions.
-4. Extend that runtime through combat, world progression, persistence and local
-   multiplayer; compare representative original scenarios continuously.
-
-The complete baseline remains open until every requirement above has direct
-evidence. Individual milestones do not redefine completion.
+Use the supplied USA revision-0 extraction and the matching `main.dol`
+checksum. Record source addresses for reconstructed behavior. Original frames,
+input traces and generated disassembly stay in ignored local directories; only
+independent source is published. Keep observed original behavior and
+provisional host behavior separate, and verify changes in the running game.

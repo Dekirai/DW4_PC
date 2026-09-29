@@ -3,8 +3,8 @@
 Version 0.14 introduced the recovered scalar movement objects, MOVE/MOVEEX
 parameter decoding, movement channels, local matrix translation and
 the elapsed timer used by those channels. This portable C++ core has no SDL,
-graphics, Dolphin or executable-DOL dependency. It is not yet connected to the
-original player lifecycle or the provisional walking preview.
+graphics, Dolphin or executable-DOL dependency. `dw4_engine`'s MODELCTRL
+uses it for sequence MOVE commands, player walking and jumping.
 
 ## Evidence and implemented boundary
 
@@ -24,7 +24,7 @@ instructions/assets are distributed by this increment.
 | `8030A254` | Stop or transition into deceleration | `stop_motion` |
 | `8030A2D8` | Expire, advance speed, integrate displacement | `advance_motion` |
 | `8030A6BC` | MOVE/MOVEEX command branch effects | Decoder and `MotionChannels::apply`; timer/work/attachment preparation is separate |
-| `8030A448` | Rotation channel, turning, translation channels | Scalar outputs here; version 0.15 model integration in [MODEL_MOTION.md](MODEL_MOTION.md); callbacks remain |
+| `8030A448` | Rotation channel, turning, translation channels | Scalar outputs here; version 0.15 model integration in [MODEL_MOTION.md](research/MODEL_MOTION.md); callbacks remain |
 | `80128DC8` | Translate along a 4x4 model basis | `translate_model_local` |
 | `802E3580`, members `802E3614` | `beBaseInfoRamTimer`, size `0x40` | `MotionTimer` |
 | `8031DE44` | Start/restart a timer | `start_motion_timer`; named lookup and creation are caller responsibilities |
@@ -221,10 +221,10 @@ times `1.25f` (`80426808`), then calls turning helper `8030C85C`. Those actor
 fields, the turning helper, matrix assignment callbacks, trace output and
 attachment/MOVERL branches are not implemented by `MotionStep.rotation`.
 Version 0.15 adds a separate `advance_model` path for the recovered rotation,
-turning and translation order; see [MODEL_MOTION.md](MODEL_MOTION.md). Original
+turning and translation order; see [MODEL_MOTION.md](research/MODEL_MOTION.md). Original
 full model preparation, setter/trace callbacks and attachment behavior remain pending.
 Version 0.16 adds a supported command preparation/control layer, including
-timer creation and position-lock release; see [MODEL_CONTROL.md](MODEL_CONTROL.md).
+timer creation and position-lock release; see [MODEL_CONTROL.md](research/MODEL_CONTROL.md).
 
 ## Validation and next integration
 
@@ -256,5 +256,5 @@ matching weapon/action animation, recovered model turning and original collision
 response. Preserve original spawn basis and independent player ownership.
 The preview's 120 Hz solver, speed 80 and host camera remain provisional; changing
 one constant alone would not establish original movement. See
-[PLAYER_MOVEMENT_RESEARCH.md](PLAYER_MOVEMENT_RESEARCH.md) and
+[PLAYER_MOVEMENT_RESEARCH.md](research/PLAYER_MOVEMENT_RESEARCH.md) and
 [ORIGINAL_BASELINE.md](ORIGINAL_BASELINE.md).

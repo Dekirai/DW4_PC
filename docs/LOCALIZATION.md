@@ -5,8 +5,8 @@ not establish seven translated game languages. The named text buffers in every
 inspected French, German, Italian and Spanish pack are byte-identical to their
 English counterparts. Japanese has substantially different text, including
 Japanese script, and is a candidate for an optional language mode after runtime
-and font validation. The current recompiled game retains its original USA
-selection; an ImGui language selector is not implemented yet.
+and font validation. The engine uses the USA selection (`SYSgetCountry` 1);
+an ImGui language selector is not implemented yet.
 
 This audit covers the owner's extracted `GDJEB2` data and the USA executable
 with SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877`. It does not establish
@@ -72,7 +72,7 @@ With the original pack-only result, the helper queues the active folder's
 `separate/<prefix>pack.igb`. The native resolver converts ASCII uppercase to
 lowercase before matching the logical catalog, so the original `USA_pack.igb`
 request resolves to `usa_pack.igb`. The original script's prefix order matters:
-it differs from alphabetical order. See [STARTUP_HOST_RESEARCH.md](STARTUP_HOST_RESEARCH.md)
+it differs from alphabetical order. See [STARTUP_HOST_RESEARCH.md](research/STARTUP_HOST_RESEARCH.md)
 for the verified queue, registration and resolver behavior.
 
 This identifies a concrete game-specific selection point. It does not prove

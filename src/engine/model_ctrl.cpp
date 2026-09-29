@@ -1,5 +1,4 @@
 #include "dw4/engine/managers.hpp"
-#include "dw4/model_motion.hpp"
 #include "dw4/motion.hpp"
 
 #include <algorithm>

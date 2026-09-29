@@ -8,7 +8,7 @@ complete; it does not execute bytecode or complete the native loading stages.
 
 ## Source evidence
 
-[STARTUP_RESEARCH.md](STARTUP_RESEARCH.md) records the original USA DOL hash,
+[STARTUP_RESEARCH.md](research/STARTUP_RESEARCH.md) records the original USA DOL hash,
 guest addresses, registration path, scheduling states and selected chunk hashes.
 The relevant serialized graph is:
 
