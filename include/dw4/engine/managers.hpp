@@ -4,6 +4,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/motion.hpp"
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -276,6 +277,123 @@ private:
     std::vector<std::unique_ptr<SelectRam>> rams_;
 };
 
+// COMMDLCTRL helper (8035BE8C..8035C73C): opens, re-sequences and closes menu
+// models and tracks two wait lists. A sequence wait ends once the model left
+// the requested sequence; a close wait ends once the model is removed.
+class CommonModelControl {
+public:
+    void open(Engine& engine, int index, const std::string& name, const std::string& seq, bool track);  // 8035BE8C
+    void set(Engine& engine, int index, const std::string& name, const std::string& seq, bool track);   // 8035C2DC
+    void close(Engine& engine, int index, const std::string& name, const std::string& seq, bool track); // 8035C51C
+    bool is_live(Engine& engine, int index, const std::string& name);                                   // 8035C6D0
+    bool sequences_done() const { return sequence_waits_.empty(); }                                     // 8035C504
+    bool closes_done() const { return close_waits_.empty(); }                                           // 8035C724
+    void update(Engine& engine);                                                                         // 8035C73C
+    void reset() { sequence_waits_.clear(); close_waits_.clear(); }
+
+private:
+    struct Wait {
+        int index{};
+        std::string name, seq;
+    };
+    std::vector<Wait> sequence_waits_, close_waits_;
+};
+
+// TITLE2 (beNDMWTitle2, update 80369284, commands 8036B1C0): press start,
+// Game Start / Option menu, attract timeout and hand-off to LOADCTRL2.
+class Title2Manager final : public Manager {
+public:
+    Title2Manager() : Manager("beNDMWTitle2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWTitle2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+    int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
+
+private:
+    struct Option {
+        int kind{};                  // +20: 0 = window B (camera/light only)
+        int row{};                   // +24
+        bool confirmed{};            // +28
+        int camera_mode{}, light_mode = 1; // +32 / +36 committed values
+        bool keep{};                 // +40
+        int edit_camera{}, edit_light{}, edit_sound{}; // +44 / +48 / +52
+    };
+    struct TitleRam : Ram {
+        bool created{};              // data list at RAM +28
+        bool run{};                  // RAM +18, set by RUN
+        int cursor{}, choice{};      // CTRL +18 / +1C
+        int state{}, sub{}, step{}, detail{}; // CTRL +20..+2C
+        CommonModelControl models;
+        Option option;
+    };
+    void update_ram(Engine& engine, TitleRam& ram);
+    void update_option(Engine& engine, TitleRam& ram, bool up, bool down, bool left, bool right, std::uint32_t trigger);
+    std::vector<std::unique_ptr<TitleRam>> rams_;
+};
+
+// State shared by LOADCTRL2 and the four LOADINTF2 panels (COMMONINTF data,
+// created by LOADCTRL2 GENERATE / GENERATE_TITLE at 803689A8).
+struct CommonIntf {
+    struct Player {
+        bool joined{};   // +13
+        bool closed{};   // +14
+        int state{};     // [9]
+        int sub{}, step{}, detail{};
+        std::string digimon = "p_agumon";
+    };
+    bool active{};
+    bool title{};        // +64: started from the title screen
+    int state{};         // +48: 3 once every panel finished
+    int difficulty{};    // +60
+    std::array<Player, 4> players{};
+};
+
+// LOADCTRL2 (beNDMWLoadCtrl2, update 80368050, commands 803689A8).
+class LoadCtrl2Manager final : public Manager {
+public:
+    LoadCtrl2Manager() : Manager("beNDMWLoadCtrl2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadCtrl2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); common_ = {}; }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+    CommonIntf& common() { return common_; }
+    int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
+
+private:
+    struct CtrlRam : Ram {
+        bool created{};
+        bool title{};                    // CTRL +16
+        int state{}, sub{}, step{}, counter{}; // CTRL +20..+32
+        int camera_mode{}, light_mode{}; // manager +24 / +28
+        bool save_utility{};             // helper +12
+    };
+    std::vector<std::unique_ptr<CtrlRam>> rams_;
+    CommonIntf common_;
+};
+
+// LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
+// controller slot. The original panel runs data-slot, name, character and
+// difficulty dialogs; this reconstruction currently confirms the default
+// selection so the new-game hand-off to LOADCTRL2 can run.
+class LoadIntf2Manager final : public Manager {
+public:
+    LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadIntf2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct PanelRam : Ram {
+        bool created{};
+    };
+    std::vector<std::unique_ptr<PanelRam>> rams_;
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:
@@ -412,6 +530,9 @@ public:
     std::int32_t difficulty{};
     std::int32_t difficulty_max{};
     std::int32_t camera_mode{};
+    std::int32_t light_mode{};
+    std::int32_t ninzu = 1;
+    bool game_started{}; // beSystem byte 4840: set by TITLE2 GAMESTART
     std::string gate_stage_name;
     std::int32_t gate_stage_no{};
     std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
