@@ -663,7 +663,10 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             auto& world = hitland->world();
             std::uint32_t mask = hitland->mask(ram.info_name);
             if (mask == 0) mask = ram.is_player ? 7u : 11u;
-            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask);
+            // OPEN QUESTION: kind 4 "limit" geometry (e.g. stag0101's inward-facing
+            // limit_Circle around the path) would block the only route if queried,
+            // so it is left out of wall queries until its gate is understood.
+            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask & ~4u);
             // PROVISIONAL model-to-model separation (the original delivers
             // CHECKWALL between the models' HitLandDeliv cylinders).
             const float own = std::max(hitland->radius(ram.info_name), 2.0f);

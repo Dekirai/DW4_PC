@@ -70,7 +70,9 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
     }
 }
 
-// Scripted input for automated runs: lines "frame button" (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R).
+// Scripted input for automated runs: lines "frame button [duration]" (button:
+// A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R) and "frame GOTO x z [duration]",
+// which steers player 1's stick toward world (x, z) relative to the camera.
 struct ScriptedInput {
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -81,6 +83,12 @@ struct ScriptedInput {
             std::istringstream fields(line);
             int duration = 6;
             if (!(fields >> frame >> name)) continue;
+            if (name == "GOTO") {
+                Goto g{frame, 0, 0, 600};
+                fields >> g.x >> g.z >> g.duration;
+                gotos.push_back(g);
+                continue;
+            }
             fields >> duration;
             std::uint32_t bit = 0;
             namespace b = dw4::pad_button;
@@ -101,6 +109,12 @@ struct ScriptedInput {
     }
     struct Press { int frame; std::uint32_t bit; int duration; };
     std::vector<Press> presses;
+    struct Goto { int frame; float x, z; int duration; };
+    std::vector<Goto> gotos;
+    const Goto* active_goto(int frame) const {
+        for (const auto& g : gotos) if (frame >= g.frame && frame < g.frame + g.duration) return &g;
+        return nullptr;
+    }
     std::uint32_t held(int frame) const {
         std::uint32_t bits = 0;
         for (const auto& p : presses) if (frame >= p.frame && frame < p.frame + p.duration) bits |= p.bit;
@@ -241,6 +255,24 @@ int run(const Options& options) {
             for (int i = 0; i < steps; ++i) {
                 std::uint32_t input = held | scripted.held(frame);
                 float stick_x = sx, stick_y = sy;
+                if (const auto* g = scripted.active_goto(frame); g && stick_x == 0 && stick_y == 0) {
+                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                    auto* cameras = engine.get<dw4::engine::CameraManager>();
+                    if (const auto* p = models ? models->player(0) : nullptr; p && p->node && cameras) {
+                        const float dx = g->x - p->node->matrix(3, 0), dz = g->z - p->node->matrix(3, 2);
+                        if (dx * dx + dz * dz > 4.0f) {
+                            dw4::engine::FrameCamera camera;
+                            cameras->frame_camera(engine, camera);
+                            dw4::engine::Mat4 inverse;
+                            if (dw4::engine::invert(camera.view, inverse)) {
+                                const float heading = std::atan2(inverse(2, 0), inverse(2, 2));
+                                const float relative = std::atan2(dx, dz) - heading;
+                                stick_x = std::sin(relative);
+                                stick_y = -std::cos(relative);
+                            }
+                        }
+                    }
+                }
                 if (stick_x == 0 && stick_y == 0) {
                     if (input & dw4::pad_button::left) stick_x = -1;
                     if (input & dw4::pad_button::right) stick_x = 1;

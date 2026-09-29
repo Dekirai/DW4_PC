@@ -160,6 +160,9 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
                 if (!selects(t.kind, mask & ~1u) || std::abs(t.normal.y) > 0.7f || !enabled(t)) continue;
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {
                     const Vec3f center{p.x, p.y + h, p.z};
+                    // One-sided like the original segment test (801238E8,
+                    // side 0): only a probe in front of the face is pushed.
+                    if (dot(t.normal, center - t.a) < 0.0f) continue;
                     const Vec3f q = closest_point(center, t);
                     // Walls below or above the probe (e.g. a ledge being jumped
                     // over) must not push: test the 3D distance, push horizontally.
