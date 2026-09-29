@@ -208,6 +208,74 @@ private:
     CollisionWorld world_;
 };
 
+// Global font images from bectext.igb (beFontImage + igCharMetricsList).
+struct Glyph {
+    float advance{}, x_offset{}, y_offset{}, width{}, height{};
+    float u0{}, v0{}, u1{}, v1{};
+};
+struct FontImage {
+    std::string name;
+    float line_height{};
+    std::unique_ptr<Attribute> binding;
+    std::map<std::uint32_t, Glyph> glyphs;
+};
+
+// TEXTCTL (beFontInfo): text layers built from pack unicode strings.
+class TextCtlManager final : public Manager {
+public:
+    TextCtlManager() : Manager("beFont") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beFontInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    std::u16string text(std::size_t index) const;
+
+private:
+    struct Line {
+        std::string layer;
+        int line{};
+        Node* node{};
+        float max_width{};
+        float spacing{};
+        std::string style;
+    };
+    void load_fonts(Engine& engine);
+    void set_text(Engine& engine, const std::string& layer, int first_line, const std::u16string& value);
+    void clear_layer(const std::string& layer);
+    Node* layer_node(Engine& engine, const std::string& layer);
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::vector<Line> lines_;
+    std::vector<ObjectView> strings_;
+    std::map<std::string, std::unique_ptr<FontImage>> fonts_;
+    std::shared_ptr<const IgbDocument> font_document_;
+    std::vector<std::shared_ptr<GeometryData>> geometry_;
+    std::map<std::string, Vec4f> colors_;
+    std::map<std::string, std::string> align_;
+};
+
+// SELECTCTRL (beSelectCtrl, 80313CD4 / 803132C0): cursor menus and prompts.
+class SelectCtrlManager final : public Manager {
+public:
+    SelectCtrlManager() : Manager("beSelectCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beSelectCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct SelectRam : Ram {
+        bool running{};
+        int state{}, sub{}, counter{}, busy{};
+        int cursor{}, items = 1;
+        bool vertical = true, cancel = true;
+        Vec3f position{};
+        std::vector<std::uint8_t> enabled;
+        std::string sequence;
+    };
+    std::vector<std::unique_ptr<SelectRam>> rams_;
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:

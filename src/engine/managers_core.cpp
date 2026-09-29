@@ -612,6 +612,8 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<TextureCtrlManager>());
     engine.add_manager(std::make_unique<PlayerPointManager>());
     engine.add_manager(std::make_unique<HitLandManager>());
+    engine.add_manager(std::make_unique<TextCtlManager>());
+    engine.add_manager(std::make_unique<SelectCtrlManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 

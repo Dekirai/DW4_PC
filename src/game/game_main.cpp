@@ -83,18 +83,19 @@ struct ScriptedInput {
             if (!(fields >> frame >> name)) continue;
             fields >> duration;
             std::uint32_t bit = 0;
-            if (name == "A") bit = dw4::engine::pad_a;
-            else if (name == "B") bit = dw4::engine::pad_b;
-            else if (name == "X") bit = dw4::engine::pad_x;
-            else if (name == "Y") bit = dw4::engine::pad_y;
-            else if (name == "START") bit = dw4::engine::pad_start;
-            else if (name == "UP") bit = dw4::engine::pad_up;
-            else if (name == "DOWN") bit = dw4::engine::pad_down;
-            else if (name == "LEFT") bit = dw4::engine::pad_left;
-            else if (name == "RIGHT") bit = dw4::engine::pad_right;
-            else if (name == "Z") bit = dw4::engine::pad_z;
-            else if (name == "L") bit = dw4::engine::pad_l;
-            else if (name == "R") bit = dw4::engine::pad_r;
+            namespace b = dw4::pad_button;
+            if (name == "A") bit = b::a;
+            else if (name == "B") bit = b::b;
+            else if (name == "X") bit = b::x;
+            else if (name == "Y") bit = b::y;
+            else if (name == "START") bit = b::start;
+            else if (name == "UP") bit = b::up;
+            else if (name == "DOWN") bit = b::down;
+            else if (name == "LEFT") bit = b::left;
+            else if (name == "RIGHT") bit = b::right;
+            else if (name == "Z") bit = b::z;
+            else if (name == "L") bit = b::l;
+            else if (name == "R") bit = b::r;
             presses.push_back({frame, bit, duration});
         }
     }
@@ -155,8 +156,7 @@ int run(const Options& options) {
         std::vector<dw4::engine::DrawItem> items;
         dw4::engine::FrameCamera camera;
         dw4::engine::Vec4f clear{};
-        std::array<dw4::engine::PadState, 4> pads{};
-        std::uint32_t previous_held = 0;
+        std::array<dw4::engine::PadSample, 4> pads{};
         std::string rendered_stage;
         bool running = true, show_menu = false;
         int frame = 0;
@@ -197,30 +197,30 @@ int run(const Options& options) {
                 engine.debug_camera = make_camera(free_eye, free_eye + forward);
             } else if (!show_menu) {
                 const bool* keys = SDL_GetKeyboardState(nullptr);
-                if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) { held |= dw4::engine::pad_up; sy = 1; }
-                if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) { held |= dw4::engine::pad_down; sy = -1; }
-                if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) { held |= dw4::engine::pad_left; sx = -1; }
-                if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) { held |= dw4::engine::pad_right; sx = 1; }
-                if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_K]) held |= dw4::engine::pad_a;
-                if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_L]) held |= dw4::engine::pad_b;
-                if (keys[SDL_SCANCODE_J]) held |= dw4::engine::pad_x;
-                if (keys[SDL_SCANCODE_I]) held |= dw4::engine::pad_y;
-                if (keys[SDL_SCANCODE_ESCAPE] || keys[SDL_SCANCODE_TAB]) held |= dw4::engine::pad_start;
-                if (keys[SDL_SCANCODE_Q]) held |= dw4::engine::pad_l;
-                if (keys[SDL_SCANCODE_E]) held |= dw4::engine::pad_r;
-                if (keys[SDL_SCANCODE_Z]) held |= dw4::engine::pad_z;
+                if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) { held |= dw4::pad_button::up; sy = 1; }
+                if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) { held |= dw4::pad_button::down; sy = -1; }
+                if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) { held |= dw4::pad_button::left; sx = -1; }
+                if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) { held |= dw4::pad_button::right; sx = 1; }
+                if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_K]) held |= dw4::pad_button::a;
+                if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_L]) held |= dw4::pad_button::b;
+                if (keys[SDL_SCANCODE_J]) held |= dw4::pad_button::x;
+                if (keys[SDL_SCANCODE_I]) held |= dw4::pad_button::y;
+                if (keys[SDL_SCANCODE_ESCAPE] || keys[SDL_SCANCODE_TAB]) held |= dw4::pad_button::start;
+                if (keys[SDL_SCANCODE_Q]) held |= dw4::pad_button::l;
+                if (keys[SDL_SCANCODE_E]) held |= dw4::pad_button::r;
+                if (keys[SDL_SCANCODE_Z]) held |= dw4::pad_button::z;
                 for (auto* pad : gamepads) {
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH)) held |= dw4::engine::pad_a;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST)) held |= dw4::engine::pad_b;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST)) held |= dw4::engine::pad_x;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH)) held |= dw4::engine::pad_y;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) held |= dw4::engine::pad_start;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) held |= dw4::engine::pad_up;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) held |= dw4::engine::pad_down;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) held |= dw4::engine::pad_left;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) held |= dw4::engine::pad_right;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) held |= dw4::engine::pad_l;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) held |= dw4::engine::pad_r;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH)) held |= dw4::pad_button::a;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST)) held |= dw4::pad_button::b;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST)) held |= dw4::pad_button::x;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH)) held |= dw4::pad_button::y;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) held |= dw4::pad_button::start;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) held |= dw4::pad_button::up;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) held |= dw4::pad_button::down;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) held |= dw4::pad_button::left;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) held |= dw4::pad_button::right;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) held |= dw4::pad_button::l;
+                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) held |= dw4::pad_button::r;
                     const float ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
                     const float ay = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f;
                     if (std::abs(ax) > 0.2f) sx = ax;
@@ -241,18 +241,15 @@ int run(const Options& options) {
                 std::uint32_t input = held | scripted.held(frame);
                 float stick_x = sx, stick_y = sy;
                 if (stick_x == 0 && stick_y == 0) {
-                    if (input & dw4::engine::pad_left) stick_x = -1;
-                    if (input & dw4::engine::pad_right) stick_x = 1;
-                    if (input & dw4::engine::pad_up) stick_y = 1;
-                    if (input & dw4::engine::pad_down) stick_y = -1;
+                    if (input & dw4::pad_button::left) stick_x = -1;
+                    if (input & dw4::pad_button::right) stick_x = 1;
+                    if (input & dw4::pad_button::up) stick_y = 1;
+                    if (input & dw4::pad_button::down) stick_y = -1;
                 }
                 pads[0].connected = true;
-                pads[0].held = input;
-                pads[0].pressed = input & ~previous_held;
-                pads[0].released = previous_held & ~input;
-                pads[0].stick_x = stick_x;
-                pads[0].stick_y = stick_y;
-                previous_held = input;
+                pads[0].buttons = input;
+                // Original device: full deflection is 72/74 after the SDK clamp.
+                pads[0].left = {std::clamp(stick_x, -1.0f, 1.0f) * (72.0f / 74.0f), std::clamp(stick_y, -1.0f, 1.0f) * (72.0f / 74.0f)};
                 engine.step(pads);
                 ++frame;
             }
@@ -294,6 +291,9 @@ int run(const Options& options) {
                 if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
                     for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
                 }
+                if (ImGui::CollapsingHeader("Demo scripts")) {
+                    for (const auto& line : engine.demo().describe()) ImGui::TextUnformatted(line.c_str());
+                }
                 if (ImGui::CollapsingHeader("Log")) {
                     for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
                 }
@@ -324,6 +324,7 @@ int run(const Options& options) {
             if (const auto* p = models->player(0); p && p->node)
                 std::printf("player0 seq=%s pos=(%.2f, %.2f, %.2f) ctrl=%d mode=%d ground=%d\n", p->seq_name.c_str(), p->node->matrix(3, 0),
                             p->node->matrix(3, 1), p->node->matrix(3, 2), p->control_enabled ? 1 : 0, p->ctrl_mode, p->on_ground ? 1 : 0);
+        for (const auto& line : engine.demo().describe()) std::cout << "demo " << line << '\n';
         if (std::getenv("DW4_SCENE_REPORT")) for (const auto& line : engine.scene_report()) std::cout << line << '\n';
         if (std::getenv("DW4_DRAW_DUMP")) {
             for (const auto& item : items) {

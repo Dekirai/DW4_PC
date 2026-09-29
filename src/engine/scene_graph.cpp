@@ -669,6 +669,23 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     case NodeKind::geometry: {
         for (const auto* a : n->attributes) apply(a, state, model);
         apply_overrides(*n, state);
+        if (n->runtime_geometry) {
+            if (n->runtime_geometry->valid && ctx.output) {
+                DrawItem item;
+                item.geometry = n->runtime_geometry.get();
+                item.node = n;
+                item.model = model;
+                item.state = state;
+                if (n->runtime_texture) {
+                    item.state.texture = n->runtime_texture;
+                    item.state.texture_enabled = true;
+                }
+                item.layer = ctx.layer;
+                item.order = ctx.order++;
+                ctx.output->push_back(std::move(item));
+            }
+            break;
+        }
         for (const auto* g : n->geometries) {
             const auto* data = ctx.cache->geometry(g);
             if (!data || !data->valid || !ctx.output) continue;

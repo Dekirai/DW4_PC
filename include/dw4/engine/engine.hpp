@@ -4,6 +4,7 @@
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/lua4.hpp"
+#include "dw4/pad.hpp"
 #include "dw4/resources.hpp"
 
 #include <array>
@@ -127,6 +128,7 @@ public:
     void update(Engine& engine);
     void clear();
     std::size_t running() const { return running_.size(); }
+    std::vector<std::string> describe() const;
 
 private:
     std::unique_ptr<DemoWork> current_;
@@ -134,21 +136,11 @@ private:
     std::vector<std::unique_ptr<DemoWork>> running_;
 };
 
-struct PadState {
-    std::uint32_t held{};      // original button bit layout (see input.cpp)
-    std::uint32_t pressed{};
-    std::uint32_t released{};
-    float stick_x{}, stick_y{}, c_x{}, c_y{};
-    float trigger_l{}, trigger_r{};
-    bool connected{};
-};
-
-// Original GameCube-compatible button bits used by the host input layer.
-enum PadButton : std::uint32_t {
-    pad_left = 0x0001, pad_right = 0x0002, pad_down = 0x0004, pad_up = 0x0008,
-    pad_z = 0x0010, pad_r = 0x0020, pad_l = 0x0040,
-    pad_a = 0x0100, pad_b = 0x0200, pad_x = 0x0400, pad_y = 0x0800, pad_start = 0x1000
-};
+// Host input for one controller slot: logical GDJEB2 buttons (dw4::pad_button)
+// and sticks in the original normalized range. The engine runs the recovered
+// bePadData logic (dw4::OriginalPads) once per simulation frame.
+using PadSample = dw4::PadSample;
+using PadState = dw4::PadState;
 
 struct LoadedFile {
     std::string logical_path;
@@ -169,7 +161,7 @@ public:
     Engine& operator=(const Engine&) = delete;
 
     // One fixed 60 Hz simulation step.
-    void step(const std::array<PadState, 4>& pads);
+    void step(const std::array<PadSample, 4>& samples);
     // Collect the draw list for the current state.
     void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color);
     // Optional host inspection camera replacing the game camera (debug only).
@@ -186,7 +178,7 @@ public:
     DemoManager& demo() { return demo_; }
     SceneCache& scenes() { return scenes_; }
     const MountedResources& resources() const { return resources_; }
-    const std::array<PadState, 4>& pads() const { return pads_; }
+    const std::array<PadState, 4>& pads() const { return pads_.states(); }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
@@ -244,7 +236,7 @@ private:
     std::unique_ptr<Lua4Vm> lua_;
     std::map<std::pair<const void*, std::uint32_t>, Lua4Program> lua_programs_;
     int script_depth_{};
-    std::array<PadState, 4> pads_{};
+    dw4::OriginalPads pads_;
     Node global_root_;
     std::vector<Node*> attached_roots_;
 

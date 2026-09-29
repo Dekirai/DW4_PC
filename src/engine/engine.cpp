@@ -183,6 +183,21 @@ void DemoManager::clear() {
     in_switch_ = false;
 }
 
+std::vector<std::string> DemoManager::describe() const {
+    std::vector<std::string> out;
+    for (std::size_t w = 0; w < running_.size(); ++w) {
+        const auto& work = *running_[w];
+        std::string line = "work " + std::to_string(w) + " at " + std::to_string(work.cursor) + "/" + std::to_string(work.records.size());
+        if (work.cursor < work.records.size()) {
+            const auto& r = work.records[work.cursor];
+            line += " type " + std::to_string(r.type) + " " + r.category + " " + (r.name ? *r.name : std::string("nil")) + " " +
+                    std::to_string(r.index) + " " + r.command + " " + (r.argument ? *r.argument : std::string());
+        }
+        out.push_back(line);
+    }
+    return out;
+}
+
 void DemoManager::update(Engine& engine) {
     for (std::size_t w = running_.size(); w-- > 0;) {
         if (w >= running_.size()) continue;
@@ -431,10 +446,12 @@ void Engine::process_stage_loader() {
     }
 }
 
-void Engine::step(const std::array<PadState, 4>& pads) {
-    pads_ = pads;
+void Engine::step(const std::array<PadSample, 4>& samples) {
+    auto input = samples;
+    // STAGECTL PADINPUT DISABLE: the game sees released controls.
     if (!pad_input_enabled_)
-        for (auto& pad : pads_) { pad.held = pad.pressed = pad.released = 0; pad.stick_x = pad.stick_y = 0; }
+        for (auto& sample : input) { sample.buttons = 0; sample.left = {}; sample.right = {}; }
+    try { pads_.update(input); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     messenger_.update(*this);

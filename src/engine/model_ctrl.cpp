@@ -93,6 +93,8 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         }
         if (ram->node) ram->base_matrix = ram->node->matrix;
         engine.messenger().add_row(category, ram->info_name, ram->index, ram.get());
+        // Every model kind also answers generic MODELCTRL messages.
+        if (category != "MODELCTRL") engine.messenger().add_row("MODELCTRL", ram->info_name, ram->index, ram.get());
         rams_.push_back(std::move(ram));
     }
 }
@@ -327,7 +329,7 @@ float wrap_angle(float a) {
 
 void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
-    const float sx = pad.stick_x, sy = pad.stick_y;
+    const float sx = pad.left.x, sy = pad.left.y;
     const float magnitude = std::sqrt(sx * sx + sy * sy);
     ram.key_input = ram.control_enabled && magnitude > 0.25f;
     if (ram.key_input) {
@@ -425,6 +427,12 @@ void ModelCtrlManager::update(Engine& engine) {
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.generated) continue;
+        // 8030CB2C: an erased model is removed on its next update.
+        if (ram.seq_name == "SQ_ERAS") {
+            Packet p;
+            command(engine, ram, "REMOVE", p);
+            continue;
+        }
         if (ram.is_player) update_player(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.wait_name) continue;

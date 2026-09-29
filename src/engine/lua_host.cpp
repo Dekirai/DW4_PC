@@ -170,7 +170,13 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         record.command = opt_string(arg(3)).value_or("");
         if (args.size() > 4 && arg(4).type() == Lua4Type::String) record.argument = std::string(arg(4).as_string());
         if (method == "DMchkSD") {
-            const auto condition = opt_string(arg(5)).value_or("");
+            // Overloads: (cat, name, idx, cmd, cond) and (cat, name, idx, cmd, arg, cond).
+            std::string condition;
+            if (args.size() >= 6) condition = opt_string(arg(5)).value_or("");
+            else {
+                condition = opt_string(arg(4)).value_or("");
+                record.argument.reset();
+            }
             record.type = (condition == "!=0" || condition == "==1") ? 2 : 1;
             demo().add(std::move(record));
         } else if (method == "DMswtSD") {
@@ -205,6 +211,31 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "FLGflip") { auto& f = flags()[to_int(arg(0))]; f = f ? 0 : 1; return {}; }
     if (method == "COUNTERset") { counters()[to_int(arg(0))] = to_int(arg(1)); return {}; }
     if (method == "COUNTERget") return number(counters()[to_int(arg(0))]);
+
+    // --- Model queries (routed to whichever model category owns the info) ---
+    if (method == "MDLisLive" || method == "MDLisSeqName" || method == "MDLsetSeq" || method == "MDLgetRamNo") {
+        const auto target = opt_string(arg(0)).value_or("");
+        const auto index = to_int(arg(1), 0);
+        for (const char* category : {"MODELCTRL", "PLAYER", "ENEMY", "PLAYER2", "EFFECT", "ITEM"}) {
+            if (!messenger().count(category, target, index)) continue;
+            Packet packet;
+            if (method == "MDLisLive") {
+                messenger().send(*this, category, target, index, "ISRUN", packet);
+                return number(!packet.bools.empty() && packet.bools[0] ? 1 : 0);
+            }
+            if (method == "MDLisSeqName") {
+                packet.strings.emplace_back(opt_string(arg(2)).value_or(""));
+                messenger().send(*this, category, target, index, "ISSEQNAME", packet);
+                return number(!packet.bools.empty() && packet.bools[0] ? 1 : 0);
+            }
+            if (method == "MDLsetSeq") {
+                messenger().send(*this, category, target, index, opt_string(arg(2)).value_or(""), packet);
+                return {};
+            }
+            return number(index);
+        }
+        return number(0);
+    }
 
     // --- System queries ---
     if (method == "SYSgetArea") return number(area());
