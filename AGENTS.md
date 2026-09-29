@@ -16,8 +16,9 @@ The owner's current goal is a complete native source port: reconstruct the
 original game and engine behavior in authored, maintainable C++ source and set
 the DolRecomp/ModernGekko project aside. Resume the existing dw4_core and native
 application; do not replace this goal with a recompiled or embedded emulated
-game. Preserve the prior recompilation work, packages and saves as historical
-reference, but do not extend its runtime, optimize it or rebuild it as the active
+game. The prior recompilation work was removed from the source tree at the
+owner's request and remains available in Git history only; local packages and
+saves are left untouched. Do not restore, extend or rebuild it as the active
 queue. Generated PowerPC C is not the requested recovered source deliverable.
 Keep correct original behavior and local one-to-four-player play using separate
 controllers. Target at least 60 FPS on documented test hardware, with
@@ -67,8 +68,8 @@ preview's provisional movement or camera to original behavior. Use DTK, objdiff
 and Ghidra selectively for evidence; a matching-build lane is a research aid, not
 a replacement for the authored native engine. Verify gameplay, rendering, audio,
 saves and independent controllers in that engine. Previous recompilation tests
-prove only their historical implementation; see docs/RECOMPILATION.md for those
-records. Do not transfer their completed-feature claims to the native core.
+proved only their historical implementation (see Git history). Do not transfer
+their completed-feature claims to the native core.
 
 Use the current repository checkout. Preserve user changes and keep generated
 builds in ignored build/ or dist/. Original game data is supplied outside this

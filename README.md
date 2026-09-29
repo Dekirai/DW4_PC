@@ -17,8 +17,8 @@ The immediate work is connecting the original startup loader to runtime object
 construction, alongside the remaining player-frame and collision requirements. See
 [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md) for the continuation plan and
 [ROADMAP.md](docs/ROADMAP.md) for the acceptance gates. Build the active project
-with `scripts/build.ps1 -Jobs 4`; `Play-DW4-PC.cmd` and `Start-DW4-PC.cmd` open
-its walking preview and workbench respectively. Builds do not launch the game.
+with `scripts/build.ps1 -Jobs 4`; `Play-DW4-Game.cmd` starts the native engine
+runtime. Builds do not launch the game.
 
 The complete target includes original gameplay, audio, progression, saves and
 local one-to-four-player play; keyboard play and freely saved bindings; graphics
@@ -28,19 +28,6 @@ The release should accept the user's ROM, prepare its assets locally, use one
 EXE entry point and preserve portable saves. These are requirements, not
 implemented native-core claims. The [language audit](docs/LOCALIZATION.md) also
 keeps supported translations separate from pack filenames.
-
-## Set-aside recompilation experiment
-
-The prior DolRecomp/ModernGekko work and every existing package, imported asset
-and save are retained. Its CPU translation still uses Dolphin-derived services;
-its boot, performance, audio, import and F1-menu results apply to that separate
-implementation. They do not establish native-core gameplay or UI support.
-See [RECOMPILATION.md](docs/RECOMPILATION.md),
-[PC_APPLICATION.md](docs/PC_APPLICATION.md) and their linked reports for the
-historical evidence. Its scripts remain available for preservation and explicit
-reference work; recompilation optimization and packaging are not the active queue.
-Existing package saves remain beside their own EXE and are not migrated by the
-native workbench.
 
 ## Active native core and walking preview
 

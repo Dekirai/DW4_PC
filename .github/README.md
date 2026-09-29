@@ -10,9 +10,8 @@ The native source port is the active local validation scope:
   CTest after building. Add `-Configuration Release -CoreOnly` for portable-core
   changes. Graphics changes require the existing finite smoke checks.
 
-The DolRecomp/ModernGekko experiment is set aside. Its scripts and historical
-evidence in `docs/RECOMPILATION.md` remain preserved; do not continue that build
-or optimization queue as the native source-port task.
+The DolRecomp/ModernGekko experiment was removed from the source tree; it
+remains in Git history only. Do not continue that build or optimization queue.
 
 Core CTest success alone does not validate complete original gameplay. Builds never
 start an interactive game. Keep generated builds, packages and original game
