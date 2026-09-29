@@ -156,7 +156,10 @@ EnbayaClip decode_enbaya(std::span<const std::uint8_t> bytes) {
     if (bytes.size() < header_size || bytes.size() > max_input)
         throw EnbayaError("Enbaya input size is outside the 80-byte to 16-MiB limits");
     Cursor header{bytes.first(header_size)};
-    if (header.unsigned_value(4) != 0x002abf84)
+    // The first word is a serialized guest value (observed 0x002ABF84 for the
+    // player clips and 0x002ABF8C for NPC clips), not a format signature. The
+    // stream layout that follows is identical; keep a coarse sanity range.
+    if ((header.unsigned_value(4) & 0xffffff00u) != 0x002abf00u)
         throw EnbayaError("Unsupported Enbaya signature");
     EnbayaClip clip;
     clip.tracks_ = header.unsigned_value(4);

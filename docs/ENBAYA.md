@@ -38,7 +38,10 @@ the game's simulation frequency or the viewer's presentation rate.
 
 ## Stream layout and limits
 
-The supported signature is `0x002ABF84`, as observed in all 82 Agumon clips.
+The first header word is a serialized guest value rather than a format tag:
+all 82 Agumon clips store `0x002ABF84`, while NPC clips such as the lobby
+staff store `0x002ABF8C` with an otherwise identical layout. The decoder accepts
+the observed `0x002ABFxx` range.
 The 80-byte header has track count at byte 4, float quantization error at byte 8,
 float duration at byte 12, sample rate at byte 16, and fourteen 32-bit byte
 lengths from bytes 20 through 72. Byte 76 contains an opaque serialized guest

@@ -27,6 +27,26 @@ std::string category_for_kind(std::string_view kind) {
 }
 } // namespace
 
+// Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
+Mat4 placement_matrix(const Vec3f& t, const Vec3f& r) {
+    auto rot = [](int axis, float angle) {
+        Mat4 q;
+        const float c = std::cos(angle), s = std::sin(angle);
+        if (axis == 0) { q(1, 1) = c; q(1, 2) = s; q(2, 1) = -s; q(2, 2) = c; }
+        else if (axis == 1) { q(0, 0) = c; q(0, 2) = -s; q(2, 0) = s; q(2, 2) = c; }
+        else { q(0, 0) = c; q(0, 1) = s; q(1, 0) = -s; q(1, 1) = c; }
+        return q;
+    };
+    Mat4 m;
+    if (r.x != 0) m = m * rot(0, r.x * kDegrees);
+    if (r.y != 0) m = m * rot(1, r.y * kDegrees);
+    if (r.z != 0) m = m * rot(2, r.z * kDegrees);
+    m(3, 0) = t.x;
+    m(3, 1) = t.y;
+    m(3, 2) = t.z;
+    return m;
+}
+
 // ===========================================================================
 // MODELCTRL (8030D910 dispatch, 8030C3AC command loop, 8030BDB8 waits)
 // ===========================================================================
@@ -149,6 +169,9 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (packet.strings.size() == 1 && packet.strings[0]) seq = *packet.strings[0];
         else if (packet.strings.size() >= 2 && packet.strings[1]) seq = *packet.strings[1];
         if (ram.hp == 0) ram.hp = ram.max_hp = 100;
+        // Position / rotation vectors supplied with GENERATE place the model.
+        if (ram.node && !packet.vectors.empty())
+            ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
         select_sequence(engine, ram, seq);
         return true;
     }
@@ -194,27 +217,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         return true;
     }
     if (command == "MOVETRANS") {
-        if (ram.generated && ram.node && packet.vectors.size() >= 2) {
-            const auto t = packet.vectors[0];
-            const auto r = packet.vectors[1];
-            Mat4 m;
-            // Rotation about X, then Y, then Z (801298F0 applied in that order), then translation.
-            auto rot = [](int axis, float angle) {
-                Mat4 q;
-                const float c = std::cos(angle), s = std::sin(angle);
-                if (axis == 0) { q(1, 1) = c; q(1, 2) = s; q(2, 1) = -s; q(2, 2) = c; }
-                else if (axis == 1) { q(0, 0) = c; q(0, 2) = -s; q(2, 0) = s; q(2, 2) = c; }
-                else { q(0, 0) = c; q(0, 1) = s; q(1, 0) = -s; q(1, 1) = c; }
-                return q;
-            };
-            if (r.x != 0) m = m * rot(0, r.x * kDegrees);
-            if (r.y != 0) m = m * rot(1, r.y * kDegrees);
-            if (r.z != 0) m = m * rot(2, r.z * kDegrees);
-            m(3, 0) = t.x;
-            m(3, 1) = t.y;
-            m(3, 2) = t.z;
-            ram.node->matrix = m;
-        }
+        if (ram.generated && ram.node && packet.vectors.size() >= 2)
+            ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors[1]);
         return true;
     }
     if (command == "SETMATRIX") {
