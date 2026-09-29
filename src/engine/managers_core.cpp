@@ -713,6 +713,30 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         out = {Lua4Value::number(value)};
         return true;
     }
+    // CTRLITEM folders (802EBF5C / 802EC064 / 802EC164 / 802EC26C).
+    auto arg_str = [&](std::size_t i) {
+        return i < args.size() && args[i].type() == Lua4Type::String ? std::string(args[i].as_string()) : std::string();
+    };
+    if (method == "SYSctlDeviceFolder") {
+        out = {Lua4Value::number(control_item("DEVICE", arg_str(0), arg_int(1), arg_str(2), arg_int(3), arg_int(4), arg_int(5)))};
+        return true;
+    }
+    if (method == "SYSctlDiskFolder") {
+        out = {Lua4Value::number(control_item("DISK", arg_str(0), arg_int(1), {}, arg_int(2), 0, arg_int(3)))};
+        return true;
+    }
+    if (method == "SYSctlFlagFolder") {
+        out = {Lua4Value::number(control_item("FLAG", arg_str(0), 0, {}, arg_int(1), 0, 0))};
+        return true;
+    }
+    if (method == "SYSctlBit") {
+        out = {Lua4Value::number(control_item("BIT", arg_str(0), arg_int(1), {}, arg_int(2), 0, 0))};
+        return true;
+    }
+    if (method == "SYSgetPlayerLevel") {
+        out = {Lua4Value::number(players[std::size_t(std::clamp(arg_int(0), 0, 3))].stats.level)};
+        return true;
+    }
     if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }
     if (method == "SYSgetLightMode") { out = {Lua4Value::number(light_mode)}; return true; }
     if (method == "SYSgetGateStageName") { out = {Lua4Value::string(gate_stage_name)}; return true; }

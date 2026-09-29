@@ -37,6 +37,9 @@ struct ItemDevice {
 };
 // Drop table id (GameSystem::item_tables order) + record -> rolled equipment.
 ItemDevice roll_item_device(int table, int record, int level);
+// 802EDC54: a floating number (0 damage, 1 EXP, 2 heal, 3 player damage,
+// 4 bits) rising from a world position.
+void show_number(Engine& engine, int kind, int value, const Vec3f& position);
 
 // Original scaled node/timer clock (8030FA2C / 8031DE44 family).
 struct NodeTimer {
@@ -876,6 +879,7 @@ public:
         std::array<int, 4> resist{}; // HONOOTEIKO, KOORITEIKO, KAMINARITEIKO, YAMITEIKO
         int kaihiritsu{}, bougyoritsu{};
         int exp{}, next_exp{}, exp_rate{}; // EXP, NEXTEXP, EXPRITSU
+        int bit_rate{};                    // BITRITSU
         int weapon_record = -1, weapon_skill_no{};
         std::array<int, 9> skill{1, 1, 1, 1, 1, 1, 1, 1, 1};
         std::string weapon_model;
@@ -890,12 +894,17 @@ public:
         std::vector<ItemDevice> devices;
         // DISKFOLDER: consumable disks, record -> count (at most 9 each).
         std::map<int, int> disks;
+        int bits{};                    // player BIT (0..9999999)
+        int xdata{};                   // XDATA
+        std::array<int, 11> upcnt{};   // UPCNT: MHP, MMP, STR, DEF, WIS, SPI, SPD, fire, ice, thunder, dark
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,
     // weapon, armor1, armor2, abChip.
     static constexpr const char* item_tables[7] = {"conItem", "insItem", "impItem", "weapon", "armor1", "armor2", "abChip"};
-    std::int32_t bits{};                  // GAMERAM common BIT
     std::map<int, std::uint8_t> flag_folder; // common FLAGFOLDER, set by impItem pickups
+    // CTRLITEM (GAMERAM 80372054): SYSctlDeviceFolder/DiskFolder/FlagFolder/Bit.
+    int control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
+                     int a, int b, int c);
     // GAMESTART / RECALCPLAYER subset: species, level-1 status and the first
     // initial weapon, from the stage's shinka and weapon databases.
     void prepare_player(Engine& engine, int slot);

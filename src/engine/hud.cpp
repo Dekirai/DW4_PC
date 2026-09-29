@@ -230,4 +230,33 @@ void MeterCtrlManager::update(Engine& engine) {
     }
 }
 
+// 802EDC54 / table 804DD2C4: FIND_SPACE the kind's number model, GENERATE it
+// at the position with the sequence for the digit count (values capped at
+// 99999) and set its NUMBERCTRL of the same RAM.
+void show_number(Engine& engine, int kind, int value, const Vec3f& position) {
+    struct Popup { const char* model; const char* number; const char* sequences[5]; };
+    static const Popup popups[5] = {
+        {"i_dmgnum", "dmgnm0", {"SQ_DMGNM01", "SQ_DMGNM02", "SQ_DMGNM03", "SQ_DMGNM04", "SQ_DMGNM05"}},
+        {"i_expnum", "expnm0", {"SQ_EXPNM01", "SQ_EXPNM02", "SQ_EXPNM03", "SQ_EXPNM04", "SQ_EXPNM04"}},
+        {"i_healnum", "healnm0", {"SQ_HEALNM01", "SQ_HEALNM02", "SQ_HEALNM03", "SQ_HEALNM04", "SQ_HEALNM05"}},
+        {"i_pcdmgnum", "dmgnm1", {"SQ_DMGNM01", "SQ_DMGNM02", "SQ_DMGNM03", "SQ_DMGNM04", "SQ_DMGNM05"}},
+        {"i_bitnum", "bitnum0", {"SQ_BITNM01", "SQ_BITNM02", "SQ_BITNM03", "SQ_BITNM04", "SQ_BITNM04"}}};
+    if (kind < 0 || kind > 4) return;
+    const auto& popup = popups[kind];
+    auto& messenger = engine.messenger();
+    Packet find;
+    messenger.send(engine, "MODELCTRL", popup.model, -1, "FIND_SPACE", find);
+    if (find.ints.empty()) return;
+    const int index = find.ints[0];
+    const int digits = value < 10 ? 0 : value < 100 ? 1 : value < 1000 ? 2 : value < 10000 ? 3 : 4;
+    value = std::min(value, 99999);
+    Packet generate;
+    generate.strings.emplace_back(popup.sequences[digits]);
+    generate.vectors.push_back(position);
+    messenger.send(engine, "MODELCTRL", popup.model, index, "GENERATE", generate);
+    Packet number;
+    number.ints.push_back(value);
+    messenger.send(engine, "NUMBERCTRL", popup.number, index, "SETVALUE", number);
+}
+
 } // namespace dw4::engine

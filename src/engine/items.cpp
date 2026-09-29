@@ -84,25 +84,59 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
     if (nearest < 0) return;
     auto* sys = engine.get<GameSystem>();
     if (!sys) return;
-    if (ram.item_record == 0) {
-        // 803B1408: bits by player 1's level band.
-        static const int bands[][3] = {{18, 10, 55}, {38, 55, 100}, {59, 87, 195}, {93, 162, 350},
-                                       {107, 232, 520}, {143, 340, 700}, {202, 446, 860}, {9999, 566, 1160}};
-        const int level = sys->players[0].stats.level;
-        int lo = 566, hi = 1160;
-        for (const auto& band : bands)
-            if (level <= band[0]) { lo = band[1]; hi = band[2]; break; }
-        const int amount = lo + int(fight::random() % std::uint32_t(hi - lo));
-        sys->bits += amount;
-        engine.log("picked up " + std::to_string(amount) + " bits (" + std::to_string(sys->bits) + ")");
-        Packet value;
-        value.ints.push_back(sys->bits);
-        if (engine.messenger().count("NUMBERCTRL", "bitnum0", -1)) engine.messenger().send(engine, "NUMBERCTRL", "bitnum0", -1, "SETVALUE", value);
-    } else {
-        engine.note("instant item " + std::to_string(ram.item_record));
-    }
+    // 803B13F8: record 0 bits, 1..3 X data, 4..25 status ups (UPCNT, then
+    // RECALCPLAYER); UP is the record's amount.
+    auto& slot = sys->players[std::size_t(std::clamp(nearest, 0, 3))];
+    const int record = ram.item_record;
+    int up = 0;
+    if (auto* db = engine.get<DatabaseManager>()) up = db->number("insItem", record, "UP").value_or(0);
     ram.item_table = -1;
     select_sequence(engine, ram, "SQ_DDMG");
+    if (record == 0) {
+        // Bits by player 1's level band, scaled by player 1's BITRITSU.
+        static const int bands[][3] = {{18, 10, 55}, {38, 55, 100}, {59, 87, 195}, {93, 162, 350},
+                                       {107, 232, 520}, {143, 340, 700}, {202, 446, 860}, {9999, 566, 1160}};
+        const auto& first = sys->players[0].stats;
+        int lo = 566, hi = 1160;
+        for (const auto& band : bands)
+            if (first.level <= band[0]) { lo = band[1]; hi = band[2]; break; }
+        const int amount = (lo + int(fight::random() % std::uint32_t(hi - lo))) * (first.bit_rate + 100) / 100;
+        slot.bits = std::min(slot.bits + amount, 9999999);
+        engine.log("player " + std::to_string(nearest) + " picked up " + std::to_string(amount) + " bits (" +
+                   std::to_string(slot.bits) + ")");
+        show_number(engine, 4, amount, Vec3f{m(3, 0), m(3, 1), m(3, 2)});
+        return;
+    }
+    if (record <= 3) {
+        slot.xdata += up;
+    } else if (record <= 25) {
+        // Record pairs map to UPCNT slots; the MMP ups land on slot 0 as well.
+        static const int index[22] = {2, 2, 3, 3, 0, 0, 0, 0, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10};
+        slot.upcnt[std::size_t(index[record - 4])] += up;
+        sys->prepare_player(engine, nearest);
+    } else {
+        return;
+    }
+    engine.log("player " + std::to_string(nearest) + " picked up insItem " + std::to_string(record) + " (+" +
+               std::to_string(up) + ")");
+    // 803AA9A0: the matching panel (804EDAA0) over the player.
+    static const char* panels[25][2] = {
+        {"i_getitempnl02", "SQ_X5UP"},    {"i_getitempnl02", "SQ_X20UP"},    {"i_getitempnl02", "SQ_X100UP"},
+        {"i_getitempnl01", "SQ_STRUP"},   {"i_getitempnl01", "SQ_STRUP2"},   {"i_getitempnl01", "SQ_DEFUP"},
+        {"i_getitempnl01", "SQ_DEFUP2"},  {"i_getitempnl03", "SQ_MHPUP"},    {"i_getitempnl03", "SQ_MHPUP2"},
+        {"i_getitempnl03", "SQ_MMPUP"},   {"i_getitempnl03", "SQ_MMPUP2"},   {"i_getitempnl01", "SQ_WISUP"},
+        {"i_getitempnl01", "SQ_WISUP2"},  {"i_getitempnl01", "SQ_SPIUP"},    {"i_getitempnl01", "SQ_SPIUP2"},
+        {"i_getitempnl01", "SQ_SPDUP"},   {"i_getitempnl01", "SQ_SPDUP2"},   {"i_getitempnl01", "SQ_FIREUP"},
+        {"i_getitempnl01", "SQ_FIREUP2"}, {"i_getitempnl01", "SQ_ICEUP"},    {"i_getitempnl01", "SQ_ICEUP2"},
+        {"i_getitempnl01", "SQ_THUNDUP"}, {"i_getitempnl01", "SQ_THUNDUP2"}, {"i_getitempnl01", "SQ_DARKUP"},
+        {"i_getitempnl01", "SQ_DARKUP2"}};
+    Packet effect;
+    effect.strings.emplace_back(panels[record - 1][0]);
+    effect.strings.emplace_back(panels[record - 1][1]);
+    effect.floats.push_back(1.0f);
+    effect.vectors.push_back({0.0f, 0.0f, 0.0f});
+    effect.bools = {0, 1};
+    engine.messenger().send(engine, "PLAYER", std::nullopt, nearest, "SETEFFECT", effect);
 }
 
 // 803AB864..803ABDB0: one of four ITNAMEFONT lines (font00..03) carries the
@@ -188,6 +222,81 @@ bool ModelCtrlManager::pick_item(Engine& engine, ModelRam& ram, int player) {
     ram.item_table = -1;
     select_sequence(engine, ram, "SQ_DDMG");
     return true;
+}
+
+// CTRLITEM (GAMERAM 80372054). DEVICE: SET adds (weapon/armor1 record, value
+// b, rank c; armor2 value b; abChip record) unless 36 are held, CLR drops the
+// first unequipped match, IS / ISEQUIP / ISMAX query. DISK: SET / CLR add or
+// remove c (0..9), IS / ISMAX query. FLAG: SET / CLR succeed on a change, IS
+// reads. BIT: SET, GET, ADD (0..9999999). Answers 0 when nothing changes.
+int GameSystem::control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
+                             int a, int b, int c) {
+    auto& slot = players[std::size_t(std::clamp(player, 0, 3))];
+    if (folder == "DEVICE") {
+        auto& devices = slot.devices;
+        if (command == "ISMAX") return devices.size() >= 36 ? 1 : 0;
+        const int type = table == "weapon" ? 0 : table == "armor1" ? 1 : table == "armor2" ? 2 : table == "abChip" ? 3 : -1;
+        if (type < 0) return 0;
+        auto match = [&](const ItemDevice& d) { return d.type == type && d.record == a; };
+        if (command == "SET") {
+            if (devices.size() >= 36) return 0;
+            ItemDevice device;
+            device.type = type;
+            device.record = a;
+            if (type <= 2) device.value = b;
+            if (type <= 1) device.rank = c;
+            devices.push_back(device);
+            return 1;
+        }
+        if (command == "CLR") {
+            const auto found = std::find_if(devices.begin(), devices.end(), [&](const ItemDevice& d) { return match(d) && !d.flag; });
+            if (found == devices.end()) return 0;
+            devices.erase(found);
+            return 1;
+        }
+        if (command == "IS") return std::any_of(devices.begin(), devices.end(), match) ? 1 : 0;
+        if (command == "ISEQUIP")
+            return std::any_of(devices.begin(), devices.end(), [&](const ItemDevice& d) { return match(d) && d.flag; }) ? 1 : 0;
+        return 0;
+    }
+    if (folder == "DISK") {
+        auto& count = slot.disks[a];
+        if (command == "SET") {
+            if (count == 9) return 0;
+            count = std::min(count + c, 9);
+            return 1;
+        }
+        if (command == "CLR") {
+            if (count == 0) return 0;
+            count = std::max(count - c, 0);
+            return 1;
+        }
+        if (command == "IS") return count != 0 ? 1 : 0;
+        if (command == "ISMAX") return count == 9 ? 1 : 0;
+        return 0;
+    }
+    if (folder == "FLAG") {
+        auto& flag = flag_folder[a];
+        if (command == "SET") {
+            if (flag) return 0;
+            flag = 1;
+            return 1;
+        }
+        if (command == "CLR") {
+            if (!flag) return 0;
+            flag = 0;
+            return 1;
+        }
+        if (command == "IS") return flag;
+        return 0;
+    }
+    if (folder == "BIT") {
+        if (command == "SET") slot.bits = a;
+        else if (command == "GET") return slot.bits;
+        else if (command == "ADD") slot.bits = int(std::clamp<long long>(static_cast<long long>(slot.bits) + a, 0, 9999999));
+        return 0;
+    }
+    return 0;
 }
 
 } // namespace dw4::engine

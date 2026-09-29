@@ -430,9 +430,15 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const int killer = context->shooter_name.starts_with('p') ? context->shooter : -1;
         return number(sys->experience_up(*this, killer, model->record));
     }
-    if (method == "BLTcalcSkillUp" || method == "MDLdspExp") return {}; // growth / number display not reconstructed
-    if (method == "MDLdspDamage" || method == "MDLdspDamageP") {
-        log("damage " + std::to_string(to_int(arg(0))) + (context ? " -> " + context->name : std::string()));
+    if (method == "BLTcalcSkillUp") return {}; // weapon skill growth not reconstructed
+    if (method == "MDLdspDamage" || method == "MDLdspDamageP" || method == "MDLdspExp") {
+        // 802EAE28..48: floating damage / player damage / EXP numbers at the model.
+        const int value = to_int(arg(0));
+        if (method != "MDLdspExp") log("damage " + std::to_string(value) + (context ? " -> " + context->name : std::string()));
+        if (auto* model = context_model(); model && model->node) {
+            const auto& m = model->node->matrix;
+            show_number(*this, method == "MDLdspDamage" ? 0 : method == "MDLdspDamageP" ? 3 : 1, value, Vec3f{m(3, 0), m(3, 1), m(3, 2)});
+        }
         return {};
     }
     if ((method.starts_with("BLTget") || method.starts_with("BLPget")) && method.ends_with("Time")) return number(0);

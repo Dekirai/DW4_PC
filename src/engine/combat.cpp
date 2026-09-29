@@ -242,8 +242,9 @@ void GameSystem::prepare_player(Engine& engine, int slot) {
     const int row = stats.species;
     const int level = stats.level;
     auto cell = [&](std::string_view table, int r, std::string_view column) { return db->number(table, r, column).value_or(0); };
-    auto attribute = [&](const char* ini, const char* grow) {
-        return grown_value(level, false, cell("shinka", row, grow), cell("shinka", row, ini), 0, 9999);
+    const auto& up = player.upcnt;
+    auto attribute = [&](const char* ini, const char* grow, int upcnt) {
+        return grown_value(level, false, cell("shinka", row, grow), cell("shinka", row, ini), upcnt, 9999);
     };
     // First power-socket weapon: the species' INI_WEAPON1 (GAMESTART initial weapons).
     stats.weapon_record = cell("shinka", row, "INI_WEAPON1");
@@ -259,15 +260,16 @@ void GameSystem::prepare_player(Engine& engine, int slot) {
     stats.chimeiritsu = cell("weapon", weapon, "CHIMEIRITSU");
     stats.attack_delay = cell("weapon", weapon, "DELAY");
     auto clamp_stat = [](int v) { return std::clamp(v, 1, 9999); };
-    stats.tsuyosa = clamp_stat(attribute("STR_INI", "STR_GROW") + cell("weapon", weapon, "TSUYOSA"));
-    stats.mamori = clamp_stat(attribute("AC_INI", "AC_GROW"));
-    stats.kashikosa = clamp_stat(attribute("INT_INI", "INT_GROW") + cell("weapon", weapon, "KASHIKOSA"));
-    stats.seishin = clamp_stat(attribute("MND_INI", "MND_GROW") + cell("weapon", weapon, "SEISHIN"));
-    stats.subayasa = clamp_stat(attribute("DEX_INI", "DEX_GROW") + cell("weapon", weapon, "SUBAYASA"));
+    // UPCNT slots (8036F808 / 8036FB80): 0 MHP, 1 MMP, 2.. STR, DEF, WIS, SPI, SPD.
+    stats.tsuyosa = clamp_stat(attribute("STR_INI", "STR_GROW", up[2]) + cell("weapon", weapon, "TSUYOSA"));
+    stats.mamori = clamp_stat(attribute("AC_INI", "AC_GROW", up[3]));
+    stats.kashikosa = clamp_stat(attribute("INT_INI", "INT_GROW", up[4]) + cell("weapon", weapon, "KASHIKOSA"));
+    stats.seishin = clamp_stat(attribute("MND_INI", "MND_GROW", up[5]) + cell("weapon", weapon, "SEISHIN"));
+    stats.subayasa = clamp_stat(attribute("DEX_INI", "DEX_GROW", up[6]) + cell("weapon", weapon, "SUBAYASA"));
     static const char* resists[] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK"};
-    for (std::size_t i = 0; i < 4; ++i) stats.resist[i] = clamp_stat(cell("shinka", row, resists[i]));
-    player.max_hp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), 0, 99999);
-    player.max_mp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), 0, 99999);
+    for (std::size_t i = 0; i < 4; ++i) stats.resist[i] = clamp_stat(cell("shinka", row, resists[i]) + up[7 + i]);
+    player.max_hp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), up[0], 99999);
+    player.max_mp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), up[1], 99999);
     // NEXTEXP (80370DBC): (level + 140) * level^2 + level * 200; none at 999.
     stats.next_exp = level >= 999 ? 0 : (level + 140) * level * level + level * 200;
     if (!stats.ready || player.hp > player.max_hp) player.hp = player.max_hp;
