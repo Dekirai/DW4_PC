@@ -155,6 +155,25 @@ private:
     std::int64_t movie_end_{};
 };
 
+// beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the
+// placeholder igTextureBindAttr of listed attribute sets.
+class TextureCtrlManager final : public Manager {
+public:
+    TextureCtrlManager() : Manager("beTextureCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beTextureCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    void update(Engine& engine) override;
+    void bind_all(Engine& engine);
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::vector<ObjectView> pack_data_;   // beTextureCtrlData
+    std::vector<ObjectView> ctrl_attrs_;  // beTextureCtrlAttr
+    std::vector<std::unique_ptr<Attribute>> owned_;
+    bool pending_{};
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:

@@ -15,6 +15,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -31,6 +32,7 @@ struct Options {
     std::vector<int> screenshot_frames;
     std::string input_script;
     bool overlay = true;
+    std::vector<float> debug_camera; // eye xyz, target xyz
 };
 
 std::filesystem::path default_data_path() {
@@ -99,6 +101,19 @@ struct ScriptedInput {
 int run(const Options& options) {
     dw4::engine::Engine engine(options.data);
     engine.request_stage(options.stage);
+    auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
+        dw4::engine::FrameCamera c;
+        c.view = dw4::engine::look_at(eye, target, {0, 1, 0});
+        c.projection = dw4::engine::perspective(54.43f * 3.14159265f / 180.0f, 4.0f / 3.0f, 1.0f, 4000.0f);
+        return c;
+    };
+    if (options.debug_camera.size() >= 6)
+        engine.debug_camera = make_camera({options.debug_camera[0], options.debug_camera[1], options.debug_camera[2]},
+                                          {options.debug_camera[3], options.debug_camera[4], options.debug_camera[5]});
+    // Interactive free camera (F2): position + yaw/pitch.
+    bool free_camera = false;
+    dw4::engine::Vec3f free_eye{0, 60, 200};
+    float free_yaw = 3.14159265f, free_pitch = -0.2f;
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -146,11 +161,31 @@ int run(const Options& options) {
                     if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) gamepads.push_back(pad);
                 }
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) show_menu = !show_menu;
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F2) {
+                    free_camera = !free_camera;
+                    if (!free_camera) engine.debug_camera.reset();
+                }
+                if (free_camera && event.type == SDL_EVENT_MOUSE_MOTION && (event.motion.state & SDL_BUTTON_RMASK)) {
+                    free_yaw -= event.motion.xrel * 0.005f;
+                    free_pitch = std::clamp(free_pitch - event.motion.yrel * 0.005f, -1.5f, 1.5f);
+                }
             }
             // Input: keyboard + first gamepad -> player 1.
             std::uint32_t held = 0;
             float sx = 0, sy = 0;
-            if (!show_menu) {
+            if (free_camera) {
+                const bool* keys = SDL_GetKeyboardState(nullptr);
+                const dw4::engine::Vec3f forward{std::sin(free_yaw) * std::cos(free_pitch), std::sin(free_pitch), std::cos(free_yaw) * std::cos(free_pitch)};
+                const dw4::engine::Vec3f right = dw4::engine::normalize(dw4::engine::cross(forward, {0, 1, 0}));
+                const float speed = keys[SDL_SCANCODE_LSHIFT] ? 8.0f : 2.0f;
+                if (keys[SDL_SCANCODE_W]) free_eye = free_eye + forward * speed;
+                if (keys[SDL_SCANCODE_S]) free_eye = free_eye - forward * speed;
+                if (keys[SDL_SCANCODE_D]) free_eye = free_eye + right * speed;
+                if (keys[SDL_SCANCODE_A]) free_eye = free_eye - right * speed;
+                if (keys[SDL_SCANCODE_E]) free_eye.y += speed;
+                if (keys[SDL_SCANCODE_Q]) free_eye.y -= speed;
+                engine.debug_camera = make_camera(free_eye, free_eye + forward);
+            } else if (!show_menu) {
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) { held |= dw4::engine::pad_up; sy = 1; }
                 if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) { held |= dw4::engine::pad_down; sy = -1; }
@@ -260,6 +295,20 @@ int run(const Options& options) {
             if (options.smoke_frames && frame >= options.smoke_frames) running = false;
         }
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
+        if (std::getenv("DW4_SCENE_REPORT")) for (const auto& line : engine.scene_report()) std::cout << line << '\n';
+        if (std::getenv("DW4_DRAW_DUMP")) {
+            for (const auto& item : items) {
+                const auto& s = item.state;
+                const std::string image = s.texture && s.texture->image ? std::string(s.texture->image.str(22)) : "-";
+                std::printf("draw node='%s' verts=%zu tris=%zu tex=%d img=%s blend=%d(%d,%d) alpha=%d(%d,%.2f) vcol=%d "
+                            "color=(%.2f,%.2f,%.2f,%.2f) light=%d depth=%d/%d cull=%d fog=%d\n",
+                            item.node ? item.node->name.c_str() : "?", item.geometry->positions.size(),
+                            item.geometry->indices.size() / 3, s.texture_enabled ? 1 : 0, image.c_str(), s.blend_enabled ? 1 : 0,
+                            s.blend_src, s.blend_dst, s.alpha_test ? 1 : 0, s.alpha_func, s.alpha_ref,
+                            item.geometry->colors.empty() ? 0 : 1, s.color.x, s.color.y, s.color.z, s.color.w, s.lighting ? 1 : 0,
+                            s.depth_test ? 1 : 0, s.depth_write ? 1 : 0, s.cull_enabled ? 1 : 0, s.fog ? 1 : 0);
+            }
+        }
         std::cout << "unimplemented:\n";
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
@@ -298,6 +347,16 @@ int main(int argc, char** argv) {
                     start = comma + 1;
                 }
             } else if (arg == "--input") options.input_script = next();
+            else if (arg == "--debug-camera") {
+                std::string list = next();
+                std::size_t start = 0;
+                while (start < list.size()) {
+                    const auto comma = list.find(',', start);
+                    options.debug_camera.push_back(std::stof(list.substr(start, comma - start)));
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            }
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
                              "         [--screenshot-frames N,M,...] [--input SCRIPT]\n";

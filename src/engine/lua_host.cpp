@@ -220,7 +220,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (sys->script_call(*this, method, args, out)) return out;
     }
     note("script method be:" + method);
-    return {};
+    // Unknown queries answer 0 so numeric comparisons in the original
+    // scripts keep running; the call is reported as unimplemented.
+    return number(0);
 }
 
 } // namespace dw4::engine

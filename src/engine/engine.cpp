@@ -449,6 +449,7 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     clear_color = {0, 0, 0, 1};
     if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
     if (auto* cam = get<CameraManager>()) cam->frame_camera(*this, camera);
+    if (debug_camera) camera = *debug_camera;
     TraversalContext context;
     context.cache = &scenes_;
     context.time = time_;
@@ -456,6 +457,37 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     context.output = &out;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     traverse(&global_root_, context);
+}
+
+std::vector<std::string> Engine::scene_report() {
+    std::vector<std::string> lines;
+    auto* scenes = get<SceneManager>();
+    if (!scenes) return lines;
+    for (const auto& info : scenes->scenes()) {
+        const auto root = info.ref(5);
+        if (!root) continue;
+        std::vector<DrawItem> items;
+        TraversalContext context;
+        context.cache = &scenes_;
+        context.time = time_;
+        context.output = &items;
+        Node* node = scenes_.node(root);
+        // Count what the scene would draw with all switches as stored.
+        traverse(node, context);
+        std::size_t textured = 0, blended = 0, vertices = 0, lit = 0;
+        for (const auto& item : items) {
+            textured += item.state.texture_enabled && item.state.texture ? 1 : 0;
+            blended += item.state.blend_enabled ? 1 : 0;
+            lit += item.state.lighting ? 1 : 0;
+            vertices += item.geometry->positions.size();
+        }
+        char buffer[512];
+        std::snprintf(buffer, sizeof buffer, "scene '%s' root '%s' (%s) draws=%zu textured=%zu blended=%zu lit=%zu verts=%zu",
+                      std::string(info.str(2)).c_str(), node->name.c_str(), node->object.type().c_str(), items.size(), textured,
+                      blended, lit, vertices);
+        lines.emplace_back(buffer);
+    }
+    return lines;
 }
 
 } // namespace dw4::engine

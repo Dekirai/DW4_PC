@@ -394,6 +394,62 @@ void SoundManager::update(Engine& engine) {
 }
 
 // ---------------------------------------------------------------------------
+// Texture control
+// ---------------------------------------------------------------------------
+void TextureCtrlManager::add_info(Engine& engine, const ObjectView& info) {
+    make_rams(engine, this, info, rams_, "TEXTURECTRL");
+    const bool pack = info.boolean(7);
+    for (const auto& item : info.list(8)) {
+        if (!item) continue;
+        if (pack) pack_data_.push_back(item);
+        else ctrl_attrs_.push_back(item);
+    }
+    pending_ = true;
+}
+
+void TextureCtrlManager::clear_stage(Engine&) {
+    rams_.clear();
+    pack_data_.clear();
+    ctrl_attrs_.clear();
+    owned_.clear();
+    pending_ = false;
+}
+
+void TextureCtrlManager::bind_all(Engine& engine) {
+    for (const auto& ctrl : ctrl_attrs_) {
+        const auto name = ctrl.str(2);
+        ObjectView texture;
+        for (const auto& data : pack_data_) {
+            if (data.str(2) == name) { texture = data.ref(3); break; }
+        }
+        if (!texture) continue;
+        Node* set = engine.scenes().node(ctrl.ref(3));
+        if (!set) continue;
+        auto bind = std::make_unique<Attribute>();
+        bind->kind = AttrKind::texture_bind;
+        bind->unit = 0;
+        bind->texture = texture;
+        bind->image = texture.ref(12);
+        bind->sampler.mag_filter = texture.i32(5, 1);
+        bind->sampler.min_filter = texture.i32(6, 1);
+        bind->sampler.wrap_s = texture.i32(7, 1);
+        bind->sampler.wrap_t = texture.i32(8, 1);
+        bind->object = texture;
+        auto& attrs = set->attributes;
+        attrs.erase(std::remove_if(attrs.begin(), attrs.end(), [](const Attribute* a) { return a->kind == AttrKind::texture_bind; }),
+                    attrs.end());
+        attrs.push_back(bind.get());
+        owned_.push_back(std::move(bind));
+    }
+}
+
+void TextureCtrlManager::update(Engine& engine) {
+    if (!pending_) return;
+    pending_ = false;
+    bind_all(engine);
+}
+
+// ---------------------------------------------------------------------------
 bool PassiveManager::accepts(const ObjectView& info) const {
     const auto& t = info.type();
     return t.starts_with("be") || t == "ParticleInfo" || t == "igInfo" || t == "igAnimationDatabase";
@@ -463,6 +519,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<ModelCtrlManager>());
     engine.add_manager(std::make_unique<ActionManager>());
     engine.add_manager(std::make_unique<CameraManager>());
+    engine.add_manager(std::make_unique<TextureCtrlManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 

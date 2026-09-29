@@ -44,6 +44,8 @@ struct GlRenderer::Impl {
     }
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
+    int u_fog{}, u_fog_color{}, u_fog_range{};
+    PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
 namespace {
@@ -62,9 +64,12 @@ uniform int u_light_count;
 uniform vec4 u_ambient, u_diffuse, u_emission;
 out vec4 v_color;
 out vec2 v_uv;
+out float v_depth;
 void main() {
     vec4 world = u_model * vec4(a_pos, 1.0);
-    gl_Position = u_proj * (u_view * world);
+    vec4 eye = u_view * world;
+    v_depth = -eye.z;
+    gl_Position = u_proj * eye;
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
         vec3 n = normalize(mat3(u_model) * a_normal);
@@ -81,6 +86,10 @@ void main() {
 const char* kFragment = R"(#version 330 core
 in vec4 v_color;
 in vec2 v_uv;
+in float v_depth;
+uniform int u_fog;
+uniform vec4 u_fog_color;
+uniform vec2 u_fog_range;
 uniform sampler2D u_tex;
 uniform int u_use_tex;
 uniform vec4 u_modulate;
@@ -101,6 +110,10 @@ void main() {
     else if (u_alpha_func == 5) pass = abs(a - u_alpha_ref) >= 0.002;
     else if (u_alpha_func == 6) pass = a >= u_alpha_ref;
     if (!pass) discard;
+    if (u_fog != 0) {
+        float f = clamp((u_fog_range.y - v_depth) / max(u_fog_range.y - u_fog_range.x, 0.001), 0.0, 1.0);
+        c.rgb = mix(u_fog_color.rgb, c.rgb, f);
+    }
     o_color = c;
 }
 )";
@@ -158,7 +171,9 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex)
+    U(fog) U(fog_color) U(fog_range)
 #undef U
+    gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
     glBindTexture(GL_TEXTURE_2D, white_texture_);
     const std::uint32_t white = 0xffffffffu;
@@ -317,6 +332,12 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             gl.Uniform4f(gl.u_ambient, s.ambient.x, s.ambient.y, s.ambient.z, s.ambient.w);
             gl.Uniform4f(gl.u_diffuse, s.diffuse.x, s.diffuse.y, s.diffuse.z, s.diffuse.w);
             gl.Uniform4f(gl.u_emission, s.emission.x, s.emission.y, s.emission.z, s.emission.w);
+        }
+        const bool fog = s.fog && s.fog_params && !s.projection;
+        gl.Uniform1i(gl.u_fog, fog ? 1 : 0);
+        if (fog) {
+            gl.Uniform4f(gl.u_fog_color, s.fog_params->color.x, s.fog_params->color.y, s.fog_params->color.z, 1);
+            gl.Uniform2f(gl.u_fog_range, s.fog_params->f0, s.fog_params->f1);
         }
         if (s.blend_enabled) {
             glEnable(GL_BLEND);

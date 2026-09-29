@@ -172,6 +172,10 @@ public:
     void step(const std::array<PadState, 4>& pads);
     // Collect the draw list for the current state.
     void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color);
+    // Optional host inspection camera replacing the game camera (debug only).
+    std::optional<FrameCamera> debug_camera;
+    // Per-scene draw statistics for diagnostics.
+    std::vector<std::string> scene_report();
 
     void request_stage(std::string name);
     const std::string& stage_name() const { return stage_name_; }
