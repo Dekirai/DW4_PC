@@ -146,7 +146,13 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
-    // sequence-long invulnerability.
+    // sequence-long invulnerability; started sequence-dead effects are erased.
+    for (const auto& effect : ram.effects)
+        if (effect.sequence_dead && effect.started && effect.ram >= 0) {
+            Packet erase;
+            engine.messenger().send(engine, "MODELCTRL", effect.model, effect.ram, "SQ_ERAS", erase);
+        }
+    ram.effects.clear();
     ram.hitboxes.clear();
     ++ram.hitbox_generation;
     if (ram.muteki < 0) ram.muteki = 0;
@@ -352,8 +358,19 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 hud("NUMBERCTRL", "mpnm", "SETVALUE", mp_value);
             }
         }
-        // Position / rotation vectors (or a matrix) supplied with GENERATE place the model.
-        if (ram.node && !packet.vectors.empty())
+        ram.attach_name.clear();
+        ram.attach_index = -1;
+        ram.attach_lock = false;
+        // Effect form (80310340): source RAM/name, sequence, owner name/RAM,
+        // offset and rotation relative to the owner, position lock.
+        if (ram.node && packet.strings.size() >= 3 && packet.ints.size() >= 2) {
+            ram.attach_name = std::string(packet.string(2));
+            ram.attach_index = packet.ints[1];
+            ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+            ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
+            ram.attach_lock = packet.boolean(0);
+            place_attached(ram);
+        } else if (ram.node && !packet.vectors.empty())
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
         else if (ram.node && !packet.matrices.empty())
             ram.node->matrix = packet.matrices[0];
@@ -445,7 +462,22 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
         return true;
     }
-    if (command == "SETEFFECT" || command == "SETSOUND" ||
+    if (command == "SETEFFECT") {
+        // 8030DD34: model, sequence, delay, offset (+ rotation when two vectors),
+        // sequence-dead and position-lock flags.
+        if (!ram.generated || packet.strings.empty()) return true;
+        ModelRam::Effect effect;
+        effect.model = std::string(packet.string(0));
+        effect.sequence = std::string(packet.string(1));
+        effect.delay = packet.real(0);
+        if (!packet.vectors.empty()) effect.offset = packet.vectors[0];
+        if (packet.vectors.size() == 2) effect.rotation = packet.vectors[1];
+        effect.sequence_dead = packet.boolean(0);
+        effect.lock = packet.boolean(1);
+        ram.effects.push_back(std::move(effect));
+        return true;
+    }
+    if (command == "SETSOUND" ||
         command == "GETTRCDATA" || command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
         command == "SETSLIPPEDFLOOR" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
@@ -711,6 +743,8 @@ void ModelCtrlManager::update(Engine& engine) {
         else if (ram.category == "PLAYER2") update_capsule(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
+        if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
+        if (ram.attach_lock && ram.generated) place_attached(ram);
         if (!ram.generated || !ram.wait_name) continue;
         const auto& wait = *ram.wait_name;
         bool done = false;
@@ -837,6 +871,54 @@ bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_vi
         return action_done();
     }
     return !held;
+}
+
+// Effect subcommands (80310754 / start 80310340): after the delay, FIND_SPACE a
+// RAM of the effect model and GENERATE it on this model. Sequence-dead effects
+// stay queued so a sequence change erases them.
+void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
+    for (std::size_t i = 0; i < ram.effects.size();) {
+        auto& effect = ram.effects[i];
+        effect.elapsed += 1.0f;
+        if (effect.started || effect.elapsed < effect.delay) { ++i; continue; }
+        effect.started = true;
+        Packet find;
+        engine.messenger().send(engine, "MODELCTRL", effect.model, -1, "FIND_SPACE", find);
+        if (find.ints.empty()) {
+            engine.note("effect model " + effect.model);
+            ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
+            continue;
+        }
+        effect.ram = find.ints[0];
+        Packet generate;
+        generate.ints = {ram.index, ram.index};
+        generate.strings.emplace_back(ram.info_name);
+        generate.strings.emplace_back(effect.sequence);
+        generate.strings.emplace_back(ram.info_name);
+        generate.vectors = {effect.offset, effect.rotation};
+        generate.bools.push_back(effect.lock ? 1 : 0);
+        const std::string model = effect.model;
+        const int target = effect.ram;
+        const bool keep = effect.sequence_dead;
+        if (!keep) ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
+        else ++i;
+        engine.messenger().send(engine, "MODELCTRL", model, target, "GENERATE", generate);
+        if (!ram.generated) return;
+    }
+}
+
+// An attached effect: the owner's matrix with the offset rotated into it and
+// the extra rotation (degrees) applied first.
+void ModelCtrlManager::place_attached(ModelRam& ram) {
+    const auto* owner = find(ram.attach_name, ram.attach_index);
+    if (!owner || !owner->node || !ram.node) return;
+    const auto& o = owner->node->matrix;
+    Mat4 m = placement_matrix(Vec3f{}, ram.attach_rotation) * o;
+    const Vec3f v = ram.attach_offset;
+    m(3, 0) = v.x * o(0, 0) + v.y * o(1, 0) + v.z * o(2, 0) + o(3, 0);
+    m(3, 1) = v.x * o(0, 1) + v.y * o(1, 1) + v.z * o(2, 1) + o(3, 1);
+    m(3, 2) = v.x * o(0, 2) + v.y * o(1, 2) + v.z * o(2, 2) + o(3, 2);
+    ram.node->matrix = m;
 }
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
@@ -1030,6 +1112,49 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
 }
 
 void ModelCtrlManager::install_actor_hook(Engine&, TraversalContext&) {}
+
+// ===========================================================================
+// beActionStarter
+// ===========================================================================
+// [7] beAsTargetModelData: target model [2] with beActionStarterData rows:
+// [2] action, [3] effect sequence, [4] delay, [5] offset, [6]/[7] flags
+// (Data2 adds a rotation vector).
+void ActionStarterManager::add_info(Engine& engine, const ObjectView& info) {
+    std::int32_t index = 0;
+    for (const auto& record : info.list(6)) {
+        auto ram = std::make_unique<Ram>();
+        ram->manager = this;
+        ram->info = info;
+        ram->ram = record;
+        ram->info_name = std::string(info.str(2));
+        ram->index = index++;
+        ram->active = record ? record.boolean(5) : false;
+        engine.messenger().add_row("ACTION_BROADCAST", std::nullopt, -1, ram.get());
+        rams_.push_back(std::move(ram));
+        break; // one broadcast row per starter info
+    }
+}
+
+bool ActionStarterManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
+    const std::string source(packet.string(0));
+    const int index = packet.integer(0, -1);
+    for (const auto& target : ram.info.list(7)) {
+        if (!target || target.str(2) != source) continue;
+        for (const auto& data : target.list(3)) {
+            if (!data || data.str(2) != command) continue;
+            Packet effect;
+            effect.strings.emplace_back(ram.info_name);
+            effect.strings.emplace_back(std::string(data.str(3)));
+            effect.floats.push_back(float(data.i32(4)));
+            effect.vectors.push_back(data.vec3(5).value_or(Vec3f{}));
+            if (data.type() == "beActionStarterData2") effect.vectors.push_back(data.vec3(8).value_or(Vec3f{}));
+            effect.bools = {std::uint8_t(data.boolean(6) ? 1 : 0), std::uint8_t(data.boolean(7) ? 1 : 0)};
+            engine.messenger().send(engine, "MODELCTRL", source, index, "SETEFFECT", effect);
+        }
+        break;
+    }
+    return true;
+}
 
 // ===========================================================================
 // PLAYERARMS (80318298 registration, 80318474 commands)
@@ -1276,6 +1401,12 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
     if (ram.current == found) { apply_visuals(ram); return; }
     ram.current = found;
     ram.cursor = 0;
+    // ACTION_BROADCAST (8031308C): starters react to (model, RAM, action).
+    Packet broadcast;
+    broadcast.strings.emplace_back(ram.info_name);
+    broadcast.ints.push_back(ram.index);
+    if (engine.messenger().count("ACTION_BROADCAST", std::nullopt, -1))
+        engine.messenger().send(engine, "ACTION_BROADCAST", std::nullopt, -1, name, broadcast);
     run(engine, ram);
     apply_visuals(ram);
 }

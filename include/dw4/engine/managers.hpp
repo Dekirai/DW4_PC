@@ -667,6 +667,20 @@ public:
             bool started{};
         };
         std::vector<Hitbox> hitboxes;
+        // Effect subcommands (SETEFFECT, 80310B50 / start 80310340).
+        struct Effect {
+            std::string model, sequence;
+            Vec3f offset{}, rotation{};
+            float delay{}, elapsed{};
+            bool started{}, sequence_dead{}, lock{};
+            int ram = -1;
+        };
+        std::vector<Effect> effects;
+        // An effect placed on an owner model (GENERATE with attachment strings).
+        std::string attach_name;
+        int attach_index = -1;
+        Vec3f attach_offset{}, attach_rotation{};
+        bool attach_lock{};
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)
@@ -702,6 +716,8 @@ private:
     void update_ai_map(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
+    void update_effects(Engine& engine, ModelRam& ram);
+    void place_attached(ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
     void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
@@ -727,6 +743,21 @@ public:
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, std::vector<std::pair<std::string, std::string>>, std::less<>> labels_;
+};
+
+// beActionStarter (registration 802F2244, handler 802F228C): on the
+// ACTION_BROADCAST of a target model's action, SETEFFECT this effect model on
+// that model (hit sparks, defeat smoke, ...).
+class ActionStarterManager final : public Manager {
+public:
+    ActionStarterManager() : Manager("beActionStarter") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beActionStarterInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
 };
 
 class ActionManager final : public Manager {
