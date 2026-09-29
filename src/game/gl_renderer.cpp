@@ -44,7 +44,7 @@ struct GlRenderer::Impl {
     }
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
-    int u_fog{}, u_fog_color{}, u_fog_range{};
+    int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{};
     PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
@@ -54,7 +54,11 @@ layout(location=0) in vec3 a_pos;
 layout(location=1) in vec3 a_normal;
 layout(location=2) in vec4 a_color;
 layout(location=3) in vec2 a_uv;
+layout(location=4) in vec2 a_weights;
+layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
+uniform int u_skinned;
+uniform mat4 u_palette[64];
 uniform int u_use_vcol;
 uniform vec4 u_color;
 uniform int u_lighting;
@@ -66,13 +70,23 @@ out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
 void main() {
-    vec4 world = u_model * vec4(a_pos, 1.0);
+    vec4 local = vec4(a_pos, 1.0);
+    vec3 normal = a_normal;
+    if (u_skinned != 0) {
+        int i0 = int(a_indices.x + 0.5), i1 = int(a_indices.y + 0.5);
+        vec4 p = u_palette[i0] * local * a_weights.x;
+        vec3 nn = mat3(u_palette[i0]) * a_normal * a_weights.x;
+        if (a_weights.y > 0.0) { p += u_palette[i1] * local * a_weights.y; nn += mat3(u_palette[i1]) * a_normal * a_weights.y; }
+        local = vec4(p.xyz, 1.0);
+        normal = nn;
+    }
+    vec4 world = u_model * local;
     vec4 eye = u_view * world;
     v_depth = -eye.z;
     gl_Position = u_proj * eye;
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
-        vec3 n = normalize(mat3(u_model) * a_normal);
+        vec3 n = normalize(mat3(u_model) * normal);
         vec3 lit = u_emission.rgb + u_ambient.rgb * 0.35;
         for (int i = 0; i < u_light_count; ++i)
             lit += u_light_col[i] * max(dot(n, -normalize(u_light_dir[i])), 0.0);
@@ -171,7 +185,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex)
-    U(fog) U(fog_color) U(fog_range)
+    U(fog) U(fog_color) U(fog_range) U(skinned) U(palette)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -206,15 +220,24 @@ const GlRenderer::Mesh* GlRenderer::mesh(const engine::GeometryData* g) {
     m.has_uvs = !g->texcoords.empty();
     m.has_normals = !g->normals.empty();
     const std::size_t n = g->positions.size();
-    // Interleaved: pos(12) normal(12) color(4) uv(8) = 36 bytes
-    std::vector<std::uint8_t> data(n * 36, 0);
+    // Interleaved: pos(12) normal(12) color(4) uv(8) weights(8) indices(8) = 52 bytes
+    constexpr std::size_t stride = 52;
+    std::vector<std::uint8_t> data(n * stride, 0);
+    const std::size_t wc = g->weight_count;
     for (std::size_t i = 0; i < n; ++i) {
-        auto* p = data.data() + i * 36;
+        auto* p = data.data() + i * stride;
         std::memcpy(p, &g->positions[i], 12);
         if (m.has_normals) std::memcpy(p + 12, &g->normals[i], 12);
         const std::uint32_t color = m.has_colors ? g->colors[i] : 0xffffffffu;
         std::memcpy(p + 24, &color, 4);
         if (m.has_uvs) std::memcpy(p + 28, &g->texcoords[i * 2], 8);
+        float weights[2]{1.0f, 0.0f}, indices[2]{0.0f, 0.0f};
+        for (std::size_t k = 0; k < wc && k < 2; ++k) {
+            weights[k] = g->weights[i * wc + k];
+            indices[k] = float(g->blend_indices[i * wc + k]);
+        }
+        std::memcpy(p + 36, weights, 8);
+        std::memcpy(p + 44, indices, 8);
     }
     gl.GenVertexArrays(1, &m.vao);
     gl.BindVertexArray(m.vao);
@@ -222,13 +245,17 @@ const GlRenderer::Mesh* GlRenderer::mesh(const engine::GeometryData* g) {
     gl.BindBuffer(GL_ARRAY_BUFFER, m.vbo);
     gl.BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(data.size()), data.data(), GL_STATIC_DRAW);
     gl.EnableVertexAttribArray(0);
-    gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 36, reinterpret_cast<void*>(0));
+    gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
     gl.EnableVertexAttribArray(1);
-    gl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 36, reinterpret_cast<void*>(12));
+    gl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(12));
     gl.EnableVertexAttribArray(2);
-    gl.VertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, 36, reinterpret_cast<void*>(24));
+    gl.VertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, reinterpret_cast<void*>(24));
     gl.EnableVertexAttribArray(3);
-    gl.VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, 36, reinterpret_cast<void*>(28));
+    gl.VertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(28));
+    gl.EnableVertexAttribArray(4);
+    gl.VertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(36));
+    gl.EnableVertexAttribArray(5);
+    gl.VertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(44));
     gl.GenBuffers(1, &m.ibo);
     gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ibo);
     gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(g->indices.size() * 4), g->indices.data(), GL_STATIC_DRAW);
@@ -298,6 +325,13 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const auto view = s.view.value_or(camera.view);
         const auto proj = s.projection.value_or(camera.projection);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
+        if (item.palette && !item.palette->empty()) {
+            const auto count = std::min<std::size_t>(item.palette->size(), 64);
+            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.Uniform1i(gl.u_skinned, 1);
+        } else {
+            gl.Uniform1i(gl.u_skinned, 0);
+        }
         gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, view.m.data());
         gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, proj.m.data());
         gl.Uniform4f(gl.u_color, s.color.x, s.color.y, s.color.z, s.color.w);

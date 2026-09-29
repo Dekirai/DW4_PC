@@ -233,7 +233,7 @@ public:
     void update(Engine& engine) override;
 
     struct Command {
-        std::string type, name, loop;
+        std::string type, name, loop, interpolation;
         float first{}, second{};
     };
     struct Action {
@@ -256,7 +256,13 @@ public:
         std::optional<bool> blend, texture, lighting;
         std::map<std::string, NodeTimer> timers;
         NodeTimer node_clock;
+        AnimationDatabase* database{};
+        std::vector<Node*> actors;
+        MotionState motion;
+        ActorPose pose;
+        std::int64_t pose_time = -1;
     };
+    const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
 
 private:
     void dispatch(Engine& engine, ActionRam& ram, std::string_view name);
@@ -265,12 +271,13 @@ private:
     void apply_visuals(ActionRam& ram);
     std::vector<std::unique_ptr<ActionRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Action>>> actions_;
+    std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<AnimationDatabase>> databases_;
+    std::map<const Node*, ActionRam*> actor_owner_;
 };
 
 // Game-wide system state (beSystem / beNDMWGameRam script services).
 class GameSystem final : public Manager {
 public:
-    GameSystem() : Manager("beSystem") {}
     bool accepts(const ObjectView&) const override { return false; }
     void add_info(Engine&, const ObjectView&) override {}
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
@@ -281,6 +288,7 @@ public:
         std::array<std::string, 3> weapons{};
     };
     std::array<PlayerSlot, 4> players{};
+    GameSystem() : Manager("beSystem") { players[0].joined = true; }
     std::int32_t difficulty{};
     std::int32_t difficulty_max{};
     std::int32_t camera_mode{};

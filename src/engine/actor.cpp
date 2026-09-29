@@ -1,0 +1,174 @@
+#include "dw4/engine/actor.hpp"
+
+#include "dw4/skinning.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace dw4::engine {
+namespace {
+Mat4 to_mat4(const SkinMatrix& m) {
+    Mat4 r;
+    for (std::size_t i = 0; i < 16; ++i) r.m[i] = static_cast<float>(m[i]);
+    return r;
+}
+Mat4 lerp_matrix(const Mat4& a, const Mat4& b, float t) {
+    Mat4 r;
+    for (std::size_t i = 0; i < 16; ++i) r.m[i] = a.m[i] + (b.m[i] - a.m[i]) * t;
+    return r;
+}
+} // namespace
+
+AnimationDatabase::AnimationDatabase(const ObjectView& database) : object_(database) {
+    const auto skeletons = database.list(5);
+    if (!skeletons.empty() && skeletons[0]) {
+        const auto& s = skeletons[0];
+        skeleton_.object = s;
+        const auto bones = s.list(4);
+        const auto constants = s.memory(3);
+        const auto inverse = s.memory(5);
+        const auto joint_count = s.i32(6);
+        for (std::size_t i = 0; i < bones.size(); ++i) {
+            const auto& bone = bones[i];
+            skeleton_.names.emplace_back(bone ? std::string(bone.str(2)) : std::string());
+            skeleton_.parent.push_back(bone ? bone.i32(3, -1) : -1);
+            skeleton_.joint.push_back(bone ? bone.i32(4, -1) : -1);
+            Vec3f c{};
+            if (constants.size() >= (i + 1) * 12)
+                c = {read_f32le(constants, i * 12), read_f32le(constants, i * 12 + 4), read_f32le(constants, i * 12 + 8)};
+            skeleton_.constant_translation.push_back(c);
+        }
+        skeleton_.joint_bone.assign(std::size_t(std::max(joint_count, 0)), 0);
+        skeleton_.inverse_joint.assign(std::size_t(std::max(joint_count, 0)), Mat4{});
+        for (int j = 0; j < joint_count; ++j) {
+            if (inverse.size() >= std::size_t(j + 1) * 64)
+                for (std::size_t k = 0; k < 16; ++k) skeleton_.inverse_joint[std::size_t(j)].m[k] = read_f32le(inverse, std::size_t(j) * 64 + k * 4);
+        }
+        for (std::size_t b = 0; b < skeleton_.joint.size(); ++b) {
+            const int j = skeleton_.joint[b];
+            if (j >= 0 && j < joint_count) skeleton_.joint_bone[std::size_t(j)] = int(b);
+        }
+        skeleton_.valid = !bones.empty();
+    }
+    animations_ = database.list(6);
+}
+
+bool AnimationDatabase::has_clip(std::string_view name) const {
+    for (const auto& a : animations_) if (a && a.str(2) == name) return true;
+    return false;
+}
+
+std::string AnimationDatabase::first_clip_name() const {
+    for (const auto& a : animations_) if (a) return std::string(a.str(2));
+    return {};
+}
+
+const Clip* AnimationDatabase::clip(std::string_view name) {
+    if (auto found = clips_.find(name); found != clips_.end()) return found->second->valid ? found->second.get() : nullptr;
+    auto clip = std::make_unique<Clip>();
+    clip->name = std::string(name);
+    try {
+        ObjectView animation;
+        for (const auto& a : animations_) if (a && a.str(2) == name) { animation = a; break; }
+        if (animation && skeleton_.valid) {
+            clip->duration = animation.i64(9);
+            const auto bindings = animation.list(4);
+            const auto tracks = animation.list(5);
+            std::vector<int> map(tracks.size());
+            for (std::size_t i = 0; i < tracks.size(); ++i) map[i] = int(i);
+            if (!bindings.empty() && bindings[0]) {
+                const auto bytes = bindings[0].memory(3);
+                for (std::size_t i = 0; i < tracks.size() && (i + 1) * 4 <= bytes.size(); ++i) map[i] = int(read_u32le(bytes, i * 4));
+            }
+            ObjectView source;
+            for (const auto& track : tracks) {
+                if (!track) continue;
+                const auto transform = track.ref(3);
+                if (transform) { source = transform.ref(3); if (source) break; }
+            }
+            if (source) {
+                clip->channels = decode_enbaya(source.memory(2));
+                clip->track_bone = map;
+                clip->use_sample_translation.assign(skeleton_.names.size(), false);
+                if (const auto mask = animation.ref(10)) {
+                    const auto bytes = mask.memory(4);
+                    for (std::size_t b = 0; b < skeleton_.names.size(); ++b) {
+                        const std::size_t word = b / 32;
+                        if ((word + 1) * 4 <= bytes.size()) clip->use_sample_translation[b] = (read_u32le(bytes, word * 4) >> (b % 32)) & 1u;
+                    }
+                }
+                clip->valid = clip->channels.track_count() > 0 && clip->duration > 0;
+            }
+        }
+    } catch (const std::exception&) {
+        clip->valid = false;
+    }
+    auto* raw = clip.get();
+    clips_.emplace(std::string(name), std::move(clip));
+    return raw->valid ? raw : nullptr;
+}
+
+std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, std::int64_t time) {
+    std::int64_t local = time - start;
+    if (local < 0) local = 0;
+    if (clip.duration > 0) {
+        if (loop) local %= clip.duration;
+        else local = std::min(local, clip.duration);
+    }
+    return local;
+}
+
+namespace {
+bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, bool loop, std::int64_t time,
+                   std::vector<Mat4>& locals) {
+    const Clip* clip = database.clip(name);
+    const auto& skel = database.skeleton();
+    if (!clip) return false;
+    const auto local = motion_local_time(*clip, start, loop, time);
+    const float seconds = std::min(static_cast<float>(double(local) / 1e9), clip->channels.duration());
+    std::vector<EnbayaTransform> samples;
+    try {
+        samples = sample_enbaya_original(clip->channels, seconds);
+    } catch (const std::exception&) {
+        return false;
+    }
+    locals.assign(skel.names.size(), Mat4{});
+    for (std::size_t t = 0; t < samples.size() && t < clip->track_bone.size(); ++t) {
+        const int bone = clip->track_bone[t];
+        if (bone < 0 || std::size_t(bone) >= locals.size()) continue;
+        Vec3 translation = samples[t].translation;
+        if (std::size_t(bone) < clip->use_sample_translation.size() && !clip->use_sample_translation[std::size_t(bone)]) {
+            const auto& c = skel.constant_translation[std::size_t(bone)];
+            translation = {c.x, c.y, c.z};
+        }
+        locals[std::size_t(bone)] = to_mat4(original_bone_transform(samples[t].rotation, translation));
+    }
+    return true;
+}
+} // namespace
+
+bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose) {
+    const auto& skel = database.skeleton();
+    pose.skeleton = &skel;
+    pose.bone_world.assign(skel.names.size(), Mat4{});
+    std::vector<Mat4> locals;
+    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, motion.loop, time, locals)) {
+        pose.bind_pose = true;
+        return false;
+    }
+    if (motion.blend > 0 && !motion.previous_clip.empty() && time - motion.blend_start < motion.blend) {
+        std::vector<Mat4> previous;
+        if (sample_locals(database, motion.previous_clip, motion.previous_start, motion.previous_loop, time, previous)) {
+            const float t = std::clamp(float(double(time - motion.blend_start) / double(motion.blend)), 0.0f, 1.0f);
+            for (std::size_t i = 0; i < locals.size() && i < previous.size(); ++i) locals[i] = lerp_matrix(previous[i], locals[i], t);
+        }
+    }
+    for (std::size_t b = 0; b < locals.size(); ++b) {
+        const int p = skel.parent[b];
+        pose.bone_world[b] = (p >= 0 && std::size_t(p) < b) ? locals[b] * pose.bone_world[std::size_t(p)] : locals[b];
+    }
+    pose.bind_pose = false;
+    return true;
+}
+
+} // namespace dw4::engine

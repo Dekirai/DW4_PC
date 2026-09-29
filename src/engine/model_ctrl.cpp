@@ -285,8 +285,9 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
                 c.first = command.f32(3);
                 c.second = command.f32(4);
             } else if (type == "beAction2MOTIONSET") {
-                c.first = command.f32(3);
                 c.loop = std::string(command.str(5));
+                c.first = command.f32(4);
+                c.interpolation = std::string(command.str(3));
             }
             action.commands.push_back(std::move(c));
         }
@@ -296,6 +297,12 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
     actions_[reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()))] =
         std::move(actions);
     Node* switch_node = engine.scenes().node(info.ref(7));
+    AnimationDatabase* database = nullptr;
+    if (const auto db = info.ref(8)) {
+        auto& slot = databases_[{static_cast<const void*>(db.document()), db.reference()}];
+        if (!slot) slot = std::make_unique<AnimationDatabase>(db);
+        database = slot.get();
+    }
     std::int32_t index = 0;
     for (const auto& record : info.list(6)) {
         auto ram = std::make_unique<ActionRam>();
@@ -307,6 +314,15 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
         ram->actions = action_ptr;
         ram->switch_node = switch_node && switch_node->kind == NodeKind::switch_node ? switch_node : nullptr;
         if (record) ram->node = engine.scenes().node(record.ref(11));
+        ram->database = database;
+        if (record) {
+            for (const auto& actor : record.list(13)) {
+                if (!actor) continue;
+                Node* n = engine.scenes().node(actor);
+                ram->actors.push_back(n);
+                actor_owner_[n] = ram.get();
+            }
+        }
         if (ram->node) {
             ram->node_clock.scale = ram->node->time_scale;
             ram->node_clock.bias = ram->node->time_bias;
@@ -323,6 +339,21 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
 void ActionManager::clear_stage(Engine&) {
     rams_.clear();
     actions_.clear();
+    databases_.clear();
+    actor_owner_.clear();
+}
+
+const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time) {
+    auto found = actor_owner_.find(&actor);
+    if (found == actor_owner_.end()) return nullptr;
+    auto& ram = *found->second;
+    if (!ram.database) return nullptr;
+    if (ram.pose_time != world_time) {
+        const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+        evaluate_pose(*ram.database, ram.motion, time, ram.pose);
+        ram.pose_time = world_time;
+    }
+    return &ram.pose;
 }
 
 void ActionManager::apply_visuals(ActionRam& ram) {
@@ -402,7 +433,19 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         return true;
     }
     if (c.type == "beAction2MOTIONSET") {
-        // Actor animation playback is handled by the actor runtime when present.
+        const auto now = static_cast<std::int64_t>(scaled_clock(engine.time(), ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+        auto& m = ram.motion;
+        if (m.clip != c.name || !(!c.loop.empty() && c.loop[0] == 'L')) {
+            m.previous_clip = m.clip;
+            m.previous_start = m.start;
+            m.previous_loop = m.loop;
+            m.blend_start = now;
+            m.blend = m.previous_clip.empty() ? 0 : frames_to_time(c.first);
+            m.clip = c.name;
+            m.start = now;
+            m.loop = !c.loop.empty() && c.loop[0] == 'L';
+        }
+        ram.pose_time = -1;
         return true;
     }
     engine.note("ACTION command " + c.type);
@@ -529,7 +572,13 @@ void ActionManager::update(Engine& engine) {
             auto found = ram.timers.find("WAIT");
             ready = found == ram.timers.end() || timer_expired(found->second, now);
         } else if (ram.wait_state == 2) {
-            ready = true; // no animation combiner on this RAM
+            ready = true;
+            if (ram.database && !ram.motion.clip.empty()) {
+                if (const Clip* clip = ram.database->clip(ram.motion.clip)) {
+                    const auto t = static_cast<std::int64_t>(scaled_clock(now, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+                    ready = t - ram.motion.start >= clip->duration;
+                }
+            }
         } else if (ram.wait_state == 3) {
             ready = ram.joint_ended;
         }

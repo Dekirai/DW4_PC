@@ -457,12 +457,36 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         n->kind = NodeKind::blend_matrix_select;
         attributes_from(8, n->attributes);
         children_from(7);
+        if (const auto list = view.ref(10)) {
+            const auto data = list.memory(4);
+            const auto count = list.u32(2);
+            for (std::uint32_t i = 0; i < count && (i + 1) * 4 <= data.size(); ++i)
+                n->blend_indices.push_back(static_cast<std::int32_t>(read_u32le(data, i * 4)));
+        }
     } else if (view.is_a("igModelViewMatrixBoneSelect")) {
         n->kind = NodeKind::bone_select;
+        n->bone_index = view.i32(8, -1);
         children_from(7);
     } else if (view.is_a("igActor")) {
         n->kind = NodeKind::actor;
         children_from(7);
+        if (auto m = view.mat4(14)) n->actor_matrix = *m;
+        if (const auto appearance = view.ref(11)) {
+            if (const auto skin = appearance.ref(3))
+                if (const auto graph = skin.ref(3)) n->appearance_roots.push_back(node(graph.document(), graph.reference()));
+            for (const auto& skin : appearance.list(4))
+                if (skin) if (const auto graph = skin.ref(3)) n->appearance_roots.push_back(node(graph.document(), graph.reference()));
+            for (const auto& extra : appearance.list(7))
+                if (extra && extra.is_a("igNode")) n->appearance_roots.push_back(node(extra.document(), extra.reference()));
+        }
+    } else if (view.is_a("igLod")) {
+        n->kind = NodeKind::lod;
+        children_from(7);
+        if (const auto list = view.ref(8)) {
+            const auto data = list.memory(4);
+            const auto count = list.u32(2);
+            for (std::uint32_t i = 0; i < count && (i + 1) * 4 <= data.size(); ++i) n->lod_ranges.push_back(read_f32le(data, i * 4));
+        }
     } else if (view.is_a("igAttrSet")) {
         n->kind = NodeKind::attr_set;
         attributes_from(8, n->attributes);
@@ -558,14 +582,45 @@ void apply_overrides(const Node& n, RenderState& s) {
 }
 } // namespace
 
-void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time) {
-    if (!n || n->hidden) return;
+namespace {
+struct ActorScope {
+    const ActorPose* pose{};
+    Mat4 actor_model{};
+    std::shared_ptr<const std::vector<Mat4>> palette;
+};
+
+void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time,
+           const ActorScope& parent_scope, int depth) {
+    if (!n || n->hidden || depth > 256) return;
     Mat4 model = parent_model;
     RenderState state = parent_state;
+    ActorScope scope = parent_scope;
     switch (n->kind) {
     case NodeKind::attr_set:
-    case NodeKind::blend_matrix_select:
         for (const auto* a : n->attributes) apply(a, state, model);
+        break;
+    case NodeKind::blend_matrix_select: {
+        for (const auto* a : n->attributes) apply(a, state, model);
+        if (scope.pose && scope.pose->skeleton) {
+            auto palette = std::make_shared<std::vector<Mat4>>();
+            const auto& skel = *scope.pose->skeleton;
+            for (const auto joint : n->blend_indices) {
+                if (scope.pose->bind_pose || joint < 0 || std::size_t(joint) >= skel.inverse_joint.size()) {
+                    palette->push_back(Mat4{});
+                    continue;
+                }
+                const auto bone = std::size_t(skel.joint_bone[std::size_t(joint)]);
+                palette->push_back(bone < scope.pose->bone_world.size()
+                                       ? skel.inverse_joint[std::size_t(joint)] * scope.pose->bone_world[bone]
+                                       : Mat4{});
+            }
+            scope.palette = std::move(palette);
+        }
+        break;
+    }
+    case NodeKind::bone_select:
+        if (scope.pose && n->bone_index >= 0 && std::size_t(n->bone_index) < scope.pose->bone_world.size() && !scope.pose->bind_pose)
+            model = scope.pose->bone_world[std::size_t(n->bone_index)] * scope.actor_model;
         break;
     case NodeKind::light_set:
         for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
@@ -587,7 +642,6 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
         break;
     }
     case NodeKind::billboard: {
-        // Screen-aligned: keep translation, cancel the view rotation.
         const Mat4 view = state.view.value_or(ctx.camera.view);
         const Mat4 mv = model * view;
         const float sx = length({mv(0, 0), mv(0, 1), mv(0, 2)});
@@ -600,6 +654,17 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
         Mat4 inverse_view;
         if (invert(view, inverse_view)) model = aligned * inverse_view;
         break;
+    }
+    case NodeKind::lod: {
+        apply_overrides(*n, state);
+        const Vec3f origin{model(3, 0), model(3, 1), model(3, 2)};
+        const float distance = length(origin - ctx.camera_position);
+        for (std::size_t i = 0; i < n->children.size(); ++i) {
+            const float low = i < n->lod_ranges.size() ? n->lod_ranges[i] : 0.0f;
+            const float high = i + 1 < n->lod_ranges.size() ? n->lod_ranges[i + 1] : 3.0e38f;
+            if (distance >= low && distance < high) visit(n->children[i], ctx, model, state, time, scope, depth + 1);
+        }
+        return;
     }
     case NodeKind::geometry: {
         for (const auto* a : n->attributes) apply(a, state, model);
@@ -614,13 +679,21 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
             item.state = state;
             item.layer = ctx.layer;
             item.order = ctx.order++;
+            if (data->weight_count && scope.palette) item.palette = scope.palette;
             ctx.output->push_back(std::move(item));
         }
         break;
     }
-    case NodeKind::actor:
+    case NodeKind::actor: {
         if (ctx.actor_hook) ctx.actor_hook(*n, model, ctx);
+        apply_overrides(*n, state);
+        ActorScope actor;
+        actor.actor_model = n->actor_matrix * model;
+        actor.pose = ctx.actor_pose ? ctx.actor_pose(*n) : nullptr;
+        for (auto* root : n->appearance_roots) visit(root, ctx, actor.actor_model, state, time, actor, depth + 1);
+        scope = actor;
         break;
+    }
     case NodeKind::camera:
         return;
     default: break;
@@ -628,8 +701,13 @@ void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Re
     apply_overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
-        traverse(n->children[i], ctx, model, state, time);
+        visit(n->children[i], ctx, model, state, time, scope, depth + 1);
     }
+}
+} // namespace
+
+void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time) {
+    visit(n, ctx, parent_model, parent_state, time, ActorScope{}, 0);
 }
 
 void traverse(Node* root, TraversalContext& context) {

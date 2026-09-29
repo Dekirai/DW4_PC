@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dw4/engine/actor.hpp"
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/math.hpp"
 
@@ -103,8 +104,14 @@ struct Node {
     std::optional<Mat4> runtime_matrix;
     // Billboard axis mode etc.
     std::int32_t billboard_mode{};
-    // Actor / skin data is attached by the animation module.
-    void* actor{};
+    // igLod child ranges.
+    std::vector<float> lod_ranges;
+    // igActor appearance skin graph roots and actor transform.
+    std::vector<Node*> appearance_roots;
+    Mat4 actor_matrix{};
+    // igBlendMatrixSelect palette (joint indices) / igModelViewMatrixBoneSelect bone.
+    std::vector<std::int32_t> blend_indices;
+    std::int32_t bone_index = -1;
 
     bool child_enabled(std::size_t index) const;
     void set_child_enabled(std::size_t index, bool enabled);
@@ -186,6 +193,9 @@ struct TraversalContext {
     std::uint32_t layer{};
     std::uint32_t order{};
     std::function<void(const Node&, const Mat4& model, TraversalContext&)> actor_hook;
+    // Pose provider for igActor nodes (null or nullptr result: bind pose).
+    std::function<const ActorPose*(const Node& actor)> actor_pose;
+    Vec3f camera_position{};
 };
 
 void traverse(Node* root, TraversalContext& context);
