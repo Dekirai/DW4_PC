@@ -268,9 +268,73 @@ void GameSystem::prepare_player(Engine& engine, int slot) {
     for (std::size_t i = 0; i < 4; ++i) stats.resist[i] = clamp_stat(cell("shinka", row, resists[i]));
     player.max_hp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), 0, 99999);
     player.max_mp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), 0, 99999);
+    // NEXTEXP (80370DBC): (level + 140) * level^2 + level * 200; none at 999.
+    stats.next_exp = level >= 999 ? 0 : (level + 140) * level * level + level * 200;
     if (!stats.ready || player.hp > player.max_hp) player.hp = player.max_hp;
     if (!stats.ready || player.mp > player.max_mp) player.mp = player.max_mp;
     stats.ready = true;
+}
+
+int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
+    auto* db = engine.get<DatabaseManager>();
+    const int enemy_exp = db ? db->number("enemy", enemy_record, "EXP").value_or(0) : 0;
+    int joined = 0;
+    for (const auto& p : players) joined += p.joined ? 1 : 0;
+    int killer_gain = 0;
+    for (int slot = 0; slot < 4; ++slot) {
+        auto& player = players[std::size_t(slot)];
+        if (!player.joined || player.hp == 0) continue;
+        if (!player.stats.ready) prepare_player(engine, slot);
+        auto& stats = player.stats;
+        if (stats.level >= 999) continue;
+        int exp = enemy_exp;
+        if (stats.exp_rate != 0) exp = exp * (stats.exp_rate + 100) / 100;
+        // Party size scaling, then the defeating player keeps twice the share.
+        switch (joined) {
+        case 2: exp = exp * 140 / 3; break;
+        case 3: exp = exp * 160 / 4; break;
+        case 4: exp = exp * 200 / 5; break;
+        default: exp = exp * 100 / 2; break;
+        }
+        exp = slot == killer ? exp / 50 : exp / 100;
+        if (slot == killer) killer_gain = exp;
+        stats.exp += exp;
+        bool leveled = false;
+        while (stats.level < 999 && stats.next_exp <= stats.exp) {
+            ++stats.level;
+            prepare_player(engine, slot);
+            leveled = true;
+        }
+        if (!leveled) continue;
+        player.hp = player.max_hp;
+        player.mp = player.max_mp;
+        auto* models = engine.get<ModelCtrlManager>();
+        std::string name = player.digimon;
+        if (models)
+            if (auto* model = models->find(name, slot)) {
+                model->max_hp = player.max_hp;
+                model->hp = player.hp;
+            }
+        engine.log("player " + std::to_string(slot) + " reached level " + std::to_string(stats.level));
+        auto send = [&](const char* category, const char* target, const char* command, Packet p) {
+            engine.messenger().send(engine, category, target, slot, command, p);
+        };
+        Packet effect;
+        effect.strings.emplace_back("i_getitempnl01");
+        effect.strings.emplace_back("SQ_LVUP");
+        send("MODELCTRL", name.c_str(), "SETEFFECT", effect);
+        Packet level, full, hp, mp;
+        level.ints.push_back(stats.level);
+        full.floats.push_back(100.0f);
+        hp.ints.push_back(player.hp);
+        mp.ints.push_back(player.mp);
+        send("NUMBERCTRL", "lvnm", "SETVALUE", level);
+        send("METERCTRL", "hpmt", "SETPERCENT", full);
+        send("NUMBERCTRL", "hpnm", "SETVALUE", hp);
+        send("METERCTRL", "mpmt", "SETPERCENT", full);
+        send("NUMBERCTRL", "mpnm", "SETVALUE", mp);
+    }
+    return killer_gain;
 }
 
 } // namespace dw4::engine

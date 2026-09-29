@@ -783,6 +783,7 @@ public:
         int attack_zokusei = -1;
         std::array<int, 4> resist{}; // HONOOTEIKO, KOORITEIKO, KAMINARITEIKO, YAMITEIKO
         int kaihiritsu{}, bougyoritsu{};
+        int exp{}, next_exp{}, exp_rate{}; // EXP, NEXTEXP, EXPRITSU
         int weapon_record = -1, weapon_skill_no{};
         std::array<int, 9> skill{1, 1, 1, 1, 1, 1, 1, 1, 1};
         std::string weapon_model;
@@ -797,6 +798,10 @@ public:
     // GAMESTART / RECALCPLAYER subset: species, level-1 status and the first
     // initial weapon, from the stage's shinka and weapon databases.
     void prepare_player(Engine& engine, int slot);
+    // P2EEXPUP (80373B48): every live player gains the enemy's EXP (the
+    // defeating player the full share), levels up past NEXTEXP with full HP/MP.
+    // Returns the defeating player's gain.
+    int experience_up(Engine& engine, int killer, int enemy_record);
     std::array<PlayerSlot, 4> players{};
     GameSystem() : Manager("beSystem") { players[0].joined = true; }
     std::int32_t difficulty{};

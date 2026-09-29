@@ -379,8 +379,10 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     }
     if (method == "BLTcalcEXPUp") {
         auto* model = context_model();
-        auto* db = get<DatabaseManager>();
-        return number(model && db ? db->number("enemy", model->record, "EXP").value_or(0) : 0);
+        auto* sys = get<GameSystem>();
+        if (!model || !sys || !context) return number(0);
+        const int killer = context->shooter_name.starts_with('p') ? context->shooter : -1;
+        return number(sys->experience_up(*this, killer, model->record));
     }
     if (method == "BLTcalcSkillUp" || method == "MDLdspExp") return {}; // growth / number display not reconstructed
     if (method == "MDLdspDamage" || method == "MDLdspDamageP") {
