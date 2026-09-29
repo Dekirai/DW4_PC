@@ -468,6 +468,36 @@ private:
     std::vector<std::unique_ptr<PanelRam>> rams_;
 };
 
+// MATCTRL (beMatCtrl, update 803030A8, commands 80303B14): floor mats. Each
+// beMatCtrlData [8] is a named igAABox; whenever the set of players standing on
+// a mat changes, "<name>.lua" runs with that mat as the script context.
+class MatCtrlManager final : public Manager {
+public:
+    MatCtrlManager() : Manager("beMatCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beMatCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+    // MATisAllPlayer / MATgetPlayerNo / MATisRideOffPlayer for the running mat script.
+    bool script_call(Engine& engine, const std::string& method, std::vector<Lua4Value>& out);
+
+private:
+    struct Mat {
+        std::string name;
+        Vec3f min{}, max{};
+        bool enabled = true;
+        std::uint32_t current{}, previous{};
+    };
+    struct MatRam : Ram {
+        bool running = true;  // RAM +20: PAUSE / RESTART
+        Node* visuals{};      // info [7] switch
+        std::vector<Mat> mats;
+    };
+    std::vector<std::unique_ptr<MatRam>> rams_;
+    const Mat* context_{};
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:
@@ -598,6 +628,7 @@ public:
         bool joined{};
         std::string digimon = "p_agumon";
         std::array<std::string, 3> weapons{};
+        int hp = 100, max_hp = 100, mp = 50, max_mp = 50;
     };
     std::array<PlayerSlot, 4> players{};
     GameSystem() : Manager("beSystem") { players[0].joined = true; }

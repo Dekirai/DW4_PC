@@ -246,6 +246,12 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto limit = std::max(1, to_int(arg(0), 1));
         return number(double(rng() % std::uint32_t(limit)));
     }
+    if (method.starts_with("MAT")) {
+        if (auto* mats = get<MatCtrlManager>()) {
+            std::vector<Lua4Value> out;
+            if (mats->script_call(*this, method, out)) return out;
+        }
+    }
     if (auto* sys = get<GameSystem>()) {
         std::vector<Lua4Value> out;
         if (sys->script_call(*this, method, args, out)) return out;

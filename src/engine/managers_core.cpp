@@ -584,6 +584,21 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     if (method == "SYSsetDifficulty") { difficulty = arg_int(0); return true; }
     if (method == "LISsetDifficultMax") { difficulty_max = arg_int(0); return true; }
     if (method == "SYSgetCameraMode") { out = {Lua4Value::number(camera_mode)}; return true; }
+    if (method == "SYSctlPlayer") {
+        // ("HP"|"MP", "GETHP"|"GETMHP"|"GETMP"|"GETMMP", player, 0): GAMERAM player
+        // status. Values stay at the new-game defaults until GAMERAM exists.
+        const std::string op = args.size() > 1 && args[1].type() == Lua4Type::String ? std::string(args[1].as_string()) : "";
+        const int slot = std::clamp(arg_int(2), 0, 3);
+        const auto& p = players[std::size_t(slot)];
+        int value = 0;
+        if (op == "GETHP") value = p.hp;
+        else if (op == "GETMHP") value = p.max_hp;
+        else if (op == "GETMP") value = p.mp;
+        else if (op == "GETMMP") value = p.max_mp;
+        else engine.note("SYSctlPlayer " + op);
+        out = {Lua4Value::number(value)};
+        return true;
+    }
     if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }
     if (method == "SYSgetLightMode") { out = {Lua4Value::number(light_mode)}; return true; }
     if (method == "SYSgetGateStageName") { out = {Lua4Value::string(gate_stage_name)}; return true; }
@@ -619,6 +634,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<LoadCtrl2Manager>());
     engine.add_manager(std::make_unique<LoadIntf2Manager>());
     engine.add_manager(std::make_unique<DatabaseManager>());
+    engine.add_manager(std::make_unique<MatCtrlManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 
