@@ -119,7 +119,10 @@ public:
 private:
     struct CameraRam : Ram {
         std::vector<CameraPath> paths;
-        int demo_path = -1;
+        // beCameraDemoData ([7]): a demo camera info's own path and length.
+        std::optional<CameraPath> demo_data;
+        std::int64_t demo_data_duration{};
+        int demo_path = -1; // index into paths, or -2 for demo_data
         std::int64_t demo_start{}, demo_duration{};
         bool demo_active{};
         bool box_camera{};

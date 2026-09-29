@@ -244,7 +244,31 @@ void CameraManager::add_info(Engine& engine, const ObjectView& info) {
             }
         }
     }
-    for (auto* ram : created) ram->paths = paths;
+    // A demo camera info (e.g. a dungeon's "entry" in ACMR_pack.igb) carries
+    // its graph path and length in beCameraDemoData.
+    std::optional<CameraPath> demo;
+    std::int64_t demo_duration = 0;
+    if (const auto data = info.ref(7); data && data.type() == "beCameraDemoData") {
+        CameraPath p;
+        if (const auto path = data.ref(2))
+            for (const auto& node : path.list(2)) {
+                if (!node) continue;
+                Node* n = engine.scenes().node(node);
+                p.nodes.push_back(n);
+                if (n->kind == NodeKind::camera) p.camera = n;
+            }
+        if (!p.nodes.empty()) {
+            p.name = p.nodes.back()->name;
+            demo = std::move(p);
+            demo_duration = data.i64(3);
+            if (demo_duration <= 0) demo_duration = std::int64_t(data.f32(4) * 1e9f);
+        }
+    }
+    for (auto* ram : created) {
+        ram->paths = paths;
+        ram->demo_data = demo;
+        ram->demo_data_duration = demo_duration;
+    }
 }
 
 void CameraManager::clear_stage(Engine&) {
@@ -255,10 +279,25 @@ void CameraManager::clear_stage(Engine&) {
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<CameraRam&>(base);
     if (command == "SETDEMOCAMERA") {
-        // Play the named camera path's animation once; its longest transform
-        // sequence gives the length (at least one frame so ISDEMOCAMERA reports it).
+        // Play the named camera once: a demo camera info of that name uses its
+        // beCameraDemoData path and length; otherwise a path of this camera
+        // whose node has the name plays for its longest transform sequence
+        // (at least one frame so ISDEMOCAMERA reports it).
         const auto name = packet.string(0);
+        if (ram.demo_data && ram.info_name == name) {
+            ram.demo_path = -2;
+            ram.demo_duration = std::max<std::int64_t>(ram.demo_data_duration, kFrameNs);
+            ram.demo_active = true;
+            ram.demo_start = engine.time();
+            return true;
+        }
         ram.demo_path = -1;
+        bool named_info = false;
+        for (const auto& other : rams_) named_info = named_info || (other->demo_data && other->info_name == name);
+        if (named_info) {
+            ram.demo_active = false;
+            return true;
+        }
         for (std::size_t i = 0; i < ram.paths.size() && ram.demo_path < 0; ++i)
             for (auto* node : ram.paths[i].nodes)
                 if (node && node->name == name) { ram.demo_path = int(i); break; }
@@ -274,8 +313,14 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
         return true;
     }
     if (command == "ISDEMOCAMERA") {
-        if (ram.demo_active && engine.time() - ram.demo_start > ram.demo_duration) ram.demo_active = false;
-        packet.bools.push_back(ram.demo_active ? 1 : 0);
+        // One answer for the broadcast: whether any camera demo still runs.
+        if (&ram != rams_.front().get()) return true;
+        bool active = false;
+        for (auto& other : rams_) {
+            if (other->demo_active && engine.time() - other->demo_start > other->demo_duration) other->demo_active = false;
+            active = active || other->demo_active;
+        }
+        packet.bools.push_back(active ? 1 : 0);
         return true;
     }
     if (command == "SETBOXCAMERA") {
@@ -292,10 +337,15 @@ void CameraManager::update(Engine&) {}
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     camera.projection = perspective(54.4322f * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
-    for (const auto& ram : rams_) {
-        if (ram->paths.empty()) continue;
-        const bool demo = ram->demo_active && ram->demo_path >= 0;
-        const auto& path = ram->paths[std::size_t(demo ? ram->demo_path : 0)];
+    // A running demo camera info takes over from the stage camera.
+    const CameraRam* demo_info = nullptr;
+    for (const auto& ram : rams_)
+        if (ram->demo_active && ram->demo_path == -2 && engine.time() - ram->demo_start <= ram->demo_duration) demo_info = ram.get();
+    for (const auto& owned : rams_) {
+        const CameraRam* ram = demo_info ? demo_info : owned.get();
+        if (!demo_info && ram->paths.empty()) continue;
+        const bool demo = demo_info || (ram->demo_active && ram->demo_path >= 0);
+        const auto& path = demo_info ? *ram->demo_data : ram->paths[std::size_t(demo ? ram->demo_path : 0)];
         const std::int64_t at = demo ? std::min(engine.time() - ram->demo_start, ram->demo_duration) : 0;
         // World matrices along the path; the last transform places the camera
         // relative to its parent group, whose origin is the look-at pivot.

@@ -2,9 +2,10 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <random>
 
 namespace dw4::engine {
@@ -43,6 +44,7 @@ void Engine::install_lua() {
     lua_->set_global("be", Lua4Value::host_object("be"));
     lua_->set_global("gsub", Lua4Value::host_function("gsub"));
     lua_->set_global("strfind", Lua4Value::host_function("strfind"));
+    lua_->set_global("format", Lua4Value::host_function("format"));
     lua_->set_resumable_host_handler([this](const Lua4HostCall& call) {
         Lua4HostResult result;
         try {
@@ -131,6 +133,46 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto found = at <= value.size() ? value.find(pattern, at) : std::string::npos;
         if (found == std::string::npos) return {Lua4Value{}};
         return {Lua4Value::number(double(found + 1)), Lua4Value::number(double(found + pattern.size()))};
+    }
+    if (name == "format") {
+        // Lua 4 format(fmt, ...): printf conversions d i c x X o u e E f g G s q %.
+        if (call.arguments.empty()) return {Lua4Value::string({})};
+        const std::string fmt(call.arguments[0].as_string());
+        std::string out;
+        std::size_t next = 1;
+        for (std::size_t i = 0; i < fmt.size(); ++i) {
+            if (fmt[i] != '%') { out.push_back(fmt[i]); continue; }
+            if (i + 1 < fmt.size() && fmt[i + 1] == '%') { out.push_back('%'); ++i; continue; }
+            std::size_t j = i + 1;
+            while (j < fmt.size() && std::strchr("-+ #0123456789.", fmt[j])) ++j;
+            if (j >= fmt.size()) break;
+            const char conversion = fmt[j];
+            const std::string spec = fmt.substr(i, j - i);
+            const Lua4Value none;
+            const Lua4Value& value = next < call.arguments.size() ? call.arguments[next] : none;
+            ++next;
+            char buffer[512];
+            if (std::strchr("dic", conversion)) {
+                std::snprintf(buffer, sizeof(buffer), (spec + conversion).c_str(), int(to_number(value)));
+            } else if (std::strchr("xXou", conversion)) {
+                std::snprintf(buffer, sizeof(buffer), (spec + conversion).c_str(), static_cast<unsigned>(static_cast<long long>(to_number(value))));
+            } else if (std::strchr("eEfgG", conversion)) {
+                std::snprintf(buffer, sizeof(buffer), (spec + conversion).c_str(), to_number(value));
+            } else if (conversion == 's' || conversion == 'q') {
+                std::string text = value.type() == Lua4Type::Number ? [&] {
+                    char n[64];
+                    std::snprintf(n, sizeof(n), "%.14g", value.as_number());
+                    return std::string(n);
+                }() : std::string(value.as_string());
+                if (conversion == 'q') text = "\"" + text + "\"";
+                std::snprintf(buffer, sizeof(buffer), (spec + 's').c_str(), text.c_str());
+            } else {
+                buffer[0] = 0;
+            }
+            out += buffer;
+            i = j;
+        }
+        return {Lua4Value::string(out)};
     }
     if (!name.starts_with("be.")) {
         note("script function " + name);
