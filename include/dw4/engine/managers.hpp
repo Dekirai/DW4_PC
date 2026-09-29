@@ -661,6 +661,8 @@ public:
         bool control_enabled = true; // ONCTRL / OFCTRL
         bool key_input{};
         bool on_ground = true;
+        Vec3f last_ground{};         // PROVISIONAL fall-out recovery
+        bool has_ground{};
         float fall_speed{};
         std::string label;
         std::map<std::string, std::string, std::less<>> labels; // SETLABEL per sequence

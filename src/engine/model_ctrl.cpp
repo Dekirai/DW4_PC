@@ -715,6 +715,17 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             }
         }
     }
+    // PROVISIONAL: a model that fell far below its last floor returns there
+    // (the original recovery from bottomless areas is not identified yet).
+    if (ram.on_ground) {
+        ram.last_ground = next;
+        ram.has_ground = true;
+    } else if (ram.has_ground && next.y < ram.last_ground.y - 300.0f) {
+        next = ram.last_ground;
+        ram.fall_speed = 0;
+        ram.on_ground = true;
+        if (ram.is_player) engine.log("player " + std::to_string(ram.index) + " fell out and was put back");
+    }
     matrix[12] = next.x;
     matrix[13] = next.y;
     matrix[14] = next.z;
