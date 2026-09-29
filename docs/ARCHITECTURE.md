@@ -56,19 +56,25 @@ the F1 notes and answer 0 so the original scripts keep running.
 | --- | --- | --- |
 | `GameSystem` | beSystem / GAMERAM script services | players, difficulty, modes, flags, counters, text call number |
 | `SceneManager`, `LayerManager`, `BkColorManager` | igSceneInfo, LAYERCTL, BKCOLOR | layer ORDER/SWITCH/REMOVE, clear colour |
-| `CameraManager` | beCameraCtrl | follow and box cameras; demo cameras pending |
+| `CameraManager` | beCameraCtrl | follow and box cameras, named demo camera paths |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
 | `LogoManager`, `SoundManager` | beNDMWLogo, sound/movie | audio and movies are reported, not played |
-| `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control, HIT bodies, CHKBULLET (8030E56C), talk hitbox |
+| `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, provisional enemy AI |
+| `GeneraterManager` | beGenerater (802FCF68, 802FD5C4) | enemy waves from DATABASE enemy rows, start/fill modes, `_callLua` on clear |
+| `WeaponManager` | beWeapon / PLAYERARMS (80318474) | weapon sequence labels for the carrying player |
 | `ActionManager` | beAction2 (802F1794) | joint/fade/flash/wait, motions on actors |
 | `TextCtlManager` | beFont (802FA900) | per-line TEXTSET/SWITCH/ALIGN/COLOR from the pack unicode strings |
 | `SelectCtrlManager` | beSelectCtrl (803132C0) | cursor menus and prompts |
 | `Title2Manager` | beNDMWTitle2 (80369284) | press start, menu, option window |
 | `LoadCtrl2Manager`, `LoadIntf2Manager` | beNDMWLoadCtrl2 (80368050), beNDMWLoadIntf2 (8035C958) | new game and character select panels |
-| `DatabaseManager` | beDBManager | beDataBase string columns |
+| `DatabaseManager` | beDBManager | beDataBase string and integer columns |
 | `MatCtrlManager` | beMatCtrl (803030A8) | floor mats running `<name>.lua` |
 | `TextureCtrlManager`, `PlayerPointManager`, `SwitchCtrlManager`, `HitLandManager` | beTextureCtrl, bePoint01, SWITCHCTRL, beHitLandModel | pack texture binding, spawn points, switches, collision geometry |
 | `PassiveManager` | everything else | accepted and listed as not reconstructed |
+
+`combat.cpp` holds the player-to-enemy FIGHTCALC path (GAMERAM 803717A4:
+P2EISHITCHECK, P2EISCRITICAL, P2EDAMAGE, the damage rank at 802EE91C) and the
+level-1 player status from the shinka and weapon databases (GAME_STATS.md).
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)
@@ -90,7 +96,8 @@ state in one shader (lighting, fog, alpha test, skinning palette of 64).
 `beHitLandModelInfo` geometry: kind bit 1 triangles are floors (CHECKLAND),
 kind bit 2 triangles walls (CHECKWALL). Step-up, jumps over ledges and landing
 work; the original CHECKLAND/CHECKWALL responses (80300444 / 802FE7F0) are still
-to be reconstructed.
+to be reconstructed. Kind bit 0x400 geometry follows its model's transform in
+the original and is left out until that dynamic collision exists.
 
 ## Adding a manager
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 namespace dw4::engine {
 namespace {
@@ -157,7 +158,17 @@ void TextCtlManager::refresh_categories(Engine& engine) {
 }
 
 void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string& value) {
-    (void)engine;
+    // DW4_TRACE_TEXT logs every text assignment (non-ASCII as <hex>) for smoke tests.
+    static const bool trace = std::getenv("DW4_TRACE_TEXT") != nullptr;
+    if (trace) {
+        std::string ascii;
+        char hex[8];
+        for (char16_t c : value) {
+            if (c >= 32 && c < 127) ascii.push_back(char(c));
+            else { std::snprintf(hex, sizeof hex, "<%04x>", unsigned(c)); ascii += hex; }
+        }
+        engine.log("text " + target.layer + "/" + target.name + ": " + ascii);
+    }
     Node* geometry_node = find_geometry(target.node);
     if (!geometry_node) return;
     auto font_it = fonts_.find(target.style.empty() ? "NORMAL" : target.style);

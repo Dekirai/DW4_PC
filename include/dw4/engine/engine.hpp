@@ -164,6 +164,8 @@ struct ModelScriptContext {
     std::int32_t bullet_kind{};
     bool turn = true;              // cleared by MDLsetDMGTurn(0)
     std::string call_name;         // MDLisCallName
+    // Last FIGHTCALC results of this hit (80535A54..5C): damage, attribute, flag.
+    std::int32_t damage{}, attribute = -1, damage_flag{};
 };
 
 class Engine {

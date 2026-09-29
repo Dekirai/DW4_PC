@@ -312,6 +312,90 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         }
         return number(model->hp);
     }
+    if (method == "MDLgetMHp") {
+        auto* model = context_model();
+        return number(model ? model->max_hp : 0);
+    }
+    if (method == "MDLgetRecNo") {
+        auto* model = context_model();
+        return number(model ? (model->record >= 0 ? model->record : model->index) : 0);
+    }
+    if (method == "MDLgetInfoName") return string_result(context ? context->name : std::string());
+    if (method == "MDLsetSD") {
+        // Context form (command, "a/b/I<n>"): message to the script's own model.
+        if (context) {
+            Packet packet;
+            if (args.size() > 1 && arg(1).type() == Lua4Type::String) parse_packet_arguments(arg(1).as_string(), packet);
+            messenger().send(*this, context->category, context->name, context->index, opt_string(arg(0)).value_or(""), packet);
+        }
+        return {};
+    }
+    if (method == "MDLisStatus") return number(0); // status effects are not reconstructed
+
+    // --- Battle queries of hit scripts (FIGHTCALC P2E*, 802EE5C4..802EEA2C) ---
+    auto shooter_stats = [&]() -> const GameSystem::Stats* {
+        auto* sys = get<GameSystem>();
+        if (!sys || !context || !context->shooter_name.starts_with('p') || context->shooter < 0 || context->shooter > 3) return nullptr;
+        auto& slot = sys->players[std::size_t(context->shooter)];
+        if (!slot.stats.ready) sys->prepare_player(*this, context->shooter);
+        return &slot.stats;
+    };
+    const int bullet_kind = context ? context->bullet_kind : 0;
+    if (method == "MDLgetBulletName") return string_result(fight::bullet_name(bullet_kind));
+    if (method == "BLTisPlayerBullet") return number(context && context->shooter_name.starts_with('p') ? 1 : 0);
+    if (method == "BLTisHitCheck") {
+        const auto* stats = shooter_stats();
+        auto* model = context_model();
+        if (!stats || !model) return number(1);
+        return number(fight::player_hits(*this, *stats, model->record, bullet_kind, 0) ? 1 : 0);
+    }
+    if (method == "BLTisCritical") {
+        const auto* stats = shooter_stats();
+        return number(stats && fight::player_critical(*stats, bullet_kind) ? 1 : 0);
+    }
+    if (method == "BLTgetDamageValue") {
+        const auto* stats = shooter_stats();
+        auto* model = context_model();
+        if (!stats || !model || !context) return number(0);
+        const auto result = fight::player_damage(*this, *stats, model->record, bullet_kind, to_int(arg(0)) != 0, 0);
+        context->damage = result.damage;
+        context->attribute = result.attribute;
+        context->damage_flag = result.flag;
+        return number(result.damage);
+    }
+    if (method == "BLTgetDamageRank") {
+        auto* model = context_model();
+        FightResult result;
+        if (context) result = {context->damage, context->attribute, context->damage_flag};
+        return number(fight::damage_rank(to_int(arg(0)), model ? model->max_hp : 0, result, to_int(arg(1)) != 0, bullet_kind));
+    }
+    if (method == "BLTgetAttributeStr") {
+        static const char* names[] = {"fire", "ice", "thunder", "dark"};
+        const int attribute = context ? context->attribute : -1;
+        return string_result(attribute >= 0 && attribute < 4 ? names[attribute] : "common");
+    }
+    if (method == "BLTcalcEXPUp") {
+        auto* model = context_model();
+        auto* db = get<DatabaseManager>();
+        return number(model && db ? db->number("enemy", model->record, "EXP").value_or(0) : 0);
+    }
+    if (method == "BLTcalcSkillUp" || method == "MDLdspExp") return {}; // growth / number display not reconstructed
+    if (method == "MDLdspDamage" || method == "MDLdspDamageP") {
+        log("damage " + std::to_string(to_int(arg(0))) + (context ? " -> " + context->name : std::string()));
+        return {};
+    }
+    if ((method.starts_with("BLTget") || method.starts_with("BLPget")) && method.ends_with("Time")) return number(0);
+    // Enemy-to-player hits (E2P*): PROVISIONAL until those FIGHTCALC paths are
+    // reconstructed. The hit lands and reports a value; no HP is removed.
+    if (method == "BLPisHitCheck") return number(1);
+    if (method == "BLPcalcKoukaMagic") return number(0);
+    if (method == "BLPgetDamageValue") {
+        auto* models = get<ModelCtrlManager>();
+        auto* db = get<DatabaseManager>();
+        const auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
+        int strength = shooter && db ? db->number("enemy", shooter->record, "TSUYOSA").value_or(10) : 10;
+        return number(std::max(1, strength / 4));
+    }
 
     // --- System queries ---
     if (method == "SYSgetArea") return number(area());

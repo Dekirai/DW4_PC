@@ -7,6 +7,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -96,7 +97,7 @@ private:
     struct CameraRam : Ram {
         std::vector<CameraPath> paths;
         int demo_path = -1;
-        std::int64_t demo_start{};
+        std::int64_t demo_start{}, demo_duration{};
         bool demo_active{};
         bool box_camera{};
     };
@@ -427,10 +428,50 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); tables_.clear(); }
     std::string text(std::string_view table, int row, std::string_view column) const;
+    // 8031F3CC / 8031F608: integer cell of a char, short, int or bool column.
+    std::optional<std::int32_t> number(std::string_view table, int row, std::string_view column) const;
+    // First row whose string column equals value, or -1.
+    int find_row(std::string_view table, std::string_view column, std::string_view value) const;
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, ObjectView, std::less<>> tables_;
+};
+
+// GENERATER (beGenerater, update 802FCF68, commands 802FD5C4, spawn 802FC9FC):
+// one RAM per beGeneraterData. START creates the work (enemy name and max HP
+// from DATABASE enemy[_geneEnemyId]); the start mode (direct / timer / range)
+// releases the first wave, the fill mode (wipeout / always / timer) spawns the
+// rest; when every enemy of the last wave is gone the generator runs _callLua.
+class GeneraterManager final : public Manager {
+public:
+    GeneraterManager() : Manager("beGenerater") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beGeneraterInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct GeneRam : Ram {
+        ObjectView data;           // beGeneraterData
+        bool started{};            // RAM +14
+        bool done{};               // RAM +18: finished, START is ignored
+        int state{};               // RAM +1C
+        bool work{};               // RAM +2C allocated
+        bool freeze{}, system_freeze{}; // work +8 / +9
+        int player_count = 1;      // work +C
+        int remaining{};           // work +10 (_nokoriKazu)
+        std::vector<int> enemies;  // work +14 (_enemyRamList): generated RAM numbers
+        int point{};               // work +18 (_genePoint)
+        std::string enemy_name;    // work +1C
+        int enemy_record{};        // work +20
+        int enemy_max_hp{};        // work +24
+        std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
+    };
+    int spawn(Engine& engine, GeneRam& ram, int count);
+    void refresh(Engine& engine, GeneRam& ram);
+    std::vector<std::unique_ptr<GeneRam>> rams_;
 };
 
 // LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
@@ -557,8 +598,24 @@ public:
         bool on_ground = true;
         float fall_speed{};
         std::string label;
-        int talk_delay = -1;         // pending lobby talk hitbox (frames)
+        std::map<std::string, std::string, std::less<>> labels; // SETLABEL per sequence
         const HitBody* hit{};
+        // beModelCtrlSCHitBox queue (MODEL_HITBOX): kind, delay, absolute end.
+        struct Hitbox {
+            std::int32_t kind{};
+            float delay{}, end{}, elapsed{};
+            Vec3f offset{}, size{};
+            bool started{};
+        };
+        std::vector<Hitbox> hitboxes;
+        std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
+        float muteki{};              // MUTEKI invulnerability frames
+        std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)
+        std::int64_t attack_ready{}; // player ATDELAY timer end
+        int combo_phase{};           // player work +128
+        bool combo_released{};       // player work +12C
+        bool previous_live{};        // enemy AI: generated last frame
+        int ai_timer{};              // PROVISIONAL enemy AI cooldown
     };
 
     const ModelRam* player(int index) const;
@@ -567,13 +624,33 @@ public:
 private:
     void update_player(Engine& engine, ModelRam& ram);
     void advance_motion(Engine& engine, ModelRam& ram);
-    void check_talk(Engine& engine, ModelRam& ram);
+    void update_hitboxes(Engine& engine, ModelRam& ram);
+    void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
+    void update_enemy(Engine& engine, ModelRam& ram);
+    void apply_control(Engine& engine, ModelRam& ram);
+    bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
+};
+
+// PLAYERARMS (beWeapon, commands 80318474): weapon infos. Their sequence rows
+// become SETLABEL overrides of the carrying player (WEAPON_RUNTIME.md); the
+// weapon geometry attachment to the hand bone is not reconstructed yet.
+class WeaponManager final : public Manager {
+public:
+    WeaponManager() : Manager("beWeapon") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beWeaponInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); labels_.clear(); }
+    const std::vector<std::pair<std::string, std::string>>* labels(std::string_view weapon) const;
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>, std::less<>> labels_;
 };
 
 class ActionManager final : public Manager {
@@ -635,12 +712,28 @@ public:
     void add_info(Engine&, const ObjectView&) override {}
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
 
+    // Player game RAM subset used by FIGHTCALC (GAME_DATA / GAME_STATS).
+    struct Stats {
+        bool ready{};
+        int level = 1;
+        int species{};                        // shinka row
+        int tsuyosa{}, mamori{}, kashikosa{}, seishin{}, subayasa{};
+        int meichuritsu{}, chimeiritsu{}, attack_delay = 30;
+        int attack_zokusei = -1;
+        int weapon_record = -1, weapon_skill_no{};
+        std::array<int, 9> skill{1, 1, 1, 1, 1, 1, 1, 1, 1};
+        std::string weapon_model;
+    };
     struct PlayerSlot {
         bool joined{};
         std::string digimon = "p_agumon";
         std::array<std::string, 3> weapons{};
         int hp = 100, max_hp = 100, mp = 50, max_mp = 50;
+        Stats stats;
     };
+    // GAMESTART / RECALCPLAYER subset: species, level-1 status and the first
+    // initial weapon, from the stage's shinka and weapon databases.
+    void prepare_player(Engine& engine, int slot);
     std::array<PlayerSlot, 4> players{};
     GameSystem() : Manager("beSystem") { players[0].joined = true; }
     std::int32_t difficulty{};
@@ -654,5 +747,23 @@ public:
     std::int32_t gate_stage_no{};
     std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
 };
+
+// FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38): the
+// player-to-enemy weapon path. Magic, status effects and E2P* are not
+// reconstructed yet.
+struct FightResult {
+    std::int32_t damage{};
+    std::int32_t attribute = -1; // 0 fire .. 3 dark; -1 common
+    std::int32_t flag{};         // largest variance step
+};
+namespace fight {
+std::uint32_t random();
+const char* bullet_name(int kind);
+bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int speed_down);
+bool player_critical(const GameSystem::Stats& stats, int kind);
+FightResult player_damage(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, bool critical,
+                          int defense_down);
+int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int kind);
+} // namespace fight
 
 } // namespace dw4::engine

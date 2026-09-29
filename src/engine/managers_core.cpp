@@ -255,21 +255,33 @@ void CameraManager::clear_stage(Engine&) {
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<CameraRam&>(base);
     if (command == "SETDEMOCAMERA") {
+        // Play the named camera path's animation once; its longest transform
+        // sequence gives the length (at least one frame so ISDEMOCAMERA reports it).
+        const auto name = packet.string(0);
+        ram.demo_path = -1;
+        for (std::size_t i = 0; i < ram.paths.size() && ram.demo_path < 0; ++i)
+            for (auto* node : ram.paths[i].nodes)
+                if (node && node->name == name) { ram.demo_path = int(i); break; }
+        ram.demo_duration = kFrameNs;
+        if (ram.demo_path >= 0)
+            for (auto* node : ram.paths[std::size_t(ram.demo_path)].nodes)
+                if (node && node->sequence && node->sequence->valid && !node->sequence->times.empty())
+                    ram.demo_duration = std::max(ram.demo_duration, node->sequence->duration > 0 ? node->sequence->duration
+                                                                                                 : node->sequence->times.back());
+        else engine.note("CAMERA demo path " + std::string(name));
         ram.demo_active = true;
         ram.demo_start = engine.time();
-        ram.demo_path = ram.paths.empty() ? -1 : 0;
-        (void)packet;
         return true;
     }
     if (command == "ISDEMOCAMERA") {
-        // Demo camera animation playback is not reconstructed yet; report it as finished.
-        packet.bools.push_back(0);
-        ram.demo_active = false;
+        if (ram.demo_active && engine.time() - ram.demo_start > ram.demo_duration) ram.demo_active = false;
+        packet.bools.push_back(ram.demo_active ? 1 : 0);
         return true;
     }
     if (command == "SETBOXCAMERA") {
         ram.box_camera = true;
         ram.demo_active = false;
+        ram.demo_path = -1;
         return true;
     }
     return false;
@@ -282,7 +294,9 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
     for (const auto& ram : rams_) {
         if (ram->paths.empty()) continue;
-        const auto& path = ram->paths[std::size_t(std::max(0, ram->demo_path))];
+        const bool demo = ram->demo_active && ram->demo_path >= 0;
+        const auto& path = ram->paths[std::size_t(demo ? ram->demo_path : 0)];
+        const std::int64_t at = demo ? std::min(engine.time() - ram->demo_start, ram->demo_duration) : 0;
         // World matrices along the path; the last transform places the camera
         // relative to its parent group, whose origin is the look-at pivot.
         Mat4 world, pivot;
@@ -292,7 +306,7 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
         for (auto* node : path.nodes) {
             if (node->kind != NodeKind::transform && node->kind != NodeKind::model_node) continue;
             if (node == last_transform) pivot = world;
-            world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(0) : node->matrix) * world;
+            world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix) * world;
         }
         if (path.camera) {
             const float fov = path.camera->object.f32(8, 54.4322f);
@@ -301,7 +315,7 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
             camera.projection = perspective(fov * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, near_plane, far_plane);
         }
         // Follow the first player: keep the authored angle and distance.
-        if (!ram->demo_active) {
+        if (!demo) {
             if (auto* models = engine.get<ModelCtrlManager>()) {
                 if (const auto* player = models->player(0); player && player->node) {
                     const auto& pm = player->node->matrix;
@@ -531,7 +545,15 @@ bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet
 void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
     // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
-    if (const auto graph = info.ref(8)) world_.add_graph(graph, std::uint32_t(info.i32(10)));
+    // Kind bit 0x400 marks model-attached geometry whose children follow the
+    // source model transform (HITLAND_TRAVERSAL.md); that dynamic collision is
+    // not reconstructed, so it is left out of the static world.
+    const auto kind = std::uint32_t(info.i32(10));
+    if (kind & 0x400u) {
+        engine.note("HITLAND model-attached geometry " + std::string(info.str(2)));
+        return;
+    }
+    if (const auto graph = info.ref(8)) world_.add_graph(graph, kind);
 }
 
 void HitLandManager::clear_stage(Engine&) {
@@ -636,6 +658,8 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<LoadIntf2Manager>());
     engine.add_manager(std::make_unique<DatabaseManager>());
     engine.add_manager(std::make_unique<MatCtrlManager>());
+    engine.add_manager(std::make_unique<GeneraterManager>());
+    engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 

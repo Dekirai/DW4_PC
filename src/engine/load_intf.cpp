@@ -298,6 +298,42 @@ std::string DatabaseManager::text(std::string_view table, int row, std::string_v
     return {};
 }
 
+std::optional<std::int32_t> DatabaseManager::number(std::string_view table, int row, std::string_view column) const {
+    const auto found = tables_.find(table);
+    if (found == tables_.end() || row < 0) return std::nullopt;
+    // beDataBase column/data pairs: char, short, int (float skipped), bool.
+    struct Group { std::uint16_t names, data; std::size_t width; bool is_signed; };
+    static constexpr Group groups[] = {{2, 3, 1, true}, {4, 5, 2, true}, {6, 7, 4, true}, {10, 11, 1, false}};
+    for (const auto& group : groups) {
+        const auto names = found->second.list(group.names);
+        for (std::size_t c = 0; c < names.size(); ++c) {
+            if (!names[c] || names[c].str(2) != column) continue;
+            const auto data = found->second.ref(group.data);
+            if (!data) return std::nullopt;
+            const auto bytes = data.memory(4);
+            const std::size_t offset = (std::size_t(row) * names.size() + c) * group.width;
+            if (offset + group.width > bytes.size()) return std::nullopt;
+            if (group.width == 1) return group.is_signed ? std::int32_t(std::int8_t(bytes[offset])) : std::int32_t(bytes[offset]);
+            if (group.width == 2) return std::int32_t(std::int16_t(read_u16le(bytes, offset)));
+            return std::int32_t(read_u32le(bytes, offset));
+        }
+    }
+    return std::nullopt;
+}
+
+int DatabaseManager::find_row(std::string_view table, std::string_view column, std::string_view value) const {
+    const auto found = tables_.find(table);
+    if (found == tables_.end()) return -1;
+    const auto names = found->second.list(12);
+    const auto values = found->second.list(13);
+    for (std::size_t c = 0; c < names.size(); ++c) {
+        if (!names[c] || names[c].str(2) != column) continue;
+        for (std::size_t at = c, row = 0; at < values.size(); at += names.size(), ++row)
+            if (values[at] && values[at].str(2) == value) return int(row);
+    }
+    return -1;
+}
+
 // ---------------------------------------------------------------------------
 // LOADINTF2
 void LoadIntf2Manager::add_info(Engine& engine, const ObjectView& info) {

@@ -131,6 +131,11 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
 }
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
+    // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
+    // sequence-long invulnerability.
+    ram.hitboxes.clear();
+    ++ram.hitbox_generation;
+    if (ram.muteki < 0) ram.muteki = 0;
     if (name == "SQ_ERAS") {
         ram.seq_name = "SQ_ERAS";
         ram.seq = nullptr;
@@ -156,10 +161,13 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     ram.pdmove_set = false;
     ram.fall_check = true;
     try { if (ram.channels.allocated()) ram.channels.on_sequence_change(); } catch (const std::exception&) {}
-    // Weapon label section: start after the selected LABEL when one is set.
-    if (found && !ram.label.empty()) {
+    // Label section (SETLABEL per sequence, e.g. the weapon's "axe" for
+    // SQ_ATCK1 or "common" for a damage reaction): start after that LABEL.
+    const auto override = ram.labels.find(name);
+    const std::string& label = override != ram.labels.end() ? override->second : ram.label;
+    if (found && !label.empty()) {
         for (std::size_t i = 0; i < found->commands.size(); ++i) {
-            if (found->commands[i].type() == "beModelCtrlLABEL" && found->commands[i].str(2) == ram.label) {
+            if (found->commands[i].type() == "beModelCtrlLABEL" && found->commands[i].str(2) == label) {
                 ram.cursor = i + 1;
                 ram.label_passed = true;
                 break;
@@ -228,8 +236,29 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 engine.note(std::string("MODELCTRL MOVE decode: ") + error.what());
             }
             ++ram.cursor;
-        } else if (type == "beModelCtrlMUTEKI" || type == "beModelCtrlLABELCTRL" || type == "beModelCtrlHITBOX" ||
-                   type == "beModelCtrlAIMAP") {
+        } else if (type == "beModelCtrlHITBOX") {
+            // Set appends one beModelCtrlSCHitBox; AllClear drops them all.
+            if (name == "Set") {
+                ModelRam::Hitbox box;
+                box.kind = command.i32(3);
+                box.delay = command.f32(4);
+                const float length = command.f32(5);
+                box.end = length == -1.0f ? 100000000.0f : box.delay + length;
+                box.offset = command.vec3(6).value_or(Vec3f{});
+                box.size = command.vec3(7).value_or(Vec3f{});
+                ram.hitboxes.push_back(box);
+            } else if (name == "AllClear") {
+                ram.hitboxes.clear();
+                ++ram.hitbox_generation;
+            }
+            ++ram.cursor;
+        } else if (type == "beModelCtrlMUTEKI") {
+            // "ON" -1: invulnerable for the rest of the sequence; "OFF" ends it;
+            // otherwise the frame count.
+            const float frames = command.f32(3);
+            ram.muteki = name == "OFF" ? 0.0f : frames;
+            ++ram.cursor;
+        } else if (type == "beModelCtrlLABELCTRL" || type == "beModelCtrlAIMAP") {
             ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
             const auto mode = command.str(3);
@@ -251,6 +280,21 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (packet.strings.size() == 1 && packet.strings[0]) seq = *packet.strings[0];
         else if (packet.strings.size() >= 2 && packet.strings[1]) seq = *packet.strings[1];
         if (ram.hp == 0) ram.hp = ram.max_hp = 100;
+        // Generator form: I<record>/I<max HP> (802FC9FC).
+        if (packet.ints.size() >= 2) {
+            ram.record = packet.ints[0];
+            ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
+        }
+        ram.muteki = 0;
+        if (ram.is_player) {
+            if (auto* sys = engine.get<GameSystem>()) {
+                sys->prepare_player(engine, ram.index);
+                const auto& stats = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats;
+                if (auto* weapons = engine.get<WeaponManager>())
+                    if (const auto* rows = weapons->labels(stats.weapon_model))
+                        for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;
+            }
+        }
         // Position / rotation vectors supplied with GENERATE place the model.
         if (ram.node && !packet.vectors.empty())
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
@@ -298,7 +342,18 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         return true;
     }
-    if (command == "GETRECNO") { packet.ints.push_back(ram.index); return true; }
+    if (command == "GETRECNO") { packet.ints.push_back(ram.record >= 0 ? ram.record : ram.index); return true; }
+    if (command == "FIND_SPACE") {
+        // First free RAM of this info answers (generator spawn).
+        if (!ram.generated && packet.ints.empty()) packet.ints.push_back(ram.index);
+        return true;
+    }
+    if (command == "SETLABEL") {
+        // "<sequence>/<label>": the label section that sequence starts from.
+        if (packet.strings.size() >= 2) ram.labels[std::string(packet.string(0))] = std::string(packet.string(1));
+        else if (packet.strings.size() == 1) ram.label = std::string(packet.string(0));
+        return true;
+    }
     if (command == "GETSEQNAMELIST") {
         packet.strings.emplace_back("SQ_ERAS");
         if (ram.sequences) for (const auto& s : *ram.sequences) packet.strings.emplace_back(s.name);
@@ -331,7 +386,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
         return true;
     }
-    if (command == "SETLABEL" || command == "SETEFFECT" || command == "SETSOUND" ||
+    if (command == "SETEFFECT" || command == "SETSOUND" ||
         command == "GETTRCDATA" || command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
         command == "SETSLIPPEDFLOOR" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
@@ -372,17 +427,45 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             ram.desired[1] = std::atan2(forward.x, forward.z) + std::atan2(sx, -sy);
         }
     }
-    // 8034C3C8: in the main lobby, A appends a talk hitbox (kind 60000, delay 1,
-    // length 1, offset (0,4,7), size 3) instead of attacking.
-    if (ram.control_enabled && engine.main_lobby() && (pad.buttons.trigger & dw4::pad_button::a) && ram.talk_delay < 0)
-        ram.talk_delay = 1;
-    // X publishes SQ_JUMP unless the player is already airborne.
-    if (ram.control_enabled && (pad.buttons.trigger & dw4::pad_button::x) &&
-        (ram.seq_name == "SQ_WAIT" || ram.seq_name == "SQ_WALK")) {
-        select_sequence(engine, ram, "SQ_JUMP");
-        return;
+    // 8034C3C8 buttons while standing or walking: B guards (outside the main
+    // lobby), X jumps, A attacks - or, in the main lobby, appends the talk
+    // hitbox (kind 60000, delay 1, length 1, offset (0,4,7), size 3).
+    const bool free = ram.seq_name == "SQ_WAIT" || ram.seq_name == "SQ_WALK";
+    if (ram.control_enabled && free) {
+        const auto trigger = pad.buttons.trigger;
+        if (!engine.main_lobby() && (trigger & dw4::pad_button::b)) {
+            select_sequence(engine, ram, "SQ_GUARD");
+            return;
+        }
+        if (trigger & dw4::pad_button::x) {
+            select_sequence(engine, ram, "SQ_JUMP");
+            return;
+        }
+        if (trigger & dw4::pad_button::a) {
+            if (engine.main_lobby()) {
+                ModelRam::Hitbox talk;
+                talk.kind = 60000;
+                talk.delay = 1;
+                talk.end = 2;
+                talk.offset = {0, 4, 7};
+                talk.size = {3, 3, 3};
+                ram.hitboxes.push_back(talk);
+            } else if (engine.time() >= ram.attack_ready) {
+                // ATDELAY: the next attack waits the player's ATTACKDELAY frames.
+                int delay = 30;
+                if (auto* sys = engine.get<GameSystem>()) delay = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats.attack_delay;
+                ram.attack_ready = engine.time() + frames_to_time(float(delay));
+                ram.combo_phase = 0;
+                select_sequence(engine, ram, "SQ_ATCK1");
+                return;
+            }
+        }
     }
-    // 80309168: post-input control transitions.
+    apply_control(engine, ram);
+}
+
+// 80309168: post-input control transitions of the CTRL modes.
+void ModelCtrlManager::apply_control(Engine& engine, ModelRam& ram) {
     std::string request;
     if (ram.ctrl_mode == 1 && ram.channels.allocated()) {
         std::optional<bool> moving;
@@ -433,7 +516,7 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         return;
     }
     Vec3f next{matrix[12], matrix[13], matrix[14]};
-    if (ram.is_player) {
+    if (ram.is_player || ram.category == "ENEMY") {
         // PROVISIONAL collision response (see collision.hpp).
         if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
             auto& world = hitland->world();
@@ -482,10 +565,12 @@ void ModelCtrlManager::update(Engine& engine) {
             command(engine, ram, "REMOVE", p);
             continue;
         }
+        if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         if (ram.is_player) update_player(engine, ram);
+        else if (ram.category == "ENEMY") update_enemy(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
-        if (ram.talk_delay >= 0 && ram.talk_delay-- == 0) check_talk(engine, ram);
-        if (!ram.wait_name) continue;
+        if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
+        if (!ram.generated || !ram.wait_name) continue;
         const auto& wait = *ram.wait_name;
         bool done = false;
         if (wait == "Action") {
@@ -498,6 +583,8 @@ void ModelCtrlManager::update(Engine& engine) {
             else if (wait == "Moving") done = !states[0].active && !states[1].active && !states[2].active;
             else done = !states[3].active;
             if (wait == "Landing" && ram.is_player && !ram.on_ground) done = false;
+        } else if (ram.is_player && (wait == "Atck01" || wait == "Atck02" || wait == "Atck03")) {
+            done = player_wait(engine, ram, wait);
         } else {
             engine.note("MODELCTRL wait " + wait);
         }
@@ -508,22 +595,129 @@ void ModelCtrlManager::update(Engine& engine) {
     }
 }
 
-// MODEL_HITBOX start routine: world box from the source matrix and authored
-// offset, then CHKBULLET to the category the kind selects (60000 = talk).
-void ModelCtrlManager::check_talk(Engine& engine, ModelRam& ram) {
+// MODEL_HITBOX queue: every entry advances once per frame in list order. The
+// first check happens when elapsed reaches the delay; later passes check
+// again until elapsed reaches the end, which removes the entry unchecked.
+void ModelCtrlManager::update_hitboxes(Engine& engine, ModelRam& ram) {
+    const auto generation = ram.hitbox_generation;
+    for (std::size_t i = 0; i < ram.hitboxes.size();) {
+        auto& box = ram.hitboxes[i];
+        box.elapsed += 1.0f;
+        bool check = false;
+        if (!box.started) {
+            if (box.elapsed >= box.delay) {
+                box.started = true;
+                check = true;
+            }
+        } else if (box.elapsed >= box.end) {
+            ram.hitboxes.erase(ram.hitboxes.begin() + std::ptrdiff_t(i));
+            continue;
+        } else {
+            check = true;
+        }
+        if (check) {
+            const auto copy = box;
+            fire_hitbox(engine, ram, copy);
+            if (ram.hitbox_generation != generation || !ram.generated) return;
+        }
+        ++i;
+    }
+}
+
+// Start routine: world box from the source matrix and authored offset with
+// boxSize as full extents, then CHKBULLET to the category of the bullet mode
+// (kind / 10000: 6 talk, 7-8 enemy bullet, otherwise player bullet; below
+// 10000 only kinds under 1000 are player bullets).
+void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box) {
     if (!ram.node) return;
     const auto& m = ram.node->matrix;
-    const Vec3f offset{0, 4, 7};
-    const Vec3f center{offset.x * m(0, 0) + offset.y * m(1, 0) + offset.z * m(2, 0) + m(3, 0),
-                       offset.x * m(0, 1) + offset.y * m(1, 1) + offset.z * m(2, 1) + m(3, 1),
-                       offset.x * m(0, 2) + offset.y * m(1, 2) + offset.z * m(2, 2) + m(3, 2)};
-    const Vec3f half{1.5f, 1.5f, 1.5f};
+    const Vec3f o = box.offset;
+    const Vec3f center{o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0),
+                       o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1),
+                       o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2)};
+    const Vec3f half{box.size.x * 0.5f, box.size.y * 0.5f, box.size.z * 0.5f};
+    const int group = box.kind / 10000;
+    int mode = 0;
+    if (group == 0) mode = box.kind < 1000 ? 0 : 2;
+    else if (group == 6) mode = 1;
+    else if (group == 7 || group == 8) mode = 2;
+    static const char* categories[] = {"HITPLAYERBULLET", "HITPLAYERTALK", "HITENEMYBULLET"};
     Packet packet;
-    packet.ints = {60000, ram.index};
+    packet.ints = {box.kind, ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
     packet.strings.emplace_back(ram.info_name);
-    engine.messenger().send(engine, "HITPLAYERTALK", std::nullopt, -1, "CHKBULLET", packet);
+    engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
+}
+
+// Player controller waits (vtable +A4, 8034D214). Atck01: the attack chain
+// continues after the action only when A stayed held; Atck02: releasing A
+// returns to SQ_WAIT, otherwise continue after the action; Atck03: wait while
+// A is held.
+bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_view wait) {
+    const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
+    const bool held = ram.control_enabled && (pad.buttons.held & dw4::pad_button::a);
+    auto action_done = [&] {
+        Packet packet;
+        engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "ISCOMEND", packet);
+        return !packet.bools.empty() && packet.bools[0];
+    };
+    if (wait == "Atck01") {
+        if (ram.combo_phase == 0) {
+            ram.combo_released = false;
+            ram.combo_phase = 1;
+        }
+        if (!held) ram.combo_released = true;
+        if (!action_done()) return false;
+        ram.combo_phase = 0;
+        if (!ram.combo_released) return true;
+        select_sequence(engine, ram, "SQ_WAIT");
+        return false;
+    }
+    if (wait == "Atck02") {
+        if (!held) {
+            select_sequence(engine, ram, "SQ_WAIT");
+            return false;
+        }
+        return action_done();
+    }
+    return !held;
+}
+
+// PROVISIONAL enemy behaviour until the original enemy controller (AIMAP,
+// beActionStarter) is reconstructed: face the nearest player, walk towards
+// it and attack at close range after a cooldown.
+void ModelCtrlManager::update_enemy(Engine& engine, ModelRam& ram) {
+    if (ram.ai_timer > 0) --ram.ai_timer;
+    ram.key_input = false;
+    ram.turn_rate_y = 0.2f;
+    if (!ram.control_enabled || !ram.node) return;
+    if (ram.seq_name != "SQ_WAIT" && ram.seq_name != "SQ_WALK") return;
+    const auto& m = ram.node->matrix;
+    const ModelRam* target = nullptr;
+    float best = 1e30f;
+    for (const auto& other : rams_) {
+        if (!other->is_player || !other->generated || !other->node) continue;
+        const auto& o = other->node->matrix;
+        const float dx = o(3, 0) - m(3, 0), dz = o(3, 2) - m(3, 2);
+        const float d = std::sqrt(dx * dx + dz * dz);
+        if (d < best) { best = d; target = other.get(); }
+    }
+    if (target && best < 80.0f) {
+        const auto& o = target->node->matrix;
+        ram.desired[1] = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2));
+        if (best < 10.0f) {
+            if (ram.ai_timer == 0 && ram.sequences &&
+                std::any_of(ram.sequences->begin(), ram.sequences->end(), [](const Sequence& q) { return q.name == "SQ_ATCK1"; })) {
+                ram.ai_timer = 120;
+                select_sequence(engine, ram, "SQ_ATCK1");
+                return;
+            }
+        } else {
+            ram.key_input = true;
+        }
+    }
+    apply_control(engine, ram);
 }
 
 // 8030E56C: base CHKBULLET target path. Gates, body overlap, target hit script
@@ -531,6 +725,9 @@ void ModelCtrlManager::check_talk(Engine& engine, ModelRam& ram) {
 bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) {
     if (!ram.generated || !ram.control_enabled || ram.seq_name == "SQ_ERAS" || !ram.hit || !ram.node) return false;
     if (packet.vectors.size() < 2) return false;
+    // A model never hits itself; MUTEKI blocks everything but p-to-p hits.
+    if (packet.string(0) == ram.info_name && packet.integer(1, -1) == ram.index) return false;
+    if (ram.muteki != 0 && !(ram.info_name.starts_with('p') && packet.string(0).starts_with('p'))) return false;
     const Vec3f in_min = packet.vectors[0], in_max = packet.vectors[1];
     const auto& m = ram.node->matrix;
     bool overlap = false;
@@ -585,6 +782,34 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
 }
 
 void ModelCtrlManager::install_actor_hook(Engine&, TraversalContext&) {}
+
+// ===========================================================================
+// PLAYERARMS (80318298 registration, 80318474 commands)
+// ===========================================================================
+void WeaponManager::add_info(Engine& engine, const ObjectView& info) {
+    const std::string name(info.str(2));
+    auto& rows = labels_[name];
+    rows.clear();
+    for (const auto& row : info.list(9))
+        if (row) rows.emplace_back(std::string(row.str(2)), std::string(row.str(3)));
+    std::int32_t index = 0;
+    for (const auto& record : info.list(6)) {
+        auto ram = std::make_unique<Ram>();
+        ram->manager = this;
+        ram->info = info;
+        ram->ram = record;
+        ram->info_name = name;
+        ram->index = index++;
+        ram->active = record ? record.boolean(5) : false;
+        engine.messenger().add_row("PLAYERARMS", name, ram->index, ram.get());
+        rams_.push_back(std::move(ram));
+    }
+}
+
+const std::vector<std::pair<std::string, std::string>>* WeaponManager::labels(std::string_view weapon) const {
+    const auto found = labels_.find(weapon);
+    return found != labels_.end() ? &found->second : nullptr;
+}
 
 // ===========================================================================
 // ACTION2 (802F1794 dispatch, 802F1510 loop, 802F16CC update)
