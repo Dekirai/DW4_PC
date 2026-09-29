@@ -501,8 +501,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         engine.note("MODELCTRL " + std::string(command));
         return true;
     }
-    // Any other command selects the named sequence of a generated model.
-    if (ram.generated) select_sequence(engine, ram, command);
+    // Any other command selects the named sequence of a generated model; a
+    // name the model has no sequence for (e.g. the status-effect commands
+    // SETMETAL / SETPOISON of 804E28F0) leaves the current one running.
+    if (!ram.generated) return true;
+    bool known = command == "SQ_ERAS" || command == "SQ_ERAS2";
+    if (ram.sequences)
+        for (const auto& s : *ram.sequences) known = known || s.name == command;
+    if (known) select_sequence(engine, ram, command);
+    else engine.note("MODELCTRL command " + std::string(command) + " without a sequence in " + ram.info_name);
     return true;
 }
 

@@ -45,6 +45,7 @@ void Engine::install_lua() {
     lua_->set_global("gsub", Lua4Value::host_function("gsub"));
     lua_->set_global("strfind", Lua4Value::host_function("strfind"));
     lua_->set_global("format", Lua4Value::host_function("format"));
+    for (const char* name : {"floor", "ceil", "getn"}) lua_->set_global(name, Lua4Value::host_function(name));
     lua_->set_resumable_host_handler([this](const Lua4HostCall& call) {
         Lua4HostResult result;
         try {
@@ -133,6 +134,20 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto found = at <= value.size() ? value.find(pattern, at) : std::string::npos;
         if (found == std::string::npos) return {Lua4Value{}};
         return {Lua4Value::number(double(found + 1)), Lua4Value::number(double(found + pattern.size()))};
+    }
+    if (name == "floor" || name == "ceil") {
+        const double value = call.arguments.empty() ? 0.0 : to_number(call.arguments[0]);
+        return {Lua4Value::number(name == "floor" ? std::floor(value) : std::ceil(value))};
+    }
+    if (name == "getn") {
+        // Lua 4 getn(t): the "n" field, else the count of consecutive integer keys from 1.
+        if (call.arguments.empty() || call.arguments[0].type() != Lua4Type::Table || !lua_) return {Lua4Value::number(0)};
+        const auto& table = call.arguments[0];
+        const auto n = lua_->table_get(table, Lua4Value::string("n"));
+        if (n.type() == Lua4Type::Number) return {n};
+        double count = 0;
+        while (lua_->table_get(table, Lua4Value::number(count + 1)).truthy()) ++count;
+        return {Lua4Value::number(count)};
     }
     if (name == "format") {
         // Lua 4 format(fmt, ...): printf conversions d i c x X o u e E f g G s q %.

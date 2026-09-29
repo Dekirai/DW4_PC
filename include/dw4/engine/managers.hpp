@@ -186,6 +186,7 @@ private:
     std::vector<std::unique_ptr<Ram>> rams_;
     bool movie_playing_{};
     std::int64_t movie_end_{};
+    std::int64_t jingle_end_{}; // PLAYatPAUSE stand-in length
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the
@@ -897,6 +898,8 @@ public:
         int bits{};                    // player BIT (0..9999999)
         int xdata{};                   // XDATA
         std::array<int, 11> upcnt{};   // UPCNT: MHP, MMP, STR, DEF, WIS, SPI, SPD, fire, ice, thunder, dark
+        std::map<int, std::uint8_t> base_isuse; // BASE_ISUSE: species reached by this player
+        std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,
     // weapon, armor1, armor2, abChip.

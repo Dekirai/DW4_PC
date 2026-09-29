@@ -449,6 +449,7 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
 void SoundManager::clear_stage(Engine&) {
     rams_.clear();
     movie_playing_ = false;
+    jingle_end_ = 0;
 }
 bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const auto& t = ram.info.type();
@@ -467,9 +468,16 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         return false;
     }
     // Audio is not played: streams report ready and nothing as playing, so
-    // scripts waiting on the sound system continue.
+    // scripts waiting on the sound system continue. A pause jingle
+    // (PLAYatPAUSE) keeps ISALLREADY at 0 for two seconds, as scripts wait for
+    // it to start and then to end.
+    if (command == "PLAYatPAUSE") {
+        jingle_end_ = engine.time() + kFrameNs * 120;
+        return true;
+    }
     if (command.starts_with("IS")) {
-        packet.bools.push_back(command.ends_with("READY") ? 1 : 0);
+        const bool ready = command == "ISALLREADY" ? engine.time() >= jingle_end_ : command.ends_with("READY");
+        packet.bools.push_back(ready ? 1 : 0);
         return true;
     }
     engine.note("audio " + std::string(command) + (packet.strings.empty() ? "" : " " + std::string(packet.string(0))));
@@ -731,6 +739,32 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     }
     if (method == "SYSctlBit") {
         out = {Lua4Value::number(control_item("BIT", arg_str(0), arg_int(1), {}, arg_int(2), 0, 0))};
+        return true;
+    }
+    if (method == "SYSisGetShinkaDigimon") {
+        // 802EC3E8: the player's BASE_ISUSE byte for a species.
+        const auto& used = players[std::size_t(std::clamp(arg_int(0), 0, 3))].base_isuse;
+        const auto found = used.find(arg_int(1));
+        out = {Lua4Value::number(found != used.end() ? found->second : 0)};
+        return true;
+    }
+    if (method == "SYSctlCardFolder") {
+        // 802EC430: player 1's CARDLIST; KAZU counts owned cards, SET / CLR
+        // succeed on a change.
+        auto& cards = players[0].cards;
+        const std::string op = arg_str(0);
+        const int card = arg_int(1);
+        int result = 0;
+        if (op == "KAZU") {
+            for (const auto& [id, owned] : cards) result += owned == 1 ? 1 : 0;
+        } else if (op == "SET" || op == "CLR") {
+            auto& owned = cards[card];
+            if ((op == "SET") != (owned != 0)) {
+                owned = op == "SET" ? 1 : 0;
+                result = 1;
+            }
+        }
+        out = {Lua4Value::number(result)};
         return true;
     }
     if (method == "SYSgetPlayerLevel") {
