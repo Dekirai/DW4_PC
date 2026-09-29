@@ -234,47 +234,177 @@ int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int
 } // namespace fight
 
 void GameSystem::prepare_player(Engine& engine, int slot) {
+    if (!players[std::size_t(std::clamp(slot, 0, 3))].stats.ready) create_player(engine, slot);
+    else recalc_player(engine, slot);
+}
+
+void GameSystem::create_player(Engine& engine, int slot) {
     auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
     auto& stats = player.stats;
     auto* db = engine.get<DatabaseManager>();
     if (!db) return;
     stats.species = std::max(0, db->find_row("shinka", "MODEL_NAME", player.digimon));
+    stats.level = 1;
+    stats.exp = 0;
+    stats.skill.fill(1);
+    player.upcnt.fill(0);
+    player.base_isuse[stats.species] = 1;
+    // 8036E124 / 8036E3B8: the three initial weapons fill DEVICEFOLDER and the socket.
+    player.devices.clear();
+    player.power_socket.clear();
+    static const char* initial[] = {"INI_WEAPON1", "INI_WEAPON2", "INI_WEAPON3"};
+    for (const char* column : initial) {
+        ItemDevice weapon;
+        weapon.record = db->number("shinka", stats.species, column).value_or(0);
+        weapon.flag = true;
+        player.devices.push_back(weapon);
+        player.power_socket.push_back(weapon);
+    }
+    player.hp = 0; // RECALCPLAYER refills HP and MP from 0
+    recalc_player(engine, slot);
+    stats.ready = true;
+}
+
+void GameSystem::recalc_player(Engine& engine, int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto& stats = player.stats;
+    auto* db = engine.get<DatabaseManager>();
+    if (!db) return;
     const int row = stats.species;
     const int level = stats.level;
     auto cell = [&](std::string_view table, int r, std::string_view column) { return db->number(table, r, column).value_or(0); };
+    static const char* device_tables[4] = {"weapon", "armor1", "armor2", "abChip"};
+    auto column = [&](const ItemDevice& d, std::string_view c) { return cell(device_tables[std::clamp(d.type, 0, 3)], d.record, c); };
+    // 8036F484 socket weapon (+ value), 8036F534 weapon chips, 8036F5DC armor1
+    // (+ value), 8036F68C armor chips, 8036F734 armor2 (+ value on its main stat).
+    auto socket = [&](int& v, const char* c, bool value) {
+        if (player.power_socket.empty()) return;
+        v += column(player.power_socket[0], c);
+        if (value) v += player.power_socket[0].value;
+    };
+    auto power_pocket = [&](int& v, const char* c) { for (const auto& d : player.power_pocket) v += column(d, c); };
+    auto main_slot = [&](int& v, const char* c, bool value) {
+        if (!player.main_slot) return;
+        v += column(*player.main_slot, c);
+        if (value) v += player.main_slot->value;
+    };
+    auto main_pocket = [&](int& v, const char* c) { for (const auto& d : player.main_pocket) v += column(d, c); };
+    auto sub_slot = [&](int& v, const char* c, bool value) {
+        if (!player.sub_slot) return;
+        v += column(*player.sub_slot, c);
+        if (value && db->text("armor2", player.sub_slot->record, "SHUSEINOURYOKU") == c) v += player.sub_slot->value;
+    };
     const auto& up = player.upcnt;
-    auto attribute = [&](const char* ini, const char* grow, int upcnt) {
+    const auto& buff = player.updata;
+    const auto& down = player.downdata;
+    auto grown = [&](const char* ini, const char* grow, int upcnt) {
         return grown_value(level, false, cell("shinka", row, grow), cell("shinka", row, ini), upcnt, 9999);
     };
-    // First power-socket weapon: the species' INI_WEAPON1 (GAMESTART initial weapons).
-    stats.weapon_record = cell("shinka", row, "INI_WEAPON1");
-    // The power socket holds INI_WEAPON1..3; their models are the files the
-    // next stage's boot.lua loads through SYSgetWeaponName.
-    static const char* initial[] = {"INI_WEAPON1", "INI_WEAPON2", "INI_WEAPON3"};
-    for (std::size_t i = 0; i < 3; ++i)
-        if (player.weapons[i].empty()) player.weapons[i] = db->text("weapon", cell("shinka", row, initial[i]), "MODEL");
-    const int weapon = stats.weapon_record;
-    stats.weapon_model = db->text("weapon", weapon, "MODEL");
-    stats.weapon_skill_no = cell("weapon", weapon, "SKILL");
-    stats.meichuritsu = cell("weapon", weapon, "MEICHURITSU");
-    stats.chimeiritsu = cell("weapon", weapon, "CHIMEIRITSU");
-    stats.attack_delay = cell("weapon", weapon, "DELAY");
-    auto clamp_stat = [](int v) { return std::clamp(v, 1, 9999); };
-    // UPCNT slots (8036F808 / 8036FB80): 0 MHP, 1 MMP, 2.. STR, DEF, WIS, SPI, SPD.
-    stats.tsuyosa = clamp_stat(attribute("STR_INI", "STR_GROW", up[2]) + cell("weapon", weapon, "TSUYOSA"));
-    stats.mamori = clamp_stat(attribute("AC_INI", "AC_GROW", up[3]));
-    stats.kashikosa = clamp_stat(attribute("INT_INI", "INT_GROW", up[4]) + cell("weapon", weapon, "KASHIKOSA"));
-    stats.seishin = clamp_stat(attribute("MND_INI", "MND_GROW", up[5]) + cell("weapon", weapon, "SEISHIN"));
-    stats.subayasa = clamp_stat(attribute("DEX_INI", "DEX_GROW", up[6]) + cell("weapon", weapon, "SUBAYASA"));
+    auto limit = [](int v) { return std::clamp(v, 1, 9999); };
+
+    int mhp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), up[0], 99999) + buff[6];
+    main_slot(mhp, "MAXHP", false);
+    sub_slot(mhp, "MAXHP", false);
+    player.max_hp = std::min(mhp, 99999);
+    const bool refill = player.hp == 0;
+    if (refill || player.hp > player.max_hp) player.hp = player.max_hp;
+    int mmp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), up[1], 99999);
+    main_slot(mmp, "MAXMP", false);
+    sub_slot(mmp, "MAXMP", false);
+    player.max_mp = std::min(mmp, 99999);
+    if (refill || player.mp > player.max_mp) player.mp = player.max_mp;
+
+    int tsuyosa = grown("STR_INI", "STR_GROW", up[2]) + buff[4] - down[4];
+    socket(tsuyosa, "TSUYOSA", true);
+    power_pocket(tsuyosa, "TSUYOSA");
+    sub_slot(tsuyosa, "TSUYOSA", true);
+    stats.tsuyosa = limit(tsuyosa);
+    int mamori = grown("AC_INI", "AC_GROW", up[3]) + buff[5] - down[5];
+    main_slot(mamori, "MAMORI", true);
+    sub_slot(mamori, "MAMORI", true);
+    stats.mamori = limit(mamori);
+    auto mind = [&](const char* ini, const char* grow, int upcnt, const char* c, bool sub_value, int extra) {
+        int v = grown(ini, grow, upcnt) + extra;
+        socket(v, c, false);
+        power_pocket(v, c);
+        main_slot(v, c, false);
+        main_pocket(v, c);
+        sub_slot(v, c, sub_value);
+        return limit(v);
+    };
+    stats.kashikosa = mind("INT_INI", "INT_GROW", up[4], "KASHIKOSA", true, 0);
+    stats.seishin = mind("MND_INI", "MND_GROW", up[5], "SEISHIN", false, 0);
+    stats.subayasa = mind("DEX_INI", "DEX_GROW", up[6], "SUBAYASA", true, buff[0] - down[0]);
     static const char* resists[] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK"};
-    for (std::size_t i = 0; i < 4; ++i) stats.resist[i] = clamp_stat(cell("shinka", row, resists[i]) + up[7 + i]);
-    player.max_hp = grown_value(level, true, cell("shinka", row, "MHP_GROW"), cell("shinka", row, "MHP_INI"), up[0], 99999);
-    player.max_mp = grown_value(level, true, cell("shinka", row, "MMP_GROW"), cell("shinka", row, "MMP_INI"), up[1], 99999);
+    for (std::size_t i = 0; i < 4; ++i) {
+        int v = cell("shinka", row, resists[i]) + up[7 + i] + buff[7 + i];
+        main_slot(v, resists[i], false);
+        main_pocket(v, resists[i]);
+        sub_slot(v, resists[i], true);
+        stats.resist[i] = limit(v);
+    }
+
+    // WAZALIST: each TECHn reached by LEVEL, at the highest rank whose
+    // TECHn_SKILLk the technique's skill points meet.
+    player.wazalist.clear();
+    for (int n = 1; n <= 6; ++n) {
+        const std::string tech = "TECH" + std::to_string(n);
+        const int base = cell("shinka", row, tech);
+        const int skill_type = std::clamp(cell("pcTech", base, "SKILL"), 0, 8);
+        const int points = stats.skill[std::size_t(skill_type)];
+        if (cell("shinka", row, tech + "_LEVEL") > level) continue;
+        for (int rank = 4; rank >= 0; --rank)
+            if (cell("shinka", row, tech + "_SKILL" + std::to_string(rank + 1)) <= points) {
+                player.wazalist.push_back(base + rank);
+                break;
+            }
+    }
     // NEXTEXP (80370DBC): (level + 140) * level^2 + level * 200; none at 999.
     stats.next_exp = level >= 999 ? 0 : (level + 140) * level * level + level * 200;
-    if (!stats.ready || player.hp > player.max_hp) player.hp = player.max_hp;
-    if (!stats.ready || player.mp > player.max_mp) player.mp = player.max_mp;
-    stats.ready = true;
+
+    int delay = down[6];
+    socket(delay, "DELAY", false);
+    stats.attack_delay = std::min(delay, 70);
+    stats.meichuritsu = 0;
+    socket(stats.meichuritsu, "MEICHURITSU", false);
+    int chimei = buff[1] - down[1];
+    socket(chimei, "CHIMEIRITSU", false);
+    power_pocket(chimei, "CHIMEIRITSU");
+    stats.chimeiritsu = std::max(chimei, 1);
+    stats.mahiritsu = 0;
+    socket(stats.mahiritsu, "MAHIRITSU", false);
+    int kaihi = buff[3] - down[3];
+    main_pocket(kaihi, "CHOHATURITSU");
+    stats.kaihiritsu = std::max(kaihi, 1);
+    stats.bougyoritsu = 0;
+    main_slot(stats.bougyoritsu, "BOUGYORITSU", false);
+    int mahiteikou = buff[2] - down[2];
+    main_slot(mahiteikou, "MAHITEIKOU", false);
+    stats.mahiteikou = std::max(mahiteikou, 1);
+    stats.dokuteikou = 0;
+    main_slot(stats.dokuteikou, "DOKUTEIKOU", false);
+    stats.bit_rate = stats.exp_rate = stats.luck_rate = 0;
+    sub_slot(stats.bit_rate, "BITRITSU", false);
+    sub_slot(stats.exp_rate, "EXPRITSU", false);
+    sub_slot(stats.luck_rate, "LUCKRITSU", false);
+    stats.attack_zokusei = -1;
+    static const char* elements[] = {"fire", "ice", "thunder", "dark"};
+    for (const auto& chip : player.power_pocket) {
+        const auto element = db->text("abChip", chip.record, "ZOKUSEI");
+        for (int e = 0; e < 4 && stats.attack_zokusei < 0; ++e)
+            if (element == elements[e]) stats.attack_zokusei = e;
+        if (stats.attack_zokusei >= 0) break;
+    }
+    stats.hp_drain = stats.mp_drain = 0;
+    power_pocket(stats.hp_drain, "HPDRAIN");
+    power_pocket(stats.mp_drain, "MPDRAIN");
+    // WEAPONRECNO / WEAPONSKILLNO and POWERSOCKETNAME (the models boot.lua loads).
+    stats.weapon_record = player.power_socket.empty() ? 0 : player.power_socket[0].record;
+    stats.weapon_skill_no = player.power_socket.empty() ? 0 : cell("weapon", stats.weapon_record, "SKILL");
+    player.weapons = {};
+    for (std::size_t i = 0; i < player.power_socket.size() && i < 3; ++i)
+        player.weapons[i] = db->text("weapon", player.power_socket[i].record, "MODEL");
+    stats.weapon_model = player.weapons[0];
 }
 
 int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {

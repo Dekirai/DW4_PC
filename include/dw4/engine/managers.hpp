@@ -875,12 +875,13 @@ public:
         int level = 1;
         int species{};                        // shinka row
         int tsuyosa{}, mamori{}, kashikosa{}, seishin{}, subayasa{};
-        int meichuritsu{}, chimeiritsu{}, attack_delay = 30;
+        int meichuritsu{}, chimeiritsu{}, mahiritsu{}, attack_delay = 30;
         int attack_zokusei = -1;
         std::array<int, 4> resist{}; // HONOOTEIKO, KOORITEIKO, KAMINARITEIKO, YAMITEIKO
-        int kaihiritsu{}, bougyoritsu{};
+        int kaihiritsu{}, bougyoritsu{}, mahiteikou{}, dokuteikou{};
         int exp{}, next_exp{}, exp_rate{}; // EXP, NEXTEXP, EXPRITSU
-        int bit_rate{};                    // BITRITSU
+        int bit_rate{}, luck_rate{};       // BITRITSU, LUCKRITSU
+        int hp_drain{}, mp_drain{};        // HPDRAIN, MPDRAIN
         int weapon_record = -1, weapon_skill_no{};
         std::array<int, 9> skill{1, 1, 1, 1, 1, 1, 1, 1, 1};
         std::string weapon_model;
@@ -898,6 +899,14 @@ public:
         int bits{};                    // player BIT (0..9999999)
         int xdata{};                   // XDATA
         std::array<int, 11> upcnt{};   // UPCNT: MHP, MMP, STR, DEF, WIS, SPI, SPD, fire, ice, thunder, dark
+        // UPDATA / DOWNDATA status buffs: 0 SUBAYASA, 1 CHIMEIRITSU, 2 MAHITEIKOU,
+        // 3 KAIHIRITSU, 4 TSUYOSA, 5 MAMORI, 6 MHP (up) / DELAY (down), 7.. resists.
+        std::array<int, 11> updata{}, downdata{};
+        // Equipment: POWERSOCKET (up to 3 weapons, [0] in use) with POWERPOCKET
+        // chips, MAINSLOT (armor1) with MAINPOCKET chips, SUBSLOT (armor2).
+        std::vector<ItemDevice> power_socket, power_pocket, main_pocket;
+        std::optional<ItemDevice> main_slot, sub_slot;
+        std::vector<int> wazalist;     // WAZALIST: pcTech rows
         std::map<int, std::uint8_t> base_isuse; // BASE_ISUSE: species reached by this player
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
     };
@@ -908,9 +917,14 @@ public:
     // CTRLITEM (GAMERAM 80372054): SYSctlDeviceFolder/DiskFolder/FlagFolder/Bit.
     int control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
                      int a, int b, int c);
-    // GAMESTART / RECALCPLAYER subset: species, level-1 status and the first
-    // initial weapon, from the stage's shinka and weapon databases.
+    // Creates the player on first use (8036EB0C), otherwise RECALCPLAYER.
     void prepare_player(Engine& engine, int slot);
+    // 8036EB0C: species, BASE_LEVEL/SKILL 1, INI_WEAPON1..3 in DEVICEFOLDER and
+    // POWERSOCKET, then RECALCPLAYER with full HP/MP.
+    void create_player(Engine& engine, int slot);
+    // RECALCPLAYER (8036FDE8): status from level, UPCNT, buffs and equipment,
+    // the technique list and the socket weapon.
+    void recalc_player(Engine& engine, int slot);
     // P2EEXPUP (80373B48): every live player gains the enemy's EXP (the
     // defeating player the full share), levels up past NEXTEXP with full HP/MP.
     // Returns the defeating player's gain.
