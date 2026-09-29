@@ -551,7 +551,10 @@ bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet
 void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     if (info.type() == "beHitLandDelivInfo") {
         const auto rams = info.list(6);
-        if (!rams.empty() && rams.front()) radii_[std::string(info.str(2))] = rams.front().f32(13);
+        if (!rams.empty() && rams.front()) {
+            radii_[std::string(info.str(2))] = rams.front().f32(13);
+            masks_[std::string(info.str(2))] = std::uint32_t(rams.front().i32(12));
+        }
         return;
     }
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
@@ -595,6 +598,7 @@ void HitLandManager::clear_stage(Engine&) {
     rams_.clear();
     children_.clear();
     radii_.clear();
+    masks_.clear();
     world_.clear();
 }
 

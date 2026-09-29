@@ -31,9 +31,17 @@ public:
     std::size_t triangle_count() const { return triangles_.size(); }
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // Highest floor at (x, z) within [y - down, y + up]; false when none.
-    bool floor_height(const Vec3f& position, float up, float down, float& height, Vec3f* normal = nullptr) const;
+    // mask: the model's HitLandDeliv kind bits (players 7, enemies 11).
+    bool floor_height(const Vec3f& position, float up, float down, float& height, Vec3f* normal = nullptr,
+                      std::uint32_t mask = 7) const;
     // Push a vertical capsule (radius, from y+step to y+height) out of walls.
-    Vec3f resolve_walls(const Vec3f& position, float radius, float step, float height) const;
+    Vec3f resolve_walls(const Vec3f& position, float radius, float step, float height, std::uint32_t mask = 7) const;
+    // HITLAND_TRAVERSAL: the low nine kind bits must intersect the query mask;
+    // bit 0x800 on both suppresses the geometry.
+    static bool selects(std::uint32_t kind, std::uint32_t query) {
+        if ((kind & 0x800u) && (query & 0x800u)) return false;
+        return (kind & query & 0x1FFu) != 0;
+    }
 
 private:
     void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group);

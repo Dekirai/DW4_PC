@@ -212,6 +212,11 @@ public:
         const auto found = radii_.find(model);
         return found != radii_.end() ? found->second : 0.0f;
     }
+    // beHitLandDelivInfoRam [12]: the model's HitLand query mask (0 when unknown).
+    std::uint32_t mask(std::string_view model) const {
+        const auto found = masks_.find(model);
+        return found != masks_.end() ? found->second : 0u;
+    }
 
 private:
     struct HitRam : Ram {
@@ -220,6 +225,7 @@ private:
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::unique_ptr<HitRam>> children_;
     std::map<std::string, float, std::less<>> radii_;
+    std::map<std::string, std::uint32_t, std::less<>> masks_;
     CollisionWorld world_;
 };
 

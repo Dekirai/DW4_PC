@@ -117,7 +117,8 @@ Vec3f closest_point(const Vec3f& p, const CollisionTriangle& t) {
 }
 } // namespace
 
-bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& height, Vec3f* normal) const {
+bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& height, Vec3f* normal,
+                                  std::uint32_t mask) const {
     bool found = false;
     float best = -1e30f;
     std::set<std::uint32_t> seen;
@@ -126,7 +127,7 @@ bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& h
             if (!seen.insert(index).second) continue;
             const auto& t = triangles_[index];
             // CHECKLAND (80300444) queries kind bit 1 only.
-            if (!(t.kind & 1u) || t.normal.y < 0.25f || !enabled(t)) continue;
+            if (!selects(t.kind, mask & 1u) || t.normal.y < 0.25f || !enabled(t)) continue;
             float y;
             if (!vertical_hit(t, p.x, p.z, y)) continue;
             if (y > p.y + up || y < p.y - down) continue;
@@ -143,7 +144,7 @@ bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& h
     return found;
 }
 
-Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float step, float height) const {
+Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float step, float height, std::uint32_t mask) const {
     Vec3f p = position;
     std::vector<std::int64_t> keys;
     cells({p.x - radius, 0, p.z - radius}, {p.x + radius, 0, p.z + radius}, keys);
@@ -156,7 +157,7 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
             for (auto index : it->second) {
                 const auto& t = triangles_[index];
                 // CHECKWALL (802FE7F0) excludes the floor bit: wall geometry only.
-                if (!(t.kind & 2u) || std::abs(t.normal.y) > 0.7f || !enabled(t)) continue;
+                if (!selects(t.kind, mask & ~1u) || std::abs(t.normal.y) > 0.7f || !enabled(t)) continue;
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {
                     const Vec3f center{p.x, p.y + h, p.z};
                     const Vec3f q = closest_point(center, t);

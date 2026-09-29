@@ -570,7 +570,7 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     // 8034C3C8 buttons while standing or walking: B guards (outside the main
     // lobby), X jumps, A attacks - or, in the main lobby, appends the talk
     // hitbox (kind 60000, delay 1, length 1, offset (0,4,7), size 3).
-    const bool free = ram.seq_name == "SQ_WAIT" || ram.seq_name == "SQ_WALK";
+    const bool free = ram.seq_name != "SQ_JUMP" && ram.seq_name != "SQ_FALL";
     if (ram.control_enabled && free) {
         const auto trigger = pad.buttons.trigger;
         if (!engine.main_lobby() && (trigger & dw4::pad_button::b)) {
@@ -661,7 +661,9 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         // PROVISIONAL collision response (see collision.hpp).
         if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
             auto& world = hitland->world();
-            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f);
+            std::uint32_t mask = hitland->mask(ram.info_name);
+            if (mask == 0) mask = ram.is_player ? 7u : 11u;
+            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask);
             // PROVISIONAL model-to-model separation (the original delivers
             // CHECKWALL between the models' HitLandDeliv cylinders).
             const float own = std::max(hitland->radius(ram.info_name), 2.0f);
@@ -684,7 +686,7 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             }
             float floor = 0;
             const bool rising = next.y > position.y + 0.001f;
-            if (!rising && world.floor_height(next, 6.0f, ram.on_ground ? 6.0f : 0.5f, floor)) {
+            if (!rising && world.floor_height(next, 6.0f, ram.on_ground ? 6.0f : 0.5f, floor, nullptr, mask)) {
                 next.y = floor;
                 ram.on_ground = true;
                 ram.fall_speed = 0;
@@ -702,7 +704,7 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                 ram.fall_speed = std::min(ram.fall_speed + 0.12f, 4.0f);
                 const float before = next.y;
                 next.y -= ram.fall_speed;
-                if (world.floor_height({next.x, before, next.z}, 0.5f, ram.fall_speed + 0.5f, floor)) {
+                if (world.floor_height({next.x, before, next.z}, 0.5f, ram.fall_speed + 0.5f, floor, nullptr, mask)) {
                     next.y = floor;
                     ram.on_ground = true;
                     ram.fall_speed = 0;
@@ -738,9 +740,17 @@ void ModelCtrlManager::update(Engine& engine) {
             continue;
         }
         if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
-        if (ram.is_player) update_player(engine, ram);
-        else if (ram.category == "ENEMY") update_enemy(engine, ram);
-        else if (ram.category == "PLAYER2") update_capsule(engine, ram);
+        // 8030CCDC: input, AI and the control transitions run only while the
+        // sequence has a CTRL mode; otherwise a running AITIMER is dropped.
+        if (ram.ctrl_mode != 0) {
+            if (ram.is_player) update_player(engine, ram);
+            else if (ram.category == "ENEMY") update_enemy(engine, ram);
+            else if (ram.category == "PLAYER2") update_capsule(engine, ram);
+            else apply_control(engine, ram);
+        } else {
+            if (ram.ai_maps) ram.ai_timer_end = -1;
+            if (ram.is_player) ram.key_input = false;
+        }
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
