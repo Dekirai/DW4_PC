@@ -41,6 +41,7 @@ void Engine::install_lua() {
     lua_ = std::make_unique<Lua4Vm>();
     lua_->set_global("be", Lua4Value::host_object("be"));
     lua_->set_global("gsub", Lua4Value::host_function("gsub"));
+    lua_->set_global("strfind", Lua4Value::host_function("strfind"));
     lua_->set_resumable_host_handler([this](const Lua4HostCall& call) {
         Lua4HostResult result;
         try {
@@ -114,6 +115,21 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
             ++count;
         }
         return {Lua4Value::string(value), Lua4Value::number(double(count))};
+    }
+    if (name == "strfind") {
+        // Lua 4 strfind(s, pattern [, init [, plain]]): the scripts only search
+        // literal text, so patterns are matched literally (magic characters noted).
+        if (call.arguments.size() < 2) return {Lua4Value{}};
+        const std::string value(call.arguments[0].as_string());
+        const std::string pattern(call.arguments[1].as_string());
+        if (pattern.find_first_of("^$()%.[]*+-?") != std::string::npos) note("strfind pattern " + pattern);
+        long long init = call.arguments.size() > 2 && call.arguments[2].type() == Lua4Type::Number
+                             ? static_cast<long long>(call.arguments[2].as_number()) : 1;
+        if (init < 0) init = std::max<long long>(1, static_cast<long long>(value.size()) + init + 1);
+        const auto at = init <= 0 ? 0 : std::size_t(init - 1);
+        const auto found = at <= value.size() ? value.find(pattern, at) : std::string::npos;
+        if (found == std::string::npos) return {Lua4Value{}};
+        return {Lua4Value::number(double(found + 1)), Lua4Value::number(double(found + pattern.size()))};
     }
     if (!name.starts_with("be.")) {
         note("script function " + name);

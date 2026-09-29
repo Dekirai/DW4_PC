@@ -160,6 +160,7 @@ int run(const Options& options) {
         std::string rendered_stage;
         bool running = true, show_menu = false;
         int frame = 0;
+        const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
         while (running) {
@@ -252,6 +253,12 @@ int run(const Options& options) {
                 pads[0].left = {std::clamp(stick_x, -1.0f, 1.0f) * (72.0f / 74.0f), std::clamp(stick_y, -1.0f, 1.0f) * (72.0f / 74.0f)};
                 engine.step(pads);
                 ++frame;
+                // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
+                if (trace_player > 0 && frame % trace_player == 0)
+                    if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
+                        if (const auto* p = models->player(0); p && p->node)
+                            std::printf("[%d] player0 %s (%.2f, %.2f, %.2f)\n", frame, p->seq_name.c_str(), p->node->matrix(3, 0),
+                                        p->node->matrix(3, 1), p->node->matrix(3, 2));
             }
             if (rendered_stage != engine.stage_name()) {
                 renderer.clear_cache();

@@ -144,6 +144,8 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
                     // Walls below or above the probe (e.g. a ledge being jumped
                     // over) must not push: test the 3D distance, push horizontally.
                     if (std::abs(q.y - center.y) >= radius) continue;
+                    // Wall parts below the step height can be stepped onto.
+                    if (q.y < p.y + step) continue;
                     Vec3f d{center.x - q.x, 0, center.z - q.z};
                     const float dist = length(d);
                     if (dist < radius && dist > 1e-5f) {
