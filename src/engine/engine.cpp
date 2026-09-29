@@ -452,13 +452,15 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     if (!pad_input_enabled_)
         for (auto& sample : input) { sample.buttons = 0; sample.left = {}; sample.right = {}; }
     try { pads_.update(input); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
+    // The frame clock advances first so updates and the following render
+    // observe the same time (joint clamps and fades end exactly on a key).
+    time_ += kFrameNs;
+    ++frame_;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     messenger_.update(*this);
     demo_.update(*this);
     for (auto& m : managers_) m->update(*this);
-    time_ += kFrameNs;
-    ++frame_;
 }
 
 void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color) {
