@@ -58,7 +58,7 @@ the F1 notes and answer 0 so the original scripts keep running.
 | `SceneManager`, `LayerManager`, `BkColorManager` | igSceneInfo, LAYERCTL, BKCOLOR | layer ORDER/SWITCH/REMOVE, clear colour |
 | `CameraManager` | beCameraCtrl | follow and box cameras, named demo camera paths |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
-| `LogoManager`, `SoundManager` | beNDMWLogo, sound/movie | audio and movies are reported, not played |
+| `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience and sound effects play; movies are reported |
 | `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, provisional enemy AI |
 | `GeneraterManager` | beGenerater (802FCF68, 802FD5C4) | enemy waves from DATABASE enemy rows, start/fill modes, `_callLua` on clear |
 | `WeaponManager` | beWeapon / PLAYERARMS (80318474) | weapon sequence labels for the carrying player |
@@ -86,9 +86,17 @@ model timers (803ACD88), the sequence-change check that breaks sleep and stun
 `SoundManager` follows the beAsmSound2 command handler (80314F14): a stage's
 beSoundInfo lists its sounds (type 1 BGM, 2 ambience, 3/4 sound effects) and
 the files they index; stream files are written "[archive.entry]" (802A9828)
-and name CRI ADX files decoded by `dw4::adx` in the core. `render()` mixes the
-two stream channels as 48 kHz stereo PCM that `dw4_game` queues on an SDL3
-audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it).
+and name CRI ADX files decoded by `dw4::adx` in the core. Sound effects carry
+a request id 0xA9GGNN00 into a CRI Sound Factory bank (`dw4::sfp`): the common
+allse.sfp (_common/sbiallse.igb) or a stage bank from beStaticInfo. The bank's
+request table leads to a short sequence (803C49F4, millisecond delta times)
+whose notes play drum-program splits, each a DSP ADPCM sample. Effects without
+a request id are ADX files on two SE stream channels. beSeInfo holds each
+model's SE set: the sounds an ACTION2 action plays after a frame delay; a
+looping sound (type 4) stops at the model's next action. `render()` mixes the
+streams and effect voices as 48 kHz stereo PCM that `dw4_game` queues on an
+SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1`
+logs the effects).
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)

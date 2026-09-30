@@ -1583,9 +1583,9 @@ void ActionManager::run(Engine& engine, ActionRam& ram) {
 }
 
 void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view name) {
-    // DW4_TRACE_ACTION=model logs the actions that model is given.
+    // DW4_TRACE_ACTION=model (or *) logs the actions that model is given.
     static const char* trace = std::getenv("DW4_TRACE_ACTION");
-    if (trace && ram.info_name == trace)
+    if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
         engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name));
     if (!ram.actions) return;
     const Action* found = nullptr;
@@ -1594,6 +1594,7 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
         engine.note("ACTION " + std::string(name) + " missing in " + ram.info_name);
         return;
     }
+    if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
     if (!ram.action_active) {
         ram.action_active = true;
         ram.fade_state = 0;

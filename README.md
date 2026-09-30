@@ -59,11 +59,15 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
 - Music and ambience: the stage sound lists' BGM and ambience streams are
   the CRI ADX files of ndmw.afs, decoded natively (loop points, volume, the
   fade-out before a change) and played through SDL3 audio.
+- Sound effects: the CRI Sound Factory banks (the common allse.sfp and each
+  stage's banks) with their request sequences, drum-program splits and DSP
+  ADPCM samples, triggered by menus, scripts and the models' SE sets (the
+  sounds each action plays, such as jumps, landings, footsteps and swings).
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
 
 Not yet reconstructed: the card booster program, the raise technique,
-homing enemy bullets, particles and shadows, sound effects (CRI SFP banks), voices and movies,
+homing enemy bullets, particles and shadows, voices and movies,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 

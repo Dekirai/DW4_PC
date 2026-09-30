@@ -450,6 +450,15 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     const auto& t = info.type();
     std::string category = t == "beSoundInfo" ? "SOUND" : t == "beSeInfo" ? "SE" : t == "beMovieInfo" ? "MOVIE" : "";
     make_rams(engine, this, info, rams_, category);
+    if (t == "beSeInfo") {
+        for (const auto& set : info.list(5)) {
+            if (!set) continue;
+            auto& cues = se_sets_[std::string(set.str(2))];
+            for (const auto& cue : set.list(4))
+                if (cue) cues.push_back({std::string(cue.str(2)), std::string(cue.str(3)), cue.i16(4)});
+        }
+        return;
+    }
     if (t == "beStaticInfo") {
         // The stage's sfp banks (beCriSfpData), next to the common allse.sfp.
         for (const auto& data : info.list(5))
@@ -475,6 +484,45 @@ void SoundManager::clear_stage(Engine&) {
     std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
     std::erase_if(voices_, [](const SeVoice& voice) { return voice.loop; });
     tracks_.clear();
+    se_sets_.clear();
+    cues_.clear();
+    owner_loops_.clear();
+}
+
+void SoundManager::action_started(Engine& engine, const std::string& model, int index, std::string_view action) {
+    const std::string owner = model + "#" + std::to_string(index);
+    if (const auto loop = owner_loops_.find(owner); loop != owner_loops_.end()) {
+        stop_effects(loop->second, owner);
+        owner_loops_.erase(loop);
+    }
+    std::erase_if(cues_, [&](const PendingCue& cue) { return cue.owner == owner; });
+    const auto set = se_sets_.find(model);
+    if (set == se_sets_.end()) return;
+    for (const auto& cue : set->second) {
+        if (cue.action != action) continue;
+        if (cue.delay <= 0) play_cue(engine, cue.sound, owner);
+        else cues_.push_back({cue.sound, owner, cue.delay});
+    }
+}
+
+void SoundManager::play_cue(Engine& engine, const std::string& sound, const std::string& owner) {
+    const auto found = sounds_.find(sound);
+    if (found == sounds_.end() || found->second.request == 0xffffffffu) {
+        Packet packet;
+        packet.strings.emplace_back(sound);
+        play(engine, packet);
+        return;
+    }
+    if (found->second.type == 4) owner_loops_[owner] = sound;
+    play_request(engine, sound, found->second, owner);
+}
+
+void SoundManager::stop_effects(const std::string& name, const std::string& owner) {
+    auto matches = [&](const std::string& n, const std::string& o) {
+        return (name.empty() || n == name) && (owner.empty() || o == owner);
+    };
+    std::erase_if(tracks_, [&](const SeTrack& track) { return matches(track.name, track.owner); });
+    std::erase_if(voices_, [&](const SeVoice& voice) { return matches(voice.name, voice.owner); });
 }
 
 void SoundManager::add_bank(Engine& engine, const ObjectView& data, bool common) {
@@ -577,7 +625,7 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
 
 // A sound-effect request (8031CCFC SEQ_SET/SEQ_PLAY): the bank holding the
 // request's group (803C5188) runs its sequence on a track.
-bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data) {
+bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner) {
     if (!common_loaded_) {
         // Loaded once at boot by the original (802F902C).
         common_loaded_ = true;
@@ -606,13 +654,14 @@ bool SoundManager::play_request(Engine& engine, const std::string& name, const S
     // A looping effect (type 4) already sounding keeps its voice.
     if (data.type == 4)
         for (const auto& voice : voices_)
-            if (voice.name == name && voice.loop) return true;
+            if (voice.name == name && voice.owner == owner && voice.loop) return true;
     if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
         engine.log("sound effect " + name + " from " + bank->name + " at frame " + std::to_string(engine.frame()));
     SeTrack track;
     track.bank = bank;
     track.sequence = sfp::Sequence(sequence);
     track.name = name;
+    track.owner = owner;
     track.gain = volume_gain(data.volume) * float(se_volume_ ? se_volume_ : 127) / 127.0f;
     run_track(track);
     if (!track.sequence.finished()) tracks_.push_back(std::move(track));
@@ -633,6 +682,7 @@ void SoundManager::run_track(SeTrack& track) {
         voice.bank = track.bank;
         voice.sample = split->sample;
         voice.name = track.name;
+        voice.owner = track.owner;
         voice.loop = track.bank->bank->sample(split->sample).loop;
         if (split->detune) {
             random_ = random_ * 1103515245u + 12345u;
@@ -786,8 +836,11 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "SESTOP") {
             // All sound effects, or those of one sound.
             const std::string name = packet.strings.empty() ? std::string() : std::string(packet.string(0));
-            std::erase_if(tracks_, [&](const SeTrack& track) { return name.empty() || track.name == name; });
-            std::erase_if(voices_, [&](const SeVoice& voice) { return name.empty() || voice.name == name; });
+            stop_effects(name, {});
+            if (name.empty()) {
+                cues_.clear();
+                owner_loops_.clear();
+            }
             for (std::size_t channel = 2; channel < streams_.size(); ++channel)
                 if (name.empty() || streams_[channel].name == name) stop(int(channel));
             return true;
@@ -830,6 +883,15 @@ void SoundManager::update(Engine& engine) {
         run_track(track);
     }
     std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
+    for (std::size_t i = 0; i < cues_.size();) {
+        if (--cues_[i].frames > 0) {
+            ++i;
+            continue;
+        }
+        const PendingCue cue = cues_[i];
+        cues_.erase(cues_.begin() + std::ptrdiff_t(i));
+        play_cue(engine, cue.sound, cue.owner);
+    }
     if (movie_playing_ && engine.time() >= movie_end_) {
         movie_playing_ = false;
         engine.run_script("nextStage.lua");
