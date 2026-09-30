@@ -178,7 +178,8 @@ public:
     // One fixed 60 Hz simulation step.
     void step(const std::array<PadSample, 4>& samples);
     // Collect the draw list for the current state.
-    void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color);
+    // `shadow` (optional) receives the projected-shadow light and casters.
+    void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow = nullptr);
     // Optional host inspection camera replacing the game camera (debug only).
     std::optional<FrameCamera> debug_camera;
     // Per-scene draw statistics for diagnostics.

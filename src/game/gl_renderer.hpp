@@ -25,6 +25,8 @@ public:
     // `screen` is the 4:3 game area inside the window (GL window coordinates).
     void render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
                 const engine::Vec4f& clear_color, const Viewport& screen, int window_width, int window_height);
+    // The projected shadow drawn with the next render (null: none).
+    void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop all GPU resources (call when the engine changed stage).
     void clear_cache();
     std::size_t texture_count() const { return textures_.size(); }
@@ -47,12 +49,18 @@ private:
     };
     const Mesh* mesh(const engine::GeometryData* geometry);
     const Texture* texture(const engine::Attribute* binding);
+    void render_shadow_map();
+    void render_shadow_receivers(const engine::FrameCamera& camera);
 
     std::unique_ptr<Impl> gl_;
     unsigned program_{};
     std::unordered_map<const engine::GeometryData*, Mesh> meshes_;
     std::map<std::pair<const void*, std::uint32_t>, Texture> textures_;
     unsigned white_texture_{};
+    const engine::ShadowFrame* shadow_{};
+    unsigned shadow_fbo_{}, shadow_texture_{};
+    int shadow_size_{};
+    bool shadow_ready_{};
 };
 
 } // namespace dw4::game

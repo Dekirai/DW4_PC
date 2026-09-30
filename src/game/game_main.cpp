@@ -213,6 +213,7 @@ int run(const Options& options) {
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
         std::vector<dw4::engine::DrawItem> items;
+        dw4::engine::ShadowFrame shadow;
         dw4::engine::FrameCamera camera;
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
@@ -376,7 +377,8 @@ int run(const Options& options) {
                 renderer.clear_cache();
                 rendered_stage = engine.stage_name();
             }
-            engine.render(items, camera, clear);
+            engine.render(items, camera, clear, &shadow);
+            renderer.set_shadow(&shadow);
             int width = 0, height = 0;
             SDL_GetWindowSizeInPixels(window, &width, &height);
             dw4::game::Viewport screen;

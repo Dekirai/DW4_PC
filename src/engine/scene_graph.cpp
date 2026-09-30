@@ -425,6 +425,11 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
             const auto data = mask.memory(4);
             for (std::size_t i = 0; i + 4 <= data.size(); i += 4) n->mask.push_back(read_u32le(data, i));
         }
+    } else if (type == "beCopyModelCtrl2") {
+        n->kind = NodeKind::copy_model;
+        children_from(7);
+        if (auto m = view.mat4(8)) { n->matrix = *m; n->has_matrix = true; }
+        if (const auto source = view.ref(12)) n->copy_source = node(source.document(), source.reference());
     } else if (view.is_a("beModelCtrlNode2")) {
         n->kind = NodeKind::model_node;
         children_from(7);
@@ -588,7 +593,17 @@ struct ActorScope {
     const ActorPose* pose{};
     Mat4 actor_model{};
     std::shared_ptr<const std::vector<Mat4>> palette;
+    const Node* pose_actor{}; // beCopyModelCtrl2: actors take this actor's pose
 };
+
+// The first actor below a model instance (through LOD and switches).
+Node* first_actor(Node* n, int depth) {
+    if (!n || depth > 32) return nullptr;
+    if (n->kind == NodeKind::actor) return n;
+    for (auto* child : n->children)
+        if (auto* found = first_actor(child, depth + 1)) return found;
+    return nullptr;
+}
 
 void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time,
            const ActorScope& parent_scope, int depth) {
@@ -635,6 +650,18 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
             break;
         }
         model = local * model;
+        break;
+    }
+    case NodeKind::copy_model: {
+        // The source instance's placement and its actor's pose.
+        if (Node* source = n->copy_source) {
+            model = (source->runtime_matrix ? *source->runtime_matrix : source->matrix) * model;
+            if (!n->copy_resolved) {
+                n->copy_actor = first_actor(source, 0);
+                n->copy_resolved = true;
+            }
+            scope.pose_actor = n->copy_actor;
+        }
         break;
     }
     case NodeKind::model_node: {
@@ -712,7 +739,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         apply_overrides(*n, state);
         ActorScope actor;
         actor.actor_model = n->actor_matrix * model;
-        actor.pose = ctx.actor_pose ? ctx.actor_pose(*n) : nullptr;
+        actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n) : nullptr;
         for (auto* root : n->appearance_roots) visit(root, ctx, actor.actor_model, state, time, actor, depth + 1);
         scope = actor;
         break;

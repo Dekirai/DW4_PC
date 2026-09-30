@@ -308,6 +308,33 @@ private:
     bool pending_{};
 };
 
+// beShadow01 (manager vtable 804DF760): projected shadows. The stage's
+// beShadow01Info with an igProjectiveShadowShader ([9], 80314690) sets the
+// light; infos with [8] add casters (model switches or beCopyModelCtrl2
+// shadow proxies) to the shader's caster list and infos with [7] add
+// receivers as the shader's children (803144D0). The light stays 200 units
+// above the players' centre (8031476C, 8031C1FC) and looks down.
+class ShadowManager final : public Manager {
+public:
+    ShadowManager() : Manager("beShadow01") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beShadow01Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    void update(Engine& engine) override;
+    // Fills the frame's light and caster draw items (casters traverse with
+    // the given context's time and actor poses).
+    void render(Engine& engine, const TraversalContext& context, ShadowFrame& frame);
+
+private:
+    std::vector<Node*> casters_, receivers_;
+    bool shader_{};
+    float darkness_ = 0.4f;
+    int size_ = 256;
+    float extent_ = 100.0f;             // [48]/[49]: the light's box half size
+    float near_ = 0.1f, far_ = 1000.0f; // [27]/[28]
+    std::optional<Vec3f> light_;
+};
+
 // bePoint01 (80312A70): PLAYERPOINT generation groups and point matrices.
 class PlayerPointManager final : public Manager {
 public:
@@ -1042,6 +1069,9 @@ public:
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).
     const ActionRam* find(std::string_view name, int index) const;
+    // Whether the action whose model instance is `node` shows it (its switch
+    // bit); true for a node no action owns.
+    bool drawn(const Node* node) const;
 
 private:
     void dispatch(Engine& engine, ActionRam& ram, std::string_view name);

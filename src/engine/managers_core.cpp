@@ -1269,6 +1269,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<MeterCtrlManager>());
     engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<ActionStarterManager>());
+    engine.add_manager(std::make_unique<ShadowManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
 

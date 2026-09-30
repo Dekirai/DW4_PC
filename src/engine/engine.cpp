@@ -470,7 +470,7 @@ bool Engine::main_lobby() const {
     return stage == "stagml02" || stage == "stagml11" || stage == "stagml12" || stage == "stagml13";
 }
 
-void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color) {
+void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
     out.clear();
     clear_color = {0, 0, 0, 1};
     if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
@@ -487,6 +487,10 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
     traverse(&global_root_, context);
+    if (shadow) {
+        shadow->active = false;
+        if (auto* shadows = get<ShadowManager>()) shadows->render(*this, context, *shadow);
+    }
 }
 
 std::vector<std::string> Engine::scene_report() {

@@ -112,6 +112,16 @@ actor poses). Matrices are row-vector and share the column-major memory layout
 of the original. The GL renderer maps IGB attributes to fixed-function-like
 state in one shader (lighting, fog, alpha test, skinning palette of 64).
 
+Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
+beShadow01): beShadow01Info entries name casters (model switches, or
+`beCopyModelCtrl2` "Kage" proxies that copy a model instance's matrix and
+actor pose) and receivers (simplified ground meshes outside the visible scene).
+`Engine::render` hands the renderer a `ShadowFrame`: the casters are drawn
+black into a 256x256 map from an orthographic light 200 units above the
+players' centre (+-100 units, looking down), and the receivers multiply the map
+(darkness 0.4) over the 3D scene before the 2D layers. `DW4_TRACE_SHADOW=1`
+logs the light and item counts.
+
 ## Collision
 
 `CollisionWorld` is a provisional host query over the original

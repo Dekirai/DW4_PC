@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -30,7 +31,9 @@ namespace dw4::game {
     X(PFNGLUNIFORM1IPROC, Uniform1i) X(PFNGLUNIFORM1FPROC, Uniform1f) X(PFNGLUNIFORM4FPROC, Uniform4f) \
     X(PFNGLUNIFORM3FVPROC, Uniform3fv) X(PFNGLACTIVETEXTUREPROC, ActiveTexture) \
     X(PFNGLBLENDFUNCSEPARATEPROC, BlendFuncSeparate) X(PFNGLBLENDEQUATIONPROC, BlendEquation) \
-    X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap)
+    X(PFNGLGENERATEMIPMAPPROC, GenerateMipmap) X(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers) \
+    X(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer) X(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D) \
+    X(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus) X(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers)
 
 struct GlRenderer::Impl {
 #define DECLARE(type, name) type name{};
@@ -45,6 +48,7 @@ struct GlRenderer::Impl {
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
+    int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_darkness{}, u_shadow_pass{};
     PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
@@ -67,9 +71,11 @@ uniform vec3 u_light_dir[4];
 uniform vec3 u_light_col[4];
 uniform int u_light_count;
 uniform vec4 u_ambient, u_diffuse, u_emission;
+uniform mat4 u_shadow_matrix;
 out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
+out vec4 v_shadow;
 void main() {
     vec4 local = vec4(a_pos, 1.0);
     vec3 normal = a_normal;
@@ -82,6 +88,7 @@ void main() {
         normal = nn;
     }
     vec4 world = u_model * local;
+    v_shadow = u_shadow_matrix * world;
     vec4 eye = u_view * world;
     v_depth = -eye.z;
     gl_Position = u_proj * eye;
@@ -102,6 +109,10 @@ const char* kFragment = R"(#version 330 core
 in vec4 v_color;
 in vec2 v_uv;
 in float v_depth;
+in vec4 v_shadow;
+uniform sampler2D u_shadow_tex;
+uniform float u_shadow_darkness;
+uniform int u_shadow_pass;
 uniform int u_fog;
 uniform vec4 u_fog_color;
 uniform vec2 u_fog_range;
@@ -112,6 +123,14 @@ uniform int u_alpha_func;
 uniform float u_alpha_ref;
 out vec4 o_color;
 void main() {
+    // Receiver pass: the light's map as a multiplier (white where lit).
+    if (u_shadow_pass == 2) {
+        vec3 p = v_shadow.xyz / v_shadow.w * 0.5 + 0.5;
+        float lit = 1.0;
+        if (p.x > 0.0 && p.x < 1.0 && p.y > 0.0 && p.y < 1.0) lit = texture(u_shadow_tex, p.xy).r;
+        o_color = vec4(vec3(mix(1.0 - u_shadow_darkness, 1.0, lit)), 1.0);
+        return;
+    }
     vec4 c = v_color;
     if (u_use_tex != 0) c *= texture(u_tex, v_uv);
     c *= u_modulate;
@@ -125,6 +144,8 @@ void main() {
     else if (u_alpha_func == 5) pass = abs(a - u_alpha_ref) >= 0.002;
     else if (u_alpha_func == 6) pass = a >= u_alpha_ref;
     if (!pass) discard;
+    // Shadow map pass: casters are black on the white map.
+    if (u_shadow_pass != 0) { o_color = vec4(0.0, 0.0, 0.0, 1.0); return; }
     if (u_fog != 0) {
         float f = clamp((u_fog_range.y - v_depth) / max(u_fog_range.y - u_fog_range.x, 0.001), 0.0, 1.0);
         c.rgb = mix(u_fog_color.rgb, c.rgb, f);
@@ -187,6 +208,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
+    U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -197,6 +219,8 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
 
 GlRenderer::~GlRenderer() {
     clear_cache();
+    if (shadow_fbo_) gl_->DeleteFramebuffers(1, &shadow_fbo_);
+    if (shadow_texture_) glDeleteTextures(1, &shadow_texture_);
     if (white_texture_) glDeleteTextures(1, &white_texture_);
     if (program_) gl_->DeleteProgram(program_);
 }
@@ -310,9 +334,123 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
     return stored.id ? &stored : nullptr;
 }
 
+// igProjectiveShadowShader: the casters from the light into the map.
+void GlRenderer::render_shadow_map() {
+    auto& gl = *gl_;
+    shadow_ready_ = false;
+    if (!shadow_ || !shadow_->active || shadow_->casters.empty()) return;
+    if (!shadow_fbo_ || shadow_size_ != shadow_->size) {
+        if (!shadow_texture_) glGenTextures(1, &shadow_texture_);
+        glBindTexture(GL_TEXTURE_2D, shadow_texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, shadow_->size, shadow_->size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        if (!shadow_fbo_) gl.GenFramebuffers(1, &shadow_fbo_);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, shadow_fbo_);
+        gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, shadow_texture_, 0);
+        const bool complete = gl.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (!complete) return;
+        shadow_size_ = shadow_->size;
+    }
+    gl.BindFramebuffer(GL_FRAMEBUFFER, shadow_fbo_);
+    glDisable(GL_SCISSOR_TEST);
+    glViewport(0, 0, shadow_size_, shadow_size_);
+    glClearColor(1, 1, 1, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    gl.UseProgram(program_);
+    gl.Uniform1i(gl.u_shadow_pass, 1);
+    gl.Uniform1i(gl.u_lighting, 0);
+    gl.Uniform1i(gl.u_fog, 0);
+    gl.Uniform1i(gl.u_use_tex, 0);
+    gl.Uniform1i(gl.u_alpha_func, 7);
+    gl.Uniform4f(gl.u_modulate, 1, 1, 1, 1);
+    gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, shadow_->light_view.m.data());
+    gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, shadow_->light_projection.m.data());
+    const engine::Mat4 identity{};
+    gl.UniformMatrix4fv(gl.u_tex_matrix, 1, GL_FALSE, identity.m.data());
+    for (const auto& item : shadow_->casters) {
+        const auto* m = mesh(item.geometry);
+        if (!m || !m->index_count) continue;
+        gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
+        if (item.palette && !item.palette->empty()) {
+            const auto count = std::min<std::size_t>(item.palette->size(), 64);
+            gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
+            gl.Uniform1i(gl.u_skinned, 1);
+        } else {
+            gl.Uniform1i(gl.u_skinned, 0);
+        }
+        gl.BindVertexArray(m->vao);
+        glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
+    }
+    gl.BindVertexArray(0);
+    gl.Uniform1i(gl.u_shadow_pass, 0);
+    if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && frame_ % 120 == 0) {
+        std::vector<std::uint8_t> pixels(std::size_t(shadow_size_ * shadow_size_) * 4);
+        glReadPixels(0, 0, shadow_size_, shadow_size_, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        std::size_t dark = 0;
+        int x0 = shadow_size_, y0 = shadow_size_, x1 = -1, y1 = -1;
+        for (int y = 0; y < shadow_size_; ++y)
+            for (int x = 0; x < shadow_size_; ++x)
+                if (pixels[std::size_t(y * shadow_size_ + x) * 4] < 128) {
+                    ++dark;
+                    x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+                }
+        std::cerr << "shadow map: " << dark << " caster texels in x " << x0 << ".." << x1 << " y " << y0 << ".." << y1 << std::endl;
+    }
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    shadow_ready_ = true;
+}
+
+// The receivers multiply the map over the 3D scene drawn so far.
+void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
+    auto& gl = *gl_;
+    if (!shadow_ready_ || shadow_->receivers.empty()) return;
+    const auto matrix = shadow_->light_view * shadow_->light_projection;
+    gl.UniformMatrix4fv(gl.u_shadow_matrix, 1, GL_FALSE, matrix.m.data());
+    gl.Uniform1f(gl.u_shadow_darkness, shadow_->darkness);
+    gl.ActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, shadow_texture_);
+    gl.ActiveTexture(GL_TEXTURE0);
+    gl.Uniform1i(gl.u_shadow_pass, 2);
+    gl.Uniform1i(gl.u_skinned, 0);
+    glEnable(GL_BLEND);
+    gl.BlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ONE);
+    gl.BlendEquation(GL_FUNC_ADD);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+    gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, camera.view.m.data());
+    gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, camera.projection.m.data());
+    for (const auto& item : shadow_->receivers) {
+        const auto* m = mesh(item.geometry);
+        if (!m || !m->index_count) continue;
+        gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
+        gl.BindVertexArray(m->vao);
+        glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
+    }
+    gl.BindVertexArray(0);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    gl.Uniform1i(gl.u_shadow_pass, 0);
+}
+
 void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
                         const engine::Vec4f& clear, const Viewport& screen, int window_width, int window_height) {
     auto& gl = *gl_;
+    render_shadow_map();
+    bool receivers_drawn = false;
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, window_width, window_height);
     glClearColor(0, 0, 0, 1);
@@ -325,12 +463,21 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     gl.UseProgram(program_);
     gl.Uniform1i(gl.u_tex, 0);
+    gl.Uniform1i(gl.u_shadow_tex, 1);
+    gl.Uniform1i(gl.u_shadow_pass, 0);
     gl.ActiveTexture(GL_TEXTURE0);
     const float sx = screen.width / 640.0f, sy = screen.height / 480.0f;
     for (const auto& item : items) {
         const auto* m = mesh(item.geometry);
         if (!m || !m->index_count) continue;
         const auto& s = item.state;
+        // The shadow goes over the 3D scene, before the 2D layers.
+        if (!receivers_drawn && s.projection && s.projection->operator()(2, 3) == 0.0f) {
+            glViewport(screen.x, screen.y, screen.width, screen.height);
+            glScissor(screen.x, screen.y, screen.width, screen.height);
+            render_shadow_receivers(camera);
+            receivers_drawn = true;
+        }
         if (s.viewport) {
             const auto& v = *s.viewport;
             const int x = screen.x + int(std::lround(v[0] * sx));
@@ -421,6 +568,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         glDrawElements(GL_TRIANGLES, m->index_count, GL_UNSIGNED_INT, nullptr);
     }
     gl.BindVertexArray(0);
+    if (!receivers_drawn) {
+        glViewport(screen.x, screen.y, screen.width, screen.height);
+        glScissor(screen.x, screen.y, screen.width, screen.height);
+        render_shadow_receivers(camera);
+    }
     glDisable(GL_DEPTH_CLAMP);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glDepthMask(GL_TRUE);

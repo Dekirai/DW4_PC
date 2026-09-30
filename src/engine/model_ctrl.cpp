@@ -1476,6 +1476,12 @@ const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_t
     return &ram.pose;
 }
 
+bool ActionManager::drawn(const Node* node) const {
+    for (const auto& ram : rams_)
+        if (ram->node == node) return !ram->switch_node || ram->switch_node->child_enabled(ram->switch_child);
+    return true;
+}
+
 void ActionManager::apply_visuals(ActionRam& ram) {
     if (ram.switch_node) ram.switch_node->set_child_enabled(ram.switch_child, ram.visible);
     if (ram.node) {

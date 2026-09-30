@@ -64,10 +64,12 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   ADPCM samples, triggered by menus, scripts and the models' SE sets (the
   sounds each action plays, such as jumps, landings, footsteps and swings).
 - Rendering of original models, textures, skinned and animated actors
-  (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
+  (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers,
+  and the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
+  stages' receiver meshes).
 
 Not yet reconstructed: the card booster program, the raise technique,
-homing enemy bullets, particles and shadows, voices and movies,
+homing enemy bullets, particles, voices and movies,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
