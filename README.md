@@ -44,10 +44,10 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   into the forms reached (each form keeps its level, EXP, skills and stat
   ups), the strongest usable weapon equipped, then the evolution scene.
 - Rendering of original models, textures, skinned and animated actors
-  (Enbaya clips), text from the original fonts and the HUD layers.
+  (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
 
-Not yet reconstructed: the card booster program, status effects, the HUD
-portrait after a digivolution, weapon geometry on the players, homing enemy bullets, particles and shadows, audio and movies, name entry,
+Not yet reconstructed: the card booster program, status effects,
+homing enemy bullets, particles and shadows, audio and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
