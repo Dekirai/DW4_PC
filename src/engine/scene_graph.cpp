@@ -1,4 +1,5 @@
 #include "dw4/engine/scene_graph.hpp"
+#include "dw4/engine/particles.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -407,7 +408,13 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         for (const auto& item : view.list(slot))
             if (item) if (const auto* a = attribute(item)) out.push_back(a);
     };
-    if (view.is_a("igGeometry")) {
+    if (type == "ParticleTimer") {
+        // An igAttrSet whose attributes are igParticleAttr draws.
+        n->kind = NodeKind::particle_timer;
+        children_from(7);
+        for (const auto& attr : view.list(8))
+            if (attr && attr.type() == "igParticleAttr") n->particles.push_back(attr);
+    } else if (view.is_a("igGeometry")) {
         n->kind = NodeKind::geometry;
         std::vector<const Attribute*> attrs;
         attributes_from(8, attrs);
@@ -659,6 +666,30 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
             break;
         }
         model = local * model;
+        break;
+    }
+    case NodeKind::particle_timer: {
+        // The running effect's particles as camera-facing quads.
+        if (n->particle_start < 0 || !ctx.output) break;
+        const std::int64_t now = n->particle_paused >= 0 ? n->particle_paused : ctx.time;
+        const float seconds = float(double(now - n->particle_start) * 1e-9);
+        const Mat4 view = state.view.value_or(ctx.camera.view);
+        if (n->particle_geometry.size() < n->particles.size()) n->particle_geometry.resize(n->particles.size());
+        apply_overrides(*n, state);
+        for (std::size_t i = 0; i < n->particles.size(); ++i) {
+            auto& geometry = n->particle_geometry[i];
+            if (!geometry) geometry = std::make_shared<GeometryData>();
+            *geometry = GeometryData{}; // a new serial: the renderer uploads the new quads
+            if (!build_particles(n->particles[i], seconds, model, view, *geometry)) continue;
+            DrawItem item;
+            item.geometry = geometry.get();
+            item.node = n;
+            item.model = Mat4{};
+            item.state = state;
+            item.layer = ctx.layer;
+            item.order = ctx.order++;
+            ctx.output->push_back(std::move(item));
+        }
         break;
     }
     case NodeKind::copy_model: {

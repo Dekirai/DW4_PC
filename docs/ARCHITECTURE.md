@@ -117,6 +117,15 @@ for the scene, and each lit vertex gets the lights' ambient times the material
 ambient plus their diffuse, over the material or vertex colour (GX channel).
 LIGHTCTRL SETCOLOR (beLightCtrl, 803248AC) recolours a light set per room.
 
+Particle effects (`y_*` names) are beParticleCtrl2Info instances answering as
+MODELCTRL rows (`ParticleCtrlManager`): FIND_SPACE and GENERATE place an
+instance on a model (offset, radian rotations, optional follow), start its
+ParticleTimer and switch it off after the info's duration. A ParticleTimer node
+draws its igParticleAttr arrays (`dw4/engine/particles.hpp`): each 180-byte
+particle is a quadratic in time for position, RGBA, size and texture rectangle,
+built into camera-facing quads every frame (`DW4_TRACE_PARTICLES=1` logs the
+instances).
+
 Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
 beShadow01): beShadow01Info entries name casters (model switches, or
 `beCopyModelCtrl2` "Kage" proxies that copy a model instance's matrix and

@@ -308,6 +308,36 @@ private:
     bool pending_{};
 };
 
+// beParticleCtrl2 (manager vtable 804DF2B0): particle effects answering as
+// MODELCTRL rows. GENERATE (80312554) places an instance on a model with an
+// offset, an X/Y/Z rotation in radians (Y above 2 pi: random) and optionally
+// follows it; the update (80312268) starts the instance's ParticleTimer and
+// switches it off after the info's duration ([10]).
+class ParticleCtrlManager final : public Manager {
+public:
+    ParticleCtrlManager() : Manager("beParticleCtrl2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beParticleCtrl2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct ParticleRam : Ram {
+        bool running{};
+        int state{};
+        std::int64_t start{};
+        Node* transform{};  // ram [11]
+        Node* timer{};      // ram [12] ParticleTimer
+        std::string owner;  // followed model (lock)
+        int owner_index = -1;
+        Vec3f offset{};
+    };
+    void stop(ParticleRam& ram);
+    std::vector<std::unique_ptr<ParticleRam>> rams_;
+    std::uint32_t random_ = 0x2545F491u;
+};
+
 // LIGHTCTRL (beLightCtrl, command handler 803248AC): SETCOLOR name/V<ambient>/
 // V<diffuse>/V<specular> recolours the lights of one of the info's light sets
 // ([7]); the stage's ROOTATTR light states light the scene with them.

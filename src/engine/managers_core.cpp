@@ -1101,6 +1101,136 @@ void HitLandManager::clear_stage(Engine&) {
 }
 
 // ---------------------------------------------------------------------------
+void ParticleCtrlManager::add_info(Engine& engine, const ObjectView& info) {
+    for (auto* ram : make_rams(engine, this, info, rams_, "MODELCTRL")) {
+        ram->transform = engine.scenes().node(ram->ram.ref(11));
+        ram->timer = engine.scenes().node(ram->ram.ref(12));
+    }
+}
+
+void ParticleCtrlManager::clear_stage(Engine&) { rams_.clear(); }
+
+void ParticleCtrlManager::stop(ParticleRam& ram) {
+    // 803123DC: the timer stops, the instance's switch bit goes and the
+    // outer switch with the last one.
+    ram.running = false;
+    ram.owner.clear();
+    if (ram.timer) {
+        ram.timer->particle_start = -1;
+        ram.timer->particle_paused = -1;
+    }
+}
+
+bool ParticleCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
+    auto& ram = static_cast<ParticleRam&>(base);
+    if (command == "FIND_SPACE") {
+        if (!ram.running && packet.ints.empty()) packet.ints.push_back(ram.index);
+        return true;
+    }
+    if (command == "GENERATE") {
+        Mat4 m;
+        if (!packet.strings.empty()) {
+            // The owner's matrix (MODELCTRL GETMATRIX), the offset in its
+            // space, then the rotations about X, Y and Z.
+            const std::string owner(packet.string(0));
+            const int index = packet.integer(0, 0);
+            const Vec3f offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+            Vec3f rotation{};
+            if (packet.vectors.size() == 2) {
+                rotation = packet.vectors[1];
+                if (rotation.y > 6.28319f) {
+                    random_ = random_ * 1103515245u + 12345u;
+                    rotation.y = float((random_ >> 8) % 6144u) / 1000.0f;
+                }
+            }
+            if (auto* models = engine.get<ModelCtrlManager>())
+                if (const auto* target = models->find(owner, index); target && target->node) m = target->node->matrix;
+            m = translation(offset.x, offset.y, offset.z) * m;
+            auto rotate = [&](int axis, float angle) {
+                if (angle == 0.0f) return;
+                Mat4 q;
+                const float c = std::cos(angle), s = std::sin(angle);
+                if (axis == 0) { q(1, 1) = c; q(1, 2) = s; q(2, 1) = -s; q(2, 2) = c; }
+                else if (axis == 1) { q(0, 0) = c; q(0, 2) = -s; q(2, 0) = s; q(2, 2) = c; }
+                else { q(0, 0) = c; q(0, 1) = s; q(1, 0) = -s; q(1, 1) = c; }
+                m = q * m;
+            };
+            rotate(0, rotation.x);
+            rotate(1, rotation.y);
+            rotate(2, rotation.z);
+            ram.owner = packet.boolean(0) ? owner : std::string();
+            ram.owner_index = index;
+            ram.offset = offset;
+        }
+        if (ram.transform) ram.transform->matrix = m;
+        ram.running = true;
+        ram.state = 0;
+        if (static const bool trace = std::getenv("DW4_TRACE_PARTICLES") != nullptr; trace)
+            engine.log("particles " + ram.info_name + "#" + std::to_string(ram.index) + " at (" + std::to_string(m(3, 0)) + ", " +
+                       std::to_string(m(3, 1)) + ", " + std::to_string(m(3, 2)) + ")" + (ram.timer ? "" : " without timer"));
+        return true;
+    }
+    if (command == "ISRUN") {
+        packet.bools.push_back(ram.running ? 1 : 0);
+        return true;
+    }
+    if (command == "SQ_ERAS") {
+        if (ram.running) ram.state = 2;
+        return true;
+    }
+    if (command == "GETSEQNAMELIST") {
+        for (const char* name : {"GENERATE", "GENERATE", "SQ_ERAS"}) packet.strings.emplace_back(name);
+        return true;
+    }
+    if (command == "ONFREEZE" || command == "OFFREEZE") {
+        if (ram.running && ram.timer && ram.timer->particle_start >= 0) {
+            if (command == "ONFREEZE" && ram.timer->particle_paused < 0) ram.timer->particle_paused = engine.time();
+            if (command == "OFFREEZE" && ram.timer->particle_paused >= 0) {
+                ram.timer->particle_start += engine.time() - ram.timer->particle_paused;
+                ram.start += engine.time() - ram.timer->particle_paused;
+                ram.timer->particle_paused = -1;
+            }
+        }
+        return true;
+    }
+    return command == "ONCTRL" || command == "OFCTRL";
+}
+
+void ParticleCtrlManager::update(Engine& engine) {
+    auto* models = engine.get<ModelCtrlManager>();
+    for (auto& owned : rams_) {
+        auto& ram = *owned;
+        Node* outer = engine.scenes().node(ram.info.ref(7));
+        Node* instances = engine.scenes().node(ram.info.ref(8));
+        if (!ram.running) continue;
+        // A locked instance follows its owner (80312298).
+        if (!ram.owner.empty() && models && ram.transform)
+            if (const auto* target = models->find(ram.owner, ram.owner_index); target && target->node)
+                ram.transform->matrix = translation(ram.offset.x, ram.offset.y, ram.offset.z) * target->node->matrix;
+        if (ram.state == 0) {
+            if (outer && outer->kind == NodeKind::switch_node) outer->set_child_enabled(0, true);
+            if (instances && instances->kind == NodeKind::switch_node) instances->set_child_enabled(std::size_t(ram.index), true);
+            if (ram.timer) {
+                ram.timer->particle_start = engine.time();
+                ram.timer->particle_paused = -1;
+            }
+            ram.start = engine.time();
+            ram.state = 1;
+            continue;
+        }
+        const bool paused = ram.timer && ram.timer->particle_paused >= 0;
+        if (ram.state == 1 && (paused || engine.time() - ram.start < ram.info.i64(10))) continue;
+        stop(ram);
+        if (instances && instances->kind == NodeKind::switch_node) {
+            instances->set_child_enabled(std::size_t(ram.index), false);
+            bool any = false;
+            for (std::size_t i = 0; i < instances->children.size(); ++i) any = any || instances->child_enabled(i);
+            if (!any && outer && outer->kind == NodeKind::switch_node) outer->set_child_enabled(0, false);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 void LightCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     make_rams(engine, this, info, rams_, "LIGHTCTRL");
     for (const auto& set : info.list(7)) {
@@ -1303,6 +1433,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<ActionStarterManager>());
     engine.add_manager(std::make_unique<LightCtrlManager>());
+    engine.add_manager(std::make_unique<ParticleCtrlManager>());
     engine.add_manager(std::make_unique<ShadowManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }
