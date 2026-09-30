@@ -1014,7 +1014,7 @@ public:
     struct PlayerSlot {
         bool joined{};
         std::uint32_t unique{};        // UNIQUE: the character's id on the card
-        std::string name;              // PLAYERNAME (name entry)
+        std::u16string name;           // PLAYERNAME as entered (full-width forms, at most 8)
         std::string digimon = "p_agumon";
         std::array<std::string, 3> weapons{};
         int hp = 100, max_hp = 100, mp = 50, max_mp = 50;

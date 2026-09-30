@@ -588,12 +588,45 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                 if (ram.cancel) {
                     set_state(3);
                 } else {
-                    // State 5 (NAMESEL) enters the player name; it is not
-                    // reconstructed yet, so the new game continues unnamed.
-                    engine.note("LOADINTF2 name entry (NAMESEL)");
+                    set_state(5);
+                    ram.names.open(true);
+                }
+            }
+        }
+        break;
+    case 5: // name entry (NAMESEL)
+        if (ram.sub == 0 || ram.sub >= 6) {
+            ram.names.set_digimon(ram.digimon);
+            next_sub();
+            message.show(id | 0x517); // Enter your Digimon's name.
+        } else if (ram.sub == 1) {
+            if (ram.names.update(engine, models, idx, ram.position, entry.active)) {
+                if (ram.names.confirmed()) {
                     ram.new_game = true;
                     set_state(8);
+                } else {
+                    set_state(4);
                 }
+            } else if (ram.names.asking()) {
+                next_sub();
+            }
+        } else if (ram.sub == 2) {
+            message.next(id | 0x519); // Do you want to assign this name?
+            next_sub();
+        } else if (ram.sub == 3) {
+            if (!message.busy()) next_sub();
+        } else if (ram.sub == 4) {
+            message.question(id | 0x51B, 0);
+            next_sub();
+        } else if (ram.sub == 5) {
+            if (!message.busy()) {
+                if (message.answer() == 1) {
+                    message.show(id | 0x517);
+                    ram.names.answer(false);
+                } else if (message.answer() == 0) {
+                    ram.names.answer(true);
+                }
+                set_sub(1);
             }
         }
         break;
@@ -694,6 +727,7 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                             // new UNIQUE, then the record for the windows.
                             target = GameSystem::PlayerSlot{};
                             target.digimon = kPartners[std::size_t(ram.digimon)];
+                            target.name = ram.names.name();
                             target.joined = true;
                             target.unique = std::random_device{}();
                             sys->prepare_player(engine, idx);
@@ -779,7 +813,8 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                 next_detail();
             } else if (ram.detail == 3 && window_done(0)) {
                 if (ram.new_game) {
-                    set_state(4); // NAMESEL would reopen first
+                    set_state(5);
+                    ram.names.open(false);
                 } else {
                     common.records[std::size_t(idx)] = save::Record{};
                     set_state(6);

@@ -223,7 +223,7 @@ struct DeviceMenu : Window {
             sizes.clear();
             for (std::size_t k = 0; k < partners.size() && k < 3; ++k) {
                 auto* other = slot_of(engine, partners[k]);
-                text(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::string(), "LEFT");
+                text(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::u16string(), "LEFT");
                 sizes.push_back(other ? other->devices.size() : 36);
             }
             set_step(2);
@@ -532,7 +532,7 @@ struct CtrlDisk : Window {
             text(engine, "STWINFONT14", "font000", db ? db->text("conItem", own.record, "NAME") : std::string(), "LEFT");
             for (std::size_t k = 0; k < partners.size() && k < 3; ++k) {
                 auto* other = slot_of(engine, partners[k]);
-                text(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::string(), "LEFT");
+                text(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::u16string(), "LEFT");
                 auto* disk = partner_disk(engine, int(k));
                 text(engine, "STWINFONT15", kPartnerLines[k], digit(disk ? disk->count : 0), "CENTER");
             }
@@ -676,7 +676,7 @@ struct CtrlSendBit : Window {
             textset(engine, "STWINFONT27", "font000", std::to_string(p->bits));
             for (std::size_t k = 0; k < partners.size() && k < 3; ++k) {
                 auto* other = slot_of(engine, partners[k]);
-                textset(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::string());
+                textset(engine, "STWINFONT14", kPartnerLines[k], other ? other->name : std::u16string());
                 textset(engine, "STWINFONT27", kPartnerLines[k], std::to_string(other ? other->bits : 0));
             }
             auto& select = add_child<SelectE1>(engine);

@@ -32,7 +32,7 @@ save::Record GameSystem::make_record(Engine& engine, int slot) {
     r.used = true;
     r.unique = p.unique;
     r.digimon = p.digimon;
-    r.name = save::name_to_card(p.name);
+    r.name = p.name.substr(0, 8);
     r.level = p.stats.level;
     r.hp = p.hp;
     r.max_hp = p.max_hp;
@@ -81,7 +81,7 @@ void GameSystem::apply_record(Engine& engine, int slot, const save::Record& r, b
     p.joined = joined;
     p.unique = r.unique;
     p.digimon = r.digimon;
-    p.name = save::name_from_card(r.name);
+    p.name = r.name;
     p.xdata = r.xdata;
     p.bits = r.bits;
     for (const auto word : r.devices)

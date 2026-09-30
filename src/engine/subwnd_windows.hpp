@@ -103,6 +103,13 @@ struct SubWindowManager::Window {
         p.strings = {layer, line, value};
         engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", p);
     }
+    void textset(Engine& engine, const std::string& layer, const std::string& line, const std::u16string& value) const {
+        Packet p;
+        p.strings = {layer, line};
+        auto copy = value;
+        p.objects.push_back(&copy); // a string object (player names)
+        engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", p);
+    }
     template <class T> T& add_child(Engine& engine) {
         (void)engine;
         auto child = std::make_shared<T>();
@@ -184,6 +191,21 @@ struct SubWindowManager::Window {
         a.strings = {layer, line, align};
         messenger.send(engine, "TEXTCTL", std::nullopt, -1, "ALIGN", a);
         t.strings = {layer, line, value};
+        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", t);
+        s.strings = {layer, line, "SET"};
+        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", s);
+        lines.emplace_back(layer, line);
+    }
+    // A UTF-16 string object (the player names).
+    void text(Engine& engine, const std::string& layer, const std::string& line, const std::u16string& value,
+              const std::string& align) {
+        auto& messenger = engine.messenger();
+        Packet a, t, s;
+        a.strings = {layer, line, align};
+        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "ALIGN", a);
+        t.strings = {layer, line};
+        auto copy = value;
+        t.objects.push_back(&copy);
         messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", t);
         s.strings = {layer, line, "SET"};
         messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", s);

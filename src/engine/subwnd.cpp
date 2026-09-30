@@ -1060,6 +1060,13 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
         t.strings = {layer, line, value};
         messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", t);
     };
+    auto set_name = [&](const char* layer, const char* line, const std::u16string& value) {
+        Packet t;
+        t.strings = {layer, line};
+        auto text = value;
+        t.objects.push_back(&text); // PLAYERNAME string object
+        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", t);
+    };
     auto color = [&](const char* line, const Vec3f* rgb) {
         Packet c;
         c.strings = {"STWINFONT06", line};
@@ -1075,7 +1082,7 @@ bool SubWindowManager::command(Engine& engine, Ram&, std::string_view command, P
     if (command == "UPDATE") {
         // 8034FCD4: the status texts; the shown values are kept for PREVIEW.
         auto* db = engine.get<DatabaseManager>();
-        set("STWINFONT02", "font000", p.name);
+        set_name("STWINFONT02", "font000", p.name);
         set("STWINFONT04", "font000", std::to_string(std::min(s.level, 999)));
         set("STWINFONT04", "font001", db ? db->text("shinka", s.species, "NAME") : std::string());
         set("STWINFONT06", "font000", std::to_string(p.hp));

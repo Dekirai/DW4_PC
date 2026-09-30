@@ -183,6 +183,35 @@ private:
     bool called_{};                                                         // +64
 };
 
+// NAMESEL (80356774 / 803572D8, the US layout): the player name reel. Up and
+// down pick a character row (lower case, upper case, digits, symbols), left
+// and right scroll its five visible characters, A takes one, B removes the
+// last, START finishes; the panel then asks to confirm (asking / answer).
+class NameSelect {
+public:
+    void open(bool clear);                        // 80356774
+    void set_digimon(int row) { digimon_ = row; } // 80361090: face window partner
+    void answer(bool yes) { answered_ = true; yes_ = yes; } // 803572C8
+    bool update(Engine& engine, CommonModelControl& models, int player, const Vec3f& position, bool input); // 803572D8
+    bool confirmed() const { return confirmed_; } // +77
+    bool asking() const { return asking_; }       // +78
+    std::u16string name() const;                  // +236
+
+private:
+    struct Slot {
+        int row{}, scroll{}, cursor{};
+    };
+    char16_t current() const;
+    void draw_rows(Engine& engine, int player, bool clear);  // 80356970
+    void draw_chars(Engine& engine, int player, bool clear); // 80356C0C
+    void draw_name(Engine& engine, int player, bool clear);  // 80356DA8
+    int digimon_{}, row_{}, scroll_{}, cursor_{}, pos_ = -1, phase_{}, step_{};
+    std::array<Slot, 10> saved_{};
+    std::array<int, 10> state_{};      // 1 editing, 2 taken
+    std::array<char16_t, 10> name_{};
+    bool done_{}, confirmed_{}, asking_{}, answered_{}, yes_{}, arrows_{};
+};
+
 // The player-level card flows shared by the save room and the character
 // select (80379790 cases 4 / 6, 8035C958 cases 5 / 6): open the chosen
 // card's file, creating or formatting it on request (saving only creates),
@@ -220,8 +249,8 @@ private:
 // LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
 // controller slot: join prompt, Create / Call Digimon, partner selection with
 // the 3D model, calling a character from a memory card box, the status window
-// and the host's START. The name entry keyboard (NAMESEL) and the difficulty
-// dialog (DIFFSELECT) are not reconstructed yet.
+// the name entry and the host's START. The difficulty dialog (DIFFSELECT) is
+// not reconstructed yet.
 class LoadIntf2Manager final : public Manager {
 public:
     LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
@@ -249,6 +278,7 @@ private:
         std::array<RecordWindow, 2> windows{RecordWindow(false), RecordWindow(true)};
         SlotSelect slots;
         DataSelect boxes;
+        NameSelect names;
     };
     void update_panel(Engine& engine, PanelRam& ram, SaveCommon& common);
     void update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& common, std::uint16_t trigger);

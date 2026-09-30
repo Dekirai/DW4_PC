@@ -943,6 +943,297 @@ bool DataSelect::refresh_users(Context& c) {
 }
 
 // ---------------------------------------------------------------------------
+// NAMESEL (US layout)
+namespace {
+// 804E81CC rows 0..3: the characters a US name can use.
+struct NameRow {
+    int count;
+    char16_t chars[26];
+};
+constexpr NameRow kNameRows[4] = {
+    {26, {0xFF41, 0xFF42, 0xFF43, 0xFF44, 0xFF45, 0xFF46, 0xFF47, 0xFF48, 0xFF49, 0xFF4A, 0xFF4B, 0xFF4C, 0xFF4D,
+          0xFF4E, 0xFF4F, 0xFF50, 0xFF51, 0xFF52, 0xFF53, 0xFF54, 0xFF55, 0xFF56, 0xFF57, 0xFF58, 0xFF59, 0xFF5A}},
+    {26, {0xFF21, 0xFF22, 0xFF23, 0xFF24, 0xFF25, 0xFF26, 0xFF27, 0xFF28, 0xFF29, 0xFF2A, 0xFF2B, 0xFF2C, 0xFF2D,
+          0xFF2E, 0xFF2F, 0xFF30, 0xFF31, 0xFF32, 0xFF33, 0xFF34, 0xFF35, 0xFF36, 0xFF37, 0xFF38, 0xFF39, 0xFF3A}},
+    {10, {0xFF10, 0xFF11, 0xFF12, 0xFF13, 0xFF14, 0xFF15, 0xFF16, 0xFF17, 0xFF18, 0xFF19}},
+    {7, {0xFF06, 0xFF01, 0xFF1F, 0xFF5E, 0x30FC, 0x30FB, 0xFF1A}},
+};
+constexpr int kNameRowStart = 0, kNameRowEnd = 4, kNameLength = 8;
+
+std::string numbered(const char* prefix, int value) { return prefix + std::to_string(value); }
+} // namespace
+
+void NameSelect::open(bool clear) {
+    if (clear) {
+        name_.fill(0);
+        state_.fill(0);
+        pos_ = -1;
+    }
+    if (pos_ == -1) {
+        saved_[0] = Slot{};
+        pos_ = 0;
+    }
+    row_ = saved_[std::size_t(pos_)].row;
+    scroll_ = saved_[std::size_t(pos_)].scroll;
+    cursor_ = saved_[std::size_t(pos_)].cursor;
+    state_[std::size_t(pos_)] = 1;
+    done_ = confirmed_ = asking_ = answered_ = yes_ = arrows_ = false;
+    phase_ = step_ = 0;
+}
+
+char16_t NameSelect::current() const {
+    const auto& row = kNameRows[std::clamp(row_, 0, 3)];
+    return row.chars[(scroll_ + cursor_) % row.count];
+}
+
+std::u16string NameSelect::name() const {
+    std::u16string out;
+    for (int i = 0; i < kNameLength && name_[std::size_t(i)]; ++i) out.push_back(name_[std::size_t(i)]);
+    return out;
+}
+
+void NameSelect::draw_rows(Engine& engine, int player, bool clear) {
+    for (int i = 0; i < 3; ++i) {
+        if (clear) {
+            text_line_clear(engine, "CHRSELFONT10", player, i);
+            continue;
+        }
+        int row = row_ + i - 1;
+        if (row < kNameRowStart) row = kNameRowEnd - 1;
+        if (row >= kNameRowEnd) row = kNameRowStart;
+        text_set_string(engine, "CHRSELFONT10", player, i, std::u16string(1, kNameRows[row].chars[0]), 1, false);
+    }
+}
+
+void NameSelect::draw_chars(Engine& engine, int player, bool clear) {
+    const auto& row = kNameRows[std::clamp(row_, 0, 3)];
+    for (int i = 0; i < 5; ++i) {
+        if (clear) text_line_clear(engine, "CHRSELFONT11", player, i);
+        else text_set_string(engine, "CHRSELFONT11", player, i, std::u16string(1, row.chars[(scroll_ + i) % row.count]), 1, false);
+    }
+}
+
+void NameSelect::draw_name(Engine& engine, int player, bool clear) {
+    int i = 0;
+    for (; !clear && i < kNameLength && name_[std::size_t(i)]; ++i) {
+        const int state = state_[std::size_t(i)];
+        if (state == 1 || state == 2)
+            text_set_string(engine, "CHRSELFONT13", player, i, std::u16string(1, name_[std::size_t(i)]), 1, state == 1);
+    }
+    for (; i < kNameLength; ++i) text_line_clear(engine, "CHRSELFONT13", player, i);
+}
+
+bool NameSelect::update(Engine& engine, CommonModelControl& models, int player, const Vec3f& position, bool input) {
+    if (done_) return true;
+    if (static const bool trace = std::getenv("DW4_TRACE_SAVE") != nullptr; trace) {
+        static int last = -1;
+        if (phase_ * 100 + step_ != last) {
+            last = phase_ * 100 + step_;
+            engine.log("namesel phase " + std::to_string(phase_) + " step " + std::to_string(step_) + " pos " + std::to_string(pos_));
+        }
+    }
+    const Pad in = input ? read_pad(engine, player) : Pad{};
+    const std::uint16_t trigger = std::uint16_t(in.trigger);
+    auto step_to = [&](int step) { step_ = step; };
+    auto phase_to = [&](int phase) {
+        phase_ = phase;
+        step_ = 0;
+    };
+    auto reel = [&](const std::string& seq, bool track) { models.set(engine, player, "j_namecursorus", seq, track); };
+    auto store_current = [&] { name_[std::size_t(pos_)] = current(); };
+    auto arrows = [&] {
+        const bool wide = kNameRows[row_].count > 5;
+        models.set(engine, player, "j_namecursorleft", wide ? "SQ_SELECT00" : "SQ_NOSELECT", false);
+        models.set(engine, player, "j_namecursorright", wide ? "SQ_SELECT00" : "SQ_NOSELECT", false);
+        arrows_ = wide;
+    };
+    switch (phase_) {
+    case 0: // open the reel
+        if (step_ == 0) {
+            models.open_at(engine, player, "j_digifacewin", kPartnerRows[std::clamp(digimon_, 0, 15)].open, position, true);
+            for (const char* model : {"j_namecursor01", "j_namecursor02", "j_namewin01", "j_namecursordown", "j_namecursorup",
+                                      "j_namecursorleft", "j_namecursorright"})
+                models.open_at(engine, player, model, "SQ_OPEN", position, true);
+            arrows_ = true;
+            store_current();
+            models.open_at(engine, player, "j_namecursorus", numbered("SQ_NAMESL0", pos_), position, false);
+            draw_rows(engine, player, false);
+            draw_chars(engine, player, false);
+            draw_name(engine, player, false);
+            step_to(1);
+        } else if (step_ == 1) {
+            if (models.sequences_done()) step_to(2);
+        } else if (step_ == 2) {
+            if (pos_ >= kNameLength) pos_ = kNameLength - 1;
+            models.set(engine, player, "j_namecursor02", numbered("SQ_SELECT0", cursor_), true);
+            step_to(3);
+        } else if (step_ == 3 && models.sequences_done()) {
+            phase_to(1);
+        }
+        break;
+    case 1: // edit
+        if (step_ == 0) {
+            const int count = kNameRows[row_].count;
+            if (in.right || in.left) {
+                if (in.right ? ++cursor_ < 5 : --cursor_ >= 0) {
+                    models.set(engine, player, "j_namecursor02", numbered("SQ_SELECT0", cursor_), true);
+                    reel(numbered("SQ_NAMECG0", pos_), true);
+                } else {
+                    cursor_ = in.right ? 4 : 0;
+                    if (count > 5) {
+                        scroll_ = in.right ? (scroll_ + 1) % count : (scroll_ + count - 1) % count;
+                        if (arrows_) {
+                            models.set(engine, player, in.right ? "j_namecursorright" : "j_namecursorleft", "SQ_ON00", true);
+                            reel(numbered("SQ_NAMECG0", pos_), true);
+                        }
+                        draw_chars(engine, player, false);
+                    }
+                }
+                store_current();
+                draw_name(engine, player, false);
+                step_to(1);
+            } else if (in.up || in.down) {
+                models.set(engine, player, in.up ? "j_namecursorup" : "j_namecursordown", "SQ_ON00", true);
+                reel(numbered("SQ_NAMECG0", pos_), true);
+                if (in.up) {
+                    if (--row_ < kNameRowStart) row_ = kNameRowEnd - 1;
+                } else if (++row_ >= kNameRowEnd) {
+                    row_ = kNameRowStart;
+                }
+                arrows();
+                scroll_ = 0;
+                store_current();
+                step_to(1);
+                draw_name(engine, player, false);
+                draw_rows(engine, player, false);
+                draw_chars(engine, player, false);
+            } else if (trigger & dw4::pad_button::a) {
+                if (pos_ < kNameLength) {
+                    saved_[std::size_t(pos_)] = {row_, scroll_, cursor_};
+                    state_[std::size_t(pos_)] = 2;
+                    store_current();
+                    reel(numbered("SQ_NAMEON0", pos_), true);
+                    ++pos_;
+                    name_[std::size_t(pos_ + 1)] = 0;
+                    state_[std::size_t(pos_)] = 1;
+                    step_to(3);
+                }
+                draw_name(engine, player, false);
+            } else if (trigger & dw4::pad_button::b) {
+                name_[std::size_t(pos_)] = 0;
+                --pos_;
+                reel("SQ_NAMECANCEL", true);
+                if (pos_ >= 0) {
+                    row_ = saved_[std::size_t(pos_)].row;
+                    scroll_ = saved_[std::size_t(pos_)].scroll;
+                    cursor_ = saved_[std::size_t(pos_)].cursor;
+                    store_current();
+                    models.set(engine, player, "j_namecursor02", numbered("SQ_SELECT0", cursor_), true);
+                    draw_chars(engine, player, false);
+                    draw_rows(engine, player, false);
+                    step_to(2);
+                } else {
+                    pos_ = -1;
+                    phase_to(4); // leave the name entry
+                }
+                draw_name(engine, player, false);
+            } else if ((trigger & dw4::pad_button::start) && pos_ > 0) {
+                reel(numbered("SQ_NAMEON0", pos_), true);
+                name_[std::size_t(pos_)] = 0;
+                --pos_;
+                draw_name(engine, player, false);
+                step_to(4);
+            }
+        } else if (step_ == 1) {
+            if (models.sequences_done()) step_to(0);
+        } else if (step_ == 2) {
+            if (models.sequences_done()) {
+                reel(numbered("SQ_NAMESL0", pos_), false);
+                state_[std::size_t(pos_)] = 1;
+                draw_name(engine, player, false);
+                step_to(0);
+            }
+        } else if (step_ == 3) {
+            if (models.sequences_done()) {
+                if (pos_ < kNameLength) {
+                    reel(numbered("SQ_NAMESL0", pos_), false);
+                    store_current();
+                    draw_name(engine, player, false);
+                } else {
+                    pos_ = kNameLength - 1;
+                    phase_to(2);
+                }
+                for (int i = pos_ + 1; i < kNameLength; ++i) name_[std::size_t(i)] = 0;
+                if (phase_ == 1) step_to(0);
+            }
+        } else if (step_ == 4 && models.sequences_done()) {
+            phase_to(2);
+        }
+        break;
+    case 2:
+        // 803572D8 waits for SQ_LINESL00 to leave; that sequence is a single
+        // held action here, so the reel shows it and the question follows.
+        reel("SQ_LINESL00", false);
+        phase_to(3);
+        break;
+    case 3: // "Do you want to assign this name?" is asked by the panel
+        if (step_ == 0) {
+            asking_ = true;
+            answered_ = false;
+            step_to(1);
+        } else if (step_ == 1) {
+            if (answered_) {
+                asking_ = false;
+                confirmed_ = yes_;
+                step_to(yes_ ? 2 : 4);
+            }
+        } else if (step_ == 2) {
+            models.close(engine, player, "j_namecursorus", "SQ_LINEON00", true);
+            step_to(3);
+        } else if (step_ == 3) {
+            if (models.closes_done()) phase_to(5);
+        } else if (step_ == 4) {
+            row_ = saved_[std::size_t(pos_)].row;
+            scroll_ = saved_[std::size_t(pos_)].scroll;
+            cursor_ = saved_[std::size_t(pos_)].cursor;
+            state_[std::size_t(pos_)] = 1;
+            reel(numbered("SQ_NAMESL0", pos_), false);
+            models.set(engine, player, "j_namecursor02", numbered("SQ_SELECT0", cursor_), true);
+            draw_chars(engine, player, false);
+            draw_rows(engine, player, false);
+            draw_name(engine, player, false);
+            step_to(5);
+        } else if (step_ == 5 && models.closes_done()) {
+            phase_to(1);
+        }
+        break;
+    case 4: // cancelled
+        if (step_ == 0) {
+            models.close(engine, player, "j_namecursorus", "SQ_CLOSE", true);
+            step_to(1);
+        } else if (models.closes_done()) {
+            phase_to(5);
+        }
+        break;
+    case 5: // close
+        if (step_ == 0) {
+            draw_rows(engine, player, true);
+            draw_chars(engine, player, true);
+            draw_name(engine, player, true);
+            for (const char* model : {"j_digifacewin", "j_namewin01", "j_namecursor01", "j_namecursor02", "j_namecursordown",
+                                      "j_namecursorup", "j_namecursorleft", "j_namecursorright"})
+                models.close(engine, player, model, "SQ_CLOSE", true);
+            step_to(1);
+        } else if (models.closes_done()) {
+            done_ = true;
+        }
+        break;
+    default: break;
+    }
+    return done_;
+}
+
+// ---------------------------------------------------------------------------
 // SAVECTRL
 void SaveCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     std::int32_t index = 0;
