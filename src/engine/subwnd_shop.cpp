@@ -1886,6 +1886,120 @@ struct ShopXdata : Window {
     }
 };
 
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrl40 (80395CB0): unknown devices identified for 300 bits.
+// ---------------------------------------------------------------------------
+struct ShopIdentify : Window {
+    int device{}; // +84: the DEVICEFOLDER index
+
+    // 803961C0: the record comes from coweapon / coarmor1 / coarmor2 row
+    // 100 * band (band by LEVEL: 40, 100, 200, 300, 400, above), whose ID is
+    // the count of the RATE rows that follow (out of 10000).
+    void identify(Engine& engine, GameSystem::PlayerSlot& p, ItemDevice& d) {
+        auto* db = engine.get<DatabaseManager>();
+        if (!db) return;
+        const int level = p.stats.level;
+        const int band = level <= 40 ? 1 : level <= 100 ? 2 : level <= 200 ? 3 : level <= 300 ? 4 : level <= 400 ? 5 : 6;
+        static const char* tables[3] = {"coweapon", "coarmor1", "coarmor2"};
+        if (d.type < 0 || d.type > 2) return;
+        const char* table = tables[d.type];
+        const int base = 100 * band;
+        const auto count = db->number(table, base, "ID");
+        if (!count) {
+            engine.note(std::string("CNOS: no ") + table + " table");
+            return;
+        }
+        const int roll = int(fight::random() % 10000u);
+        int sum = 0;
+        for (int k = 1; k <= *count; ++k) {
+            sum += db->number(table, base + k, "RATE").value_or(0);
+            if (sum >= roll) {
+                d.record = db->number(table, base + k, "ID").value_or(d.record);
+                break;
+            }
+        }
+    }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        auto* p = player_slot(engine);
+        if (!p) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            text(engine, "STWINFONT29", "font100", " ", "LEFT");
+            next_state(1);
+        }
+        auto* folder = find_child<DeviceList>();
+        switch (sub) {
+        case 0: // the unknown devices
+            if (step == 0) {
+                auto& list = add_child<DeviceList>(engine);
+                list.auto_close = false;
+                list.unknown_enable = true;
+                text_script(engine, "txt_shop.lua", 1450);
+                mark();
+                set_step(1);
+                return;
+            }
+            if (!folder) return;
+            if (selection == -1) {
+                set_sub(3);
+                return;
+            }
+            if (folder->state != 1 || folder->sub != 2) return;
+            device = selection;
+            set_sub(p->bits >= 300 ? 1 : 2);
+            switch_line(engine, "STWINFONT29", "font100", false);
+            return;
+        case 1: // pay and identify
+            if (step == 0) {
+                shop_message(*this, engine, 1452);
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                add_child<ShopSelect01>(engine).mode = 1453;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 0) {
+                p->bits -= 300;
+                subwnd(engine, "UPDATE");
+                if (device >= 0 && device < int(p->devices.size())) identify(engine, *p, p->devices[std::size_t(device)]);
+            }
+            selection = device;
+            if (folder) {
+                set_sub(0);
+                set_step(1);
+                folder->set_step(1);
+                switch_line(engine, "STWINFONT29", "font100", false);
+            }
+            return;
+        case 2: // not enough bits
+            if (step == 0) {
+                shop_message(*this, engine, 1451);
+                mark();
+                set_step(1);
+            }
+            if (child_done()) set_sub(3);
+            return;
+        case 3: // close the list, then the window
+            if (step == 0) {
+                if (folder) folder->next_state(2);
+                set_step(1);
+            } else if (!folder) {
+                next_state(2);
+            }
+            return;
+        }
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -1927,6 +2041,7 @@ struct ShopCtrl00 : Window {
             if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
             if (mode == 1) add_child<ShopXdata>(engine).mode = mode;
             else if (mode == 3) add_child<ShopBank>(engine).mode = mode;
+            else if (mode == 4) add_child<ShopIdentify>(engine).mode = mode;
             else if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
             else if (mode >= 6 && mode <= 8) add_child<ShopDevice>(engine).mode = mode;
             else if (mode == 9) add_child<ShopJunk>(engine).mode = mode;
