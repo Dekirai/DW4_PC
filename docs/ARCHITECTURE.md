@@ -81,6 +81,13 @@ status commands (803AEBB4), the per-model update after control with named
 model timers (803ACD88), the sequence-change check that breaks sleep and stun
 (803AE1A4) and the status icons (803ACB30).
 
+`SoundManager` follows the beAsmSound2 command handler (80314F14): a stage's
+beSoundInfo lists its sounds (type 1 BGM, 2 ambience, 3/4 sound effects) and
+the files they index; stream files are written "[archive.entry]" (802A9828)
+and name CRI ADX files decoded by `dw4::adx` in the core. `render()` mixes the
+two stream channels as 48 kHz stereo PCM that `dw4_game` queues on an SDL3
+audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it).
+
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)
 and DEGISTATECTRL (`StatusWindow`) are separate classes.

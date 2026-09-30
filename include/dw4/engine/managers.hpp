@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dw4/adx.hpp"
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/motion.hpp"
@@ -176,8 +177,11 @@ private:
     std::vector<std::unique_ptr<LogoRam>> rams_;
 };
 
-// Sound, sound effects and movies. Audio output is a separate host service;
-// until it exists these managers track state and report the requests.
+// Sound, sound effects and movies (beAsmSound2 command handler 80314F14).
+// The BGM (type 1) and ambience (type 2) streams are the CRI ADX files the
+// stage's sound list names as "[archive.entry]"; the host's audio service
+// pulls them mixed through render(). Sound effects (sfp banks) and movies
+// are only tracked.
 class SoundManager final : public Manager {
 public:
     SoundManager() : Manager("beSound") {}
@@ -186,9 +190,32 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // Interleaved stereo 16-bit PCM at kOutputRate of the running streams.
+    void render(std::int16_t* out, std::size_t frames);
+    static constexpr int kOutputRate = 48000;
 
 private:
+    // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
+    // list index, [8] volume in 0.1 dB.
+    struct SoundData {
+        int type{}, file{}, volume{};
+    };
+    struct Stream {
+        std::string name;
+        std::unique_ptr<adx::Decoder> decoder;
+        float gain = 1.0f;
+        int fade_left{}; // frames of a running fade-out (10, 8031D5D0)
+        double phase = 1.0;
+        std::array<float, 2> previous{}, next{};
+    };
+    bool play(Engine& engine, Packet& packet);
+    void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::string, SoundData, std::less<>> sounds_;
+    std::vector<std::string> files_;
+    std::array<Stream, 2> streams_; // BGM, ambience
+    std::string current_bgm_;       // +0x24
+    int master_volume_{};           // SNDFVOLUME, 0.1 dB
     bool movie_playing_{};
     std::int64_t movie_end_{};
     std::int64_t jingle_end_{}; // PLAYatPAUSE stand-in length

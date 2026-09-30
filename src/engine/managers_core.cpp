@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
+#include <stdexcept>
 
 namespace dw4::engine {
 
@@ -445,11 +447,120 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     const auto& t = info.type();
     std::string category = t == "beSoundInfo" ? "SOUND" : t == "beSeInfo" ? "SE" : t == "beMovieInfo" ? "MOVIE" : "";
     make_rams(engine, this, info, rams_, category);
+    if (t != "beSoundInfo") return;
+    // The stage's sounds ([5] beSoundData) and the files they index ([7]).
+    for (const auto& data : info.list(5))
+        if (data) sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8)};
+    files_.clear();
+    for (const auto& file : info.list(7)) files_.emplace_back(file ? std::string(file.str(2)) : std::string());
 }
 void SoundManager::clear_stage(Engine&) {
+    // The streams keep playing into the next stage (its scripts stop or
+    // replace them); only the stage's sound list goes.
     rams_.clear();
+    sounds_.clear();
+    files_.clear();
     movie_playing_ = false;
     jingle_end_ = 0;
+}
+
+namespace {
+// 0.1 dB volume (ADXT_SetOutVol) as a gain factor.
+float volume_gain(int volume) { return std::pow(10.0f, float(std::min(volume, 0)) / 200.0f); }
+} // namespace
+
+// PLAY <name> (80314FC8): a stream sound starts on its channel. A channel
+// still playing fades out first (10 frames) and the request comes back 11
+// frames later; the same BGM again is kept.
+bool SoundManager::play(Engine& engine, Packet& packet) {
+    const std::string name(packet.string(0));
+    const auto found = sounds_.find(name);
+    if (found == sounds_.end()) {
+        engine.note("audio PLAY " + name + " (not in the stage sound list)");
+        return true;
+    }
+    const auto& data = found->second;
+    if (data.type != 1 && data.type != 2) {
+        engine.note("audio sound effect " + name);
+        return true;
+    }
+    auto& stream = streams_[std::size_t(data.type - 1)];
+    if (data.type == 1 && current_bgm_ == name && stream.decoder && stream.fade_left == 0) return true;
+    if (stream.decoder) {
+        if (stream.fade_left == 0) stream.fade_left = 10;
+        Packet again;
+        again.strings.emplace_back(name);
+        engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, "PLAY", std::move(again));
+        return true;
+    }
+    // "[archive.entry]" names an ADX file of an AFS archive (802A9828).
+    const std::string file = data.file >= 0 && data.file < int(files_.size()) ? files_[std::size_t(data.file)] : std::string();
+    unsigned archive = 0, entry = 0;
+    char close = 0;
+    if (std::sscanf(file.c_str(), "[%u.%u%c", &archive, &entry, &close) != 3 || close != ']') {
+        engine.note("audio stream file " + file + " for " + name);
+        return true;
+    }
+    try {
+        const auto& archives = engine.resources().archives();
+        if (archive >= archives.size()) throw std::runtime_error("no archive " + std::to_string(archive));
+        stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
+    } catch (const std::exception& error) {
+        engine.note("audio stream " + file + ": " + error.what());
+        return true;
+    }
+    stream.name = name;
+    stream.gain = volume_gain(data.volume + master_volume_);
+    stream.fade_left = 0;
+    stream.phase = 1.0;
+    stream.previous = stream.next = {};
+    if (data.type == 1) current_bgm_ = name;
+    return true;
+}
+
+void SoundManager::stop(int channel) {
+    auto& stream = streams_[std::size_t(channel)];
+    stream.decoder.reset();
+    stream.fade_left = 0;
+    stream.name.clear();
+    if (channel == 0) current_bgm_.clear();
+}
+
+void SoundManager::render(std::int16_t* out, std::size_t frames) {
+    std::vector<float> mix(frames * 2, 0.0f);
+    for (auto& stream : streams_) {
+        if (!stream.decoder) continue;
+        const auto& header = stream.decoder->header();
+        const float gain = stream.gain * (stream.fade_left > 0 ? float(stream.fade_left) / 10.0f : 1.0f);
+        const std::uint32_t channels = header.channels;
+        std::int16_t source[16];
+        auto fetch = [&](std::array<float, 2>& frame) {
+            if (stream.decoder->read(source, 1) == 0) return false;
+            frame[0] = float(source[0]);
+            frame[1] = float(channels > 1 ? source[1] : source[0]);
+            return true;
+        };
+        const double step = double(header.sample_rate) / double(kOutputRate);
+        bool ended = false;
+        for (std::size_t i = 0; i < frames && !ended; ++i) {
+            while (stream.phase >= 1.0) {
+                stream.previous = stream.next;
+                if (!fetch(stream.next)) {
+                    ended = true;
+                    break;
+                }
+                stream.phase -= 1.0;
+            }
+            if (ended) break;
+            const float t = float(stream.phase);
+            mix[i * 2] += (stream.previous[0] + (stream.next[0] - stream.previous[0]) * t) * gain;
+            mix[i * 2 + 1] += (stream.previous[1] + (stream.next[1] - stream.previous[1]) * t) * gain;
+            stream.phase += step;
+        }
+        if (ended) stream.decoder.reset();
+    }
+    for (std::size_t i = 0; i < frames * 2; ++i)
+        out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768.0f, 32767.0f));
 }
 bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const auto& t = ram.info.type();
@@ -467,10 +578,24 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "STOP") { movie_playing_ = false; return true; }
         return false;
     }
-    // Audio is not played: streams report ready and nothing as playing, so
-    // scripts waiting on the sound system continue. A pause jingle
-    // (PLAYatPAUSE) keeps ISALLREADY at 0 for two seconds, as scripts wait for
-    // it to start and then to end.
+    if (t == "beSoundInfo") {
+        if (command == "PLAY") return play(engine, packet);
+        if (command == "BGMSTOP") { stop(0); return true; }
+        if (command == "ENVSTOP") { stop(1); return true; }
+        if (command == "STOP") {
+            stop(0);
+            stop(1);
+            return true;
+        }
+        if (command == "SNDFVOLUME") {
+            master_volume_ = packet.integer(0, 0);
+            return true;
+        }
+        if (command == "SESTOP") return true;
+    }
+    // Streams start at once, so they report ready. A pause jingle
+    // (PLAYatPAUSE, a sound effect) keeps ISALLREADY at 0 for two seconds, as
+    // scripts wait for it to start and then to end.
     if (command == "PLAYatPAUSE") {
         jingle_end_ = engine.time() + kFrameNs * 120;
         return true;
@@ -484,6 +609,8 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
     return true;
 }
 void SoundManager::update(Engine& engine) {
+    for (std::size_t channel = 0; channel < streams_.size(); ++channel)
+        if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
     if (movie_playing_ && engine.time() >= movie_end_) {
         movie_playing_ = false;
         engine.run_script("nextStage.lua");

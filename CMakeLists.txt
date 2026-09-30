@@ -12,7 +12,7 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
@@ -46,7 +46,7 @@ add_executable(dw4_catalog tools/dw4_catalog.cpp)
 target_link_libraries(dw4_catalog PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite assets igb igb_document resources packages scripts lua4 pad textures meshes skinning animation_math enbaya)
+  foreach(suite assets igb igb_document resources packages scripts lua4 pad textures meshes skinning animation_math enbaya adx)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)

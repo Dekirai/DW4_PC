@@ -180,6 +180,27 @@ int run(const Options& options) {
     ImGui_ImplSDL3_InitForOpenGL(window, context);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // Audio: the SoundManager's streams go to the default playback device
+    // (not in smoke tests). DW4_AUDIO_DUMP=FILE.wav records what was mixed.
+    SDL_AudioStream* audio = nullptr;
+    if (!options.smoke_frames && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+        const SDL_AudioSpec spec{SDL_AUDIO_S16, 2, dw4::engine::SoundManager::kOutputRate};
+        audio = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+        if (audio) SDL_ResumeAudioStreamDevice(audio);
+        else std::cerr << "audio: " << SDL_GetError() << '\n';
+    }
+    const char* audio_dump_path = std::getenv("DW4_AUDIO_DUMP");
+    std::vector<std::int16_t> audio_dump;
+    constexpr int kAudioFrameSamples = dw4::engine::SoundManager::kOutputRate / 60;
+    auto mix_audio = [&](int frames) {
+        auto* sound = engine.get<dw4::engine::SoundManager>();
+        if (!sound || (!audio && !audio_dump_path)) return;
+        std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
+        sound->render(pcm.data(), std::size_t(frames));
+        if (audio) SDL_PutAudioStreamData(audio, pcm.data(), int(pcm.size() * sizeof(std::int16_t)));
+        if (audio_dump_path) audio_dump.insert(audio_dump.end(), pcm.begin(), pcm.end());
+    };
+
     {
         dw4::game::GlRenderer renderer;
         std::vector<SDL_Gamepad*> gamepads;
@@ -330,6 +351,7 @@ int run(const Options& options) {
                 // Original device: full deflection is 72/74 after the SDK clamp.
                 pads[0].left = {std::clamp(stick_x, -1.0f, 1.0f) * (72.0f / 74.0f), std::clamp(stick_y, -1.0f, 1.0f) * (72.0f / 74.0f)};
                 engine.step(pads);
+                mix_audio(kAudioFrameSamples);
                 ++frame;
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
@@ -407,6 +429,11 @@ int run(const Options& options) {
                 write_bmp(path, width, height, pixels);
                 std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
             }
+            // Keep about three frames of audio queued across frame hitches.
+            if (audio) {
+                const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
+                if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
+            }
             SDL_GL_SwapWindow(window);
             if (options.smoke_frames && frame >= options.smoke_frames) running = false;
         }
@@ -441,6 +468,28 @@ int run(const Options& options) {
                 }
             }
         }
+        if (audio_dump_path) {
+            // 16-bit stereo PCM WAV of everything mixed.
+            std::ofstream wav(audio_dump_path, std::ios::binary);
+            const std::uint32_t rate = dw4::engine::SoundManager::kOutputRate;
+            const std::uint32_t bytes = std::uint32_t(audio_dump.size() * sizeof(std::int16_t));
+            auto u32 = [&](std::uint32_t v) { wav.write(reinterpret_cast<const char*>(&v), 4); };
+            auto u16 = [&](std::uint16_t v) { wav.write(reinterpret_cast<const char*>(&v), 2); };
+            wav.write("RIFF", 4);
+            u32(36 + bytes);
+            wav.write("WAVEfmt ", 8);
+            u32(16);
+            u16(1);
+            u16(2);
+            u32(rate);
+            u32(rate * 4);
+            u16(4);
+            u16(16);
+            wav.write("data", 4);
+            u32(bytes);
+            wav.write(reinterpret_cast<const char*>(audio_dump.data()), std::streamsize(bytes));
+            std::cout << "audio dump " << audio_dump_path << " (" << audio_dump.size() / 2 << " frames)\n";
+        }
         std::cout << "unimplemented:\n";
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
@@ -448,6 +497,7 @@ int run(const Options& options) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
+    if (audio) SDL_DestroyAudioStream(audio);
     SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();

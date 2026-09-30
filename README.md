@@ -49,11 +49,14 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   values in the stat recalculation and damage, and the icons above the model;
   the support techniques (heal, heal all, cure, speed and power up, refract)
   and the weapon and technique skill growth with the skill up panel.
+- Music and ambience: the stage sound lists' BGM and ambience streams are
+  the CRI ADX files of ndmw.afs, decoded natively (loop points, volume, the
+  fade-out before a change) and played through SDL3 audio.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
 
 Not yet reconstructed: the card booster program, the raise technique,
-homing enemy bullets, particles and shadows, audio and movies, name entry,
+homing enemy bullets, particles and shadows, sound effects (CRI SFP banks), voices and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
