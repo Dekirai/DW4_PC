@@ -108,7 +108,8 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     std::vector<Ram*> recipients;
     for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
     if (recipients.empty()) {
-        engine.note("no recipient: " + std::string(category) + " " + std::string(command));
+        engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
+                    (name ? " (" + std::string(*name) + ")" : std::string()));
         return 0;
     }
     for (auto* ram : recipients) {
