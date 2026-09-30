@@ -855,6 +855,14 @@ public:
         bool player_bullet{}, enemy_bullet{}, player_talk{};
         std::vector<std::pair<Vec3f, Vec3f>> boxes;
     };
+    // "AIH" data (beModelCtrlInfoDataAIH): the homing of bullets (80308A2C).
+    struct Homing {
+        bool pitch{}, yaw{};         // [4] follow the height, [5] steer
+        float delay{}, interval{};   // [6]/[7] frames before the first and between steering steps
+        float range2{};              // [8] squared reach
+        float pitch_rate{}, yaw_rate{}; // [9]/[10] radians per step
+        int steps{};                 // [11] steering steps
+    };
     struct ModelRam : Ram {
         std::string category;
         Node* node{};
@@ -936,6 +944,8 @@ public:
         int ai_map{};
         std::int64_t ai_timer_end = -1; // AITIMER
         std::string ai_request;         // AI work +58
+        const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)
+        int homing_state{}, homing_steps{};
         // beNDMWMdlPEBase status work (+240..+268), made by the first status
         // command (803AEBB4). Slots: 0 poison, 1 attack down, 2 power down,
         // 3 bind, 4 refract, 5 speed up, 6 power up, 7 metal, 8 sleep, 9 stun,
@@ -971,6 +981,7 @@ private:
     void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
     void update_enemy(Engine& engine, ModelRam& ram);
     void update_ai_map(Engine& engine, ModelRam& ram);
+    void update_homing(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
     void update_item(Engine& engine, ModelRam& ram);
@@ -994,6 +1005,7 @@ private:
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
+    std::map<const void*, std::unique_ptr<Homing>> homings_;
     std::map<const void*, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
     std::array<bool, 4> item_labels_{}; // ITNAMEFONT font00..03 in use
 };

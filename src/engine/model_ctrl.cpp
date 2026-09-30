@@ -86,6 +86,23 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         hit_bodies_[info_key] = std::move(body);
         break;
     }
+    // "AIH" data: the homing AI of bullets.
+    Homing* homing = nullptr;
+    for (const auto& data : info.list(5)) {
+        if (!data || data.str(2) != "AIH") continue;
+        auto h = std::make_unique<Homing>();
+        h->pitch = data.boolean(4);
+        h->yaw = data.boolean(5);
+        h->delay = data.f32(6);
+        h->interval = data.f32(7);
+        h->range2 = data.f32(8);
+        h->pitch_rate = data.f32(9);
+        h->yaw_rate = data.f32(10);
+        h->steps = data.i32(11);
+        homing = h.get();
+        homings_[info_key] = std::move(h);
+        break;
+    }
     // "AIM" data (beModelCtrlInfoDataAIM [4]): the AI maps selected by AIMAP.
     std::vector<ObjectView>* ai_maps = nullptr;
     for (const auto& data : info.list(5)) {
@@ -108,6 +125,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         ram->category = category;
         ram->sequences = seq_ptr;
         ram->ai_maps = ai_maps;
+        ram->homing = homing;
         ram->is_player = category == "PLAYER";
         if (record) {
             for (const auto& data : record.list(10)) {
@@ -345,6 +363,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.capsule_on = ram.capsule_ended = false;
         ram.ai_timer_end = -1;
         ram.ai_request.clear();
+        ram.homing_state = ram.homing_steps = 0;
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
@@ -853,7 +872,10 @@ void ModelCtrlManager::update(Engine& engine) {
             if (ram.is_player) update_player(engine, ram);
             else if (ram.category == "ENEMY") update_enemy(engine, ram);
             else if (ram.category == "PLAYER2") update_capsule(engine, ram);
-            else apply_control(engine, ram);
+            else {
+                if (ram.homing) update_homing(engine, ram);
+                apply_control(engine, ram);
+            }
         } else {
             if (ram.ai_maps) ram.ai_timer_end = -1;
             if (ram.is_player) ram.key_input = false;
@@ -1091,6 +1113,80 @@ void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
 // cumulative weight exceeds it. The entry sets the heading (target direction
 // plus its angle), the requested sequence and the next AITIMER; until then the
 // same sequence stays requested.
+// AIH homing AI (80308A2C): after [6] frames and then every [7] frames (at
+// most [11] times) a bullet steers one step of [10] radians towards the
+// nearest enemy (enemy bullets: player) within the reach; with [4] it also
+// tilts towards the target's height every frame.
+void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
+    const Homing& h = *ram.homing;
+    if (!ram.node) return;
+    bool live = true, tick = false;
+    switch (ram.homing_state) {
+    case 0:
+        ram.ai_timer_end = engine.time() + frames_to_time(h.delay);
+        ram.homing_state = 1;
+        [[fallthrough]];
+    case 1:
+        if (engine.time() >= ram.ai_timer_end) {
+            ram.homing_state = 2;
+            tick = true;
+        }
+        break;
+    case 2:
+        ram.ai_timer_end = engine.time() + frames_to_time(h.interval);
+        ram.homing_state = 3;
+        [[fallthrough]];
+    case 3:
+        if (engine.time() >= ram.ai_timer_end) {
+            ram.homing_state = 2;
+            tick = true;
+        }
+        break;
+    default:
+        live = false;
+        break;
+    }
+    if (!((live && h.pitch) || (tick && h.yaw))) return;
+    if (tick && ++ram.homing_steps >= h.steps) ram.homing_state = 4;
+    // 8031C67C: the nearest target of the other side.
+    const bool enemy_bullet = ram.category == "EBULLET";
+    const auto& m = ram.node->matrix;
+    const ModelRam* target = nullptr;
+    float best = 1e30f;
+    for (const auto& other : rams_) {
+        if (!other->generated || !other->node || other.get() == &ram) continue;
+        if (enemy_bullet ? !other->is_player : other->category != "ENEMY") continue;
+        const auto& o = other->node->matrix;
+        const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
+        const float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < best) {
+            best = d2;
+            target = other.get();
+        }
+    }
+    if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace && tick)
+        engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " tick " +
+                   (target ? target->info_name + " d2 " + std::to_string(best) : std::string("no target")));
+    if (!target || best > h.range2) return;
+    const auto& o = target->node->matrix;
+    auto turn = [](float from, float to, float rate) {
+        const float diff = wrap_angle(to - from);
+        return std::abs(diff) <= rate ? to : from + (diff > 0 ? rate : -rate);
+    };
+    if (live && h.pitch) {
+        const float pitch = -std::atan2(o(3, 1) - m(3, 1), std::sqrt(best));
+        ram.applied[0] = ram.desired[0] = turn(ram.applied[0], pitch, h.pitch_rate);
+    }
+    if (tick && h.yaw) {
+        // 8030C85C turns one step; the heading then stays where it got to.
+        const float yaw = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2));
+        ram.applied[1] = ram.desired[1] = turn(ram.applied[1], yaw, h.yaw_rate);
+        if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace)
+            engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
+                       " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
+    }
+}
+
 void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
     if (!ram.control_enabled || !ram.node || ram.ai_maps->empty()) return;
     std::string request = ram.ai_request;
