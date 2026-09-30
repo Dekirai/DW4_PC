@@ -44,7 +44,7 @@ struct GlRenderer::Impl {
     }
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
-    int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{};
+    int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
@@ -59,6 +59,7 @@ layout(location=5) in vec2 a_indices;
 uniform mat4 u_model, u_view, u_proj;
 uniform int u_skinned;
 uniform mat4 u_palette[64];
+uniform mat4 u_tex_matrix;
 uniform int u_use_vcol;
 uniform vec4 u_color;
 uniform int u_lighting;
@@ -94,7 +95,7 @@ void main() {
         base = vec4(clamp(lit, 0.0, 1.0) * material.rgb, material.a);
     }
     v_color = base;
-    v_uv = a_uv;
+    v_uv = (u_tex_matrix * vec4(a_uv, 0.0, 1.0)).xy;
 }
 )";
 const char* kFragment = R"(#version 330 core
@@ -185,7 +186,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex)
-    U(fog) U(fog_color) U(fog_range) U(skinned) U(palette)
+    U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -349,6 +350,8 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         if (proj(2, 3) == 0.0f && proj(3, 3) == 1.0f) glEnable(GL_DEPTH_CLAMP);
         else glDisable(GL_DEPTH_CLAMP);
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
+        const auto tex_matrix = s.texture_matrix.value_or(dw4::engine::Mat4{});
+        gl.UniformMatrix4fv(gl.u_tex_matrix, 1, GL_FALSE, tex_matrix.m.data());
         if (item.palette && !item.palette->empty()) {
             const auto count = std::min<std::size_t>(item.palette->size(), 64);
             gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());

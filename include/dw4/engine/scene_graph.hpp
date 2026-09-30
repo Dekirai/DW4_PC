@@ -109,6 +109,7 @@ struct Node {
     Mat4 matrix{};
     bool has_matrix{};
     std::shared_ptr<TransformSequence> sequence;
+    bool texture_transform{}; // igTransform flag 8: a texture coordinate transform
     std::vector<std::uint32_t> mask;               // igSwitch child bits
     // beModelCtrlNode2 node clock (original slots 12..14).
     float time_scale = 1.0f;
@@ -156,6 +157,8 @@ struct RenderState {
     bool lighting{};
     Vec4f color{1, 1, 1, 1};
     std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
+    // igTransform flag 8: the transform (sequence) applies to the texture coordinates.
+    std::optional<Mat4> texture_matrix;
     Vec4f diffuse{1, 1, 1, 1}, ambient{0.2f, 0.2f, 0.2f, 1}, emission{0, 0, 0, 1};
     bool fog{};
     const Attribute* fog_params{};

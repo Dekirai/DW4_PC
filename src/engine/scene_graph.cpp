@@ -435,6 +435,7 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         n->kind = NodeKind::transform;
         children_from(7);
         if (auto m = view.mat4(8)) { n->matrix = *m; n->has_matrix = true; }
+        n->texture_transform = (view.i32(9) & 8) != 0;
         if (const auto input = view.ref(11); input && input.is_a("igTransformSequence")) {
             auto seq = std::make_shared<TransformSequence>();
             seq->translations = vec3_list(input.ref(2));
@@ -628,6 +629,11 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     case NodeKind::transform: {
         Mat4 local = n->sequence && n->sequence->valid ? n->sequence->evaluate(time) : n->matrix;
         if (n->runtime_matrix) local = *n->runtime_matrix * local;
+        if (n->texture_transform) {
+            // UV animation (icon atlases, scrolling surfaces).
+            state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
+            break;
+        }
         model = local * model;
         break;
     }

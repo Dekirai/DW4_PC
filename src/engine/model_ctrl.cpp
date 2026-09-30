@@ -1576,6 +1576,10 @@ void ActionManager::run(Engine& engine, ActionRam& ram) {
 }
 
 void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view name) {
+    // DW4_TRACE_ACTION=model logs the actions that model is given.
+    static const char* trace = std::getenv("DW4_TRACE_ACTION");
+    if (trace && ram.info_name == trace)
+        engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name));
     if (!ram.actions) return;
     const Action* found = nullptr;
     for (const auto& a : *ram.actions) if (a.name == name) { found = &a; break; }
