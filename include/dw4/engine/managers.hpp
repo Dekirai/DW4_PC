@@ -209,10 +209,15 @@ private:
         std::unique_ptr<adx::Decoder> decoder;
         float gain = 1.0f;
         int fade_left{}; // frames of a running fade-out (10, 8031D5D0)
+        bool paused{};   // PLAYatPAUSE: buffered, waiting for PAUSEOFF (8031D294)
+        int ready_in{};  // frames until the stream reports ready (buffer fill)
+        float ramp_from = 1.0f, ramp_to = 1.0f; // VOLUMECTL2 gain ramp
+        int ramp_frames{}, ramp_left{};
         double phase = 1.0;
         std::array<float, 2> previous{}, next{};
     };
-    bool play(Engine& engine, Packet& packet);
+    bool play(Engine& engine, Packet& packet, bool paused = false);
+    Stream* stream_named(std::string_view name);
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, SoundData, std::less<>> sounds_;
@@ -222,7 +227,6 @@ private:
     int master_volume_{};           // SNDFVOLUME, 0.1 dB
     bool movie_playing_{};
     std::int64_t movie_end_{};
-    std::int64_t jingle_end_{}; // PLAYatPAUSE stand-in length
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the

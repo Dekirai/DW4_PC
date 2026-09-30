@@ -463,7 +463,6 @@ void SoundManager::clear_stage(Engine&) {
     sounds_.clear();
     files_.clear();
     movie_playing_ = false;
-    jingle_end_ = 0;
 }
 
 namespace {
@@ -473,8 +472,9 @@ float volume_gain(int volume) { return std::pow(10.0f, float(std::min(volume, 0)
 
 // PLAY <name> (80314FC8): a stream sound starts on its channel. A channel
 // still playing fades out first (10 frames) and the request comes back 11
-// frames later; the same BGM again is kept.
-bool SoundManager::play(Engine& engine, Packet& packet) {
+// frames later; the same BGM again is kept. PLAYatPAUSE (80314FBC) starts it
+// paused (802F5828 keeps the pause) until PAUSEOFF.
+bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
     const std::string name(packet.string(0));
     const auto found = sounds_.find(name);
     if (found == sounds_.end()) {
@@ -492,7 +492,8 @@ bool SoundManager::play(Engine& engine, Packet& packet) {
         if (stream.fade_left == 0) stream.fade_left = 10;
         Packet again;
         again.strings.emplace_back(name);
-        engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, "PLAY", std::move(again));
+        engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, paused ? "PLAYatPAUSE" : "PLAY",
+                                std::move(again));
         return true;
     }
     // "[archive.entry]" names an ADX file of an AFS archive (802A9828).
@@ -514,10 +515,20 @@ bool SoundManager::play(Engine& engine, Packet& packet) {
     stream.name = name;
     stream.gain = volume_gain(data.volume + master_volume_);
     stream.fade_left = 0;
+    stream.paused = paused;
+    stream.ready_in = 10; // the ADX stream buffers before it reports ready
+    stream.ramp_frames = stream.ramp_left = 0;
+    stream.ramp_from = stream.ramp_to = 1.0f;
     stream.phase = 1.0;
     stream.previous = stream.next = {};
     if (data.type == 1) current_bgm_ = name;
     return true;
+}
+
+SoundManager::Stream* SoundManager::stream_named(std::string_view name) {
+    for (auto& stream : streams_)
+        if (stream.decoder && stream.name == name) return &stream;
+    return nullptr;
 }
 
 void SoundManager::stop(int channel) {
@@ -531,9 +542,12 @@ void SoundManager::stop(int channel) {
 void SoundManager::render(std::int16_t* out, std::size_t frames) {
     std::vector<float> mix(frames * 2, 0.0f);
     for (auto& stream : streams_) {
-        if (!stream.decoder) continue;
+        if (!stream.decoder || stream.paused || stream.ready_in > 0) continue;
         const auto& header = stream.decoder->header();
-        const float gain = stream.gain * (stream.fade_left > 0 ? float(stream.fade_left) / 10.0f : 1.0f);
+        float ramp = stream.ramp_to;
+        if (stream.ramp_left > 0 && stream.ramp_frames > 0)
+            ramp = stream.ramp_to + (stream.ramp_from - stream.ramp_to) * float(stream.ramp_left) / float(stream.ramp_frames);
+        const float gain = stream.gain * ramp * (stream.fade_left > 0 ? float(stream.fade_left) / 10.0f : 1.0f);
         const std::uint32_t channels = header.channels;
         std::int16_t source[16];
         auto fetch = [&](std::array<float, 2>& frame) {
@@ -582,6 +596,21 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
     }
     if (t == "beSoundInfo") {
         if (command == "PLAY") return play(engine, packet);
+        if (command == "PLAYatPAUSE") return play(engine, packet, true);
+        if (command == "PAUSEOFF") {
+            // 802F61F8: the channel playing that sound leaves its pause.
+            if (auto* stream = stream_named(packet.string(0))) stream->paused = false;
+            return true;
+        }
+        if (command == "VOLUMECTL2") {
+            // name/F<from>/F<to>/F<frames>: a gain ramp on that sound.
+            if (auto* stream = stream_named(packet.string(0))) {
+                stream->ramp_from = packet.real(0, 1.0f);
+                stream->ramp_to = packet.real(1, 1.0f);
+                stream->ramp_frames = stream->ramp_left = std::max(0, int(packet.real(2, 0.0f)));
+            }
+            return true;
+        }
         if (command == "BGMSTOP") { stop(0); return true; }
         if (command == "ENVSTOP") { stop(1); return true; }
         if (command == "STOP") {
@@ -595,22 +624,36 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         }
         if (command == "SESTOP") return true;
     }
-    // Streams start at once, so they report ready. A pause jingle
-    // (PLAYatPAUSE, a sound effect) keeps ISALLREADY at 0 for two seconds, as
-    // scripts wait for it to start and then to end.
-    if (command == "PLAYatPAUSE") {
-        jingle_end_ = engine.time() + kFrameNs * 120;
+    // A started stream reports ready once its buffer is filled; scripts wait
+    // for ISALLREADY to drop after PLAYatPAUSE and to return.
+    if (command == "ISREADY") {
+        const auto* stream = stream_named(packet.string(0));
+        packet.bools.push_back(!stream || stream->ready_in == 0 ? 1 : 0);
+        return true;
+    }
+    if (command == "ISBGMREADY" || command == "ISENVREADY") {
+        const auto& stream = streams_[command == "ISBGMREADY" ? 0 : 1];
+        packet.bools.push_back(!stream.decoder || stream.ready_in == 0 ? 1 : 0);
+        return true;
+    }
+    if (command == "ISALLREADY") {
+        bool ready = true;
+        for (const auto& stream : streams_) ready = ready && (!stream.decoder || stream.ready_in == 0);
+        packet.bools.push_back(ready ? 1 : 0);
         return true;
     }
     if (command.starts_with("IS")) {
-        const bool ready = command == "ISALLREADY" ? engine.time() >= jingle_end_ : command.ends_with("READY");
-        packet.bools.push_back(ready ? 1 : 0);
+        packet.bools.push_back(1);
         return true;
     }
     engine.note("audio " + std::string(command) + (packet.strings.empty() ? "" : " " + std::string(packet.string(0))));
     return true;
 }
 void SoundManager::update(Engine& engine) {
+    for (auto& stream : streams_) {
+        if (stream.ready_in > 0) --stream.ready_in;
+        if (stream.ramp_left > 0 && !stream.paused) --stream.ramp_left;
+    }
     for (std::size_t channel = 0; channel < streams_.size(); ++channel)
         if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
     if (movie_playing_ && engine.time() >= movie_end_) {
