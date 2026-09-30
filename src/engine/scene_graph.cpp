@@ -316,6 +316,7 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
         a->kind = AttrKind::light_state;
         a->texture = view.ref(4); // the igLightAttr
         a->enabled = view.boolean(5);
+        a->light = attribute(view.ref(4));
     } else if (type == "igLightAttr") {
         a->kind = AttrKind::light;
         a->e0 = view.i32(4);
@@ -502,8 +503,13 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
     } else if (type == "igProjectiveShadowShader") {
         n->kind = NodeKind::shadow_shader;
         children_from(7);
+    } else if (type == "igLightStateSet") {
+        // A group whose light states ([8]) switch lights on for its children.
+        n->kind = NodeKind::light_state_set;
+        children_from(7);
+        attributes_from(8, n->attributes);
     } else if (view.is_a("igGroup")) {
-        n->kind = type == "igLightStateSet" ? NodeKind::light_state_set : NodeKind::group;
+        n->kind = NodeKind::group;
         children_from(7);
     }
     return n;
@@ -553,7 +559,7 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         break;
     case AttrKind::lighting_state: s.lighting = a->enabled; break;
     case AttrKind::light_state:
-        if (a->enabled && a->texture) s.lights.push_back(a);
+        if (a->enabled && a->light) s.lights.push_back(a->light);
         break;
     case AttrKind::fog: s.fog_params = a; break;
     case AttrKind::fog_state: s.fog = a->enabled; break;
@@ -641,6 +647,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     case NodeKind::light_set:
         for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
         return;
+    case NodeKind::light_state_set:
+        for (const auto* a : n->attributes) apply(a, state, model);
+        break;
     case NodeKind::transform: {
         Mat4 local = n->sequence && n->sequence->valid ? n->sequence->evaluate(time) : n->matrix;
         if (n->runtime_matrix) local = *n->runtime_matrix * local;

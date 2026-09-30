@@ -47,6 +47,7 @@ struct GlRenderer::Impl {
     }
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
+    int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_darkness{}, u_shadow_pass{};
     PFNGLUNIFORM2FPROC Uniform2f{};
@@ -70,6 +71,7 @@ uniform int u_lighting;
 uniform vec3 u_light_dir[4];
 uniform vec3 u_light_col[4];
 uniform int u_light_count;
+uniform vec3 u_light_ambient;
 uniform vec4 u_ambient, u_diffuse, u_emission;
 uniform mat4 u_shadow_matrix;
 out vec4 v_color;
@@ -94,12 +96,14 @@ void main() {
     gl_Position = u_proj * eye;
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
+        // GX channel: the lights' ambient times the material ambient plus
+        // each light's diffuse, over the material (or vertex) colour.
         vec3 n = normalize(mat3(u_model) * normal);
-        vec3 lit = u_emission.rgb + u_ambient.rgb * 0.35;
+        vec3 lit = u_light_ambient * u_ambient.rgb;
         for (int i = 0; i < u_light_count; ++i)
             lit += u_light_col[i] * max(dot(n, -normalize(u_light_dir[i])), 0.0);
         vec4 material = u_use_vcol != 0 ? a_color : u_diffuse;
-        base = vec4(clamp(lit, 0.0, 1.0) * material.rgb, material.a);
+        base = vec4(clamp(lit, 0.0, 1.0) * material.rgb + u_emission.rgb, material.a);
     }
     v_color = base;
     v_uv = (u_tex_matrix * vec4(a_uv, 0.0, 1.0)).xy;
@@ -206,7 +210,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     gl.DeleteShader(fs);
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
-    U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex)
+    U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
     U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass)
 #undef U
@@ -520,12 +524,15 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const bool lighting = s.lighting && m->has_normals && !s.lights.empty();
         gl.Uniform1i(gl.u_lighting, lighting ? 1 : 0);
         if (lighting) {
-            float dirs[12]{}, cols[12]{};
+            float dirs[12]{}, cols[12]{}, ambient[3]{};
             int count = 0;
             for (const auto* light : s.lights) {
                 if (count >= 4) break;
                 const engine::Attribute* attr = light;
                 if (light->kind == engine::AttrKind::light_state) continue;
+                ambient[0] += attr->ambient.x;
+                ambient[1] += attr->ambient.y;
+                ambient[2] += attr->ambient.z;
                 dirs[count * 3] = attr->matrix(0, 0);
                 dirs[count * 3 + 1] = attr->matrix(0, 1);
                 dirs[count * 3 + 2] = attr->matrix(0, 2);
@@ -536,6 +543,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             }
             gl.Uniform3fv(gl.u_light_dir, 4, dirs);
             gl.Uniform3fv(gl.u_light_col, 4, cols);
+            gl.Uniform3fv(gl.u_light_ambient, 1, ambient);
             gl.Uniform1i(gl.u_light_count, count);
             gl.Uniform4f(gl.u_ambient, s.ambient.x, s.ambient.y, s.ambient.z, s.ambient.w);
             gl.Uniform4f(gl.u_diffuse, s.diffuse.x, s.diffuse.y, s.diffuse.z, s.diffuse.w);

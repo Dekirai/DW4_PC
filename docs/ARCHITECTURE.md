@@ -111,6 +111,11 @@ change nodes through overrides (switch masks, colours, runtime text geometry,
 actor poses). Matrices are row-vector and share the column-major memory layout
 of the original. The GL renderer maps IGB attributes to fixed-function-like
 state in one shader (lighting, fog, alpha test, skinning palette of 64).
+Lighting is on unless an igLightingStateAttr turns it off (the Alchemy
+default); the stage root "ROOTATTR" igLightStateSet switches its light sets on
+for the scene, and each lit vertex gets the lights' ambient times the material
+ambient plus their diffuse, over the material or vertex colour (GX channel).
+LIGHTCTRL SETCOLOR (beLightCtrl, 803248AC) recolours a light set per room.
 
 Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
 beShadow01): beShadow01Info entries name casters (model switches, or

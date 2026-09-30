@@ -77,6 +77,7 @@ struct Attribute {
     TextureSampler sampler;
     std::int32_t viewport[4]{};
     bool mask[4]{true, true, true, true};
+    const Attribute* light{}; // igLightStateAttr: the light it switches on
 };
 
 enum class NodeKind : std::uint8_t {
@@ -159,7 +160,7 @@ struct RenderState {
     std::int32_t depth_func = 3;
     bool cull_enabled{};
     std::int32_t cull_mode = 1;
-    bool lighting{};
+    bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
     std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
     // igTransform flag 8: the transform (sequence) applies to the texture coordinates.
@@ -208,6 +209,8 @@ public:
     Node* node(const IgbDocument* document, std::uint32_t reference);
     Node* node(const ObjectView& view) { return view ? node(view.document(), view.reference()) : nullptr; }
     const GeometryData* geometry(const Attribute* attribute);
+    // A cached attribute a manager changes at run time (LIGHTCTRL colours).
+    Attribute* edit_attribute(const ObjectView& view) { return const_cast<Attribute*>(attribute(view)); }
     Node* find(const IgbDocument* document, std::uint32_t reference) const;
     void release_document(const IgbDocument* document);
 

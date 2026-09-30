@@ -1101,6 +1101,39 @@ void HitLandManager::clear_stage(Engine&) {
 }
 
 // ---------------------------------------------------------------------------
+void LightCtrlManager::add_info(Engine& engine, const ObjectView& info) {
+    make_rams(engine, this, info, rams_, "LIGHTCTRL");
+    for (const auto& set : info.list(7)) {
+        if (!set) continue;
+        auto& lights = sets_[std::string(set.str(2))];
+        for (const auto& light : set.list(7))
+            if (light && light.type() == "igLightAttr") lights.push_back(light);
+    }
+}
+
+void LightCtrlManager::clear_stage(Engine&) {
+    rams_.clear();
+    sets_.clear();
+}
+
+bool LightCtrlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
+    if (command != "SETCOLOR") return false;
+    const auto found = sets_.find(packet.string(0));
+    if (found == sets_.end() || packet.vectors.size() < 3) return true;
+    for (const auto& light : found->second) {
+        Attribute* attr = engine.scenes().edit_attribute(light);
+        if (!attr) continue;
+        const auto& a = packet.vectors[0];
+        const auto& d = packet.vectors[1];
+        const auto& s = packet.vectors[2];
+        attr->ambient = {a.x, a.y, a.z, 1};
+        attr->color = {d.x, d.y, d.z, 1};
+        attr->specular = {s.x, s.y, s.z, 1};
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 bool PassiveManager::accepts(const ObjectView& info) const {
     const auto& t = info.type();
     return t.starts_with("be") || t == "ParticleInfo" || t == "igInfo" || t == "igAnimationDatabase";
@@ -1269,6 +1302,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<MeterCtrlManager>());
     engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<ActionStarterManager>());
+    engine.add_manager(std::make_unique<LightCtrlManager>());
     engine.add_manager(std::make_unique<ShadowManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
 }

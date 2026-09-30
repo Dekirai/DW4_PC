@@ -308,6 +308,22 @@ private:
     bool pending_{};
 };
 
+// LIGHTCTRL (beLightCtrl, command handler 803248AC): SETCOLOR name/V<ambient>/
+// V<diffuse>/V<specular> recolours the lights of one of the info's light sets
+// ([7]); the stage's ROOTATTR light states light the scene with them.
+class LightCtrlManager final : public Manager {
+public:
+    LightCtrlManager() : Manager("beLightCtrl") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beLightCtrlInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+
+private:
+    std::vector<std::unique_ptr<Ram>> rams_;
+    std::map<std::string, std::vector<ObjectView>, std::less<>> sets_; // light set name -> igLightAttr
+};
+
 // beShadow01 (manager vtable 804DF760): projected shadows. The stage's
 // beShadow01Info with an igProjectiveShadowShader ([9], 80314690) sets the
 // light; infos with [8] add casters (model switches or beCopyModelCtrl2
