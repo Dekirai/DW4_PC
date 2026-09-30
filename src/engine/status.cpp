@@ -70,6 +70,11 @@ int ModelCtrlManager::down_value(Engine& engine, const ModelRam& ram, int index)
     return ram.status && index < 6 ? ram.status->down[std::size_t(index)] : 0;
 }
 
+void ModelCtrlManager::clear_poison(ModelRam& ram) {
+    remove_timer(ram, "POISON");
+    if (ram.status) ram.status->timer[0] = 0;
+}
+
 // A player's [66] / [67] are its GAMERAM DOWNDATA / UPDATA lists (803AE5F8 /
 // 803AE87C); an enemy's own lists hold 6 and 7 values.
 void ModelCtrlManager::set_down(Engine& engine, ModelRam& ram, int index, int value) {

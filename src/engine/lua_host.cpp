@@ -520,7 +520,12 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto* stats = target_stats();
         return number(!stats || fight::enemy_hits(*this, *stats, shooter_record(), bullet_kind) ? 1 : 0);
     }
-    if (method == "BLPcalcKoukaMagic") return number(0); // technique effects are not reconstructed
+    if (method == "BLPcalcKoukaMagic") {
+        // 802EFC64: P2PKOUKAMAGIC of the support bullet that reached a player.
+        auto* model = context_model();
+        if (!model || !model->is_player || !context) return number(0);
+        return number(fight::support_magic(*this, model->index, context->shooter, bullet_kind));
+    }
     if (method == "BLPgetDamageValue") {
         const auto* stats = target_stats();
         auto* model = context_model();

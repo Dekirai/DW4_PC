@@ -780,6 +780,8 @@ public:
     // A player's DOWNDATA entry or an enemy's DOWN value (0 before its first
     // status command); what GETPEBASEWORK hands the FIGHTCALC paths.
     int down_value(Engine& engine, const ModelRam& ram, int index) const;
+    // 803B0620: a cure ends the poison of a model.
+    void clear_poison(ModelRam& ram);
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
 
 private:
@@ -1166,6 +1168,8 @@ int player_poison(Engine& engine, const GameSystem::PlayerSlot& player, int enem
 int player_sleep_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
 int player_attack_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
 int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
+// P2PKOUKAMAGIC (80376EE4): a support technique of the caster; 1 when it acted.
+int support_magic(Engine& engine, int target, int shooter, int kind);
 } // namespace fight
 
 } // namespace dw4::engine

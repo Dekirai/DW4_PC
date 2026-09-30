@@ -523,6 +523,117 @@ int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int 
         return technique_down(engine, player, enemy_record, kind, what == "TSUYOSA" ? "TSUYOSA" : "MAMORI");
     return 0;
 }
+
+namespace {
+// 803715AC: RAM numbers of the players (or bit capsules) within 30 units of
+// a point that still have HP, one RAM number excluded.
+std::vector<int> models_around(Engine& engine, bool players, const Vec3f& point, int exclude) {
+    std::vector<int> found;
+    auto* models = engine.get<ModelCtrlManager>();
+    if (!models) return found;
+    for (const auto& ram : models->rams()) {
+        if (!ram->generated || !ram->node || ram->index == exclude) continue;
+        if (players ? !ram->is_player : ram->category != "PLAYER2") continue;
+        const auto& m = ram->node->matrix;
+        const float dx = m(3, 0) - point.x, dy = m(3, 1) - point.y, dz = m(3, 2) - point.z;
+        if (dz * dz + (dx * dx + dy * dy) < 900.0f && ram->hp != 0) found.push_back(ram->index);
+    }
+    return found;
+}
+} // namespace
+
+// P2PKOUKAMAGIC (80376EE4): a support technique acts once, when its bullet
+// reaches the caster itself, on the players around the caster.
+int support_magic(Engine& engine, int target, int shooter, int kind) {
+    if (target != shooter) return 0;
+    auto* sys = engine.get<GameSystem>();
+    auto* models = engine.get<ModelCtrlManager>();
+    if (!sys || !models) return 0;
+    const int slot = std::clamp(target, 0, 3);
+    auto& caster = sys->players[std::size_t(slot)];
+    const int family = kind % 10000;
+    Vec3f point{};
+    if (const auto* model = models->player(slot); model && model->node) {
+        const auto& m = model->node->matrix;
+        point = {m(3, 0), m(3, 1), m(3, 2)};
+    }
+    const auto use = technique_use(engine, caster, kind);
+    auto column = [&](const char* name) { return database(engine, "pcTech", use.row, name); };
+    auto send = [&](int player, const char* command, Packet& packet) {
+        engine.messenger().send(engine, "PLAYER", sys->players[std::size_t(std::clamp(player, 0, 3))].digimon, player, command,
+                                packet);
+    };
+    // The hit effect on the other players (SETEFFECT one frame later, locked).
+    auto effect = [&](int player, const char* model, const char* sequence) {
+        Packet packet;
+        packet.strings.emplace_back(std::string(model));
+        packet.strings.emplace_back(std::string(sequence));
+        packet.floats.push_back(1.0f);
+        packet.vectors.push_back(Vec3f{});
+        packet.bools.push_back(0);
+        packet.bools.push_back(1);
+        send(player, "SETEFFECT", packet);
+    };
+    // Buffs reach the players around and the caster (without its effect).
+    auto buff = [&](const char* command, std::initializer_list<int> values) {
+        auto players = models_around(engine, true, point, slot);
+        players.push_back(slot);
+        for (const int player : players) {
+            Packet packet;
+            for (const int value : values) packet.ints.push_back(value);
+            send(player, command, packet);
+            if (player != slot) effect(player, "x_250uphit00", "SQ_UPEFONLY");
+        }
+    };
+    switch (family) {
+    case 40: // heal: technique HP + skill + KASHIKOSA
+    case 45: // heal all
+    {
+        const int amount = column("HP") + use.skill + caster.stats.kashikosa;
+        sys->change_hp(engine, slot, amount);
+        if (family == 45)
+            for (const int player : models_around(engine, true, point, slot)) {
+                sys->change_hp(engine, player, amount);
+                effect(player, "x_250healhit00", "SQ_HEALEFONLY");
+            }
+        break;
+    }
+    case 55: // cure: ends poison when rank + 5 - GEDOKU reaches random % 10
+    case 60: // cure all
+    {
+        auto cure = [&](int player) {
+            auto* ram = models->find(sys->players[std::size_t(std::clamp(player, 0, 3))].digimon, player);
+            if (!ram || !ram->status || !ram->status->timer[0]) return;
+            if (use.row - family + 5 - ram->status->gedoku >= int(random() % 10u)) models->clear_poison(*ram);
+        };
+        cure(slot);
+        if (family == 60)
+            for (const int player : models_around(engine, true, point, slot)) {
+                cure(player);
+                effect(player, "x_250curehit00", "SQ_CUREEFONLY");
+            }
+        break;
+    }
+    case 50: // raise: bit capsules around get RAISE (804EB164 / 804EB178)
+        engine.note("P2PKOUKAMAGIC raise of bit capsules");
+        break;
+    case 65: // speed up: SUBAYASA + skill / 5 and the hit values
+        buff("SETSPEEDUP", {column("TIME") + caster.stats.kashikosa, use.skill / 5 + column("SUBAYASA"), column("CHIMEIRITSU"),
+                            column("MHIRITSU"), column("KAIHIRITSU")});
+        break;
+    case 80: { // power up: TSUYOSA, MAMORI and MAXHP + skill / 5
+        const int bonus = use.skill / 5;
+        buff("SETPOWERUP", {column("TIME") + caster.stats.kashikosa, bonus + column("TSUYOSA"), bonus + column("MAMORI"),
+                            bonus + column("MAXHP")});
+        break;
+    }
+    case 75: // refract: the element resistances
+        buff("SETREFRACT", {column("TIME"), column("FIRE"), column("ICE"), column("THUNDER"), column("DARK")});
+        break;
+    default: break;
+    }
+    return 1;
+}
 } // namespace fight
 
 void GameSystem::prepare_player(Engine& engine, int slot) {
@@ -586,6 +697,11 @@ void GameSystem::create_player(Engine& engine, int slot) {
             while (*at && *at != ',') ++at;
             if (*at == ',') ++at;
         }
+    }
+    // DW4_LEVEL=n: the level a test run starts at.
+    if (const char* level = std::getenv("DW4_LEVEL")) {
+        stats.level = std::clamp(std::atoi(level), 1, 999);
+        player.base_level[std::size_t(std::clamp(stats.species, 0, 15))] = stats.level;
     }
     player.hp = 0; // RECALCPLAYER refills HP and MP from 0
     recalc_player(engine, slot);

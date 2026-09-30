@@ -1173,8 +1173,9 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     }
     if (!ram.generated || !ram.control_enabled || ram.seq_name == "SQ_ERAS" || !ram.hit || !ram.node) return false;
     if (packet.vectors.size() < 2) return false;
-    // A model never hits itself; MUTEKI blocks everything but p-to-p hits.
-    if (packet.string(0) == ram.info_name && packet.integer(1, -1) == ram.index) return false;
+    // A bullet reaches its own shooter too (a support technique acts when it
+    // does; hit scripts drop their own special bullets). MUTEKI blocks
+    // everything but p-to-p hits.
     if (ram.muteki != 0 && !(ram.info_name.starts_with('p') && packet.string(0).starts_with('p'))) return false;
     const Vec3f in_min = packet.vectors[0], in_max = packet.vectors[1];
     const auto& m = ram.node->matrix;
