@@ -4,14 +4,6 @@ namespace dw4::engine {
 
 namespace subwnd {
 
-// Title00 (80391154): the dimmed background.
-struct Title00 : Title {
-    void open(Engine& engine) override {
-        open_model(engine, "i_stback", 0, "SQ_OPEN", "SQ_CLOSE");
-        open_model(engine, "i_bgclear", 0, "SQ_OPEN", "SQ_CLOSE");
-    }
-};
-
 // Title01 (803911B8 / 80392AE0 / 80392108): the status page of the player.
 struct Title01 : Title {
     void open(Engine& engine) override {
@@ -48,15 +40,6 @@ struct Title01 : Title {
             if (digimon.starts_with("p_")) sequence = "SQ_" + digimon.substr(2) + "OPEN";
         }
         open_model(engine, "i_stdigiface", player, sequence, "SQ_CLOSE", {-410.0f, 240.0f, 0.0f});
-    }
-};
-
-// Title03 (80392D48): the account panel with its labels.
-struct Title03 : Title {
-    void open(Engine& engine) override {
-        open_model(engine, "i_staccount", 0, "SQ_OPEN", "SQ_CLOSE");
-        for (const char* line : {"font000", "font001", "font002"}) remember("STWINFONT34", line);
-        text_script(engine, "txt_status.lua", 0);
     }
 };
 
@@ -1045,8 +1028,17 @@ void SubWindowManager::update(Engine& engine) {
             window->player = player_;
             window_ = std::move(window);
         } else {
-            engine.note("SUBWND program " + std::to_string(program_) + " (shops, labo, card)");
-            window_.reset();
+            // The lobby programs play the shop music (RM_NSHOP).
+            window_ = subwnd::make_shop_program(program_);
+            window_->manager = this;
+            window_->player = player_;
+            for (const char* command : {"BGMSTOP", "ENVSTOP"}) {
+                Packet p;
+                messenger.send(engine, "SOUND", std::nullopt, -1, command, p);
+            }
+            Packet music;
+            music.strings.emplace_back("RM_NSHOP");
+            messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", music);
         }
         ++state_;
     }

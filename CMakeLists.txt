@@ -32,7 +32,8 @@ add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/sc
   src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
   src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
-  src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp)
+  src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
+  src/engine/subwnd_shop.cpp)
 target_link_libraries(dw4_engine PUBLIC dw4_core)
 if(MSVC)
   target_compile_options(dw4_engine PRIVATE /W3 /permissive- /utf-8)

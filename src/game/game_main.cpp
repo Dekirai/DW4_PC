@@ -74,7 +74,7 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 // A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R) and "frame GOTO x z [duration]",
 // which steers player 1's stick toward world (x, z) relative to the camera, and
 // "frame SEEK duration", which walks to the nearest pickup or live enemy and
-// presses A next to it.
+// presses A next to it, and "frame SEND CATEGORY COMMAND [argument]".
 struct ScriptedInput {
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -97,6 +97,14 @@ struct ScriptedInput {
                 gotos.push_back(g);
                 continue;
             }
+            if (name == "SEND") {
+                // "frame SEND CATEGORY COMMAND [a/b/I<n>]": a messenger command
+                // like the stage scripts' DMsetSD (row -1), e.g. opening a shop.
+                Send send{frame};
+                fields >> send.category >> send.command >> send.argument;
+                sends.push_back(send);
+                continue;
+            }
             fields >> duration;
             std::uint32_t bit = 0;
             namespace b = dw4::pad_button;
@@ -115,6 +123,8 @@ struct ScriptedInput {
             presses.push_back({frame, bit, duration});
         }
     }
+    struct Send { int frame; std::string category, command, argument; };
+    std::vector<Send> sends;
     struct Press { int frame; std::uint32_t bit; int duration; };
     std::vector<Press> presses;
     struct Goto { int frame; float x, z; int duration; bool seek = false; };
@@ -261,6 +271,12 @@ int run(const Options& options) {
                 if (steps == 4) accumulator = 0;
             }
             for (int i = 0; i < steps; ++i) {
+                for (const auto& send : scripted.sends) {
+                    if (send.frame != frame) continue;
+                    dw4::engine::Packet packet;
+                    if (!send.argument.empty()) dw4::engine::parse_packet_arguments(send.argument, packet);
+                    engine.messenger().send(engine, send.category, std::nullopt, -1, send.command, packet);
+                }
                 std::uint32_t input = held | scripted.held(frame);
                 float stick_x = sx, stick_y = sy;
                 if (const auto* g = scripted.active_goto(frame); g && stick_x == 0 && stick_y == 0) {

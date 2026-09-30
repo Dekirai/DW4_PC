@@ -605,6 +605,37 @@ struct DeviceList : Window {
     }
 };
 
+// Title00 (80391154): the dimmed background.
+struct Title00 : Title {
+    void open(Engine& engine) override {
+        open_model(engine, "i_stback", 0, "SQ_OPEN", "SQ_CLOSE");
+        open_model(engine, "i_bgclear", 0, "SQ_OPEN", "SQ_CLOSE");
+    }
+};
+
+// Title03 (80392D48): the account panel with its labels.
+struct Title03 : Title {
+    void open(Engine& engine) override {
+        open_model(engine, "i_staccount", 0, "SQ_OPEN", "SQ_CLOSE");
+        for (const char* line : {"font000", "font001", "font002"}) remember("STWINFONT34", line);
+        text_script(engine, "txt_status.lua", 0);
+    }
+};
+
+// ShopSelect52 (803A9D90): a count picker (i_stcursor05) with mode lines,
+// starting on the last one.
+struct ShopSelect52 : Select {
+    void open(Engine&) override {
+        cursor = "i_stcursor05";
+        count = mode;
+        initial = mode - 1;
+        no_cancel = false;
+    }
+};
+
+// The shop programs 1 and 3..10 (subwnd_shop.cpp).
+std::unique_ptr<Window> make_shop_program(int program);
+
 // The folder page (beNDMWStatusCtrlFolder, subwnd_folder.cpp) and the skill
 // page (beNDMWStatusCtrlSkill, subwnd_skill.cpp).
 Window& add_folder_page(Window& parent, Engine& engine);

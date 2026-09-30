@@ -43,17 +43,6 @@ std::string partner_frame(const char* kind, std::size_t partners) {
     return "SQ_" + std::to_string(lines) + kind + "OPEN";
 }
 
-// ShopSelect52 (803A9D90): a count picker (i_stcursor05) with mode lines,
-// starting on the last one.
-struct ShopSelect52 : Select {
-    void open(Engine&) override {
-        cursor = "i_stcursor05";
-        count = mode;
-        initial = mode - 1;
-        no_cancel = false;
-    }
-};
-
 // ShopSelect34 (803A971C): the seven-digit cursor (i_stcursor03).
 struct ShopSelect34 : Select {
     void open(Engine& engine) override {

@@ -93,8 +93,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `frame BUTTON [duration]`), `--screenshot FILE.bmp`, `--screenshot-frames
 N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive,
-`DW4_DEVICES=type:record:rank:value,...` and `DW4_DISKS=record:count,...` fill a
-new player's folders,
+`DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
+`DW4_BITS=n` fill a new player's folders,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 
