@@ -949,6 +949,8 @@ public:
         // MOVERL "JOINT" (8030ADC0, ctrl work +A8/+B4/+B8): the model follows a
         // bone of another model with the same index instead of moving.
         std::string follow_model, follow_bone;
+        Node* trace{};        // own "TRC" data: an igTransformRecorder
+        Node* follow_trace{}; // MOVERL ACTOR: another model's recorder
         // beNDMWMdlPEBase status work (+240..+268), made by the first status
         // command (803AEBB4). Slots: 0 poison, 1 attack down, 2 power down,
         // 3 bind, 4 refract, 5 speed up, 6 power up, 7 metal, 8 sleep, 9 stun,

@@ -126,6 +126,11 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         ram->sequences = seq_ptr;
         ram->ai_maps = ai_maps;
         ram->homing = homing;
+        for (const auto& data : info.list(5))
+            if (data && data.str(2) == "TRC") {
+                ram->trace = engine.scenes().node(data.ref(4));
+                break;
+            }
         ram->is_player = category == "PLAYER";
         if (record) {
             for (const auto& data : record.list(10)) {
@@ -267,15 +272,22 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // model's trace data (GETTRCDATA), not reconstructed yet.
             ram.follow_model.clear();
             ram.follow_bone.clear();
+            ram.follow_trace = nullptr;
             if (name == "JOINT") {
                 ram.follow_model = std::string(command.str(3));
                 ram.follow_bone = std::string(command.str(4));
             } else {
-                engine.note("MODELCTRL MOVERL " + std::string(name) + " (trace data)");
+                Packet trace;
+                engine.messenger().send(engine, "MODELCTRL", std::string(command.str(3)), ram.index, "GETTRCDATA", trace);
+                if (trace.objects.size() == 1) ram.follow_trace = static_cast<Node*>(trace.objects[0]);
+                if (static const bool trace_log = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace_log)
+                    engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace of " +
+                               std::string(command.str(3)) + (ram.follow_trace ? "" : " (none)"));
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
             ram.follow_model.clear(); // 8030A71C: a new move ends the follow
+            ram.follow_trace = nullptr;
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
@@ -379,6 +391,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.homing_state = ram.homing_steps = 0;
         ram.follow_model.clear();
         ram.follow_bone.clear();
+        ram.follow_trace = nullptr;
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
@@ -536,8 +549,13 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.effects.push_back(std::move(effect));
         return true;
     }
+    if (command == "GETTRCDATA") {
+        // The model's trace recorder (TRC data) for MOVERL ACTOR.
+        if (ram.trace) packet.objects.push_back(ram.trace);
+        return true;
+    }
     if (command == "SETSOUND" ||
-        command == "GETTRCDATA" || command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
+        command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
         command == "SETSLIPPEDFLOOR" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
         return true;
@@ -898,7 +916,10 @@ void ModelCtrlManager::update(Engine& engine) {
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
-        if (!ram.follow_model.empty()) follow_bone(engine, ram);
+        if (ram.follow_trace) {
+            // 8030CD94: the recorder's last world matrix.
+            if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
+        } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
         else if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);

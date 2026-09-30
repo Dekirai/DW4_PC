@@ -82,7 +82,8 @@ struct Attribute {
 
 enum class NodeKind : std::uint8_t {
     unknown, group, attr_set, switch_node, transform, geometry, actor, billboard, blend_matrix_select,
-    light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select, copy_model, particle_timer
+    light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select, copy_model, particle_timer,
+    transform_recorder
 };
 
 struct TransformSequence {
@@ -149,6 +150,8 @@ struct Node {
     std::int64_t particle_start = -1;
     std::int64_t particle_paused = -1; // ONFREEZE: the time the timer stopped at
     std::vector<std::shared_ptr<GeometryData>> particle_geometry;
+    // igTransformRecorder: the world matrix it was last drawn with (TRC data).
+    std::optional<Mat4> recorded;
 
     bool child_enabled(std::size_t index) const;
     void set_child_enabled(std::size_t index, bool enabled);

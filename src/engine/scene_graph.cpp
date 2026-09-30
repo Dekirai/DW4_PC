@@ -510,6 +510,9 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
     } else if (type == "igProjectiveShadowShader") {
         n->kind = NodeKind::shadow_shader;
         children_from(7);
+    } else if (type == "igTransformRecorder") {
+        n->kind = NodeKind::transform_recorder;
+        children_from(7);
     } else if (type == "igLightStateSet") {
         // A group whose light states ([8]) switch lights on for its children.
         n->kind = NodeKind::light_state_set;
@@ -692,6 +695,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         }
         break;
     }
+    case NodeKind::transform_recorder:
+        n->recorded = model;
+        break;
     case NodeKind::copy_model: {
         // The source instance's placement and its actor's pose.
         if (Node* source = n->copy_source) {
