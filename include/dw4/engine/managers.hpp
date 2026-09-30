@@ -1170,6 +1170,8 @@ int player_attack_down(Engine& engine, const GameSystem::PlayerSlot& player, int
 int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
 // P2PKOUKAMAGIC (80376EE4): a support technique of the caster; 1 when it acted.
 int support_magic(Engine& engine, int target, int shooter, int kind);
+// P2ESKILLUP (803736C8): the shooter's weapon or technique skill may grow.
+void skill_up(Engine& engine, int shooter, int kind, int hit, int critical);
 } // namespace fight
 
 } // namespace dw4::engine

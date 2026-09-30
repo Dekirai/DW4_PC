@@ -634,6 +634,76 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
     }
     return 1;
 }
+
+namespace {
+// 804EAF18: skill up chances per level bracket (to 36, 107, 227, above), skill
+// rank (804EB110 limits) and column (0 hit, 1 unused, 2 critical).
+constexpr std::int16_t kSkillUpTable[4][21][3] = {
+    {{10, 5, 12}, {13, 7, 16}, {16, 9, 21}, {21, 12, 27}, {28, 15, 35}, {37, 20, 46}, {48, 26, 60}, {62, 34, 78}, {81, 44, 101}, {106, 58, 132}, {132, 72, 165}, {165, 91, 207}, {207, 113, 258}, {258, 142, 323}, {323, 177, 404}, {404, 222, 505}, {505, 278, 632}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}},
+    {{5, 2, 6}, {6, 3, 8}, {8, 4, 10}, {10, 6, 13}, {14, 7, 17}, {18, 10, 23}, {24, 13, 30}, {31, 17, 39}, {40, 22, 50}, {53, 29, 66}, {66, 36, 82}, {82, 45, 103}, {103, 56, 129}, {129, 71, 161}, {161, 88, 202}, {202, 111, 252}, {252, 139, 316}, {316, 173, 395}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}},
+    {{2, 1, 3}, {3, 1, 4}, {4, 2, 5}, {5, 3, 6}, {7, 4, 8}, {9, 5, 11}, {12, 7, 15}, {15, 9, 19}, {20, 12, 25}, {26, 15, 33}, {33, 19, 41}, {41, 24, 51}, {51, 31, 64}, {64, 38, 80}, {80, 48, 101}, {101, 60, 126}, {126, 75, 158}, {158, 94, 197}, {205, 123, 256}, {0, 0, 0}, {0, 0, 0}},
+    {{1, 0, 1}, {1, 0, 2}, {2, 1, 2}, {2, 1, 3}, {3, 2, 4}, {4, 2, 5}, {6, 3, 7}, {7, 4, 9}, {10, 6, 12}, {13, 7, 16}, {16, 9, 20}, {20, 12, 25}, {25, 15, 32}, {32, 19, 40}, {40, 24, 50}, {50, 30, 63}, {63, 37, 79}, {79, 47, 98}, {102, 61, 128}, {128, 77, 160}, {160, 96, 200}},
+};
+constexpr std::int16_t kSkillRanks[21] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 100, 300, 500, 1000, 2000, 3000, 4000, 6000, 10000};
+// 804EB13C: the shinka growth column of each weapon skill.
+constexpr const char* kSkillGrow[6] = {"BLUNT_GROW", "SLASH_GROW", "STAB_GROW", "BASH_GROW", "SHOT_GROW", "CRUSH_GROW"};
+} // namespace
+
+// P2ESKILLUP (803736C8): below the level's skill limit the weapon skill (or a
+// technique's skill) may grow by one; weapons scale the chance by the form's
+// growth for that skill. The hit flag folds away in the original: only a
+// critical changes the column.
+void skill_up(Engine& engine, int shooter, int kind, int /*hit*/, int critical) {
+    auto* sys = engine.get<GameSystem>();
+    if (!sys) return;
+    const int slot = std::clamp(shooter, 0, 3);
+    auto& player = sys->players[std::size_t(slot)];
+    auto& stats = player.stats;
+    const int level = stats.level;
+    int limit;
+    if (level <= 36) limit = level * 30;
+    else if (level <= 107) limit = level * 20 + 360;
+    else if (level <= 227) limit = level * 10 + 1430;
+    else limit = level * 8 + 1884;
+    const int group = kind / 10000;
+    const bool technique = group == 4 || group == 8 || group == 9;
+    const int skill_type = std::clamp(technique ? database(engine, "pcTech", technique_row(player, kind), "SKILL") : stats.weapon_skill_no, 0, 8);
+    const int skill = stats.skill[std::size_t(skill_type)];
+    if (skill >= limit) return;
+    const int bracket = level <= 36 ? 0 : level <= 107 ? 1 : level <= 227 ? 2 : 3;
+    int rank = 20;
+    for (int i = 0; i < 21; ++i)
+        if (skill <= kSkillRanks[i]) {
+            rank = i;
+            break;
+        }
+    const int value = kSkillUpTable[bracket][rank][critical == 1 ? 2 : 0];
+    int chance;
+    if (technique) {
+        chance = value * 100;
+    } else {
+        const int grow = skill_type < 6 ? database(engine, "shinka", stats.species, kSkillGrow[skill_type]) : 0;
+        chance = value * grow * 500 / 1000;
+    }
+    static const bool trace = std::getenv("DW4_TRACE_SKILL") != nullptr;
+    if (trace)
+        engine.log("skill up chance " + std::to_string(chance) + "/100000 for skill " + std::to_string(skill_type) + " = " +
+                   std::to_string(skill));
+    if (!(chance > int(random() % 100000u))) return;
+    stats.skill[std::size_t(skill_type)] = skill + 1;
+    engine.log("player " + std::to_string(slot) + " skill " + std::to_string(skill_type) + " -> " + std::to_string(skill + 1));
+    sys->recalc_player(engine, slot);
+    sys->store_species(slot);
+    // The skill up panel over the player (i_getitempnl01 SQ_TECUP).
+    Packet effect;
+    effect.strings.emplace_back(std::string("i_getitempnl01"));
+    effect.strings.emplace_back(std::string("SQ_TECUP"));
+    effect.floats.push_back(1.0f);
+    effect.vectors.push_back(Vec3f{});
+    effect.bools.push_back(0);
+    effect.bools.push_back(1);
+    engine.messenger().send(engine, "MODELCTRL", player.digimon, slot, "SETEFFECT", effect);
+}
 } // namespace fight
 
 void GameSystem::prepare_player(Engine& engine, int slot) {

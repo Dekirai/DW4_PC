@@ -47,7 +47,8 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   attack and power down (plus the speed/power up, refract and metal
   commands) with the original FIGHTCALC chances and times, their DOWN/UP
   values in the stat recalculation and damage, and the icons above the model;
-  the support techniques (heal, heal all, cure, speed and power up, refract).
+  the support techniques (heal, heal all, cure, speed and power up, refract)
+  and the weapon and technique skill growth with the skill up panel.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
 
