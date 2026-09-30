@@ -338,6 +338,50 @@ private:
     std::uint32_t random_ = 0x2545F491u;
 };
 
+// beWaterPlain (update 803178CC): rippling water. Players and enemies in the
+// surface's height bands press the grid point under them down (803176F0),
+// beWaterMove drops do so at their times, and a wave-equation step
+// (8031716C) turns the heights into the surface mesh's vertex heights and
+// normals.
+class WaterPlainManager final : public Manager {
+public:
+    WaterPlainManager() : Manager("beWaterPlain") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beWaterPlainInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    void update(Engine& engine) override;
+
+private:
+    struct Drop {
+        std::int64_t time{};
+        float strength{};
+        std::vector<Vec3f> points; // relative to the origin
+    };
+    struct Water {
+        ObjectView vertices;             // [21] the surface's vertex array
+        std::vector<float> weight;       // [22] per grid point (0: no water)
+        std::vector<int> map;            // [23] grid point -> vertex
+        int width{}, height{};           // [24]/[25]
+        Vec3f origin{}, max{}, min{};    // [26]..[28]
+        float cell = 4.0f;               // [31]
+        float c_sum{}, c_cur{};          // [12]/[13]
+        float range1_top{}, range1_bottom{}, range1_amount{}; // [15]..[17]
+        float range2_top{}, range2_bottom{}, range2_amount{}; // [18]..[20]
+        float limit_max{}, limit_min{}, boundary{};           // [33]..[35]
+        std::array<std::vector<float>, 2> buffers;           // [32]
+        int current{};
+        std::int64_t period{}, move_start{};                  // [37] beWaterMove
+        std::size_t move_index{};
+        std::vector<Drop> drops;
+        GeometryData* geometry{};
+        bool searched{};
+    };
+    bool inside(const Water& w, const Vec3f& p) const;
+    void push(Water& w, const Vec3f& p, float strength);
+    void step(Water& w);
+    std::vector<Water> waters_;
+};
+
 // LIGHTCTRL (beLightCtrl, command handler 803248AC): SETCOLOR name/V<ambient>/
 // V<diffuse>/V<specular> recolours the lights of one of the info's light sets
 // ([7]); the stage's ROOTATTR light states light the scene with them.

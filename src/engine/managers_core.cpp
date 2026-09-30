@@ -1433,6 +1433,7 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<WeaponManager>());
     engine.add_manager(std::make_unique<ActionStarterManager>());
     engine.add_manager(std::make_unique<LightCtrlManager>());
+    engine.add_manager(std::make_unique<WaterPlainManager>());
     engine.add_manager(std::make_unique<ParticleCtrlManager>());
     engine.add_manager(std::make_unique<ShadowManager>());
     engine.add_manager(std::make_unique<PassiveManager>());
