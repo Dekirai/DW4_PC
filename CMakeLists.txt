@@ -30,7 +30,7 @@ endif()
 add_library(dw4_engine src/engine/math.cpp src/engine/igb_view.cpp src/engine/scene_graph.cpp
   src/engine/engine.cpp src/engine/lua_host.cpp src/engine/managers_core.cpp src/engine/model_ctrl.cpp
   src/engine/actor.cpp src/engine/collision.cpp src/engine/ui.cpp src/engine/title.cpp src/engine/load_intf.cpp
-  src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp
+  src/engine/mat_ctrl.cpp src/engine/generater.cpp src/engine/combat.cpp src/engine/status.cpp src/engine/save_game.cpp src/engine/save_util.cpp src/engine/save_menu.cpp src/engine/menu_text.cpp
   src/engine/hud.cpp src/engine/items.cpp src/engine/panel.cpp
   src/engine/subwnd.cpp src/engine/subwnd_folder.cpp src/engine/subwnd_skill.cpp
   src/engine/subwnd_shop.cpp)

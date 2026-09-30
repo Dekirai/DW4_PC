@@ -308,6 +308,7 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
     if (command == "TEXTSET") {
         std::optional<std::u16string> value;
         if (packet.strings.size() > 2) value = decode_game_text(packet.string(2));
+        else if (!packet.objects.empty()) value = *static_cast<const std::u16string*>(packet.objects[0]); // string object
         for (auto& line : lines_) {
             if (!matches(line)) continue;
             if (!value && !packet.ints.empty()) {
@@ -340,6 +341,7 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
         refresh_categories(engine);
         return true;
     }
+    if (command == "REPLACEUNKNOWN") return true; // missing glyphs already fall back
     if (command == "ALIGN") {
         const auto mode = packet.string(2);
         const int align = mode == "CENTER" ? 1 : mode == "RIGHT" ? 2 : 0;

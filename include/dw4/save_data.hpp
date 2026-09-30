@@ -2,8 +2,9 @@
 
 // Digimon World 4 memory card data (docs/SAVES.md): the NDMWSaveData file is
 // an 8 KB header (comment, banner, icon) and two redundant 40960-byte copies
-// of the game data; each copy holds a checksum, the word 4 and the 3316-byte
-// character records (80364AEC) back to back. Big-endian throughout.
+// of the game data; each copy holds a checksum, the word 4 and four
+// character records (80364AEC) in 8 KB beNDMWDegiData buffers (80345CD8), of
+// which the first 3316 bytes are used. Big-endian throughout.
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,11 +17,12 @@
 namespace dw4::save {
 
 constexpr std::size_t kRecordSize = 3316;
+constexpr std::size_t kRecordStride = 0x2000; // beNDMWDegiData buffer
 constexpr std::size_t kCopySize = 40960;
 constexpr std::size_t kHeaderSize = 0x2000;
 constexpr std::size_t kFileSize = 90112; // 11 blocks of 8192
 constexpr std::array<std::size_t, 2> kCopyOffsets{0x2000, 0xC000};
-constexpr std::size_t kRecordsPerCopy = (kCopySize - 8) / kRecordSize;
+constexpr std::size_t kRecordsPerCopy = 4; // the four save boxes (80363A64)
 constexpr std::uint32_t kCopyVersion = 4;
 constexpr std::size_t kGciEntrySize = 64;
 

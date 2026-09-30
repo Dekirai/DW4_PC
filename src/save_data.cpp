@@ -179,7 +179,7 @@ std::vector<std::uint8_t> write_file(std::span<const std::uint8_t> header, std::
     w.u32(4, kCopyVersion);
     for (std::size_t i = 0; i < std::min(records.size(), kRecordsPerCopy); ++i) {
         const auto bytes = encode(records[i]);
-        std::copy(bytes.begin(), bytes.end(), copy.begin() + std::ptrdiff_t(8 + i * kRecordSize));
+        std::copy(bytes.begin(), bytes.end(), copy.begin() + std::ptrdiff_t(8 + i * kRecordStride));
     }
     w.u32(0, checksum(copy));
     for (const auto offset : kCopyOffsets) std::copy(copy.begin(), copy.end(), file.begin() + std::ptrdiff_t(offset));
@@ -193,7 +193,7 @@ std::optional<std::vector<Record>> read_file(std::span<const std::uint8_t> file)
         Reader rd(copy);
         if (rd.u32(4) != kCopyVersion || rd.u32(0) != checksum(copy)) continue;
         std::vector<Record> records;
-        for (std::size_t i = 0; i < kRecordsPerCopy; ++i) records.push_back(decode(copy.subspan(8 + i * kRecordSize, kRecordSize)));
+        for (std::size_t i = 0; i < kRecordsPerCopy; ++i) records.push_back(decode(copy.subspan(8 + i * kRecordStride, kRecordSize)));
         return records;
     }
     return std::nullopt;

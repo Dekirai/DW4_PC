@@ -482,13 +482,17 @@ public:
     void question(int id, int cursor);    // 803630D0: two-choice prompt
     void next(int id);                    // 803630F4: wait for A
     void clear();                         // 8036317C
+    void cancel(Engine& engine, int player); // 80363114: drop the prompt
+    void interrupt(int id);               // 8036318C: show id over the prompt
+    void resume();                        // 803631A8: back to the parked message
     bool busy() const { return prompt_; } // 8036316C
     int answer() const { return cursor_; }
     void update(Engine& engine, int player);
 
 private:
     bool open_{}, closing_{}, answered_{}, prompt_{}, pending_{}, clear_request_{};
-    int mode_{}, step_{}, cursor_{}, id_{};
+    bool interrupted_{}, shown_{};
+    int mode_{}, step_{}, cursor_{}, id_{}, interrupt_id_{}, interrupt_count_{};
     std::string sequence_;
 };
 
@@ -696,6 +700,15 @@ public:
         int operation{};
         std::uint32_t free_bytes{}, need_bytes{};
         bool enough_space{}, free_entry{}, done = true;
+        // Per card slot (lists [3], [15], [12], [14]): card state (1 usable,
+        // 0 none), free and needed bytes, room for the file.
+        struct Slot {
+            int state{};
+            std::uint32_t free_bytes{}, need_bytes{};
+            bool enough{};
+        };
+        std::array<Slot, 2> slots{};
+        bool ready = true; // +40
     };
 
 private:

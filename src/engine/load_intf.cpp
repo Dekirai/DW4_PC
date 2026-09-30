@@ -1,99 +1,13 @@
 #include "dw4/engine/managers.hpp"
+#include "menu_text.hpp"
 
 #include <algorithm>
 #include <cstdio>
 
 namespace dw4::engine {
+using namespace menu;
+
 namespace {
-
-bool query(Engine& engine, std::string_view category, std::optional<std::string_view> name, int index,
-           std::string_view command, std::optional<std::string_view> argument = std::nullopt) {
-    Packet packet;
-    if (argument) packet.strings.emplace_back(std::string(*argument));
-    engine.messenger().send(engine, category, name, index, command, packet);
-    return !packet.bools.empty() && packet.bools[0];
-}
-
-std::size_t send(Engine& engine, std::string_view category, std::optional<std::string_view> name, int index,
-                 std::string_view command) {
-    Packet packet;
-    return engine.messenger().send(engine, category, name, index, command, packet);
-}
-
-void text_command(Engine& engine, std::string_view command, std::initializer_list<std::string_view> strings) {
-    Packet packet;
-    for (auto s : strings) packet.strings.emplace_back(std::string(s));
-    engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, command, packet);
-}
-
-// 804EA468: per-player line names, "font" + player digit + two-digit index.
-std::string player_font(int player, int index) {
-    char buffer[16];
-    std::snprintf(buffer, sizeof buffer, "font%d%02d", player, index);
-    return buffer;
-}
-
-// TEXTORDER table 804E93DC (the entries LOADINTF2 uses). Each id names the
-// lines it clears first and a call number that txt_mem.lua / txt_Tar.lua turn
-// into TEXTCTL commands; the call number of player p is p * 10000 + base.
-enum class ClearSet { join, choice, message };
-struct TextOrderEntry {
-    int id;
-    int call;
-    ClearSet clears;
-};
-constexpr TextOrderEntry kTextOrder[] = {
-    {0x400, 160, ClearSet::join},    {0x401, 161, ClearSet::choice},  {0x511, 225, ClearSet::message},
-    {0x517, 232, ClearSet::message}, {0x519, 235, ClearSet::message}, {0x51B, 236, ClearSet::message},
-    {0x51C, 239, ClearSet::message}, {0x51D, 240, ClearSet::message}, {0x51F, 243, ClearSet::message},
-    {0x521, 246, ClearSet::message}, {0x522, 248, ClearSet::message}, {0x523, 250, ClearSet::message},
-    {0x524, 251, ClearSet::message}, {0x52F, 268, ClearSet::message}, {0x530, 270, ClearSet::message},
-};
-
-const TextOrderEntry* text_order_entry(int id) {
-    for (const auto& entry : kTextOrder)
-        if (entry.id == (id & 0xFFFF)) return &entry;
-    return nullptr;
-}
-
-void text_order_clear_lines(Engine& engine, const TextOrderEntry& entry, int player) {
-    auto clear = [&](std::string_view layer, int index) { text_command(engine, "SWITCH", {layer, player_font(player, index), "CLR"}); };
-    switch (entry.clears) {
-    case ClearSet::join: clear("CHRSELFONT01", 0); break;
-    case ClearSet::choice: clear("CHRSELFONT02", 0); clear("CHRSELFONT02", 1); break;
-    case ClearSet::message:
-        for (int i = 0; i < 4; ++i) clear("CHRSELFONT06", i);
-        for (int i = 0; i < 2; ++i) clear("CHRSELFONT16", i);
-        break;
-    }
-}
-
-// 80362614: clear the entry's lines, then run the text script for its call.
-void text_order_show(Engine& engine, int id) {
-    const auto* entry = text_order_entry(id);
-    if (!entry) {
-        engine.note("TEXTORDER id " + std::to_string(id & 0xFFFF));
-        return;
-    }
-    const int player = (id >> 16) & 0xF;
-    text_order_clear_lines(engine, *entry, player);
-    if (auto* sys = engine.get<GameSystem>()) sys->text_call = player * 10000 + entry->call;
-    engine.run_script((id & 0xF000) == 0 ? "txt_mem.lua" : "txt_Tar.lua");
-}
-
-// 803627F4: clear the entry's lines only.
-void text_order_clear(Engine& engine, int id) {
-    if (const auto* entry = text_order_entry(id)) text_order_clear_lines(engine, *entry, (id >> 16) & 0xF);
-}
-
-// 803622B4: set a literal on one player line (alignment, default colour, show).
-void text_set_literal(Engine& engine, std::string_view layer, int player, int index, std::string_view text) {
-    const auto font = player_font(player, index);
-    text_command(engine, "ALIGN", {layer, font, "CENTER"});
-    text_command(engine, "DEFAULTCOLOR", {layer, font});
-    text_command(engine, "TEXTSET", {layer, font, text});
-    text_command(engine, "SWITCH", {layer, font, "SET"});
-}
 
 struct PanelInput {
     bool up{}, down{}, left{}, right{};
@@ -165,6 +79,26 @@ void MessageWindow::clear() {
     pending_ = true;
 }
 
+void MessageWindow::cancel(Engine& engine, int player) {
+    prompt_ = false;
+    send(engine, "MODELCTRL", "j_chrselmesswin", player, "SQ_WAIT");
+    clear();
+}
+
+void MessageWindow::interrupt(int id) {
+    pending_ = interrupted_ = true;
+    interrupt_id_ = id;
+    interrupt_count_ = 0;
+}
+
+void MessageWindow::resume() {
+    interrupted_ = false;
+    if (!shown_) clear();
+    else if (!prompt_) show(id_);
+    else if (mode_ == 1) next(id_);
+    else question(id_, cursor_);
+}
+
 void MessageWindow::update(Engine& engine, int player) {
     if (!open_) return;
     auto seq = [&](const std::string& name) {
@@ -172,6 +106,15 @@ void MessageWindow::update(Engine& engine, int player) {
         send(engine, "MODELCTRL", "j_chrselmesswin", player, name);
     };
     auto in_seq = [&] { return query(engine, "MODELCTRL", "j_chrselmesswin", player, "ISSEQNAME", sequence_); };
+    if (interrupted_) {
+        // 80362B44: an interrupt message parks the prompt until resume().
+        if (interrupt_count_++ == 0) send(engine, "MODELCTRL", "j_chrselmesswin", player, "SQ_WAIT");
+        if (pending_) {
+            text_order_show(engine, interrupt_id_, true);
+            pending_ = false;
+        }
+        return;
+    }
     auto finish = [&] {
         clear();
         answered_ = true;
@@ -228,9 +171,11 @@ void MessageWindow::update(Engine& engine, int player) {
             for (int i = 0; i < 4; ++i) text_command(engine, "SWITCH", {"CHRSELFONT06", player_font(player, i), "CLR"});
             for (int i = 0; i < 2; ++i) text_command(engine, "SWITCH", {"CHRSELFONT16", player_font(player, i), "CLR"});
             clear_request_ = false;
+            shown_ = false;
             if (closing_) open_ = false;
         } else {
-            text_order_show(engine, id_);
+            shown_ = true;
+            text_order_show(engine, id_, true);
         }
         pending_ = false;
     }

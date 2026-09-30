@@ -209,6 +209,14 @@ void SaveUtilManager::update(Engine& engine) {
             ram.ready = true;
             continue;
         }
+        // The slots as McUtilCtrl reads them through GETDELIVER every frame.
+        for (int slot = 0; slot < int(ram.deliver.slots.size()); ++slot) {
+            auto& s = ram.deliver.slots[std::size_t(slot)];
+            s.state = inserted(engine, slot) ? 1 : 0;
+            s.free_bytes = kFreeBytes;
+            s.need_bytes = std::uint32_t(save::kFileSize);
+            s.enough = s.need_bytes <= s.free_bytes;
+        }
         if (ram.pending >= 0) run(engine, ram);
     }
 }

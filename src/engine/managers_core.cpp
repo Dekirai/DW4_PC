@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/save_menu.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -946,6 +947,8 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<Title2Manager>());
     engine.add_manager(std::make_unique<LoadCtrl2Manager>());
     engine.add_manager(std::make_unique<LoadIntf2Manager>());
+    engine.add_manager(std::make_unique<SaveCtrlManager>());
+    engine.add_manager(std::make_unique<SaveIntfManager>());
     engine.add_manager(std::make_unique<DatabaseManager>());
     engine.add_manager(std::make_unique<MatCtrlManager>());
     engine.add_manager(std::make_unique<GeneraterManager>());

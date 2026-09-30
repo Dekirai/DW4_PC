@@ -54,7 +54,12 @@ beSaveUtilInfo (`stagis12/separate/*_pack.igb`) holds beSvPlatDataGC: file
 `SaveData`, then two redundant 40960-byte copies of the game data at 0x2000
 and 0xC000 (a copy whose check fails is skipped).
 
-## Character record (80364AEC, big-endian, 3316 bytes; 12 per copy)
+## Character record (80364AEC, big-endian, 3316 bytes; 4 per copy)
+
+A copy is the checksum word, the version word 4 and the four save boxes, each
+an 8192-byte beNDMWDegiData buffer (80345CD8 allocates 0x2000 bytes; the read
+80363A64 and the write 803674C0 step by the buffer size), so box n starts at
+copy offset 8 + n * 0x2000 and only its first 3316 bytes are used.
 
 | Offset | Field |
 | --- | --- |
