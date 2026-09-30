@@ -1106,7 +1106,9 @@ bool PassiveManager::accepts(const ObjectView& info) const {
     return t.starts_with("be") || t == "ParticleInfo" || t == "igInfo" || t == "igAnimationDatabase";
 }
 void PassiveManager::add_info(Engine& engine, const ObjectView& info) {
-    engine.note("runtime for " + info.type());
+    // Build metadata (beOptInfo, e.g. "beCameraOPT.ini" with its dates) and
+    // the animation databases ACTION2 infos reference need no runtime.
+    if (const auto& t = info.type(); t != "beOptInfo" && t != "igAnimationDatabase") engine.note("runtime for " + t);
     make_rams(engine, this, info, rams_, "");
 }
 void PassiveManager::clear_stage(Engine&) { rams_.clear(); }
