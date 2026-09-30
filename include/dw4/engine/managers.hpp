@@ -37,6 +37,11 @@ struct ItemDevice {
 };
 // Drop table id (GameSystem::item_tables order) + record -> rolled equipment.
 ItemDevice roll_item_device(int table, int record, int level);
+// 803B07E0: the name color of a device by its value (grey for chips and the
+// placeholder records).
+Vec3f device_color(const ItemDevice& device);
+// The database table of a device kind: weapon, armor1, armor2, abChip.
+const char* device_table(const ItemDevice& device);
 // 802EDC54: a floating number (0 damage, 1 EXP, 2 heal, 3 player damage,
 // 4 bits) rising from a world position.
 void show_number(Engine& engine, int kind, int value, const Vec3f& position);
@@ -324,6 +329,7 @@ private:
     struct SelectRam : Ram {
         bool running{};
         int state{}, sub{}, counter{}, busy{};
+        int traced_state = -1, traced_sub = -1; // DW4_TRACE_SELECT
         int cursor{}, items = 1;
         bool vertical = true, cancel = true;
         Vec3f position{};
@@ -791,6 +797,7 @@ public:
     bool accepts(const ObjectView& info) const override { return info.type() == "beWeaponInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); labels_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     const std::vector<std::pair<std::string, std::string>>* labels(std::string_view weapon) const;
 
 private:
@@ -969,10 +976,18 @@ public:
         // UPDATA / DOWNDATA status buffs: 0 SUBAYASA, 1 CHIMEIRITSU, 2 MAHITEIKOU,
         // 3 KAIHIRITSU, 4 TSUYOSA, 5 MAMORI, 6 MHP (up) / DELAY (down), 7.. resists.
         std::array<int, 11> updata{}, downdata{};
-        // Equipment: POWERSOCKET (up to 3 weapons, [0] in use) with POWERPOCKET
-        // chips, MAINSLOT (armor1) with MAINPOCKET chips, SUBSLOT (armor2).
-        std::vector<ItemDevice> power_socket, power_pocket, main_pocket;
-        std::optional<ItemDevice> main_slot, sub_slot;
+        // Equipment lists hold DEVICEFOLDER indices (-1 empty) like the
+        // original pointer lists: POWERSOCKET 3 weapons ([0] in use) with the
+        // POWERPOCKET 5 chips of that weapon, MAINSLOT 1 armor1 with its
+        // MAINPOCKET 5 chips, SUBSLOT 1 armor2. Equipped devices carry flag.
+        std::vector<int> power_socket = std::vector<int>(3, -1), power_pocket = std::vector<int>(5, -1);
+        std::vector<int> main_slot = std::vector<int>(1, -1), main_pocket = std::vector<int>(5, -1);
+        std::vector<int> sub_slot = std::vector<int>(1, -1);
+        const ItemDevice* device(int index) const {
+            return index >= 0 && index < int(devices.size()) ? &devices[std::size_t(index)] : nullptr;
+        }
+        // Drops DEVICEFOLDER entry index and renumbers the equipment lists.
+        void remove_device(int index);
         std::vector<int> wazalist;     // WAZALIST: pcTech rows
         std::map<int, std::uint8_t> base_isuse; // BASE_ISUSE: species reached by this player
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)

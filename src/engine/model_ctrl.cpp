@@ -1292,6 +1292,23 @@ void WeaponManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+// 80318474 GENERATE: the weapon row of player index gives the player model
+// its sequence labels (SETLABEL). Attaching the weapon geometry to the
+// player's appearance is not reconstructed yet.
+bool WeaponManager::command(Engine& engine, Ram& ram, std::string_view command, Packet&) {
+    if (command != "GENERATE") return command == "REMOVE";
+    auto* sys = engine.get<GameSystem>();
+    const auto* rows = labels(ram.info_name);
+    if (!sys || !rows) return true;
+    const auto& digimon = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].digimon;
+    for (const auto& [sequence, label] : *rows) {
+        Packet p;
+        p.strings = {sequence, label};
+        engine.messenger().send(engine, "MODELCTRL", digimon, ram.index, "SETLABEL", p);
+    }
+    return true;
+}
+
 const std::vector<std::pair<std::string, std::string>>* WeaponManager::labels(std::string_view weapon) const {
     const auto found = labels_.find(weapon);
     return found != labels_.end() ? &found->second : nullptr;

@@ -31,11 +31,15 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   hit effects, and item drops from the generator tables (bits picked up on
   contact, disks, key items and rolled equipment picked up with A, floating
   item names).
+- Quick panels (L disks, R techniques, Z status, Y emergency heal), MP
+  techniques with magic damage, and the START status window with its
+  equipment page: weapon socket (reorder, chip pockets), armor and sub slots,
+  the device folder list with pages, level/skill checks and stat previews.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips), text from the original fonts and the HUD layers.
 
-Not yet reconstructed: magic and MP techniques, the status and item menus,
-homing enemy bullets, particles and shadows, audio and movies, name entry,
+Not yet reconstructed: the folder and skill pages of the status window, shops
+and the Digi-Lab, status effects, evolution, homing enemy bullets, particles and shadows, audio and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
@@ -88,6 +92,10 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
 `frame BUTTON [duration]`), `--screenshot FILE.bmp`, `--screenshot-frames
 N,M`, `--flag N=V`.
+Test-run environment variables: `DW4_GOD` keeps players alive,
+`DW4_DEVICES=type:record:rank:value,...` adds devices to a new player's folder,
+`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
+log menu cursors, text, player state and hits.
 
 ### Controls
 

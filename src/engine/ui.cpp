@@ -257,8 +257,10 @@ void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string
         }
         const Glyph& g = found->second;
         if (g.width > 0 && g.height > 0) {
+            // 80116A1C: the glyph stands on the pen (bottom y + y_offset, top
+            // one height above); the pen starts at the font's +16 (0).
             const float x0 = x + g.x_offset, x1 = x0 + g.width;
-            const float y1 = y - g.y_offset, y0 = y1 - g.height;
+            const float y0 = y + g.y_offset, y1 = y0 + g.height;
             const auto base = std::uint32_t(geometry->positions.size());
             geometry->positions.push_back({x0, y1, 0});
             geometry->positions.push_back({x1, y1, 0});
@@ -424,7 +426,23 @@ bool SelectCtrlManager::command(Engine& engine, Ram& base, std::string_view comm
         ram.sub = ram.counter = ram.busy = 0;
         return true;
     }
-    if (command == "FO2TOP") { packet.bools.push_back(0); return true; }
+    if (command == "FO2TOP") {
+        // A new page: an idle cursor returns to the top with the new count
+        // and enables (state 10 plays SQ_FO2TOP).
+        if (ram.state != 1 || ram.sub) {
+            packet.bools.push_back(0);
+            return true;
+        }
+        ram.cursor = 0;
+        if (!packet.ints.empty()) {
+            ram.items = packet.ints[0];
+            if (int(packet.bools.size()) == ram.items) ram.enabled = packet.bools;
+        }
+        ram.state = 10;
+        ram.sub = ram.counter = ram.busy = 0;
+        packet.bools.push_back(1);
+        return true;
+    }
     if (command == "ISFO2TOP") { packet.bools.push_back(ram.state != 1 || ram.sub ? 1 : 0); return true; }
     return false;
 }
@@ -442,12 +460,21 @@ void SelectCtrlManager::update(Engine& engine) {
         return !p.bools.empty() && p.bools[0];
     };
     char buffer[32];
+    static const bool trace = std::getenv("DW4_TRACE_SELECT") != nullptr;
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.running) continue;
+        if (trace && (ram.state != ram.traced_state || ram.sub != ram.traced_sub)) {
+            engine.log("select " + ram.info_name + " state " + std::to_string(ram.state) + "/" + std::to_string(ram.sub) +
+                       " frame " + std::to_string(engine.frame()));
+            ram.traced_state = ram.state;
+            ram.traced_sub = ram.sub;
+        }
         const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
-        const std::uint32_t sticks = pad.left_directions.repeat;
-        const std::uint32_t dpad = pad.buttons.repeat & 0xF0u;
+        // 803132C0: held stick / d-pad directions move the cursor once the
+        // previous line sequence has ended.
+        const std::uint32_t sticks = pad.left_directions.held;
+        const std::uint32_t dpad = pad.buttons.held & 0xF0u;
         const std::uint32_t trigger = pad.buttons.trigger;
         if (ram.state == 0) {
             if (ram.sub == 0) {
@@ -531,6 +558,14 @@ void SelectCtrlManager::update(Engine& engine) {
             } else if (ram.sub == 2) {
                 if (ram.counter >= 16) ram.sub = ram.counter = ram.busy = 0;
                 else ++ram.counter;
+            }
+        } else if (ram.state == 10) {
+            if (ram.sub == 0) {
+                seq(ram, "SQ_FO2TOP");
+                ram.sub = 1;
+            } else if (!is_seq(ram, "SQ_FO2TOP")) {
+                ram.state = 1;
+                ram.sub = ram.counter = ram.busy = 0;
             }
         } else if (ram.state == 2) {
             if (ram.sub == 0) {

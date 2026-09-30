@@ -27,17 +27,8 @@ int roll_value(int level) {
 
 // 803B07E0: name colour by value; disks, chips and the "none" records stay grey.
 Vec3f name_color(int table, const ItemDevice& device) {
-    const Vec3f grey{0.9f, 0.9f, 0.9f};
-    if (table < 3 || device.type >= 3) return grey;
-    if ((device.type == 0 && device.record == 0x114) || (device.type == 1 && device.record == 0x1F) ||
-        (device.type == 2 && device.record == 0x2C))
-        return grey;
-    if (device.value >= 1000) return {1.0f, 0.0f, 0.9f};
-    if (device.value >= 501) return {1.0f, 0.6f, 0.1f};
-    if (device.value >= 101) return {0.9f, 0.8f, 0.1f};
-    if (device.value >= 31) return {0.4f, 1.0f, 0.6f};
-    if (device.value >= 1) return {0.1f, 0.9f, 1.0f};
-    return grey;
+    if (table < 3) return {0.9f, 0.9f, 0.9f};
+    return device_color(device);
 }
 
 Packet text_packet(int slot, std::string argument = {}) {
@@ -49,6 +40,35 @@ Packet text_packet(int slot, std::string argument = {}) {
     return packet;
 }
 } // namespace
+
+Vec3f device_color(const ItemDevice& device) {
+    const Vec3f grey{0.9f, 0.9f, 0.9f};
+    if (device.type >= 3) return grey;
+    if ((device.type == 0 && device.record == 276) || (device.type == 1 && device.record == 31) ||
+        (device.type == 2 && device.record == 44))
+        return grey;
+    if (device.value >= 1000) return {1.0f, 0.0f, 0.9f};
+    if (device.value >= 501) return {1.0f, 0.6f, 0.1f};
+    if (device.value >= 101) return {0.9f, 0.8f, 0.1f};
+    if (device.value >= 31) return {0.4f, 1.0f, 0.6f};
+    if (device.value >= 1) return {0.1f, 0.9f, 1.0f};
+    return grey;
+}
+
+const char* device_table(const ItemDevice& device) {
+    static const char* tables[4] = {"weapon", "armor1", "armor2", "abChip"};
+    return tables[std::clamp(device.type, 0, 3)];
+}
+
+void GameSystem::PlayerSlot::remove_device(int index) {
+    if (index < 0 || index >= int(devices.size())) return;
+    devices.erase(devices.begin() + index);
+    for (auto* list : {&power_socket, &power_pocket, &main_slot, &main_pocket, &sub_slot})
+        for (int& entry : *list) {
+            if (entry == index) entry = -1;
+            else if (entry > index) --entry;
+        }
+}
 
 // Drop GENERATE (803AAE8C): weapons and armor1 roll rank and value, armor2 a
 // value only, ability chips nothing; the level is player 1's LEVEL.
@@ -251,7 +271,7 @@ int GameSystem::control_item(std::string_view folder, std::string_view command, 
         if (command == "CLR") {
             const auto found = std::find_if(devices.begin(), devices.end(), [&](const ItemDevice& d) { return match(d) && !d.flag; });
             if (found == devices.end()) return 0;
-            devices.erase(found);
+            slot.remove_device(int(found - devices.begin()));
             return 1;
         }
         if (command == "IS") return std::any_of(devices.begin(), devices.end(), match) ? 1 : 0;

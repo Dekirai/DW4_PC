@@ -1,6 +1,8 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <random>
 
 namespace dw4::engine {
@@ -310,14 +312,29 @@ void GameSystem::create_player(Engine& engine, int slot) {
     player.base_isuse[stats.species] = 1;
     // 8036E124 / 8036E3B8: the three initial weapons fill DEVICEFOLDER and the socket.
     player.devices.clear();
-    player.power_socket.clear();
+    player.power_socket.assign(3, -1);
+    player.power_pocket.assign(5, -1);
+    player.main_slot.assign(1, -1);
+    player.main_pocket.assign(5, -1);
+    player.sub_slot.assign(1, -1);
     static const char* initial[] = {"INI_WEAPON1", "INI_WEAPON2", "INI_WEAPON3"};
-    for (const char* column : initial) {
+    for (int i = 0; i < 3; ++i) {
         ItemDevice weapon;
-        weapon.record = db->number("shinka", stats.species, column).value_or(0);
+        weapon.record = db->number("shinka", stats.species, initial[i]).value_or(0);
         weapon.flag = true;
+        player.power_socket[std::size_t(i)] = int(player.devices.size());
         player.devices.push_back(weapon);
-        player.power_socket.push_back(weapon);
+    }
+    // DW4_DEVICES=type:record:rank:value,...: test runs start with more devices.
+    if (const char* extra = std::getenv("DW4_DEVICES")) {
+        for (const char* at = extra; *at;) {
+            ItemDevice device;
+            if (std::sscanf(at, "%d:%d:%d:%d", &device.type, &device.record, &device.rank, &device.value) == 4 &&
+                player.devices.size() < 36)
+                player.devices.push_back(device);
+            while (*at && *at != ',') ++at;
+            if (*at == ',') ++at;
+        }
     }
     player.hp = 0; // RECALCPLAYER refills HP and MP from 0
     recalc_player(engine, slot);
@@ -336,22 +353,29 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     auto column = [&](const ItemDevice& d, std::string_view c) { return cell(device_tables[std::clamp(d.type, 0, 3)], d.record, c); };
     // 8036F484 socket weapon (+ value), 8036F534 weapon chips, 8036F5DC armor1
     // (+ value), 8036F68C armor chips, 8036F734 armor2 (+ value on its main stat).
+    const ItemDevice* weapon = player.device(player.power_socket[0]);
+    const ItemDevice* armor1 = player.device(player.main_slot[0]);
+    const ItemDevice* armor2 = player.device(player.sub_slot[0]);
     auto socket = [&](int& v, const char* c, bool value) {
-        if (player.power_socket.empty()) return;
-        v += column(player.power_socket[0], c);
-        if (value) v += player.power_socket[0].value;
+        if (!weapon) return;
+        v += column(*weapon, c);
+        if (value) v += weapon->value;
     };
-    auto power_pocket = [&](int& v, const char* c) { for (const auto& d : player.power_pocket) v += column(d, c); };
+    auto chips = [&](int& v, const char* c, const std::vector<int>& list) {
+        for (const int index : list)
+            if (const auto* d = player.device(index)) v += column(*d, c);
+    };
+    auto power_pocket = [&](int& v, const char* c) { chips(v, c, player.power_pocket); };
     auto main_slot = [&](int& v, const char* c, bool value) {
-        if (!player.main_slot) return;
-        v += column(*player.main_slot, c);
-        if (value) v += player.main_slot->value;
+        if (!armor1) return;
+        v += column(*armor1, c);
+        if (value) v += armor1->value;
     };
-    auto main_pocket = [&](int& v, const char* c) { for (const auto& d : player.main_pocket) v += column(d, c); };
+    auto main_pocket = [&](int& v, const char* c) { chips(v, c, player.main_pocket); };
     auto sub_slot = [&](int& v, const char* c, bool value) {
-        if (!player.sub_slot) return;
-        v += column(*player.sub_slot, c);
-        if (value && db->text("armor2", player.sub_slot->record, "SHUSEINOURYOKU") == c) v += player.sub_slot->value;
+        if (!armor2) return;
+        v += column(*armor2, c);
+        if (value && db->text("armor2", armor2->record, "SHUSEINOURYOKU") == c) v += armor2->value;
     };
     const auto& up = player.upcnt;
     const auto& buff = player.updata;
@@ -448,8 +472,10 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     sub_slot(stats.luck_rate, "LUCKRITSU", false);
     stats.attack_zokusei = -1;
     static const char* elements[] = {"fire", "ice", "thunder", "dark"};
-    for (const auto& chip : player.power_pocket) {
-        const auto element = db->text("abChip", chip.record, "ZOKUSEI");
+    for (const int index : player.power_pocket) {
+        const auto* chip = player.device(index);
+        if (!chip) continue;
+        const auto element = db->text("abChip", chip->record, "ZOKUSEI");
         for (int e = 0; e < 4 && stats.attack_zokusei < 0; ++e)
             if (element == elements[e]) stats.attack_zokusei = e;
         if (stats.attack_zokusei >= 0) break;
@@ -458,11 +484,11 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     power_pocket(stats.hp_drain, "HPDRAIN");
     power_pocket(stats.mp_drain, "MPDRAIN");
     // WEAPONRECNO / WEAPONSKILLNO and POWERSOCKETNAME (the models boot.lua loads).
-    stats.weapon_record = player.power_socket.empty() ? 0 : player.power_socket[0].record;
-    stats.weapon_skill_no = player.power_socket.empty() ? 0 : cell("weapon", stats.weapon_record, "SKILL");
+    stats.weapon_record = weapon ? weapon->record : 0;
+    stats.weapon_skill_no = weapon ? cell("weapon", stats.weapon_record, "SKILL") : 0;
     player.weapons = {};
     for (std::size_t i = 0; i < player.power_socket.size() && i < 3; ++i)
-        player.weapons[i] = db->text("weapon", player.power_socket[i].record, "MODEL");
+        if (const auto* d = player.device(player.power_socket[i])) player.weapons[i] = db->text("weapon", d->record, "MODEL");
     stats.weapon_model = player.weapons[0];
 }
 
