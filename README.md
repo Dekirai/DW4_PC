@@ -34,12 +34,18 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
 - Quick panels (L disks, R techniques, Z status, Y emergency heal), MP
   techniques with magic damage, and the START status window with its
   equipment page: weapon socket (reorder, chip pockets), armor and sub slots,
-  the device folder list with pages, level/skill checks and stat previews.
+  the device folder list with pages, level/skill checks and stat previews;
+  the folder page (discard, sort, give devices, disks and bits) and the skill
+  page (forms, weapon skills, techniques).
+- Lobby programs: weapon, armor and chip shops with their level-based stock
+  and stat previews, the disk shop, selling, the junk shop with bit
+  donations, the bank (devices and bits), the X data keeper (stats and chip
+  upgrades) and the appraiser for unknown devices.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips), text from the original fonts and the HUD layers.
 
-Not yet reconstructed: the folder and skill pages of the status window, shops
-and the Digi-Lab, status effects, evolution, homing enemy bullets, particles and shadows, audio and movies, name entry,
+Not yet reconstructed: the Digi-Lab and the card program, status effects,
+evolution, homing enemy bullets, particles and shadows, audio and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
@@ -94,7 +100,7 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
-`DW4_BITS=n` fill a new player's folders,
+`DW4_BITS=n` and `DW4_XDATA=n` fill a new player's folders,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 
