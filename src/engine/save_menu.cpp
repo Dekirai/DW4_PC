@@ -383,9 +383,41 @@ bool RecordWindow::update(Engine& engine, CommonModelControl& models, int player
     const bool used = rec && rec->used;
     const auto& row = kPartnerRows[used ? partner_row(rec->digimon) : 0];
     const std::string face = check_ ? "j_savecheckwin" : "j_digifacewin";
+    // 803531FC: clear the window's lines.
+    auto clear_values = [&] {
+        if (check_) {
+            text_line_clear(engine, "CHRSELFONT03", player, 10);
+            text_line_clear(engine, "CHRSELFONT04", player, 11);
+            text_line_clear(engine, "CHRSELFONT04", player, 1);
+            for (const int line : {2, 12, 3, 13}) text_line_clear(engine, "CHRSELFONT05", player, line);
+            text_order_clear(engine, (player << 16) | 0x110);
+        } else {
+            text_line_clear(engine, "CHRSELFONT03", player, 0);
+            text_line_clear(engine, "CHRSELFONT04", player, 0);
+            text_line_clear(engine, "CHRSELFONT04", player, 10);
+            for (const int line : {0, 10, 1, 11}) text_line_clear(engine, "CHRSELFONT05", player, line);
+            text_order_clear(engine, (player << 16) | 0x10);
+        }
+    };
+    // 80352A38: player name, Digimon name, level, HP and MP.
+    auto fill_values = [&] {
+        if (!used) {
+            text_order_show(engine, (player << 16) | (check_ ? 0x110 : 0x10)); // NO DATA
+            return;
+        }
+        std::string species;
+        if (auto* db = engine.get<DatabaseManager>()) species = db->text("shinka", partner_row(rec->digimon), "NAME");
+        const int base = check_ ? 10 : 0;
+        text_set_string(engine, "CHRSELFONT03", player, base, rec->name, 0, false);
+        text_set_text(engine, "CHRSELFONT04", player, check_ ? 11 : 10, species, 0, false);
+        const int lines[5][2] = {{4, check_ ? 1 : 0}, {5, check_ ? 2 : 0}, {5, check_ ? 12 : 10}, {5, check_ ? 3 : 1},
+                                 {5, check_ ? 13 : 11}};
+        const std::int32_t values[5] = {rec->level, rec->hp, rec->max_hp, rec->mp, rec->max_mp};
+        for (int i = 0; i < 5; ++i)
+            text_set_text(engine, lines[i][0] == 4 ? "CHRSELFONT04" : "CHRSELFONT05", player, lines[i][1],
+                          std::to_string(values[i]), i == 0 ? 1 : 2, false);
+    };
     auto finish = [&] {
-        // 80352A38 fills the name, level and status numbers; the text is not
-        // reconstructed yet.
         done_ = true;
         phase_ = 0;
         step_ = 0;
@@ -396,11 +428,14 @@ bool RecordWindow::update(Engine& engine, CommonModelControl& models, int player
             if (!check_) models.open_at(engine, player, "j_mainstatuswin", used ? "SQ_OPEN" : "SQ_NOOPEN", position, true);
             step_ = 1;
         } else if (models.sequences_done()) {
+            fill_values();
             finish();
         }
     } else if (phase_ == 3) {
         models.set(engine, player, face, used ? row.change : "SQ_noface", false);
         if (!check_) models.set(engine, player, "j_mainstatuswin", used ? "SQ_WAIT" : "SQ_NOWAIT", false);
+        clear_values();
+        fill_values();
         finish();
     } else if (phase_ == 2) {
         if (step_ == 0) {
@@ -409,6 +444,7 @@ bool RecordWindow::update(Engine& engine, CommonModelControl& models, int player
                 const char* seq = !used ? "SQ_NOCLOSE" : style_ == 1 ? "SQ_LINEON00" : style_ == 2 ? "SQ_CANCEL" : "SQ_CLOSE";
                 models.close(engine, player, "j_mainstatuswin", seq, true);
             }
+            clear_values();
             step_ = 1;
         } else if (models.closes_done()) {
             finish();

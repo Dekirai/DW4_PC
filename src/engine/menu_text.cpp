@@ -8,7 +8,7 @@ namespace {
 
 // Line sets a TEXTORDER entry clears first (the 804E8xxx tables, one per
 // player; the player index is the id's high half).
-enum class ClearSet { join, choice, difficulty, message, choice_lines, slots, slot_label, slot_warning, box };
+enum class ClearSet { join, choice, difficulty, message, choice_lines, slots, slot_label, slot_warning, box, status, status_check };
 
 struct TextOrderEntry {
     int id;         // low 16 bits of the message id
@@ -19,6 +19,7 @@ struct TextOrderEntry {
 
 // TEXTORDER 804E93DC, the entries the menus use.
 constexpr TextOrderEntry kTextOrder[] = {
+    {0x10, 116, ClearSet::status, false},        {0x110, 136, ClearSet::status_check, false},
     {0x300, 150, ClearSet::box, false},          {0x301, 151, ClearSet::box, false},
     {0x302, 152, ClearSet::box, false},          {0x303, 153, ClearSet::box, false},
     {0x400, 160, ClearSet::join, false},         {0x401, 161, ClearSet::choice, false},
@@ -90,6 +91,8 @@ void clear_lines(Engine& engine, const TextOrderEntry& entry, int player) {
     case ClearSet::slot_label: clear("CHRSELFONT07", 10); break;
     case ClearSet::slot_warning: clear("CHRSELFONT07", 11); break;
     case ClearSet::box: clear("CHRSELFONT08", entry.id & 3); break;
+    case ClearSet::status: clear("CHRSELFONT09", 1); break;
+    case ClearSet::status_check: clear("CHRSELFONT09", 0); break;
     }
 }
 
@@ -152,6 +155,15 @@ void text_set_literal(Engine& engine, std::string_view layer, int player, int in
     text_command(engine, "DEFAULTCOLOR", {layer, font});
     text_command(engine, "TEXTSET", {layer, font, text});
     text_command(engine, "SWITCH", {layer, font, "SET"});
+}
+
+void text_set_text(Engine& engine, std::string_view layer, int player, int index, std::string_view text, int align,
+                   bool cancel_color) {
+    const auto font = player_font(player, index);
+    text_command(engine, "ALIGN", {layer, font, align == 1 ? "CENTER" : align == 2 ? "RIGHT" : "LEFT"});
+    text_command(engine, "TEXTSET", {layer, font, text});
+    text_command(engine, "SWITCH", {layer, font, "SET"});
+    text_command(engine, cancel_color ? "CANCELCOLOR" : "DEFAULTCOLOR", {layer, font});
 }
 
 void text_set_string(Engine& engine, std::string_view layer, int player, int index, const std::u16string& text,

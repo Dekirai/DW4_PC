@@ -29,6 +29,10 @@ void text_order_clear(Engine& engine, int id);
 void text_line_clear(Engine& engine, std::string_view layer, int player, int index);
 // 803622B4: a literal on one player line (centred, default colour, shown).
 void text_set_literal(Engine& engine, std::string_view layer, int player, int index, std::string_view text);
+// 80362598: a game-text (Shift-JIS) literal on one player line with the
+// alignment and colour of text_set_string.
+void text_set_text(Engine& engine, std::string_view layer, int player, int index, std::string_view text, int align,
+                   bool cancel_color);
 // 803628AC: a UTF-16 string on one player line; align 0 left, 1 centre,
 // 2 right; the cancel colour greys it.
 void text_set_string(Engine& engine, std::string_view layer, int player, int index, const std::u16string& text,
