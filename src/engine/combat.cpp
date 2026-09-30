@@ -78,14 +78,14 @@ const char* bullet_name(int kind) {
 }
 
 // P2EISHITCHECK (80372A44): magic (kind group 4) always hits; otherwise
-// MEICHURITSU * (skill*20 + 6000 + SUBAYASA*30) / (enemy SUBAYASA * (100-down) / 100)
-// is compared with a random value below 10000.
-bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int speed_down) {
+// MEICHURITSU * (skill*20 + 6000 + SUBAYASA*30) / (enemy SUBAYASA * (100 - its
+// KAIHIRITSU down) / 100) is compared with a random value below 10000.
+bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down) {
     if (kind / 10000 == 4) return true;
     auto* db = engine.get<DatabaseManager>();
     const int enemy_speed = db ? db->number("enemy", enemy_record, "SUBAYASA").value_or(1) : 1;
     const int skill = stats.skill[std::size_t(std::clamp(stats.weapon_skill_no, 0, 8))];
-    const int divisor = enemy_speed * (100 - speed_down) / 100;
+    const int divisor = enemy_speed * (100 - evade_down) / 100;
     const std::uint32_t roll = random() % 10000u;
     if (divisor == 0) return true;
     const int value = stats.meichuritsu * (skill * 20 + 6000 + stats.subayasa * 30) / divisor;
@@ -201,7 +201,8 @@ bool enemy_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record
     return value > int(random() % 100u);
 }
 
-FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind) {
+FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind,
+                         int strength_down, int critical_down) {
     FightResult result;
     const int attack = kind % 10000;
     const int type = database(engine, "eneatk", attack, "TYPE");
@@ -211,15 +212,15 @@ FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max
     result.attribute = attribute;
     int damage = 0;
     if (type == 0) {
-        // Physical: enemy TSUYOSA * attack power / player MAMORI.
-        const int strength = database(engine, "enemy", enemy_record, "TSUYOSA");
+        // Physical: enemy TSUYOSA (less its down value) * attack power / player MAMORI.
+        const int strength = database(engine, "enemy", enemy_record, "TSUYOSA") - strength_down;
         damage = stats.mamori != 0 ? std::clamp(strength * power / stats.mamori, 0, 99999) : 0;
         if (resist != 0 && !(resist / 5 > int(random() % 1000u))) {
             if (resist <= 1000) damage += damage * ((1000 - resist) / 20 + 50) / 100;
             else if (resist <= 5000) damage += damage * ((5000 - resist) / 80) / 100;
         }
         if (damage != 0) {
-            const int enemy_critical = database(engine, "enemy", enemy_record, "CHIMEIRITSU");
+            const int enemy_critical = database(engine, "enemy", enemy_record, "CHIMEIRITSU") - critical_down;
             const int attack_critical = database(engine, "eneatk", attack, "CHIMEIRITSU");
             if (!((100 - enemy_critical) * (100 - attack_critical) > int(random() % 10000u)))
                 damage += damage * (attack_critical / 2 + 90) / 100;
@@ -291,6 +292,236 @@ int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int
         if (group == 2 || group == 3) return rank + 1;
     }
     return rank;
+}
+
+// --- Status effect times (FIGHTCALC cases 7..12 E2P*, 14..19 P2E*) ---
+// Times are frames (SETPOISON turns its time into 2 second ticks). A result
+// of 0 means no attempt; an attempt that fails answers -1 (P2ESTUNTIME
+// answers 0 either way).
+namespace {
+bool attack_effect(Engine& engine, int attack, std::string_view effect) {
+    auto* db = engine.get<DatabaseManager>();
+    return db && db->text("eneatk", attack, "KOUKA") == effect;
+}
+
+// E2P chance factor: 3 * enemy KASHIKOSA / SEISHIN + 100 - SEISHIN / 40.
+int enemy_status_factor(Engine& engine, const GameSystem::Stats& stats, int enemy_record) {
+    const int wisdom = database(engine, "enemy", enemy_record, "KASHIKOSA");
+    const int spirit = std::max(stats.seishin, 1);
+    return 3 * wisdom / spirit + 100 - spirit / 40;
+}
+
+int attempted(int time) { return time != 0 ? time : -1; }
+
+// P2E sleep / bind / down chance per mille: skill tiers over enemy SEISHIN.
+int technique_status_chance(Engine& engine, int skill, int enemy_record) {
+    const int spirit = std::max(database(engine, "enemy", enemy_record, "SEISHIN"), 1);
+    if (skill <= 1000) return 100 * (skill / 4 + 550) / spirit;
+    if (skill <= 2000) return 100 * ((skill - 1000) / 5 + 800) / spirit;
+    return 100 * ((skill - 2000) / 10 + 1000) / spirit;
+}
+
+struct TechniqueUse {
+    int row{}, skill{};
+};
+TechniqueUse technique_use(Engine& engine, const GameSystem::PlayerSlot& player, int kind) {
+    TechniqueUse use;
+    use.row = technique_row(player, kind);
+    const int skill_type = std::clamp(database(engine, "pcTech", use.row, "SKILL"), 0, 8);
+    use.skill = player.stats.skill[std::size_t(skill_type)];
+    return use;
+}
+
+// P2ESLEEPTIME / P2EBINDTIME and the TIME of both downs.
+int technique_status_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind) {
+    const auto use = technique_use(engine, player, kind);
+    int time = 0;
+    if (technique_status_chance(engine, use.skill, enemy_record) > int(random() % 1000u))
+        time = player.stats.kashikosa / 2 + database(engine, "pcTech", use.row, "TIME");
+    return attempted(time);
+}
+
+// P2E down value: the technique's (negative) value less skill / 20, at most
+// 80 percent of the enemy's value, answered as a positive amount.
+int technique_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, const char* column) {
+    const auto use = technique_use(engine, player, kind);
+    const int floor = -database(engine, "enemy", enemy_record, column) * 80 / 100;
+    const int value = std::max(database(engine, "pcTech", use.row, column) - use.skill / 20, floor);
+    return -value;
+}
+} // namespace
+
+// E2PSTUNTIME (80375E28): magic attacks stun by their MAHIRITSU, physical
+// ones by the enemy's MAHIRITSU (less its down value) on a medium or large
+// hit, proportional ones on any such hit; plus the damage share of maximum HP
+// and the player's MAHITEIKOU.
+int enemy_stun_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, int damage, int rank,
+                    int mahiritsu_down) {
+    const int attack = kind % 10000;
+    int from_attack = 0, from_enemy = 0;
+    bool attempt = false;
+    switch (database(engine, "eneatk", attack, "TYPE")) {
+    case 0:
+        if (rank >= 1 && rank < 3) {
+            from_enemy = database(engine, "enemy", enemy_record, "MAHIRITSU") - mahiritsu_down;
+            attempt = true;
+        }
+        break;
+    case 1:
+        from_attack = database(engine, "eneatk", attack, "MAHIRITSU");
+        attempt = from_attack > 0;
+        break;
+    case 2: attempt = rank >= 1 && rank < 3; break;
+    default: break;
+    }
+    if (!attempt) return 0;
+    const int value = 50 * damage / std::max(player.max_hp, 1) + from_attack + from_enemy + player.stats.mahiteikou;
+    int time = 0;
+    if ((value + 100) / 2 > int(random() % 100u)) time = (value + 30) / 4;
+    return attempted(time);
+}
+
+// E2PPOISONTIME (8037606C): "doku" attacks; TIME, DAMAGE (share of maximum
+// HP) and GEDOKU.
+int enemy_poison(Engine& engine, const GameSystem::PlayerSlot& player, int kind, std::string_view what) {
+    const int attack = kind % 10000;
+    if (what == "TIME") {
+        if (!attack_effect(engine, attack, "doku")) return 0;
+        const int rank = database(engine, "eneatk", attack, "KOUKARANK");
+        int time = 0;
+        if (15 * rank + player.stats.dokuteikou + 30 > int(random() % 100u))
+            time = player.stats.dokuteikou / 2 + database(engine, "eneatk", attack, "KOUKATIME");
+        return attempted(time);
+    }
+    if (what == "DAMAGE") return player.max_hp * database(engine, "eneatk", attack, "KOUKARANK") / 100;
+    if (what == "GEDOKU") return database(engine, "eneatk", attack, "GEDOKU");
+    return 0;
+}
+
+// E2PSLEEPTIME (803762A4): "sleep" attacks.
+int enemy_sleep_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind) {
+    const int attack = kind % 10000;
+    if (!attack_effect(engine, attack, "sleep")) return 0;
+    const int rank = database(engine, "eneatk", attack, "KOUKARANK");
+    const int factor = enemy_status_factor(engine, stats, enemy_record);
+    int time = 0;
+    if (5 * rank * factor > int(random() % 10000u)) time = database(engine, "eneatk", attack, "KOUKATIME") * factor / 100;
+    return attempted(time);
+}
+
+// E2PBINDTIME (8037643C): "ashidome" attacks; proportional ones always bind.
+int enemy_bind_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind) {
+    const int attack = kind % 10000;
+    if (!attack_effect(engine, attack, "ashidome")) return 0;
+    const int rank = database(engine, "eneatk", attack, "KOUKARANK");
+    const int type = database(engine, "eneatk", attack, "TYPE");
+    int time = 0;
+    if (type == 2) {
+        time = database(engine, "eneatk", attack, "KOUKATIME");
+    } else {
+        const int factor = enemy_status_factor(engine, stats, enemy_record);
+        if (5 * rank * factor > int(random() % 10000u)) time = database(engine, "eneatk", attack, "KOUKATIME") * factor / 100;
+    }
+    return attempted(time);
+}
+
+namespace {
+// E2PATKDWNTIME / E2PPOWDWNTIME: TIME for the effect; a value clears its
+// DOWNDATA entry, recalculates the player and answers a percentage of the
+// stat (KOUKARANK + 150 * enemy KASHIKOSA / SEISHIN / 100 - SEISHIN / 80,
+// within 20..80).
+int enemy_down(Engine& engine, int slot, int enemy_record, int kind, std::string_view what, const char* effect,
+               std::initializer_list<std::pair<const char*, int>> values) {
+    auto* sys = engine.get<GameSystem>();
+    if (!sys) return 0;
+    auto& player = sys->players[std::size_t(std::clamp(slot, 0, 3))];
+    const int attack = kind % 10000;
+    if (what == "TIME") {
+        if (!attack_effect(engine, attack, effect)) return 0;
+        const int rank = database(engine, "eneatk", attack, "KOUKARANK");
+        const int factor = enemy_status_factor(engine, player.stats, enemy_record);
+        int time = 0;
+        if (160 * rank / 100 * factor > int(random() % 10000u))
+            time = database(engine, "eneatk", attack, "KOUKATIME") * factor / 100;
+        return attempted(time);
+    }
+    for (const auto& [name, index] : values) {
+        if (what != name) continue;
+        player.downdata[std::size_t(index)] = 0;
+        sys->recalc_player(engine, slot);
+        const int rank = database(engine, "eneatk", attack, "KOUKARANK");
+        const int wisdom = database(engine, "enemy", enemy_record, "KASHIKOSA");
+        const int spirit = std::max(player.stats.seishin, 1);
+        const int percent = std::clamp(rank + 150 * wisdom / spirit / 100 - spirit / 80, 20, 80);
+        int stat = 0;
+        if (what == "SUBAYASA") stat = player.stats.subayasa;
+        else if (what == "MEICHURITSU") stat = player.stats.meichuritsu;
+        else if (what == "TSUYOSA") stat = player.stats.tsuyosa;
+        else if (what == "MAMORI") stat = player.stats.mamori;
+        return stat * percent / 100;
+    }
+    return 0;
+}
+} // namespace
+
+// E2PATKDWNTIME (8037667C): "freeze"; SUBAYASA -> DOWNDATA 0, MEICHURITSU -> 1.
+int enemy_attack_down(Engine& engine, int slot, int enemy_record, int kind, std::string_view what) {
+    return enemy_down(engine, slot, enemy_record, kind, what, "freeze", {{"SUBAYASA", 0}, {"MEICHURITSU", 1}});
+}
+
+// E2PPOWDWNTIME (80376AB0): "powerdown"; TSUYOSA -> DOWNDATA 4, MAMORI -> 5.
+int enemy_power_down(Engine& engine, int slot, int enemy_record, int kind, std::string_view what) {
+    return enemy_down(engine, slot, enemy_record, kind, what, "powerdown", {{"TSUYOSA", 4}, {"MAMORI", 5}});
+}
+
+// P2ESTUNTIME (80373FA0): the player's MAHIRITSU and the damage share of the
+// enemy's maximum HP against its RES_STUN.
+int player_stun_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int max_hp, int damage) {
+    const int resist = database(engine, "enemy", enemy_record, "RES_STUN");
+    const int hp = std::max(max_hp, 1);
+    const int chance = stats.mahiritsu + (50 * damage / hp + 100) - resist;
+    if (!(chance / 2 > int(random() % 100u))) return 0;
+    return (200 - resist) * (30 * damage / hp + stats.mahiritsu * 3) / 400;
+}
+
+// P2EPOISONTIME (803740C8): TIME from the technique skill against RES_POISON;
+// DAMAGE is a fifth of the technique's HP.
+int player_poison(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what) {
+    const auto use = technique_use(engine, player, kind);
+    if (what != "TIME") return -(database(engine, "pcTech", use.row, "HP") / 5);
+    const int keep = 1000 - database(engine, "enemy", enemy_record, "RES_POISON");
+    int threshold;
+    if (use.skill <= 1000) threshold = (use.skill / 4 + 750) * keep / 1000;
+    else if (use.skill <= 2000) threshold = ((use.skill - 1000) / 5 + 1000) * keep / 1000;
+    else threshold = ((use.skill - 2000) / 10 + 1200) * keep / 1000;
+    int time = 0;
+    if (threshold > int(random() % 1000u)) time = player.stats.kashikosa / 2 + database(engine, "pcTech", use.row, "TIME");
+    return attempted(time);
+}
+
+// P2ESLEEPTIME (803743C0) / P2EBINDTIME (803745B8).
+int player_sleep_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind) {
+    return technique_status_time(engine, player, enemy_record, kind);
+}
+
+// P2EATKDWNTIME (803747B0): SUBAYASA limited by the enemy's; CHIMEIRITSU,
+// MAHIRITSU (pcTech MHIRITSU) and KAIHIRITSU straight from the technique.
+int player_attack_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what) {
+    if (what == "TIME") return technique_status_time(engine, player, enemy_record, kind);
+    if (what == "SUBAYASA") return technique_down(engine, player, enemy_record, kind, "SUBAYASA");
+    const auto use = technique_use(engine, player, kind);
+    if (what == "CHIMEIRITSU") return -database(engine, "pcTech", use.row, "CHIMEIRITSU");
+    if (what == "MAHIRITSU") return -database(engine, "pcTech", use.row, "MHIRITSU");
+    if (what == "KAIHIRITSU") return -database(engine, "pcTech", use.row, "KAIHIRITSU");
+    return 0;
+}
+
+// P2EPOWDWNTIME (80374C60): TSUYOSA / MAMORI limited by the enemy's.
+int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what) {
+    if (what == "TIME") return technique_status_time(engine, player, enemy_record, kind);
+    if (what == "TSUYOSA" || what == "MAMORI")
+        return technique_down(engine, player, enemy_record, kind, what == "TSUYOSA" ? "TSUYOSA" : "MAMORI");
+    return 0;
 }
 } // namespace fight
 

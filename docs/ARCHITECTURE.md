@@ -74,7 +74,12 @@ the F1 notes and answer 0 so the original scripts keep running.
 
 `combat.cpp` holds the player-to-enemy FIGHTCALC path (GAMERAM 803717A4:
 P2EISHITCHECK, P2EISCRITICAL, P2EDAMAGE, the damage rank at 802EE91C) and the
-level-1 player status from the shinka and weapon databases (GAME_STATS.md).
+level-1 player status from the shinka and weapon databases (GAME_STATS.md),
+plus the status effect chances and times of both directions (E2P*/P2E*).
+`status.cpp` is the beNDMWMdlPEBase status work of players and enemies: the
+status commands (803AEBB4), the per-model update after control with named
+model timers (803ACD88), the sequence-change check that breaks sleep and stun
+(803AE1A4) and the status icons (803ACB30).
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)

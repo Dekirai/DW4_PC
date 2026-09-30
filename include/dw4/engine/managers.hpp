@@ -756,10 +756,30 @@ public:
         int ai_map{};
         std::int64_t ai_timer_end = -1; // AITIMER
         std::string ai_request;         // AI work +58
+        // beNDMWMdlPEBase status work (+240..+268), made by the first status
+        // command (803AEBB4). Slots: 0 poison, 1 attack down, 2 power down,
+        // 3 bind, 4 refract, 5 speed up, 6 power up, 7 metal, 8 sleep, 9 stun,
+        // 10 rare icon, 11 the icon frame shown while any of 0..7 runs.
+        struct Status {
+            std::array<int, 12> icon{};    // +240 icon model RAM, -1 none
+            std::array<int, 12> place{};   // +244 icon position shown, -1 none
+            std::array<int, 12> timer{};   // +248 poison: 2 s ticks; otherwise frames
+            std::array<bool, 11> start{};  // +252 set by a command, taken by the update
+            int poison_damage{}, gedoku{}; // +256 / +260
+            std::array<int, 6> down{};     // +264 an enemy's DOWN values (players: DOWNDATA)
+            std::array<int, 7> up{};       // +268 an enemy's UP values (players: UPDATA)
+            bool down_list{}, up_list{};   // +264 / +268 linked (803AE5F8 / 803AE87C)
+        };
+        std::optional<Status> status;
+        // Named model timers (8031DE44 / 8031E238 / 8031E8BC): time left in ns.
+        std::map<std::string, std::int64_t, std::less<>> named_timers;
     };
 
     const ModelRam* player(int index) const;
     ModelRam* find(std::string_view name, int index);
+    // A player's DOWNDATA entry or an enemy's DOWN value (0 before its first
+    // status command); what GETPEBASEWORK hands the FIGHTCALC paths.
+    int down_value(Engine& engine, const ModelRam& ram, int index) const;
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
 
 private:
@@ -781,6 +801,14 @@ private:
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
+    // Status effects (status.cpp).
+    bool status_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
+    void update_status(Engine& engine, ModelRam& ram);
+    void status_sequence_check(Engine& engine, ModelRam& ram);
+    int status_icon(Engine& engine, ModelRam& ram, int slot, int icon, int place, bool moved);
+    void apply_status_values(Engine& engine, ModelRam& ram);
+    void set_down(Engine& engine, ModelRam& ram, int index, int value);
+    void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
@@ -1103,9 +1131,8 @@ public:
     std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
 };
 
-// FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38): the
-// player-to-enemy weapon path. Magic, status effects and E2P* are not
-// reconstructed yet.
+// FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38). The
+// enemy DOWN values (GETPEBASEWORK) come in as plain numbers.
 struct FightResult {
     std::int32_t damage{};
     std::int32_t attribute = -1; // 0 fire .. 3 dark; -1 common
@@ -1114,7 +1141,7 @@ struct FightResult {
 namespace fight {
 std::uint32_t random();
 const char* bullet_name(int kind);
-bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int speed_down);
+bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down);
 bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
 FightResult player_damage(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, bool critical,
                           int defense_down);
@@ -1122,8 +1149,23 @@ int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int
 // E2P* (803750B8, 8037526C, 80375C60): enemy attacks; the attack id is kind % 10000
 // in the DATABASE eneatk table.
 bool enemy_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind);
-FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind);
+FightResult enemy_damage(Engine& engine, const GameSystem::Stats& stats, int max_hp, int enemy_record, int kind,
+                         int strength_down = 0, int critical_down = 0);
 int enemy_damage_rank(Engine& engine, int kind, int hp, int damage, int max_hp, const FightResult& fight);
+// Status effect times (cases 7..12 E2P*, 14..19 P2E*) in frames; 0 is no
+// attempt, -1 a failed one. Down values are positive amounts.
+int enemy_stun_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, int damage, int rank,
+                    int mahiritsu_down);
+int enemy_poison(Engine& engine, const GameSystem::PlayerSlot& player, int kind, std::string_view what);
+int enemy_sleep_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind);
+int enemy_bind_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind);
+int enemy_attack_down(Engine& engine, int slot, int enemy_record, int kind, std::string_view what);
+int enemy_power_down(Engine& engine, int slot, int enemy_record, int kind, std::string_view what);
+int player_stun_time(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int max_hp, int damage);
+int player_poison(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
+int player_sleep_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
+int player_attack_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
+int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
 } // namespace fight
 
 } // namespace dw4::engine

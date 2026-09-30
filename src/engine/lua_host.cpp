@@ -394,7 +394,13 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         }
         return {};
     }
-    if (method == "MDLisStatus") return number(0); // status effects are not reconstructed
+    if (method == "MDLisStatus") {
+        // 802EE144: MODELCTRL <name> <ram> CHECKSTATUS <status> answers one flag.
+        Packet packet;
+        packet.strings.emplace_back(opt_string(arg(2)).value_or(""));
+        messenger().send(*this, "MODELCTRL", opt_string(arg(0)).value_or(""), to_int(arg(1)), "CHECKSTATUS", packet);
+        return number(packet.bools.size() == 1 && packet.bools[0] ? 1 : 0);
+    }
 
     // --- Battle queries of hit scripts (FIGHTCALC P2E*, 802EE5C4..802EEA2C) ---
     auto shooter_slot = [&]() -> const GameSystem::PlayerSlot* {
@@ -409,13 +415,18 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return slot ? &slot->stats : nullptr;
     };
     const int bullet_kind = context ? context->bullet_kind : 0;
+    // GETPEBASEWORK: a model's DOWN value for the FIGHTCALC paths.
+    auto down_of = [&](ModelCtrlManager::ModelRam* model, int index) {
+        auto* models = get<ModelCtrlManager>();
+        return models && model ? models->down_value(*this, *model, index) : 0;
+    };
     if (method == "MDLgetBulletName") return string_result(fight::bullet_name(bullet_kind));
     if (method == "BLTisPlayerBullet") return number(context && context->shooter_name.starts_with('p') ? 1 : 0);
     if (method == "BLTisHitCheck") {
         const auto* stats = shooter_stats();
         auto* model = context_model();
         if (!stats || !model) return number(1);
-        return number(fight::player_hits(*this, *stats, model->record, bullet_kind, 0) ? 1 : 0);
+        return number(fight::player_hits(*this, *stats, model->record, bullet_kind, down_of(model, 3)) ? 1 : 0);
     }
     if (method == "BLTisCritical") {
         const auto* slot = shooter_slot();
@@ -426,7 +437,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto* slot = shooter_slot();
         auto* model = context_model();
         if (!slot || !model || !context) return number(0);
-        const auto result = fight::player_damage(*this, *slot, model->record, bullet_kind, to_int(arg(0)) != 0, 0);
+        const auto result =
+            fight::player_damage(*this, *slot, model->record, bullet_kind, to_int(arg(0)) != 0, down_of(model, 5));
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;
@@ -467,7 +479,28 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         }
         return {};
     }
-    if ((method.starts_with("BLTget") || method.starts_with("BLPget")) && method.ends_with("Time")) return number(0);
+    if (method.starts_with("BLTget") && method.ends_with("Time")) {
+        // P2E* status times (802EEA64..802EF050): stun after any hit; the
+        // others only for their technique (kind 4xxxx with its family).
+        const auto* slot = shooter_slot();
+        auto* model = context_model();
+        if (!slot || !model) return number(0);
+        const std::string what = opt_string(arg(0)).value_or("");
+        auto technique = [&](int family) { return bullet_kind / 10000 == 4 && bullet_kind % 10000 == family; };
+        if (method == "BLTgetStunTime")
+            return number(fight::player_stun_time(*this, slot->stats, model->record, model->max_hp, to_int(arg(0))));
+        if (method == "BLTgetPoisonTime")
+            return number(technique(20) ? fight::player_poison(*this, *slot, model->record, bullet_kind, what) : 0);
+        if (method == "BLTgetSleepTime")
+            return number(technique(90) ? fight::player_sleep_time(*this, *slot, model->record, bullet_kind) : 0);
+        if (method == "BLTgetBindTime")
+            return number(technique(95) ? fight::player_sleep_time(*this, *slot, model->record, bullet_kind) : 0);
+        if (method == "BLTgetAttackDownTime")
+            return number(technique(70) ? fight::player_attack_down(*this, *slot, model->record, bullet_kind, what) : 0);
+        if (method == "BLTgetPowerDownTime")
+            return number(technique(85) ? fight::player_power_down(*this, *slot, model->record, bullet_kind, what) : 0);
+        return number(0);
+    }
     // Enemy-to-player hits (E2P*): the target is the player RAM, the shooter's
     // GETRECNO is its enemy record.
     auto target_stats = [&]() -> const GameSystem::Stats* {
@@ -492,7 +525,10 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto* stats = target_stats();
         auto* model = context_model();
         if (!stats || !model || !context) return number(0);
-        const auto result = fight::enemy_damage(*this, *stats, model->max_hp, shooter_record(), bullet_kind);
+        auto* models = get<ModelCtrlManager>();
+        auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
+        const auto result = fight::enemy_damage(*this, *stats, model->max_hp, shooter_record(), bullet_kind, down_of(shooter, 4),
+                                                down_of(shooter, 1));
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;
@@ -503,6 +539,27 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         FightResult result;
         if (context) result = {context->damage, context->attribute, context->damage_flag};
         return number(fight::enemy_damage_rank(*this, bullet_kind, to_int(arg(0)), to_int(arg(1)), model ? model->max_hp : 0, result));
+    }
+    if (method.starts_with("BLPget") && method.ends_with("Time")) {
+        // E2P* status times (802EF68C..802EFB78) of the attacking enemy.
+        auto* sys = get<GameSystem>();
+        auto* model = context_model();
+        if (!sys || !model || !model->is_player || !target_stats()) return number(0);
+        const int slot = std::clamp(model->index, 0, 3);
+        const auto& player = sys->players[std::size_t(slot)];
+        const int record = shooter_record();
+        const std::string what = opt_string(arg(0)).value_or("");
+        if (method == "BLPgetStunTime") {
+            auto* models = get<ModelCtrlManager>();
+            auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
+            return number(fight::enemy_stun_time(*this, player, record, bullet_kind, to_int(arg(0)), to_int(arg(1)), down_of(shooter, 2)));
+        }
+        if (method == "BLPgetPoisonTime") return number(fight::enemy_poison(*this, player, bullet_kind, what));
+        if (method == "BLPgetSleepTime") return number(fight::enemy_sleep_time(*this, player.stats, record, bullet_kind));
+        if (method == "BLPgetBindTime") return number(fight::enemy_bind_time(*this, player.stats, record, bullet_kind));
+        if (method == "BLPgetAttackDownTime") return number(fight::enemy_attack_down(*this, slot, record, bullet_kind, what));
+        if (method == "BLPgetPowerDownTime") return number(fight::enemy_power_down(*this, slot, record, bullet_kind, what));
+        return number(0);
     }
 
     // --- System queries ---

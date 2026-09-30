@@ -202,6 +202,8 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
         return;
     }
     run_commands(engine, ram);
+    // 8030EA8C: the sequence-change hook (vtable +B8) checks sleep and stun.
+    if (ram.is_player || ram.category == "ENEMY") status_sequence_check(engine, ram);
 }
 
 void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
@@ -506,9 +508,11 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         engine.note("MODELCTRL " + std::string(command));
         return true;
     }
+    // Players and enemies (beNDMWMdlPEBase) take the status commands of
+    // 804E28E0 (vtable +C4, status.cpp).
+    if ((ram.is_player || ram.category == "ENEMY") && status_command(engine, ram, command, packet)) return true;
     // Any other command selects the named sequence of a generated model; a
-    // name the model has no sequence for (e.g. the status-effect commands
-    // SETMETAL / SETPOISON of 804E28F0) leaves the current one running.
+    // name the model has no sequence for leaves the current one running.
     if (!ram.generated) return true;
     bool known = command == "SQ_ERAS" || command == "SQ_ERAS2";
     if (ram.sequences)
@@ -854,6 +858,8 @@ void ModelCtrlManager::update(Engine& engine) {
             if (ram.ai_maps) ram.ai_timer_end = -1;
             if (ram.is_player) ram.key_input = false;
         }
+        // 8030CD18: the status update of players and enemies (vtable +C0).
+        if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);

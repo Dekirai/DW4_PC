@@ -43,10 +43,14 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   upgrades), the appraiser for unknown devices and the Digi-Lab: digivolution
   into the forms reached (each form keeps its level, EXP, skills and stat
   ups), the strongest usable weapon equipped, then the evolution scene.
+- Status effects of players and enemies: poison ticks, sleep, stun, bind,
+  attack and power down (plus the speed/power up, refract and metal
+  commands) with the original FIGHTCALC chances and times, their DOWN/UP
+  values in the stat recalculation and damage, and the icons above the model.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips) with the weapon parts on their bones, UV animations, text from the original fonts and the HUD layers.
 
-Not yet reconstructed: the card booster program, status effects,
+Not yet reconstructed: the card booster program,
 homing enemy bullets, particles and shadows, audio and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
