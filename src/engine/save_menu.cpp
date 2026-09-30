@@ -1234,6 +1234,71 @@ bool NameSelect::update(Engine& engine, CommonModelControl& models, int player, 
 }
 
 // ---------------------------------------------------------------------------
+// DIFFSELECT
+void DiffSelect::open(int kind, int player) {
+    cursor_ = 0;
+    player_ = player;
+    kind_ = kind;
+    done_ = cancelled_ = false;
+    phase_ = step_ = 0;
+    count_ = kind == 1 ? 3 : 2;
+}
+
+bool DiffSelect::update(Engine& engine, CommonModelControl& models, MessageWindow& message, const Vec3f& position,
+                        bool input) {
+    if (done_) return true;
+    const Pad in = input ? read_pad(engine, player_) : Pad{};
+    const std::string window = kind_ == 1 ? "j_linewin03" : "j_linewin02";
+    const int choices = (player_ << 16) | (kind_ == 1 ? 0x403 : 0x402);
+    if (phase_ == 0) {
+        if (step_ == 0) {
+            models.open_at(engine, player_, window, "SQ_OPEN", position, true);
+            step_ = 1;
+        } else if (models.sequences_done()) {
+            text_order_show(engine, choices);
+            message.show((player_ << 16) | 0x404); // Select Difficulty
+            phase_ = 1;
+            step_ = 0;
+        }
+    } else if (phase_ == 1) {
+        if (step_ == 1) {
+            if (models.sequences_done()) step_ = 0;
+        } else if (in.up) {
+            if (--cursor_ >= 0) {
+                models.set(engine, player_, window, kind_ == 1 && cursor_ ? "SQ_LINEUP01" : "SQ_LINEUP00", true);
+                step_ = 1;
+            } else {
+                cursor_ = 0;
+            }
+        } else if (in.down) {
+            if (++cursor_ <= count_ - 1) {
+                models.set(engine, player_, window, kind_ == 1 && cursor_ == 2 ? "SQ_LINEDW02" : "SQ_LINEDW01", true);
+                step_ = 1;
+            } else {
+                cursor_ = count_ - 1;
+            }
+        } else if (in.trigger & dw4::pad_button::a) {
+            phase_ = 2;
+            step_ = 0;
+        } else if (in.trigger & dw4::pad_button::b) {
+            cancelled_ = true;
+            phase_ = 2;
+            step_ = 0;
+        }
+    } else if (phase_ == 2) {
+        if (step_ == 0) {
+            text_order_clear(engine, choices);
+            static const char* kPicks[3] = {"SQ_LINEON00", "SQ_LINEON01", "SQ_LINEON02"};
+            models.close(engine, player_, window, cancelled_ ? "SQ_CANCEL" : kPicks[std::clamp(cursor_, 0, 2)], true);
+            step_ = 1;
+        } else if (models.closes_done()) {
+            done_ = true;
+        }
+    }
+    return done_;
+}
+
+// ---------------------------------------------------------------------------
 // SAVECTRL
 void SaveCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     std::int32_t index = 0;

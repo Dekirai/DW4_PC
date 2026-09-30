@@ -746,25 +746,32 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                                        record.digimon + " level " + std::to_string(record.level) + ")");
                         }
                     }
-                    bool difficulty = false;
+                    int unlocked = 0;
                     if (idx == 0 && ram.fresh) {
                         common.difficulty = 0;
                         if (sys) sys->difficulty_max = 0;
-                        engine.run_script("hostLoad.lua");
-                        difficulty = sys && sys->difficulty_max > 0;
+                        engine.run_script("hostLoad.lua"); // LISsetDifficultMax from the story flags
+                        unlocked = sys ? sys->difficulty_max : 0;
                     }
-                    if (difficulty) {
+                    if (unlocked > 0) {
+                        ram.difficulty.open(unlocked >= 2 ? 1 : 0, idx);
                         ++ram.detail2;
                     } else {
                         ram.windows[0].show(1, idx);
                         next_detail();
                     }
                 } else if (ram.detail2 == 1) {
-                    // DIFFSELECT (8035616C) is not reconstructed: Normal.
-                    engine.note("LOADINTF2 difficulty selection (DIFFSELECT)");
-                    common.difficulty = 0;
-                    ram.windows[0].show(1, idx);
-                    next_detail();
+                    if (ram.difficulty.update(engine, models, message, ram.position, entry.active)) {
+                        if (ram.difficulty.cancelled()) {
+                            common.records[std::size_t(idx)] = save::Record{};
+                            entry.joined = false;
+                            set_state(6);
+                        } else {
+                            common.difficulty = ram.difficulty.selection();
+                            ram.windows[0].show(1, idx);
+                            next_detail();
+                        }
+                    }
                 }
             } else if (ram.detail == 1) {
                 if (window_done(0)) {

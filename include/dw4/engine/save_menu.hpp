@@ -212,6 +212,21 @@ private:
     bool done_{}, confirmed_{}, asking_{}, answered_{}, yes_{}, arrows_{};
 };
 
+// DIFFSELECT (8035610C / 8035616C): the host picks Normal / Hard (kind 0,
+// j_linewin02) or Normal / Hard / Very Hard (kind 1, j_linewin03).
+class DiffSelect {
+public:
+    void open(int kind, int player);  // 8035610C
+    bool update(Engine& engine, CommonModelControl& models, MessageWindow& message, const Vec3f& position,
+                bool input);          // 8035616C
+    int selection() const { return cursor_; }   // +16
+    bool cancelled() const { return cancelled_; } // +37
+
+private:
+    int kind_{}, player_{}, count_ = 2, cursor_{}, phase_{}, step_{};
+    bool done_ = true, cancelled_{};
+};
+
 // The player-level card flows shared by the save room and the character
 // select (80379790 cases 4 / 6, 8035C958 cases 5 / 6): open the chosen
 // card's file, creating or formatting it on request (saving only creates),
@@ -249,8 +264,7 @@ private:
 // LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
 // controller slot: join prompt, Create / Call Digimon, partner selection with
 // the 3D model, calling a character from a memory card box, the status window
-// the name entry and the host's START. The difficulty dialog (DIFFSELECT) is
-// not reconstructed yet.
+// the name entry, the difficulty dialog and the host's START.
 class LoadIntf2Manager final : public Manager {
 public:
     LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
@@ -279,6 +293,7 @@ private:
         SlotSelect slots;
         DataSelect boxes;
         NameSelect names;
+        DiffSelect difficulty;
     };
     void update_panel(Engine& engine, PanelRam& ram, SaveCommon& common);
     void update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& common, std::uint16_t trigger);
