@@ -946,6 +946,9 @@ public:
         std::string ai_request;         // AI work +58
         const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)
         int homing_state{}, homing_steps{};
+        // MOVERL "JOINT" (8030ADC0, ctrl work +A8/+B4/+B8): the model follows a
+        // bone of another model with the same index instead of moving.
+        std::string follow_model, follow_bone;
         // beNDMWMdlPEBase status work (+240..+268), made by the first status
         // command (803AEBB4). Slots: 0 poison, 1 attack down, 2 power down,
         // 3 bind, 4 refract, 5 speed up, 6 power up, 7 metal, 8 sleep, 9 stun,
@@ -982,6 +985,7 @@ private:
     void update_enemy(Engine& engine, ModelRam& ram);
     void update_ai_map(Engine& engine, ModelRam& ram);
     void update_homing(Engine& engine, ModelRam& ram);
+    void follow_bone(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
     void update_item(Engine& engine, ModelRam& ram);

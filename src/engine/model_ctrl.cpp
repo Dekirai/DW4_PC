@@ -262,7 +262,20 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             if (name == "Stop") { ram.pdmove[0] = command.f32(3); ram.pdmove[1] = command.f32(4); }
             else if (name == "Move") { ram.pdmove[2] = command.f32(3); ram.pdmove[3] = command.f32(4); }
             ++ram.cursor;
+        } else if (type == "beModelCtrlMOVERL") {
+            // 8030ACBC: JOINT keeps the model and bone names; ACTOR takes the
+            // model's trace data (GETTRCDATA), not reconstructed yet.
+            ram.follow_model.clear();
+            ram.follow_bone.clear();
+            if (name == "JOINT") {
+                ram.follow_model = std::string(command.str(3));
+                ram.follow_bone = std::string(command.str(4));
+            } else {
+                engine.note("MODELCTRL MOVERL " + std::string(name) + " (trace data)");
+            }
+            ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
+            ram.follow_model.clear(); // 8030A71C: a new move ends the follow
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
@@ -364,6 +377,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.ai_timer_end = -1;
         ram.ai_request.clear();
         ram.homing_state = ram.homing_steps = 0;
+        ram.follow_model.clear();
+        ram.follow_bone.clear();
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
@@ -883,7 +898,8 @@ void ModelCtrlManager::update(Engine& engine) {
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
-        if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
+        if (!ram.follow_model.empty()) follow_bone(engine, ram);
+        else if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
         if (ram.attach_lock && ram.generated) place_attached(ram);
@@ -1185,6 +1201,23 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
             engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
                        " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
     }
+}
+
+// 8030CDD0: ACTION <model> GETBONEMATRIX <bone> times MODELCTRL <model>
+// GETMATRIX (same index) places the following model.
+void ModelCtrlManager::follow_bone(Engine& engine, ModelRam& ram) {
+    if (!ram.node) return;
+    Packet bone;
+    bone.strings.emplace_back(ram.follow_bone);
+    engine.messenger().send(engine, "ACTION", ram.follow_model, ram.index, "GETBONEMATRIX", bone);
+    if (bone.matrices.size() != 1) return;
+    const auto* target = find(ram.follow_model, ram.index);
+    if (!target || !target->node) return;
+    ram.node->matrix = bone.matrices[0] * target->node->matrix;
+    if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0)
+        engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " on " + ram.follow_model + " at (" +
+                   std::to_string(ram.node->matrix(3, 0)) + ", " + std::to_string(ram.node->matrix(3, 1)) + ", " +
+                   std::to_string(ram.node->matrix(3, 2)) + ")");
 }
 
 void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
@@ -1725,6 +1758,26 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
 
 bool ActionManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<ActionRam&>(base);
+    if (command == "GETBONEMATRIX") {
+        // The named bone in the model's space from the current pose; no name
+        // gives the model's own origin.
+        const std::string bone(packet.string(0));
+        if (bone.empty()) {
+            packet.matrices.push_back(Mat4{});
+            return true;
+        }
+        if (ram.actors.empty()) return true;
+        const Node* actor = ram.actors.front();
+        const ActorPose* pose = pose_for(*actor, engine.time());
+        if (!pose || !pose->skeleton) return true;
+        const auto& names = pose->skeleton->names;
+        for (std::size_t i = 0; i < names.size() && i < pose->bone_world.size(); ++i)
+            if (names[i] == bone) {
+                packet.matrices.push_back(pose->bone_world[i] * actor->actor_matrix);
+                break;
+            }
+        return true;
+    }
     if (command == "ISCOMEND") {
         const bool end = ram.current && ram.wait_state == 0 && ram.cursor == ram.current->commands.size();
         packet.bools.push_back(end ? 1 : 0);
