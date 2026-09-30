@@ -69,7 +69,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
 Not yet reconstructed: the card booster program, the raise technique,
-models moving along another model's trace (MOVERL), voices and movies,
+the card keeper (booster packs and album), voices and movies,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
