@@ -63,10 +63,13 @@ struct SaveCommon {
         int result{};                   // +20: outcome of the card flows
         std::shared_ptr<CardData> card; // +32
         int state{}, sub{}, detail{}, detail2{}; // +36..+48
+        std::string digimon = "p_agumon";        // partner chosen at the character select
     };
     bool active{};
+    bool title{};      // +64: the character select started from the title
     int state{};       // +48: 3 once every panel finished
     int platform = 1;  // +56: GameCube
+    int difficulty{};  // +60
     int owner{};       // +68: player allowed to touch the card
     std::array<Player, 4> players{};
     std::array<save::Record, 4> records{}; // +36: each player's own character
@@ -178,6 +181,78 @@ private:
     int player_{}, mode_{}, cursor_{}, step_{};
     bool boxes_{}, window0_{}, window1_{}, cursor_open_{}, cancelled_{}; // +48..+52, +73
     bool called_{};                                                         // +64
+};
+
+// The player-level card flows shared by the save room and the character
+// select (80379790 cases 4 / 6, 8035C958 cases 5 / 6): open the chosen
+// card's file, creating or formatting it on request (saving only creates),
+// and show a card error; both end in state 7 with the outcome in `result`.
+void card_open_flow(Engine& engine, SaveCommon& common, int player, MessageWindow& message, const SlotSelect& slots,
+                    bool loading);
+void card_error_flow(Engine& engine, SaveCommon& common, int player, MessageWindow& message, SlotSelect& slots,
+                     CommonModelControl& models, const Vec3f& position, bool loading);
+
+// LOADCTRL2 (beNDMWLoadCtrl2, update 80368050, commands 803689A8): the
+// character select: memory card worker, backdrop, the four LOADINTF2 panels,
+// then the game start (title) or the lobby.
+class LoadCtrl2Manager final : public Manager {
+public:
+    LoadCtrl2Manager() : Manager("beNDMWLoadCtrl2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadCtrl2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); common_ = {}; }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+    SaveCommon& common() { return common_; }
+    int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
+
+private:
+    struct CtrlRam : Ram {
+        bool created{};
+        bool title{};                    // CTRL +16
+        int state{}, sub{}, step{}, counter{}; // CTRL +20..+32
+        int camera_mode{}, light_mode{}; // manager +24 / +28
+    };
+    std::vector<std::unique_ptr<CtrlRam>> rams_;
+    SaveCommon common_;
+};
+
+// LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
+// controller slot: join prompt, Create / Call Digimon, partner selection with
+// the 3D model, calling a character from a memory card box, the status window
+// and the host's START. The name entry keyboard (NAMESEL) and the difficulty
+// dialog (DIFFSELECT) are not reconstructed yet.
+class LoadIntf2Manager final : public Manager {
+public:
+    LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadIntf2Info"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+private:
+    struct PanelRam : Ram {
+        bool created{};
+        int state{}, sub{}, detail{}, detail2{}; // CTRL +36..+48
+        int cursor{};                            // CTRL +24
+        bool joined_flag{};                      // CTRL +18
+        bool cancel{};                           // CTRL +20
+        bool message_open{};                     // CTRL +21
+        bool no_model{};                         // CTRL +23
+        bool new_game{};                         // CTRL +28
+        bool fresh{};                            // CTRL +29: no saved player
+        int digimon = 3;                         // MAKECHR +48
+        Vec3f position{};
+        CommonModelControl models;
+        MessageWindow message;
+        std::array<RecordWindow, 2> windows{RecordWindow(false), RecordWindow(true)};
+        SlotSelect slots;
+        DataSelect boxes;
+    };
+    void update_panel(Engine& engine, PanelRam& ram, SaveCommon& common);
+    void update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& common, std::uint16_t trigger);
+    std::vector<std::unique_ptr<PanelRam>> rams_;
 };
 
 // SAVECTRL (beNDMWSaveCtrl, update 803788A8, commands 80379184): starts the

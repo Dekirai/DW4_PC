@@ -1179,9 +1179,9 @@ void SaveIntfManager::update_panel(Engine& engine, PanelRam& ram, SaveCommon& co
             set_sub(entry, 3);
         }
         break;
-    case 3:
-    case 4:
-    case 6: card_flow(engine, ram, common); break;
+    case 3: card_flow(engine, ram, common); break;
+    case 4: card_open_flow(engine, common, idx, ram.message, ram.slots, false); break;
+    case 6: card_error_flow(engine, common, idx, ram.message, ram.slots, ram.models, ram.position, false); break;
     case 7: // release the card: every panel resumes
         for (auto& p : common.players) set_state(p, 8);
         break;
@@ -1546,9 +1546,196 @@ void SaveIntfManager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& com
     }
 }
 
-// Player-level card flows (80379790 cases 3, 4 and 6): 3 writes the box,
-// 4 opens the chosen card's file (creating or formatting on request), 6 shows
-// a card error. They end in state 7 with the outcome in `result`.
+void card_open_flow(Engine& engine, SaveCommon& common, int idx, MessageWindow& message, const SlotSelect& slots,
+                    bool loading) {
+    const int id = idx << 16;
+    auto& entry = common.players[std::size_t(idx)];
+    auto& io = common.io;
+    if (loading && !io.available) return;
+    const int slot = slots.chosen();
+    const bool inserted = io.slots[std::size_t(std::clamp(slot, 0, 1))].inserted;
+    auto finish = [&](int result) {
+        set_state(entry, 7);
+        entry.result = result;
+    };
+    auto error = [&] { set_state(entry, 6); };
+    auto missing = [&] { // LABEL_539: the card left while asking
+        message.cancel(engine, idx);
+        finish(2);
+    };
+    switch (entry.sub) {
+    case 0: {
+        const int r = common.check(engine, idx, slot, 3);
+        if (r == 1) {
+            set_sub(entry, 5);
+        } else if (r == 2) {
+            // Loading never creates a file: a missing one is an error.
+            const int code = io.result;
+            if (code == 7 && (!loading || common.platform == 1)) set_sub(entry, 3);
+            else if (code == 2) set_sub(entry, 5);
+            else if (!loading && (code == 3 || code == 4)) set_sub(entry, 1);
+            else error();
+        }
+        break;
+    }
+    case 1: // Do you want to create a new game file in this Memory Card?
+        if (!inserted) {
+            missing();
+        } else if (const int r = common.ask(engine, idx, message, id | 0x2000, id | 0x2002, 0, 3); r == 1) {
+            set_sub(entry, 2);
+        } else if (r == 2) {
+            finish(1);
+        }
+        break;
+    case 2:
+        if (entry.detail == 0) {
+            next_detail(entry);
+        } else if (entry.detail == 1) {
+            const int r = common.create(engine, idx, message, slot, 3);
+            if (r == 1) set_sub(entry, 5);
+            else if (r == 2) {
+                if (io.result == 7) set_sub(entry, 3);
+                else {
+                    error();
+                    entry.result = 1;
+                }
+            }
+        }
+        break;
+    case 3: // The Memory Card is corrupted and must be formatted.
+        if (!inserted) {
+            missing();
+        } else if (const int r = common.ask(engine, idx, message, id | 0x2005, id | 0x2007, 1, 3); r == 1) {
+            set_sub(entry, 4);
+        } else if (r == 2) {
+            finish(1);
+        }
+        break;
+    case 4:
+        if (entry.detail == 0) {
+            message.show(id | 0x2008);
+            next_detail(entry);
+        } else if (entry.detail == 1) {
+            const int r = common.format(engine, idx, slot, 3);
+            if (r == 1) {
+                if (loading) finish(4); // an empty card: pick again
+                else set_sub(entry, 1);
+            } else if (r == 2) {
+                error();
+                entry.result = 2;
+            }
+        }
+        break;
+    case 5: { // a file another player already opened
+        std::shared_ptr<SaveCommon::CardData> found;
+        for (const auto& card : common.cards)
+            if (card->slot == slot) {
+                found = card;
+                break;
+            }
+        if (found) {
+            found->users.push_back(idx);
+            entry.card = found;
+            finish(0);
+        } else if (io.available) {
+            next_sub(entry);
+        }
+        break;
+    }
+    case 6: {
+        if (loading && entry.detail == 0) {
+            next_detail(entry);
+            break;
+        }
+        const int r = common.read(engine, idx, slot, 3);
+        if (r == 1) finish(0);
+        else if (r == 2) {
+            if (io.result == 7) set_sub(entry, 3);
+            else if (io.result == 8 && !loading) next_sub(entry);
+            else {
+                error();
+                entry.result = 1;
+            }
+        }
+        break;
+    }
+    case 7: // The Digimon World 4 file is corrupted.
+        if (!inserted) {
+            missing();
+            break;
+        }
+        switch (entry.detail) {
+        case 0: message.next(id | 0x202B); next_detail(entry); break;
+        case 1:
+        case 3:
+            if (!message.busy()) next_detail(entry);
+            break;
+        case 2: message.next(id | 0x202C); next_detail(entry); break;
+        case 4: message.question(id | 0x202D, 0); next_detail(entry); break;
+        case 5:
+            if (!message.busy()) {
+                if (message.answer() == 1) finish(1);
+                else if (message.answer() == 0) next_detail(entry);
+            }
+            break;
+        case 6: { // a fresh file over the broken one
+            auto card = std::make_shared<SaveCommon::CardData>();
+            card->slot = slot;
+            card->users.push_back(idx);
+            common.cards.push_back(card);
+            entry.card = card;
+            finish(0);
+            break;
+        }
+        default: break;
+        }
+        break;
+    default: break;
+    }
+}
+
+void card_error_flow(Engine& engine, SaveCommon& common, int idx, MessageWindow& message, SlotSelect& slots,
+                     CommonModelControl& models, const Vec3f& position, bool loading) {
+    auto& entry = common.players[std::size_t(idx)];
+    auto& io = common.io;
+    const int slot = slots.chosen();
+    const bool inserted = io.slots[std::size_t(std::clamp(slot, 0, 1))].inserted;
+    if (entry.sub != 0) return;
+    if (entry.detail == 1) {
+        if (!message.busy()) {
+            set_state(entry, 7);
+            entry.result = 1;
+        }
+        return;
+    }
+    if (entry.detail != 0) return;
+    int text = 0x200E;
+    if (io.formatting) {
+        slots.mark(engine, models, idx, position, io.result == 12 ? slot : -1, io);
+    } else if (inserted) {
+        const int code = io.result;
+        slots.mark(engine, models, idx, position, code == 12 ? slot : -1, io);
+        switch (code) {
+        case 4: text = loading ? 0x2028 : 0x200F; break; // no (Digimon World 4) game file
+        case 5: text = 0x2010; break;
+        case 6: text = 0x2011; break;
+        case 7: text = 0x2012; break;
+        case 8: text = 0x2013; break;
+        case 9: text = 0x2014; break;
+        case 10: text = 0x2015; break;
+        case 12: text = 0x2016; break;
+        default: text = loading ? 0x200D : 0x200E; break;
+        }
+    } else {
+        slots.mark(engine, models, idx, position, slot, io);
+        text = 0x2016;
+    }
+    message.next((idx << 16) | text);
+    next_detail(entry);
+}
+
+// Player state 3 (80379790 case 3): write the character into the chosen box;
+// the flow ends in state 7 with the outcome in `result`.
 void SaveIntfManager::card_flow(Engine& engine, PanelRam& ram, SaveCommon& common) {
     const int idx = std::clamp(ram.index, 0, 3);
     const int id = idx << 16;
@@ -1563,169 +1750,6 @@ void SaveIntfManager::card_flow(Engine& engine, PanelRam& ram, SaveCommon& commo
         entry.result = result;
     };
     auto error = [&] { set_state(entry, 6); };
-    auto missing = [&] { // LABEL_539: the card left while asking
-        message.cancel(engine, idx);
-        finish(2);
-    };
-
-    if (entry.state == 4) {
-        switch (entry.sub) {
-        case 0: {
-            const int r = common.check(engine, idx, slot, 3);
-            if (r == 1) {
-                set_sub(entry, 5);
-            } else if (r == 2) {
-                const int code = io.result;
-                if (code == 7) set_sub(entry, 3);
-                else if (code == 2) set_sub(entry, 5);
-                else if (code == 3 || code == 4) set_sub(entry, 1);
-                else error();
-            }
-            break;
-        }
-        case 1: // Do you want to create a new game file in this Memory Card?
-            if (!inserted) {
-                missing();
-            } else if (const int r = common.ask(engine, idx, message, id | 0x2000, id | 0x2002, 0, 3); r == 1) {
-                set_sub(entry, 2);
-            } else if (r == 2) {
-                finish(1);
-            }
-            break;
-        case 2:
-            if (entry.detail == 0) {
-                next_detail(entry);
-            } else if (entry.detail == 1) {
-                const int r = common.create(engine, idx, message, slot, 3);
-                if (r == 1) set_sub(entry, 5);
-                else if (r == 2) {
-                    if (io.result == 7) set_sub(entry, 3);
-                    else {
-                        error();
-                        entry.result = 1;
-                    }
-                }
-            }
-            break;
-        case 3: // The Memory Card is corrupted and must be formatted.
-            if (!inserted) {
-                missing();
-            } else if (const int r = common.ask(engine, idx, message, id | 0x2005, id | 0x2007, 1, 3); r == 1) {
-                set_sub(entry, 4);
-            } else if (r == 2) {
-                finish(1);
-            }
-            break;
-        case 4:
-            if (entry.detail == 0) {
-                message.show(id | 0x2008);
-                next_detail(entry);
-            } else if (entry.detail == 1) {
-                const int r = common.format(engine, idx, slot, 3);
-                if (r == 1) set_sub(entry, 1);
-                else if (r == 2) {
-                    error();
-                    entry.result = 2;
-                }
-            }
-            break;
-        case 5: { // a file another player already opened
-            std::shared_ptr<SaveCommon::CardData> found;
-            for (const auto& card : common.cards)
-                if (card->slot == slot) {
-                    found = card;
-                    break;
-                }
-            if (found) {
-                found->users.push_back(idx);
-                entry.card = found;
-                finish(0);
-            } else if (io.available) {
-                next_sub(entry);
-            }
-            break;
-        }
-        case 6: {
-            const int r = common.read(engine, idx, slot, 3);
-            if (r == 1) finish(0);
-            else if (r == 2) {
-                if (io.result == 7) set_sub(entry, 3);
-                else if (io.result == 8) next_sub(entry);
-                else {
-                    error();
-                    entry.result = 1;
-                }
-            }
-            break;
-        }
-        case 7: // The Digimon World 4 file is corrupted.
-            if (!inserted) {
-                missing();
-                break;
-            }
-            switch (entry.detail) {
-            case 0: message.next(id | 0x202B); next_detail(entry); break;
-            case 1:
-            case 3:
-                if (!message.busy()) next_detail(entry);
-                break;
-            case 2: message.next(id | 0x202C); next_detail(entry); break;
-            case 4: message.question(id | 0x202D, 0); next_detail(entry); break;
-            case 5:
-                if (!message.busy()) {
-                    if (message.answer() == 1) finish(1);
-                    else if (message.answer() == 0) next_detail(entry);
-                }
-                break;
-            case 6: { // a fresh file over the broken one
-                auto card = std::make_shared<SaveCommon::CardData>();
-                card->slot = slot;
-                card->users.push_back(idx);
-                common.cards.push_back(card);
-                entry.card = card;
-                finish(0);
-                break;
-            }
-            default: break;
-            }
-            break;
-        default: break;
-        }
-        return;
-    }
-
-    if (entry.state == 6) { // card error message
-        if (entry.sub != 0) return;
-        if (entry.detail == 1) {
-            if (!message.busy()) finish(1);
-            return;
-        }
-        if (entry.detail != 0) return;
-        int text = 0x200E;
-        if (io.formatting) {
-            ram.slots.mark(engine, ram.models, idx, ram.position, io.result == 12 ? slot : -1, io);
-        } else if (inserted) {
-            const int code = io.result;
-            ram.slots.mark(engine, ram.models, idx, ram.position, code == 12 ? slot : -1, io);
-            switch (code) {
-            case 4: text = 0x200F; break;
-            case 5: text = 0x2010; break;
-            case 6: text = 0x2011; break;
-            case 7: text = 0x2012; break;
-            case 8: text = 0x2013; break;
-            case 9: text = 0x2014; break;
-            case 10: text = 0x2015; break;
-            case 12: text = 0x2016; break;
-            default: break;
-            }
-        } else {
-            ram.slots.mark(engine, ram.models, idx, ram.position, slot, io);
-            text = 0x2016;
-        }
-        message.next(id | text);
-        next_detail(entry);
-        return;
-    }
 
     // State 3: write the character into the chosen box.
     switch (entry.sub) {

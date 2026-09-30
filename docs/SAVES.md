@@ -1,7 +1,9 @@
 # Saves (memory card) reconstruction
 
-Status: research complete for the data layout and the manager structure;
-implementation in progress. Addresses are GDJEB2 (USA).
+Status: saving in the save room and calling a saved character at the
+character select run (`src/engine/save_menu.cpp`, `src/engine/load_intf.cpp`);
+the name entry (NAMESEL) and the difficulty dialog (DIFFSELECT) are still
+missing. Addresses are GDJEB2 (USA).
 
 ## Flow
 

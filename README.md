@@ -17,7 +17,13 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   "Press Start", Game Start / Option menu and the attract-demo timeout.
 - New game: the four-panel character select (join prompt, Create/Call
   Digimon, partner selection with hologram preview, status window, START),
-  `gameStart.lua` and the hand-off to the Home lobby.
+  `gameStart.lua` and the hand-off to the Home lobby. Call Digimon loads a
+  character from a memory card box.
+- Memory card saves: the lobby's save NPC opens the save room (slot A/B,
+  creating or formatting the game file, the four save boxes with status
+  windows, overwrite check, timed write). Cards are Dolphin-style GCI folders
+  (`saves/GC/USA/Card A` next to the program, or `--card-dir`), so Dolphin
+  saves can be copied in and out.
 - Lobby areas (`stagML11`, Central Area, Shop Area, Commander Room): first-visit
   story scenes, dialogs with portraits and prompts, talking to NPCs, walking,
   jumping, floor gates with the confirmation dialog and stage changes.
@@ -57,7 +63,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
 
 Not yet reconstructed: the card booster program, the raise technique,
 homing enemy bullets, particles and shadows, sound effects (CRI SFP banks), voices and movies, name entry,
-memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
+the difficulty dialog, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout

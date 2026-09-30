@@ -429,49 +429,6 @@ private:
     std::vector<std::unique_ptr<TitleRam>> rams_;
 };
 
-// State shared by LOADCTRL2 and the four LOADINTF2 panels (COMMONINTF data,
-// created by LOADCTRL2 GENERATE / GENERATE_TITLE at 803689A8).
-struct CommonIntf {
-    struct Player {
-        bool entered{};    // +0C: panel taken by this controller
-        bool joined{};     // +0D: selection confirmed
-        bool closed{};     // +0E: panel closed after the hand-off
-        bool active = true; // +0F: still accepting input
-        int state{};       // +24 [9]: 2 = LOADCTRL2 closes the panel
-        int sub{}, step{}, detail{};
-        std::string digimon = "p_agumon";
-    };
-    bool active{};
-    bool title{};        // +64: started from the title screen
-    int state{};         // +48: 3 once every panel finished
-    int difficulty{};    // +60
-    std::array<Player, 4> players{};
-};
-
-// LOADCTRL2 (beNDMWLoadCtrl2, update 80368050, commands 803689A8).
-class LoadCtrl2Manager final : public Manager {
-public:
-    LoadCtrl2Manager() : Manager("beNDMWLoadCtrl2") {}
-    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadCtrl2Info"; }
-    void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); common_ = {}; }
-    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
-    void update(Engine& engine) override;
-    CommonIntf& common() { return common_; }
-    int state() const { return rams_.empty() ? -1 : rams_.front()->state; }
-
-private:
-    struct CtrlRam : Ram {
-        bool created{};
-        bool title{};                    // CTRL +16
-        int state{}, sub{}, step{}, counter{}; // CTRL +20..+32
-        int camera_mode{}, light_mode{}; // manager +24 / +28
-        bool save_utility{};             // helper +12
-    };
-    std::vector<std::unique_ptr<CtrlRam>> rams_;
-    CommonIntf common_;
-};
-
 // MESWIN helper (80362B44 / 80363064..803631A8): the panel message window.
 // Messages are TEXTORDER ids; prompts drive j_chrselmesswin's sequences.
 class MessageWindow {
@@ -494,19 +451,6 @@ private:
     bool interrupted_{}, shown_{};
     int mode_{}, step_{}, cursor_{}, id_{}, interrupt_id_{}, interrupt_count_{};
     std::string sequence_;
-};
-
-// DEGISTATECTRL helper (8035299C / 803529EC / 80353394): face and status windows.
-class StatusWindow {
-public:
-    void show() { mode_ = 1; step_ = 0; done_ = false; }                          // 8035299C
-    void hide(int style) { mode_ = 2; style_ = style; step_ = 0; done_ = false; } // 803529EC
-    bool update(Engine& engine, CommonModelControl& models, int player, const Vec3f& position, int digimon);
-    bool done() const { return done_; }
-
-private:
-    int mode_{}, style_{}, step_{};
-    bool done_ = true;
 };
 
 // DATABASE (beDBManagerInfo): named beDataBase tables with typed columns;
@@ -609,41 +553,6 @@ private:
     void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);
     void drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last);
     std::vector<std::unique_ptr<GeneRam>> rams_;
-};
-
-// LOADINTF2 (beNDMWLoadIntf2, update 8035C958, commands 803612DC): one panel per
-// controller slot: join prompt, new game / load choice, partner selection with
-// the 3D model, status window and the host's START. The name entry keyboard
-// (NAMESEL), memory card slots and the difficulty dialog are not reconstructed
-// yet; a new game skips straight from the partner to the status window.
-class LoadIntf2Manager final : public Manager {
-public:
-    LoadIntf2Manager() : Manager("beNDMWLoadIntf2") {}
-    bool accepts(const ObjectView& info) const override { return info.type() == "beNDMWLoadIntf2Info"; }
-    void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
-    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
-    void update(Engine& engine) override;
-
-private:
-    struct PanelRam : Ram {
-        bool created{};
-        int state{}, sub{}, detail{}, detail2{}; // CTRL +24..+30
-        int cursor{};                            // CTRL +18
-        bool joined_flag{};                      // CTRL +12
-        bool cancel{};                           // CTRL +14
-        bool message_open{};                     // CTRL +15
-        bool no_model{};                         // CTRL +17
-        bool new_game{};                         // CTRL +1C
-        bool fresh{};                            // CTRL +1D: no saved player
-        int digimon = 3;                         // MAKECHR +30
-        Vec3f position{};
-        CommonModelControl models;
-        MessageWindow message;
-        StatusWindow status;
-    };
-    void update_panel(Engine& engine, PanelRam& ram, CommonIntf& common);
-    std::vector<std::unique_ptr<PanelRam>> rams_;
 };
 
 // MATCTRL (beMatCtrl, update 803030A8, commands 80303B14): floor mats. Each

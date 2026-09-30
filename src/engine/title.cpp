@@ -1,4 +1,5 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/save_menu.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -486,7 +487,7 @@ bool LoadCtrl2Manager::command(Engine& engine, Ram& base, std::string_view comma
                 for (std::size_t slot = 1; slot < sys->players.size(); ++slot)
                     if (!sys->players[slot].joined) sys->players[slot] = GameSystem::PlayerSlot{};
         }
-        common_ = CommonIntf{};
+        common_ = SaveCommon{};
         common_.active = true;
         common_.title = title;
         return true;
@@ -509,12 +510,10 @@ void LoadCtrl2Manager::update(Engine& engine) {
         switch (ram.state) {
         case 1: // save utility (memory card) start-up
             if (ram.sub == 0) {
-                Packet packet;
-                packet.ints.push_back(4);
-                ram.save_utility = engine.messenger().send(engine, "SAVEUTILITY", std::nullopt, -1, "GENERATE", packet) > 0;
+                common_.io.generate(engine); // 80367900
                 next_sub();
             } else if (ram.sub == 1) {
-                if (!ram.save_utility || query(engine, "SAVEUTILITY", std::nullopt, -1, "ISRDY")) enter(2);
+                if (common_.io.is_ready(engine)) enter(2); // 80367980
             }
             break;
         case 2: // character select screen
@@ -538,13 +537,15 @@ void LoadCtrl2Manager::update(Engine& engine) {
                 send(engine, "LOADINTF2_ALL", std::nullopt, -1, "GENERATE");
                 next_sub();
             } else if (ram.sub == 3) {
-                if (common_.state == 3) next_sub();
+                // 8036322C runs the card worker while the panels work.
+                if (common_.state == 0) common_.update(engine);
+                else if (common_.state == 3) next_sub();
             } else if (ram.sub == 4) {
                 if (ram.step == 0) {
                     for (auto& player : common_.players) {
                         player.closed = false;
                         player.state = 2;
-                        player.sub = player.step = player.detail = 0;
+                        player.sub = player.detail = player.detail2 = 0;
                     }
                     next_step();
                 } else if (ram.step == 1) {
@@ -576,10 +577,10 @@ void LoadCtrl2Manager::update(Engine& engine) {
             break;
         case 3: // leave for the lobby
             if (ram.sub == 0) {
-                if (ram.save_utility) send(engine, "SAVEUTILITY", std::nullopt, -1, "REMOVE");
+                common_.io.remove(engine); // 80367A18
                 next_sub();
             } else if (ram.sub == 1) {
-                if (!ram.save_utility || !query(engine, "SAVEUTILITY", std::nullopt, -1, "ISRDY")) {
+                if (common_.io.gone(engine)) { // 80367A60
                     Packet point;
                     if (ram.title) {
                         engine.run_script("gameStart.lua");
