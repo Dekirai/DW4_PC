@@ -1172,6 +1172,21 @@ void SubWindowManager::update(Engine& engine) {
                 sys->change_hp(engine, slot, 0);
                 sys->change_mp(engine, slot, 0);
             }
+    if (program_ == 10) {
+        // 8034FA18: the card program leaves for the lobby's point 4 unless a
+        // reset is starting.
+        Packet reset;
+        messenger.send(engine, "STAGECTL", std::nullopt, -1, "ISRESETSTART", reset);
+        if (!reset.boolean(0)) {
+            Packet point;
+            point.ints.push_back(4);
+            messenger.send(engine, "PLAYERPOINT", std::nullopt, -1, "SETGENERATEPOS", point);
+            Packet next;
+            next.strings.emplace_back("stagML12");
+            messenger.send(engine, "STAGECTL", std::nullopt, -1, "NEXTSTAGE", next);
+        }
+        return;
+    }
     for (const char* layer : {"WN01", "WN00"}) {
         Packet p;
         p.strings = {layer, "DISPON"};

@@ -398,6 +398,11 @@ bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Pa
         if (!packet.strings.empty()) engine.request_stage(std::string(packet.string(0)));
         return true;
     }
+    if (command == "ISRESETSTART") {
+        // The soft reset (_resetTrgTime) is not held.
+        packet.bools.push_back(0);
+        return true;
+    }
     if (command == "PADINPUT") {
         const auto mode = packet.string(0);
         if (mode == "ENABLE") engine.set_pad_input_enabled(true);
