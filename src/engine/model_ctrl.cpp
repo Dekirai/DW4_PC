@@ -355,6 +355,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 if (auto* weapons = engine.get<WeaponManager>())
                     if (const auto* rows = weapons->labels(stats.weapon_model))
                         for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;
+                // 8034DC60: PLAYERARMS GENERATE of POWERSOCKETNAME[0] hangs the weapon on,
+                // posted (8030650C) so the weapon package is registered by then.
+                if (!slot.weapons[0].empty())
+                    engine.messenger().post(engine.time() + kFrameNs, "PLAYERARMS", slot.weapons[0], ram.index, "GENERATE", {});
                 // 8034DCFC..8034DE94: level, HP and MP meters and numbers.
                 auto hud = [&](const char* category, const char* name, const char* command, Packet p) {
                     engine.messenger().send(engine, category, name, ram.index, command, p);
@@ -1278,6 +1282,10 @@ void WeaponManager::add_info(Engine& engine, const ObjectView& info) {
     rows.clear();
     for (const auto& row : info.list(9))
         if (row) rows.emplace_back(std::string(row.str(2)), std::string(row.str(3)));
+    auto& arms = arms_[name];
+    arms = {};
+    for (const auto& part : info.list(7)) arms.geometry.push_back(part);
+    for (const auto& joint : info.list(8)) arms.joints.push_back(joint ? std::string(joint.str(2)) : std::string());
     std::int32_t index = 0;
     for (const auto& record : info.list(6)) {
         auto ram = std::make_unique<Ram>();
@@ -1292,20 +1300,67 @@ void WeaponManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+void WeaponManager::clear_stage(Engine&) {
+    while (!attached_.empty()) remove(attached_.begin()->first);
+    attached_.clear();
+    rams_.clear();
+    labels_.clear();
+    arms_.clear();
+}
+
+void WeaponManager::remove(int index) {
+    const auto found = attached_.find(index);
+    if (found == attached_.end()) return;
+    for (auto* actor : found->second.actors)
+        for (const auto& node : found->second.nodes)
+            std::erase(actor->children, node.get());
+    attached_.erase(found);
+}
+
 // 80318474 GENERATE: the weapon row of player index gives the player model
-// its sequence labels (SETLABEL). Attaching the weapon geometry to the
-// player's appearance is not reconstructed yet.
+// its sequence labels (SETLABEL) and hangs each weapon part under the model's
+// igActor nodes in an igModelViewMatrixBoneSelect of its bone, so the part
+// follows the animated skeleton. REMOVE takes the parts off again. A player
+// keeps one weapon's parts at a time.
 bool WeaponManager::command(Engine& engine, Ram& ram, std::string_view command, Packet&) {
-    if (command != "GENERATE") return command == "REMOVE";
+    const int player = std::clamp(ram.index, 0, 3);
+    if (command == "REMOVE") {
+        remove(player);
+        return true;
+    }
+    if (command != "GENERATE") return false;
+    remove(player);
     auto* sys = engine.get<GameSystem>();
     const auto* rows = labels(ram.info_name);
     if (!sys || !rows) return true;
-    const auto& digimon = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].digimon;
+    const auto& digimon = sys->players[std::size_t(player)].digimon;
     for (const auto& [sequence, label] : *rows) {
         Packet p;
         p.strings = {sequence, label};
         engine.messenger().send(engine, "MODELCTRL", digimon, ram.index, "SETLABEL", p);
     }
+    auto* actions = engine.get<ActionManager>();
+    const auto arms = arms_.find(ram.info_name);
+    const auto* action = actions ? actions->find(digimon, ram.index) : nullptr;
+    if (!action || arms == arms_.end() || !action->database) return true;
+    const auto& skeleton = action->database->skeleton();
+    auto& attached = attached_[player];
+    attached.actors = action->actors;
+    for (std::size_t i = 0; i < arms->second.geometry.size() && i < arms->second.joints.size(); ++i) {
+        const auto bone = std::find(skeleton.names.begin(), skeleton.names.end(), arms->second.joints[i]);
+        Node* part = engine.scenes().node(arms->second.geometry[i]);
+        if (bone == skeleton.names.end() || !part) continue;
+        auto select = std::make_unique<Node>();
+        select->kind = NodeKind::bone_select;
+        select->name = arms->second.joints[i];
+        select->bone_index = int(bone - skeleton.names.begin());
+        select->children.push_back(part);
+        for (auto* actor : attached.actors)
+            if (actor) actor->children.push_back(select.get());
+        attached.nodes.push_back(std::move(select));
+    }
+    engine.log("player " + std::to_string(player) + " arms " + ram.info_name + ": " + std::to_string(attached.nodes.size()) +
+               " parts on " + std::to_string(attached.actors.size()) + " actors");
     return true;
 }
 
@@ -1393,6 +1448,12 @@ void ActionManager::clear_stage(Engine&) {
     actions_.clear();
     databases_.clear();
     actor_owner_.clear();
+}
+
+const ActionManager::ActionRam* ActionManager::find(std::string_view name, int index) const {
+    for (const auto& ram : rams_)
+        if (ram->info_name == name && ram->index == index) return ram.get();
+    return nullptr;
 }
 
 const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time) {

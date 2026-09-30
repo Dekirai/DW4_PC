@@ -796,13 +796,25 @@ public:
     WeaponManager() : Manager("beWeapon") {}
     bool accepts(const ObjectView& info) const override { return info.type() == "beWeaponInfo"; }
     void add_info(Engine& engine, const ObjectView& info) override;
-    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); labels_.clear(); }
+    void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     const std::vector<std::pair<std::string, std::string>>* labels(std::string_view weapon) const;
 
 private:
+    // Detaches what GENERATE hung on player index's actors.
+    void remove(int index);
+    struct Arms {
+        std::vector<ObjectView> geometry; // info list 7: the weapon parts
+        std::vector<std::string> joints;  // info list 8: their bones
+    };
+    struct Attached {
+        std::vector<Node*> actors;
+        std::vector<std::unique_ptr<Node>> nodes; // igModelViewMatrixBoneSelect per part
+    };
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, std::vector<std::pair<std::string, std::string>>, std::less<>> labels_;
+    std::map<std::string, Arms, std::less<>> arms_;
+    std::map<int, Attached> attached_; // per player
 };
 
 // beActionStarter (registration 802F2244, handler 802F228C): on the
@@ -934,6 +946,9 @@ public:
         std::int64_t pose_time = -1;
     };
     const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
+    // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
+    // and animation database with the skeleton).
+    const ActionRam* find(std::string_view name, int index) const;
 
 private:
     void dispatch(Engine& engine, ActionRam& ram, std::string_view name);
