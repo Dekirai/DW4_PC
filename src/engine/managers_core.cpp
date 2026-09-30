@@ -771,6 +771,10 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         out = {Lua4Value::number(players[std::size_t(std::clamp(arg_int(0), 0, 3))].stats.level)};
         return true;
     }
+    if (method == "SYSgetPlayerDigimon") {
+        out = {Lua4Value::number(players[std::size_t(std::clamp(arg_int(0), 0, 3))].stats.species)};
+        return true;
+    }
     if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }
     if (method == "SYSgetLightMode") { out = {Lua4Value::number(light_mode)}; return true; }
     if (method == "SYSgetGateStageName") { out = {Lua4Value::string(gate_stage_name)}; return true; }

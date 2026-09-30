@@ -952,6 +952,12 @@ public:
     bool accepts(const ObjectView&) const override { return false; }
     void add_info(Engine&, const ObjectView&) override {}
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
+    // GAMERAM messages (803717A4); the row is registered again after each stage load.
+    void update(Engine& engine) override;
+    void clear_stage(Engine&) override { registered_ = false; }
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    Ram ram_{};
+    bool registered_{};
 
     // Player game RAM subset used by FIGHTCALC (GAME_DATA / GAME_STATS).
     struct Stats {
@@ -1017,22 +1023,27 @@ public:
         void remove_device(int index);
         std::vector<int> wazalist;     // WAZALIST: pcTech rows
         std::map<int, std::uint8_t> base_isuse; // BASE_ISUSE: species reached by this player
-        // BASE_LEVEL: the level of each of the 16 species (8036DF70 stores the
-        // current LEVEL after a level-up, 8036DBA8 loads it on a change).
+        // BASE_LEVEL / BASE_EXP / BASE_SKILL / BASE_UPCNT: what each of the 16
+        // species keeps (8036DF70 stores the current species, 8036DBA8 loads
+        // one on a change; 8036EB0C starts levels and skills at 1).
         std::array<int, 16> base_level = [] {
             std::array<int, 16> levels{};
             levels.fill(1);
             return levels;
         }();
+        std::array<int, 16> base_exp{};
+        std::array<std::array<int, 9>, 16> base_skill = [] {
+            std::array<std::array<int, 9>, 16> skills{};
+            for (auto& row : skills) row.fill(1);
+            return skills;
+        }();
+        std::array<std::array<int, 11>, 16> base_upcnt{};
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,
     // weapon, armor1, armor2, abChip.
     static constexpr const char* item_tables[7] = {"conItem", "insItem", "impItem", "weapon", "armor1", "armor2", "abChip"};
     std::map<int, std::uint8_t> flag_folder; // common FLAGFOLDER, set by impItem pickups
-    // Common COUNTER list; [1] picks the junk shop's stock. Its writers are
-    // not reconstructed yet.
-    std::map<int, int> counter;
     // CTRLITEM (GAMERAM 80372054): SYSctlDeviceFolder/DiskFolder/FlagFolder/Bit.
     int control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
                      int a, int b, int c);
@@ -1041,6 +1052,17 @@ public:
     // 8036EB0C: species, BASE_LEVEL/SKILL 1, INI_WEAPON1..3 in DEVICEFOLDER and
     // POWERSOCKET, then RECALCPLAYER with full HP/MP.
     void create_player(Engine& engine, int slot);
+    // CURRENT2BASE (8036DF70): the current species keeps LEVEL, EXP, SKILL and UPCNT.
+    void store_species(int slot);
+    // BASE2CURRENT (8036DBA8): the player becomes species with its kept values.
+    void load_species(Engine& engine, int slot, int species);
+    // WEAPONEQUIPCHECK (8036E9D4): a folder weapon the species could equip.
+    bool weapon_usable(Engine& engine, int slot, int species) const;
+    // 8036F808 / 8036FB80 for a kept species: MHP, MMP, STR, DEF, WIS, SPI and
+    // SPD at its BASE_LEVEL with its BASE_UPCNT.
+    std::array<int, 7> form_stats(Engine& engine, int slot, int species) const;
+    // WEAPONEQUIPSTRONG (8036E3B8): only the strongest usable weapon stays socketed.
+    void equip_strongest_weapon(Engine& engine, int slot);
     // RECALCPLAYER (8036FDE8): status from level, UPCNT, buffs and equipment,
     // the technique list and the socket weapon.
     void recalc_player(Engine& engine, int slot);

@@ -347,6 +347,15 @@ void GameSystem::create_player(Engine& engine, int slot) {
             if (*at == ',') ++at;
         }
     }
+    // DW4_FORMS=species,...: forms a test run has reached (BASE_ISUSE).
+    if (const char* forms = std::getenv("DW4_FORMS")) {
+        for (const char* at = forms; *at;) {
+            const int species = std::atoi(at);
+            if (species >= 0 && species < 16) player.base_isuse[species] = 1;
+            while (*at && *at != ',') ++at;
+            if (*at == ',') ++at;
+        }
+    }
     player.hp = 0; // RECALCPLAYER refills HP and MP from 0
     recalc_player(engine, slot);
     stats.ready = true;
@@ -557,7 +566,7 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
             leveled = true;
         }
         if (!leveled) continue;
-        if (stats.species >= 0 && stats.species < 16) player.base_level[std::size_t(stats.species)] = stats.level;
+        store_species(slot);
         player.hp = player.max_hp;
         player.mp = player.max_mp;
         auto* models = engine.get<ModelCtrlManager>();
@@ -587,6 +596,116 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
         send("NUMBERCTRL", "mpnm", "SETVALUE", mp);
     }
     return killer_gain;
+}
+
+void GameSystem::store_species(int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    const int species = player.stats.species;
+    if (species < 0 || species >= 16) return;
+    const auto s = std::size_t(species);
+    player.base_level[s] = player.stats.level;
+    player.base_exp[s] = player.stats.exp;
+    player.base_skill[s] = player.stats.skill;
+    player.base_upcnt[s] = player.upcnt;
+}
+
+void GameSystem::load_species(Engine& engine, int slot, int species) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    if (species < 0 || species >= 16) return;
+    const auto s = std::size_t(species);
+    player.stats.species = species;
+    if (auto* db = engine.get<DatabaseManager>()) {
+        const auto model = db->text("shinka", species, "MODEL_NAME");
+        if (!model.empty()) player.digimon = model;
+    }
+    player.stats.level = player.base_level[s];
+    player.stats.exp = player.base_exp[s];
+    player.stats.skill = player.base_skill[s];
+    player.upcnt = player.base_upcnt[s];
+}
+
+bool GameSystem::weapon_usable(Engine& engine, int slot, int species) const {
+    const auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto* db = engine.get<DatabaseManager>();
+    if (!db || species < 0 || species >= 16) return false;
+    const auto& skills = player.stats.species == species ? player.stats.skill : player.base_skill[std::size_t(species)];
+    for (const auto& d : player.devices) {
+        if (d.type != 0) continue;
+        const auto soubi = std::uint32_t(db->number("weapon", d.record, "SOUBI").value_or(0));
+        const int skill = db->number("weapon", d.record, "SKILL").value_or(0);
+        const int need = db->number("weapon", d.record, "SKILLPOINT").value_or(0);
+        if ((soubi & (1u << species)) && skill >= 0 && skill < 9 && skills[std::size_t(skill)] >= need) return true;
+    }
+    return false;
+}
+
+void GameSystem::equip_strongest_weapon(Engine& engine, int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto* db = engine.get<DatabaseManager>();
+    if (!db) return;
+    for (auto& d : player.devices)
+        if (d.type == 0) d.flag = false;
+    std::fill(player.power_socket.begin(), player.power_socket.end(), -1);
+    player.weapons = {};
+    const int species = player.stats.species;
+    int best = -1, strongest = 0;
+    for (std::size_t i = 0; i < player.devices.size(); ++i) {
+        const auto& d = player.devices[i];
+        if (d.type != 0 || species < 0 || species >= 32) continue;
+        const auto soubi = std::uint32_t(db->number("weapon", d.record, "SOUBI").value_or(0));
+        const int skill = db->number("weapon", d.record, "SKILL").value_or(0);
+        const int need = db->number("weapon", d.record, "SKILLPOINT").value_or(0);
+        if (!(soubi & (1u << species)) || skill < 0 || skill >= 9 || player.stats.skill[std::size_t(skill)] < need) continue;
+        const int power = db->number("weapon", d.record, "TSUYOSA").value_or(0);
+        if (best < 0 || strongest < power) {
+            best = int(i);
+            strongest = power;
+        }
+    }
+    if (best < 0) return;
+    if (!player.power_socket.empty()) player.power_socket[0] = best;
+    player.weapons[0] = db->text("weapon", player.devices[std::size_t(best)].record, "MODEL");
+    player.devices[std::size_t(best)].flag = true;
+}
+
+std::array<int, 7> GameSystem::form_stats(Engine& engine, int slot, int species) const {
+    std::array<int, 7> out{};
+    const auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto* db = engine.get<DatabaseManager>();
+    if (!db || species < 0 || species >= 16) return out;
+    const auto s = std::size_t(species);
+    const int level = player.base_level[s];
+    const auto& up = player.base_upcnt[s];
+    auto cell = [&](const char* column) { return db->number("shinka", species, column).value_or(0); };
+    out[0] = grown_value(level, true, cell("MHP_GROW"), cell("MHP_INI"), up[0], 99999);
+    out[1] = grown_value(level, true, cell("MMP_GROW"), cell("MMP_INI"), up[1], 99999);
+    static const char* ini[5] = {"STR_INI", "AC_INI", "INT_INI", "MND_INI", "DEX_INI"};
+    static const char* grow[5] = {"STR_GROW", "AC_GROW", "INT_GROW", "MND_GROW", "DEX_GROW"};
+    for (std::size_t i = 0; i < 5; ++i) out[i + 2] = grown_value(level, false, cell(grow[i]), cell(ini[i]), up[i + 2], 9999);
+    return out;
+}
+
+void GameSystem::update(Engine& engine) {
+    if (registered_) return;
+    ram_.manager = this;
+    engine.messenger().add_row("GAMERAM", std::nullopt, -1, &ram_);
+    registered_ = true;
+}
+
+bool GameSystem::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
+    // ADDHP / ADDMP (I<player>/I<amount>): the amount added within the maximum.
+    if (command == "ADDHP" || command == "ADDMP") {
+        const int slot = packet.integer(0, 0);
+        const int amount = packet.integer(1, 0);
+        if (command == "ADDHP") change_hp(engine, slot, amount);
+        else change_mp(engine, slot, amount);
+        return true;
+    }
+    if (command == "RECALCPLAYER") {
+        recalc_player(engine, packet.integer(0, 0));
+        return true;
+    }
+    return false;
 }
 
 } // namespace dw4::engine

@@ -677,6 +677,12 @@ inline void show_digits(Engine& engine, const Window& window, int value, int wid
     }
 }
 
+// 8039E320 / 80392AE0: point the parent's status panel (StatusTitle01) at
+// player, the lobby variant (created in mode 1 when missing) or the full page.
+void status_panel(Window& parent, Engine& engine, int player, bool shop);
+// beNDMWStatusCtrlEquip (subwnd.cpp); mode 1 is the Digi-Lab's variant.
+Window& add_equip_page(Window& parent, Engine& engine, int mode);
+
 // The shop programs 1 and 3..10 (subwnd_shop.cpp).
 std::unique_ptr<Window> make_shop_program(int program);
 

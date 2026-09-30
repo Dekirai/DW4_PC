@@ -1259,7 +1259,7 @@ struct ShopJunk : Window {
                 return;
             }
             {
-                int& total = sys->counter[1];
+                int& total = engine.counters()[1];
                 const int before = counter;
                 total += selection;
                 p->bits -= selection;
@@ -2000,6 +2000,530 @@ struct ShopIdentify : Window {
     }
 };
 
+// ShopSelect02 (803A7840): a choice in the talk window (TALKFONT01,
+// i_messcr): the Digi-Lab menu for mode players (3 or 4 lines), two lines of
+// txt_shop.lua call mode, or the players (mode -1).
+struct ShopSelect02 : Select {
+    std::vector<int> players; // +112 for mode -1
+    void open(Engine& engine) override {
+        static const char* talk[4] = {"font01", "font02", "font03", "font04"};
+        if (mode == -1) {
+            auto* sys = engine.get<GameSystem>();
+            auto* db = engine.get<DatabaseManager>();
+            for (std::size_t i = 0; sys && db && i < players.size() && i < 4; ++i) {
+                const auto& p = sys->players[std::size_t(std::clamp(players[i], 0, 3))];
+                if (!p.name.empty()) text(engine, "TALKFONT01", talk[i], p.name, "LEFT");
+                text(engine, "TALKFONT04", talk[i], db->text("shinka", p.stats.species, "NAME"), "LEFT");
+            }
+            count = int(players.size());
+        } else if (mode >= 1 && mode <= 4) {
+            const int lines = mode == 1 ? 3 : 4;
+            for (int i = 0; i < lines; ++i) remember("TALKFONT01", talk[i]);
+            text_script(engine, "txt_shop.lua", mode == 1 ? 2034 : 2030);
+            count = lines;
+        } else if (mode == 1262 || mode == 1268 || mode == 2003 || mode == 2005 || mode == 2008) {
+            remember("TALKFONT01", "font01");
+            remember("TALKFONT01", "font02");
+            text_script(engine, "txt_shop.lua", mode);
+            count = 2;
+        }
+        cursor = "i_messcr";
+        position = {};
+        initial = 0;
+        no_cancel = mode == 2003;
+    }
+};
+
+// ShopSelect03 (803A8564): a talk window message of txt_shop.lua call mode.
+struct ShopSelect03 : Select {
+    void open(Engine& engine) override {
+        if (mode > 0) {
+            remember("TALKFONT01", "font00");
+            text_script(engine, "txt_shop.lua", mode);
+        }
+        cursor = "i_messky";
+        count = 1;
+        position = {};
+        initial = 0;
+        no_cancel = false;
+    }
+};
+
+// Lines of the form values (804EC7B8): label, value.
+constexpr const char* kFormLines[16][2] = {
+    {"font000", "font030"}, {"font001", "font031"}, {"font010", "font040"}, {"font011", "font041"},
+    {"font012", "font042"}, {"font013", "font043"}, {"font014", "font044"}, {"font020", "font050"},
+    {"font021", "font051"}, {"font022", "font052"}, {"font023", "font053"}, {"font024", "font054"},
+    {"font025", "font055"}, {"font026", "font056"}, {"font027", "font057"}, {"font028", "font058"}};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlEvolve (8039B154): the forms reached (BASE_ISUSE, 8 a page)
+// with their level, stats and weapon skills; choosing one digivolves.
+// ---------------------------------------------------------------------------
+struct ShopEvolve : Window {
+    int page{};    // +84
+    int pages = 1; // +88
+    int line{};    // +92
+    struct Form {
+        int species{}, level{};
+        std::string name;
+        std::array<int, 16> values{}; // MHP, MMP, 5 stats, 9 skills
+    };
+    std::vector<Form> forms; // +96 (803AC44C / 803AC858), species 3 first
+
+    void build(Engine& engine) {
+        forms.clear();
+        auto* sys = engine.get<GameSystem>();
+        auto* db = engine.get<DatabaseManager>();
+        if (!sys || !db) return;
+        const auto& p = sys->players[std::size_t(std::clamp(player, 0, 3))];
+        for (int i = 0; i < 16; ++i) {
+            const auto found = p.base_isuse.find(i);
+            if (found == p.base_isuse.end() || !found->second) continue;
+            Form form{i, p.base_level[std::size_t(i)], db->text("shinka", i, "NAME"), {}};
+            const auto stats = sys->form_stats(engine, player, i);
+            for (std::size_t k = 0; k < 7; ++k) form.values[k] = stats[k];
+            for (std::size_t k = 0; k < 9; ++k) form.values[7 + k] = p.base_skill[std::size_t(i)][k];
+            if (i == 3) forms.insert(forms.begin(), form);
+            else forms.push_back(form);
+        }
+    }
+    int page_count() const {
+        const int size = int(forms.size());
+        if (!size) return 2;
+        return page == 1 ? size - 8 : std::min(size, 8);
+    }
+    const Form* form(int at) const { return at >= 0 && at < int(forms.size()) ? &forms[std::size_t(at)] : nullptr; }
+    // 8039C4DC
+    void fill(Engine& engine, bool names, bool description) {
+        if (names) {
+            for (int i = 0; i < 8; ++i) {
+                const auto* f = form(i + 8 * page);
+                if (f) {
+                    textset(engine, "STWINFONT20", kLines[i], f->name);
+                    textset(engine, "STWINFONT43", kLines[i], "Lv");
+                    textset(engine, "STWINFONT21", kLines[i], std::to_string(f->level));
+                }
+                for (const char* layer : {"STWINFONT20", "STWINFONT43", "STWINFONT21"})
+                    switch_line(engine, layer, kLines[i], f != nullptr);
+            }
+            if (pages > 1) {
+                textset(engine, "STWINFONT31", "font000", std::string(1, char('1' + page)));
+                textset(engine, "STWINFONT31", "font001", std::string(1, char('0' + pages)));
+            }
+        }
+        if (description && selection != -1) {
+            if (const auto* f = form(8 * page + selection)) {
+                for (std::size_t k = 0; k < 16; ++k) textset(engine, "STWINFONT22", kFormLines[k][1], std::to_string(f->values[k]));
+                if (auto* db = engine.get<DatabaseManager>())
+                    textset(engine, "STWINFONT29", "font000", db->text("shinka", f->species, "EXPLANATION"));
+                switch_line(engine, "STWINFONT29", "font000", true);
+            }
+        }
+    }
+    // 8039CA4C: CURRENT2BASE, BASE2CURRENT, WEAPONEQUIPSTRONG, boards and
+    // chips taken off.
+    void evolve(Engine& engine, int species) {
+        auto* sys = engine.get<GameSystem>();
+        auto* p = player_slot(engine);
+        if (!sys || !p) return;
+        sys->store_species(player);
+        sys->load_species(engine, player, species);
+        recalc(engine);
+        sys->equip_strongest_weapon(engine, player);
+        for (auto* list : {&p->main_slot, &p->sub_slot, &p->power_pocket, &p->main_pocket})
+            for (int& index : *list) {
+                if (index >= 0 && index < int(p->devices.size())) p->devices[std::size_t(index)].flag = false;
+                index = -1;
+            }
+        recalc(engine);
+        subwnd(engine, "UPDATE");
+        if (parent) status_panel(*parent, engine, player, true);
+    }
+    void cursor_ng(Engine& engine) {
+        Packet sound;
+        sound.strings.emplace_back("CURSOR_NG");
+        engine.messenger().send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
+    }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        auto* p = player_slot(engine);
+        auto* sys = engine.get<GameSystem>();
+        if (!p || !sys) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            if (sub == 0) {
+                open_model(engine, "i_messwn", 0, "SQ_STOPEN", "SQ_STCLOSE");
+                set_sub(1);
+            }
+            if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
+            build(engine);
+            pages = forms.size() <= 8 ? 1 : 2;
+            page = line = 0;
+            if (pages <= 1) {
+                open_model(engine, "j_shwin", 0, "SQ_SINKAOFFOPEN", "SQ_CLOSE");
+            } else {
+                open_model(engine, "j_shwin", 0, "SQ_SINKAONOPEN", "SQ_CLOSE");
+                open_model(engine, "i_stcursorleft", 0, "SQ_HIDE", "SQ_CLOSE", {-308.0f, 25.0f, 0.0f});
+                open_model(engine, "i_stcursorright", 0, "SQ_SELECT", "SQ_CLOSE", {-51.0f, 25.0f, 0.0f});
+                text(engine, "STWINFONT31", "font000", " ", "RIGHT");
+                text(engine, "STWINFONT31", "font001", " ", "RIGHT");
+            }
+            remember("STWINFONT29", "font100");
+            text_script(engine, "txt_shop.lua", 1254);
+            remember("STWINFONT37", "font000");
+            remember("STWINFONT37", "font001");
+            text_script(engine, "txt_shop.lua", 1218);
+            for (int i = 0; i < 8; ++i) {
+                text(engine, "STWINFONT20", kLines[i], " ", "LEFT");
+                text(engine, "STWINFONT43", kLines[i], " ", "LEFT");
+                text(engine, "STWINFONT21", kLines[i], " ", "RIGHT");
+            }
+            for (const auto& pair : kFormLines) {
+                text(engine, "STWINFONT22", pair[0], " ", "LEFT");
+                text(engine, "STWINFONT22", pair[1], " ", "RIGHT");
+            }
+            text_script(engine, "txt_shop.lua", 1202);
+            text(engine, "STWINFONT29", "font000", " ", "LEFT");
+            next_state(1);
+            return;
+        }
+        switch (sub) {
+        case 0: {
+            auto& select = add_child<SelectE1>(engine);
+            select.position = {-283.0f, 92.0f, 0.0f};
+            select.initial = line;
+            select.count = page_count();
+            mark();
+            set_sub(1);
+            selection = line;
+            fill(engine, true, false);
+        }
+            [[fallthrough]];
+        case 1:
+            if (selection != -1) fill(engine, false, true);
+            set_sub(2);
+            last = selection;
+            [[fallthrough]];
+        case 2: {
+            if (!child_done()) {
+                if (selection == -1) return;
+                if (last != selection) {
+                    set_sub(1);
+                    return;
+                }
+                auto* select = find_child<SelectE1>();
+                if (!select || !select_idle(engine, *this, *select)) return;
+                if (turn_page(engine, *this, page, pages, false) || turn_page(engine, *this, page, pages, true)) {
+                    select->next_state(4);
+                    select->count = page_count();
+                    set_sub(1);
+                    selection = 0;
+                    fill(engine, true, false);
+                }
+                return;
+            }
+            if (selection == -1) {
+                if (parent) parent->selection = -1;
+                next_state(2);
+                return;
+            }
+            line = selection;
+            const auto* f = form(line + 8 * page);
+            const int target = f ? f->species : p->stats.species;
+            if (p->stats.species == target) {
+                set_sub(4);
+                cursor_ng(engine);
+            } else if (sys->weapon_usable(engine, player, target)) {
+                set_sub(3);
+            } else {
+                set_sub(4);
+                set_step(1);
+                cursor_ng(engine);
+            }
+            return;
+        }
+        case 3: // confirm twice, then digivolve
+            switch (step) {
+            case 0:
+            case 4:
+                add_child<ShopSelect01>(engine).mode = step == 0 ? 1255 : 1258;
+                mark();
+                set_step(step + 1);
+                return;
+            case 2:
+                shop_message(*this, engine, 1257);
+                mark();
+                set_step(3);
+                return;
+            case 1:
+            case 3:
+            case 5:
+                if (!child_done()) return;
+                if (selection != 0) set_sub(0);
+                else set_step(step + 1);
+                return;
+            case 6: {
+                auto& note = shop_message(*this, engine, 0);
+                note.remember("STWINFONT29", "font000");
+                note.remember("STWINFONT29", "font100");
+                text_script(engine, "txt_shop.lua", 1260);
+                if (const auto* f = form(line + 8 * page)) {
+                    if (auto* db = engine.get<DatabaseManager>())
+                        textset(engine, "STWINFONT29", "font000", db->text("shinka", f->species, "EXPLANATION"));
+                    switch_line(engine, "STWINFONT29", "font000", true);
+                    evolve(engine, f->species);
+                }
+                mark();
+                set_step(7);
+                return;
+            }
+            default:
+                if (!child_done()) return;
+                if (parent) parent->selection = 1;
+                next_state(2);
+                return;
+            }
+        case 4: // already this form (step 0) or no weapon for it (step 1)
+            if (last == 0) {
+                auto& note = shop_message(*this, engine, 0);
+                note.remember("STWINFONT29", "font000");
+                text_script(engine, "txt_shop.lua", step ? 2021 : 2020);
+                mark();
+                last = 1;
+            }
+            if (child_done()) set_sub(0);
+            return;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrl20 (8039CD70): the Digi-Lab. Digivolve, equip or switch the
+// player; leaving after a change plays demo_digilab.lua.
+// ---------------------------------------------------------------------------
+struct ShopLab : Window {
+    std::vector<int> players;              // +84: ISUSE players
+    std::vector<int> species;              // +88: their DIGIMONNO on entry
+    std::vector<std::vector<int>> sockets; // +92: their POWERSOCKET records on entry
+    bool evolved{}, equipped{};            // +96 / +97
+    bool demo{};                           // +104
+
+    // 8039DD88
+    void snapshot(Engine& engine) {
+        players.clear();
+        species.clear();
+        sockets.clear();
+        auto* sys = engine.get<GameSystem>();
+        if (!sys) return;
+        for (int i = 0; i < 4; ++i) {
+            const auto& p = sys->players[std::size_t(i)];
+            if (!p.joined) continue;
+            players.push_back(i);
+            species.push_back(p.stats.species);
+            std::vector<int> records;
+            for (const int index : p.power_socket)
+                if (const auto* d = p.device(index)) records.push_back(d->record);
+            sockets.push_back(records);
+        }
+    }
+    // 8039E030: a digivolution or a different socket since entry.
+    bool changed(Engine& engine) const {
+        if (!evolved && !equipped) return false;
+        auto* sys = engine.get<GameSystem>();
+        if (!sys) return false;
+        for (std::size_t k = 0; k < players.size(); ++k) {
+            const auto& p = sys->players[std::size_t(players[k])];
+            if (p.stats.species != species[k]) return true;
+            auto left = sockets[k];
+            int socketed = 0;
+            for (const int index : p.power_socket) {
+                const auto* d = p.device(index);
+                if (!d) continue;
+                ++socketed;
+                const auto found = std::find(left.begin(), left.end(), d->record);
+                if (found != left.end()) *found = -1;
+            }
+            if (socketed != int(sockets[k].size())) return true;
+            if (std::any_of(left.begin(), left.end(), [](int r) { return r != -1; })) return true;
+        }
+        return false;
+    }
+    // 8039DFA0
+    void recalc_all(Engine& engine) {
+        if (auto* sys = engine.get<GameSystem>())
+            for (const int k : players) sys->recalc_player(engine, k);
+    }
+    void open_message(Engine& engine) { open_model(engine, "i_messwn", 0, "SQ_OPEN", "SQ_CLOSE"); } // 8039E440
+    void update(Engine& engine) override {
+        if (state == 2) {
+            model(engine, "i_bgclear", 0, "OFFREEZE");
+            close_models(engine);
+            clear_lines(engine);
+            close_children();
+            next_state(3);
+            if (demo) engine.run_script("demo_digilab.lua");
+            return;
+        }
+        if (state == 3) {
+            if (closed(engine)) running = false;
+            return;
+        }
+        auto* sys = engine.get<GameSystem>();
+        if (!sys) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            evolved = equipped = false;
+            snapshot(engine);
+            add_child<ShopTitle00>(engine);
+            add_child<Title03>(engine);
+            add_child<ShopTitle01>(engine).mode = mode;
+            next_state(1);
+        }
+        switch (sub) {
+        case 0: // Digivolve / Equip / (Switch) / Exit
+            if (step == 0) {
+                open_message(engine);
+                status_panel(*this, engine, player, true);
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (model_in(engine, "i_messwn", 0, "SQ_OPEN")) return;
+                add_child<ShopSelect02>(engine).mode = int(players.size());
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 0) set_sub(1);
+            else if (selection == 1) set_sub(2);
+            else if (selection == 2 && players.size() != 1) set_sub(5);
+            else set_sub(6);
+            return;
+        case 1: // digivolve
+            if (step == 0) {
+                add_child<ShopEvolve>(engine);
+                mark();
+                set_step(1);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 1) {
+                evolved = true;
+                set_sub(3);
+            } else {
+                set_sub(0);
+            }
+            open_message(engine);
+            return;
+        case 2: // equipment
+            if (step == 0) {
+                status_panel(*this, engine, player, false);
+                set_step(1);
+            }
+            if (step == 1) {
+                add_equip_page(*this, engine, 1).open_model(engine, "i_messwn", 0, "SQ_STOPEN", "SQ_STCLOSE");
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 100) equipped = true;
+            set_sub(0);
+            open_message(engine);
+            return;
+        case 3: // after a digivolution: equip now?
+            if (step == 0) {
+                if (model_in(engine, "i_messwn", 0, "SQ_OPEN")) return;
+                add_child<ShopSelect03>(engine).mode = 1261;
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                add_child<ShopSelect02>(engine).mode = 1262;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            set_sub(selection == 0 ? 2 : 0);
+            return;
+        case 5: // another player
+            if (step == 0) {
+                if (players.size() <= 1) {
+                    set_sub(0);
+                    return;
+                }
+                add_child<ShopSelect03>(engine).mode = 1250;
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                auto& choice = add_child<ShopSelect02>(engine);
+                choice.mode = -1;
+                choice.players = players;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection >= 0 && selection < int(players.size())) player = players[std::size_t(selection)];
+            set_sub(0);
+            return;
+        case 6: // leave
+            switch (step) {
+            case 0:
+                if (changed(engine)) {
+                    set_step(2);
+                    return;
+                }
+                add_child<ShopSelect03>(engine).mode = 1275;
+                mark();
+                set_step(1);
+                recalc_all(engine);
+                for (const int k : players) {
+                    Packet arms;
+                    engine.messenger().send(engine, "PLAYERARMS", sys->players[std::size_t(k)].weapons[0], k, "GENERATE", arms);
+                }
+                return;
+            case 1:
+                if (child_done()) next_state(2);
+                return;
+            case 2:
+                add_child<ShopSelect03>(engine).mode = 1267;
+                mark();
+                set_step(3);
+                return;
+            case 3:
+                if (!child_done()) return;
+                add_child<ShopSelect02>(engine).mode = 1268;
+                mark();
+                set_step(4);
+                return;
+            case 4:
+                if (!child_done()) return;
+                if (selection != 0) set_sub(5);
+                else set_step(5);
+                return;
+            default:
+                recalc_all(engine);
+                demo = true;
+                next_state(2);
+                return;
+            }
+        }
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -2056,6 +2580,11 @@ struct ShopCtrl00 : Window {
 } // namespace
 
 std::unique_ptr<Window> make_shop_program(int program) {
+    if (program == 2) {
+        auto lab = std::make_unique<ShopLab>();
+        lab->mode = program;
+        return lab;
+    }
     auto window = std::make_unique<ShopCtrl00>();
     window->mode = program;
     return window;

@@ -18,14 +18,20 @@ struct Title01 : Title {
                                        "font070", "font071"};
         for (const char* line : values) text(engine, "STWINFONT06", line, "", "RIGHT");
         text_script(engine, "txt_status.lua", 3);
+        show(engine, mode == 1);
+    }
+    // 80392AE0: the full page on i_stbase; 80392BF8 (mode 1, the lobby
+    // programs): only name and portrait on j_shbase.
+    void show(Engine& engine, bool shop) {
         refresh(engine);
-        open_model(engine, "i_stbase", player, "SQ_LOPEN", "SQ_CLOSE");
+        if (shop) open_model(engine, "j_shbase", player, "SQ_OPEN", "SQ_CLOSE");
+        else open_model(engine, "i_stbase", player, "SQ_LOPEN", "SQ_CLOSE");
         static const char* shown[] = {"font030", "font031", "font032", "font033", "font034", "font035", "font036",
                                       "font037", "font038", "font039", "font060", "font061", "font000", "font001",
                                       "font010", "font011", "font040", "font041", "font042", "font043", "font044",
                                       "font045", "font046", "font047", "font048", "font049", "font070", "font071"};
-        for (const char* line : shown) switch_line(engine, "STWINFONT06", line, true);
-        switch_line(engine, "STWINFONT04", "font001", true);
+        for (const char* line : shown) switch_line(engine, "STWINFONT06", line, !shop);
+        switch_line(engine, "STWINFONT04", "font001", !shop);
     }
     // 80392108: SUBWND UPDATE fills the values; the portrait of the species.
     void refresh(Engine& engine) {
@@ -42,6 +48,19 @@ struct Title01 : Title {
         open_model(engine, "i_stdigiface", player, sequence, "SQ_CLOSE", {-410.0f, 240.0f, 0.0f});
     }
 };
+
+void status_panel(Window& parent, Engine& engine, int player, bool shop) {
+    for (auto& child : parent.children)
+        if (auto* panel = dynamic_cast<Title01*>(child.get())) {
+            panel->player = player;
+            panel->show(engine, shop);
+            return;
+        }
+    if (!shop) return;
+    auto& panel = parent.add_child<Title01>(engine);
+    panel.player = player;
+    panel.mode = 1;
+}
 
 // Select00 (80390730): Equipment / Folder / Skill.
 struct Select00 : Select {
@@ -881,6 +900,12 @@ struct StatusCtrl00 : Window {
         }
     }
 };
+
+Window& add_equip_page(Window& parent, Engine& engine, int mode) {
+    auto& page = parent.add_child<CtrlEquip>(engine);
+    page.mode = mode;
+    return page;
+}
 } // namespace subwnd
 
 // ===========================================================================
@@ -971,7 +996,7 @@ void SubWindowManager::fill_stocks(Engine& engine) {
         }
     } else if (program_ == 9 && stocks_[3].empty()) {
         static const int levels[] = {1000, 6000, 26000, 86000, 206000, 456000, 956000, 1956000, 3956000};
-        const int count = sys->counter[1];
+        const int count = engine.counters()[1];
         junk_counter_ = count;
         int row = -1;
         while (row + 1 < 9 && count >= levels[row + 1]) ++row;
