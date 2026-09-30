@@ -54,7 +54,7 @@ beSaveUtilInfo (`stagis12/separate/*_pack.igb`) holds beSvPlatDataGC: file
 `SaveData`, then two redundant 40960-byte copies of the game data at 0x2000
 and 0xC000 (a copy whose check fails is skipped).
 
-## Character record (80364AEC, big-endian)
+## Character record (80364AEC, big-endian, 3316 bytes; 12 per copy)
 
 | Offset | Field |
 | --- | --- |
@@ -81,7 +81,15 @@ and 0xC000 (a copy whose check fails is skipped).
 | 1908 | BASE_LEVEL (16 ints) |
 | 1972 | BASE_EXP (16 ints) |
 | 2036 | BASE_SKILL (16 x 9 ints) |
-| 2612 | BASE_UPCNT (16 x 11 ints), ends at 2788 |
+| 2612 | BASE_UPCNT (16 x 11 ints), ends at 3316 |
+
+Verified against a real Dolphin save (GCI folder `B2-GDJE-NDMWSaveData.gci`,
+64-byte directory entry + the 90112-byte file): each copy starts with the
+checksum (sum of all following big-endian words) and the word 4 (the
+SAVEUTILITY GENERATE argument, 80322538 -> 80535C1C; check at 8031FB98), and
+the records follow back to back from copy offset 8 (unused ones stay zero).
+PLAYERNAME is written in full-width forms (U+FF21.. = 'A'..), terminated by
+0. A disk word is record | kind << 12 | count << 16.
 
 80364894 then refreshes the slot summary (ISUSE, LEVEL, HP, MHP, MP, MMP,
 digimon name, player name, UNIQUE) shown by the data select window.
