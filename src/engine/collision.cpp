@@ -9,6 +9,7 @@
 namespace dw4::engine {
 
 void CollisionWorld::clear() {
+    dynamic_.clear();
     triangles_.clear();
     grid_.clear();
     groups_.assign(1, true);
@@ -54,7 +55,47 @@ void CollisionWorld::index_triangle(std::size_t index) {
 
 void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind, 0); }
 
-void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group) {
+std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std::uint32_t kind) {
+    Dynamic d;
+    // The copy transform's own matrix is replaced by its source; its
+    // children are read in its space.
+    if (copy_transform)
+        for (const auto& child : copy_transform.list(7)) add_node(child, Mat4{}, 1, kind, 0, &d.local);
+    for (const auto& t : d.local)
+        for (const auto& v : {t.a, t.b, t.c}) d.reach = std::max(d.reach, length(v));
+    dynamic_.push_back(std::move(d));
+    return std::uint32_t(dynamic_.size() - 1);
+}
+
+void CollisionWorld::set_dynamic(std::uint32_t id, const Mat4& matrix, bool enabled) {
+    if (id >= dynamic_.size()) return;
+    dynamic_[id].matrix = matrix;
+    dynamic_[id].enabled = enabled;
+}
+
+void CollisionWorld::dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const {
+    for (const auto& d : dynamic_) {
+        if (!d.enabled || d.local.empty()) continue;
+        const Vec3f origin = transform_point(Vec3f{}, d.matrix);
+        const float dx = p.x - origin.x, dz = p.z - origin.z;
+        const float limit = d.reach + reach;
+        if (dx * dx + dz * dz > limit * limit) continue;
+        for (const auto& local : d.local) {
+            CollisionTriangle t = local;
+            t.a = transform_point(local.a, d.matrix);
+            t.b = transform_point(local.b, d.matrix);
+            t.c = transform_point(local.c, d.matrix);
+            const Vec3f n = cross(t.b - t.a, t.c - t.a);
+            if (length(n) < 1e-8f) continue;
+            t.normal = normalize(n);
+            t.group = UINT32_MAX; // not a switchable static group
+            out.push_back(t);
+        }
+    }
+}
+
+void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group,
+                              std::vector<CollisionTriangle>* into) {
     if (!node || depth > 64) return;
     Mat4 model = parent;
     if (node.is_a("igTransform")) {
@@ -75,13 +116,17 @@ void CollisionWorld::add_node(const ObjectView& node, const Mat4& parent, int de
                 t.normal = normalize(n);
                 t.kind = kind;
                 t.group = group;
+                if (into) {
+                    into->push_back(t);
+                    continue;
+                }
                 triangles_.push_back(t);
                 index_triangle(triangles_.size() - 1);
             }
         }
     }
     if (node.is_a("igGroup"))
-        for (const auto& child : node.list(7)) add_node(child, model, depth + 1, kind, group);
+        for (const auto& child : node.list(7)) add_node(child, model, depth + 1, kind, group, into);
 }
 
 namespace {
@@ -140,6 +185,19 @@ bool CollisionWorld::floor_height(const Vec3f& p, float up, float down, float& h
     };
     if (auto it = grid_.find(key(int(std::floor(p.x / cell_)), int(std::floor(p.z / cell_)))); it != grid_.end()) test_list(it->second);
     if (auto it = grid_.find(key(INT32_MAX, INT32_MAX)); it != grid_.end()) test_list(it->second);
+    std::vector<CollisionTriangle> moving;
+    dynamic_near(p, 0.0f, moving);
+    for (const auto& t : moving) {
+        if (!selects(t.kind, mask & 1u) || t.normal.y < 0.25f) continue;
+        float y;
+        if (!vertical_hit(t, p.x, p.z, y)) continue;
+        if (y > p.y + up || y < p.y - down) continue;
+        if (y > best) {
+            best = y;
+            found = true;
+            if (normal) *normal = t.normal;
+        }
+    }
     if (found) height = best;
     return found;
 }
@@ -150,12 +208,19 @@ Vec3f CollisionWorld::resolve_walls(const Vec3f& position, float radius, float s
     cells({p.x - radius, 0, p.z - radius}, {p.x + radius, 0, p.z + radius}, keys);
     keys.push_back(key(INT32_MAX, INT32_MAX));
     std::set<std::uint32_t> seen;
+    std::vector<CollisionTriangle> moving;
+    dynamic_near(p, radius, moving);
     for (int iteration = 0; iteration < 3; ++iteration) {
+        std::vector<const CollisionTriangle*> candidates;
         for (auto k : keys) {
             auto it = grid_.find(k);
             if (it == grid_.end()) continue;
-            for (auto index : it->second) {
-                const auto& t = triangles_[index];
+            for (auto index : it->second) candidates.push_back(&triangles_[index]);
+        }
+        for (const auto& t : moving) candidates.push_back(&t);
+        for (const auto* candidate : candidates) {
+            {
+                const auto& t = *candidate;
                 // CHECKWALL (802FE7F0) excludes the floor bit: wall geometry only.
                 if (!selects(t.kind, mask & ~1u) || std::abs(t.normal.y) > 0.7f || !enabled(t)) continue;
                 for (float h : {step + (height - step) * 0.25f, step + (height - step) * 0.75f}) {

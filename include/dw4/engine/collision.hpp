@@ -28,6 +28,11 @@ public:
     // group ids in child order.
     std::vector<std::uint32_t> add_switch(const ObjectView& check_switch, std::uint32_t kind);
     void set_group_enabled(std::uint32_t group, bool enabled);
+    // Kind 0x400 geometry (HITLAND_TRAVERSAL): a beCopyTransform child whose
+    // matrix is copied from its source transform [12] every frame. Its
+    // triangles stay in the child's space and follow set_dynamic.
+    std::uint32_t add_dynamic(const ObjectView& copy_transform, std::uint32_t kind);
+    void set_dynamic(std::uint32_t id, const Mat4& matrix, bool enabled);
     std::size_t triangle_count() const { return triangles_.size(); }
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // Highest floor at (x, z) within [y - down, y + up]; false when none.
@@ -44,7 +49,17 @@ public:
     }
 
 private:
-    void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group);
+    void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group,
+                  std::vector<CollisionTriangle>* into = nullptr);
+    struct Dynamic {
+        std::vector<CollisionTriangle> local;
+        float reach{};       // largest local distance from the origin
+        Mat4 matrix{};
+        bool enabled{};
+    };
+    // The enabled dynamic triangles within `reach` of p, in world space.
+    void dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const;
+    std::vector<Dynamic> dynamic_;
     void index_triangle(std::size_t index);
     bool enabled(const CollisionTriangle& t) const { return t.group >= groups_.size() || groups_[t.group]; }
     std::vector<CollisionTriangle> triangles_;

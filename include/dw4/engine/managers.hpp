@@ -276,6 +276,7 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
     CollisionWorld& world() { return world_; }
     // beHitLandDelivInfoRam [13]: a model's collision radius (0 when unknown).
     float radius(std::string_view model) const {
@@ -292,6 +293,14 @@ private:
     struct HitRam : Ram {
         std::uint32_t group{};
     };
+    // A kind 0x400 child: its dynamic collision and the model node it follows.
+    struct Follower {
+        std::uint32_t id{};
+        ObjectView source;   // beCopyTransform [12], a model instance's node
+        std::string info;    // owning HITLANDMODEL row
+    };
+    std::vector<Follower> followers_;
+    std::map<std::string, bool, std::less<>> info_off_; // HITLANDMODEL OFFHIT on the whole info
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::unique_ptr<HitRam>> children_;
     std::map<std::string, float, std::less<>> radii_;

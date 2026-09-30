@@ -794,7 +794,14 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     // not reconstructed, so it is left out of the static world.
     const auto kind = std::uint32_t(info.i32(10));
     if (kind & 0x400u) {
-        engine.note("HITLAND model-attached geometry " + std::string(info.str(2)));
+        // Each check-switch child is a beCopyTransform following its model
+        // instance ([12]), e.g. one per box of g_box.
+        const auto check = info.ref(8);
+        const auto children = check && check.is_a("igGroup") ? check.list(7) : std::vector<ObjectView>{check};
+        for (const auto& child : children) {
+            if (!child) continue;
+            followers_.push_back({world_.add_dynamic(child, kind), child.ref(12), std::string(info.str(2))});
+        }
         return;
     }
     // Each check-switch child is its own switchable group, addressed by the
@@ -819,12 +826,37 @@ bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command
     (void)engine;
     (void)packet;
     if (command != "ONHIT" && command != "OFFHIT") return false;
+    info_off_[base.info_name] = command == "OFFHIT";
     for (const auto& child : children_)
         if (child.get() == &base) world_.set_group_enabled(child->group, command == "ONHIT");
     return true;
 }
 
+void HitLandManager::update(Engine& engine) {
+    if (followers_.empty()) return;
+    // The copy transforms take their model's matrix (80128CF4); a removed
+    // model (a broken box) leaves no collision behind.
+    auto* models = engine.get<ModelCtrlManager>();
+    for (const auto& follower : followers_) {
+        const Node* node = engine.scenes().node(follower.source);
+        bool live = false;
+        if (node && models)
+            for (const auto& ram : models->rams())
+                if (ram->node == node) {
+                    live = ram->generated;
+                    break;
+                }
+        const auto off = info_off_.find(follower.info);
+        world_.set_dynamic(follower.id, node ? node->matrix : Mat4{}, live && (off == info_off_.end() || !off->second));
+        if (static const bool trace = std::getenv("DW4_TRACE_HITLAND") != nullptr; trace && live && engine.frame() % 300 == 0)
+            engine.log("hitland " + follower.info + " follows (" + std::to_string(node->matrix(3, 0)) + ", " +
+                       std::to_string(node->matrix(3, 1)) + ", " + std::to_string(node->matrix(3, 2)) + ")");
+    }
+}
+
 void HitLandManager::clear_stage(Engine&) {
+    followers_.clear();
+    info_off_.clear();
     rams_.clear();
     children_.clear();
     radii_.clear();
