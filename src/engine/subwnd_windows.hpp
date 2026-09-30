@@ -360,9 +360,10 @@ struct Select01 : Select {
 
 // beNDMWShopSelect00 (803A6E64): a one-line message acknowledged with A.
 struct ShopSelect00 : Select {
+    std::string line = "font000"; // +112: the message line
     void open(Engine& engine) override {
         if (mode > 0) {
-            remember("STWINFONT29", "font000");
+            remember("STWINFONT29", line);
             text_script(engine, "txt_shop.lua", mode);
         }
         cursor = "i_stmessky";

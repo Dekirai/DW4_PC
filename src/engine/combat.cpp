@@ -337,6 +337,7 @@ void GameSystem::create_player(Engine& engine, int slot) {
         }
     }
     if (const char* bits = std::getenv("DW4_BITS")) player.bits = std::clamp(std::atoi(bits), 0, 9999999);
+    if (const char* xdata = std::getenv("DW4_XDATA")) player.xdata = std::clamp(std::atoi(xdata), 0, 9999);
     // DW4_DISKS=record:count,...: disks for test runs.
     if (const char* extra = std::getenv("DW4_DISKS")) {
         for (const char* at = extra; *at;) {

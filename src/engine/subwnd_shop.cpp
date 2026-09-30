@@ -1455,6 +1455,437 @@ struct ShopBank : Window {
     }
 };
 
+// The X data stats in list order with their UPCNT slots and limits.
+struct XdataStat {
+    const char* name;
+    int upcnt, limit;
+};
+constexpr XdataStat kXdataStats[7] = {{"TSUYOSA", 2, 9999}, {"MAMORI", 3, 9999},  {"KASHIKOSA", 4, 9999},
+                                      {"SEISHIN", 5, 9999}, {"SUBAYASA", 6, 9999}, {"MHP", 0, 99999},
+                                      {"MMP", 1, 99999}};
+
+int xdata_stat(const GameSystem::PlayerSlot& p, int stat) {
+    const auto& s = p.stats;
+    switch (stat) {
+    case 0: return s.tsuyosa;
+    case 1: return s.mamori;
+    case 2: return s.kashikosa;
+    case 3: return s.seishin;
+    case 4: return s.subayasa;
+    case 5: return p.max_hp;
+    default: return p.max_mp;
+    }
+}
+
+// 80394814: one point costs a fifth of the stat above 45, rounded up, 1..400.
+int xdata_cost(int value) {
+    const int x = value - 45;
+    const int cost = x / 5 + (x % 5 != 0 ? 1 : 0);
+    return cost > 400 ? 400 : cost >= 0 ? cost : 1;
+}
+
+// ---------------------------------------------------------------------------
+// beNDMWShopSelect11 (803A8770): the seven stats with their X data cost,
+// "----" and orange once a stat reached its limit.
+// ---------------------------------------------------------------------------
+struct ShopSelect11 : Select {
+    void open(Engine& engine) override {
+        open_model(engine, "j_shwin", 0, "SQ_XDATASTATUSOPEN", "SQ_CLOSE");
+        remember("STWINFONT29", "font100");
+        text_script(engine, "txt_shop.lua", 1153);
+        remember("STWINFONT13", "font000");
+        remember("STWINFONT35", "font001");
+        text_script(engine, "txt_shop.lua", 1101);
+        for (int i = 0; i < 7; ++i) remember("STWINFONT14", kLines[i]);
+        text_script(engine, "txt_shop.lua", 1103);
+        for (int i = 0; i < 7; ++i) text(engine, "STWINFONT19", kLines[i], " ", "RIGHT");
+        text(engine, "STWINFONT29", "font000", " ", "LEFT");
+        recalc(engine);
+        show_costs(engine);
+        text_script(engine, "txt_shop.lua", mode + 1154);
+        cursor = "i_stcursor01";
+        count = 7;
+        position = kShopList;
+        initial = mode;
+        no_cancel = false;
+    }
+    // 803A9494
+    void show_costs(Engine& engine) {
+        auto* p = player_slot(engine);
+        if (!p) return;
+        static const Vec3f limited{0.9f, 0.4f, 0.2f};
+        for (int i = 0; i < 7; ++i) {
+            const int value = xdata_stat(*p, i);
+            const bool open = value < kXdataStats[i].limit;
+            textset(engine, "STWINFONT19", kLines[i], open ? std::to_string(xdata_cost(value)) : std::string("----"));
+            if (open) textctl(engine, "STWINFONT14", kLines[i], "DEFAULTCOLOR");
+            else textctl(engine, "STWINFONT14", kLines[i], "COLOR", &limited);
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlXdataChip (803A4C94): ability chips raised to their next
+// record for NEXTX X data.
+// ---------------------------------------------------------------------------
+struct XdataChip : Window {
+    int page{};             // +84
+    int pages = 1;          // +88
+    int line{};             // +92
+    std::vector<int> chips; // +96: DEVICEFOLDER indices of the chips
+    int message{};          // +40 for subs 10 and 11
+
+    // 803A64F8
+    int page_lines() {
+        const int size = int(chips.size());
+        pages = size % 12 ? size / 12 + 1 : size / 12;
+        const int rest = size - 12 * page;
+        const int n = rest < 12 ? rest % 12 : 12;
+        return n < 1 ? 1 : n;
+    }
+    ItemDevice* chip(Engine& engine, int at) {
+        auto* p = player_slot(engine);
+        if (!p || at < 0 || at >= int(chips.size())) return nullptr;
+        const int index = chips[std::size_t(at)];
+        return index >= 0 && index < int(p->devices.size()) ? &p->devices[std::size_t(index)] : nullptr;
+    }
+    // 803A659C
+    void fill(Engine& engine, bool names, bool description) {
+        auto* db = engine.get<DatabaseManager>();
+        if (!db) return;
+        if (names) {
+            for (int i = 0; i < 12; ++i) {
+                const auto* d = chip(engine, i + 12 * page);
+                if (d) {
+                    textset(engine, "STWINFONT14", kLines[i], db->text("abChip", d->record, "NAME"));
+                    const int next = db->number("abChip", d->record, "NEXTX").value_or(-1);
+                    textset(engine, "STWINFONT17", kLines[i], next <= 0 ? std::string("----") : std::to_string(next));
+                }
+                switch_line(engine, "STWINFONT14", kLines[i], d != nullptr);
+                switch_line(engine, "STWINFONT17", kLines[i], d != nullptr);
+            }
+            textset(engine, "STWINFONT30", "font000", std::string(1, char('1' + page)));
+            textset(engine, "STWINFONT30", "font001", std::string(1, char('0' + pages)));
+        }
+        if (description) {
+            if (const auto* d = chip(engine, 12 * page + selection)) {
+                textset(engine, "STWINFONT29", "font000", db->text("abChip", d->record, "TXT"));
+                switch_line(engine, "STWINFONT29", "font000", true);
+            }
+        }
+    }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        auto* p = player_slot(engine);
+        auto* db = engine.get<DatabaseManager>();
+        if (!p || !db) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            remember("STWINFONT13", "font000");
+            remember("STWINFONT35", "font000");
+            for (const char* l : kLines) {
+                text(engine, "STWINFONT14", l, " ", "LEFT");
+                text(engine, "STWINFONT17", l, " ", "RIGHT");
+            }
+            text(engine, "STWINFONT29", "font000", " ", "LEFT");
+            text(engine, "STWINFONT29", "font100", " ", "LEFT");
+            text(engine, "STWINFONT30", "font000", " ", "CENTER");
+            text(engine, "STWINFONT30", "font001", " ", "CENTER");
+            next_state(1);
+        }
+        switch (sub) {
+        case 0: {
+            chips.clear();
+            for (std::size_t i = 0; i < p->devices.size(); ++i)
+                if (p->devices[i].type == 3) chips.push_back(int(i));
+            if (chips.empty()) {
+                set_sub(10);
+                message = 1169;
+                return;
+            }
+            const int count = page_lines();
+            if (step == 0) {
+                open_model(engine, "j_shwin", 0, "SQ_XDATAITEMOPEN", "SQ_CLOSE");
+                text_script(engine, "txt_shop.lua", 1110);
+                open_model(engine, "i_stcursorleft", 0, "SQ_HIDE", "SQ_CLOSE", kArrowLeft);
+                open_model(engine, "i_stcursorright", 0, pages <= 1 ? "SQ_HIDE" : "SQ_SELECT", "SQ_CLOSE", kArrowRight);
+            }
+            auto& select = add_child<SelectE1>(engine);
+            select.position = kShopList;
+            select.count = count;
+            select.initial = line;
+            selection = line;
+            mark();
+            set_sub(1);
+        }
+            [[fallthrough]];
+        case 1:
+            if (selection != -1) fill(engine, true, true);
+            set_sub(2);
+            [[fallthrough]];
+        case 2:
+            if (!child_done()) {
+                if (selection == -1) return;
+                if (last == selection) {
+                    auto* select = find_child<SelectE1>();
+                    if (!select || !select_idle(engine, *this, *select)) return;
+                    if (turn_page(engine, *this, page, pages, false) || turn_page(engine, *this, page, pages, true)) {
+                        select->next_state(4);
+                        set_sub(1);
+                        select->count = page_lines();
+                    }
+                } else {
+                    fill(engine, false, true);
+                    last = selection;
+                }
+                return;
+            }
+            if (selection == -1) {
+                next_state(2);
+                return;
+            }
+            line = selection;
+            set_sub(3);
+            return;
+        case 3: {
+            const auto* d = chip(engine, line + 12 * page);
+            const int next = d ? db->number("abChip", d->record, "NEXTX").value_or(-1) : -1;
+            if (next == -1) {
+                set_sub(11);
+                message = 1170;
+            } else if (p->xdata >= next) {
+                set_sub(4);
+            } else {
+                set_sub(11);
+                message = 1161;
+            }
+            return;
+        }
+        case 4:
+            if (step == 0) {
+                auto* d = chip(engine, line + 12 * page);
+                if (!d) {
+                    set_sub(0);
+                    return;
+                }
+                auto& note = add_child<ShopSelect00>(engine);
+                const int record = d->record;
+                if (d->flag) {
+                    d->record = record + 1;
+                    recalc(engine);
+                    subwnd(engine, "ONPREVIEW");
+                    d->record = record;
+                    recalc(engine);
+                }
+                note.text(engine, "STWINFONT29", "font000", db->text("abChip", record + 1, "NAME"), "LEFT");
+                for (const char* l : {"font001", "font002", "font003"}) note.text(engine, "STWINFONT41", l, " ", "LEFT");
+                note.text(engine, "STWINFONT29", "font002", " ", "LEFT");
+                // The first stat the next chip raises names the message.
+                static const char* raised[12] = {"TSUYOSA",  "KASHIKOSA", "SEISHIN",     "SUBAYASA",
+                                                 "RES_FIRE", "RES_ICE",   "RES_THUNDER", "RES_DARK",
+                                                 "CHIMEIRITSU", "HPDRAIN", "MPDRAIN",    "CHOHATURITSU"};
+                static const int messages[8] = {11765, 11769, 11773, 11777, 11781, 11785, 11789, 11793};
+                for (int i = 0; i < 12; ++i) {
+                    const int value = db->number("abChip", record + 1, raised[i]).value_or(0);
+                    if (value > 0) {
+                        note.text(engine, "STWINFONT41", "font011", std::to_string(value), "RIGHT");
+                        note.mode = messages[std::min(i, 7)];
+                        break;
+                    }
+                }
+                const int cost = db->number("abChip", record, "NEXTX").value_or(0);
+                note.text(engine, "STWINFONT41", "font012", std::to_string(p->xdata - cost), "RIGHT");
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                add_child<ShopSelect01>(engine).mode = 1171;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            subwnd(engine, "OFPREVIEW");
+            if (selection == 0) {
+                if (auto* d = chip(engine, line + 12 * page)) {
+                    p->xdata -= db->number("abChip", d->record, "NEXTX").value_or(0);
+                    ++d->record;
+                    recalc(engine);
+                    subwnd(engine, "UPDATE");
+                }
+            }
+            set_sub(0);
+            set_step(1);
+            return;
+        case 10: // no chips
+        case 11: // a message, back to the list
+            if (step == 0) {
+                auto& note = shop_message(*this, engine, message);
+                if (sub == 10) note.line = "font100";
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (sub == 10) {
+                next_state(2);
+            } else {
+                set_sub(0);
+                set_step(1);
+            }
+            return;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrl10 (80393B74): X data raises a stat by one point or an
+// ability chip to its next record; leaving refills HP and MP.
+// ---------------------------------------------------------------------------
+struct ShopXdata : Window {
+    int line{};          // +84
+    int stat{};          // +88
+    bool can_raise{};    // +40 while the stat message runs
+
+    void refill(GameSystem::PlayerSlot& p) {
+        p.hp = p.max_hp;
+        p.mp = p.max_mp;
+    }
+    void update(Engine& engine) override {
+        auto* p = player_slot(engine);
+        if (state == 2) {
+            recalc(engine);
+            if (p) refill(*p);
+        }
+        if (close_states(engine)) return;
+        if (!p) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) next_state(1);
+        switch (sub) {
+        case 0: // Stats / Chips / Exit
+            if (step == 0) {
+                auto& menu = add_child<ShopSelect01>(engine);
+                menu.mode = 1150;
+                menu.initial = line;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            stat = 0;
+            if (selection == 1) {
+                line = 1;
+                set_sub(2);
+            } else if (selection == 0) {
+                line = 0;
+                set_sub(1);
+            } else {
+                next_state(2);
+            }
+            return;
+        case 1: // stats
+            switch (step) {
+            case 0:
+                recalc(engine);
+                add_child<ShopSelect11>(engine).mode = stat;
+                mark();
+                set_step(1);
+                last = stat;
+                return;
+            case 1: {
+                if (!child_done()) {
+                    if (selection != -1 && selection != last) {
+                        text_script(engine, "txt_shop.lua", selection + 1154);
+                        last = selection;
+                    }
+                    return;
+                }
+                for (int i = 0; i < 7; ++i) textctl(engine, "STWINFONT14", kLines[i], "DEFAULTCOLOR");
+                if (selection < 0 || selection > 6) {
+                    set_sub(0);
+                    return;
+                }
+                const int value = xdata_stat(*p, selection);
+                const int cost = xdata_cost(value);
+                stat = selection;
+                auto& note = add_child<ShopSelect00>(engine);
+                set_step(2);
+                can_raise = false;
+                if (value >= kXdataStats[stat].limit) {
+                    note.mode = 1162;
+                } else if (cost > p->xdata) {
+                    note.mode = 1161;
+                } else {
+                    note.text(engine, "STWINFONT41", "font011", "+1", "RIGHT");
+                    note.text(engine, "STWINFONT41", "font012", std::to_string(p->xdata - cost), "RIGHT");
+                    for (int i = 0; i < 4; ++i) note.remember("STWINFONT41", kLines[i]);
+                    note.remember("STWINFONT41", "font011");
+                    note.remember("STWINFONT41", "font012");
+                    note.remember("STWINFONT29", "font002");
+                    note.mode = 11730 + 5 * stat;
+                    can_raise = true;
+                }
+                mark();
+                return;
+            }
+            case 2:
+                if (!child_done()) return;
+                if (!can_raise) {
+                    set_sub(1);
+                    return;
+                }
+                add_child<ShopSelect01>(engine).mode = 1163;
+                mark();
+                set_step(3);
+                return;
+            case 3: {
+                if (!child_done()) return;
+                if (selection != 0) {
+                    set_sub(1);
+                    return;
+                }
+                p->xdata -= xdata_cost(xdata_stat(*p, stat));
+                ++p->upcnt[std::size_t(kXdataStats[stat].upcnt)];
+                recalc(engine);
+                refill(*p);
+                subwnd(engine, "UPDATE");
+                shop_message(*this, engine, 1165);
+                mark();
+                set_step(4);
+                return;
+            }
+            case 4:
+                if (!child_done()) return;
+                add_child<ShopSelect01>(engine).mode = 1166;
+                mark();
+                set_step(5);
+                return;
+            case 5:
+                if (!child_done()) return;
+                if (selection != 0) set_sub(0);
+                else set_sub(1);
+                return;
+            }
+            return;
+        case 2: // chips
+            if (step == 0) {
+                recalc(engine);
+                add_child<XdataChip>(engine);
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            set_sub(0);
+            last = 1;
+            return;
+        }
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -1494,7 +1925,8 @@ struct ShopCtrl00 : Window {
         }
         if (sub == 0) {
             if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
-            if (mode == 3) add_child<ShopBank>(engine).mode = mode;
+            if (mode == 1) add_child<ShopXdata>(engine).mode = mode;
+            else if (mode == 3) add_child<ShopBank>(engine).mode = mode;
             else if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
             else if (mode >= 6 && mode <= 8) add_child<ShopDevice>(engine).mode = mode;
             else if (mode == 9) add_child<ShopJunk>(engine).mode = mode;
