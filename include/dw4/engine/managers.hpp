@@ -821,8 +821,16 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     struct Window;
+    // GETSHOPDATA: the stock of the weapon (6), armor (7), chip (8) and junk
+    // (9) shops; an empty entry is a gap, abChip 185 a sold-out line.
+    using Stock = std::vector<std::optional<ItemDevice>>;
+    Stock* shop_stock(int program);
 
 private:
+    // 80351794: a program start fills the empty stocks from shopWeapon /
+    // shopArmor / shopChip / shopJunk by player 1's level.
+    void fill_stocks(Engine& engine);
+    std::array<Stock, 4> stocks_;
     std::vector<std::unique_ptr<Ram>> rams_;
     std::unique_ptr<Window> window_;
     bool running_{};
@@ -1016,6 +1024,9 @@ public:
     // weapon, armor1, armor2, abChip.
     static constexpr const char* item_tables[7] = {"conItem", "insItem", "impItem", "weapon", "armor1", "armor2", "abChip"};
     std::map<int, std::uint8_t> flag_folder; // common FLAGFOLDER, set by impItem pickups
+    // Common COUNTER list; [1] picks the junk shop's stock. Its writers are
+    // not reconstructed yet.
+    std::map<int, int> counter;
     // CTRLITEM (GAMERAM 80372054): SYSctlDeviceFolder/DiskFolder/FlagFolder/Bit.
     int control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
                      int a, int b, int c);

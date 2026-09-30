@@ -904,7 +904,89 @@ void SubWindowManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+SubWindowManager::Stock* SubWindowManager::shop_stock(int program) {
+    return program >= 6 && program <= 9 ? &stocks_[std::size_t(program - 6)] : nullptr;
+}
+
+void SubWindowManager::fill_stocks(Engine& engine) {
+    auto* sys = engine.get<GameSystem>();
+    auto* db = engine.get<DatabaseManager>();
+    if (!sys || !db) return;
+    int joined = 0;
+    for (auto& p : sys->players) {
+        if (!p.joined) continue;
+        ++joined;
+        p.bits = std::min(p.bits, 9999999);
+        p.xdata = std::min(p.xdata, 9999);
+    }
+    const auto& first = sys->players[0];
+    const int level = first.stats.level;
+    // The level row: one step past each of these levels.
+    static const int steps[] = {9,  16, 21, 26, 31,  36,  41,  46,  51,  60,  67,  72,  77,  82,  87,
+                                92, 97, 102, 107, 112, 117, 127, 137, 147, 157, 167, 177, 187, 197};
+    auto row_of = [&](int last) {
+        int row = 0;
+        while (row < last && level > steps[row]) ++row;
+        return row;
+    };
+    auto column = [](int i, const char* suffix = "") {
+        return std::string{char('0' + i / 10), char('0' + i % 10)} + suffix;
+    };
+    auto cell = [&](const char* table, int row, const std::string& name) { return db->number(table, row, name).value_or(-1); };
+    if (program_ == 6 && stocks_[0].empty()) {
+        // Weapons: a species offset alone, 150 for a party.
+        int offset = 0;
+        if (joined <= 1) {
+            switch (first.stats.species) {
+            case 1: case 4: case 12: offset = 25; break;
+            case 2: case 7: case 14: offset = 50; break;
+            case 3: case 9: offset = 75; break;
+            case 6: case 10: offset = 100; break;
+            case 8: case 11: case 13: offset = 125; break;
+            default: offset = 0; break;
+            }
+        } else {
+            offset = 150;
+        }
+        const int row = offset + row_of(24);
+        for (int i = 0; i < 36; ++i) {
+            const int record = cell("shopWeapon", row, column(i));
+            if (record == -1) stocks_[0].emplace_back();
+            else stocks_[0].push_back(roll_item_device(3, record, level));
+        }
+    } else if (program_ == 7 && stocks_[1].empty()) {
+        // Boards on lines 0..11, accessories on 12..35.
+        const int row = row_of(29);
+        for (int i = 0; i < 36; ++i) {
+            const int record = cell("shopArmor", row, column(i));
+            if (record == -1) stocks_[1].emplace_back();
+            else stocks_[1].push_back(roll_item_device(i < 12 ? 4 : 5, record, level));
+        }
+    } else if (program_ == 8 && stocks_[2].empty()) {
+        const int row = row_of(29);
+        for (int i = 0; i < 36; ++i) {
+            const int record = cell("shopChip", row, column(i));
+            if (record == -1) stocks_[2].emplace_back();
+            else stocks_[2].push_back(ItemDevice{3, record});
+        }
+    } else if (program_ == 9 && stocks_[3].empty()) {
+        static const int levels[] = {1000, 6000, 26000, 86000, 206000, 456000, 956000, 1956000, 3956000};
+        const int count = sys->counter[1];
+        int row = -1;
+        while (row + 1 < 9 && count >= levels[row + 1]) ++row;
+        if (row >= 0) {
+            for (int i = 0; i < 36; ++i) {
+                const int record = cell("shopJunk", row, column(i));
+                if (record == -1) continue;
+                const int kind = cell("shopJunk", row, column(i, "kind"));
+                if (kind >= 0 && kind <= 2) stocks_[3].push_back(roll_item_device(3 + kind, record, level));
+            }
+        }
+    }
+}
+
 void SubWindowManager::clear_stage(Engine&) {
+    for (auto& stock : stocks_) stock.clear();
     rams_.clear();
     window_.reset();
     running_ = false;
@@ -1014,6 +1096,7 @@ void SubWindowManager::update(Engine& engine) {
     if (!running_) return;
     auto& messenger = engine.messenger();
     if (state_ == 0) {
+        fill_stocks(engine);
         Packet pad;
         pad.strings.emplace_back("ENABLE");
         messenger.send(engine, "STAGECTL", std::nullopt, -1, "PADINPUT", pad);

@@ -743,6 +743,304 @@ struct ShopDisk : Window {
     }
 };
 
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlSales (803A2920): the stock of the weapon, armor, chip and
+// junk shops (GETSHOPDATA), 12 lines a page; bought lines turn into the
+// sold-out abChip 185 ("----").
+// ---------------------------------------------------------------------------
+struct ShopSales : Window {
+    int page{};                       // +84
+    int pages = 1;                    // +88
+    int line{};                       // +92
+    SubWindowManager::Stock* stock{}; // +96
+    std::vector<std::uint8_t> buyable; // +100
+    int message{};                    // +40 for sub 2
+
+    static bool sold(const std::optional<ItemDevice>& d) { return d && d->type == 3 && d->record == 185; }
+    const std::optional<ItemDevice>* entry(int at) const {
+        return stock && at >= 0 && at < int(stock->size()) ? &(*stock)[std::size_t(at)] : nullptr;
+    }
+    // 803A3F14: pages up to the last stocked line; this page's lines run to
+    // the first gap.
+    int page_lines() {
+        const int size = stock ? int(stock->size()) : 0;
+        int used = size;
+        for (int i = 0; i < size; ++i)
+            if ((*stock)[std::size_t(i)]) used = i + 1;
+        pages = used % 12 ? used / 12 + 1 : used / 12;
+        int n = 12;
+        for (int i = 0; i < 12; ++i) {
+            const auto* e = entry(12 * page + i);
+            if (!e || !*e) {
+                n = i;
+                break;
+            }
+        }
+        n = std::clamp(n, 1, 12);
+        buyable.clear();
+        for (int i = 0; i < n; ++i) {
+            const auto* e = entry(12 * page + i);
+            buyable.push_back(e && *e && !sold(*e) ? 1 : 0);
+        }
+        return n;
+    }
+    // 803A41BC
+    bool can_equip(Engine& engine, const ItemDevice& d) {
+        auto* p = player_slot(engine);
+        auto* db = engine.get<DatabaseManager>();
+        if (!p || !db) return false;
+        if (d.type == 3) return true;
+        const char* table = device_table(d);
+        if (d.type == 1 || d.type == 2) return p->stats.level >= db->number(table, d.record, "LVPOINT").value_or(0);
+        if (d.type != 0) return false;
+        const int species = p->stats.species;
+        const std::uint32_t soubi = std::uint32_t(db->number(table, d.record, "SOUBI").value_or(0));
+        const bool fits = species >= 0 && species < 32 && (soubi & (1u << species)) != 0;
+        const int skill = db->number(table, d.record, "SKILL").value_or(0);
+        const int have = skill >= 0 && skill < int(p->stats.skill.size()) ? p->stats.skill[std::size_t(skill)] : 0;
+        return fits && have >= db->number(table, d.record, "SKILLPOINT").value_or(0);
+    }
+    // 803A4344: the stats with the cursor's device in the first slot of its
+    // kind (weapons and boards without chips).
+    void preview(Engine& engine, bool on) {
+        auto* p = player_slot(engine);
+        const auto* e = on ? entry(12 * page + selection) : nullptr;
+        if (!p || !e || !*e) {
+            subwnd(engine, "OFPREVIEW");
+            return;
+        }
+        const auto saved_socket = p->power_socket, saved_power = p->power_pocket;
+        const auto saved_main = p->main_slot, saved_armor = p->main_pocket, saved_sub = p->sub_slot;
+        const int index = int(p->devices.size());
+        p->devices.push_back(**e);
+        if ((*e)->type == 0) {
+            std::fill(p->power_pocket.begin(), p->power_pocket.end(), -1);
+            p->power_socket[0] = index;
+        } else if ((*e)->type == 1) {
+            std::fill(p->main_pocket.begin(), p->main_pocket.end(), -1);
+            p->main_slot[0] = index;
+        } else if ((*e)->type == 2) {
+            p->sub_slot[0] = index;
+        }
+        recalc(engine);
+        subwnd(engine, "ONPREVIEW");
+        p->power_socket = saved_socket;
+        p->power_pocket = saved_power;
+        p->main_slot = saved_main;
+        p->main_pocket = saved_armor;
+        p->sub_slot = saved_sub;
+        p->devices.pop_back();
+        recalc(engine);
+    }
+    // 803A3910
+    void fill(Engine& engine, bool names, bool description) {
+        auto* db = engine.get<DatabaseManager>();
+        if (!db) return;
+        if (names) {
+            for (int i = 0; i < 12; ++i) {
+                const auto* e = entry(12 * page + i);
+                const bool shown = e && *e;
+                if (shown) {
+                    const auto& d = **e;
+                    textset(engine, "STWINFONT14", kLines[i], db->text(device_table(d), d.record, "NAME"));
+                    const Vec3f rgb = device_color(d);
+                    textctl(engine, "STWINFONT14", kLines[i], "COLOR", &rgb);
+                    textset(engine, "STWINFONT17", kLines[i], sold(*e) ? std::string("----") : std::to_string(device_price(engine, d, true)));
+                }
+                switch_line(engine, "STWINFONT14", kLines[i], shown);
+                switch_line(engine, "STWINFONT17", kLines[i], shown);
+            }
+            textset(engine, "STWINFONT30", "font000", std::string(1, char('1' + page)));
+            textset(engine, "STWINFONT30", "font001", std::string(1, char('0' + pages)));
+        }
+        if (description) {
+            const auto* e = entry(12 * page + selection);
+            const bool shown = e && *e;
+            if (shown) {
+                const auto& d = **e;
+                std::string txt = db->text(device_table(d), d.record, "TXT");
+                if (d.type == 0 || d.type == 1) txt += char('0' + d.rank);
+                textset(engine, "STWINFONT29", "font000", txt);
+            }
+            preview(engine, shown);
+            switch_line(engine, "STWINFONT29", "font000", shown);
+        }
+    }
+    void update(Engine& engine) override {
+        if (state == 2) {
+            close_models(engine);
+            clear_lines(engine);
+            close_children();
+            next_state(3);
+            for (const char* l : kLines) textctl(engine, "STWINFONT14", l, "DEFAULTCOLOR");
+            return;
+        }
+        if (state == 3) {
+            if (closed(engine)) running = false;
+            return;
+        }
+        auto* p = player_slot(engine);
+        if (!p) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            stock = manager ? manager->shop_stock(mode) : nullptr;
+            if (!stock) {
+                next_state(2);
+                return;
+            }
+            open_model(engine, "j_shwin", 0, "SQ_AWINOPEN", "SQ_CLOSE");
+            page_lines();
+            open_model(engine, "i_stcursorleft", 0, "SQ_HIDE", "SQ_CLOSE", kArrowLeft);
+            open_model(engine, "i_stcursorright", 0, pages <= 1 ? "SQ_HIDE" : "SQ_SELECT", "SQ_CLOSE", kArrowRight);
+            remember("STWINFONT29", "font100");
+            remember("STWINFONT13", "font000");
+            const int base = mode == 6 ? 1600 : mode == 7 ? 1700 : mode == 8 ? 1800 : 1900;
+            text_script(engine, "txt_shop.lua", base + 53);
+            text_script(engine, "txt_shop.lua", base + 1);
+            for (const char* l : kLines) {
+                text(engine, "STWINFONT14", l, " ", "LEFT");
+                text(engine, "STWINFONT17", l, " ", "RIGHT");
+            }
+            text(engine, "STWINFONT30", "font000", " ", "RIGHT");
+            text(engine, "STWINFONT30", "font001", " ", "RIGHT");
+            line = 0;
+            next_state(1);
+        }
+        switch (sub) {
+        case 0: // the stock
+            if (step == 0) {
+                auto& select = add_child<SelectE1>(engine);
+                selection = line;
+                select.position = kShopList;
+                select.initial = line;
+                select.text(engine, "STWINFONT29", "font000", " ", "LEFT");
+                select.count = page_lines();
+                select.enabled = buyable;
+                mark();
+                set_step(1);
+            }
+            if (step == 1) {
+                fill(engine, true, true);
+                set_step(2);
+                return;
+            }
+            if (!child_done()) {
+                if (selection == -1) return;
+                if (selection == last) {
+                    auto* select = find_child<SelectE1>();
+                    if (!select || !select_idle(engine, *this, *select)) return;
+                    if (turn_page(engine, *this, page, pages, false) || turn_page(engine, *this, page, pages, true)) {
+                        select->next_state(4);
+                        set_step(1);
+                        select->count = page_lines();
+                        select->enabled = buyable;
+                    }
+                } else {
+                    fill(engine, false, true);
+                    last = selection;
+                }
+                return;
+            }
+            preview(engine, false);
+            if (selection == -1) {
+                if (parent) parent->selection = -1;
+                next_state(2);
+                return;
+            }
+            if (const auto* e = entry(12 * page + selection); e && *e) {
+                const int price = device_price(engine, **e, true);
+                if (p->devices.size() >= 36) {
+                    set_sub(2);
+                    message = 1670;
+                } else if (p->bits < price) {
+                    set_sub(2);
+                    message = 1570;
+                } else {
+                    set_sub(1);
+                    list_marker(engine, *this, selection);
+                }
+            }
+            line = selection;
+            return;
+        case 1: // confirm the purchase
+            if (step == 0) {
+                const auto* e = entry(line + 12 * page);
+                const ItemDevice d = e && *e ? **e : ItemDevice{};
+                if (can_equip(engine, d)) {
+                    shop_message(*this, engine, d.type == 0 ? 1655 : d.type == 1 || d.type == 2 ? 1755 : 1855);
+                } else {
+                    auto& note = shop_message(*this, engine, 0);
+                    note.remember("STWINFONT29", "font000");
+                    text_script(engine, "txt_shop.lua", 2040);
+                }
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                const auto* e = entry(line + 12 * page);
+                const int type = e && *e ? (*e)->type : 3;
+                add_child<ShopSelect01>(engine).mode = type == 0 ? 1656 : type == 1 || type == 2 ? 1756 : 1856;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 0) {
+                const int at = line + 12 * page;
+                if (at >= 0 && at < int(stock->size()) && (*stock)[std::size_t(at)]) {
+                    const ItemDevice bought = *(*stock)[std::size_t(at)];
+                    p->bits -= device_price(engine, bought, true);
+                    p->devices.push_back(bought);
+                    (*stock)[std::size_t(at)] = ItemDevice{3, 185};
+                    subwnd(engine, "UPDATE");
+                }
+            }
+            set_sub(0);
+            list_marker(engine, *this, -1);
+            return;
+        case 2: // a message
+            if (step == 0) {
+                shop_message(*this, engine, message);
+                mark();
+                set_step(1);
+            }
+            if (child_done()) set_sub(0);
+            return;
+        }
+    }
+};
+
+// beNDMWShopDevice (803A6914): the weapon (6), armor (7) and chip (8) shops.
+struct ShopDevice : Window {
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        if (state == 0) next_state(1);
+        if (sub == 0) {
+            if (step == 0) {
+                add_child<ShopSelect01>(engine).mode = mode == 6 ? 1650 : mode == 7 ? 1750 : 1850;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (selection == 1) set_sub(2);
+            else if (selection == 0) set_sub(1);
+            else next_state(2);
+            return;
+        }
+        if (step == 0) {
+            if (sub == 1) add_child<ShopSales>(engine).mode = mode;
+            else add_child<ShopSell>(engine);
+            mark();
+            set_step(1);
+        }
+        if (child_done()) set_sub(0);
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -783,6 +1081,7 @@ struct ShopCtrl00 : Window {
         if (sub == 0) {
             if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
             if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
+            else if (mode >= 6 && mode <= 8) add_child<ShopDevice>(engine).mode = mode;
             else add_child<ShopPending>(engine).mode = mode;
             mark();
             set_sub(1);
