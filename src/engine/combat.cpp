@@ -336,6 +336,15 @@ void GameSystem::create_player(Engine& engine, int slot) {
             if (*at == ',') ++at;
         }
     }
+    // DW4_DISKS=record:count,...: disks for test runs.
+    if (const char* extra = std::getenv("DW4_DISKS")) {
+        for (const char* at = extra; *at;) {
+            int record = 0, count = 0;
+            if (std::sscanf(at, "%d:%d", &record, &count) == 2) player.disk_count(record) = std::clamp(count, 0, 9);
+            while (*at && *at != ',') ++at;
+            if (*at == ',') ++at;
+        }
+    }
     player.hp = 0; // RECALCPLAYER refills HP and MP from 0
     recalc_player(engine, slot);
     stats.ready = true;

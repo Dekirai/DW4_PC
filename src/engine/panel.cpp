@@ -118,9 +118,9 @@ bool PanelManager::emergency_item(Engine& engine, PanelRam& ram) {
     if (!sys) return false;
     const auto& disks = sys->players[std::size_t(ram.index)].disks;
     int best = -1, position = -1, held = 0;
-    for (int record = 0; record < 10; ++record) {
-        const auto found = disks.find(record);
-        if (found == disks.end() || found->second <= 0) continue;
+    for (std::size_t slot = 0; slot + 2 < disks.size(); ++slot) {
+        const int record = disks[slot].record;
+        if (disks[slot].count <= 0) continue;
         if ((record <= 2 || record == 9) && record > best) {
             best = record;
             position = held;
@@ -231,13 +231,14 @@ void PanelManager::display(Engine& engine, PanelRam& ram, List& list) {
             colors.push_back(color);
         }
     } else if (list.kind == 1) {
-        for (int record = 0; record < 10; ++record) {
-            const auto found = player.disks.find(record);
-            if (found == player.disks.end() || found->second <= 0) continue;
+        // 80349684: the first 10 DISKFOLDER slots in folder order.
+        for (std::size_t slot = 0; slot + 2 < player.disks.size(); ++slot) {
+            const int record = player.disks[slot].record;
+            if (player.disks[slot].count <= 0) continue;
             rows.push_back(record);
             names.push_back(db->text("conItem", record, "NAME"));
             char count[16];
-            std::snprintf(count, sizeof(count), "x%d", found->second);
+            std::snprintf(count, sizeof(count), "x%d", player.disks[slot].count);
             counts.emplace_back(count);
             int color = 0;
             if (ram.no_gate_disk && record == 8) color = 2;
@@ -294,7 +295,7 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
         sys->change_mp(engine, ram.index, -cost);
         return std::int64_t(db->number("pcTech", row, "DELAY").value_or(0)) * 1'000'000'000 / 60;
     }
-    auto& count = player.disks[row];
+    auto& count = player.disk_count(row);
     if (count <= 0) {
         play_sound(engine, "CURSOR_NG");
         return 0;

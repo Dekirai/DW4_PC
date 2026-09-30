@@ -968,8 +968,21 @@ public:
         Stats stats;
         // DEVICEFOLDER: equipment, at most 36.
         std::vector<ItemDevice> devices;
-        // DISKFOLDER: consumable disks, record -> count (at most 9 each).
-        std::map<int, int> disks;
+        // DISKFOLDER (8036CE1C): 12 slots made for the conItem records 0..11
+        // with a count (at most 9); the first 10 are shown and can be reordered.
+        struct Disk {
+            int record{}, count{};
+        };
+        std::array<Disk, 12> disks = [] {
+            std::array<Disk, 12> slots{};
+            for (int i = 0; i < 12; ++i) slots[std::size_t(i)].record = i;
+            return slots;
+        }();
+        int& disk_count(int record) {
+            for (auto& slot : disks)
+                if (slot.record == record) return slot.count;
+            return disks[0].count;
+        }
         int bits{};                    // player BIT (0..9999999)
         int xdata{};                   // XDATA
         std::array<int, 11> upcnt{};   // UPCNT: MHP, MMP, STR, DEF, WIS, SPI, SPD, fire, ice, thunder, dark

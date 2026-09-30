@@ -226,7 +226,7 @@ bool ModelCtrlManager::pick_item(Engine& engine, ModelRam& ram, int player) {
     if (!sys) return false;
     auto& slot = sys->players[std::size_t(std::clamp(player, 0, 3))];
     if (ram.item_table == 0) {
-        auto& count = slot.disks[ram.item_record];
+        auto& count = slot.disk_count(ram.item_record);
         if (count >= 9) return false;
         ++count;
     } else if (ram.item_table == 2) {
@@ -280,7 +280,7 @@ int GameSystem::control_item(std::string_view folder, std::string_view command, 
         return 0;
     }
     if (folder == "DISK") {
-        auto& count = slot.disks[a];
+        auto& count = slot.disk_count(a);
         if (command == "SET") {
             if (count == 9) return 0;
             count = std::min(count + c, 9);
