@@ -1,5 +1,6 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/save_menu.hpp"
+#include "dw4/igb_document.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -449,10 +450,17 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     const auto& t = info.type();
     std::string category = t == "beSoundInfo" ? "SOUND" : t == "beSeInfo" ? "SE" : t == "beMovieInfo" ? "MOVIE" : "";
     make_rams(engine, this, info, rams_, category);
+    if (t == "beStaticInfo") {
+        // The stage's sfp banks (beCriSfpData), next to the common allse.sfp.
+        for (const auto& data : info.list(5))
+            if (data && data.type() == "beCriSfpData") add_bank(engine, data, false);
+        return;
+    }
     if (t != "beSoundInfo") return;
     // The stage's sounds ([5] beSoundData) and the files they index ([7]).
     for (const auto& data : info.list(5))
-        if (data) sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8)};
+        if (data)
+            sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8), std::uint32_t(data.i32(6))};
     files_.clear();
     for (const auto& file : info.list(7)) files_.emplace_back(file ? std::string(file.str(2)) : std::string());
 }
@@ -463,6 +471,33 @@ void SoundManager::clear_stage(Engine&) {
     sounds_.clear();
     files_.clear();
     movie_playing_ = false;
+    // The stage's banks go; one-shot effects finish, loops end.
+    std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
+    std::erase_if(voices_, [](const SeVoice& voice) { return voice.loop; });
+    tracks_.clear();
+}
+
+void SoundManager::add_bank(Engine& engine, const ObjectView& data, bool common) {
+    std::string name(data.str(2));
+    for (auto& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (const auto& bank : banks_)
+        if (bank->name == name) return;
+    const auto bytes = data.memory(4);
+    auto bank = std::make_shared<SeBank>();
+    bank->name = name;
+    bank->common = common;
+    try {
+        bank->bank = std::make_unique<sfp::Bank>(std::vector<std::uint8_t>(bytes.begin(), bytes.end()));
+    } catch (const std::exception& error) {
+        engine.note("audio sfp bank " + name + ": " + error.what());
+        return;
+    }
+    for (std::size_t i = 0; i < bank->bank->sample_count(); ++i) {
+        std::uint32_t loop = 0;
+        bank->pcm.push_back(bank->bank->decode(i, &loop));
+        bank->loop_start.push_back(loop);
+    }
+    banks_.push_back(std::move(bank));
 }
 
 namespace {
@@ -483,7 +518,16 @@ bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
     }
     const auto& data = found->second;
     if (data.type != 1 && data.type != 2) {
-        engine.note("audio sound effect " + name);
+        if (data.request != 0xffffffffu) return play_request(engine, name, data);
+        // 802F5A80: without a request id the sound effect is an ADX file on
+        // an SE stream channel, kept paused by PLAYatPAUSE (+60).
+        Stream* target = &streams_[2];
+        for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+            if (!streams_[channel].decoder || streams_[channel].name == name) {
+                target = &streams_[channel];
+                break;
+            }
+        if (open_stream(engine, *target, name, data)) target->paused = paused;
         return true;
     }
     auto& stream = streams_[std::size_t(data.type - 1)];
@@ -496,13 +540,20 @@ bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
                                 std::move(again));
         return true;
     }
+    if (!open_stream(engine, stream, name, data)) return true;
+    stream.paused = paused;
+    if (data.type == 1) current_bgm_ = name;
+    return true;
+}
+
+bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data) {
     // "[archive.entry]" names an ADX file of an AFS archive (802A9828).
     const std::string file = data.file >= 0 && data.file < int(files_.size()) ? files_[std::size_t(data.file)] : std::string();
     unsigned archive = 0, entry = 0;
     char close = 0;
     if (std::sscanf(file.c_str(), "[%u.%u%c", &archive, &entry, &close) != 3 || close != ']') {
         engine.note("audio stream file " + file + " for " + name);
-        return true;
+        return false;
     }
     try {
         const auto& archives = engine.resources().archives();
@@ -510,19 +561,114 @@ bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
         stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
     } catch (const std::exception& error) {
         engine.note("audio stream " + file + ": " + error.what());
-        return true;
+        return false;
     }
     stream.name = name;
-    stream.gain = volume_gain(data.volume + master_volume_);
+    stream.gain = volume_gain(data.volume);
     stream.fade_left = 0;
-    stream.paused = paused;
+    stream.paused = false;
     stream.ready_in = 10; // the ADX stream buffers before it reports ready
     stream.ramp_frames = stream.ramp_left = 0;
     stream.ramp_from = stream.ramp_to = 1.0f;
     stream.phase = 1.0;
     stream.previous = stream.next = {};
-    if (data.type == 1) current_bgm_ = name;
     return true;
+}
+
+// A sound-effect request (8031CCFC SEQ_SET/SEQ_PLAY): the bank holding the
+// request's group (803C5188) runs its sequence on a track.
+bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data) {
+    if (!common_loaded_) {
+        // Loaded once at boot by the original (802F902C).
+        common_loaded_ = true;
+        try {
+            const auto document = read_igb_document(engine.resources().read("_common/sbiallse.igb"));
+            for (const auto& object : document.objects)
+                if (document.metadata.object_types[object.type_index].name == "beCriSfpData")
+                    add_bank(engine, ObjectView(&document, object.reference_index), true);
+        } catch (const std::exception& error) {
+            engine.note(std::string("audio _common/sbiallse.igb: ") + error.what());
+        }
+    }
+    std::string file = data.file >= 0 && data.file < int(files_.size()) ? files_[std::size_t(data.file)] : std::string();
+    file = file.substr(file.find_last_of('/') + 1);
+    for (auto& c : file) c = char(std::tolower(static_cast<unsigned char>(c)));
+    std::shared_ptr<SeBank> bank;
+    for (const auto& candidate : banks_)
+        if (candidate->bank->has_group(data.request) && (!bank || candidate->name == file)) bank = candidate;
+    const auto sequence = bank ? bank->bank->sequence(data.request) : std::span<const std::uint8_t>{};
+    if (sequence.empty()) {
+        char id[16];
+        std::snprintf(id, sizeof id, "%08X", data.request);
+        engine.note("audio SE request " + std::string(id) + " " + name + " (no bank)");
+        return true;
+    }
+    // A looping effect (type 4) already sounding keeps its voice.
+    if (data.type == 4)
+        for (const auto& voice : voices_)
+            if (voice.name == name && voice.loop) return true;
+    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+        engine.log("sound effect " + name + " from " + bank->name + " at frame " + std::to_string(engine.frame()));
+    SeTrack track;
+    track.bank = bank;
+    track.sequence = sfp::Sequence(sequence);
+    track.name = name;
+    track.gain = volume_gain(data.volume) * float(se_volume_ ? se_volume_ : 127) / 127.0f;
+    run_track(track);
+    if (!track.sequence.finished()) tracks_.push_back(std::move(track));
+    return true;
+}
+
+// Runs a track's due events (803C49F4): a note starts its split's sample.
+void SoundManager::run_track(SeTrack& track) {
+    constexpr std::size_t kMaxVoices = 48;
+    while (track.wait_ms <= 0.0 && !track.sequence.finished()) {
+        const auto event = track.sequence.next();
+        if (event.kind == sfp::Event::Kind::end) break;
+        track.wait_ms += double(event.wait_ms);
+        if (event.kind != sfp::Event::Kind::note || event.velocity == 0) continue;
+        const auto* split = track.bank->bank->split(event.key);
+        if (!split) continue;
+        SeVoice voice;
+        voice.bank = track.bank;
+        voice.sample = split->sample;
+        voice.name = track.name;
+        voice.loop = track.bank->bank->sample(split->sample).loop;
+        if (split->detune) {
+            random_ = random_ * 1103515245u + 12345u;
+            const int cents = int((random_ >> 16) % (2u * split->detune)) - split->detune;
+            voice.pitch = std::exp2(double(cents) / 1200.0);
+        }
+        const float gain = track.gain * float(track.bank->bank->level(event.velocity)) / 255.0f;
+        const float pan = float(split->pan) / 127.0f;
+        voice.left = gain * std::min(1.0f, 2.0f * (1.0f - pan));
+        voice.right = gain * std::min(1.0f, 2.0f * pan);
+        voices_.push_back(std::move(voice));
+        if (voices_.size() > kMaxVoices) voices_.erase(voices_.begin());
+    }
+}
+
+void SoundManager::mix_voices(float* mix, std::size_t frames) {
+    for (auto& voice : voices_) {
+        const auto& pcm = voice.bank->pcm[std::size_t(voice.sample)];
+        const auto& sample = voice.bank->bank->sample(std::size_t(voice.sample));
+        const std::size_t loop = voice.bank->loop_start[std::size_t(voice.sample)];
+        const double step = double(sample.rate) * voice.pitch / double(kOutputRate);
+        for (std::size_t i = 0; i < frames && voice.position < pcm.size(); ++i) {
+            std::size_t after = voice.position + 1;
+            if (after >= pcm.size()) after = voice.loop && loop < pcm.size() ? loop : voice.position;
+            const float a = float(pcm[voice.position]);
+            const float value = a + (float(pcm[after]) - a) * float(voice.phase);
+            mix[i * 2] += value * voice.left;
+            mix[i * 2 + 1] += value * voice.right;
+            voice.phase += step;
+            while (voice.phase >= 1.0 && voice.position < pcm.size()) {
+                voice.phase -= 1.0;
+                if (++voice.position >= pcm.size() && voice.loop && loop < pcm.size()) voice.position = loop;
+            }
+        }
+    }
+    std::erase_if(voices_, [](const SeVoice& voice) { return voice.position >= voice.bank->pcm[std::size_t(voice.sample)].size(); });
 }
 
 SoundManager::Stream* SoundManager::stream_named(std::string_view name) {
@@ -575,8 +721,16 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
         }
         if (ended) stream.decoder.reset();
     }
-    for (std::size_t i = 0; i < frames * 2; ++i)
-        out[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32768.0f, 32767.0f));
+    mix_voices(mix.data(), frames);
+    // Peaks where effects meet the music bend towards full scale instead of
+    // clipping.
+    constexpr float knee = 24576.0f;
+    for (std::size_t i = 0; i < frames * 2; ++i) {
+        float value = mix[i];
+        const float over = std::abs(value) - knee;
+        if (over > 0.0f) value = std::copysign(knee + over / (1.0f + over / 8192.0f), value);
+        out[i] = static_cast<std::int16_t>(std::clamp(value, -32768.0f, 32767.0f));
+    }
 }
 bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const auto& t = ram.info.type();
@@ -614,15 +768,30 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "BGMSTOP") { stop(0); return true; }
         if (command == "ENVSTOP") { stop(1); return true; }
         if (command == "STOP") {
-            stop(0);
-            stop(1);
+            for (std::size_t channel = 0; channel < streams_.size(); ++channel) stop(int(channel));
+            tracks_.clear();
+            voices_.clear();
             return true;
         }
         if (command == "SNDFVOLUME") {
-            master_volume_ = packet.integer(0, 0);
+            // 802F7244: the Sound Factory master volume, set once (803C2734).
+            if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+                engine.log("SNDFVOLUME " + std::to_string(packet.integer(0, 0)));
+            if (!se_volume_) {
+                const int volume = packet.integer(0, 0);
+                se_volume_ = volume <= 0 || volume > 127 ? 127 : volume;
+            }
             return true;
         }
-        if (command == "SESTOP") return true;
+        if (command == "SESTOP") {
+            // All sound effects, or those of one sound.
+            const std::string name = packet.strings.empty() ? std::string() : std::string(packet.string(0));
+            std::erase_if(tracks_, [&](const SeTrack& track) { return name.empty() || track.name == name; });
+            std::erase_if(voices_, [&](const SeVoice& voice) { return name.empty() || voice.name == name; });
+            for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+                if (name.empty() || streams_[channel].name == name) stop(int(channel));
+            return true;
+        }
     }
     // A started stream reports ready once its buffer is filled; scripts wait
     // for ISALLREADY to drop after PLAYatPAUSE and to return.
@@ -656,6 +825,11 @@ void SoundManager::update(Engine& engine) {
     }
     for (std::size_t channel = 0; channel < streams_.size(); ++channel)
         if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
+    for (auto& track : tracks_) {
+        track.wait_ms -= 1000.0 / 60.0;
+        run_track(track);
+    }
+    std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
     if (movie_playing_ && engine.time() >= movie_end_) {
         movie_playing_ = false;
         engine.run_script("nextStage.lua");

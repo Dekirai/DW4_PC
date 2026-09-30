@@ -4,6 +4,7 @@
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/motion.hpp"
+#include "dw4/sfp.hpp"
 
 #include <array>
 #include <map>
@@ -184,8 +185,10 @@ private:
 // Sound, sound effects and movies (beAsmSound2 command handler 80314F14).
 // The BGM (type 1) and ambience (type 2) streams are the CRI ADX files the
 // stage's sound list names as "[archive.entry]"; the host's audio service
-// pulls them mixed through render(). Sound effects (sfp banks) and movies
-// are only tracked.
+// pulls them mixed through render(). Sound effects (types 3/4) are requests
+// into the sfp banks (the common allse.sfp and the stage's beStaticInfo
+// banks) or, without a request id, ADX files on the SE stream channels.
+// Movies are only tracked.
 class SoundManager final : public Manager {
 public:
     SoundManager() : Manager("beSound") {}
@@ -200,9 +203,10 @@ public:
 
 private:
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
-    // list index, [8] volume in 0.1 dB.
+    // list index, [6] SE request id (-1: an ADX file), [8] volume in 0.1 dB.
     struct SoundData {
         int type{}, file{}, volume{};
+        std::uint32_t request{0xffffffffu};
     };
     struct Stream {
         std::string name;
@@ -216,15 +220,53 @@ private:
         double phase = 1.0;
         std::array<float, 2> previous{}, next{};
     };
+    // A loaded sfp bank with its samples decoded once.
+    struct SeBank {
+        std::string name; // lower-case file name
+        std::unique_ptr<sfp::Bank> bank;
+        std::vector<std::vector<std::int16_t>> pcm;
+        std::vector<std::uint32_t> loop_start;
+        bool common{};
+    };
+    // A running request sequence (803C49F4, one of 16 tracks).
+    struct SeTrack {
+        std::shared_ptr<SeBank> bank;
+        sfp::Sequence sequence;
+        std::string name;
+        float gain = 1.0f;
+        double wait_ms{};
+    };
+    // A playing split sample.
+    struct SeVoice {
+        std::shared_ptr<SeBank> bank;
+        int sample{};
+        std::string name;
+        std::size_t position{};
+        double phase{};
+        double pitch = 1.0; // random detune
+        float left = 1.0f, right = 1.0f;
+        bool loop{};
+    };
     bool play(Engine& engine, Packet& packet, bool paused = false);
+    bool play_request(Engine& engine, const std::string& name, const SoundData& data);
+    bool open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data);
+    void add_bank(Engine& engine, const ObjectView& data, bool common);
+    void run_track(SeTrack& track);
+    void mix_voices(float* mix, std::size_t frames);
     Stream* stream_named(std::string_view name);
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, SoundData, std::less<>> sounds_;
     std::vector<std::string> files_;
-    std::array<Stream, 2> streams_; // BGM, ambience
+    static constexpr std::size_t kSeStreams = 2;
+    std::array<Stream, 2 + kSeStreams> streams_; // BGM, ambience, SE streams
+    std::vector<std::shared_ptr<SeBank>> banks_;
+    bool common_loaded_{};
+    std::vector<SeTrack> tracks_;
+    std::vector<SeVoice> voices_;
+    std::uint32_t random_ = 0x12345678u;
     std::string current_bgm_;       // +0x24
-    int master_volume_{};           // SNDFVOLUME, 0.1 dB
+    int se_volume_{};               // SNDFVOLUME: SNDF master 1..127, 0 unset (+56)
     bool movie_playing_{};
     std::int64_t movie_end_{};
 };
