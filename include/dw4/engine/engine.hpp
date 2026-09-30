@@ -193,6 +193,9 @@ public:
     DemoManager& demo() { return demo_; }
     SceneCache& scenes() { return scenes_; }
     const MountedResources& resources() const { return resources_; }
+    // Memory card folders (Dolphin's GCI layout: <root>/Card A, <root>/Card B).
+    void set_card_root(std::filesystem::path root) { card_root_ = std::move(root); }
+    const std::filesystem::path& card_root() const { return card_root_; }
     const std::array<PadState, 4>& pads() const { return pads_.states(); }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
@@ -250,6 +253,7 @@ private:
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
     MountedResources resources_;
+    std::filesystem::path card_root_ = "saves/GC/USA";
     Messenger messenger_;
     DemoManager demo_;
     SceneCache scenes_;

@@ -673,6 +673,43 @@ private:
     std::optional<bool> pending_run_; // MATsetRun for the running mat (80302DA8)
 };
 
+// SAVEUTILITY (beSaveUtil, commands 80323D20): the memory card front end.
+// One request runs at a time and fills the deliver record (beSvDeliver);
+// results follow the beSv*Api codes: 2 done, 3 error, 4 no file, 8 both
+// data copies broken, 9 not enough space, 10 no free file entry, 12 no card.
+// The cards are GCI folders (Engine::card_root()/Card A|B); card A is
+// always inserted, card B when its folder exists.
+class SaveUtilManager final : public Manager {
+public:
+    SaveUtilManager() : Manager("beSaveUtil") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beSaveUtilInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override;
+    bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
+
+    // beSvDeliver: request, result and the free space check.
+    struct Deliver {
+        int slot{};
+        std::vector<std::uint8_t>* data{}; // game data after the copy header (40952 bytes)
+        int result = 1;
+        int operation{};
+        std::uint32_t free_bytes{}, need_bytes{};
+        bool enough_space{}, free_entry{}, done = true;
+    };
+
+private:
+    struct UtilRam : Ram {
+        bool generated{}, ready{}, ending{};
+        int version = 4;
+        int pending = -1; // request waiting for the next update
+        Deliver deliver;
+    };
+    void run(Engine& engine, UtilRam& ram);
+    std::vector<std::uint8_t> header_; // 8 KB file header from beSvPlatDataGC
+    std::vector<std::unique_ptr<UtilRam>> rams_;
+};
+
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.
 class PassiveManager final : public Manager {
 public:

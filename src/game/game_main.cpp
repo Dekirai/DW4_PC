@@ -36,6 +36,7 @@ struct Options {
     bool overlay = true;
     std::vector<float> debug_camera; // eye xyz, target xyz
     std::vector<std::pair<int, int>> flags;
+    std::filesystem::path card_dir; // memory card GCI folders (Card A / Card B)
 };
 
 std::filesystem::path default_data_path() {
@@ -142,6 +143,11 @@ struct ScriptedInput {
 
 int run(const Options& options) {
     dw4::engine::Engine engine(options.data);
+    // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
+    // program. Dolphin's GC/USA folder works too (same GCI files).
+    if (!options.card_dir.empty()) engine.set_card_root(options.card_dir);
+    else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
+    else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
     engine.request_stage(options.stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
@@ -516,6 +522,7 @@ int main(int argc, char** argv) {
                 return argv[++i];
             };
             if (arg == "--data") options.data = next();
+            else if (arg == "--card-dir") options.card_dir = next();
             else if (arg == "--stage") options.stage = next();
             else if (arg == "--smoke-test") options.smoke_frames = std::stoi(next());
             else if (arg == "--screenshot") options.screenshot = next();
@@ -546,7 +553,7 @@ int main(int argc, char** argv) {
             }
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
-                             "         [--screenshot-frames N,M,...] [--input SCRIPT]\n";
+                             "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n";
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }
