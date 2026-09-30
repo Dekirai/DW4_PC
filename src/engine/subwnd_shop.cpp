@@ -1294,6 +1294,167 @@ struct ShopJunk : Window {
     }
 };
 
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrl30 (80394FC4): the bank. Deposit or withdraw devices
+// (BANKDEVICE, at most 96) or bits (BANKBIT).
+// ---------------------------------------------------------------------------
+struct ShopBank : Window {
+    int withdraw{}; // +84: 0 deposit, 1 withdraw
+    int message{};  // +40 for the messages
+
+    DeviceList* list() { return find_child<DeviceList>(); }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        auto* p = player_slot(engine);
+        if (!p) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) next_state(1);
+        switch (sub) {
+        case 0: // Deposit / Withdraw / Exit
+            if (step == 0) {
+                auto& menu = add_child<ShopSelect01>(engine);
+                menu.mode = 1350;
+                menu.initial = withdraw;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (selection < 0 || selection > 1) {
+                next_state(2);
+                return;
+            }
+            withdraw = selection;
+            set_sub(1);
+            return;
+        case 1: // Devices / Bits
+            if (step == 0) {
+                add_child<ShopSelect01>(engine).mode = 1355;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (selection == 1) {
+                set_sub(withdraw ? 5 : 4);
+            } else if (selection == 0) {
+                if (!withdraw) {
+                    set_sub(2);
+                } else if (!p->bank_devices.empty()) {
+                    set_sub(3);
+                } else {
+                    set_sub(6);
+                    message = 1374;
+                }
+            } else {
+                set_sub(0);
+            }
+            return;
+        case 2: // devices in (2) or out (3)
+        case 3:
+            switch (step) {
+            case 0: {
+                auto& folder = add_child<DeviceList>(engine);
+                folder.auto_close = false;
+                folder.equip_disable = true;
+                folder.bank = sub == 3;
+                text_script(engine, "txt_shop.lua", sub == 3 ? 1364 : 1357);
+                mark();
+                set_step(1);
+                return;
+            }
+            case 1: {
+                auto* folder = list();
+                if (!folder) return;
+                if (selection == -1) {
+                    folder->next_state(2);
+                    set_step(5);
+                    switch_line(engine, "STWINFONT29", "font100", false);
+                    return;
+                }
+                if (folder->state != 1 || folder->sub != 2) return;
+                const int at = selection;
+                if (sub == 3) {
+                    if (int(p->devices.size()) >= 36) {
+                        set_step(2);
+                        message = 1365;
+                        return;
+                    }
+                    if (at >= 0 && at < int(p->bank_devices.size())) {
+                        p->devices.push_back(p->bank_devices[std::size_t(at)]);
+                        p->bank_devices.erase(p->bank_devices.begin() + at);
+                    }
+                    if (!p->bank_devices.empty()) {
+                        folder->set_step(1);
+                    } else {
+                        set_step(2);
+                        message = 1374;
+                        folder->fill(engine, true, false);
+                    }
+                } else {
+                    if (int(p->bank_devices.size()) >= 96) {
+                        set_step(2);
+                        message = 1358;
+                        return;
+                    }
+                    if (at >= 0 && at < int(p->devices.size()) && !p->devices[std::size_t(at)].flag) {
+                        p->bank_devices.push_back(p->devices[std::size_t(at)]);
+                        p->remove_device(at);
+                    }
+                    folder->set_step(1);
+                }
+                return;
+            }
+            case 2:
+                switch_line(engine, "STWINFONT29", "font100", false);
+                shop_message(*this, engine, message);
+                mark();
+                set_step(3);
+                return;
+            case 3:
+                if (!child_done()) return;
+                if (auto* folder = list()) {
+                    folder->next_state(2);
+                    set_step(5);
+                }
+                return;
+            case 5:
+                if (!list()) set_sub(0);
+                return;
+            }
+            return;
+        case 4: // bits in (4) or out (5)
+        case 5:
+            if (step == 0) {
+                add_child<ShopEditBit>(engine).mode = withdraw;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (selection != -1) {
+                if (withdraw) {
+                    p->bits += selection;
+                    p->bank_bits -= selection;
+                } else {
+                    p->bits -= selection;
+                    p->bank_bits += selection;
+                }
+                subwnd(engine, "UPDATE");
+            }
+            set_sub(0);
+            return;
+        case 6: // a message
+            if (step == 0) {
+                shop_message(*this, engine, message);
+                mark();
+                set_step(1);
+            }
+            if (child_done()) set_sub(0);
+            return;
+        }
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -1333,7 +1494,8 @@ struct ShopCtrl00 : Window {
         }
         if (sub == 0) {
             if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
-            if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
+            if (mode == 3) add_child<ShopBank>(engine).mode = mode;
+            else if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
             else if (mode >= 6 && mode <= 8) add_child<ShopDevice>(engine).mode = mode;
             else if (mode == 9) add_child<ShopJunk>(engine).mode = mode;
             else add_child<ShopPending>(engine).mode = mode;

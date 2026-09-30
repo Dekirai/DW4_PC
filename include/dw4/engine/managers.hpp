@@ -979,6 +979,8 @@ public:
         Stats stats;
         // DEVICEFOLDER: equipment, at most 36.
         std::vector<ItemDevice> devices;
+        // BANKDEVICE: devices kept in the bank, at most 96.
+        std::vector<ItemDevice> bank_devices;
         // DISKFOLDER (8036CE1C): 12 slots made for the conItem records 0..11
         // with a count (at most 9); the first 10 are shown and can be reordered.
         struct Disk {

@@ -404,7 +404,7 @@ struct DeviceList : Window {
                                                "font006", "font007", "font008", "font009", "font010", "font011"};
     const std::vector<ItemDevice>* folder(Engine& engine) const {
         auto* p = player_slot(engine);
-        return p ? &p->devices : nullptr; // BANKDEVICE is not reconstructed
+        return p ? (bank ? &p->bank_devices : &p->devices) : nullptr;
     }
     static bool unknown(const ItemDevice& d) {
         return (d.type == 0 && d.record == 276) || (d.type == 1 && d.record == 31) || (d.type == 2 && d.record == 44);
