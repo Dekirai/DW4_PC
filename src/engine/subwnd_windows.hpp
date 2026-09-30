@@ -633,6 +633,49 @@ struct ShopSelect52 : Select {
     }
 };
 
+inline std::string line_name(const char* format, int value) {
+    char line[16];
+    std::snprintf(line, sizeof line, format, value);
+    return line;
+}
+
+// ShopSelect34 (803A971C): the seven-digit cursor (i_stcursor03).
+struct ShopSelect34 : Select {
+    void open(Engine& engine) override {
+        for (int i = 0; i < 7; ++i) {
+            if (mode == 3) {
+                align(engine, "STWINFONT28", line_name("font%03d", i), "CENTER");
+            } else {
+                for (const char* format : {"font%03d", "font01%d", "font02%d"})
+                    align(engine, "STWINFONT25", line_name(format, i), "CENTER");
+            }
+        }
+        cursor = "i_stcursor03";
+        count = 7;
+        initial = 6;
+        no_cancel = false;
+        if (mode == 3) position = {147.0f, -2.0f, 0.0f};
+        else if (mode == 1) position = {-20.0f, -1.0f, 0.0f};
+        else if (mode == 0 || mode == 2) position = {-20.0f, 138.0f, 0.0f};
+    }
+};
+
+// 803A9B48: value as width digits on the format lines, the units on line 0
+// (STWINFONT28 for a mode 3 window, STWINFONT25 otherwise).
+inline void show_digits(Engine& engine, const Window& window, int value, int width, const char* format = "font%03d") {
+    const char* layer = window.mode == 3 ? "STWINFONT28" : "STWINFONT25";
+    for (int i = 0; i < 7; ++i) window.switch_line(engine, layer, line_name(format, i), false);
+    if (width < 1 || width > 7) return;
+    char text[16];
+    std::snprintf(text, sizeof text, "%0*d", width, value);
+    const int length = int(std::char_traits<char>::length(text));
+    for (int k = length - 1; k > -1; --k) {
+        const auto line = line_name(format, k);
+        window.textset(engine, layer, line, std::string(1, text[length - 1 - k]));
+        window.switch_line(engine, layer, line, true);
+    }
+}
+
 // The shop programs 1 and 3..10 (subwnd_shop.cpp).
 std::unique_ptr<Window> make_shop_program(int program);
 

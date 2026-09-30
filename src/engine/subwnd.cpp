@@ -972,6 +972,7 @@ void SubWindowManager::fill_stocks(Engine& engine) {
     } else if (program_ == 9 && stocks_[3].empty()) {
         static const int levels[] = {1000, 6000, 26000, 86000, 206000, 456000, 956000, 1956000, 3956000};
         const int count = sys->counter[1];
+        junk_counter_ = count;
         int row = -1;
         while (row + 1 < 9 && count >= levels[row + 1]) ++row;
         if (row >= 0) {

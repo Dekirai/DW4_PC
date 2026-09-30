@@ -1041,6 +1041,259 @@ struct ShopDevice : Window {
     }
 };
 
+// 803A99C8: the other balance on STWINFONT25 (font%03d for mode 1,
+// font01%d otherwise).
+void show_balance(Engine& engine, const Window& window, int mode, int value) {
+    const char* format = mode == 1 ? "font%03d" : "font01%d";
+    for (int i = 0; i < 7; ++i) window.switch_line(engine, "STWINFONT25", line_name(format, i), false);
+    const std::string text = std::to_string(value);
+    const int length = int(text.size());
+    for (int k = length - 1; k > -1; --k) {
+        const auto line = line_name(format, k);
+        window.textset(engine, "STWINFONT25", line, std::string(1, text[std::size_t(length - 1 - k)]));
+        window.switch_line(engine, "STWINFONT25", line, true);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlEditBit (8039E478): a seven-digit amount; mode 0 deposits,
+// 1 withdraws (the bank), 2 donates to the junk shop after a Yes/No. The
+// amount goes to the parent's selection, -1 when cancelled.
+// ---------------------------------------------------------------------------
+struct ShopEditBit : Window {
+    int amount{};     // +84
+    int amount_max{}; // +88
+
+    const char* digit_lines() const { return mode == 1 ? "font01%d" : "font%03d"; }
+    void update(Engine& engine) override {
+        if (state == 2) {
+            close_models(engine);
+            clear_lines(engine);
+            close_children();
+            next_state(3);
+            for (int i = 0; i < 7; ++i)
+                for (const char* format : {"font%03d", "font01%d", "font02%d"})
+                    switch_line(engine, "STWINFONT25", line_name(format, i), false);
+            return;
+        }
+        if (state == 3) {
+            if (closed(engine)) running = false;
+            return;
+        }
+        auto* p = player_slot(engine);
+        if (!p) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            if (mode == 1) {
+                open_model(engine, "j_shwin", 0, "SQ_BITDRAWOUTOPEN", "SQ_CLOSE");
+                for (const char* line : {"font000", "font001", "font002"}) remember("STWINFONT36", line);
+                text_script(engine, "txt_shop.lua", 1375);
+                remember("STWINFONT29", "font100");
+                text_script(engine, "txt_shop.lua", 1367);
+            } else if (mode == 2) {
+                open_model(engine, "j_shwin", 0, "SQ_JUNKOPEN", "SQ_CLOSE");
+                remember("STWINFONT36", "font000");
+                text_script(engine, "txt_shop.lua", 1378);
+            } else {
+                open_model(engine, "j_shwin", 0, "SQ_BITPUTINOPEN", "SQ_CLOSE");
+                for (const char* line : {"font000", "font001"}) remember("STWINFONT36", line);
+                text_script(engine, "txt_shop.lua", 1301);
+                remember("STWINFONT29", "font100");
+                text_script(engine, "txt_shop.lua", 1360);
+            }
+            next_state(1);
+        }
+        switch (step) {
+        case 0:
+            add_child<ShopSelect34>(engine).mode = mode;
+            mark();
+            set_step(1);
+            return;
+        case 1: {
+            if (children.empty()) return;
+            const Window& digits = *children.front();
+            amount = 0;
+            const int bits = p->bits, bank = p->bank_bits;
+            if (mode == 1) {
+                show_digits(engine, digits, amount, 1, "font01%d");
+                amount_max = std::min(bank, 9999999 - bits);
+                show_balance(engine, digits, mode, bits);
+                show_digits(engine, digits, bank, 1, "font02%d");
+            } else if (mode == 2) {
+                show_digits(engine, digits, amount, 1);
+                amount_max = std::min(bits, 999999999 - bits);
+            } else {
+                show_digits(engine, digits, amount, 1);
+                amount_max = std::min(bits, 9999999 - bank);
+                show_balance(engine, digits, mode, bank);
+            }
+            set_step(2);
+            return;
+        }
+        case 2:
+            if (child_done()) {
+                if (selection == -1 || amount < 1) {
+                    if (parent) parent->selection = -1;
+                    next_state(2);
+                } else {
+                    if (parent) parent->selection = amount;
+                    set_step(3);
+                    switch_line(engine, "STWINFONT29", "font100", false);
+                }
+                return;
+            }
+            if (selection == -1 || children.empty()) return;
+            if (last != selection) {
+                show_digits(engine, *children.front(), amount, 7 - selection, digit_lines());
+                last = selection;
+                return;
+            }
+            {
+                Packet now;
+                engine.messenger().send(engine, "SELECTCTRL", std::string("i_stcursor03"), player, "ISSELECTNOW", now);
+                if (now.bools.empty() || !now.bools[0]) return;
+                const auto& pad = engine.pads()[std::size_t(std::clamp(player, 0, 3))];
+                const std::uint32_t stick = pad.left_directions.trigger | pad.left_directions.repeat;
+                const std::uint32_t buttons = pad.buttons.trigger | pad.buttons.repeat;
+                const bool up = (stick & pad_direction::positive_y) || (buttons & pad_button::up);
+                const bool down = (stick & pad_direction::negative_y) || (buttons & pad_button::down);
+                if (!up && !down) return;
+                int step_value = 1;
+                for (int k = 1; k < 7 - selection; ++k) step_value *= 10;
+                const int before = amount;
+                if (up) amount = std::min(amount + step_value, amount_max);
+                else amount = std::max(amount - step_value, 0);
+                if (amount != before) {
+                    show_digits(engine, *children.front(), amount, 7 - selection, digit_lines());
+                    Packet sound;
+                    sound.strings.emplace_back("CURSOR_MOVE");
+                    engine.messenger().send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
+                }
+            }
+            return;
+        case 3:
+            shop_message(*this, engine, mode == 1 ? 1369 : mode == 2 ? 1961 : 1362);
+            mark();
+            set_step(4);
+            return;
+        case 4:
+            if (!child_done()) return;
+            if (mode == 2) set_step(5);
+            else next_state(2);
+            return;
+        case 5:
+            add_child<ShopSelect01>(engine).mode = 1962;
+            mark();
+            set_step(6);
+            return;
+        case 6:
+            if (!child_done()) return;
+            if (selection != 0 && parent) parent->selection = -1;
+            next_state(2);
+            return;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrl90 (80397E60): the junk shop. Donations count into
+// COUNTER[1]; each of the thresholds 1000 .. 3956000 opens a better stock
+// (junkexit.lua runs when a donation crosses one).
+// ---------------------------------------------------------------------------
+struct ShopJunk : Window {
+    int line{};    // +84: the menu line
+    int counter{}; // +88: COUNTER[1] when the stock was made
+    SubWindowManager::Stock* stock{}; // +92
+
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        auto* p = player_slot(engine);
+        auto* sys = engine.get<GameSystem>();
+        if (!p || !sys) {
+            next_state(2);
+            return;
+        }
+        if (state == 0) {
+            if (manager) {
+                stock = manager->shop_stock(9);
+                counter = manager->junk_counter();
+            }
+            next_state(1);
+        }
+        switch (sub) {
+        case 0: // Donate / Buy / Exit
+            if (step == 0) {
+                auto& menu = add_child<ShopSelect01>(engine);
+                menu.mode = 1950;
+                menu.initial = line;
+                const bool has_stock = stock && std::any_of(stock->begin(), stock->end(), [](const auto& e) { return e.has_value(); });
+                menu.enabled = {std::uint8_t(counter < 3956000 ? 1 : 0), std::uint8_t(has_stock ? 1 : 0), 1};
+                for (std::size_t i = 0; i < 3; ++i)
+                    textctl(engine, "STWINFONT29", kLines[i], menu.enabled[i] ? "DEFAULTCOLOR" : "CANCELCOLOR");
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            for (std::size_t i = 0; i < 3; ++i) textctl(engine, "STWINFONT29", kLines[i], "DEFAULTCOLOR");
+            if (selection == 1) {
+                line = 1;
+                set_sub(2);
+            } else if (selection == 0) {
+                line = 0;
+                set_sub(1);
+            } else {
+                next_state(2);
+            }
+            return;
+        case 1: // donate
+            if (step == 0) {
+                add_child<ShopEditBit>(engine).mode = 2;
+                mark();
+                set_step(1);
+            }
+            if (!child_done()) return;
+            if (selection == -1) {
+                set_sub(0);
+                return;
+            }
+            {
+                int& total = sys->counter[1];
+                const int before = counter;
+                total += selection;
+                p->bits -= selection;
+                subwnd(engine, "UPDATE");
+                set_sub(0);
+                static const int thresholds[] = {1000, 6000, 26000, 86000, 206000, 456000, 956000, 1956000, 3956000};
+                for (const int threshold : thresholds)
+                    if (before < threshold && total >= threshold) {
+                        engine.run_script("junkexit.lua");
+                        set_sub(3);
+                        return;
+                    }
+            }
+            return;
+        case 2: // buy
+            if (step == 0) {
+                add_child<ShopSales>(engine).mode = 9;
+                mark();
+                set_step(1);
+            }
+            if (child_done()) set_sub(0);
+            return;
+        case 3: // a new stock
+            if (step == 0) {
+                shop_message(*this, engine, 1970);
+                mark();
+                set_step(1);
+            }
+            if (child_done()) next_state(2);
+            return;
+        }
+    }
+};
+
 // Programs whose windows are not reconstructed yet close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
@@ -1082,6 +1335,7 @@ struct ShopCtrl00 : Window {
             if (model_in(engine, "i_messwn", 0, "SQ_STOPEN")) return;
             if (mode == 5) add_child<ShopDisk>(engine).mode = mode;
             else if (mode >= 6 && mode <= 8) add_child<ShopDevice>(engine).mode = mode;
+            else if (mode == 9) add_child<ShopJunk>(engine).mode = mode;
             else add_child<ShopPending>(engine).mode = mode;
             mark();
             set_sub(1);

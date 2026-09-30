@@ -825,12 +825,15 @@ public:
     // (9) shops; an empty entry is a gap, abChip 185 a sold-out line.
     using Stock = std::vector<std::optional<ItemDevice>>;
     Stock* shop_stock(int program);
+    // GETSHOPDATA 9 also returns COUNTER[1] as it was when the junk stock was made.
+    int junk_counter() const { return junk_counter_; }
 
 private:
     // 80351794: a program start fills the empty stocks from shopWeapon /
     // shopArmor / shopChip / shopJunk by player 1's level.
     void fill_stocks(Engine& engine);
     std::array<Stock, 4> stocks_;
+    int junk_counter_{};
     std::vector<std::unique_ptr<Ram>> rams_;
     std::unique_ptr<Window> window_;
     bool running_{};
@@ -992,6 +995,7 @@ public:
             return disks[0].count;
         }
         int bits{};                    // player BIT (0..9999999)
+        int bank_bits{};               // BANKBIT: bits kept in the bank (0..9999999)
         int xdata{};                   // XDATA
         std::array<int, 11> upcnt{};   // UPCNT: MHP, MMP, STR, DEF, WIS, SPI, SPD, fire, ice, thunder, dark
         // UPDATA / DOWNDATA status buffs: 0 SUBAYASA, 1 CHIMEIRITSU, 2 MAHITEIKOU,

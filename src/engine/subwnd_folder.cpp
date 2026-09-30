@@ -21,12 +21,6 @@ GameSystem::PlayerSlot* slot_of(Engine& engine, int k) {
 
 std::string digit(int value) { return std::string(1, char('0' + value)); }
 
-std::string line_name(const char* format, int value) {
-    char line[16];
-    std::snprintf(line, sizeof line, format, value);
-    return line;
-}
-
 constexpr const char* kLines[12] = {"font000", "font001", "font002", "font003", "font004", "font005",
                                     "font006", "font007", "font008", "font009", "font010", "font011"};
 // Partner lines of the give menus (8045A578 / 8045A334 / 8045A40C).
@@ -41,43 +35,6 @@ const Vec3f kMenuCursor{115.0f, 145.0f, 0.0f};     // 8045A368 / 8045A36C
 std::string partner_frame(const char* kind, std::size_t partners) {
     const int lines = partners == 2 ? 2 : partners == 3 ? 3 : 1;
     return "SQ_" + std::to_string(lines) + kind + "OPEN";
-}
-
-// ShopSelect34 (803A971C): the seven-digit cursor (i_stcursor03).
-struct ShopSelect34 : Select {
-    void open(Engine& engine) override {
-        for (int i = 0; i < 7; ++i) {
-            if (mode == 3) {
-                align(engine, "STWINFONT28", line_name("font%03d", i), "CENTER");
-            } else {
-                for (const char* format : {"font%03d", "font01%d", "font02%d"})
-                    align(engine, "STWINFONT25", line_name(format, i), "CENTER");
-            }
-        }
-        cursor = "i_stcursor03";
-        count = 7;
-        initial = 6;
-        no_cancel = false;
-        if (mode == 3) position = {147.0f, -2.0f, 0.0f};
-        else if (mode == 1) position = {-20.0f, -1.0f, 0.0f};
-        else if (mode == 0 || mode == 2) position = {-20.0f, 138.0f, 0.0f};
-    }
-};
-
-// 803A9B48: value as width digits, the units on font000 (STWINFONT28 for a
-// mode 3 window, STWINFONT25 otherwise).
-void show_digits(Engine& engine, const Window& window, int value, int width) {
-    const char* layer = window.mode == 3 ? "STWINFONT28" : "STWINFONT25";
-    for (int i = 0; i < 7; ++i) window.switch_line(engine, layer, line_name("font%03d", i), false);
-    if (width < 1 || width > 7) return;
-    char text[16];
-    std::snprintf(text, sizeof text, "%0*d", width, value);
-    const int length = int(std::char_traits<char>::length(text));
-    for (int k = length - 1; k > -1; --k) {
-        const auto line = line_name("font%03d", k);
-        window.textset(engine, layer, line, std::string(1, text[length - 1 - k]));
-        window.switch_line(engine, layer, line, true);
-    }
 }
 
 // ---------------------------------------------------------------------------
