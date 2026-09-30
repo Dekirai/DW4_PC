@@ -712,6 +712,7 @@ void GameSystem::prepare_player(Engine& engine, int slot) {
 }
 
 void GameSystem::create_player(Engine& engine, int slot) {
+    if (load_test_record(engine, slot)) return;
     auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
     auto& stats = player.stats;
     auto* db = engine.get<DatabaseManager>();

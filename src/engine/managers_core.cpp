@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <numbers>
 #include <stdexcept>
 
@@ -804,6 +805,10 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
     auto arg_int = [&](std::size_t i, int fallback = 0) {
         return i < args.size() && args[i].type() == Lua4Type::Number ? int(args[i].as_number()) : fallback;
     };
+    // A DW4_CARD_RECORD test character is in place before the stage scripts
+    // pick the player models.
+    static const bool test_record = std::getenv("DW4_CARD_RECORD") != nullptr;
+    if (test_record && !players[0].stats.ready && method.starts_with("SYS")) prepare_player(engine, 0);
     if (method == "SYSisJoinPlayer") {
         const int slot = arg_int(0);
         out = {Lua4Value::number(slot >= 0 && slot < 4 && players[std::size_t(slot)].joined ? 1 : 0)};

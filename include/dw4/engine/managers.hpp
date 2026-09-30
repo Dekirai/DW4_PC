@@ -12,6 +12,10 @@
 #include <string>
 #include <vector>
 
+namespace dw4::save {
+struct Record;
+}
+
 namespace dw4::engine {
 
 void register_default_managers(Engine& engine);
@@ -1050,6 +1054,7 @@ public:
     };
     struct PlayerSlot {
         bool joined{};
+        std::uint32_t unique{};        // UNIQUE: the character's id on the card
         std::string name;              // PLAYERNAME (name entry)
         std::string digimon = "p_agumon";
         std::array<std::string, 3> weapons{};
@@ -1126,6 +1131,10 @@ public:
     void create_player(Engine& engine, int slot);
     // CURRENT2BASE (8036DF70): the current species keeps LEVEL, EXP, SKILL and UPCNT.
     void store_species(int slot);
+    // Memory card records (save_game.cpp, docs/SAVES.md).
+    save::Record make_record(Engine& engine, int slot);
+    void apply_record(Engine& engine, int slot, const save::Record& record, bool common);
+    bool load_test_record(Engine& engine, int slot);
     // BASE2CURRENT (8036DBA8): the player becomes species with its kept values.
     void load_species(Engine& engine, int slot, int species);
     // WEAPONEQUIPCHECK (8036E9D4): a folder weapon the species could equip.
