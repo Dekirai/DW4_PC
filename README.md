@@ -40,12 +40,14 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
 - Lobby programs: weapon, armor and chip shops with their level-based stock
   and stat previews, the disk shop, selling, the junk shop with bit
   donations, the bank (devices and bits), the X data keeper (stats and chip
-  upgrades) and the appraiser for unknown devices.
+  upgrades), the appraiser for unknown devices and the Digi-Lab: digivolution
+  into the forms reached (each form keeps its level, EXP, skills and stat
+  ups), the strongest usable weapon equipped, then the evolution scene.
 - Rendering of original models, textures, skinned and animated actors
   (Enbaya clips), text from the original fonts and the HUD layers.
 
-Not yet reconstructed: the Digi-Lab and the card program, status effects,
-evolution, homing enemy bullets, particles and shadows, audio and movies, name entry,
+Not yet reconstructed: the card booster program, status effects, the HUD
+portrait after a digivolution, weapon geometry on the players, homing enemy bullets, particles and shadows, audio and movies, name entry,
 memory card saves, the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
@@ -100,7 +102,7 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
-`DW4_BITS=n` and `DW4_XDATA=n` fill a new player's folders,
+`DW4_BITS=n`, `DW4_XDATA=n` and `DW4_FORMS=species,...` fill a new player's folders and forms,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 
