@@ -1030,17 +1030,24 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
     }
 }
 
-// An attached effect: the owner's matrix with the offset rotated into it and
-// the extra rotation (degrees) applied first.
+// An attached effect (8030D534): the owner's matrix, the offset in its space
+// (80128DC8), then local rotations about X, Y and Z in radians (801298F0).
 void ModelCtrlManager::place_attached(ModelRam& ram) {
     const auto* owner = find(ram.attach_name, ram.attach_index);
     if (!owner || !owner->node || !ram.node) return;
-    const auto& o = owner->node->matrix;
-    Mat4 m = placement_matrix(Vec3f{}, ram.attach_rotation) * o;
     const Vec3f v = ram.attach_offset;
-    m(3, 0) = v.x * o(0, 0) + v.y * o(1, 0) + v.z * o(2, 0) + o(3, 0);
-    m(3, 1) = v.x * o(0, 1) + v.y * o(1, 1) + v.z * o(2, 1) + o(3, 1);
-    m(3, 2) = v.x * o(0, 2) + v.y * o(1, 2) + v.z * o(2, 2) + o(3, 2);
+    Mat4 m = translation(v.x, v.y, v.z) * owner->node->matrix;
+    const Vec3f r = ram.attach_rotation;
+    const float angles[3] = {r.x, r.y, r.z};
+    for (int axis = 0; axis < 3; ++axis) {
+        if (angles[axis] == 0.0f) continue;
+        Mat4 q;
+        const float c = std::cos(angles[axis]), s = std::sin(angles[axis]);
+        if (axis == 0) { q(1, 1) = c; q(1, 2) = s; q(2, 1) = -s; q(2, 2) = c; }
+        else if (axis == 1) { q(0, 0) = c; q(0, 2) = -s; q(2, 0) = s; q(2, 2) = c; }
+        else { q(0, 0) = c; q(0, 1) = s; q(1, 0) = -s; q(1, 1) = c; }
+        m = q * m;
+    }
     ram.node->matrix = m;
 }
 
