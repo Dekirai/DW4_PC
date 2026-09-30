@@ -823,22 +823,6 @@ struct CtrlEquip : Window {
     }
 };
 
-// Placeholder for the folder / skill pages until their windows
-// (beNDMWStatusCtrlFolder / CtrlSkill) are reconstructed: B returns to the
-// menu.
-struct PendingPage : Window {
-    const char* name = "";
-    void update(Engine& engine) override {
-        if (close_states(engine)) return;
-        if (state == 0) {
-            engine.note(std::string("SUBWND page ") + name);
-            next_state(1);
-        }
-        const auto& pad = engine.pads()[std::size_t(std::clamp(player, 0, 3))];
-        if (pad.buttons.trigger & (pad_button::b | pad_button::a)) next_state(2);
-    }
-};
-
 // beNDMWStatusCtrl00 (8037E9F8): the STATUS program.
 struct StatusCtrl00 : Window {
     int last_menu{}; // +84
@@ -861,16 +845,6 @@ struct StatusCtrl00 : Window {
             }
             return;
         }
-        auto page = [&](const char* name) {
-            if (step == 0) {
-                auto& child = add_child<PendingPage>(engine);
-                child.name = name;
-                child_mark = children.size();
-                ++step;
-            } else if (children.size() != child_mark) {
-                sub = step = 0;
-            }
-        };
         switch (sub) {
         case 0:
             if (step == 0) {
@@ -902,7 +876,15 @@ struct StatusCtrl00 : Window {
                 sub = step = 0;
             }
             break;
-        case 3: page("skill"); break;
+        case 3:
+            if (step == 0) {
+                add_skill_page(*this, engine);
+                mark();
+                ++step;
+            } else if (child_done()) {
+                sub = step = 0;
+            }
+            break;
         case 4:
             if (step == 0) {
                 for (std::size_t i = 1; i < children.size(); ++i)

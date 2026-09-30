@@ -605,8 +605,10 @@ struct DeviceList : Window {
     }
 };
 
-// The folder page (beNDMWStatusCtrlFolder, subwnd_folder.cpp).
+// The folder page (beNDMWStatusCtrlFolder, subwnd_folder.cpp) and the skill
+// page (beNDMWStatusCtrlSkill, subwnd_skill.cpp).
 Window& add_folder_page(Window& parent, Engine& engine);
+Window& add_skill_page(Window& parent, Engine& engine);
 
 } // namespace subwnd
 } // namespace dw4::engine

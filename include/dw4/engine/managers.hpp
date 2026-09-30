@@ -1003,6 +1003,13 @@ public:
         void remove_device(int index);
         std::vector<int> wazalist;     // WAZALIST: pcTech rows
         std::map<int, std::uint8_t> base_isuse; // BASE_ISUSE: species reached by this player
+        // BASE_LEVEL: the level of each of the 16 species (8036DF70 stores the
+        // current LEVEL after a level-up, 8036DBA8 loads it on a change).
+        std::array<int, 16> base_level = [] {
+            std::array<int, 16> levels{};
+            levels.fill(1);
+            return levels;
+        }();
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,

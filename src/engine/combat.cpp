@@ -555,6 +555,7 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
             leveled = true;
         }
         if (!leveled) continue;
+        if (stats.species >= 0 && stats.species < 16) player.base_level[std::size_t(stats.species)] = stats.level;
         player.hp = player.max_hp;
         player.mp = player.max_mp;
         auto* models = engine.get<ModelCtrlManager>();
