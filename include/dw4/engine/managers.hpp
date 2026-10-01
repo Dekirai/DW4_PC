@@ -181,9 +181,13 @@ public:
     void add_info(Engine& engine, const ObjectView& info) override;
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
+    void update(Engine& engine) override;
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;
+    // 80347BB4: the soft reset (RAM +18 state, _resetTrgTime).
+    int reset_state_{};
+    std::int64_t reset_time_{};
 };
 
 class SwitchCtrlManager final : public Manager {

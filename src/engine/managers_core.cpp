@@ -601,15 +601,79 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
 // Stage control (beNDMWStageCtl): NEXTSTAGE / PADINPUT
 // ---------------------------------------------------------------------------
 void StageCtlManager::add_info(Engine& engine, const ObjectView& info) { make_rams(engine, this, info, rams_, "STAGECTL"); }
-void StageCtlManager::clear_stage(Engine&) { rams_.clear(); }
+void StageCtlManager::clear_stage(Engine&) {
+    rams_.clear();
+    reset_state_ = 0;
+}
+
+// 80347BB4: START pressed on pad 1 while B and X are held arms the soft
+// reset; held for a second it stops the sounds and the status window, hides
+// the layers, freezes the models and generators and, two frames later,
+// returns to the title.
+void StageCtlManager::update(Engine& engine) {
+    if (rams_.empty()) return;
+    const auto& pad = engine.pads()[0].buttons;
+    const bool combination = (pad.held & pad_button::b) && (pad.held & pad_button::x);
+    auto& messenger = engine.messenger();
+    auto send = [&](const char* category, const char* command, std::initializer_list<const char*> strings = {}) {
+        Packet packet;
+        for (const char* s : strings) packet.strings.emplace_back(std::string(s));
+        messenger.send(engine, category, std::nullopt, -1, command, packet);
+        return packet;
+    };
+    auto subwnd_running = [&] {
+        Packet run = send("SUBWND", "ISRUN");
+        return run.boolean(0);
+    };
+    switch (reset_state_) {
+    case 0:
+        if (engine.soft_reset_allowed() && (pad.trigger & pad_button::start) && combination) {
+            reset_time_ = engine.time() + 1'000'000'000;
+            reset_state_ = 1;
+        }
+        break;
+    case 1:
+        if (!engine.soft_reset_allowed() || !(pad.held & pad_button::start) || !combination) {
+            reset_state_ = 0;
+            break;
+        }
+        if (engine.time() < reset_time_) break;
+        send("SOUND", "BGMSTOP");
+        send("SOUND", "ENVSTOP");
+        send("SOUND", "SESTOP");
+        if (subwnd_running()) {
+            send("SUBWND", "REMOVE");
+            send("LAYERCTL", "SWITCH", {"ALL", "DISPOFF"});
+        }
+        reset_state_ = 2;
+        break;
+    case 2:
+        if (subwnd_running()) break;
+        send("LAYERCTL", "SWITCH", {"ALL", "DISPOFF"});
+        send("MODELCTRL", "ONFREEZE");
+        send("GENERATER", "ONFREEZE");
+        reset_state_ = 3;
+        break;
+    case 3:
+    case 4:
+        ++reset_state_;
+        break;
+    case 5:
+        engine.request_stage("stagis10");
+        reset_state_ = 6;
+        break;
+    default:
+        break;
+    }
+}
 bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
     if (command == "NEXTSTAGE") {
         if (!packet.strings.empty()) engine.request_stage(std::string(packet.string(0)));
         return true;
     }
     if (command == "ISRESETSTART") {
-        // The soft reset (_resetTrgTime) is not held.
-        packet.bools.push_back(0);
+        // 803481B4: a soft reset is running.
+        packet.bools.push_back(reset_state_ != 0 ? 1 : 0);
         return true;
     }
     if (command == "PADINPUT") {

@@ -160,7 +160,9 @@ log menu cursors, text, player state and hits.
 | C stick | | Right stick |
 
 Player 1 uses the keyboard and the first gamepad; the second to fourth
-gamepads control players 2 to 4.
+gamepads control players 2 to 4. As on the original, holding B and X and
+then START for a second on player 1's controller returns to the title
+(outside the logo, opening, title and ending stages).
 
 F1 opens the debug menu (stage loader, player state, notes, script log); F2
 toggles a free camera.

@@ -326,6 +326,7 @@ void Engine::begin_stage_load() {
     stage_name_ = next;
     stage_folder_ = next;
     loading_node_ = nullptr;
+    soft_reset_allowed_ = false;
     loader_state_ = 0;
 }
 
@@ -480,6 +481,10 @@ void Engine::process_stage_loader() {
         break;
     case 9:
         run_script("first.lua");
+        // The soft reset works outside the logo, opening, title and ending
+        // stages (stagIS08 / 09 / 10 / 12).
+        soft_reset_allowed_ = stage_name_ != "stagis08" && stage_name_ != "stagis09" && stage_name_ != "stagis10" &&
+                              stage_name_ != "stagis12";
         loader_state_ = -1;
         log("stage " + stage_name_ + " started");
         break;

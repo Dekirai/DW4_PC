@@ -205,6 +205,8 @@ public:
     bool run_script(std::string_view name);
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
+    bool soft_reset_allowed() const { return soft_reset_allowed_; }
+    void set_soft_reset_allowed(bool allowed) { soft_reset_allowed_ = allowed; }
     void attach_scene_root(Node* root);
     Node* find_named_node(Node* from, std::string_view name);
 
@@ -277,6 +279,7 @@ private:
     std::string stage_folder_;
     std::string pending_stage_;
     int loader_state_ = -1;
+    bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
