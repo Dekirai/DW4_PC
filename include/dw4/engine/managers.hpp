@@ -830,6 +830,8 @@ public:
     void update(Engine& engine) override;
     // MATisAllPlayer / MATgetPlayerNo / MATisRideOffPlayer for the running mat script.
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
+    // The centre of a mat by name ("z02" or its script name "matz02"; test bot).
+    std::optional<Vec3f> mat_centre(std::string_view name) const;
 
 private:
     struct Mat {

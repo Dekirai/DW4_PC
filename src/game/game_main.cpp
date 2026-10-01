@@ -474,7 +474,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     auto* cameras = engine.get<dw4::engine::CameraManager>();
                     if (const auto* p = models ? models->player(0) : nullptr; p && p->node && cameras) {
                         float tx = g->x, tz = g->z, reach = 4.0f;
-                        if (g->seek) {
+                        // SEEK mat:<name> walks onto a floor mat (stage exits) and
+                        // confirms its prompt.
+                        if (g->seek && g->target.rfind("mat:", 0) == 0) {
+                            if (auto* mats = engine.get<dw4::engine::MatCtrlManager>())
+                                if (const auto centre = mats->mat_centre(g->target.substr(4))) {
+                                    tx = centre->x;
+                                    tz = centre->z;
+                                }
+                            if (frame % 30 < 3) input |= dw4::pad_button::a;
+                        } else if (g->seek) {
                             // Named targets, then pickups, then the nearest live enemy.
                             float best = 1e12f, target_y = 0.0f;
                             for (int pass = g->target.empty() ? 0 : -1; pass < 2 && best == 1e12f; ++pass)

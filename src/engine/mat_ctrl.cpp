@@ -33,6 +33,14 @@ void MatCtrlManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
+std::optional<Vec3f> MatCtrlManager::mat_centre(std::string_view name) const {
+    for (const auto& ram : rams_)
+        for (const auto& mat : ram->mats)
+            if (mat.name == name || "mat" + mat.name == name)
+                return Vec3f{(mat.min.x + mat.max.x) * 0.5f, (mat.min.y + mat.max.y) * 0.5f, (mat.min.z + mat.max.z) * 0.5f};
+    return std::nullopt;
+}
+
 void MatCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     context_ = nullptr;

@@ -31,12 +31,13 @@ reconstruction work.
 
 ## Next steps
 
-1. Commander Room route and Ophanimon's mission, then the lobby gate to the
-   first area (`stag0001`).
-2. Dungeons: enemies (`ENEMY` models), the player's attack sequences and
-   hitboxes, damage and HP (`FIGHTCALC`), items and the HUD numbers.
-3. Later dungeons and boss fights compared against the original.
-4. Name entry (NAMESEL), difficulty selection, memory card saves.
-5. Demo cameras, audio and movies.
-6. The PC requirements in [ROADMAP.md](ROADMAP.md): settings menu, bindings,
-   presentation options, modding and co-op.
+The story path from the boot logos through character select, the lobby, the
+areas, dungeons and all six boss stages to the staff roll runs in the native
+engine; automated runs (`--smoke-test` with `--input`, `DW4_GOD`,
+`DW4_ONE_HIT`) defeat every boss and pass the boss gates. Remaining work:
+
+1. Behaviour checks of the later dungeons against the original (security and
+   heal gates, quests), ideally with recorded traces from the original.
+2. The PC requirements in [ROADMAP.md](ROADMAP.md): save states, supported
+   languages, original/modernized options, content modding, online co-op and
+   the release packaging (compressed disc images).
