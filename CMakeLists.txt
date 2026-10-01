@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 option(DW4_BUILD_APP "Build the native game runtime (SDL3/OpenGL/ImGui)" ${WIN32})
+# One self-contained EXE: the C++ runtime linked in, so a clean Windows needs
+# no Visual C++ redistributable (applies to the dependencies built here too).
+if(MSVC)
+  option(DW4_STATIC_RUNTIME "Link the C++ runtime statically" ON)
+  if(DW4_STATIC_RUNTIME)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  endif()
+endif()
 include(CTest)
 
 # Portable core: original file formats (IGB, packages, textures, meshes),
