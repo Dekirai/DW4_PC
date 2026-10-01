@@ -1024,6 +1024,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Test runs and the converter never open dialogs (they run unattended).
+    bool interactive = !std::getenv("DW4_NO_ERROR_BOX");
+    for (int i = 1; i < argc; ++i)
+        if (std::string_view(argv[i]) == "--smoke-test" || std::string_view(argv[i]) == "--convert-rvz") interactive = false;
     try {
         Options options;
         for (int i = 1; i < argc; ++i) {
@@ -1125,8 +1129,7 @@ int main(int argc, char** argv) {
     } catch (const std::exception& error) {
         std::cerr << "dw4_game: " << error.what() << '\n';
         // Without a console the reason shows in a message box.
-        if (!std::getenv("DW4_NO_ERROR_BOX"))
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon World 4 PC", error.what(), nullptr);
+        if (interactive) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon World 4 PC", error.what(), nullptr);
         return 1;
     }
 }
