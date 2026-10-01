@@ -1,4 +1,5 @@
 #include "dw4/resources.hpp"
+#include "dw4/disc.hpp"
 #include "dw4/igb_document.hpp"
 
 #include <algorithm>
@@ -163,8 +164,24 @@ ResourceCatalog read_resource_catalog(const IgbDocument& document) {
 }
 
 MountedResources MountedResources::open(const std::filesystem::path& root) {
-    const auto data = std::filesystem::is_directory(root / "files") ? root / "files" : root;
     MountedResources result;
+    if (std::filesystem::is_regular_file(root)) {
+        // A disc image: the catalog and the AFS archives are files of its FST.
+        const auto disc = DiscImage::open(root);
+        const auto* catalog = disc.find("ndmw.igb");
+        if (!catalog) fail("disc image has no ndmw.igb: " + root.string());
+        result.catalog_ = read_resource_catalog(read_igb_document(disc.read(*catalog)));
+        for (const auto& archive : result.catalog_.archives) {
+            const auto* file = disc.find(archive.filename);
+            if (!file) fail("disc image has no archive " + archive.filename);
+            auto opened = assets::AfsArchive::open_region(root, file->offset, file->size);
+            if (opened.entries().size() != archive.declared_entries)
+                fail("archive entry count differs from catalog: " + archive.filename);
+            result.archives_.push_back(std::move(opened));
+        }
+        return result;
+    }
+    const auto data = std::filesystem::is_directory(root / "files") ? root / "files" : root;
     result.catalog_ = read_resource_catalog(read_igb_document(data / "ndmw.igb"));
     for (const auto& archive : result.catalog_.archives) {
         // Only validated archive basenames become host paths. Logical resource

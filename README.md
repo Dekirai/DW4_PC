@@ -117,14 +117,17 @@ This configures `build\Release`, builds everything and runs the tests.
 
 ## Run with your own game data
 
-Extract the USA disc (for example with Dolphin: *Properties > Filesystem >
-Extract Entire Disc*) and tell the runtime where the extracted root is, either
-with `--data PATH` or in `settings.ini` (`local\settings.ini` or
-`settings.ini` in the working folder, else next to the program):
+The runtime reads the USA disc (GDJEB2, revision 0) straight from an
+uncompressed disc image (`.iso` / `.gcm`) or from a Dolphin extraction
+(*Properties > Filesystem > Extract Entire Disc*). On the first start it asks
+for one and checks it; compressed images (RVZ, WIA, CISO, NKit) can be
+converted back to ISO in Dolphin (*Convert File...*). The choice is kept in
+`settings.ini` (`local\settings.ini` or `settings.ini` in the working folder,
+else next to the program) and `--data PATH` overrides it:
 
 ```ini
 [data]
-path=E:\Games\Digimon World 4 - Extracted
+path=E:\Games\Digimon World 4 (USA).iso
 ```
 
 The same file keeps the PC settings that the F1 menu edits while playing:

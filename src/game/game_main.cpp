@@ -7,6 +7,7 @@
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "dw4/disc.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -17,6 +18,7 @@
 #include <imgui_impl_sdl3.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -144,6 +146,67 @@ struct ScriptedInput {
         return false;
     }
 };
+
+// The supported game data: the GDJEB2 disc 0 revision 0 image or a Dolphin
+// extraction of it. Returns a problem description, empty when usable.
+std::string check_game_data(const std::filesystem::path& path) {
+    std::error_code error;
+    if (std::filesystem::is_directory(path, error)) {
+        if (std::filesystem::is_regular_file(path / "files" / "ndmw.igb", error) ||
+            std::filesystem::is_regular_file(path / "ndmw.igb", error))
+            return {};
+        return "This folder is not a Digimon World 4 extraction (no files/ndmw.igb):\n" + path.string();
+    }
+    if (!dw4::DiscImage::looks_like_disc(path))
+        return "This is not an uncompressed GameCube disc image:\n" + path.string() +
+               "\n\nCompressed images (RVZ, WIA, CISO, NKit) can be converted back to ISO in Dolphin "
+               "(right-click the game > Convert File...).";
+    try {
+        const auto disc = dw4::DiscImage::open(path);
+        if (disc.game_id() != "GDJEB2" || disc.disc_number() != 0 || disc.revision() != 0)
+            return "This disc is " + disc.game_id() + " (revision " + std::to_string(disc.revision()) +
+                   "), not Digimon World 4 USA (GDJEB2, revision 0).";
+        if (!disc.find("ndmw.igb")) return "The disc image has no ndmw.igb.";
+    } catch (const std::exception& problem) {
+        return problem.what();
+    }
+    return {};
+}
+
+// First start without game data: ask for the disc image or extraction folder.
+std::filesystem::path choose_game_data() {
+    if (!SDL_Init(SDL_INIT_VIDEO)) return {};
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Disc image..."},
+        {0, 2, "Extracted folder..."},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+    };
+    const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "Digimon World 4 PC",
+                                 "Choose your Digimon World 4 (USA) game data: an uncompressed disc image "
+                                 "(.iso / .gcm) or a Dolphin extraction folder. The choice is saved in settings.ini.",
+                                 3, buttons, nullptr};
+    int choice = 0;
+    if (!SDL_ShowMessageBox(&box, &choice) || choice == 0) return {};
+    // The dialog may answer from another thread.
+    struct Result {
+        std::atomic<bool> done{false};
+        std::filesystem::path path;
+    } result;
+    const SDL_DialogFileCallback callback = [](void* user, const char* const* files, int) {
+        auto* r = static_cast<Result*>(user);
+        if (files && files[0]) r->path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(files[0])));
+        r->done.store(true);
+    };
+    static const SDL_DialogFileFilter filters[] = {{"GameCube disc image", "iso;gcm"}, {"All files", "*"}};
+    if (choice == 1) SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 2, nullptr, false);
+    else SDL_ShowOpenFolderDialog(callback, &result, nullptr, nullptr, false);
+    while (!result.done.load()) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {}
+        SDL_Delay(10);
+    }
+    return result.path;
+}
 
 // A key button of the controls table waiting for the next key press.
 struct KeyCapture {
@@ -864,11 +927,31 @@ int main(int argc, char** argv) {
         }
         auto settings = dw4::game::Settings::load();
         if (options.data.empty()) options.data = settings.data;
+        // First start: pick and check the disc image or extraction, then
+        // remember it.
+        if (options.data.empty() && !options.smoke_frames) {
+            for (;;) {
+                const auto chosen = choose_game_data();
+                if (chosen.empty()) return 1;
+                const auto problem = check_game_data(chosen);
+                if (problem.empty()) {
+                    settings.data = chosen;
+                    settings.save();
+                    options.data = chosen;
+                    break;
+                }
+                SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon World 4 PC", problem.c_str(), nullptr);
+            }
+        }
         if (options.data.empty())
             throw std::runtime_error("no --data given and " + settings.file.string() + " has no [data] path");
+        if (const auto problem = check_game_data(options.data); !problem.empty()) throw std::runtime_error(problem);
         return run(options, settings);
     } catch (const std::exception& error) {
         std::cerr << "dw4_game: " << error.what() << '\n';
+        // Without a console the reason shows in a message box.
+        if (!std::getenv("DW4_NO_ERROR_BOX"))
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Digimon World 4 PC", error.what(), nullptr);
         return 1;
     }
 }

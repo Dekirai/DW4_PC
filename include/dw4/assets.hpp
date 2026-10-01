@@ -49,6 +49,9 @@ struct AfsEntry {
 class AfsArchive {
 public:
     static AfsArchive open(const std::filesystem::path& path);
+    // An archive stored at `base` (size bytes) inside a container file such
+    // as a disc image.
+    static AfsArchive open_region(const std::filesystem::path& container, std::uint64_t base, std::uint64_t size);
     const std::filesystem::path& path() const noexcept { return path_; }
     std::uint64_t file_size() const noexcept { return file_size_; }
     const std::vector<AfsEntry>& entries() const noexcept { return entries_; }
@@ -61,6 +64,8 @@ public:
 private:
     std::filesystem::path path_;
     std::uint64_t file_size_{};
+    std::uint64_t base_{};           // archive start in the container file
+    std::uint64_t container_size_{}; // container file size when indexed
     std::vector<AfsEntry> entries_;
     bool has_names_{};
 };

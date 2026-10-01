@@ -49,7 +49,8 @@ void validate_resource_catalog(const ResourceCatalog& catalog);
 
 class MountedResources {
 public:
-    // Accepts Dolphin's extraction root or its files/ directory. Reads only.
+    // Accepts Dolphin's extraction root or its files/ directory, or an
+    // uncompressed disc image (.iso / .gcm). Reads only.
     static MountedResources open(const std::filesystem::path& root);
     const ResourceCatalog& catalog() const noexcept { return catalog_; }
     const std::vector<assets::AfsArchive>& archives() const noexcept { return archives_; }

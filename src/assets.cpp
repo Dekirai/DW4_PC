@@ -139,12 +139,20 @@ DolInfo inspect_dol(const std::filesystem::path& path) {
     return result;
 }
 
-AfsArchive AfsArchive::open(const std::filesystem::path& path) {
+AfsArchive AfsArchive::open(const std::filesystem::path& path) { return open_region(path, 0, size_of(path)); }
+
+AfsArchive AfsArchive::open_region(const std::filesystem::path& container, std::uint64_t base, std::uint64_t size) {
     AfsArchive result;
-    result.path_ = std::filesystem::absolute(path);
-    result.file_size_ = size_of(path);
+    result.path_ = std::filesystem::absolute(container);
+    result.container_size_ = size_of(container);
+    if (!fits(base, size, result.container_size_)) throw AssetError("AFS region lies outside its container");
+    result.base_ = base;
+    result.file_size_ = size;
     if (result.file_size_ < 8) throw AssetError("AFS header is truncated");
-    auto file = open_file(path);
+    auto file = open_file(container);
+    auto read_at = [&](std::ifstream& f, std::uint64_t offset, std::uint8_t* out, std::size_t count) {
+        ::dw4::assets::read_at(f, base + offset, out, count);
+    };
     std::array<std::uint8_t, 8> header{};
     read_at(file, 0, header.data(), header.size());
     if (header[0] != 'A' || header[1] != 'F' || header[2] != 'S' || header[3] != 0)
@@ -204,12 +212,12 @@ std::vector<std::uint8_t> AfsArchive::read(std::size_t index, std::size_t max_by
 
 std::vector<std::uint8_t> AfsArchive::read_prefix(std::size_t index, std::size_t max_bytes) const {
     if (index >= entries_.size()) throw AssetError("AFS entry index is out of range");
-    if (size_of(path_) != file_size_) throw AssetError("AFS file size changed since indexing");
+    if (size_of(path_) != container_size_) throw AssetError("AFS file size changed since indexing");
     const auto& entry = entries_[index];
     const auto count = std::min<std::size_t>(entry.size, max_bytes);
     std::vector<std::uint8_t> bytes(count);
     auto file = open_file(path_);
-    read_at(file, entry.offset, bytes.data(), bytes.size());
+    read_at(file, base_ + entry.offset, bytes.data(), bytes.size());
     return bytes;
 }
 
