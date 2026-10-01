@@ -54,6 +54,9 @@ public:
     bool lobby(const SessionStart& host_start, std::string& status, std::string& error);
     const SessionStart& start() const { return start_; }
 
+    // Ends the session (or the lobby): sockets close, the game plays on alone.
+    void close();
+    bool in_lobby() const { return role_ != Role::offline && !started_; }
     Role role() const { return role_; }
     bool active() const { return role_ != Role::offline && started_; }
     int local_slot() const { return slot_; }

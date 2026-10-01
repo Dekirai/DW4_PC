@@ -736,6 +736,45 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (options.smoke_frames) std::cout << "state: " << line << '\n';
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(exact ? 2 : 6);
         };
+        // Hosting or joining from the F1 menu: the lobby runs while the game
+        // waits; once everyone is in, every machine starts at the title.
+        std::string lobby_status;
+        auto begin_session = [&] {
+            const auto& started = net.start();
+            const auto real_cards = card_root;
+            engine_storage.reset();
+            engine_storage.emplace(options.data);
+            engine.cheats().god = started.cheats & 1;
+            engine.cheats().infinite_mp = started.cheats & 2;
+            engine.cheats().one_hit = started.cheats & 4;
+            session_cards = std::filesystem::temp_directory_path() /
+                            ("dw4_session_" + std::to_string(net.local_slot()) + "_" +
+                             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            write_card(session_cards / "Card A", started.card_a);
+            write_card(session_cards / "Card B", started.card_b);
+            own_card_name = net.local_slot() == 0 ? "Card A" : net.local_slot() == 1 ? "Card B" : "";
+            own_card_folder = real_cards / "Card A";
+            engine.set_card_root(session_cards);
+            engine.request_stage(started.stage);
+            net_submitted = std::uint64_t(started.delay);
+            input_log.clear();
+            log_serial = 0;
+            accumulator = 0;
+            renderer.clear_cache();
+            interpolator.reset();
+            rendered_stage.clear();
+            state_message = "Online: player " + std::to_string(net.local_slot() + 1) + " of " + std::to_string(started.players);
+            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        };
+        auto end_session = [&] {
+            if (!own_card_name.empty()) write_card(own_card_folder, read_card(session_cards / own_card_name));
+            std::error_code error;
+            if (!session_cards.empty()) std::filesystem::remove_all(session_cards, error);
+            session_cards.clear();
+            own_card_name.clear();
+            net.close();
+            engine.set_card_root(card_root);
+        };
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -871,8 +910,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto now = std::chrono::steady_clock::now();
             accumulator += std::chrono::duration<double>(now - last).count();
             last = now;
-            int steps = options.smoke_frames ? 1 : 0;
-            const bool paused = show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active();
+            int steps = options.smoke_frames ? (net.in_lobby() ? 0 : 1) : 0;
+            if (options.smoke_frames && net.in_lobby()) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            // DW4_MENU_HOST=port / DW4_MENU_JOIN=port (test runs): the Online
+            // tab's Host / Join at frame 100, on loopback.
+            if (options.smoke_frames && frame == 100 && !net.active() && !net.in_lobby()) {
+                std::string error;
+                if (const char* port = std::getenv("DW4_MENU_HOST"))
+                    net.host(std::atoi(port), 2, 3, data_hash(engine.resources()), error, true);
+                else if (const char* join_port = std::getenv("DW4_MENU_JOIN"))
+                    net.join("127.0.0.1", std::atoi(join_port), data_hash(engine.resources()), read_card(card_root / "Card A"), error);
+                if (!error.empty()) std::cout << "online: " << error << '\n';
+            }
+            if (net.in_lobby()) {
+                dw4::game::SessionStart start;
+                start.stage = "stagis10"; // everyone meets at the title
+                start.cheats = std::uint8_t((engine.cheats().god ? 1 : 0) | (engine.cheats().infinite_mp ? 2 : 0) |
+                                            (engine.cheats().one_hit ? 4 : 0));
+                start.card_a = read_card(card_root / "Card A");
+                std::string error;
+                if (net.lobby(start, lobby_status, error)) {
+                    begin_session();
+                } else if (!error.empty()) {
+                    state_message = "Online: " + error;
+                    message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    net.close();
+                } else {
+                    state_message = "Online: " + lobby_status;
+                    message_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+                }
+            }
+            const bool paused = (show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active()) || net.in_lobby();
             if (net.active())
                 if (auto message = net.take_message(); !message.empty()) {
                     std::cout << "online: " << message << '\n';
@@ -1264,6 +1332,44 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
                     ImGui::EndTabItem();
                 }
+                if (ImGui::BeginTabItem("Online")) {
+                    static int players = 2, port = 52040, delay = 3;
+                    static char address[128] = "127.0.0.1";
+                    if (net.active()) {
+                        ImGui::Text("Playing online as player %d of %d (input delay %d steps).", net.local_slot() + 1, net.start().players,
+                                    net.start().delay);
+                        if (net.desync()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Desync at step %llu.", (unsigned long long)*net.desync());
+                        if (ImGui::Button("Leave the session")) end_session();
+                    } else if (net.in_lobby()) {
+                        ImGui::TextUnformatted(lobby_status.c_str());
+                        if (ImGui::Button("Cancel")) net.close();
+                    } else {
+                        ImGui::TextWrapped("Everyone starts at the title together; each machine's keyboard and first controller play "
+                                           "its own player. The host's Card A and the first guest's Card A (as Card B) are shared "
+                                           "and go back to their owners when the session ends.");
+                        ImGui::SliderInt("Players", &players, 2, 4);
+                        ImGui::InputInt("Port", &port);
+                        ImGui::SliderInt("Input delay (steps)", &delay, 1, 10);
+                        if (ImGui::Button("Host")) {
+                            std::string error;
+                            if (!net.host(port, players, delay, data_hash(engine.resources()), error)) {
+                                state_message = "Online: " + error;
+                                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                            }
+                        }
+                        ImGui::Separator();
+                        ImGui::InputText("Host address", address, sizeof address);
+                        if (ImGui::Button("Join")) {
+                            std::string error;
+                            if (!net.join(address, port, data_hash(engine.resources()), read_card(card_root / "Card A"), error)) {
+                                state_message = "Online: " + error;
+                                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                            }
+                        }
+                        ImGui::TextDisabled("Guests outside your network need the host's port forwarded.");
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Cheats")) {
                     ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
                                        "give (levels, bits) stays in saves.");
@@ -1395,9 +1501,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::cout << "online: final fingerprint " << std::hex << engine.fingerprint() << std::dec
                       << (net.desync() ? " (desync at step " + std::to_string(*net.desync()) + ")" : "") << '\n';
             // The owner keeps what the session saved on its card.
-            if (!own_card_name.empty() && !options.smoke_frames) write_card(own_card_folder, read_card(session_cards / own_card_name));
-            std::error_code error;
-            std::filesystem::remove_all(session_cards, error);
+            if (options.smoke_frames) own_card_name.clear();
+            end_session();
         }
         if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
             if (const auto* p = models->player(0); p && p->node)

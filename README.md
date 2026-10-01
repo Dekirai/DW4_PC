@@ -150,7 +150,9 @@ leftshoulder`).
 
 ### Online co-op
 
-Up to four machines play one session in lockstep (TCP, the host relays):
+Up to four machines play one session in lockstep (TCP, the host relays). The
+F1 menu's Online tab hosts (players, port, input delay) or joins a host
+address; everyone then starts at the title together. From the command line:
 
 ```bat
 dw4_game.exe --host --players 2            rem waits for one guest on port 52040

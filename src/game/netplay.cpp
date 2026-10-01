@@ -509,6 +509,22 @@ bool NetSession::lobby(const SessionStart& host_start, std::string& status, std:
     return true;
 }
 
+void NetSession::close() {
+    for (auto& peer : peers_) close_socket(peer->socket);
+    peers_.clear();
+    close_socket(listener_);
+    listener_ = -1;
+    role_ = Role::offline;
+    started_ = false;
+    slot_ = 0;
+    joined_ = {};
+    left_from_ = {};
+    inputs_.clear();
+    fingerprints_.clear();
+    pending_fingerprints_.clear();
+    desync_.reset();
+}
+
 bool NetSession::slot_joined(int slot) const { return slot >= 0 && slot < 4 && joined_[std::size_t(slot)]; }
 
 void NetSession::submit_local(std::uint64_t frame, const PadSample& sample) {
