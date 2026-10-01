@@ -1155,7 +1155,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             }
                         }
                         const float dx = tx - p->node->matrix(3, 0), dz = tz - p->node->matrix(3, 2);
-                        if (dx * dx + dz * dz > reach) {
+                        // No steering while the player has no control (an open
+                        // prompt would take the stick as a cursor move).
+                        const bool steer = !(g->seek && g->target.rfind("mat:", 0) == 0) || p->control_enabled;
+                        if (steer && dx * dx + dz * dz > reach) {
                             dw4::engine::FrameCamera camera;
                             cameras->frame_camera(engine, camera);
                             dw4::engine::Mat4 inverse;
