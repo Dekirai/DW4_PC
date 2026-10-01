@@ -684,6 +684,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
         double present_interval = 1.0 / 60.0;
+        std::array<float, 240> frame_times{}; // ms per presented frame (F1 graph)
+        std::size_t frame_time_at = 0;
         auto last_present = std::chrono::steady_clock::now();
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
@@ -1238,6 +1240,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         ImGui::SameLine();
                         ImGui::TextDisabled("(now %.0f fps)", present_interval > 0 ? 1.0 / present_interval : 0.0);
                         ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
+                        {
+                            float worst = 0, total = 0;
+                            for (const float t : frame_times) {
+                                worst = std::max(worst, t);
+                                total += t;
+                            }
+                            char overlay[96];
+                            std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(frame_times.size()), worst);
+                            ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), int(frame_time_at % frame_times.size()),
+                                             overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, 48));
+                        }
                         static const int sample_choices[] = {0, 2, 4, 8};
                         static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
                         int choice = 0;
@@ -1523,6 +1536,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const double seconds = std::chrono::duration<double>(now - last_present).count();
                 last_present = now;
                 present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
+                frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
             }
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
