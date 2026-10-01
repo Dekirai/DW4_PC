@@ -34,7 +34,7 @@ reconstruction work.
    first area (`stag0001`).
 2. Dungeons: enemies (`ENEMY` models), the player's attack sequences and
    hitboxes, damage and HP (`FIGHTCALC`), items and the HUD numbers.
-3. Moving platforms (rides) and the riding wall query CHECKWALLFULL.
+3. Later dungeons and boss fights compared against the original.
 4. Name entry (NAMESEL), difficulty selection, memory card saves.
 5. Demo cameras, audio and movies.
 6. The PC requirements in [ROADMAP.md](ROADMAP.md): settings menu, bindings,

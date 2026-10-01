@@ -921,6 +921,23 @@ public:
         bool fall_check = true;      // ctrl work +DA (onFall / noFall)
         bool wall_check = true;      // ctrl work +D8 (MUTEKI ONWALL / OFFWALL)
         bool floor_check = true;     // ctrl work +D9 (MUTEKI ONFLOOR / OFFFLOOR)
+        // ctrl work +CC: what the model rides (beModelCtrlInfoRideOn, set on
+        // landing on a named HitLand info) or a floor effect of the stage
+        // scripts (RideOn2-4: SETCONVEYOR / SETQUICKSAND / SETSLIPPEDFLOOR).
+        struct Ride {
+            enum class Kind { platform, conveyor, quicksand, slipped } kind{};
+            std::int32_t type{};       // +C: the HitLand child; 0x66 / 0x67 / 0x68 for the floor effects
+            std::string name;          // +8: the HitLand info, a MODELCTRL info name
+            const Node* node{};        // +10: the ridden model's node (platform)
+            Mat4 own;                  // +10 of the floor effects: their own transform
+            Mat4 last;                 // +14: the ridden matrix of the last frame
+            Vec3f point{};             // +54: conveyor step, quicksand centre, slipped floor last position
+            Vec3f velocity{};          // +60: slipped floor velocity
+            float speed_far{}, speed_near{}, radius_near{}, radius_far{}; // quicksand +60 / +64 / +68 / +6C
+            float rate{}, rest{};      // slipped floor +6C / +70
+            int state{};               // slipped floor +74
+        };
+        std::optional<Ride> ride;
         std::array<float, 3> applied{}, desired{};
         float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
         bool is_player{};
@@ -1021,7 +1038,9 @@ public:
 
 private:
     void update_player(Engine& engine, ModelRam& ram);
-    void advance_motion(Engine& engine, ModelRam& ram);
+    bool advance_motion(Engine& engine, ModelRam& ram);
+    void ride_step(ModelRam& ram);
+    void land_ride(Engine& engine, ModelRam& ram, const Packet& floor);
     void update_hitboxes(Engine& engine, ModelRam& ram);
     void fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam::Hitbox& box);
     void update_enemy(Engine& engine, ModelRam& ram);

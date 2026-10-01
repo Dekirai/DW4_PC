@@ -81,6 +81,9 @@ public:
     LandResult check_land(const Vec3f& position, float width, float up, float down) const;
     WallResult check_wall(const Vec3f& position, const Vec3f& direction, float width, float down, std::uint32_t flags,
                           bool skip_preflight) const;
+    // CHECKWALLFULL (802FF748), the query of a riding model: eight rays round
+    // the position, first against the ridden walls (kind 0x1000).
+    WallResult check_wall_full(const Vec3f& position, float width, float down, std::uint32_t flags) const;
     // HITLAND_TRAVERSAL info selection: the low nine kind bits must meet the
     // query flags; 0x800 on both suppresses, query 0x1000 needs kind 0x1000.
     static bool selects(std::uint32_t kind, std::uint32_t query) {

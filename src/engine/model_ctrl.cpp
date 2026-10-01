@@ -133,11 +133,11 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
             }
         ram->is_player = category == "PLAYER";
         if (record) {
+            // 8030F8CC: the RAM's own data ("ONE" node, "TRC" recorder).
             for (const auto& data : record.list(10)) {
-                if (data && data.str(2) == "ONE") {
-                    ram->node = engine.scenes().node(data.ref(4));
-                    break;
-                }
+                if (!data) continue;
+                if (data.str(2) == "ONE" && !ram->node) ram->node = engine.scenes().node(data.ref(4));
+                else if (data.str(2) == "TRC") ram->trace = engine.scenes().node(data.ref(4));
             }
         }
         if (ram->node) ram->base_matrix = ram->node->matrix;
@@ -269,12 +269,13 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             else if (name == "Move") { ram.pdmove[2] = command.f32(3); ram.pdmove[3] = command.f32(4); }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVERL") {
-            // 8030ACBC: JOINT keeps the model and bone names; ACTOR takes the
-            // model's trace data (GETTRCDATA), not reconstructed yet.
+            // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
+            // recorder under its animated route: boats, trains, rails);
+            // anything else (ACTOR) keeps the model and bone names.
             ram.follow_model.clear();
             ram.follow_bone.clear();
             ram.follow_trace = nullptr;
-            if (name == "JOINT") {
+            if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
                 ram.follow_bone = std::string(command.str(4));
             } else {
@@ -414,6 +415,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
         ram.muteki = 0;
+        ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
         ram.ai_timer_end = -1;
@@ -503,6 +505,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.seq = nullptr;
             ram.seq_name.clear();
             ram.wait_name.reset();
+            ram.ride.reset();
         }
         return true;
     }
@@ -564,10 +567,59 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (ram.generated && ram.node && !packet.matrices.empty()) ram.node->matrix = packet.matrices[0];
         return true;
     }
-    if (command == "GETMATRIX" || command == "GETMATRIX_ALL" || command == "GETMATRIX_ACTIVE") {
-        if (command == "GETMATRIX_ACTIVE" && !ram.generated) return true;
+    if (command == "GETMATRIX" || command == "GETMATRIX_ALL") {
+        // 8030D910 cases 10 / 11: index, matrix and node (GETMATRIX only of a
+        // generated model).
+        if (command == "GETMATRIX" && !ram.generated) return true;
         packet.ints.push_back(ram.index);
         packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
+        packet.objects.push_back(ram.node);
+        return true;
+    }
+    if (command == "GETMATRIX_ACTIVE") {
+        // Case 12: only the matrix, of a generated model not invulnerable.
+        if (ram.generated && ram.muteki == 0.0f) packet.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
+        return true;
+    }
+    if (command == "SETCONVEYOR" || command == "SETQUICKSAND" || command == "SETSLIPPEDFLOOR") {
+        // Cases 25-27: I<1> starts the floor effect unless the model already
+        // rides something; I<0> ends any ride.
+        if (!ram.generated || !ram.node) return true;
+        if (packet.integer(0) == 0) {
+            ram.ride.reset();
+            return true;
+        }
+        if (ram.ride) return true;
+        using Kind = ModelRam::Ride::Kind;
+        const auto& m = ram.node->matrix;
+        const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
+        ModelRam::Ride ride;
+        ride.own = translation(position.x, position.y, position.z);
+        if (command == "SETCONVEYOR") {
+            // RideOn2: its transform starts as the model's matrix; V0 is the step.
+            ride.kind = Kind::conveyor;
+            ride.type = 0x66;
+            ride.own = m;
+            ride.point = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+        } else if (command == "SETQUICKSAND") {
+            // RideOn3: V0 the centre, F inner / outer radius, outer / inner speed.
+            ride.kind = Kind::quicksand;
+            ride.type = 0x67;
+            ride.point = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+            ride.radius_near = packet.real(0);
+            ride.radius_far = packet.real(1);
+            ride.speed_far = packet.real(2);
+            ride.speed_near = packet.real(3);
+        } else {
+            // RideOn4: F the velocity blend per frame and the rest threshold.
+            ride.kind = Kind::slipped;
+            ride.type = 0x68;
+            ride.point = {position.x, 0.0f, position.z};
+            ride.rate = packet.real(0);
+            ride.rest = packet.real(1);
+        }
+        ride.last = ride.own;
+        ram.ride = std::move(ride);
         return true;
     }
     if (command == "ACTION1" && ram.category == "ITEM") {
@@ -595,8 +647,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         return true;
     }
     if (command == "SETSOUND" ||
-        command == "ACTION1" || command == "SETCONVEYOR" || command == "SETQUICKSAND" ||
-        command == "SETSLIPPEDFLOOR" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
+        command == "ACTION1" || command == "ONHITBULLETBOX" || command == "OFHITBULLETBOX") {
         engine.note("MODELCTRL " + std::string(command));
         return true;
     }
@@ -811,16 +862,20 @@ void ModelCtrlManager::apply_control(Engine& engine, ModelRam& ram) {
     if (!request.empty() && request != ram.seq_name) select_sequence(engine, ram, request);
 }
 
-void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
-    if (!ram.node) return;
+// 8030A448: returns whether a translation channel ran (ctrl work +78), which
+// lets the walls and floors run this frame.
+bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
+    if (!ram.node) return false;
     auto& m = ram.node->matrix;
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
     if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
         const auto s = ram.channels.states();
-        char line[200];
-        std::snprintf(line, sizeof line, "motion %s %s y=%.1f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f wait=%s",
-                      ram.info_name.c_str(), ram.seq_name.c_str(), position.y, int(s[1].active), int(s[1].mode), s[1].speed,
-                      s[1].end_time, int(s[2].active), s[2].speed, ram.wait_name ? ram.wait_name->c_str() : "-");
+        char line[256];
+        std::snprintf(line, sizeof line,
+                      "motion %s#%d %s (%.1f, %.1f, %.1f) ch0 active=%d speed=%.2f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f wait=%s",
+                      ram.info_name.c_str(), ram.index, ram.seq_name.c_str(), position.x, position.y, position.z, int(s[0].active),
+                      s[0].speed, int(s[1].active), int(s[1].mode), s[1].speed, s[1].end_time, int(s[2].active), s[2].speed,
+                      ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
     }
     // Turning (8030C85C): shortest arc at the stored rate per frame.
@@ -834,6 +889,7 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     }
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
+    bool moved = false;
     try {
         dw4::original_model_turn_basis(matrix, ram.applied);
         matrix[12] = position.x;
@@ -842,12 +898,121 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         if (ram.channels.allocated()) {
             const auto step = ram.channels.advance(1.0f);
             if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
+            moved = step.translation_updated;
         }
     } catch (const std::exception& error) {
         engine.note(std::string("model motion: ") + error.what());
-        return;
+        return false;
     }
     std::copy(matrix.begin(), matrix.end(), m.m.begin());
+    return moved;
+}
+
+// 8030CEB0: the ride's own step (vtable +5C: 802E9370 none for a platform,
+// 8030962C conveyor, 80309674 quicksand, 803098BC slipped floor), then the
+// model keeps its place on the ridden transform: its matrix taken relative
+// to last frame's (rotation only, the position as an offset) and placed on
+// the current one.
+void ModelCtrlManager::ride_step(ModelRam& ram) {
+    using Kind = ModelRam::Ride::Kind;
+    auto& ride = *ram.ride;
+    auto& m = ram.node->matrix;
+    const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
+    auto set_translation = [](Mat4& matrix, const Vec3f& v) {
+        matrix(3, 0) = v.x;
+        matrix(3, 1) = v.y;
+        matrix(3, 2) = v.z;
+    };
+    if (ride.kind != Kind::platform) set_translation(ride.last, {});
+    switch (ride.kind) {
+    case Kind::platform:
+        if (!ride.node) return;
+        break;
+    case Kind::conveyor:
+        set_translation(ride.own, ride.point);
+        break;
+    case Kind::quicksand: {
+        // Towards the centre: the inner speed within the inner radius, the
+        // outer one beyond the outer radius, linear between.
+        const Vec3f to = ride.point - position;
+        const float distance = length(to);
+        float speed = ride.speed_near;
+        if (distance >= ride.radius_far) speed = ride.speed_far;
+        else if (distance > ride.radius_near)
+            speed = ride.speed_near -
+                    (distance - ride.radius_near) / ((ride.radius_far - ride.radius_near) / (ride.speed_near - ride.speed_far));
+        set_translation(ride.own, distance > 0.0f ? to * (speed / distance) : Vec3f{});
+        break;
+    }
+    case Kind::slipped: {
+        // The model's own step since last frame (X/Z) sets a velocity once
+        // (at most 0.6), after which the velocity blends towards each step by
+        // the rate and replaces it; within the rest threshold it stops.
+        Vec3f step{position.x - ride.point.x, 0.0f, position.z - ride.point.z};
+        if (ride.state == 0) {
+            set_translation(ride.own, {});
+            ride.state = 1;
+            return;
+        }
+        if (ride.state == 1) {
+            if (dot(step, step) >= 0.36f) step = normalize(step) * 0.6f;
+            ride.velocity = step;
+            set_translation(ride.own, {});
+            ride.state = 2;
+            return;
+        }
+        Vec3f velocity = ride.velocity + (step - ride.velocity) * ride.rate;
+        if (std::abs(velocity.x) <= ride.rest) {
+            velocity.y = 0.0f;
+            if (std::abs(velocity.z) <= ride.rest) velocity = {};
+        }
+        ride.velocity = velocity;
+        set_translation(ride.own, velocity);
+        set_translation(m, {ride.point.x, position.y, ride.point.z});
+        break;
+    }
+    }
+    const Mat4& current = ride.kind == Kind::platform ? ride.node->matrix : ride.own;
+    if (static const char* traced = std::getenv("DW4_TRACE_RIDE"); traced && traced[0] == '2')
+        std::fprintf(stderr, "ride %s#%d on %s: (%.1f, %.1f, %.1f) -> (%.1f, %.1f, %.1f)\n", ram.info_name.c_str(), ram.index,
+                     ride.name.c_str(), ride.last(3, 0), ride.last(3, 1), ride.last(3, 2), current(3, 0), current(3, 1), current(3, 2));
+    Mat4 rotation = ride.last;
+    const Vec3f offset{m(3, 0) - rotation(3, 0), m(3, 1) - rotation(3, 1), m(3, 2) - rotation(3, 2)};
+    set_translation(rotation, {});
+    Mat4 inverse;
+    if (!invert(rotation, inverse)) inverse = Mat4{};
+    Mat4 local = m;
+    set_translation(local, offset);
+    m = local * inverse * current;
+    ride.last = current;
+}
+
+// 80309F58 after a landing: a named HitLand floor (a model's collision) is
+// ridden from now on (8030949C: MODELCTRL name child GETMATRIX, its node and
+// matrix), an unnamed one ends a platform ride; the floor effects stay.
+void ModelCtrlManager::land_ride(Engine& engine, ModelRam& ram, const Packet& floor) {
+    if (ram.ride && ram.ride->type >= 0x64) return;
+    const std::string name(floor.string(0));
+    if (name.empty()) {
+        if (ram.ride && std::getenv("DW4_TRACE_RIDE")) engine.log(ram.info_name + "#" + std::to_string(ram.index) + " leaves " + ram.ride->name);
+        ram.ride.reset();
+        return;
+    }
+    const std::int32_t child = floor.integer(0);
+    if (ram.ride && ram.ride->name == name && ram.ride->type == child) return;
+    Packet matrix;
+    engine.messenger().send(engine, "MODELCTRL", name, child, "GETMATRIX", matrix);
+    ModelRam::Ride ride;
+    ride.name = name;
+    ride.type = child;
+    ride.node = matrix.objects.empty() ? nullptr : static_cast<const Node*>(matrix.objects[0]);
+    if (ride.node) ride.last = ride.node->matrix;
+    if (std::getenv("DW4_TRACE_RIDE"))
+        engine.log(ram.info_name + "#" + std::to_string(ram.index) + " rides " + name + "#" + std::to_string(child) +
+                   (ride.node ? " at (" + std::to_string(ride.last(3, 0)) + ", " + std::to_string(ride.last(3, 1)) + ", " +
+                                    std::to_string(ride.last(3, 2)) + ")"
+                              : " (no node)"));
+    ram.ride = std::move(ride);
 }
 
 // 80309C74 after the frame's motion (8030D028): the model's HITLANDDELIVER
@@ -861,7 +1026,7 @@ void ModelCtrlManager::collide(Engine& engine, ModelRam& ram) {
     const auto* seq = ram.seq;
     if (ram.wall_check) {
         Packet wall;
-        messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, "HITWALL", wall);
+        messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, ram.ride ? "HITWALLFULL" : "HITWALL", wall);
         if (!ram.lua_whit.empty() && wall.bools.size() > 1 && wall.bools[1]) {
             run_model_script(engine, ram, ram.lua_whit, "WHit");
             if (!ram.generated || ram.seq != seq) return;
@@ -914,7 +1079,10 @@ void ModelCtrlManager::collide(Engine& engine, ModelRam& ram) {
         run_model_script(engine, ram, ram.lua_fhit, "FHit");
         if (!ram.generated) return;
     }
-    if (landed) ram.on_ground = true;
+    if (landed) {
+        ram.on_ground = true;
+        land_ride(engine, ram, floor);
+    }
 }
 
 void ModelCtrlManager::update(Engine& engine) {
@@ -967,8 +1135,12 @@ void ModelCtrlManager::update(Engine& engine) {
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
         } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
         bool moved = false;
-        if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated())) {
-            advance_motion(engine, ram);
+        if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated()))
+            moved = advance_motion(engine, ram);
+        // 8030CEB0: a ride carries the model and always lets the walls and
+        // floors run.
+        if (ram.ride && ram.node) {
+            ride_step(ram);
             moved = true;
         }
         // 8030CFEC: the wait runs after the motion and before the walls and
@@ -978,6 +1150,9 @@ void ModelCtrlManager::update(Engine& engine) {
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
         // 8030D028: walls and floors.
         if (moved && ram.generated) collide(engine, ram);
+        // 8030D02C: the slipped floor remembers where the model ended.
+        if (ram.ride && ram.ride->kind == ModelRam::Ride::Kind::slipped && ram.node)
+            ram.ride->point = {ram.node->matrix(3, 0), ram.node->matrix(3, 1), ram.node->matrix(3, 2)};
         if (ram.attach_lock && ram.generated) place_attached(ram);
     }
 }
@@ -1920,23 +2095,33 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
 bool ActionManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<ActionRam&>(base);
     if (command == "GETBONEMATRIX") {
-        // The named bone in the model's space from the current pose; no name
-        // gives the model's own origin.
+        // 802F18A4: the named joint (igSkeleton lookup, an unnamed root
+        // joint for "") in the model's space from the current pose.
         const std::string bone(packet.string(0));
-        if (bone.empty()) {
-            packet.matrices.push_back(Mat4{});
-            return true;
-        }
-        if (ram.actors.empty()) return true;
-        const Node* actor = ram.actors.front();
-        const ActorPose* pose = pose_for(*actor, engine.time());
-        if (!pose || !pose->skeleton) return true;
-        const auto& names = pose->skeleton->names;
-        for (std::size_t i = 0; i < names.size() && i < pose->bone_world.size(); ++i)
-            if (names[i] == bone) {
-                packet.matrices.push_back(pose->bone_world[i] * actor->actor_matrix);
-                break;
+        const Node* actor = ram.actors.empty() ? nullptr : ram.actors.front();
+        const ActorPose* pose = actor ? pose_for(*actor, engine.time()) : nullptr;
+        if (!pose && std::getenv("DW4_TRACE_BONES")) engine.log("GETBONEMATRIX " + ram.info_name + ": no pose");
+        if (pose && pose->skeleton) {
+            const auto& names = pose->skeleton->names;
+            if (std::getenv("DW4_TRACE_BONES") && engine.frame() % 60 == 0) {
+                std::string list;
+                for (std::size_t i = 0; i < names.size() && i < pose->bone_world.size(); ++i)
+                    list += " '" + names[i] + "'(" + std::to_string(pose->bone_world[i](3, 0)) + "," +
+                            std::to_string(pose->bone_world[i](3, 2)) + ")";
+                engine.log("bones " + ram.info_name + list);
             }
+            for (std::size_t i = 0; i < names.size() && i < pose->bone_world.size(); ++i)
+                if (names[i] == bone) {
+                    packet.matrices.push_back(pose->bone_world[i] * actor->actor_matrix);
+                    return true;
+                }
+            if (std::getenv("DW4_TRACE_FOLLOW")) {
+                std::string list;
+                for (const auto& n : names) list += " '" + n + "'";
+                engine.log("GETBONEMATRIX " + ram.info_name + " has no '" + bone + "':" + list);
+            }
+        }
+        if (bone.empty()) packet.matrices.push_back(Mat4{});
         return true;
     }
     if (command == "ISCOMEND") {

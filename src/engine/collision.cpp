@@ -388,4 +388,47 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
     return result;
 }
 
+// 802FF748: eight rays 45 degrees apart (the first along +X, each next one
+// turned by Euler (0, pi/4, 0)) from the position raised by `down`. A pass of
+// 3.5 width against kind 0x1000 geometry (the walls of a boat or a moving
+// floor) and, without a hit there, a pass of 2.15 width against every wall;
+// the nearest hit pushes the position out along its normal.
+WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, float down, std::uint32_t flags) const {
+    WallResult result;
+    result.position = position;
+    flags &= ~1u;
+    auto pass = [&](float radius, std::uint32_t query_flags) {
+        const Vec3f base{position.x, down + position.y, position.z};
+        std::vector<HitSegment> segments;
+        Vec3f lo = base, hi = base;
+        Vec3f direction{1.0f, 0.0f, 0.0f};
+        constexpr float turn = 0.70710677f;
+        for (int i = 0; i < 8; ++i) {
+            const Vec3f end = base + direction * radius;
+            segments.push_back(HitSegment::between(base, end));
+            extend(lo, hi, end);
+            if (i == 7) break;
+            direction = normalize(Vec3f{direction.x * turn + direction.z * turn, direction.y,
+                                        direction.z * turn - direction.x * turn});
+        }
+        lo.y = hi.y = position.y;
+        std::vector<HitCandidate> hits;
+        query(segments, lo, hi, query_flags, hits);
+        if (hits.empty()) return false;
+        std::size_t selected = 0;
+        for (std::size_t i = 1; i < hits.size(); ++i)
+            if (hits[i].distance < hits[selected].distance) selected = i;
+        const Vec3f& normal = hits[selected].normal;
+        // cos(acos(|n|^2 / (|n| |n|))), as in the lateral wall pass: one.
+        const float squared = dot(normal, normal);
+        const float ratio = std::min(1.0f, squared / (std::sqrt(squared) * std::sqrt(squared)));
+        result.position = result.position + normal * ((radius - hits[selected].distance) * ratio);
+        result.hits.push_back(hits[selected]);
+        result.hit = true;
+        return true;
+    };
+    if (!pass(3.5f * width, flags | 0x1000u)) pass(2.15f * width, flags);
+    return result;
+}
+
 } // namespace dw4::engine

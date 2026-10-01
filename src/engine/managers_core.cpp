@@ -1195,16 +1195,16 @@ bool HitLandManager::query(Engine& engine, std::string_view command, Packet& pac
         packet.vectors.push_back(result.position);
         return true;
     }
-    // CHECKWALLFULL (the riding query) is not reconstructed; it takes the
-    // CHECKWALL path with the position's own direction.
-    if (packet.ints.size() < 2 || packet.vectors.size() < 2 || packet.floats.size() < 3) return true;
-    Vec3f direction = packet.vectors[1];
+    if (packet.ints.empty() || packet.vectors.empty() || packet.floats.size() < 3) return true;
+    WallResult result;
     if (command == "CHECKWALLFULL") {
-        const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
-        direction = length > 0.0f ? Vec3f{direction.x / length, 0.0f, direction.z / length} : Vec3f{0.0f, 0.0f, 1.0f};
+        // 802FF748: the riding query takes only the position.
+        result = world_.check_wall_full(packet.vectors[0], packet.floats[0], packet.floats[2], std::uint32_t(packet.ints[0]));
+    } else {
+        if (packet.ints.size() < 2 || packet.vectors.size() < 2) return true;
+        result = world_.check_wall(packet.vectors[0], packet.vectors[1], packet.floats[0], packet.floats[2],
+                                   std::uint32_t(packet.ints[0]), packet.ints[1] != 0);
     }
-    const auto result = world_.check_wall(packet.vectors[0], direction, packet.floats[0], packet.floats[2],
-                                          std::uint32_t(packet.ints[0]), packet.ints[1] != 0);
     packet.ints.clear();
     for (const auto& hit : result.hits) {
         packet.ints.push_back(hit.child);

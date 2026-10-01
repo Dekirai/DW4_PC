@@ -176,9 +176,23 @@ at Y 0), HITFLOORADJUST and HITFLOOR put the node on it. The model consumer
 the floor: a falling model lands (vertical motion stopped, FHit), a walking one
 keeps to floors within its range or enters SQ_FALL; a rising jump skips it.
 MUTEKI ONWALL/OFFWALL/ONFLOOR/OFFFLOOR and CTRL onFall/noFall switch the
-checks. The riding query CHECKWALLFULL and moving-platform rides are not
-reconstructed yet. `DW4_TRACE_HITLAND=1` logs wall hits, `=2` every wall
-candidate.
+checks. Walls and floors run only in frames where a translation channel moved
+the model (ctrl work +78) or a ride carried it.
+
+Rides (ctrl work +CC, beModelCtrlInfoRideOn): landing from a fall on a named
+HitLand info (a model's collision such as a boat, train, box or moving
+scaffold) rides that model (MODELCTRL name child GETMATRIX); an unnamed floor
+ends the ride. Each frame (8030CEB0, before the wait check) the model keeps its
+place relative to the ridden matrix of the last frame. The stage scripts'
+floor effects use the same slot: SETCONVEYOR (a fixed step per frame),
+SETQUICKSAND (a pull towards a centre, faster inside the inner radius) and
+SETSLIPPEDFLOOR (the model's own steps blend into a sliding velocity). While
+riding, HITWALLFULL sends CHECKWALLFULL (802FF748): eight rays round the
+model, first 3.5 width against the ridden walls (kind 0x1000), else 2.15 width
+against all walls. Routes (boats, trains, rails, some bosses) follow the
+igTransformRecorder under an animated route transform (MOVERL JOINT,
+GETTRCDATA). `DW4_TRACE_HITLAND=1` logs wall hits, `=2` every wall candidate;
+`DW4_TRACE_RIDE=1` logs rides, `=2` every ride step.
 
 ## Adding a manager
 

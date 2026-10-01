@@ -76,9 +76,10 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
 Collision follows the original HITLANDMODEL queries and HITLANDDELIVER
-responses (walls, floors, falling and landing, the players' limit circle);
-the riding query and moving-platform rides are not reconstructed yet, nor are
-many smaller managers. See [ROADMAP.md](docs/ROADMAP.md).
+responses (walls, floors, falling and landing, the players' limit circle),
+including rides on boats, trains and moving platforms and the conveyor,
+quicksand and slippery floors; many smaller managers are still missing. See
+[ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
 
