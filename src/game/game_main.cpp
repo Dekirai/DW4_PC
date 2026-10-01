@@ -72,8 +72,8 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
     }
 }
 
-// Scripted input for automated runs: lines "frame button [duration]" (button:
-// A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R) and "frame GOTO x z [duration]",
+// Scripted input for automated runs: lines "frame button [duration [player]]"
+// (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R; player 1-4, default 1) and "frame GOTO x z [duration]",
 // which steers player 1's stick toward world (x, z) relative to the camera, and
 // "frame SEEK duration", which walks to the nearest pickup or live enemy and
 // presses A next to it, and "frame SEND CATEGORY COMMAND [argument]".
@@ -109,7 +109,8 @@ struct ScriptedInput {
                 sends.push_back(send);
                 continue;
             }
-            fields >> duration;
+            int player = 1;
+            fields >> duration >> player;
             std::uint32_t bit = 0;
             namespace b = dw4::pad_button;
             if (name == "A") bit = b::a;
@@ -124,12 +125,12 @@ struct ScriptedInput {
             else if (name == "Z") bit = b::z;
             else if (name == "L") bit = b::l;
             else if (name == "R") bit = b::r;
-            presses.push_back({frame, bit, duration});
+            presses.push_back({frame, bit, duration, std::clamp(player - 1, 0, 3)});
         }
     }
     struct Send { int frame; std::string category, command, argument; int row = -1; };
     std::vector<Send> sends;
-    struct Press { int frame; std::uint32_t bit; int duration; };
+    struct Press { int frame; std::uint32_t bit; int duration; int slot; };
     std::vector<Press> presses;
     struct Goto { int frame; float x, z; int duration; bool seek = false; };
     std::vector<Goto> gotos;
@@ -137,10 +138,16 @@ struct ScriptedInput {
         for (const auto& g : gotos) if (frame >= g.frame && frame < g.frame + g.duration) return &g;
         return nullptr;
     }
-    std::uint32_t held(int frame) const {
+    std::uint32_t held(int frame, int slot = 0) const {
         std::uint32_t bits = 0;
-        for (const auto& p : presses) if (frame >= p.frame && frame < p.frame + p.duration) bits |= p.bit;
+        for (const auto& p : presses)
+            if (p.slot == slot && frame >= p.frame && frame < p.frame + p.duration) bits |= p.bit;
         return bits;
+    }
+    // A controller slot the script presses buttons on counts as connected.
+    bool uses_slot(int slot) const {
+        for (const auto& p : presses) if (p.slot == slot) return true;
+        return false;
     }
 };
 
@@ -394,9 +401,9 @@ int run(const Options& options) {
                 pads[0].left = scale({stick_x, stick_y});
                 pads[0].right = scale(slot_right[0]);
                 for (std::size_t i = 1; i < 4; ++i) {
-                    pads[i].connected = i < gamepads.size();
+                    pads[i].connected = i < gamepads.size() || scripted.uses_slot(int(i));
                     dw4::PadStick left = slot_left[i];
-                    const std::uint32_t buttons = slot_held[i];
+                    const std::uint32_t buttons = slot_held[i] | scripted.held(frame, int(i));
                     if (left.x == 0.0f && left.y == 0.0f) {
                         if (buttons & dw4::pad_button::left) left.x = -1;
                         if (buttons & dw4::pad_button::right) left.x = 1;
