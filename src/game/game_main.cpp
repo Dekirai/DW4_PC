@@ -208,10 +208,11 @@ std::filesystem::path choose_game_data() {
     return result.path;
 }
 
-// A key button of the controls table waiting for the next key press.
+// A key or controller button of the controls tables waiting for input.
 struct KeyCapture {
     std::size_t button{};
     std::size_t slot{};
+    bool gamepad{};
 };
 
 int run(const Options& options, dw4::game::Settings& settings) {
@@ -341,7 +342,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
             while (SDL_PollEvent(&event)) {
                 // A key binding being edited takes the next key (F1 still
                 // closes the menu).
-                if (capture && event.type == SDL_EVENT_KEY_DOWN && event.key.scancode != SDL_SCANCODE_F1) {
+                // A controller binding being edited takes the next button or
+                // trigger pull.
+                if (capture && capture->gamepad &&
+                    (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                     (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && event.gaxis.value > 16000 &&
+                      (event.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || event.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)))) {
+                    const dw4::game::PadInput input =
+                        event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN
+                            ? dw4::game::PadInput{dw4::game::PadInput::Kind::button, int(event.gbutton.button)}
+                            : dw4::game::PadInput{dw4::game::PadInput::Kind::axis, int(event.gaxis.axis)};
+                    settings.pad[capture->button][capture->slot] = input;
+                    for (std::size_t b = 0; b < settings.pad.size(); ++b)
+                        for (std::size_t k = 0; k < settings.pad[b].size(); ++k)
+                            if ((b != capture->button || k != capture->slot) && settings.pad[b][k] == input)
+                                settings.pad[b][k] = {};
+                    capture.reset();
+                    settings_changed = true;
+                    continue;
+                }
+                if (capture && !capture->gamepad && event.type == SDL_EVENT_KEY_DOWN && event.key.scancode != SDL_SCANCODE_F1) {
                     settings.keys[capture->button][capture->slot] = event.key.scancode;
                     // A key stands for one button only.
                     for (std::size_t b = 0; b < settings.keys.size(); ++b)
@@ -398,21 +418,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::array<dw4::PadStick, 4> slot_left{}, slot_right{};
             // GameCube layout: L / R on the triggers (and L on the left
             // shoulder), Z on the right shoulder, the C stick on the right stick.
-            auto read_gamepad = [](SDL_Gamepad* pad, std::uint32_t& buttons, dw4::PadStick& left, dw4::PadStick& right) {
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH)) buttons |= dw4::pad_button::a;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST)) buttons |= dw4::pad_button::b;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST)) buttons |= dw4::pad_button::x;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH)) buttons |= dw4::pad_button::y;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) buttons |= dw4::pad_button::start;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) buttons |= dw4::pad_button::up;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) buttons |= dw4::pad_button::down;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) buttons |= dw4::pad_button::left;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) buttons |= dw4::pad_button::right;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
-                    SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000)
-                    buttons |= dw4::pad_button::l;
-                if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) buttons |= dw4::pad_button::r;
-                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) buttons |= dw4::pad_button::z;
+            // Controller buttons from settings.ini [gamepad] (the GameCube
+            // layout by default), sticks fixed: left stick moves, the right
+            // stick is the C stick.
+            auto read_gamepad = [&settings](SDL_Gamepad* pad, std::uint32_t& buttons, dw4::PadStick& left, dw4::PadStick& right) {
+                for (std::size_t b = 0; b < settings.pad.size(); ++b)
+                    for (const auto& input : settings.pad[b]) {
+                        const bool down =
+                            input.kind == dw4::game::PadInput::Kind::button
+                                ? SDL_GetGamepadButton(pad, SDL_GamepadButton(input.code))
+                                : input.kind == dw4::game::PadInput::Kind::axis && SDL_GetGamepadAxis(pad, SDL_GamepadAxis(input.code)) > 16000;
+                        if (down) buttons |= dw4::game::pad_key_bit(dw4::game::PadKey(b));
+                    }
                 auto axis = [&](SDL_GamepadAxis a, float sign) {
                     const float v = sign * SDL_GetGamepadAxis(pad, a) / 32767.0f;
                     return std::abs(v) > 0.2f ? v : 0.0f;
@@ -684,7 +701,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
                                 for (std::size_t k = 0; k < settings.keys[b].size(); ++k) {
                                     ImGui::TableNextColumn();
-                                    const bool waiting = capture && capture->button == b && capture->slot == k;
+                                    const bool waiting = capture && !capture->gamepad && capture->button == b && capture->slot == k;
                                     const SDL_Scancode code = settings.keys[b][k];
                                     std::string label = waiting ? "press a key..."
                                                       : code == SDL_SCANCODE_UNKNOWN ? "-"
@@ -712,8 +729,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             const char* name = SDL_GetGamepadName(gamepads[i]);
                             ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
                         }
-                        ImGui::TextDisabled("A = south, B = east, X = west, Y = north, L = left trigger or shoulder,");
-                        ImGui::TextDisabled("R = right trigger, Z = right shoulder, Start = start.");
+                        ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
+                        ImGui::TextDisabled("The left stick moves, the right stick is the C stick.");
+                        if (ImGui::BeginTable("pad", 4, ImGuiTableFlags_SizingStretchSame)) {
+                            for (std::size_t b = 0; b < settings.pad.size(); ++b) {
+                                ImGui::TableNextRow();
+                                ImGui::TableNextColumn();
+                                ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
+                                for (std::size_t k = 0; k < settings.pad[b].size(); ++k) {
+                                    ImGui::TableNextColumn();
+                                    const bool waiting = capture && capture->gamepad && capture->button == b && capture->slot == k;
+                                    std::string label = waiting ? "press..." : dw4::game::pad_input_name(settings.pad[b][k]);
+                                    if (label.empty()) label = "-";
+                                    label += "##pad" + std::to_string(b * 8 + k);
+                                    if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
+                                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                                        settings.pad[b][k] = {};
+                                        capture.reset();
+                                        settings_changed = true;
+                                    }
+                                }
+                            }
+                            ImGui::EndTable();
+                        }
+                        if (ImGui::Button("Default controller layout")) {
+                            settings.reset_pad();
+                            capture.reset();
+                            settings_changed = true;
+                        }
                     }
                     if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
                     ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());

@@ -42,7 +42,7 @@ for every device or scene.
 | VSync Off | F1 menu swap interval, saved; frame limit 0-300 | Validated frame pacing in gameplay |
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
 | Keyboard / Mouse | Full original controls on rebindable keys (three per button), saved | Original gameplay, freely editable saved bindings and appropriate mouse camera support |
-| Xbox / PlayStation | SDL device inspection and mapped provisional walking input | Tested original gameplay mappings, independent slots, hotplug and prompts |
+| Xbox / PlayStation | Full original controls on four independent slots with hotplug; rebindable buttons and triggers (F1, saved) | Tested original gameplay mappings, independent slots, hotplug and prompts |
 | GameCube | SDL-mapped devices when available | Original gameplay mapping, dead zones and adapter support |
 | Original / Modernized | Stored preference only | Original behavior baseline plus explicit optional changes |
 

@@ -5,11 +5,14 @@
 // edits them while playing and writes them back.
 #include "dw4/ini.hpp"
 
+#include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_scancode.h>
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <string>
+#include <string_view>
 
 namespace dw4::game {
 
@@ -19,6 +22,16 @@ constexpr std::size_t kPadKeyCount = std::size_t(PadKey::count);
 const char* pad_key_name(PadKey key);      // "A", "Start", "Up", ...
 const char* pad_key_ini_name(PadKey key);  // "a", "start", "up", ...
 std::uint32_t pad_key_bit(PadKey key);     // dw4::pad_button bit
+
+// A controller input bound to a GameCube button: a gamepad button or a
+// trigger axis pulled past half way.
+struct PadInput {
+    enum class Kind : std::uint8_t { none, button, axis } kind{};
+    int code{}; // SDL_GamepadButton or SDL_GamepadAxis
+    bool operator==(const PadInput&) const = default;
+};
+std::string pad_input_name(const PadInput& input); // "a", "leftshoulder", "righttrigger", ""
+PadInput pad_input_from_name(std::string_view name);
 
 struct Settings {
     // [window]
@@ -37,6 +50,8 @@ struct Settings {
     // [keyboard]: up to three keys per button.
     static constexpr std::size_t kKeysPerButton = 3;
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
+    // [gamepad]: up to three controller inputs per button, for every controller.
+    std::array<std::array<PadInput, kKeysPerButton>, kPadKeyCount> pad{};
     // [data]
     std::filesystem::path data;
 
@@ -44,6 +59,7 @@ struct Settings {
 
     Settings();
     void reset_keys();
+    void reset_pad();
     // local/settings.ini or settings.ini in the working directory, else
     // settings.ini next to the program.
     static Settings load();

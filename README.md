@@ -138,7 +138,9 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 60 times a second), `smooth_motion` (above about 75 presents per second the
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open) and
-`[keyboard]` with up to three key names per button (`a=Return, Space, K`).
+`[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
+`[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
+leftshoulder`).
 
 `tools/verify_game.py` checks an ISO or extraction against the expected
 `main.dol` SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` without copying data.
@@ -164,7 +166,7 @@ log menu cursors, text, player state and hits.
 
 ### Controls
 
-| Original | Keyboard (default, rebindable) | Gamepad |
+| Original | Keyboard (default, rebindable) | Gamepad (default, rebindable) |
 | --- | --- | --- |
 | Stick | Arrow keys / WASD | Left stick, D-pad |
 | A (talk, confirm) | Enter, Space, K | South |
@@ -182,7 +184,7 @@ then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
 F1 opens the menu: the Settings tab (display, widescreen, frame limit, anti-aliasing,
-window size, volume, keyboard bindings, connected controllers), the Cheats tab
+window size, volume, keyboard and controller bindings), the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player;
 session only, off by default) and the Debug tab (stage loader, player state,
 notes, script log). F11 toggles fullscreen,
