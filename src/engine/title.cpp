@@ -320,15 +320,15 @@ void Title2Manager::update_ram(Engine& engine, TitleRam& ram) {
 void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool down, bool left, bool right,
                                   std::uint32_t trigger) {
     // Option window (80369284 case 4). Row 0 camera mode, row 1 light mode,
-    // row 2 sound (kind 1/2 windows only), row 3 exit.
+    // row 2 language (kind 1/2 windows of the other regions only), row 3 exit.
     auto& models = ram.models;
     auto& o = ram.option;
     // 8036A0E4 / 8036A8EC: the values (TEXTORDER 0xF0002..0xF000D).
     auto show_values = [&] {
         if (o.kind != 0) {
-            static const int sound[7] = {0xF0007, 0xF0008, 0xF0009, 0xF000A, 0xF000C, 0xF000B, 0xF000D};
+            static const int language[7] = {0xF0007, 0xF0008, 0xF0009, 0xF000A, 0xF000C, 0xF000B, 0xF000D};
             menu::text_order_show(engine, 0xF0006);
-            menu::text_order_show(engine, o.edit_sound >= 0 && o.edit_sound <= 6 ? sound[o.edit_sound] : 0xF0007);
+            menu::text_order_show(engine, o.edit_language >= 0 && o.edit_language <= 6 ? language[o.edit_language] : 0xF0007);
         }
         menu::text_order_show(engine, o.edit_camera == 0 ? 0xF0002 : 0xF0003);
         menu::text_order_show(engine, o.edit_light == 0 ? 0xF0004 : 0xF0005);
@@ -344,7 +344,7 @@ void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool d
             o.edit_camera = o.camera_mode ? 1 : 0;
             o.edit_light = o.light_mode ? 1 : 0;
             o.keep = true;
-            o.edit_sound = 1;
+            o.edit_language = 1;
             models.open(engine, 0, "j_optionwin02", o.kind ? "SQ_AOPEN" : "SQ_BOPEN", true);
             models.open(engine, 0, "j_optioncursor11", "SQ_OPEN", true);
             models.open(engine, 0, "j_optioncursor12", "SQ_OPEN", true);
@@ -389,10 +389,10 @@ void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool d
                     else if (row == 1) o.edit_light = o.edit_light ? 0 : 1;
                     else {
                         const int low = o.kind == 1 ? 2 : 0;
-                        int value = o.edit_sound + delta;
+                        int value = o.edit_language + delta;
                         if (value > 6) value = low;
                         if (value < low) value = 6;
-                        o.edit_sound = value;
+                        o.edit_language = value;
                     }
                     next_step();
                 }

@@ -674,7 +674,7 @@ private:
         bool confirmed{};            // +28
         int camera_mode{}, light_mode = 1; // +32 / +36 committed values
         bool keep{};                 // +40
-        int edit_camera{}, edit_light{}, edit_sound{}; // +44 / +48 / +52
+        int edit_camera{}, edit_light{}, edit_language{}; // +44 / +48 / +52
     };
     struct TitleRam : Ram {
         bool created{};              // data list at RAM +28
