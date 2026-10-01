@@ -75,7 +75,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
-Not yet reconstructed: voices and many smaller managers. Collision uses a provisional host query built
+Not yet reconstructed: many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
