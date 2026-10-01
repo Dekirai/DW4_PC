@@ -105,7 +105,8 @@ working method and next steps in [PORTING_STRATEGY.md](docs/PORTING_STRATEGY.md)
 ## Build on Windows
 
 Requirements: Visual Studio with *Desktop development with C++* (MSVC, CMake,
-Ninja). SDL3 and Dear ImGui are fetched by CMake at pinned commits.
+Ninja). SDL3, Dear ImGui, pl_mpeg, stb and Zstandard are fetched by CMake at
+pinned commits and checksums.
 
 ```bat
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
@@ -113,7 +114,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Jobs 4
 
 This configures `build\Release`, builds everything and runs the tests.
 `-CoreOnly` skips the SDL/OpenGL runtime; `-Package` installs into
-`dist\DW4_PC`. Builds never start the game.
+`dist\DW4_PC`: one self-contained `DW4_PC.exe` (static C++ runtime, only system
+DLLs) with the tools, licenses and docs, ready to copy anywhere. Builds never
+start the game.
 
 ## Run with your own game data
 
