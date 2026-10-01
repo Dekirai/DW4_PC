@@ -66,6 +66,7 @@ public:
     std::uint16_t add_info(std::string name);
     const std::string& info_name(std::uint16_t info) const;
     void set_group_enabled(std::uint32_t group, bool enabled);
+    bool group_enabled(std::uint32_t group) const { return group >= groups_.size() || groups_[group]; }
     // Kind 0x400 geometry (HITLAND_TRAVERSAL): a beCopyTransform child whose
     // matrix is copied from its source transform [12] every frame. Its
     // triangles stay in the child's space and follow set_dynamic.

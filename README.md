@@ -222,16 +222,19 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
 `frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
-and `frame SEND CATEGORY COMMAND [arguments|- [row]]`), `--screenshot
+and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
+a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
+enemies, picks up items, steps on the other mats and explores until the way is open), `--screenshot
 FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
-`DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows,
-`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
-log menu cursors, text, player state and hits.
+`DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
+once the n-th stage has loaded,
+`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT` and `DW4_TRACE_EXPLORE`
+log menu cursors, text, player state, hits and the exploring bot's targets.
 
 ### Controls
 

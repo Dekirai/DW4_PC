@@ -41,6 +41,13 @@ std::optional<Vec3f> MatCtrlManager::mat_centre(std::string_view name) const {
     return std::nullopt;
 }
 
+std::vector<MatCtrlManager::MatBox> MatCtrlManager::mat_boxes() const {
+    std::vector<MatBox> out;
+    for (const auto& ram : rams_)
+        for (const auto& mat : ram->mats) out.push_back({mat.name, mat.min, mat.max});
+    return out;
+}
+
 void MatCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     context_ = nullptr;

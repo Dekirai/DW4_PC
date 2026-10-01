@@ -83,8 +83,10 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 // Scripted input for automated runs: lines "frame button [duration [player]]"
 // (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R; player 1-4, default 1) and "frame GOTO x z [duration]",
 // which steers player 1's stick toward world (x, z) relative to the camera, and
-// "frame SEEK duration", which walks to the nearest pickup or live enemy and
-// presses A next to it, and "frame SEND CATEGORY COMMAND [argument]".
+// "frame SEEK duration [target]", which walks to the nearest pickup or live
+// enemy and presses A next to it (target: a model prefix first, mat:<name> a
+// route onto a mat, explore:<mat> play through the stage to that mat), and
+// "frame SEND CATEGORY COMMAND [argument]".
 struct ScriptedInput {
     void load(const std::string& path) {
         std::ifstream in(path);
@@ -1064,7 +1066,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         float tx = g->x, tz = g->z, reach = 4.0f;
                         // SEEK mat:<name> walks onto a floor mat (stage exits) and
                         // confirms its prompt.
-                        if (g->seek && g->target.rfind("mat:", 0) == 0) {
+                        if (g->seek && g->target.rfind("explore:", 0) == 0) {
+                            // SEEK explore:<mat> plays through the stage towards a mat.
+                            static dw4::game::ExploreBot explorer;
+                            const auto decision = explorer.update(engine, *p, g->target.substr(8), frame);
+                            tx = decision.x;
+                            tz = decision.z;
+                            reach = decision.reach;
+                            if (decision.attack) {
+                                if (decision.jump_attack) {
+                                    if (frame % 40 < 3) input |= dw4::pad_button::x;
+                                    else if (frame % 40 >= 10 && frame % 40 < 13) input |= dw4::pad_button::a;
+                                } else if (frame % 20 < 3) {
+                                    input |= dw4::pad_button::a;
+                                }
+                            }
+                            if (decision.confirm && frame % 30 < 3) input |= dw4::pad_button::a;
+                        } else if (g->seek && g->target.rfind("mat:", 0) == 0) {
                             if (auto* mats = engine.get<dw4::engine::MatCtrlManager>())
                                 if (const auto centre = mats->mat_centre(g->target.substr(4))) {
                                     tx = centre->x;
@@ -1131,6 +1149,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             if (auto* hitland = engine.get<dw4::engine::HitLandManager>();
                                 hitland && flat(goal, me) > route_from &&
                                 (flat(goal, route_goal) > 15.0f || frame - route_frame > 180 || route_next >= route.size())) {
+                                const dw4::game::WithoutLimitCircle without_limit(*hitland);
                                 route = dw4::game::find_walk_path(hitland->world(), me, goal, hitland->delivery_flags(p->info_name, p->index));
                                 if (std::getenv("DW4_TRACE_ROUTE"))
                                     std::printf("[%d] route (%.0f,%.0f,%.0f) -> (%.0f,%.0f): %zu points%s\n", frame, me.x, me.y, me.z, goal.x,
@@ -1157,7 +1176,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const float dx = tx - p->node->matrix(3, 0), dz = tz - p->node->matrix(3, 2);
                         // No steering while the player has no control (an open
                         // prompt would take the stick as a cursor move).
-                        const bool steer = !(g->seek && g->target.rfind("mat:", 0) == 0) || p->control_enabled;
+                        const bool steer =
+                            !(g->seek && (g->target.rfind("mat:", 0) == 0 || g->target.rfind("explore:", 0) == 0)) || p->control_enabled;
                         if (steer && dx * dx + dz * dz > reach) {
                             dw4::engine::FrameCamera camera;
                             cameras->frame_camera(engine, camera);
@@ -1674,6 +1694,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 else if (now - next_present > interval * 4)
                     next_present = now;
             }
+            // DW4_SMOKE_STAGES=n: a test run also ends once the n-th stage has loaded.
+            static const int smoke_stages = options.smoke_frames && std::getenv("DW4_SMOKE_STAGES") ? std::atoi(std::getenv("DW4_SMOKE_STAGES")) : 0;
+            if (const auto* snapshot = engine.stage_snapshot(); smoke_stages && snapshot && snapshot->serial >= std::uint64_t(smoke_stages))
+                running = false;
             if (options.smoke_frames && frame >= options.smoke_frames) {
                 if (state_test && state_pass == 1 && state_slots[0]) {
                     // DW4_STATE_FILE=path: the state goes through a file first.

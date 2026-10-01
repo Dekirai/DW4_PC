@@ -520,6 +520,23 @@ public:
             if (ram->info_name == name && ram->index == index) return ram->flags;
         return 7;
     }
+    // The collision group of a named HITLANDMODEL child, switched without a
+    // script command (test bot: routes leave out the players' limit circle).
+    std::optional<bool> child_hit(std::string_view name) const {
+        for (const auto& child : children_)
+            if (child->info_name == name) return world_.group_enabled(child->group);
+        return std::nullopt;
+    }
+    void set_child_hit(std::string_view name, bool on) {
+        for (const auto& child : children_)
+            if (child->info_name == name) world_.set_group_enabled(child->group, on);
+    }
+    // The half-width of that cylinder (test bot).
+    float delivery_width(std::string_view name, int index) const {
+        for (const auto& ram : deliveries_)
+            if (ram->info_name == name && ram->index == index) return ram->width;
+        return 2.5f;
+    }
 
 private:
     struct HitRam : Ram {
@@ -850,6 +867,12 @@ public:
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
     // The centre of a mat by name ("z02" or its script name "matz02"; test bot).
     std::optional<Vec3f> mat_centre(std::string_view name) const;
+    // Every mat's name and bounds (test bot).
+    struct MatBox {
+        std::string name;
+        Vec3f min, max;
+    };
+    std::vector<MatBox> mat_boxes() const;
 
 private:
     struct Mat {
