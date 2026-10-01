@@ -155,7 +155,12 @@ log menu cursors, text, player state and hits.
 | X (jump) | J | West |
 | Y | I | North |
 | START | Esc, Tab | Start |
-| L / R / Z | Q / E / Z | Shoulders |
+| L / R | Q / E | Left / right trigger (L also on the left shoulder) |
+| Z | Z | Right shoulder |
+| C stick | | Right stick |
+
+Player 1 uses the keyboard and the first gamepad; the second to fourth
+gamepads control players 2 to 4.
 
 F1 opens the debug menu (stage loader, player state, notes, script log); F2
 toggles a free camera.
