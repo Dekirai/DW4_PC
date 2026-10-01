@@ -325,8 +325,19 @@ void Engine::begin_stage_load() {
     lua_.reset();
     stage_name_ = next;
     stage_folder_ = next;
+    loading_node_ = nullptr;
     loader_state_ = 0;
 }
+
+namespace {
+Node* find_loading_node(Node* node, int depth = 0) {
+    if (!node || depth > 64) return nullptr;
+    if (node->kind == NodeKind::node_anim && node->anim && node->anim->loading) return node;
+    for (auto* child : node->children)
+        if (auto* found = find_loading_node(child, depth + 1)) return found;
+    return nullptr;
+}
+} // namespace
 
 void Engine::load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred) {
     std::shared_ptr<const IgbDocument> document;
@@ -365,6 +376,22 @@ void Engine::process_stage_loader() {
     if (loader_state_ < 0) return;
     switch (loader_state_) {
     case 0: {
+        // 802F8A64 state 0/1: loadingUSA/ld<stage name from its third
+        // letter>.igb shows while the stage loads (its scene with a
+        // beLoadingNode, later the LOADING layer).
+        if (stage_name_.size() > 2) {
+            const std::string path = "loadingusa/ld" + stage_name_.substr(2) + ".igb";
+            if (const auto* record = resources_.catalog().find(path); record && record->location) {
+                std::vector<ObjectView> infos;
+                load_file(path, false, infos);
+                for (const auto& info : infos) register_info(info);
+                loading_node_ = find_loading_node(&global_root_);
+            }
+        }
+        loader_state_ = 1;
+        break;
+    }
+    case 1: {
         try {
             const auto descriptor = load_package_descriptor(resources_, stage_name_ + ".igb");
             std::string section = descriptor.section;
@@ -410,9 +437,18 @@ void Engine::process_stage_loader() {
         auto queue = std::move(common_queue_);
         common_queue_.clear();
         for (const auto& path : queue) load_file(path, false, deferred_infos_);
-        loader_state_ = 5;
+        loader_state_ = 10;
         break;
     }
+    case 10:
+        // State 4: the loading screen plays at least its minimum time
+        // (80311674), then holds its lock time (80311660).
+        if (loading_node_) {
+            if (!loading_node_->anim->finished()) break;
+            loading_node_->anim->fixed = loading_node_->anim->lock;
+        }
+        loader_state_ = 5;
+        break;
     case 5: {
         auto infos = std::move(deferred_infos_);
         deferred_infos_.clear();
@@ -423,6 +459,11 @@ void Engine::process_stage_loader() {
     case 6: {
         Packet packet;
         messenger_.send(*this, "LAYERCTL", std::nullopt, -1, "ORDER", packet);
+        // The loading screen stays on its layer until the stage scripts
+        // remove it.
+        Packet loading;
+        loading.strings = {std::string("LOADING"), std::string("SET")};
+        messenger_.send(*this, "LAYERCTL", std::nullopt, -1, "SWITCH", loading);
         loader_state_ = 7;
         break;
     }

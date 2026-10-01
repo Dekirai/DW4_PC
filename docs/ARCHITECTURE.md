@@ -25,9 +25,12 @@ One step is one original 60 Hz frame (16,666,666 ns). In order:
    samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
 2. The frame clock advances, so updates and the following render observe the
    same time.
-3. Pending stage change and the stage loader states (package members,
-   `func.lua` / `boot.lua`, common files queued with `CFLsetName`, info
-   registration, `start.lua`, `first.lua`).
+3. Pending stage change and the stage loader states (802F8A64): the loading
+   screen `loadingUSA/ld<stage name from its third letter>.igb`, package
+   members, `func.lua` / `boot.lua`, common files queued with `CFLsetName`,
+   the wait for the loading screen's minimum play time (its beLoadingNode
+   then holds its lock time on the LOADING layer until the scripts remove
+   it), info registration, `start.lua`, `first.lua`.
 4. Deferred messenger sends (`sd(..., delay)`), then the demo manager
    (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
 5. Every manager's `update`, in registration order.

@@ -277,6 +277,7 @@ private:
     std::string stage_folder_;
     std::string pending_stage_;
     int loader_state_ = -1;
+    Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
     bool pad_input_enabled_{};

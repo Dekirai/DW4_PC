@@ -83,7 +83,22 @@ struct Attribute {
 enum class NodeKind : std::uint8_t {
     unknown, group, attr_set, switch_node, transform, geometry, actor, billboard, blend_matrix_select,
     light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select, copy_model, particle_timer,
-    transform_recorder
+    transform_recorder, node_anim
+};
+
+// beNodeAnim (fields 802C48A4, clock 80311230): the children run on its own
+// clock, an intro from `start` to `loop_end`, then looping back to
+// `loop_start`; a nonzero `fixed` time holds it. beLoadingNode adds the lock
+// time it jumps to once loading is done and the minimum play time.
+struct NodeAnim {
+    std::int64_t start{}, loop_start{}, loop_end{}, fixed{}; // +20 / +28 / +30 / +38
+    bool first = true;                                       // +40
+    float scale = 1.0f;                                      // +50
+    std::int64_t bias{}, before{}, played{};                 // +58 / +60 / +68
+    bool loading{};
+    std::int64_t lock{}, play_limit{};                       // beLoadingNode +70 / +78
+    std::int64_t time(std::int64_t now);
+    bool finished() const { return play_limit < played; }    // 80311674
 };
 
 struct TransformSequence {
@@ -152,6 +167,7 @@ struct Node {
     std::vector<std::shared_ptr<GeometryData>> particle_geometry;
     // igTransformRecorder: the world matrix it was last drawn with (TRC data).
     std::optional<Mat4> recorded;
+    std::optional<NodeAnim> anim;
 
     bool child_enabled(std::size_t index) const;
     void set_child_enabled(std::size_t index, bool enabled);

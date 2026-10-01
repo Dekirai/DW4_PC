@@ -232,6 +232,37 @@ GeometryData decode_geometry(const ObjectView& attr) {
     return g;
 }
 
+namespace {
+// The original node clock: ((time >> 18) as float * scale) << 18.
+std::int64_t scaled_time(std::int64_t now, float scale) {
+    const auto coarse = static_cast<std::uint32_t>(static_cast<std::uint64_t>(now) >> 18);
+    return static_cast<std::int64_t>(static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<float>(coarse) * scale)) << 18);
+}
+} // namespace
+
+std::int64_t NodeAnim::time(std::int64_t now) {
+    // 803113E0: the first visit starts the clock at `start` (803111A0).
+    if (first) {
+        bias = start - scaled_time(now, scale);
+        before = now;
+        first = false;
+    }
+    if (fixed != 0) return fixed;
+    // 80311230: the play time counts real time; a step longer than two
+    // frames advances the clock by two frames only.
+    const std::int64_t step = now - before;
+    played += step;
+    constexpr std::int64_t two_frames = 33333333;
+    if (step > two_frames) bias -= step - two_frames;
+    before = now;
+    std::int64_t t = scaled_time(now, scale) + bias;
+    if (t < loop_end || loop_end <= 0) return t;
+    while (t > loop_end) t -= loop_end;
+    t += loop_start;
+    bias = t - scaled_time(now, scale);
+    return t;
+}
+
 Mat4 TransformSequence::evaluate(std::int64_t time) const {
     if (!valid || times.empty()) return Mat4{};
     std::int64_t t = time - time_offset;
@@ -479,6 +510,25 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         children_from(7);
         if (auto m = view.mat4(8)) { n->matrix = *m; n->has_matrix = true; }
         if (const auto source = view.ref(12)) n->copy_source = node(source.document(), source.reference());
+    } else if (view.is_a("beNodeAnim")) {
+        n->kind = NodeKind::node_anim;
+        children_from(7);
+        NodeAnim anim;
+        anim.start = view.i64(8);
+        anim.loop_start = view.i64(9);
+        anim.loop_end = view.i64(10);
+        anim.fixed = view.i64(11);
+        anim.first = view.boolean(12);
+        anim.scale = view.f32(14, 1.0f);
+        anim.bias = view.i64(15);
+        anim.before = view.i64(16);
+        anim.played = view.i64(17);
+        if (view.is_a("beLoadingNode")) {
+            anim.loading = true;
+            anim.lock = view.i64(18);
+            anim.play_limit = view.i64(19);
+        }
+        n->anim = anim;
     } else if (view.is_a("beModelCtrlNode2")) {
         n->kind = NodeKind::model_node;
         children_from(7);
@@ -753,6 +803,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         }
         break;
     }
+    case NodeKind::node_anim:
+        if (n->anim) time = n->anim->time(time);
+        break;
     case NodeKind::model_node: {
         Mat4 local = n->matrix;
         if (n->runtime_matrix) local = *n->runtime_matrix;
