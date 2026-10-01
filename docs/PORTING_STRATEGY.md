@@ -17,8 +17,8 @@
    earlier flows (title, character select, lobby intro) are rechecked.
 
 Host approximations are allowed only where the original behaviour is not yet
-recovered, and they are labelled as provisional (currently the collision
-response and some camera behaviour).
+recovered, and they are labelled as provisional (currently some camera
+behaviour and the riding collision query).
 
 ## Research tooling
 
@@ -34,8 +34,7 @@ reconstruction work.
    first area (`stag0001`).
 2. Dungeons: enemies (`ENEMY` models), the player's attack sequences and
    hitboxes, damage and HP (`FIGHTCALC`), items and the HUD numbers.
-3. Original collision queries (CHECKLAND / CHECKWALL) replacing the
-   provisional host query; moving platforms.
+3. Moving platforms (rides) and the riding wall query CHECKWALLFULL.
 4. Name entry (NAMESEL), difficulty selection, memory card saves.
 5. Demo cameras, audio and movies.
 6. The PC requirements in [ROADMAP.md](ROADMAP.md): settings menu, bindings,

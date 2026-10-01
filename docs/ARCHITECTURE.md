@@ -52,7 +52,7 @@ for example a hit script (8030B6EC). A sequence's LUACALL runs
 `MDLisCallName` tests ("swof", "magic", "setaid", ...); the modes BHit, WHit
 and FHit keep the name for when the model's hitbox hits something or it meets
 a wall or the floor (bullets erase themselves; the wall and floor checks use
-the provisional collision query). `DW4_TRACE_LUACALL=1` logs the calls.
+the HITLANDDELIVER responses). `DW4_TRACE_LUACALL=1` logs the calls.
 Unimplemented methods are reported in the F1 notes and answer 0 so the
 original scripts keep running.
 
@@ -156,12 +156,29 @@ logs the light and item counts.
 
 ## Collision
 
-`CollisionWorld` is a provisional host query over the original
-`beHitLandModelInfo` geometry: kind bit 1 triangles are floors (CHECKLAND),
-kind bit 2 triangles walls (CHECKWALL). Step-up, jumps over ledges and landing
-work; the original CHECKLAND/CHECKWALL responses (80300444 / 802FE7F0) are still
-to be reconstructed. Kind bit 0x400 geometry follows its model's transform in
-the original and is left out until that dynamic collision exists.
+`CollisionWorld` holds the `beHitLandModelInfo` geometry and answers the
+original HITLANDMODEL queries: segments against the triangles of the infos
+whose kind meets the query flags (front faces only, 801238E8). CHECKLAND
+(80300444) casts four vertical rays at the corners of the half-width and picks
+the highest floor inside the up/down window, else the nearest below; CHECKWALL
+(802FE7F0) runs the wide preflight, the longitudinal pull-back along the
+movement and the lateral push along the nearest wall's normal (H = 1.42
+width). Kind 0x400 geometry follows its model's node; a check-switch child
+that is a transform follows that transform's scene node (the limit circle
+under the beChangePosTransform, which `ChangePosManager` keeps at the players'
+centre while everyone is within 40 units, so players cannot leave each other).
+
+HITLANDDELIVER rows (beHitLandDelivInfoRam, 802FDA0C) carry each model's
+cylinder: HITWALL queries from the previous to the current node position and
+moves the node out, HITFLOORCHECK keeps the land position (with a ground plane
+at Y 0), HITFLOORADJUST and HITFLOOR put the node on it. The model consumer
+(80309C74, after the frame's motion and wait check) runs HITWALL (WHit), then
+the floor: a falling model lands (vertical motion stopped, FHit), a walking one
+keeps to floors within its range or enters SQ_FALL; a rising jump skips it.
+MUTEKI ONWALL/OFFWALL/ONFLOOR/OFFFLOOR and CTRL onFall/noFall switch the
+checks. The riding query CHECKWALLFULL and moving-platform rides are not
+reconstructed yet. `DW4_TRACE_HITLAND=1` logs wall hits, `=2` every wall
+candidate.
 
 ## Adding a manager
 

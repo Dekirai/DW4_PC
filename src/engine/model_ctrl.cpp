@@ -205,7 +205,8 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     ram.ctrl_mode = 0;
     ram.ctrl_phase = 0;
     ram.pdmove_set = false;
-    ram.fall_check = true;
+    // 8030E9F8: every sequence starts with wall, floor and fall checks on.
+    ram.wall_check = ram.floor_check = ram.fall_check = true;
     try { if (ram.channels.allocated()) ram.channels.on_sequence_change(); } catch (const std::exception&) {}
     // Label section (SETLABEL per sequence, e.g. the weapon's "axe" for
     // SQ_ATCK1 or "common" for a damage reaction): start after that LABEL.
@@ -321,10 +322,14 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMUTEKI") {
-            // "ON" -1: invulnerable for the rest of the sequence; "OFF" ends it;
-            // otherwise the frame count.
-            const float frames = command.f32(3);
-            ram.muteki = name == "OFF" ? 0.0f : frames;
+            // 8030C25C: OFFWALL / ONWALL / OFFFLOOR / ONFLOOR switch the wall
+            // and floor checks; otherwise the invulnerable frames ("ON" -1:
+            // for the rest of the sequence; "OFF" ends it).
+            if (name == "OFFWALL") ram.wall_check = false;
+            else if (name == "ONWALL") ram.wall_check = true;
+            else if (name == "OFFFLOOR") ram.floor_check = false;
+            else if (name == "ONFLOOR") ram.floor_check = true;
+            else ram.muteki = name == "OFF" ? 0.0f : command.f32(3);
             ++ram.cursor;
         } else if (type == "beModelCtrlLABELCTRL") {
             // The label section a later sequence starts from (like SETLABEL).
@@ -810,6 +815,14 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     if (!ram.node) return;
     auto& m = ram.node->matrix;
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
+    if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
+        const auto s = ram.channels.states();
+        char line[200];
+        std::snprintf(line, sizeof line, "motion %s %s y=%.1f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f wait=%s",
+                      ram.info_name.c_str(), ram.seq_name.c_str(), position.y, int(s[1].active), int(s[1].mode), s[1].speed,
+                      s[1].end_time, int(s[2].active), s[2].speed, ram.wait_name ? ram.wait_name->c_str() : "-");
+        engine.log(line);
+    }
     // Turning (8030C85C): shortest arc at the stored rate per frame.
     for (std::size_t axis = 0; axis < 3; ++axis) {
         if (ram.applied[axis] == ram.desired[axis]) continue;
@@ -834,100 +847,74 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         engine.note(std::string("model motion: ") + error.what());
         return;
     }
-    Vec3f next{matrix[12], matrix[13], matrix[14]};
-    bool wall_hit = false, floor_hit = false;
-    // Players, enemies and every model with a HitLandDeliv row (bullets,
-    // bouncing effects) meet walls and floors (80309C74).
-    auto* hitland = engine.get<HitLandManager>();
-    const std::uint32_t deliv_mask = hitland ? hitland->mask(ram.info_name) : 0u;
-    const bool body = ram.is_player || ram.category == "ENEMY";
-    if (body || deliv_mask != 0) {
-        // PROVISIONAL collision response (see collision.hpp).
-        if (hitland && hitland->world().triangle_count()) {
-            auto& world = hitland->world();
-            std::uint32_t mask = deliv_mask;
-            if (mask == 0) mask = ram.is_player ? 7u : 11u;
-            const bool was_on_ground = ram.on_ground;
-            // OPEN QUESTION: kind 4 "limit" geometry (e.g. stag0101's inward-facing
-            // limit_Circle around the path) would block the only route if queried,
-            // so it is left out of wall queries until its gate is understood.
-            const Vec3f before_walls = next;
-            if (body) {
-                next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask & ~4u);
-            } else {
-                const float radius = std::max(hitland->radius(ram.info_name), 1.0f);
-                next = world.resolve_walls(next, radius, -radius, radius, mask & ~4u);
-            }
-            {
-                const float dx = next.x - before_walls.x, dz = next.z - before_walls.z;
-                wall_hit = dx * dx + dz * dz > 1e-4f;
-            }
-            // PROVISIONAL model-to-model separation (the original delivers
-            // CHECKWALL between the models' HitLandDeliv cylinders).
-            const float own = std::max(hitland->radius(ram.info_name), 2.0f);
-            if (body) for (const auto& other : rams_) {
-                if (other.get() == &ram || !other->generated || !other->node) continue;
-                if (!other->is_player && other->category != "ENEMY") continue;
-                if (other->seq_name == "SQ_ERAS") continue;
-                const auto& o = other->node->matrix;
-                if (std::abs(o(3, 1) - next.y) > 10.0f) continue;
-                const float reach = own + std::max(hitland->radius(other->info_name), 2.0f);
-                const float dx = next.x - o(3, 0), dz = next.z - o(3, 2);
-                const float d = std::sqrt(dx * dx + dz * dz);
-                if (d >= reach) continue;
-                if (d > 1e-4f) {
-                    next.x = o(3, 0) + dx / d * reach;
-                    next.z = o(3, 2) + dz / d * reach;
-                } else {
-                    next.x = o(3, 0) + reach;
-                }
-            }
-            float floor = 0;
-            const bool rising = next.y > position.y + 0.001f;
-            if (!rising && world.floor_height(next, 6.0f, ram.on_ground ? 6.0f : 0.5f, floor, nullptr, mask)) {
-                next.y = floor;
-                ram.on_ground = true;
-                ram.fall_speed = 0;
-                // Landing ends a falling Y channel (CHECKLAND response), which
-                // completes the sequence's Landing wait.
-                if (auto list = ram.channels.list_owner(); list && list->size() > 1) {
-                    auto& y = list->mutable_entries()[1];
-                    if (y && y->active && y->speed <= 0) {
-                        y->active = false;
-                        y->speed = 0;
-                    }
-                }
-            } else if (!rising && ram.fall_check) {
-                ram.on_ground = false;
-                ram.fall_speed = std::min(ram.fall_speed + 0.12f, 4.0f);
-                const float before = next.y;
-                next.y -= ram.fall_speed;
-                if (world.floor_height({next.x, before, next.z}, 0.5f, ram.fall_speed + 0.5f, floor, nullptr, mask)) {
-                    next.y = floor;
-                    ram.on_ground = true;
-                    ram.fall_speed = 0;
-                }
-            }
-            floor_hit = !was_on_ground && ram.on_ground;
+    std::copy(matrix.begin(), matrix.end(), m.m.begin());
+}
+
+// 80309C74 after the frame's motion (8030D028): the model's HITLANDDELIVER
+// cylinder meets the walls (HITWALL moves the node out, WHit runs on a hit)
+// and the floor: a falling model lands on it (HITFLOORADJUST, the vertical
+// motion stops, FHit), a walking one keeps to floors within its step range
+// and otherwise falls (SQ_FALL). A rising jump skips the floor.
+void ModelCtrlManager::collide(Engine& engine, ModelRam& ram) {
+    auto& messenger = engine.messenger();
+    if (!ram.node || !messenger.count("HITLANDDELIVER", ram.info_name, ram.index)) return;
+    const auto* seq = ram.seq;
+    if (ram.wall_check) {
+        Packet wall;
+        messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, "HITWALL", wall);
+        if (!ram.lua_whit.empty() && wall.bools.size() > 1 && wall.bools[1]) {
+            run_model_script(engine, ram, ram.lua_whit, "WHit");
+            if (!ram.generated || ram.seq != seq) return;
         }
     }
-    // PROVISIONAL: a model that fell far below its last floor returns there
-    // (the original recovery from bottomless areas is not identified yet).
-    if (ram.on_ground) {
-        ram.last_ground = next;
-        ram.has_ground = true;
-    } else if (ram.has_ground && next.y < ram.last_ground.y - 300.0f) {
-        next = ram.last_ground;
-        ram.fall_speed = 0;
-        ram.on_ground = true;
-        if (ram.is_player) engine.log("player " + std::to_string(ram.index) + " fell out and was put back");
+    if (!ram.floor_check) return;
+    // 8030A0A0 modes 3 / 4 / 5 on the vertical motion (channel 1).
+    dw4::MotionState* vertical = nullptr;
+    if (auto list = ram.channels.list_owner(); list && list->size() > 1) {
+        auto& entry = list->mutable_entries()[1];
+        if (entry) vertical = &*entry;
     }
-    matrix[12] = next.x;
-    matrix[13] = next.y;
-    matrix[14] = next.z;
-    std::copy(matrix.begin(), matrix.end(), m.m.begin());
-    if (wall_hit && !ram.lua_whit.empty()) run_model_script(engine, ram, ram.lua_whit, "WHit");
-    else if (floor_hit && !ram.lua_fhit.empty()) run_model_script(engine, ram, ram.lua_fhit, "FHit");
+    const bool rising = vertical && vertical->active && vertical->mode == dw4::MotionMode::impulse_positive;
+    const bool falling = vertical && vertical->active && vertical->mode == dw4::MotionMode::accelerate_negative;
+    auto stop_vertical = [&] {
+        if (vertical && vertical->active) {
+            vertical->active = false;
+            vertical->speed = 0.0f;
+        }
+    };
+    if (rising) return;
+    Packet floor;
+    messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, "HITFLOORCHECK", floor);
+    if (floor.bools.empty()) return;
+    const bool in_range = floor.bools[0] != 0;
+    const bool reached = floor.bools.size() > 1 && floor.bools[1] != 0;
+    bool landed = false;
+    if (ram.fall_check) {
+        if (falling) {
+            if (reached) {
+                Packet adjust;
+                messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, "HITFLOORADJUST", adjust);
+                stop_vertical();
+                landed = true;
+            }
+        } else if (in_range) {
+            Packet adjust;
+            messenger.send(engine, "HITLANDDELIVER", ram.info_name, ram.index, "HITFLOORADJUST", adjust);
+            stop_vertical();
+            ram.on_ground = true;
+            return;
+        } else {
+            if (ram.seq_name == "SQ_SLEP") return;
+            ram.on_ground = false;
+            select_sequence(engine, ram, "SQ_FALL");
+            return;
+        }
+    }
+    if (!ram.lua_fhit.empty() && reached) {
+        run_model_script(engine, ram, ram.lua_fhit, "FHit");
+        if (!ram.generated) return;
+    }
+    if (landed) ram.on_ground = true;
 }
 
 void ModelCtrlManager::update(Engine& engine) {
@@ -979,11 +966,24 @@ void ModelCtrlManager::update(Engine& engine) {
             // 8030CD94: the recorder's last world matrix.
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
         } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
-        else if (ram.is_player || ram.channels.allocated()) advance_motion(engine, ram);
+        bool moved = false;
+        if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated())) {
+            advance_motion(engine, ram);
+            moved = true;
+        }
+        // 8030CFEC: the wait runs after the motion and before the walls and
+        // floors, so a jump's apex goes straight into its fall.
+        if (ram.generated && ram.wait_name) check_wait(engine, ram);
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
+        // 8030D028: walls and floors.
+        if (moved && ram.generated) collide(engine, ram);
         if (ram.attach_lock && ram.generated) place_attached(ram);
-        if (!ram.generated || !ram.wait_name) continue;
+    }
+}
+
+void ModelCtrlManager::check_wait(Engine& engine, ModelRam& ram) {
+    {
         const auto& wait = *ram.wait_name;
         bool done = false;
         if (wait == "Action") {

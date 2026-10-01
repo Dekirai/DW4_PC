@@ -471,21 +471,23 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     CollisionWorld& world() { return world_; }
-    // beHitLandDelivInfoRam [13]: a model's collision radius (0 when unknown).
-    float radius(std::string_view model) const {
-        const auto found = radii_.find(model);
-        return found != radii_.end() ? found->second : 0.0f;
-    }
-    // beHitLandDelivInfoRam [12]: the model's HitLand query mask (0 when unknown).
-    std::uint32_t mask(std::string_view model) const {
-        const auto found = masks_.find(model);
-        return found != masks_.end() ? found->second : 0u;
-    }
 
 private:
     struct HitRam : Ram {
         std::uint32_t group{};
     };
+    // HITLANDDELIVER (beHitLandDelivInfoRam, callback 802FDA0C): one model
+    // instance's collision cylinder on its ONE node.
+    struct DelivRam : Ram {
+        Node* node{};                    // [11] (+2C)
+        std::uint32_t flags{};           // [12] query flags (+30)
+        float width{}, up{}, down{};     // [13] half-width, [14]/[15] ranges (+34..+3C)
+        Vec3f position, previous, land;  // [16] (1,0,0) after a wall hit, [17], [18] (+40/+4C/+58)
+        bool land_valid{};               // +64
+    };
+    bool deliver(Engine& engine, DelivRam& ram, std::string_view command, Packet& packet);
+    bool query(Engine& engine, std::string_view command, Packet& packet);
+    std::vector<std::unique_ptr<DelivRam>> deliveries_;
     // A kind 0x400 child: its dynamic collision and the model node it follows.
     struct Follower {
         std::uint32_t id{};
@@ -496,9 +498,27 @@ private:
     std::map<std::string, bool, std::less<>> info_off_; // HITLANDMODEL OFFHIT on the whole info
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::unique_ptr<HitRam>> children_;
-    std::map<std::string, float, std::less<>> radii_;
-    std::map<std::string, std::uint32_t, std::less<>> masks_;
     CollisionWorld world_;
+};
+
+// beChangePosTransform (802F4494, change_pos.cpp): a transform at the
+// players' centre that holds while a player is 40 or more away; the HitLand
+// limit circle under it keeps the players together.
+class ChangePosManager final : public Manager {
+public:
+    ChangePosManager() : Manager("beChangePosTransform") {}
+    bool accepts(const ObjectView& info) const override { return info.type() == "beChangePosTransformInfo"; }
+    void add_info(Engine& engine, const ObjectView& info) override;
+    void clear_stage(Engine& engine) override { (void)engine; rams_.clear(); }
+    void update(Engine& engine) override;
+
+private:
+    struct ChangeRam : Ram {
+        Node* transform{};
+        int state{};
+        Vec3f last;
+    };
+    std::vector<std::unique_ptr<ChangeRam>> rams_;
 };
 
 // Global font images from bectext.igb (beFontImage + igCharMetricsList).
@@ -898,7 +918,9 @@ public:
         int ctrl_mode{}, ctrl_phase{};
         std::array<float, 4> pdmove{};
         bool pdmove_set{};
-        bool fall_check = true;
+        bool fall_check = true;      // ctrl work +DA (onFall / noFall)
+        bool wall_check = true;      // ctrl work +D8 (MUTEKI ONWALL / OFFWALL)
+        bool floor_check = true;     // ctrl work +D9 (MUTEKI ONFLOOR / OFFFLOOR)
         std::array<float, 3> applied{}, desired{};
         float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
         bool is_player{};
@@ -912,9 +934,6 @@ public:
         int item_player = -1, item_label = -1;
         bool item_dim{};
         std::int64_t item_blink{};
-        Vec3f last_ground{};         // PROVISIONAL fall-out recovery
-        bool has_ground{};
-        float fall_speed{};
         std::string label;
         std::map<std::string, std::string, std::less<>> labels; // SETLABEL per sequence
         const HitBody* hit{};
@@ -1011,6 +1030,8 @@ private:
     void follow_bone(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
+    void collide(Engine& engine, ModelRam& ram);
+    void check_wait(Engine& engine, ModelRam& ram);
     bool capsule_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
     void update_item(Engine& engine, ModelRam& ram);
     void item_label(Engine& engine, ModelRam& ram, bool show);

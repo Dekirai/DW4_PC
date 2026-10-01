@@ -1081,12 +1081,31 @@ bool PlayerPointManager::command(Engine&, Ram&, std::string_view command, Packet
 void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     if (info.type() == "beHitLandDelivInfo") {
         const auto rams = info.list(6);
-        if (!rams.empty() && rams.front()) {
-            radii_[std::string(info.str(2))] = rams.front().f32(13);
-            masks_[std::string(info.str(2))] = std::uint32_t(rams.front().i32(12));
+        std::int32_t index = 0;
+        for (const auto& record : rams) {
+            auto ram = std::make_unique<DelivRam>();
+            ram->manager = this;
+            ram->info = info;
+            ram->ram = record;
+            ram->info_name = std::string(info.str(2));
+            ram->index = index++;
+            ram->active = record ? record.boolean(5) : false;
+            if (record) {
+                ram->node = engine.scenes().node(record.ref(11));
+                ram->flags = std::uint32_t(record.i32(12));
+                ram->width = record.f32(13);
+                ram->up = record.f32(14);
+                ram->down = record.f32(15);
+                ram->position = record.vec3(16).value_or(Vec3f{});
+                ram->previous = record.vec3(17).value_or(Vec3f{});
+                ram->land = record.vec3(18).value_or(Vec3f{});
+            }
+            engine.messenger().add_row("HITLANDDELIVER", ram->info_name, ram->index, ram.get());
+            deliveries_.push_back(std::move(ram));
         }
         return;
     }
+    const auto info_index = world_.add_info(std::string(info.str(2)));
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
     // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
     // Kind bit 0x400 marks model-attached geometry whose children follow the
@@ -1098,15 +1117,18 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
         // instance ([12]), e.g. one per box of g_box.
         const auto check = info.ref(8);
         const auto children = check && check.is_a("igGroup") ? check.list(7) : std::vector<ObjectView>{check};
-        for (const auto& child : children) {
+        for (std::size_t i = 0; i < children.size(); ++i) {
+            const auto& child = children[i];
             if (!child) continue;
-            followers_.push_back({world_.add_dynamic(child, kind), child.ref(12), std::string(info.str(2))});
+            followers_.push_back(
+                {world_.add_dynamic(child, kind, info_index, std::uint16_t(i)), child.ref(12), std::string(info.str(2))});
         }
         return;
     }
     // Each check-switch child is its own switchable group, addressed by the
     // matching name of the info's name list [9] (e.g. "hithideliftz00").
-    const auto groups = world_.add_switch(info.ref(8), kind);
+    const auto groups = world_.add_switch(info.ref(8), kind, info_index,
+                                          [&](const ObjectView& transform) -> const Node* { return engine.scenes().node(transform); });
     const auto names = info.list(9);
     for (std::size_t i = 0; i < groups.size() && i < names.size(); ++i) {
         if (!names[i] || names[i].str(2).empty()) continue;
@@ -1123,8 +1145,8 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
 }
 
 bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
-    (void)engine;
-    (void)packet;
+    if (auto* delivery = dynamic_cast<DelivRam*>(&base)) return deliver(engine, *delivery, command, packet);
+    if (command == "CHECKLAND" || command == "CHECKWALL" || command == "CHECKWALLFULL") return query(engine, command, packet);
     if (command != "ONHIT" && command != "OFFHIT") return false;
     info_off_[base.info_name] = command == "OFFHIT";
     for (const auto& child : children_)
@@ -1154,13 +1176,154 @@ void HitLandManager::update(Engine& engine) {
     }
 }
 
+// HITLANDMODEL CHECKLAND (80300444) / CHECKWALL (802FE7F0). Every
+// HITLANDMODEL row receives the send; the first answer fills the booleans,
+// which later rows take as already answered (the leaves' own guard).
+bool HitLandManager::query(Engine& engine, std::string_view command, Packet& packet) {
+    (void)engine;
+    if (!packet.bools.empty() || packet.vectors.empty() || packet.floats.empty()) return true;
+    if (command == "CHECKLAND") {
+        if (packet.floats.size() < 3) return true;
+        const auto result = world_.check_land(packet.vectors[0], packet.floats[0], packet.floats[1], packet.floats[2]);
+        if (result.found) {
+            packet.ints.clear();
+            packet.ints.push_back(result.child);
+            packet.strings.emplace_back(world_.info_name(result.info));
+        }
+        packet.vectors.clear();
+        packet.bools = {std::uint8_t(result.in_range), std::uint8_t(result.adjusted), std::uint8_t(result.found)};
+        packet.vectors.push_back(result.position);
+        return true;
+    }
+    // CHECKWALLFULL (the riding query) is not reconstructed; it takes the
+    // CHECKWALL path with the position's own direction.
+    if (packet.ints.size() < 2 || packet.vectors.size() < 2 || packet.floats.size() < 3) return true;
+    Vec3f direction = packet.vectors[1];
+    if (command == "CHECKWALLFULL") {
+        const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
+        direction = length > 0.0f ? Vec3f{direction.x / length, 0.0f, direction.z / length} : Vec3f{0.0f, 0.0f, 1.0f};
+    }
+    const auto result = world_.check_wall(packet.vectors[0], direction, packet.floats[0], packet.floats[2],
+                                          std::uint32_t(packet.ints[0]), packet.ints[1] != 0);
+    packet.ints.clear();
+    for (const auto& hit : result.hits) {
+        packet.ints.push_back(hit.child);
+        packet.strings.emplace_back(world_.info_name(hit.info));
+    }
+    packet.bools.clear();
+    packet.vectors.clear();
+    packet.vectors.push_back(result.position);
+    packet.bools.push_back(result.hit ? 1 : 0);
+    return true;
+}
+
+// 802FDA0C: HITWALL / HITWALLFULL query the walls from the previous to the
+// current node position and move the node; HITFLOORCHECK / HITFLOOR keep the
+// floor below the node (a ground plane at Y 0 below every stage), HITFLOOR and
+// HITFLOORADJUST put the node on it.
+bool HitLandManager::deliver(Engine& engine, DelivRam& ram, std::string_view command, Packet& packet) {
+    auto& messenger = engine.messenger();
+    const bool full = command == "HITWALLFULL";
+    if (command == "HITWALL" || full) {
+        if (!ram.node) return true;
+        const Vec3f current{ram.node->matrix(3, 0), ram.node->matrix(3, 1), ram.node->matrix(3, 2)};
+        bool moved = false;
+        Packet answer;
+        bool queried = false;
+        if (full || current.x != ram.previous.x || current.z != ram.previous.z) {
+            answer.vectors.push_back(current);
+            if (full) {
+                answer.vectors.push_back(current);
+            } else {
+                Vec3f direction{current.x - ram.previous.x, 0.0f, current.z - ram.previous.z};
+                const float length = std::sqrt(direction.x * direction.x + direction.z * direction.z);
+                direction = direction * (1.0f / length);
+                answer.vectors.push_back(direction);
+            }
+            answer.floats = {ram.width, ram.up, ram.down};
+            answer.ints = {std::int32_t(ram.flags), ram.position.x == 0.0f ? 0 : 1};
+            messenger.send(engine, "HITLANDMODEL", std::nullopt, -1, full ? "CHECKWALLFULL" : "CHECKWALL", answer);
+            queried = true;
+            const bool hit = !answer.bools.empty() && answer.bools[0] == 1;
+            if (static const bool trace = std::getenv("DW4_TRACE_HITLAND") != nullptr; trace && hit) {
+                std::string walls;
+                for (const auto& name : answer.strings) walls += " " + (name ? *name : std::string("?"));
+                char line[160];
+                std::snprintf(line, sizeof line, "hitwall %s#%d at (%.1f, %.1f, %.1f) by", ram.info_name.c_str(), ram.index,
+                              current.x, current.y, current.z);
+                engine.log(line + walls);
+            }
+            ram.position = hit ? Vec3f{1.0f, 0.0f, 0.0f} : Vec3f{};
+            if (!answer.vectors.empty()) {
+                if (hit) {
+                    ram.node->matrix(3, 0) = answer.vectors[0].x;
+                    ram.node->matrix(3, 1) = answer.vectors[0].y;
+                    ram.node->matrix(3, 2) = answer.vectors[0].z;
+                    moved = true;
+                }
+                ram.previous = answer.vectors[0];
+            }
+        }
+        (void)queried;
+        packet.bools = {std::uint8_t(moved), std::uint8_t(moved), 0};
+        return true;
+    }
+    const bool floor_check = command == "HITFLOORCHECK", floor = command == "HITFLOOR";
+    if (floor_check || floor) {
+        if (!ram.node) return true;
+        Packet answer;
+        answer.vectors.push_back({ram.node->matrix(3, 0), ram.node->matrix(3, 1), ram.node->matrix(3, 2)});
+        answer.floats = {ram.width, ram.up, ram.down};
+        answer.ints.push_back(std::int32_t(ram.flags));
+        messenger.send(engine, "HITLANDMODEL", std::nullopt, -1, "CHECKLAND", answer);
+        Vec3f found{0.0f, -1.0f, 0.0f};
+        std::uint8_t in_range = 0, adjusted = 0, valid = 0;
+        if (answer.bools.size() >= 3 && !answer.vectors.empty()) {
+            found = answer.vectors[0];
+            in_range = answer.bools[0];
+            adjusted = answer.bools[1];
+            valid = answer.bools[2];
+        }
+        if (found.y >= 1.0f) {
+            ram.land = ram.previous = found;
+            ram.land_valid = valid != 0;
+        } else if (ram.node->matrix(3, 1) < 0.0f) {
+            ram.land = ram.previous = {found.x, 0.0f, found.z};
+            ram.land_valid = true;
+            in_range = adjusted = 1;
+        } else {
+            ram.land_valid = false;
+            in_range = 1;
+            adjusted = 0;
+        }
+        packet.bools = {in_range, adjusted};
+        // The ride: the floor's info name and child (the CHECKLAND answer).
+        packet.strings = answer.strings;
+        packet.ints = answer.ints;
+        if (floor && ram.land_valid) {
+            ram.node->matrix(3, 0) = ram.land.x;
+            ram.node->matrix(3, 1) = ram.land.y;
+            ram.node->matrix(3, 2) = ram.land.z;
+        }
+        return true;
+    }
+    if (command == "HITFLOORADJUST") {
+        if (ram.land_valid && ram.node) {
+            ram.node->matrix(3, 0) = ram.land.x;
+            ram.node->matrix(3, 1) = ram.land.y;
+            ram.node->matrix(3, 2) = ram.land.z;
+        }
+        return true;
+    }
+    return false;
+}
+
 void HitLandManager::clear_stage(Engine&) {
+    deliveries_.clear();
     followers_.clear();
     info_off_.clear();
     rams_.clear();
     children_.clear();
-    radii_.clear();
-    masks_.clear();
     world_.clear();
 }
 
@@ -1476,6 +1639,7 @@ void register_default_managers(Engine& engine) {
     // seen again by the panel in the frame the player opens it.
     engine.add_manager(std::make_unique<PanelManager>());
     engine.add_manager(std::make_unique<SubWindowManager>());
+    engine.add_manager(std::make_unique<ChangePosManager>());
     engine.add_manager(std::make_unique<ModelCtrlManager>());
     engine.add_manager(std::make_unique<ActionManager>());
     engine.add_manager(std::make_unique<CameraManager>());

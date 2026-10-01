@@ -73,7 +73,10 @@ float advance(MotionState& state, float delta) {
     if (!state.active) return 0;
     if (state.end_time != 0) {
         const float remaining = state.end_time - delta;
-        if (remaining < 0) {
+        // 8030A324 stops below zero. Its real-time frame delta (59.94 Hz video
+        // against 60 Hz units) passes zero; whole frames would land on it and
+        // make the end time read as "none", so zero stops as well.
+        if (remaining <= 0) {
             stop(state);
             if (!state.active) return 0;
         } else state.end_time = remaining;

@@ -75,8 +75,10 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
-Not yet reconstructed: many smaller managers. Collision uses a provisional host query built
-on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
+Collision follows the original HITLANDMODEL queries and HITLANDDELIVER
+responses (walls, floors, falling and landing, the players' limit circle);
+the riding query and moving-platform rides are not reconstructed yet, nor are
+many smaller managers. See [ROADMAP.md](docs/ROADMAP.md).
 
 ## Layout
 
