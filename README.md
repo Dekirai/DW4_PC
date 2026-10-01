@@ -94,7 +94,7 @@ quicksand and slippery floors; many smaller managers are still missing. See
 | --- | --- |
 | `include/dw4`, `src` | `dw4_core`: IGB documents, packages and resources, textures, meshes, skinning, Enbaya animation, Lua 4 bytecode, pads and motion primitives |
 | `include/dw4/engine`, `src/engine` | `dw4_engine`: frame step, messenger and demo manager, Lua host, scene graph, and the reconstructed managers (stage loader, scene/layer/camera, model control, actions, text, menus, title, character select, floor mats, collision) |
-| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping and the F1 debug menu |
+| `src/game` | `dw4_game`: SDL3 window, OpenGL renderer, input mapping, settings and the F1 menu |
 | `tools` | `dw4_inspect` (IGB inspection), `dw4_catalog` (logical resource catalog), `verify_game.py` (read-only ISO identification) |
 | `tests` | Asset-free tests for the core formats and tools |
 | `docs` | Format and module notes; `docs/research` keeps the reverse-engineering notes (DOL addresses, recovered behavior) |
@@ -119,11 +119,20 @@ This configures `build\Release`, builds everything and runs the tests.
 
 Extract the USA disc (for example with Dolphin: *Properties > Filesystem >
 Extract Entire Disc*) and tell the runtime where the extracted root is, either
-with `--data PATH` or in `local\settings.ini`:
+with `--data PATH` or in `settings.ini` (`local\settings.ini` or
+`settings.ini` in the working folder, else next to the program):
 
 ```ini
+[data]
 path=E:\Games\Digimon World 4 - Extracted
 ```
+
+The same file keeps the PC settings that the F1 menu edits while playing:
+`[window]` `width`, `height`, `fullscreen` (borderless, also F11), `vsync`,
+`fps_limit` (presented frames per second, 0 = off; the game always updates
+60 times a second) and `msaa` (2/4/8 samples, applied at start-up),
+`[audio] volume` (percent), `[menu] pause` (pause while the menu is open) and
+`[keyboard]` with up to three key names per button (`a=Return, Space, K`).
 
 `tools/verify_game.py` checks an ISO or extraction against the expected
 `main.dol` SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` without copying data.
@@ -135,19 +144,19 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
-`frame BUTTON [duration]`, `frame GOTO x z [duration]`, `frame SEEK duration`
+`frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`), `--screenshot
 FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
-`DW4_PLAYERS=n` joins n players,
+`DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 
 ### Controls
 
-| Original | Keyboard | Gamepad |
+| Original | Keyboard (default, rebindable) | Gamepad |
 | --- | --- | --- |
 | Stick | Arrow keys / WASD | Left stick, D-pad |
 | A (talk, confirm) | Enter, Space, K | South |
@@ -164,8 +173,10 @@ gamepads control players 2 to 4. As on the original, holding B and X and
 then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
-F1 opens the debug menu (stage loader, player state, notes, script log); F2
-toggles a free camera.
+F1 opens the menu: the Settings tab (display, frame limit, anti-aliasing,
+window size, volume, keyboard bindings, connected controllers) and the Debug
+tab (stage loader, player state, notes, script log). F11 toggles fullscreen,
+F2 a free camera.
 
 ## License
 

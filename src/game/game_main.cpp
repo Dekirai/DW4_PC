@@ -2,6 +2,7 @@
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "gl_renderer.hpp"
 #include "movie_decoder.hpp"
+#include "settings.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,16 +42,6 @@ struct Options {
     std::filesystem::path card_dir; // memory card GCI folders (Card A / Card B)
 };
 
-std::filesystem::path default_data_path() {
-    for (const auto& candidate : {std::filesystem::path("local/settings.ini"), std::filesystem::path("settings.ini")}) {
-        std::ifstream in(candidate);
-        std::string line;
-        while (std::getline(in, line)) {
-            if (line.rfind("path=", 0) == 0) return line.substr(5);
-        }
-    }
-    return {};
-}
 
 void write_bmp(const std::string& path, int width, int height, const std::vector<std::uint8_t>& rgba) {
     std::ofstream out(path, std::ios::binary);
@@ -151,7 +143,13 @@ struct ScriptedInput {
     }
 };
 
-int run(const Options& options) {
+// A key button of the controls table waiting for the next key press.
+struct KeyCapture {
+    std::size_t button{};
+    std::size_t slot{};
+};
+
+int run(const Options& options, dw4::game::Settings& settings) {
     dw4::engine::Engine engine(options.data);
     // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
     // program. Dolphin's GC/USA folder works too (same GCI files).
@@ -186,12 +184,29 @@ int run(const Options& options) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
     if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
-    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", 1280, 960, flags);
-    if (!window) throw std::runtime_error(SDL_GetError());
-    SDL_GLContext context = SDL_GL_CreateContext(window);
-    if (!context) throw std::runtime_error(SDL_GetError());
+    // Multisampling is chosen with the window (settings.ini msaa, read at
+    // start-up); without support the window opens without it.
+    const int msaa = options.smoke_frames ? 0 : settings.msaa;
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
+    const int window_width = options.smoke_frames ? 1280 : settings.width;
+    const int window_height = options.smoke_frames ? 960 : settings.height;
+    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+    SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
+    if (!context && msaa > 1) {
+        if (window) SDL_DestroyWindow(window);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+        context = window ? SDL_GL_CreateContext(window) : nullptr;
+    }
+    if (!window || !context) throw std::runtime_error(SDL_GetError());
     SDL_GL_MakeCurrent(window, context);
-    SDL_GL_SetSwapInterval(options.smoke_frames ? 0 : 1);
+    SDL_GL_SetSwapInterval(options.smoke_frames || !settings.vsync ? 0 : 1);
+    if (!options.smoke_frames && settings.fullscreen) SDL_SetWindowFullscreen(window, true);
+    int samples = 0;
+    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
+    if (samples > 1) glEnable(GL_MULTISAMPLE);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -217,6 +232,9 @@ int run(const Options& options) {
         if (!sound || (!audio && !audio_dump_path)) return;
         std::vector<std::int16_t> pcm(std::size_t(frames) * 2);
         sound->render(pcm.data(), std::size_t(frames));
+        // Master volume (settings.ini [audio] volume, percent).
+        if (settings.volume < 100)
+            for (auto& sample : pcm) sample = std::int16_t(int(sample) * settings.volume / 100);
         if (audio) SDL_PutAudioStreamData(audio, pcm.data(), int(pcm.size() * sizeof(std::int16_t)));
         if (audio_dump_path) audio_dump.insert(audio_dump.end(), pcm.begin(), pcm.end());
     };
@@ -234,7 +252,11 @@ int run(const Options& options) {
         std::string rendered_stage;
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
-        bool running = true, show_menu = false;
+        // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots).
+        bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
+        bool settings_changed = false;
+        std::optional<KeyCapture> capture;
+        auto next_present = std::chrono::steady_clock::now();
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         auto last = std::chrono::steady_clock::now();
@@ -242,8 +264,27 @@ int run(const Options& options) {
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
+                // A key binding being edited takes the next key (F1 still
+                // closes the menu).
+                if (capture && event.type == SDL_EVENT_KEY_DOWN && event.key.scancode != SDL_SCANCODE_F1) {
+                    settings.keys[capture->button][capture->slot] = event.key.scancode;
+                    // A key stands for one button only.
+                    for (std::size_t b = 0; b < settings.keys.size(); ++b)
+                        for (std::size_t k = 0; k < settings.keys[b].size(); ++k)
+                            if ((b != capture->button || k != capture->slot) && settings.keys[b][k] == event.key.scancode)
+                                settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
+                    capture.reset();
+                    settings_changed = true;
+                    continue;
+                }
                 ImGui_ImplSDL3_ProcessEvent(&event);
                 if (event.type == SDL_EVENT_QUIT) running = false;
+                if (event.type == SDL_EVENT_WINDOW_RESIZED && !options.smoke_frames &&
+                    !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
+                    settings.width = event.window.data1;
+                    settings.height = event.window.data2;
+                    settings_changed = true;
+                }
                 if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
                     if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) gamepads.push_back(pad);
                 }
@@ -255,7 +296,16 @@ int run(const Options& options) {
                             break;
                         }
                 }
-                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) show_menu = !show_menu;
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) {
+                    show_menu = !show_menu;
+                    capture.reset();
+                    if (!show_menu && settings_changed && settings.save()) settings_changed = false;
+                }
+                if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
+                    settings.fullscreen = !settings.fullscreen;
+                    SDL_SetWindowFullscreen(window, settings.fullscreen);
+                    settings_changed = true;
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F2) {
                     free_camera = !free_camera;
                     if (!free_camera) engine.debug_camera.reset();
@@ -308,19 +358,16 @@ int run(const Options& options) {
                 if (keys[SDL_SCANCODE_Q]) free_eye.y -= speed;
                 engine.debug_camera = make_camera(free_eye, free_eye + forward);
             } else if (!show_menu) {
+                // Keyboard: the bound keys of settings.ini [keyboard]; the
+                // direction keys also push the stick fully.
                 const bool* keys = SDL_GetKeyboardState(nullptr);
-                if (keys[SDL_SCANCODE_UP] || keys[SDL_SCANCODE_W]) { held |= dw4::pad_button::up; sy = 1; }
-                if (keys[SDL_SCANCODE_DOWN] || keys[SDL_SCANCODE_S]) { held |= dw4::pad_button::down; sy = -1; }
-                if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) { held |= dw4::pad_button::left; sx = -1; }
-                if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) { held |= dw4::pad_button::right; sx = 1; }
-                if (keys[SDL_SCANCODE_RETURN] || keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_K]) held |= dw4::pad_button::a;
-                if (keys[SDL_SCANCODE_BACKSPACE] || keys[SDL_SCANCODE_L]) held |= dw4::pad_button::b;
-                if (keys[SDL_SCANCODE_J]) held |= dw4::pad_button::x;
-                if (keys[SDL_SCANCODE_I]) held |= dw4::pad_button::y;
-                if (keys[SDL_SCANCODE_ESCAPE] || keys[SDL_SCANCODE_TAB]) held |= dw4::pad_button::start;
-                if (keys[SDL_SCANCODE_Q]) held |= dw4::pad_button::l;
-                if (keys[SDL_SCANCODE_E]) held |= dw4::pad_button::r;
-                if (keys[SDL_SCANCODE_Z]) held |= dw4::pad_button::z;
+                for (std::size_t b = 0; b < settings.keys.size(); ++b)
+                    for (const SDL_Scancode code : settings.keys[b])
+                        if (code != SDL_SCANCODE_UNKNOWN && keys[code]) held |= dw4::game::pad_key_bit(dw4::game::PadKey(b));
+                if (held & dw4::pad_button::up) sy = 1;
+                if (held & dw4::pad_button::down) sy = -1;
+                if (held & dw4::pad_button::left) sx = -1;
+                if (held & dw4::pad_button::right) sx = 1;
                 for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i)
                     read_gamepad(gamepads[i], slot_held[i], slot_left[i], slot_right[i]);
                 held |= slot_held[0];
@@ -332,7 +379,9 @@ int run(const Options& options) {
             accumulator += std::chrono::duration<double>(now - last).count();
             last = now;
             int steps = options.smoke_frames ? 1 : 0;
-            if (!options.smoke_frames) {
+            const bool paused = show_menu && settings.pause_in_menu && !options.smoke_frames;
+            if (paused) accumulator = 0;
+            if (!options.smoke_frames && !paused) {
                 while (accumulator >= 1.0 / 60.0 && steps < 4) { accumulator -= 1.0 / 60.0; ++steps; }
                 if (steps == 4) accumulator = 0;
             }
@@ -464,8 +513,95 @@ int run(const Options& options) {
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
             if (show_menu) {
-                ImGui::SetNextWindowSize(ImVec2(520, 420), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
                 ImGui::Begin("DW4 PC (F1)");
+                if (ImGui::BeginTabBar("menu")) {
+                if (ImGui::BeginTabItem("Settings")) {
+                    if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
+                            SDL_SetWindowFullscreen(window, settings.fullscreen);
+                            settings_changed = true;
+                        }
+                        if (ImGui::Checkbox("VSync", &settings.vsync)) {
+                            SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
+                            settings_changed = true;
+                        }
+                        if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off"))
+                            settings_changed = true;
+                        ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
+                        static const int sample_choices[] = {0, 2, 4, 8};
+                        static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
+                        int choice = 0;
+                        for (int i = 0; i < 4; ++i)
+                            if (settings.msaa >= sample_choices[i]) choice = i;
+                        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, 4)) {
+                            settings.msaa = sample_choices[choice];
+                            settings_changed = true;
+                        }
+                        ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
+                        static const int sizes[][2] = {{960, 720}, {1280, 960}, {1440, 1080}, {1920, 1440}, {2880, 2160}};
+                        if (!settings.fullscreen) {
+                            ImGui::TextUnformatted("Window size:");
+                            for (const auto& size : sizes) {
+                                ImGui::SameLine();
+                                const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
+                                if (ImGui::SmallButton(label.c_str())) {
+                                    SDL_SetWindowSize(window, size[0], size[1]);
+                                    settings.width = size[0];
+                                    settings.height = size[1];
+                                    settings_changed = true;
+                                }
+                            }
+                        }
+                    }
+                    if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%")) settings_changed = true;
+                    }
+                    if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
+                        if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_SizingStretchSame)) {
+                            for (std::size_t b = 0; b < settings.keys.size(); ++b) {
+                                ImGui::TableNextRow();
+                                ImGui::TableNextColumn();
+                                ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
+                                for (std::size_t k = 0; k < settings.keys[b].size(); ++k) {
+                                    ImGui::TableNextColumn();
+                                    const bool waiting = capture && capture->button == b && capture->slot == k;
+                                    const SDL_Scancode code = settings.keys[b][k];
+                                    std::string label = waiting ? "press a key..."
+                                                      : code == SDL_SCANCODE_UNKNOWN ? "-"
+                                                                                     : SDL_GetScancodeName(code);
+                                    label += "##" + std::to_string(b * 8 + k);
+                                    if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k};
+                                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                                        settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
+                                        capture.reset();
+                                        settings_changed = true;
+                                    }
+                                }
+                            }
+                            ImGui::EndTable();
+                        }
+                        if (ImGui::Button("Default keys")) {
+                            settings.reset_keys();
+                            capture.reset();
+                            settings_changed = true;
+                        }
+                    }
+                    if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (gamepads.empty()) ImGui::TextDisabled("No controller connected.");
+                        for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
+                            const char* name = SDL_GetGamepadName(gamepads[i]);
+                            ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
+                        }
+                        ImGui::TextDisabled("A = south, B = east, X = west, Y = north, L = left trigger or shoulder,");
+                        ImGui::TextDisabled("R = right trigger, Z = right shoulder, Start = start.");
+                    }
+                    if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
+                    ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Debug")) {
                 ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
                 ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
                             renderer.mesh_count(), renderer.texture_count());
@@ -489,6 +625,10 @@ int run(const Options& options) {
                 }
                 if (ImGui::CollapsingHeader("Log")) {
                     for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
+                }
+                ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
                 }
                 ImGui::End();
             }
@@ -515,8 +655,20 @@ int run(const Options& options) {
                 if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
             }
             SDL_GL_SwapWindow(window);
+            // Frame limit (settings.ini fps_limit): presents are spaced out;
+            // the simulation keeps its fixed 60 Hz steps.
+            if (!options.smoke_frames && settings.fps_limit > 0) {
+                const auto interval = std::chrono::nanoseconds(1'000'000'000LL / settings.fps_limit);
+                next_present += interval;
+                const auto now = std::chrono::steady_clock::now();
+                if (next_present > now)
+                    SDL_DelayPrecise(Uint64(std::chrono::duration_cast<std::chrono::nanoseconds>(next_present - now).count()));
+                else if (now - next_present > interval * 4)
+                    next_present = now;
+            }
             if (options.smoke_frames && frame >= options.smoke_frames) running = false;
         }
+        if (settings_changed && !options.smoke_frames) settings.save();
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
         if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
             if (const auto* p = models->player(0); p && p->node)
@@ -631,9 +783,11 @@ int main(int argc, char** argv) {
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }
-        if (options.data.empty()) options.data = default_data_path();
-        if (options.data.empty()) throw std::runtime_error("no --data given and local/settings.ini has no path");
-        return run(options);
+        auto settings = dw4::game::Settings::load();
+        if (options.data.empty()) options.data = settings.data;
+        if (options.data.empty())
+            throw std::runtime_error("no --data given and " + settings.file.string() + " has no [data] path");
+        return run(options, settings);
     } catch (const std::exception& error) {
         std::cerr << "dw4_game: " << error.what() << '\n';
         return 1;
