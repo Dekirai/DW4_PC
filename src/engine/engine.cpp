@@ -348,6 +348,7 @@ void Engine::load_file(const std::string& logical_path, bool member, std::vector
         return;
     }
     files_.push_back({logical_path, document, member});
+    if (std::getenv("DW4_TRACE_LOAD")) log("load " + logical_path);
     if (!document->info_list_reference) return;
     for (const auto& element : document->object_list(*document->info_list_reference)) {
         if (!element) continue;
