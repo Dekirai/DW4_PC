@@ -59,7 +59,14 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the support techniques (heal, heal all, cure, speed and power up, refract,
   raise: a defeated player's bit capsule brings the player back, and with it
   the bits and part of the EXP lost at the defeat)
-  and the weapon and technique skill growth with the skill up panel.
+  and the weapon and technique skill growth with the skill up panel; the
+  status quick panel lists the active effects, and the cure and raise disks
+  work.
+- The loading screens of every stage change (the "Licensed by Nintendo"
+  screen at boot, the area title screens before stages and dungeons) with
+  their minimum play time, and the box camera: the camera pivot follows the
+  players' centre and each camera box of the stage turns and distances the
+  camera, blended in as the players cross into it; camera shakes.
 - The opening movie after the logos: the Sofdec file's program stream is
   split natively; its MPEG-1 video is decoded with pl_mpeg and its ADX sound
   plays through the sound mixer; A or START skips it.
