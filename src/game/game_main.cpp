@@ -87,7 +87,7 @@ struct ScriptedInput {
             }
             if (name == "SEEK") {
                 Goto g{frame, 0, 0, 600, true};
-                fields >> g.duration;
+                fields >> g.duration >> g.target;
                 gotos.push_back(g);
                 continue;
             }
@@ -124,7 +124,8 @@ struct ScriptedInput {
     std::vector<Send> sends;
     struct Press { int frame; std::uint32_t bit; int duration; int slot; };
     std::vector<Press> presses;
-    struct Goto { int frame; float x, z; int duration; bool seek = false; };
+    // SEEK may name a model prefix to go for first (e.g. g_b01cpole).
+    struct Goto { int frame; float x, z; int duration; bool seek = false; std::string target; };
     std::vector<Goto> gotos;
     const Goto* active_goto(int frame) const {
         for (const auto& g : gotos) if (frame >= g.frame && frame < g.frame + g.duration) return &g;
@@ -406,13 +407,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     if (const auto* p = models ? models->player(0) : nullptr; p && p->node && cameras) {
                         float tx = g->x, tz = g->z, reach = 4.0f;
                         if (g->seek) {
-                            // Pickups first, then the nearest live enemy.
-                            float best = 1e12f;
-                            for (int pass = 0; pass < 2 && best == 1e12f; ++pass)
+                            // Named targets, then pickups, then the nearest live enemy.
+                            float best = 1e12f, target_y = 0.0f;
+                            for (int pass = g->target.empty() ? 0 : -1; pass < 2 && best == 1e12f; ++pass)
                                 for (const auto& e : models->rams()) {
                                     if (!e->generated || !e->node) continue;
-                                    if (pass == 0 ? (e->category != "ITEM" || e->item_table < 0)
-                                                  : (e->category != "ENEMY" || e->hp <= 0))
+                                    if (pass < 0 ? (e->info_name.rfind(g->target, 0) != 0 || e->hp <= 0)
+                                        : pass == 0 ? (e->category != "ITEM" || e->item_table < 0)
+                                                    : (e->category != "ENEMY" || e->hp <= 0))
                                         continue;
                                     const float ex = e->node->matrix(3, 0) - p->node->matrix(3, 0);
                                     const float ez = e->node->matrix(3, 2) - p->node->matrix(3, 2);
@@ -420,11 +422,28 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                         best = ex * ex + ez * ez;
                                         tx = e->node->matrix(3, 0);
                                         tz = e->node->matrix(3, 2);
-                                        reach = pass == 0 ? 9.0f : 400.0f;
+                                        target_y = e->node->matrix(3, 1);
+                                        reach = pass < 0 ? 64.0f : pass == 0 ? 9.0f : 400.0f;
                                     }
                                 }
+                            // A large boss body keeps the player beyond the reach:
+                            // attack anyway once the walk stalls nearby.
+                            static float last_x = 0, last_z = 0;
+                            static int stalled = 0;
+                            const float mx = p->node->matrix(3, 0) - last_x, mz = p->node->matrix(3, 2) - last_z;
+                            stalled = mx * mx + mz * mz < 0.01f ? stalled + 1 : 0;
+                            last_x = p->node->matrix(3, 0);
+                            last_z = p->node->matrix(3, 2);
                             if (best == 1e12f) { tx = p->node->matrix(3, 0); tz = p->node->matrix(3, 2); }
-                            else if (best <= reach && frame % 20 < 3) input |= dw4::pad_button::a;
+                            else if (best <= reach || (best <= 6400.0f && stalled > 20)) {
+                                // A target floating above the player is attacked from jumps.
+                                if (target_y > p->node->matrix(3, 1) + 8.0f) {
+                                    if (frame % 40 < 3) input |= dw4::pad_button::x;
+                                    else if (frame % 40 >= 10 && frame % 40 < 13) input |= dw4::pad_button::a;
+                                } else if (frame % 20 < 3) {
+                                    input |= dw4::pad_button::a;
+                                }
+                            }
                         }
                         const float dx = tx - p->node->matrix(3, 0), dz = tz - p->node->matrix(3, 2);
                         if (dx * dx + dz * dz > reach) {

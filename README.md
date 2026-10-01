@@ -146,7 +146,7 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
-`frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration`
+`frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`), `--screenshot
 FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
