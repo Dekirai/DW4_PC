@@ -620,6 +620,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         ride.last = ride.own;
         ram.ride = std::move(ride);
+        if (std::getenv("DW4_TRACE_RIDE")) engine.log(ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(command));
         return true;
     }
     if (command == "ACTION1" && ram.category == "ITEM") {
