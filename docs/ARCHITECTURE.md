@@ -116,8 +116,10 @@ and DEGISTATECTRL (`StatusWindow`) are separate classes.
 ## Scene graph and rendering
 
 `SceneCache` builds one `Node` per IGB object (attribute sets, switches,
-transforms with `igTransformSequence1_5`, geometry, actors, LOD, billboards,
-blend/bone selects, `beModelCtrlNode2` with its scaled node clock). Managers
+transforms with `igTransformSequence1_5` or the quantized
+`igCompressedAnimationSequenceQS` (keys base + value * range, key times
+`(value & 0x7FFF) << 23` ns), geometry, actors, LOD, billboards, blend/bone
+selects, `beModelCtrlNode2` with its scaled node clock). Managers
 change nodes through overrides (switch masks, colours, runtime text geometry,
 actor poses). Matrices are row-vector and share the column-major memory layout
 of the original. The GL renderer maps IGB attributes to fixed-function-like

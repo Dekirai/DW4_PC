@@ -67,6 +67,47 @@ std::vector<std::int64_t> long_list(const ObjectView& list) {
     return out;
 }
 
+std::vector<std::uint16_t> u16_list(const ObjectView& list) {
+    std::vector<std::uint16_t> out;
+    if (!list) return out;
+    const auto count = list.u32(2);
+    const auto data = list.memory(4);
+    if (data.size() < std::size_t(count) * 2) return out;
+    out.resize(count);
+    for (std::uint32_t i = 0; i < count; ++i) out[i] = std::uint16_t(data[i * 2] | (data[i * 2 + 1] << 8));
+    return out;
+}
+
+// igCompressedAnimationSequenceQS (fields 801C2E40): quantized keys, each
+// component base + value * range (801E2F08 translation, 801E2E54 quaternion);
+// a key time is (value & 0x7FFF) << 23 ns, bit 15 its sign (801E2F98).
+std::shared_ptr<TransformSequence> compressed_sequence(const ObjectView& input) {
+    auto seq = std::make_shared<TransformSequence>();
+    const auto translations = u16_list(input.ref(2));
+    const auto quaternions = u16_list(input.ref(3));
+    const auto times = u16_list(input.ref(4));
+    const float translation_base = input.f32(5), translation_range = input.f32(6);
+    const float quaternion_base = input.f32(7), quaternion_range = input.f32(8);
+    auto value = [](std::uint16_t v, float base, float range) { return base + float(v) * range; };
+    for (std::size_t k = 0; k + 2 < translations.size(); k += 3)
+        seq->translations.push_back({value(translations[k], translation_base, translation_range),
+                                     value(translations[k + 1], translation_base, translation_range),
+                                     value(translations[k + 2], translation_base, translation_range)});
+    for (std::size_t k = 0; k + 3 < quaternions.size(); k += 4)
+        seq->rotations.push_back({value(quaternions[k], quaternion_base, quaternion_range),
+                                  value(quaternions[k + 1], quaternion_base, quaternion_range),
+                                  value(quaternions[k + 2], quaternion_base, quaternion_range),
+                                  value(quaternions[k + 3], quaternion_base, quaternion_range)});
+    for (const auto t : times) {
+        const std::int64_t magnitude = std::int64_t(t & 0x7FFFu) << 23;
+        seq->times.push_back((t & 0x8000u) ? -magnitude : magnitude);
+    }
+    seq->duration = input.i64(9);
+    seq->play_mode = input.i32(10);
+    seq->valid = !seq->times.empty();
+    return seq;
+}
+
 void add_strip(std::vector<std::uint32_t>& out, const std::vector<std::uint32_t>& source, std::size_t start, std::size_t length) {
     for (std::size_t i = 2; i < length; ++i) {
         std::uint32_t a = source[start + i - 2], b = source[start + i - 1], c = source[start + i];
@@ -462,6 +503,8 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
             seq->duration = input.i64(18);
             seq->valid = !seq->times.empty();
             n->sequence = std::move(seq);
+        } else if (input && input.is_a("igCompressedAnimationSequenceQS")) {
+            n->sequence = compressed_sequence(input);
         }
     } else if (view.is_a("igBillboard")) {
         n->kind = NodeKind::billboard;

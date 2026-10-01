@@ -1133,6 +1133,10 @@ void ModelCtrlManager::update(Engine& engine) {
         if (ram.follow_trace) {
             // 8030CD94: the recorder's last world matrix.
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
+            if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0 && ram.node)
+                engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace at (" +
+                           std::to_string(ram.node->matrix(3, 0)) + ", " + std::to_string(ram.node->matrix(3, 1)) + ", " +
+                           std::to_string(ram.node->matrix(3, 2)) + ")" + (ram.follow_trace->recorded ? "" : " (not recorded)"));
         } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
         bool moved = false;
         if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated()))
