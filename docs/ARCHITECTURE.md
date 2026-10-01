@@ -102,7 +102,12 @@ request table leads to a short sequence (803C49F4, millisecond delta times)
 whose notes play drum-program splits, each a DSP ADPCM sample. Effects without
 a request id are ADX files on two SE stream channels. beSeInfo holds each
 model's SE set: the sounds an ACTION2 action plays after a frame delay; a
-looping sound (type 4) stops at the model's next action. `render()` mixes the
+looping sound (type 4) stops at the model's next action. Levels follow the
+AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
+table at the pan and the right side by the table at 127 - pan, so effect
+voices (split pan through the 8045D130 curve; every shipped split is centred)
+and mono streams play at -3 dB per side while stereo streams keep each channel
+at full level on its own side (802A7F34). `render()` mixes the
 streams and effect voices as 48 kHz stereo PCM that `dw4_game` queues on an
 SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1`
 logs the effects). MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the

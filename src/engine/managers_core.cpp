@@ -836,6 +836,33 @@ void SoundManager::add_bank(Engine& engine, const ObjectView& data, bool common)
 namespace {
 // 0.1 dB volume (ADXT_SetOutVol) as a gain factor.
 float volume_gain(int volume) { return std::pow(10.0f, float(std::min(volume, 0)) / 200.0f); }
+
+// The AX mixer (MIXInitChannel 80259334, stereo output): the left side is
+// attenuated by the pan table at the pan, the right side by the table at
+// 127 - pan (0.1 dB, 804C79AC), so a centred voice plays at -3 dB on each
+// side; -90.4 dB and below is silence, +6 dB the ceiling.
+constexpr std::int16_t kMixPan[128] = {
+    0,    0,    -1,   -1,   -1,   -2,   -2,   -2,   -3,   -3,   -4,   -4,   -4,   -5,   -5,   -5,
+    -6,   -6,   -7,   -7,   -7,   -8,   -8,   -9,   -9,   -10,  -10,  -10,  -11,  -11,  -12,  -12,
+    -13,  -13,  -14,  -14,  -14,  -15,  -15,  -16,  -16,  -17,  -17,  -18,  -18,  -19,  -20,  -20,
+    -21,  -21,  -22,  -22,  -23,  -23,  -24,  -25,  -25,  -26,  -26,  -27,  -28,  -28,  -29,  -30,
+    -30,  -31,  -32,  -33,  -33,  -34,  -35,  -36,  -36,  -37,  -38,  -39,  -40,  -40,  -41,  -42,
+    -43,  -44,  -45,  -46,  -47,  -48,  -49,  -50,  -51,  -52,  -54,  -55,  -56,  -57,  -59,  -60,
+    -61,  -63,  -64,  -66,  -67,  -69,  -71,  -72,  -74,  -76,  -78,  -80,  -83,  -85,  -87,  -90,
+    -93,  -96,  -99,  -102, -106, -110, -115, -120, -126, -133, -140, -150, -163, -180, -210, -904};
+float mix_level(int db10) { return db10 <= -904 ? 0.0f : std::pow(10.0f, float(std::min(db10, 60)) / 200.0f); }
+std::pair<float, float> mix_pan(int pan) {
+    pan = std::clamp(pan, 0, 127);
+    return {mix_level(kMixPan[pan]), mix_level(kMixPan[127 - pan])};
+}
+// 8045D130: an SFP split's pan as the AX pan (803BA3F0).
+constexpr std::uint8_t kSfpPan[128] = {
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   1,   1,   1,   1,   1,   2,   2,   2,   2,   3,
+    3,   4,   4,   5,   5,   6,   7,   7,   8,   9,   10,  11,  12,  13,  14,  15,  16,  17,  19,  20,  21,  23,
+    24,  26,  28,  29,  31,  33,  35,  37,  39,  41,  43,  46,  48,  50,  52,  54,  56,  58,  60,  62,  64,  66,
+    68,  70,  72,  74,  76,  78,  80,  82,  84,  87,  89,  91,  93,  94,  96,  98,  100, 101, 103, 104, 106, 107,
+    108, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 119, 120, 121, 121, 122, 123, 123, 124, 124, 124, 125,
+    125, 125, 126, 126, 126, 126, 126, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
 } // namespace
 
 // PLAY <name> (80314FC8): a stream sound starts on its channel. A channel
@@ -975,9 +1002,9 @@ void SoundManager::run_track(SeTrack& track) {
             voice.pitch = std::exp2(double(cents) / 1200.0);
         }
         const float gain = track.gain * float(track.bank->bank->level(event.velocity)) / 255.0f;
-        const float pan = float(split->pan) / 127.0f;
-        voice.left = gain * std::min(1.0f, 2.0f * (1.0f - pan));
-        voice.right = gain * std::min(1.0f, 2.0f * pan);
+        const auto [left, right] = mix_pan(kSfpPan[std::min<std::size_t>(split->pan, 127)]);
+        voice.left = gain * left;
+        voice.right = gain * right;
         voices_.push_back(std::move(voice));
         if (voices_.size() > kMaxVoices) voices_.erase(voices_.begin());
     }
@@ -1046,11 +1073,19 @@ void SoundManager::mix_stream(Stream& stream, float* mix, std::size_t frames) {
             ramp = stream.ramp_to + (stream.ramp_from - stream.ramp_to) * float(stream.ramp_left) / float(stream.ramp_frames);
         const float gain = stream.gain * ramp * (stream.fade_left > 0 ? float(stream.fade_left) / 10.0f : 1.0f);
         const std::uint32_t channels = header.channels;
+        // 802A7F34: a stereo stream's channels sit hard left and right (pan
+        // 0 / 127, full level on their side), a mono stream in the centre.
+        const auto [centre_left, centre_right] = mix_pan(64);
         std::int16_t source[16];
         auto fetch = [&](std::array<float, 2>& frame) {
             if (stream.decoder->read(source, 1) == 0) return false;
-            frame[0] = float(source[0]);
-            frame[1] = float(channels > 1 ? source[1] : source[0]);
+            if (channels > 1) {
+                frame[0] = float(source[0]);
+                frame[1] = float(source[1]);
+            } else {
+                frame[0] = float(source[0]) * centre_left;
+                frame[1] = float(source[0]) * centre_right;
+            }
             return true;
         };
         const double step = double(header.sample_rate) / double(kOutputRate);
