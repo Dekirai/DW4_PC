@@ -68,7 +68,7 @@ original scripts keep running.
 | `CameraManager` | beCameraCtrl | box camera (802F2BC0: pivot at the players' centre, per-box rotation and distance transforms blended over 120 steps, SHAKE), named demo camera paths |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
 | `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience, sound effects and the opening movie play |
-| `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, provisional enemy AI |
+| `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, AIM / AIH AI (a provisional chase fallback without AI maps), rides and floor effects |
 | `GeneraterManager` | beGenerater (802FCF68, 802FD5C4) | enemy waves from DATABASE enemy rows, start/fill modes, `_callLua` on clear |
 | `WeaponManager` | beWeapon / PLAYERARMS (80318474) | weapon sequence labels for the carrying player |
 | `ActionManager` | beAction2 (802F1794) | joint/fade/flash/wait, motions on actors |

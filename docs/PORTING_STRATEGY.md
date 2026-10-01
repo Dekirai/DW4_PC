@@ -17,8 +17,9 @@
    earlier flows (title, character select, lobby intro) are rechecked.
 
 Host approximations are allowed only where the original behaviour is not yet
-recovered, and they are labelled as provisional (currently some camera
-behaviour and the riding collision query).
+recovered, and they are labelled as provisional (currently the follow camera
+of camera infos without box data and the enemy chase fallback for enemies
+without AI maps, neither of which the shipped stages use).
 
 ## Research tooling
 
