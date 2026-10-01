@@ -23,8 +23,13 @@ public:
     GlRenderer& operator=(const GlRenderer&) = delete;
 
     // `screen` is the 4:3 game area inside the window (GL window coordinates).
+    // `screen` is the original 4:3 picture; a wider `wide` area (widescreen
+    // option) shows more of the 3D scene at the same vertical field of view
+    // while the 2D layers stay on the 4:3 picture, except full-screen layers
+    // (fades, backdrops), which stretch over it.
     void render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
-                const engine::Vec4f& clear_color, const Viewport& screen, int window_width, int window_height);
+                const engine::Vec4f& clear_color, const Viewport& screen, const Viewport& wide, int window_width,
+                int window_height);
     // A movie picture (RGBA rows, top first) over the whole 4:3 screen.
     void draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
                     int window_height);

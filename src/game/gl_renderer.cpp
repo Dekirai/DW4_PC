@@ -516,10 +516,37 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     gl.Uniform1i(gl.u_shadow_pass, 0);
 }
 
-void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
-                        const engine::Vec4f& clear, const Viewport& screen, int window_width, int window_height) {
+void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& screen_camera,
+                        const engine::Vec4f& clear, const Viewport& screen, const Viewport& wide, int window_width,
+                        int window_height) {
     auto& gl = *gl_;
     render_shadow_map();
+    // Widescreen: perspective projections keep their vertical field of view
+    // and widen horizontally to the wide area.
+    const float widen = wide.width > screen.width && wide.height > 0 && screen.height > 0
+                            ? (float(screen.width) / float(screen.height)) / (float(wide.width) / float(wide.height))
+                            : 1.0f;
+    auto widened = [&](engine::Mat4 projection) {
+        for (int r = 0; r < 4; ++r) projection(r, 0) *= widen;
+        return projection;
+    };
+    engine::FrameCamera camera = screen_camera;
+    camera.projection = widened(screen_camera.projection);
+    // A 2D item reaching every edge of the picture (fade, backdrop).
+    auto full_screen = [&](const engine::DrawItem& item, const engine::Mat4& view, const engine::Mat4& projection) {
+        const auto& positions = item.geometry->positions;
+        if (positions.empty() || positions.size() > 64) return false;
+        const auto to_ndc = item.model * view * projection;
+        float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+        for (const auto& p : positions) {
+            const auto v = engine::transform_point(p, to_ndc);
+            x0 = std::min(x0, v.x);
+            x1 = std::max(x1, v.x);
+            y0 = std::min(y0, v.y);
+            y1 = std::max(y1, v.y);
+        }
+        return x0 <= -0.99f && x1 >= 0.99f && y0 <= -0.99f && y1 >= 0.99f;
+    };
     bool receivers_drawn = false;
     glDisable(GL_SCISSOR_TEST);
     glViewport(0, 0, window_width, window_height);
@@ -528,7 +555,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(screen.x, screen.y, screen.width, screen.height);
+    glScissor(wide.x, wide.y, wide.width, wide.height);
     glClearColor(clear.x, clear.y, clear.z, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     gl.UseProgram(program_);
@@ -543,12 +570,20 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const auto& s = item.state;
         // The shadow goes over the 3D scene, before the 2D layers.
         if (!receivers_drawn && s.projection && s.projection->operator()(2, 3) == 0.0f) {
-            glViewport(screen.x, screen.y, screen.width, screen.height);
-            glScissor(screen.x, screen.y, screen.width, screen.height);
+            glViewport(wide.x, wide.y, wide.width, wide.height);
+            glScissor(wide.x, wide.y, wide.width, wide.height);
             render_shadow_receivers(camera);
             receivers_drawn = true;
         }
-        if (s.viewport) {
+        const auto view = s.view.value_or(screen_camera.view);
+        const auto authored = s.projection.value_or(screen_camera.projection);
+        const bool flat = authored(2, 3) == 0.0f;
+        const bool on_wide = widen != 1.0f && !s.viewport && (!flat || full_screen(item, view, authored));
+        const auto proj = !flat && !s.viewport ? widened(authored) : authored;
+        if (on_wide) {
+            glViewport(wide.x, wide.y, wide.width, wide.height);
+            glScissor(wide.x, wide.y, wide.width, wide.height);
+        } else if (s.viewport) {
             const auto& v = *s.viewport;
             const int x = screen.x + int(std::lround(v[0] * sx));
             const int y = screen.y + int(std::lround((480 - v[1] - v[3]) * sy));
@@ -559,8 +594,6 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             glViewport(screen.x, screen.y, screen.width, screen.height);
             glScissor(screen.x, screen.y, screen.width, screen.height);
         }
-        const auto view = s.view.value_or(camera.view);
-        const auto proj = s.projection.value_or(camera.projection);
         // 2D layers (orthographic, e.g. the FONT camera with near 10) place
         // geometry in front of the near plane (item names at z -5); GX draws
         // it, so clamp depth there instead of clipping.
@@ -643,8 +676,8 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     }
     gl.BindVertexArray(0);
     if (!receivers_drawn) {
-        glViewport(screen.x, screen.y, screen.width, screen.height);
-        glScissor(screen.x, screen.y, screen.width, screen.height);
+        glViewport(wide.x, wide.y, wide.width, wide.height);
+        glScissor(wide.x, wide.y, wide.width, wide.height);
         render_shadow_receivers(camera);
     }
     glDisable(GL_DEPTH_CLAMP);

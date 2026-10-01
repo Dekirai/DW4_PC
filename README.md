@@ -128,7 +128,9 @@ path=E:\Games\Digimon World 4 - Extracted
 ```
 
 The same file keeps the PC settings that the F1 menu edits while playing:
-`[window]` `width`, `height`, `fullscreen` (borderless, also F11), `vsync`,
+`[window]` `width`, `height`, `fullscreen` (borderless, also F11), `widescreen`
+(the 3D view fills wide windows at the original vertical field of view while
+the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 `fps_limit` (presented frames per second, 0 = off; the game always updates
 60 times a second) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open) and
@@ -151,6 +153,7 @@ Test-run environment variables: `DW4_GOD` keeps players alive,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
+`DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 
@@ -173,7 +176,7 @@ gamepads control players 2 to 4. As on the original, holding B and X and
 then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
-F1 opens the menu: the Settings tab (display, frame limit, anti-aliasing,
+F1 opens the menu: the Settings tab (display, widescreen, frame limit, anti-aliasing,
 window size, volume, keyboard bindings, connected controllers) and the Debug
 tab (stage loader, player state, notes, script log). F11 toggles fullscreen,
 F2 a free camera.

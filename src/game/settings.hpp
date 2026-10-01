@@ -26,6 +26,7 @@ struct Settings {
     int height = 960;
     bool fullscreen = false; // borderless desktop fullscreen
     bool vsync = true;
+    bool widescreen = false; // 3D fills wide windows, 2D stays 4:3
     int fps_limit = 0;       // presented frames per second, 0 = no limit
     int msaa = 4;            // samples, applied at start-up
     // [audio]

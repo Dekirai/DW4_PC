@@ -189,8 +189,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const int msaa = options.smoke_frames ? 0 : settings.msaa;
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
-    const int window_width = options.smoke_frames ? 1280 : settings.width;
-    const int window_height = options.smoke_frames ? 960 : settings.height;
+    // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
+    // unless DW4_WIDESCREEN=1.
+    int window_width = options.smoke_frames ? 1280 : settings.width;
+    int window_height = options.smoke_frames ? 960 : settings.height;
+    if (options.smoke_frames) {
+        if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
+        settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
+    }
     SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
     SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
     if (!context && msaa > 1) {
@@ -492,7 +498,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             else { screen.width = width; screen.height = width * 3 / 4; }
             screen.x = (width - screen.width) / 2;
             screen.y = (height - screen.height) / 2;
-            renderer.render(items, camera, clear, screen, width, height);
+            // Widescreen: the 3D scene uses the whole window width.
+            dw4::game::Viewport wide = screen;
+            if (settings.widescreen && width * 3 > height * 4) {
+                wide.x = 0;
+                wide.width = width;
+            }
+            renderer.render(items, camera, clear, screen, wide, width, height);
             // A playing movie covers the screen with its current picture.
             if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
                 const auto* movie = sound->movie();
@@ -522,6 +534,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             SDL_SetWindowFullscreen(window, settings.fullscreen);
                             settings_changed = true;
                         }
+                        if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen))
+                            settings_changed = true;
                         if (ImGui::Checkbox("VSync", &settings.vsync)) {
                             SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
                             settings_changed = true;
@@ -539,7 +553,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             settings_changed = true;
                         }
                         ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
-                        static const int sizes[][2] = {{960, 720}, {1280, 960}, {1440, 1080}, {1920, 1440}, {2880, 2160}};
+                        static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
                         if (!settings.fullscreen) {
                             ImGui::TextUnformatted("Window size:");
                             for (const auto& size : sizes) {

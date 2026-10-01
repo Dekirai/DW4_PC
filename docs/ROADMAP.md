@@ -37,7 +37,7 @@ for every device or scene.
 | --- | --- | --- |
 | 3840×2160 | Host window preference | Verified 4K scene render target and readable UI |
 | Borderless | F1 menu / F11 borderless desktop fullscreen, saved | Game renderer resizes correctly across monitors |
-| 16:9 | Stored preference only | Camera, culling, HUD and menus adapted |
+| 16:9 | Widescreen option: 3D at the original vertical field of view across the window, 2D layers kept 4:3, full-screen fades stretched | Camera, culling, HUD and menus adapted |
 | 60–300 FPS | Provisional walking-preview frame pacing only; original game scheduling remains pending | At least 60 FPS on documented hardware and presentation options up to 300 FPS, decoupled from measured original simulation |
 | VSync Off | F1 menu swap interval, saved; frame limit 0-300 | Validated frame pacing in gameplay |
 | MSAA 8x | Host context and mesh/static-scene viewport requests; actual samples reported and offscreen resolve tested | Gameplay render passes and material coverage validation |
