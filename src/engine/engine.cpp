@@ -330,6 +330,102 @@ void Engine::begin_stage_load() {
     loading_node_ = nullptr;
     soft_reset_allowed_ = false;
     loader_state_ = 0;
+    // What survives into this stage, for save states.
+    StageSnapshot snapshot;
+    snapshot.stage = next;
+    snapshot.time = time_;
+    snapshot.frame = frame_;
+    snapshot.flags = flags_;
+    snapshot.counters = counters_;
+    snapshot.pad_input_enabled = pad_input_enabled_;
+    snapshot.cheats = cheats_;
+    snapshot.pads = pads_;
+    {
+        std::ostringstream combat, script;
+        combat << fight::generator();
+        script << script_random_;
+        snapshot.combat_random = combat.str();
+        snapshot.script_random = script.str();
+    }
+    if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
+    if (auto* particles = get<ParticleCtrlManager>()) snapshot.particle_random = particles->random_state();
+    if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
+    snapshot.serial = ++snapshot_serial_;
+    snapshot_ = std::move(snapshot);
+}
+
+void Engine::restore(const StageSnapshot& snapshot) {
+    time_ = snapshot.time;
+    frame_ = snapshot.frame;
+    flags_ = snapshot.flags;
+    counters_ = snapshot.counters;
+    pad_input_enabled_ = snapshot.pad_input_enabled;
+    cheats_ = snapshot.cheats;
+    pads_ = snapshot.pads;
+    {
+        std::istringstream combat(snapshot.combat_random), script(snapshot.script_random);
+        combat >> fight::generator();
+        script >> script_random_;
+    }
+    if (auto* sys = get<GameSystem>(); sys && snapshot.system) {
+        const Ram keep = sys->ram_;
+        *sys = *static_cast<const GameSystem*>(snapshot.system.get());
+        sys->ram_ = keep;
+        sys->registered_ = false;
+    }
+    if (auto* particles = get<ParticleCtrlManager>()) particles->set_random_state(snapshot.particle_random);
+    if (auto* sound = get<SoundManager>()) sound->restore(*this, snapshot.sound);
+    // The rest of the step that started the load (Engine::step).
+    pending_stage_ = snapshot.stage;
+    begin_stage_load();
+    process_stage_loader();
+    messenger_.update(*this);
+    demo_.update(*this);
+    for (auto& m : managers_) m->update(*this);
+}
+
+std::uint64_t Engine::fingerprint() {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 0x100000001b3ull;
+        }
+    };
+    auto mix_value = [&](auto value) { mix(&value, sizeof value); };
+    mix_value(frame_);
+    mix_value(time_);
+    mix(stage_name_.data(), stage_name_.size());
+    mix_value(loader_state_);
+    for (const auto& [key, value] : flags_) {
+        mix_value(key);
+        mix_value(value);
+    }
+    for (const auto& [key, value] : counters_) {
+        mix_value(key);
+        mix_value(value);
+    }
+    if (auto* sys = get<GameSystem>())
+        for (const auto& p : sys->players) {
+            mix_value(p.joined);
+            mix_value(p.hp);
+            mix_value(p.mp);
+            mix_value(p.bits);
+            mix_value(p.stats.level);
+            mix_value(p.stats.exp);
+        }
+    if (auto* models = get<ModelCtrlManager>())
+        for (const auto& ram : models->rams()) {
+            if (!ram->generated) continue;
+            mix(ram->info_name.data(), ram->info_name.size());
+            mix_value(ram->index);
+            mix_value(ram->hp);
+            mix(ram->seq_name.data(), ram->seq_name.size());
+            if (ram->node)
+                for (int i = 0; i < 3; ++i) mix_value(ram->node->matrix(3, i));
+        }
+    return h;
 }
 
 namespace {

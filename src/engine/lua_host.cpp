@@ -647,9 +647,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return string_result(buffer);
     }
     if (method == "SYSgetRandom") {
-        static std::mt19937 rng{0x4457344u};
         const auto limit = std::max(1, to_int(arg(0), 1));
-        return number(double(rng() % std::uint32_t(limit)));
+        return number(double(script_random_() % std::uint32_t(limit)));
     }
     if (method.starts_with("MAT")) {
         if (auto* mats = get<MatCtrlManager>()) {

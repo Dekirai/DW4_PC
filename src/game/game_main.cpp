@@ -271,8 +271,29 @@ struct KeyCapture {
     bool gamepad{};
 };
 
+// A save state: the snapshot of the running stage's load and the controller
+// input of every step since; loading replays them on a new engine.
+// One logged step: the controllers and whether a picture was drawn after it
+// (the loading screens run on the drawing clock, as on the original).
+struct LoggedStep {
+    std::array<dw4::engine::PadSample, 4> pads;
+    bool drawn{};
+};
+
+struct SaveState {
+    dw4::engine::StageSnapshot snapshot;
+    bool load_step_drawn{}; // a picture followed the step that started the stage load
+    std::vector<LoggedStep> inputs;
+    std::uint64_t fingerprint{};
+    int frame{};
+};
+
 int run(const Options& options, dw4::game::Settings& settings) {
-    dw4::engine::Engine engine(options.data);
+    // The engine is replaced in place when a save state loads (same storage,
+    // so `engine` keeps naming the running one).
+    std::optional<dw4::engine::Engine> engine_storage;
+    engine_storage.emplace(options.data);
+    auto& engine = *engine_storage;
     // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
     // program. Dolphin's GC/USA folder works too (same GCI files).
     // settings.ini [data] cards may point at another GCI root (e.g. Dolphin's
@@ -414,6 +435,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::uint32_t movie_serial = 0;
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots).
         bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
+        // Save states (this session): four slots, F5 saves and F9 loads slot 1.
+        std::array<std::optional<SaveState>, 4> state_slots;
+        std::vector<LoggedStep> input_log;
+        bool load_step_drawn = false, last_step_loaded = false;
+        std::uint64_t log_serial = 0;
+        std::string state_message;
+        auto message_until = std::chrono::steady_clock::now();
+        // DW4_STATE_TEST=N (test runs): save at frame N, run to the end, load
+        // and run again, comparing every frame's fingerprint.
+        const int state_test = options.smoke_frames && std::getenv("DW4_STATE_TEST") ? std::atoi(std::getenv("DW4_STATE_TEST")) : 0;
+        int state_pass = 1, state_mismatch = -1;
+        bool state_test_save = false; // saves after the picture, like F5 or the menu
+        std::vector<std::uint64_t> state_fingerprints;
         bool settings_changed = false;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
@@ -425,6 +459,64 @@ int run(const Options& options, dw4::game::Settings& settings) {
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
+        const auto card_root = engine.card_root();
+        auto can_save = [&]() -> std::string {
+            const auto* snapshot = engine.stage_snapshot();
+            if (!snapshot) return "No stage has loaded yet.";
+            if (snapshot->stage.rfind("stagis", 0) == 0) return "Save states work after the title screens.";
+            return {};
+        };
+        auto save_state = [&](std::size_t slot) {
+            if (const auto problem = can_save(); !problem.empty()) {
+                state_message = problem;
+            } else {
+                state_slots[slot] = SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame};
+                state_message = "Saved state " + std::to_string(slot + 1) + " (" + engine.stage_name() + ")";
+            }
+            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        };
+        auto load_state = [&](std::size_t slot) {
+            if (!state_slots[slot]) {
+                state_message = "State " + std::to_string(slot + 1) + " is empty.";
+                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                return;
+            }
+            const SaveState state = *state_slots[slot];
+            const auto started = std::chrono::steady_clock::now();
+            engine_storage.reset();
+            engine_storage.emplace(options.data);
+            engine.set_card_root(card_root);
+            engine.restore(state.snapshot);
+            std::vector<dw4::engine::DrawItem> replay_items;
+            dw4::engine::FrameCamera replay_camera;
+            dw4::engine::Vec4f replay_clear{};
+            dw4::engine::ShadowFrame replay_shadow;
+            if (state.load_step_drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
+            std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples) * 2);
+            auto* sound = engine.get<dw4::engine::SoundManager>();
+            for (const auto& step : state.inputs) {
+                engine.step(step.pads);
+                if (sound) sound->render(scratch.data(), std::size_t(kAudioFrameSamples)); // music position
+                if (step.drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
+            }
+            const bool exact = engine.fingerprint() == state.fingerprint;
+            input_log = state.inputs;
+            load_step_drawn = state.load_step_drawn;
+            last_step_loaded = false;
+            log_serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            frame = state.frame;
+            accumulator = 0;
+            renderer.clear_cache();
+            interpolator.reset();
+            rendered_stage.clear();
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+            char line[160];
+            std::snprintf(line, sizeof line, "Loaded state %zu (%zu steps replayed in %.1f s)%s", slot + 1, state.inputs.size(),
+                          seconds, exact ? "" : " - the replay differs from the saved session");
+            state_message = line;
+            if (options.smoke_frames) std::cout << "state: " << line << '\n';
+            message_until = std::chrono::steady_clock::now() + std::chrono::seconds(exact ? 2 : 6);
+        };
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -484,6 +576,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     capture.reset();
                     if (!show_menu && settings_changed && settings.save()) settings_changed = false;
                 }
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F5) save_state(0);
+                if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F9) load_state(0);
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F11 && !event.key.repeat) {
                     settings.fullscreen = !settings.fullscreen;
                     SDL_SetWindowFullscreen(window, settings.fullscreen);
@@ -671,8 +765,27 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pads[i].right = scale(slot_right[i]);
                 }
                 engine.step(pads);
+                // The input since the running stage's load, for save states.
+                if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
+                    log_serial = snapshot->serial;
+                    input_log.clear();
+                    load_step_drawn = false;
+                    last_step_loaded = true;
+                } else {
+                    input_log.push_back({pads, false});
+                    last_step_loaded = false;
+                }
                 mix_audio(kAudioFrameSamples);
                 ++frame;
+                if (state_test) {
+                    if (state_pass == 1) {
+                        if (frame == state_test) state_test_save = true;
+                        if (frame > state_test) state_fingerprints.push_back(engine.fingerprint());
+                    } else if (state_mismatch < 0) {
+                        const auto at = std::size_t(frame - state_test - 1);
+                        if (at < state_fingerprints.size() && state_fingerprints[at] != engine.fingerprint()) state_mismatch = frame;
+                    }
+                }
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
@@ -693,6 +806,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 interpolator.reset();
             }
             engine.render(items, camera, clear, &shadow);
+            if (steps > 0) {
+                if (last_step_loaded) load_step_drawn = true;
+                else if (!input_log.empty()) input_log.back().drawn = true;
+            }
+            if (state_test_save) {
+                save_state(0);
+                state_test_save = false;
+            }
             if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
             if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
                 interpolator.blend(items, camera, shadow, float(accumulator * 60.0));
@@ -846,6 +967,22 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             settings_changed = true;
                         }
                     }
+                    if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::TextDisabled("Kept until the program closes. F5 saves and F9 loads state 1.");
+                        for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
+                            ImGui::PushID(int(slot));
+                            if (ImGui::SmallButton("Save")) save_state(slot);
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Load")) load_state(slot);
+                            ImGui::SameLine();
+                            if (state_slots[slot])
+                                ImGui::Text("%zu: %s, %zu steps since its stage loaded", slot + 1, state_slots[slot]->snapshot.stage.c_str(),
+                                            state_slots[slot]->inputs.size());
+                            else
+                                ImGui::TextDisabled("%zu: empty", slot + 1);
+                            ImGui::PopID();
+                        }
+                    }
                     if (ImGui::CollapsingHeader("Texture packs")) {
                         ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
                         ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
@@ -922,6 +1059,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 ImGui::End();
             }
+            if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
+                ImGui::SetNextWindowPos(ImVec2(12, 12));
+                ImGui::SetNextWindowBgAlpha(0.6f);
+                ImGui::Begin("##state", nullptr,
+                             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                ImGui::TextUnformatted(state_message.c_str());
+                ImGui::End();
+            }
             ImGui::Render();
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -962,8 +1108,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 else if (now - next_present > interval * 4)
                     next_present = now;
             }
-            if (options.smoke_frames && frame >= options.smoke_frames) running = false;
+            if (options.smoke_frames && frame >= options.smoke_frames) {
+                if (state_test && state_pass == 1 && state_slots[0]) {
+                    load_state(0);
+                    state_pass = 2;
+                } else {
+                    running = false;
+                }
+            }
         }
+        if (state_test)
+            std::cout << "state test: " << (state_mismatch < 0 ? "identical after loading" : "differs from frame " + std::to_string(state_mismatch))
+                      << " (" << state_fingerprints.size() << " frames compared)\n";
         if (settings_changed && !options.smoke_frames) settings.save();
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
         if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())

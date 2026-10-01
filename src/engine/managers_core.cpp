@@ -919,6 +919,8 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
         const auto& archives = engine.resources().archives();
         if (archive >= archives.size()) throw std::runtime_error("no archive " + std::to_string(archive));
         stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
+        stream.file = file;
+        stream.frames_read = 0;
     } catch (const std::exception& error) {
         engine.note("audio stream " + file + ": " + error.what());
         return false;
@@ -1079,6 +1081,7 @@ void SoundManager::mix_stream(Stream& stream, float* mix, std::size_t frames) {
         std::int16_t source[16];
         auto fetch = [&](std::array<float, 2>& frame) {
             if (stream.decoder->read(source, 1) == 0) return false;
+            ++stream.frames_read;
             if (channels > 1) {
                 frame[0] = float(source[0]);
                 frame[1] = float(source[1]);
@@ -1246,6 +1249,95 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
     engine.note("audio " + std::string(command) + (packet.strings.empty() ? "" : " " + std::string(packet.string(0))));
     return true;
 }
+namespace {
+// The stream state a save state keeps (simulation-visible fields and the
+// decoding position, so the music goes on where it was).
+struct StreamState {
+    std::string name, file;
+    std::uint64_t frames_read{};
+    float gain = 1.0f;
+    int fade_left{}, ready_in{}, ramp_frames{}, ramp_left{};
+    bool paused{};
+    float ramp_from = 1.0f, ramp_to = 1.0f;
+};
+struct SoundState {
+    std::vector<StreamState> streams;
+    std::string current_bgm;
+    int se_volume{};
+    std::uint32_t random{};
+};
+} // namespace
+
+std::shared_ptr<const void> SoundManager::persistent() const {
+    auto state = std::make_shared<SoundState>();
+    for (const auto& stream : streams_) {
+        StreamState s;
+        if (stream.decoder) {
+            s.name = stream.name;
+            s.file = stream.file;
+            s.frames_read = stream.frames_read;
+        }
+        s.gain = stream.gain;
+        s.fade_left = stream.fade_left;
+        s.ready_in = stream.ready_in;
+        s.ramp_frames = stream.ramp_frames;
+        s.ramp_left = stream.ramp_left;
+        s.paused = stream.paused;
+        s.ramp_from = stream.ramp_from;
+        s.ramp_to = stream.ramp_to;
+        state->streams.push_back(std::move(s));
+    }
+    state->current_bgm = current_bgm_;
+    state->se_volume = se_volume_;
+    state->random = random_;
+    return state;
+}
+
+void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& opaque) {
+    if (!opaque) return;
+    const auto& state = *static_cast<const SoundState*>(opaque.get());
+    for (std::size_t i = 0; i < streams_.size() && i < state.streams.size(); ++i) {
+        const auto& s = state.streams[i];
+        auto& stream = streams_[i];
+        stream = Stream{};
+        if (!s.file.empty()) {
+            unsigned archive = 0, entry = 0;
+            char close = 0;
+            try {
+                const auto& archives = engine.resources().archives();
+                if (std::sscanf(s.file.c_str(), "[%u.%u%c", &archive, &entry, &close) == 3 && archive < archives.size()) {
+                    stream.decoder = std::make_unique<adx::Decoder>(archives[archive].read(entry, 64u * 1024u * 1024u));
+                    std::int16_t scratch[16 * 512];
+                    const std::uint32_t channels = std::max<std::uint32_t>(1, stream.decoder->header().channels);
+                    std::uint64_t left = s.frames_read;
+                    while (left > 0) {
+                        const auto chunk = std::size_t(std::min<std::uint64_t>(left, sizeof scratch / sizeof scratch[0] / channels));
+                        const auto got = stream.decoder->read(scratch, chunk);
+                        if (got == 0) break;
+                        left -= got;
+                    }
+                    stream.name = s.name;
+                    stream.file = s.file;
+                    stream.frames_read = s.frames_read - left;
+                }
+            } catch (const std::exception&) {
+                stream.decoder.reset();
+            }
+        }
+        stream.gain = s.gain;
+        stream.fade_left = s.fade_left;
+        stream.ready_in = s.ready_in;
+        stream.ramp_frames = s.ramp_frames;
+        stream.ramp_left = s.ramp_left;
+        stream.paused = s.paused;
+        stream.ramp_from = s.ramp_from;
+        stream.ramp_to = s.ramp_to;
+    }
+    current_bgm_ = state.current_bgm;
+    se_volume_ = state.se_volume;
+    random_ = state.random;
+}
+
 void SoundManager::update(Engine& engine) {
     for (auto& stream : streams_) {
         if (stream.ready_in > 0) --stream.ready_in;

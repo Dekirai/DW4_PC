@@ -8,6 +8,7 @@
 #include "dw4/resources.hpp"
 
 #include <array>
+#include <random>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -177,9 +178,37 @@ struct Cheats {
     bool one_hit{};     // a damaging player hit defeats the target
 };
 
+// The state that survives a stage load, taken when one starts (everything
+// else is rebuilt by the load). With the controller input of every step since
+// then it reproduces the session exactly: save states restore it into a new
+// engine and replay the steps.
+struct StageSnapshot {
+    std::string stage;
+    std::int64_t time{};
+    std::uint64_t frame{};
+    std::map<std::int32_t, std::uint8_t> flags;
+    std::map<std::int32_t, std::int32_t> counters;
+    bool pad_input_enabled{};
+    Cheats cheats;
+    OriginalPads pads;
+    std::string combat_random, script_random; // generator states
+    std::shared_ptr<const void> system;       // GameSystem copy
+    std::uint32_t particle_random{};
+    std::shared_ptr<const void> sound;        // SoundManager streams
+    std::uint64_t serial{};                   // counts the snapshots of an engine
+};
+
 class Engine {
 public:
     explicit Engine(const std::filesystem::path& data_root);
+    // The snapshot of the running stage's load (null before the first).
+    const StageSnapshot* stage_snapshot() const { return snapshot_ ? &*snapshot_ : nullptr; }
+    // On a new engine: the state of the snapshot, then the rest of the step
+    // that started that stage load.
+    void restore(const StageSnapshot& snapshot);
+    // A hash of the simulated state (frame, stage, flags, players, models)
+    // to check that a replay arrived where the session was.
+    std::uint64_t fingerprint();
     Cheats& cheats() { return cheats_; }
     const Cheats& cheats() const { return cheats_; }
     ~Engine();
@@ -238,6 +267,7 @@ public:
     std::map<std::int32_t, std::int32_t>& counters() { return counters_; }
     bool pad_input_enabled() const { return pad_input_enabled_; }
     void set_pad_input_enabled(bool value) { pad_input_enabled_ = value; }
+    std::mt19937& script_random() { return script_random_; }
     std::int32_t area() const { return 1; }     // USA disc: AUS assets (SYSgetArea)
     std::int32_t country() const { return 1; }  // USA text (SYSgetCountry)
 
@@ -290,6 +320,9 @@ private:
     int loader_state_ = -1;
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Cheats cheats_;
+    std::optional<StageSnapshot> snapshot_;
+    std::uint64_t snapshot_serial_{};
+    std::mt19937 script_random_{0x4457344u}; // SYSgetRandom
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};

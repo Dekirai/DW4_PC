@@ -40,6 +40,7 @@ std::mt19937& rng() {
 
 namespace fight {
 std::uint32_t random() { return rng()(); }
+std::mt19937& generator() { return rng(); }
 
 namespace {
 int database(Engine& engine, std::string_view table, int row, std::string_view column, int fallback = 0) {

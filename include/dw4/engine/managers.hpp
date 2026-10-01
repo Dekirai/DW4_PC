@@ -7,6 +7,7 @@
 #include "dw4/sfp.hpp"
 
 #include <array>
+#include <random>
 #include <map>
 #include <memory>
 #include <optional>
@@ -249,6 +250,9 @@ public:
         std::uint32_t serial{}; // changes with every PLAY
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
+    // Save states: the streams that play on into the next stage, and back.
+    std::shared_ptr<const void> persistent() const;
+    void restore(Engine& engine, const std::shared_ptr<const void>& state);
 
 private:
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
@@ -259,6 +263,8 @@ private:
     };
     struct Stream {
         std::string name;
+        std::string file;                // "[archive.entry]" it was opened from
+        std::uint64_t frames_read{};     // source frames decoded so far
         std::unique_ptr<adx::Decoder> decoder;
         float gain = 1.0f;
         int fade_left{}; // frames of a running fade-out (10, 8031D5D0)
@@ -370,6 +376,8 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    std::uint32_t random_state() const { return random_; }
+    void set_random_state(std::uint32_t value) { random_ = value; }
 
 private:
     struct ParticleRam : Ram {
@@ -1466,6 +1474,7 @@ struct FightResult {
 };
 namespace fight {
 std::uint32_t random();
+std::mt19937& generator(); // FIGHTCALC random numbers (state for save states)
 const char* bullet_name(int kind);
 bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down);
 bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);

@@ -162,6 +162,7 @@ void ModelCtrlManager::clear_stage(Engine&) {
     item_labels_.fill(false);
     sequences_.clear();
     hit_bodies_.clear();
+    homings_.clear(); // keyed by documents of the stage
 }
 
 ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int index) {
