@@ -1,5 +1,6 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/save_menu.hpp"
+#include "dw4/engine/state_archive.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/sfd.hpp"
 
@@ -1336,6 +1337,36 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     current_bgm_ = state.current_bgm;
     se_volume_ = state.se_volume;
     random_ = state.random;
+}
+
+void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque) {
+    bool present = opaque != nullptr;
+    a.io(present);
+    if (!present) return;
+    auto state = a.reading() ? std::make_shared<SoundState>() : std::make_shared<SoundState>(*static_cast<const SoundState*>(opaque.get()));
+    std::uint32_t count = std::uint32_t(state->streams.size());
+    a.io(count);
+    if (a.reading()) {
+        if (count > 64) throw std::runtime_error("save state holds an implausible stream count");
+        state->streams.resize(count);
+    }
+    for (auto& s : state->streams) {
+        a.io(s.name);
+        a.io(s.file);
+        a.io(s.frames_read);
+        a.io(s.gain);
+        a.io(s.fade_left);
+        a.io(s.ready_in);
+        a.io(s.ramp_frames);
+        a.io(s.ramp_left);
+        a.io(s.paused);
+        a.io(s.ramp_from);
+        a.io(s.ramp_to);
+    }
+    a.io(state->current_bgm);
+    a.io(state->se_volume);
+    a.io(state->random);
+    if (a.reading()) opaque = state;
 }
 
 void SoundManager::update(Engine& engine) {

@@ -8,6 +8,7 @@
 #include "dw4/resources.hpp"
 
 #include <array>
+#include <span>
 #include <random>
 #include <cstdint>
 #include <deque>
@@ -197,6 +198,11 @@ struct StageSnapshot {
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
 };
+
+// Save state files: a snapshot as bytes and back (throws on damaged or
+// foreign data).
+std::vector<std::uint8_t> encode_snapshot(const StageSnapshot& snapshot);
+StageSnapshot decode_snapshot(std::span<const std::uint8_t> bytes);
 
 class Engine {
 public:

@@ -10,6 +10,7 @@
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
 #include "dw4/disc.hpp"
+#include "dw4/engine/state_archive.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -288,6 +289,86 @@ struct SaveState {
     int frame{};
 };
 
+// Save state files (saves/states/state<N>.dw4state next to the program):
+// "DW4STATE", version, the snapshot bytes, then the logged steps.
+constexpr std::uint32_t kStateFileVersion = 1;
+
+bool write_state_file(const std::filesystem::path& path, const SaveState& state) {
+    std::vector<std::uint8_t> out;
+    dw4::engine::StateArchive a(out);
+    std::array<char, 8> magic{'D', 'W', '4', 'S', 'T', 'A', 'T', 'E'};
+    a.io(magic);
+    std::uint32_t version = kStateFileVersion;
+    a.io(version);
+    auto snapshot = dw4::engine::encode_snapshot(state.snapshot);
+    a.io(snapshot);
+    bool drawn = state.load_step_drawn;
+    a.io(drawn);
+    std::uint32_t count = std::uint32_t(state.inputs.size());
+    a.io(count);
+    for (auto step : state.inputs) {
+        for (auto& pad : step.pads) {
+            a.io(pad.connected);
+            a.io(pad.left.x);
+            a.io(pad.left.y);
+            a.io(pad.right.x);
+            a.io(pad.right.y);
+            a.io(pad.buttons);
+        }
+        a.io(step.drawn);
+    }
+    std::uint64_t fingerprint = state.fingerprint;
+    a.io(fingerprint);
+    std::int32_t frame = state.frame;
+    a.io(frame);
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+    return bool(file);
+}
+
+std::optional<SaveState> read_state_file(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return std::nullopt;
+    const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
+    try {
+        dw4::engine::StateArchive a{std::span<const std::uint8_t>(bytes)};
+        std::array<char, 8> magic{};
+        a.io(magic);
+        std::uint32_t version = 0;
+        a.io(version);
+        if (std::string(magic.data(), 8) != "DW4STATE" || version != kStateFileVersion) return std::nullopt;
+        SaveState state;
+        std::vector<std::uint8_t> snapshot;
+        a.io(snapshot);
+        state.snapshot = dw4::engine::decode_snapshot(snapshot);
+        a.io(state.load_step_drawn);
+        std::uint32_t count = 0;
+        a.io(count);
+        if (count > bytes.size()) return std::nullopt;
+        state.inputs.resize(count);
+        for (auto& step : state.inputs) {
+            for (auto& pad : step.pads) {
+                a.io(pad.connected);
+                a.io(pad.left.x);
+                a.io(pad.left.y);
+                a.io(pad.right.x);
+                a.io(pad.right.y);
+                a.io(pad.buttons);
+            }
+            a.io(step.drawn);
+        }
+        a.io(state.fingerprint);
+        std::int32_t frame = 0;
+        a.io(frame);
+        state.frame = frame;
+        return state;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 int run(const Options& options, dw4::game::Settings& settings) {
     // The engine is replaced in place when a save state loads (same storage,
     // so `engine` keeps naming the running one).
@@ -460,6 +541,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
         const auto card_root = engine.card_root();
+        // State files live in saves/states next to the program (not in test runs).
+        std::filesystem::path state_dir;
+        if (const char* program = SDL_GetBasePath()) state_dir = std::filesystem::path(program) / "saves" / "states";
+        auto state_path = [&](std::size_t slot) { return state_dir / ("state" + std::to_string(slot + 1) + ".dw4state"); };
+        if (!options.smoke_frames && !state_dir.empty())
+            for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
         auto can_save = [&]() -> std::string {
             const auto* snapshot = engine.stage_snapshot();
             if (!snapshot) return "No stage has loaded yet.";
@@ -472,6 +559,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
             } else {
                 state_slots[slot] = SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame};
                 state_message = "Saved state " + std::to_string(slot + 1) + " (" + engine.stage_name() + ")";
+                if (!options.smoke_frames && !state_dir.empty() && !write_state_file(state_path(slot), *state_slots[slot]))
+                    state_message += " - the file could not be written";
             }
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         };
@@ -968,7 +1057,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                     }
                     if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        ImGui::TextDisabled("Kept until the program closes. F5 saves and F9 loads state 1.");
+                        ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
                         for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
                             ImGui::PushID(int(slot));
                             if (ImGui::SmallButton("Save")) save_state(slot);
@@ -1110,7 +1199,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             if (options.smoke_frames && frame >= options.smoke_frames) {
                 if (state_test && state_pass == 1 && state_slots[0]) {
-                    load_state(0);
+                    // DW4_STATE_FILE=path: the state goes through a file first.
+                    if (const char* file = std::getenv("DW4_STATE_FILE")) {
+                        write_state_file(file, *state_slots[0]);
+                        state_slots[0] = read_state_file(file);
+                        std::cout << "state file: " << (state_slots[0] ? "read back" : "unreadable") << '\n';
+                    }
+                    if (state_slots[0]) load_state(0);
                     state_pass = 2;
                 } else {
                     running = false;

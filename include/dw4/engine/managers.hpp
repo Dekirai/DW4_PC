@@ -253,6 +253,7 @@ public:
     // Save states: the streams that play on into the next stage, and back.
     std::shared_ptr<const void> persistent() const;
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
+    static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state);
 
 private:
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file

@@ -88,6 +88,8 @@ public:
     // pad, device enumeration, and slot ownership remain caller responsibilities.
     void update(const Samples& samples, bool frozen = false);
     void reset() noexcept { states_ = {}; }
+    // Save states: the slots as they were.
+    void restore(const States& states) noexcept { states_ = states; }
     const States& states() const noexcept { return states_; }
 
 private:

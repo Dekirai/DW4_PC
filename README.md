@@ -207,12 +207,13 @@ notes, script log). F11 toggles fullscreen,
 F2 a free camera.
 
 Save states: F5 saves and F9 loads state 1; the Settings tab has four
-slots (kept until the program closes). A state is the snapshot taken when
+slots, kept as `saves/states/state<N>.dw4state` next to the program. A state is the snapshot taken when
 the running stage loaded plus every controller input since, replayed on a new
 engine (a few hundred steps per second of play load in well under a second);
 the game is deterministic, so the loaded state matches the saved one exactly
 (`DW4_STATE_TEST=N` checks this in test runs: save at frame N, load at the end
-and compare every frame again). They work after the title screens.
+and compare every frame again; `DW4_STATE_FILE=path` also sends the state
+through a file). They work after the title screens.
 
 ## License
 
