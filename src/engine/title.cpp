@@ -1,5 +1,6 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/save_menu.hpp"
+#include "menu_text.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -319,10 +320,19 @@ void Title2Manager::update_ram(Engine& engine, TitleRam& ram) {
 void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool down, bool left, bool right,
                                   std::uint32_t trigger) {
     // Option window (80369284 case 4). Row 0 camera mode, row 1 light mode,
-    // row 2 sound (kind 1/2 windows only), row 3 exit. TEXTORDER value text
-    // is not reconstructed yet.
+    // row 2 sound (kind 1/2 windows only), row 3 exit.
     auto& models = ram.models;
     auto& o = ram.option;
+    // 8036A0E4 / 8036A8EC: the values (TEXTORDER 0xF0002..0xF000D).
+    auto show_values = [&] {
+        if (o.kind != 0) {
+            static const int sound[7] = {0xF0007, 0xF0008, 0xF0009, 0xF000A, 0xF000C, 0xF000B, 0xF000D};
+            menu::text_order_show(engine, 0xF0006);
+            menu::text_order_show(engine, o.edit_sound >= 0 && o.edit_sound <= 6 ? sound[o.edit_sound] : 0xF0007);
+        }
+        menu::text_order_show(engine, o.edit_camera == 0 ? 0xF0002 : 0xF0003);
+        menu::text_order_show(engine, o.edit_light == 0 ? 0xF0004 : 0xF0005);
+    };
     auto enter = [&](int state) {
         ram.state = state;
         ram.sub = ram.step = ram.detail = 0;
@@ -342,6 +352,8 @@ void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool d
             o.confirmed = false;
             next_step();
         } else if (ram.step == 1 && models.sequences_done()) {
+            menu::text_order_show(engine, 0xF0001);
+            show_values();
             next_sub();
         }
     } else if (ram.sub == 1) {
@@ -403,6 +415,7 @@ void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool d
             } else if (models.is_live(engine, 0, "j_optioncursor12")) {
                 models.close(engine, 0, "j_optioncursor12", "SQ_CLOSE", false);
             }
+            show_values();
             ram.step = 0;
             ram.detail = 0;
         }
@@ -410,6 +423,13 @@ void Title2Manager::update_option(Engine& engine, TitleRam& ram, bool up, bool d
         if (ram.step == 0) {
             models.close(engine, 0, "j_optioncursor11", numbered("SQ_LINEON", o.row), true);
             if (o.row != 3) models.close(engine, 0, "j_optioncursor12", "SQ_CLOSE", true);
+            menu::text_order_clear(engine, 0xF0001);
+            if (o.kind != 0) {
+                menu::text_order_clear(engine, 0xF0006);
+                menu::text_order_clear(engine, 0xF000D);
+            }
+            menu::text_order_clear(engine, 0xF0002);
+            menu::text_order_clear(engine, 0xF0005);
             next_step();
         } else if (ram.step == 1) {
             if (models.closes_done()) next_step();

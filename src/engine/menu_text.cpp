@@ -8,10 +8,13 @@ namespace {
 
 // Line sets a TEXTORDER entry clears first (the 804E8xxx tables, one per
 // player; the player index is the id's high half).
-enum class ClearSet { join, choice, difficulty, message, choice_lines, slots, slot_label, slot_warning, box, status, status_check };
+enum class ClearSet {
+    join, choice, difficulty, message, choice_lines, slots, slot_label, slot_warning, box, status, status_check,
+    option_labels, option_camera, option_light, option_sound_label, option_sound
+};
 
 struct TextOrderEntry {
-    int id;         // low 16 bits of the message id
+    int id;         // low 16 bits of the message id (all 20 for the title's 0xF entries)
     int call;       // text script call number of player 0 (player p adds p * 10000)
     ClearSet clears;
     bool continued; // 0x100000: the next entry's call follows
@@ -64,13 +67,27 @@ constexpr TextOrderEntry kTextOrder[] = {
     {0x202D, 2302, ClearSet::message, false},    {0x202E, 2304, ClearSet::slot_warning, false},
     {0x2100, 2200, ClearSet::slot_label, false}, {0x2101, 2201, ClearSet::slot_label, false},
     {0x2200, 2400, ClearSet::slot_label, false}, {0x2201, 2401, ClearSet::slot_label, false},
+    // The title's option window (TITLEFONT01): labels, camera, light, sound.
+    {0xF0001, 30, ClearSet::option_labels, false},     {0xF0002, 40, ClearSet::option_camera, false},
+    {0xF0003, 41, ClearSet::option_camera, false},     {0xF0004, 42, ClearSet::option_light, false},
+    {0xF0005, 43, ClearSet::option_light, false},      {0xF0006, 44, ClearSet::option_sound_label, false},
+    {0xF0007, 45, ClearSet::option_sound, false},      {0xF0008, 46, ClearSet::option_sound, false},
+    {0xF0009, 47, ClearSet::option_sound, false},      {0xF000A, 48, ClearSet::option_sound, false},
+    {0xF000B, 49, ClearSet::option_sound, false},      {0xF000C, 50, ClearSet::option_sound, false},
+    {0xF000D, 51, ClearSet::option_sound, false},
 };
 
+// The original matches all 20 bits (80362614); the per-player copies of the
+// menu entries (player in bits 16..19, call + 10000 per player) are folded
+// into one entry here.
 const TextOrderEntry* find_entry(int id) {
     for (const auto& entry : kTextOrder)
-        if (entry.id == (id & 0xFFFF)) return &entry;
+        if (entry.id == (id & 0xFFFFF)) return &entry;
+    for (const auto& entry : kTextOrder)
+        if (entry.id <= 0xFFFF && entry.id == (id & 0xFFFF)) return &entry;
     return nullptr;
 }
+int entry_player(const TextOrderEntry& entry, int id) { return entry.id > 0xFFFF ? 0 : (id >> 16) & 0xF; }
 
 void clear_lines(Engine& engine, const TextOrderEntry& entry, int player) {
     auto clear = [&](std::string_view layer, int index) { text_line_clear(engine, layer, player, index); };
@@ -93,11 +110,18 @@ void clear_lines(Engine& engine, const TextOrderEntry& entry, int player) {
     case ClearSet::box: clear("CHRSELFONT08", entry.id & 3); break;
     case ClearSet::status: clear("CHRSELFONT09", 1); break;
     case ClearSet::status_check: clear("CHRSELFONT09", 0); break;
+    case ClearSet::option_labels:
+        for (const char* font : {"font100", "font101", "font106", "font107", "font108", "font109"})
+            text_command(engine, "SWITCH", {"TITLEFONT01", font, "CLR"});
+        break;
+    case ClearSet::option_camera: text_command(engine, "SWITCH", {"TITLEFONT01", "font103", "CLR"}); break;
+    case ClearSet::option_light: text_command(engine, "SWITCH", {"TITLEFONT01", "font104", "CLR"}); break;
+    case ClearSet::option_sound_label: text_command(engine, "SWITCH", {"TITLEFONT01", "font102", "CLR"}); break;
+    case ClearSet::option_sound: text_command(engine, "SWITCH", {"TITLEFONT01", "font105", "CLR"}); break;
     }
 }
 
-void run_call(Engine& engine, int id, int call) {
-    const int player = (id >> 16) & 0xF;
+void run_call(Engine& engine, int id, int player, int call) {
     if (auto* sys = engine.get<GameSystem>()) sys->text_call = player * 10000 + call;
     engine.run_script((id & 0xF000) == 0 ? "txt_mem.lua" : "txt_Tar.lua");
 }
@@ -136,13 +160,14 @@ void text_order_show(Engine& engine, int id, bool continued) {
         engine.note("TEXTORDER id " + std::to_string(id & 0xFFFF));
         return;
     }
-    clear_lines(engine, *entry, (id >> 16) & 0xF);
-    run_call(engine, id, entry->call);
-    if (continued && entry->continued && entry + 1 != std::end(kTextOrder)) run_call(engine, id, (entry + 1)->call);
+    const int player = entry_player(*entry, id);
+    clear_lines(engine, *entry, player);
+    run_call(engine, id, player, entry->call);
+    if (continued && entry->continued && entry + 1 != std::end(kTextOrder)) run_call(engine, id, player, (entry + 1)->call);
 }
 
 void text_order_clear(Engine& engine, int id) {
-    if (const auto* entry = find_entry(id)) clear_lines(engine, *entry, (id >> 16) & 0xF);
+    if (const auto* entry = find_entry(id)) clear_lines(engine, *entry, entry_player(*entry, id));
 }
 
 void text_line_clear(Engine& engine, std::string_view layer, int player, int index) {
