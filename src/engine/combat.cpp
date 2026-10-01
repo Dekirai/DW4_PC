@@ -984,6 +984,7 @@ void GameSystem::store_bit_chip(int slot) {
 void GameSystem::change_hp(Engine& engine, int slot, int delta) {
     auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
     if (player.hp == 0) return;
+    if (delta < 0 && engine.cheats().god) return;
     player.hp = std::clamp(player.hp + delta, 0, player.max_hp);
     if (auto* models = engine.get<ModelCtrlManager>())
         if (auto* model = models->find(player.digimon, slot)) model->hp = player.hp;
@@ -996,6 +997,7 @@ void GameSystem::change_hp(Engine& engine, int slot, int delta) {
 
 void GameSystem::change_mp(Engine& engine, int slot, int delta) {
     auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    if (delta < 0 && engine.cheats().infinite_mp) return;
     player.mp = std::clamp(player.mp + delta, 0, player.max_mp);
     Packet percent, value;
     percent.floats.push_back(100.0f * float(player.mp) / float(std::max(player.max_mp, 1)));
@@ -1028,43 +1030,74 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
         exp = slot == killer ? exp / 50 : exp / 100;
         if (slot == killer) killer_gain = exp;
         stats.exp += exp;
-        bool leveled = false;
-        while (stats.level < 999 && stats.next_exp <= stats.exp) {
-            ++stats.level;
-            prepare_player(engine, slot);
-            leveled = true;
-        }
-        if (!leveled) continue;
-        store_species(slot);
-        player.hp = player.max_hp;
-        player.mp = player.max_mp;
-        auto* models = engine.get<ModelCtrlManager>();
-        std::string name = player.digimon;
-        if (models)
-            if (auto* model = models->find(name, slot)) {
-                model->max_hp = player.max_hp;
-                model->hp = player.hp;
-            }
-        engine.log("player " + std::to_string(slot) + " reached level " + std::to_string(stats.level));
-        auto send = [&](const char* category, const char* target, const char* command, Packet p) {
-            engine.messenger().send(engine, category, target, slot, command, p);
-        };
-        Packet effect;
-        effect.strings.emplace_back("i_getitempnl01");
-        effect.strings.emplace_back("SQ_LVUP");
-        send("MODELCTRL", name.c_str(), "SETEFFECT", effect);
-        Packet level, full, hp, mp;
-        level.ints.push_back(stats.level);
-        full.floats.push_back(100.0f);
-        hp.ints.push_back(player.hp);
-        mp.ints.push_back(player.mp);
-        send("NUMBERCTRL", "lvnm", "SETVALUE", level);
-        send("METERCTRL", "hpmt", "SETPERCENT", full);
-        send("NUMBERCTRL", "hpnm", "SETVALUE", hp);
-        send("METERCTRL", "mpmt", "SETPERCENT", full);
-        send("NUMBERCTRL", "mpnm", "SETVALUE", mp);
+        apply_level_ups(engine, slot);
     }
     return killer_gain;
+}
+
+bool GameSystem::apply_level_ups(Engine& engine, int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto& stats = player.stats;
+    bool leveled = false;
+    while (stats.level < 999 && stats.next_exp <= stats.exp) {
+        ++stats.level;
+        prepare_player(engine, slot);
+        leveled = true;
+    }
+    if (!leveled) return false;
+    store_species(slot);
+    player.hp = player.max_hp;
+    player.mp = player.max_mp;
+    auto* models = engine.get<ModelCtrlManager>();
+    std::string name = player.digimon;
+    if (models)
+        if (auto* model = models->find(name, slot)) {
+            model->max_hp = player.max_hp;
+            model->hp = player.hp;
+        }
+    engine.log("player " + std::to_string(slot) + " reached level " + std::to_string(stats.level));
+    auto send = [&](const char* category, const char* target, const char* command, Packet p) {
+        engine.messenger().send(engine, category, target, slot, command, p);
+    };
+    Packet effect;
+    effect.strings.emplace_back("i_getitempnl01");
+    effect.strings.emplace_back("SQ_LVUP");
+    send("MODELCTRL", name.c_str(), "SETEFFECT", effect);
+    Packet level, full, hp, mp;
+    level.ints.push_back(stats.level);
+    full.floats.push_back(100.0f);
+    hp.ints.push_back(player.hp);
+    mp.ints.push_back(player.mp);
+    send("NUMBERCTRL", "lvnm", "SETVALUE", level);
+    send("METERCTRL", "hpmt", "SETPERCENT", full);
+    send("NUMBERCTRL", "hpnm", "SETVALUE", hp);
+    send("METERCTRL", "mpmt", "SETPERCENT", full);
+    send("NUMBERCTRL", "mpnm", "SETVALUE", mp);
+    return true;
+}
+
+void GameSystem::cheat_levels(Engine& engine, int slot, int levels) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    if (!player.joined || player.hp == 0) return;
+    if (!player.stats.ready) prepare_player(engine, slot);
+    auto& stats = player.stats;
+    const int target = std::clamp(stats.level + levels, 1, 999);
+    // The EXP that reaches the level (NEXTEXP of the level below).
+    const int below = target - 1;
+    stats.exp = std::max(stats.exp, (below + 140) * below * below + below * 200);
+    apply_level_ups(engine, slot);
+}
+
+void GameSystem::cheat_bits(int slot, int amount) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    player.bits = std::clamp(player.bits + amount, 0, 9999999);
+}
+
+void GameSystem::cheat_refill(Engine& engine, int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    if (!player.joined || player.hp == 0) return;
+    change_hp(engine, slot, player.max_hp);
+    change_mp(engine, slot, player.max_mp);
 }
 
 void GameSystem::store_species(int slot) {

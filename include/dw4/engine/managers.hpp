@@ -1430,6 +1430,13 @@ public:
     // defeating player the full share), levels up past NEXTEXP with full HP/MP.
     // Returns the defeating player's gain.
     int experience_up(Engine& engine, int killer, int enemy_record);
+    // Levels past NEXTEXP: full HP / MP, the level-up effect and HUD numbers.
+    bool apply_level_ups(Engine& engine, int slot);
+    // Cheats: the EXP for `levels` more levels; bits added up to 9,999,999;
+    // HP and MP refilled.
+    void cheat_levels(Engine& engine, int slot, int levels);
+    void cheat_bits(int slot, int amount);
+    void cheat_refill(Engine& engine, int slot);
     // 8036F220 / 8036F364: HP (not for a defeated player) and MP changes with
     // the hpmt/hpnm and mpmt/mpnm HUD and the player model's HP.
     void change_hp(Engine& engine, int slot, int delta);

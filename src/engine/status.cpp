@@ -282,8 +282,7 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
             st.start[0] = false;
         }
         if (timer_done(ram, "POISON")) {
-            static const bool god = std::getenv("DW4_GOD") != nullptr;
-            if (!(god && ram.is_player)) ram.hp = std::max(ram.hp - st.poison_damage, 0);
+            if (!(engine.cheats().god && ram.is_player)) ram.hp = std::max(ram.hp - st.poison_damage, 0);
             if (ram.is_player) {
                 if (sys) sys->players[std::size_t(slot_index)].hp = ram.hp;
                 Packet percent, value;

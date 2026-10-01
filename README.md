@@ -177,8 +177,10 @@ then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
 F1 opens the menu: the Settings tab (display, widescreen, frame limit, anti-aliasing,
-window size, volume, keyboard bindings, connected controllers) and the Debug
-tab (stage loader, player state, notes, script log). F11 toggles fullscreen,
+window size, volume, keyboard bindings, connected controllers), the Cheats tab
+(god mode, infinite MP, one-hit defeats, refills, levels and bits per player;
+session only, off by default) and the Debug tab (stage loader, player state,
+notes, script log). F11 toggles fullscreen,
 F2 a free camera.
 
 ## License

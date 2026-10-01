@@ -383,9 +383,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         auto* model = context_model();
         if (!model) return number(0);
         if (method == "MDLaddHp") {
-            // DW4_GOD: automated test runs keep the players alive.
-            static const bool god = std::getenv("DW4_GOD") != nullptr;
-            if (god && model->is_player && to_int(arg(0)) < 0) return {};
+            // God mode cheat (DW4_GOD in test runs) keeps the players alive.
+            if (cheats().god && model->is_player && to_int(arg(0)) < 0) return {};
             model->hp = std::clamp(model->hp + to_int(arg(0)), 0, std::max(model->max_hp, model->hp + to_int(arg(0))));
             // 8030B6EC publishes a player's HP to its game RAM row.
             if (model->is_player)
@@ -455,8 +454,10 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         const auto* slot = shooter_slot();
         auto* model = context_model();
         if (!slot || !model || !context) return number(0);
-        const auto result =
+        auto result =
             fight::player_damage(*this, *slot, model->record, bullet_kind, to_int(arg(0)) != 0, down_of(model, 5));
+        // One-hit cheat: a damaging hit takes all the target's HP.
+        if (cheats().one_hit && result.damage > 0) result.damage = std::max(result.damage, model->hp);
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;

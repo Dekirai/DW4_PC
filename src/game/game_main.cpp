@@ -615,6 +615,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
                     ImGui::EndTabItem();
                 }
+                if (ImGui::BeginTabItem("Cheats")) {
+                    ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
+                                       "give (levels, bits) stays in saves.");
+                    auto& cheats = engine.cheats();
+                    ImGui::Checkbox("God mode (players lose no HP)", &cheats.god);
+                    ImGui::Checkbox("Infinite MP", &cheats.infinite_mp);
+                    ImGui::Checkbox("One-hit defeats (player hits)", &cheats.one_hit);
+                    if (auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                        for (int slot = 0; slot < 4; ++slot) {
+                            auto& player = sys->players[std::size_t(slot)];
+                            if (!player.joined || !player.stats.ready) continue;
+                            ImGui::PushID(slot);
+                            ImGui::SeparatorText(("Player " + std::to_string(slot + 1)).c_str());
+                            ImGui::Text("Level %d  HP %d/%d  MP %d/%d  Bits %d", player.stats.level, player.hp, player.max_hp,
+                                        player.mp, player.max_mp, player.bits);
+                            if (ImGui::Button("Refill HP/MP")) sys->cheat_refill(engine, slot);
+                            ImGui::SameLine();
+                            if (ImGui::Button("+1 level")) sys->cheat_levels(engine, slot, 1);
+                            ImGui::SameLine();
+                            if (ImGui::Button("+10 levels")) sys->cheat_levels(engine, slot, 10);
+                            ImGui::SameLine();
+                            if (ImGui::Button("+100,000 bits")) sys->cheat_bits(slot, 100000);
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
                 if (ImGui::BeginTabItem("Debug")) {
                 ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
                 ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),

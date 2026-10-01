@@ -258,6 +258,7 @@ void DemoManager::update(Engine& engine) {
 Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResources::open(data_root)) {
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
+    cheats_.god = std::getenv("DW4_GOD") != nullptr;
     register_default_managers(*this);
 }
 

@@ -170,9 +170,18 @@ struct ModelScriptContext {
     std::int32_t damage{}, attribute = -1, damage_flag{};
 };
 
+// Optional PC cheats (F1 menu); all off is the original game.
+struct Cheats {
+    bool god{};         // players lose no HP (also DW4_GOD for test runs)
+    bool infinite_mp{}; // techniques cost no MP
+    bool one_hit{};     // a damaging player hit defeats the target
+};
+
 class Engine {
 public:
     explicit Engine(const std::filesystem::path& data_root);
+    Cheats& cheats() { return cheats_; }
+    const Cheats& cheats() const { return cheats_; }
     ~Engine();
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
@@ -280,6 +289,7 @@ private:
     std::string pending_stage_;
     int loader_state_ = -1;
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
+    Cheats cheats_;
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
