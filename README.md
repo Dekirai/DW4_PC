@@ -149,7 +149,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`), `--screenshot
 FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
-Test-run environment variables: `DW4_GOD` keeps players alive,
+Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
+player hits defeat their target,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,

@@ -259,6 +259,7 @@ Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResou
     global_root_.kind = NodeKind::group;
     global_root_.name = "GlobalRoot";
     cheats_.god = std::getenv("DW4_GOD") != nullptr;
+    cheats_.one_hit = std::getenv("DW4_ONE_HIT") != nullptr;
     register_default_managers(*this);
 }
 
