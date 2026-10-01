@@ -950,7 +950,8 @@ public:
         bool frozen{};               // ONFREEZE: control, AI and motion paused
         bool previous_live{};        // enemy AI: generated last frame
         int ai_timer{};              // PROVISIONAL enemy AI cooldown
-        std::string lua_bhit;        // LUACALL BHit script prefix
+        std::string lua_bhit;        // LUACALL BHit script prefix (ctrl work +30)
+        std::string lua_whit, lua_fhit; // LUACALL WHit / FHit prefixes (+34 / +38)
         std::array<int, 8> spin{};   // player work +114: direction history (Spiral Attack)
         int slam_state{};            // player work +118..+120: Slam Attack double tap
         std::uint32_t slam_direction{};
@@ -1016,7 +1017,7 @@ private:
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
-    void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix);
+    void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix, std::string_view mode);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);

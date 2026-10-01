@@ -337,20 +337,24 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                     if ((*ram.ai_maps)[i].str(2) == name) ram.ai_map = int(i);
             ++ram.cursor;
         } else if (type == "beModelCtrlLUACALL") {
-            // An empty mode runs "<name>_<info>.lua" now (e.g. ded_g_tcounter00);
-            // BHit runs it after this model's hitbox hits something. WHit/FHit
-            // (wall and floor hit callbacks) are not reconstructed.
+            // 8030B8A4: BHit, WHit and FHit keep the name for after this
+            // model's hitbox hits something, it meets a wall or the floor
+            // (bullets erase themselves). Any other mode runs
+            // "<name>_<info>.lua" now with the mode as MDLisCallName's call
+            // name (e.g. "swof", "magic", "setaid").
             const auto mode = command.str(3);
             ++ram.cursor;
-            if (mode.empty()) {
+            if (mode == "BHit") {
+                ram.lua_bhit = name;
+            } else if (mode == "WHit") {
+                ram.lua_whit = name;
+            } else if (mode == "FHit") {
+                ram.lua_fhit = name;
+            } else {
                 const auto generation = ram.hitbox_generation;
                 const auto* seq = ram.seq;
-                run_model_script(engine, ram, name);
+                run_model_script(engine, ram, name, mode);
                 if (ram.seq != seq || ram.hitbox_generation != generation) return;
-            } else if (mode == "BHit") {
-                ram.lua_bhit = name;
-            } else if (mode != "WHit" && mode != "FHit") {
-                engine.note("MODELCTRL LUACALL " + std::string(mode));
             }
         } else {
             engine.note("MODELCTRL command " + type);
@@ -812,6 +816,27 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         return;
     }
     Vec3f next{matrix[12], matrix[13], matrix[14]};
+    bool wall_hit = false, floor_hit = false;
+    if (!ram.is_player && ram.category != "ENEMY" && (!ram.lua_whit.empty() || !ram.lua_fhit.empty())) {
+        // PROVISIONAL wall and floor hits (8030 9C74: HITLANDDELIVER HITWALL
+        // and the landing check) on the host collision query.
+        if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
+            const auto& world = hitland->world();
+            std::uint32_t mask = hitland->mask(ram.info_name);
+            if (mask == 0) mask = 7u;
+            const float radius = std::max(hitland->radius(ram.info_name), 1.0f);
+            if (!ram.lua_whit.empty()) {
+                const Vec3f pushed = world.resolve_walls(next, radius, -radius, radius, mask);
+                const float dx = pushed.x - next.x, dz = pushed.z - next.z;
+                wall_hit = dx * dx + dz * dz > 1e-4f;
+            }
+            float floor = 0;
+            if (!ram.lua_fhit.empty() &&
+                world.floor_height({next.x, position.y, next.z}, 0.0f, std::max(position.y - next.y, 0.0f) + 0.5f, floor,
+                                   nullptr, mask))
+                floor_hit = next.y <= floor + 0.5f;
+        }
+    }
     if (ram.is_player || ram.category == "ENEMY") {
         // PROVISIONAL collision response (see collision.hpp).
         if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
@@ -885,6 +910,8 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     matrix[13] = next.y;
     matrix[14] = next.z;
     std::copy(matrix.begin(), matrix.end(), m.m.begin());
+    if (wall_hit) run_model_script(engine, ram, ram.lua_whit, "WHit");
+    else if (floor_hit) run_model_script(engine, ram, ram.lua_fhit, "FHit");
 }
 
 void ModelCtrlManager::update(Engine& engine) {
@@ -1022,18 +1049,22 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     packet.strings.emplace_back(owned ? ram.attach_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
-    if (!packet.bools.empty() && !ram.lua_bhit.empty()) run_model_script(engine, ram, ram.lua_bhit);
+    if (!packet.bools.empty() && !ram.lua_bhit.empty()) run_model_script(engine, ram, ram.lua_bhit, "BHit");
 }
 
-// "%s_%s.lua" (80426850) with the model as script context (8030B6EC).
-void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix) {
+// "%s_%s.lua" (80426850) with the model as script context and the call
+// mode for MDLisCallName (8030B6EC, 80535948).
+void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix, std::string_view mode) {
     ModelScriptContext context;
     context.category = ram.category;
     context.name = ram.info_name;
     context.index = ram.index;
-    context.call_name = std::string(prefix);
+    context.call_name = std::string(mode);
     engine.push_model_context(std::move(context));
-    engine.run_script(std::string(prefix) + "_" + ram.info_name + ".lua");
+    const bool ran = engine.run_script(std::string(prefix) + "_" + ram.info_name + ".lua");
+    if (static const bool trace = std::getenv("DW4_TRACE_LUACALL") != nullptr; trace)
+        engine.log("luacall " + std::string(prefix) + "_" + ram.info_name + ".lua #" + std::to_string(ram.index) + " mode '" +
+                   std::string(mode) + "'" + (ran ? "" : " (no script)"));
     engine.pop_model_context();
 }
 

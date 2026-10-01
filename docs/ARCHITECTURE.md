@@ -47,8 +47,14 @@ form `"a/b/I<n>/F<x>/V<x,y,z>"`.
 `lua_host.cpp` binds the `be:` methods the scripts call. Model methods without
 a name (`MDLsetSeq`, `MDLgetRamNo`, `MDLgetPosStr`, `BLTgetShootRamNo`, ...)
 read the `ModelScriptContext` pushed by the code that runs a model script,
-for example a hit script (8030B6EC). Unimplemented methods are reported in
-the F1 notes and answer 0 so the original scripts keep running.
+for example a hit script (8030B6EC). A sequence's LUACALL runs
+`<name>_<model>.lua` at once with its mode as the call name that
+`MDLisCallName` tests ("swof", "magic", "setaid", ...); the modes BHit, WHit
+and FHit keep the name for when the model's hitbox hits something or it meets
+a wall or the floor (bullets erase themselves; the wall and floor checks use
+the provisional collision query). `DW4_TRACE_LUACALL=1` logs the calls.
+Unimplemented methods are reported in the F1 notes and answer 0 so the
+original scripts keep running.
 
 ## Managers
 
