@@ -240,6 +240,14 @@ int run(const Options& options) {
                 if (event.type == SDL_EVENT_GAMEPAD_ADDED) {
                     if (auto* pad = SDL_OpenGamepad(event.gdevice.which)) gamepads.push_back(pad);
                 }
+                if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                    for (auto it = gamepads.begin(); it != gamepads.end(); ++it)
+                        if (SDL_GetGamepadID(*it) == event.gdevice.which) {
+                            SDL_CloseGamepad(*it);
+                            gamepads.erase(it);
+                            break;
+                        }
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1) show_menu = !show_menu;
                 if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F2) {
                     free_camera = !free_camera;
@@ -250,9 +258,36 @@ int run(const Options& options) {
                     free_pitch = std::clamp(free_pitch - event.motion.yrel * 0.005f, -1.5f, 1.5f);
                 }
             }
-            // Input: keyboard + first gamepad -> player 1.
+            // Input: player 1 is the keyboard and the first gamepad, players 2-4
+            // the further gamepads, each on its own controller slot.
             std::uint32_t held = 0;
             float sx = 0, sy = 0;
+            std::array<std::uint32_t, 4> slot_held{};
+            std::array<dw4::PadStick, 4> slot_left{}, slot_right{};
+            // GameCube layout: L / R on the triggers (and L on the left
+            // shoulder), Z on the right shoulder, the C stick on the right stick.
+            auto read_gamepad = [](SDL_Gamepad* pad, std::uint32_t& buttons, dw4::PadStick& left, dw4::PadStick& right) {
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH)) buttons |= dw4::pad_button::a;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST)) buttons |= dw4::pad_button::b;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST)) buttons |= dw4::pad_button::x;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH)) buttons |= dw4::pad_button::y;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) buttons |= dw4::pad_button::start;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) buttons |= dw4::pad_button::up;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) buttons |= dw4::pad_button::down;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) buttons |= dw4::pad_button::left;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) buttons |= dw4::pad_button::right;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
+                    SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > 16000)
+                    buttons |= dw4::pad_button::l;
+                if (SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 16000) buttons |= dw4::pad_button::r;
+                if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) buttons |= dw4::pad_button::z;
+                auto axis = [&](SDL_GamepadAxis a, float sign) {
+                    const float v = sign * SDL_GetGamepadAxis(pad, a) / 32767.0f;
+                    return std::abs(v) > 0.2f ? v : 0.0f;
+                };
+                left = {axis(SDL_GAMEPAD_AXIS_LEFTX, 1.0f), axis(SDL_GAMEPAD_AXIS_LEFTY, -1.0f)};
+                right = {axis(SDL_GAMEPAD_AXIS_RIGHTX, 1.0f), axis(SDL_GAMEPAD_AXIS_RIGHTY, -1.0f)};
+            };
             if (free_camera) {
                 const bool* keys = SDL_GetKeyboardState(nullptr);
                 const dw4::engine::Vec3f forward{std::sin(free_yaw) * std::cos(free_pitch), std::sin(free_pitch), std::cos(free_yaw) * std::cos(free_pitch)};
@@ -279,24 +314,11 @@ int run(const Options& options) {
                 if (keys[SDL_SCANCODE_Q]) held |= dw4::pad_button::l;
                 if (keys[SDL_SCANCODE_E]) held |= dw4::pad_button::r;
                 if (keys[SDL_SCANCODE_Z]) held |= dw4::pad_button::z;
-                for (auto* pad : gamepads) {
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_SOUTH)) held |= dw4::pad_button::a;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_EAST)) held |= dw4::pad_button::b;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_WEST)) held |= dw4::pad_button::x;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_NORTH)) held |= dw4::pad_button::y;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_START)) held |= dw4::pad_button::start;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_UP)) held |= dw4::pad_button::up;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) held |= dw4::pad_button::down;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) held |= dw4::pad_button::left;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) held |= dw4::pad_button::right;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) held |= dw4::pad_button::l;
-                    if (SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) held |= dw4::pad_button::r;
-                    const float ax = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX) / 32767.0f;
-                    const float ay = -SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTY) / 32767.0f;
-                    if (std::abs(ax) > 0.2f) sx = ax;
-                    if (std::abs(ay) > 0.2f) sy = ay;
-                    break;
-                }
+                for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i)
+                    read_gamepad(gamepads[i], slot_held[i], slot_left[i], slot_right[i]);
+                held |= slot_held[0];
+                if (slot_left[0].x != 0.0f) sx = slot_left[0].x;
+                if (slot_left[0].y != 0.0f) sy = slot_left[0].y;
             }
             // Fixed 60 Hz simulation.
             const auto now = std::chrono::steady_clock::now();
@@ -362,10 +384,29 @@ int run(const Options& options) {
                     if (input & dw4::pad_button::up) stick_y = 1;
                     if (input & dw4::pad_button::down) stick_y = -1;
                 }
+                // Original device: full deflection is 72/74 after the SDK clamp.
+                auto scale = [](dw4::PadStick stick) {
+                    return dw4::PadStick{std::clamp(stick.x, -1.0f, 1.0f) * (72.0f / 74.0f),
+                                                 std::clamp(stick.y, -1.0f, 1.0f) * (72.0f / 74.0f)};
+                };
                 pads[0].connected = true;
                 pads[0].buttons = input;
-                // Original device: full deflection is 72/74 after the SDK clamp.
-                pads[0].left = {std::clamp(stick_x, -1.0f, 1.0f) * (72.0f / 74.0f), std::clamp(stick_y, -1.0f, 1.0f) * (72.0f / 74.0f)};
+                pads[0].left = scale({stick_x, stick_y});
+                pads[0].right = scale(slot_right[0]);
+                for (std::size_t i = 1; i < 4; ++i) {
+                    pads[i].connected = i < gamepads.size();
+                    dw4::PadStick left = slot_left[i];
+                    const std::uint32_t buttons = slot_held[i];
+                    if (left.x == 0.0f && left.y == 0.0f) {
+                        if (buttons & dw4::pad_button::left) left.x = -1;
+                        if (buttons & dw4::pad_button::right) left.x = 1;
+                        if (buttons & dw4::pad_button::up) left.y = 1;
+                        if (buttons & dw4::pad_button::down) left.y = -1;
+                    }
+                    pads[i].buttons = buttons;
+                    pads[i].left = scale(left);
+                    pads[i].right = scale(slot_right[i]);
+                }
                 engine.step(pads);
                 mix_audio(kAudioFrameSamples);
                 ++frame;
