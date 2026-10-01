@@ -7,6 +7,7 @@
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
 #include "settings.hpp"
+#include "test_path.hpp"
 #include "texture_pack.hpp"
 
 #include "dw4/engine/engine.hpp"
@@ -1069,7 +1070,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                     tx = centre->x;
                                     tz = centre->z;
                                 }
-                            if (frame % 30 < 3) input |= dw4::pad_button::a;
+                            // A only on the mat (the stage change prompt); elsewhere
+                            // it would attack instead of walking.
+                            const float mx = tx - p->node->matrix(3, 0), mz = tz - p->node->matrix(3, 2);
+                            if (mx * mx + mz * mz < 400.0f && frame % 30 < 3) input |= dw4::pad_button::a;
                         } else if (g->seek) {
                             // Named targets, then pickups, then the nearest live enemy.
                             float best = 1e12f, target_y = 0.0f;
@@ -1107,6 +1111,47 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 } else if (frame % 20 < 3) {
                                     input |= dw4::pad_button::a;
                                 }
+                            }
+                        }
+                        // SEEK mat:<name> walks a route around walls (DW4_SEEK_DIRECT=1:
+                        // a straight line).
+                        if (g->seek && g->target.rfind("mat:", 0) == 0 && !std::getenv("DW4_SEEK_DIRECT")) {
+                            static std::vector<dw4::engine::Vec3f> route;
+                            static std::size_t route_next = 0;
+                            static dw4::engine::Vec3f route_goal{1e9f, 0, 1e9f};
+                            static int route_frame = -1000;
+                            const dw4::engine::Vec3f me{p->node->matrix(3, 0), p->node->matrix(3, 1), p->node->matrix(3, 2)};
+                            const dw4::engine::Vec3f goal{tx, me.y, tz};
+                            auto flat = [](const dw4::engine::Vec3f& a, const dw4::engine::Vec3f& b) {
+                                return std::hypot(a.x - b.x, a.z - b.z);
+                            };
+                            // Routes lead to mats; enemies and pickups are walked at
+                            // directly (a boss body is not a place to route to).
+                            const float route_from = 20.0f;
+                            if (auto* hitland = engine.get<dw4::engine::HitLandManager>();
+                                hitland && flat(goal, me) > route_from &&
+                                (flat(goal, route_goal) > 15.0f || frame - route_frame > 180 || route_next >= route.size())) {
+                                route = dw4::game::find_walk_path(hitland->world(), me, goal, hitland->delivery_flags(p->info_name, p->index));
+                                if (std::getenv("DW4_TRACE_ROUTE"))
+                                    std::printf("[%d] route (%.0f,%.0f,%.0f) -> (%.0f,%.0f): %zu points%s\n", frame, me.x, me.y, me.z, goal.x,
+                                                goal.z, route.size(),
+                                                route.empty() ? "" : (" ending (" + std::to_string(int(route.back().x)) + "," +
+                                                                      std::to_string(int(route.back().z)) + ")").c_str());
+                                if (std::getenv("DW4_TRACE_ROUTE") && !route.empty())
+                                    for (const auto& m : models->rams())
+                                        if (m->generated && m->node && std::hypot(m->node->matrix(3, 0) - route.back().x,
+                                                                                  m->node->matrix(3, 2) - route.back().z) < 60.0f)
+                                            std::printf("      near the end: %s#%d %s %s (%.0f,%.0f,%.0f)\n", m->info_name.c_str(), m->index,
+                                                        m->category.c_str(), m->seq_name.c_str(), m->node->matrix(3, 0),
+                                                        m->node->matrix(3, 1), m->node->matrix(3, 2));
+                                route_next = 0;
+                                route_goal = goal;
+                                route_frame = frame;
+                            }
+                            while (route_next < route.size() && flat(route[route_next], me) < 5.0f) ++route_next;
+                            if (flat(goal, me) > route_from && route_next < route.size()) {
+                                tx = route[route_next].x;
+                                tz = route[route_next].z;
                             }
                         }
                         const float dx = tx - p->node->matrix(3, 0), dz = tz - p->node->matrix(3, 2);

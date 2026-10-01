@@ -514,6 +514,12 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     CollisionWorld& world() { return world_; }
+    // The wall kinds a model's HITLANDDELIVER cylinder collides with (test bot).
+    std::uint32_t delivery_flags(std::string_view name, int index) const {
+        for (const auto& ram : deliveries_)
+            if (ram->info_name == name && ram->index == index) return ram->flags;
+        return 7;
+    }
 
 private:
     struct HitRam : Ram {
