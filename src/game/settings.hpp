@@ -47,6 +47,8 @@ struct Settings {
     int volume = 100;        // master volume in percent
     // [menu]
     bool pause_in_menu = true;
+    // [preferences]
+    bool skip_intro = false; // boot straight to the title (no logos / opening movie)
     // [keyboard]: up to three keys per button.
     static constexpr std::size_t kKeysPerButton = 3;
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
@@ -57,6 +59,7 @@ struct Settings {
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
     // [data]
     std::filesystem::path data;
+    std::filesystem::path cards; // memory card root (Card A / Card B), empty: saves/GC/USA
 
     std::filesystem::path file; // where the settings are read from and saved to
 

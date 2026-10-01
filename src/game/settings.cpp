@@ -124,6 +124,7 @@ Settings Settings::load() {
     settings.msaa = std::clamp(ini.get_int("window", "msaa", settings.msaa), 0, 16);
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
+    settings.skip_intro = ini.get_bool("preferences", "skip_intro", settings.skip_intro);
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         const auto value = ini.get("keyboard", kKeys[i].ini);
         if (!value) continue;
@@ -156,6 +157,7 @@ Settings Settings::load() {
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
     settings.data = ini.get_or("data", "path", "");
+    settings.cards = ini.get_or("data", "cards", "");
     return settings;
 }
 
@@ -170,6 +172,7 @@ bool Settings::save() {
     ini_.set_int("window", "msaa", msaa);
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
+    ini_.set_bool("preferences", "skip_intro", skip_intro);
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         std::string value;
         for (const auto code : keys[i]) {

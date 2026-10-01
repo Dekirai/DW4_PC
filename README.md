@@ -140,7 +140,10 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 `fps_limit` (presented frames per second, 0 = off; the game always updates
 60 times a second), `smooth_motion` (above about 75 presents per second the
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
-`[audio] volume` (percent), `[menu] pause` (pause while the menu is open) and
+`[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
+`[preferences] skip_intro` (boot straight to the title), `[data] cards` (the
+memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
+program; Dolphin's `GC/USA` folder works too) and
 `[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
 `[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
 leftshoulder`).

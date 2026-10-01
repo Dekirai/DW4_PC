@@ -38,6 +38,7 @@ namespace {
 struct Options {
     std::filesystem::path data;
     std::string stage = "stagis08";
+    bool stage_given{}; // --stage on the command line
     int smoke_frames = 0;
     std::string screenshot;
     std::vector<int> screenshot_frames;
@@ -274,15 +275,21 @@ int run(const Options& options, dw4::game::Settings& settings) {
     dw4::engine::Engine engine(options.data);
     // Memory cards: --card-dir, DW4_CARD_DIR, else saves/GC/USA next to the
     // program. Dolphin's GC/USA folder works too (same GCI files).
+    // settings.ini [data] cards may point at another GCI root (e.g. Dolphin's
+    // GC/USA folder to continue its saves); test runs ignore it.
     if (!options.card_dir.empty()) engine.set_card_root(options.card_dir);
     else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
+    else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
     // DW4_PLAYERS=n: test runs start with n joined players.
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
-    engine.request_stage(options.stage);
+    // Skip intro: boot straight to the title (stagIS10) instead of the
+    // license, logos and opening movie.
+    engine.request_stage(!options.smoke_frames && settings.skip_intro && !options.stage_given ? std::string("stagis10")
+                                                                                               : options.stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
         c.view = dw4::engine::look_at(eye, target, {0, 1, 0});
@@ -850,6 +857,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (ImGui::Button("Reload texture pack")) configure_pack();
                     }
                     if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
+                    if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
+                        settings_changed = true;
+                    ImGui::TextDisabled("Memory cards: %s", engine.card_root().string().c_str());
+                    ImGui::TextDisabled("(settings.ini [data] cards=<folder with Card A / Card B> changes it)");
                     ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
                     ImGui::EndTabItem();
                 }
@@ -1042,7 +1053,10 @@ int main(int argc, char** argv) {
                 options.convert_from = next();
                 options.convert_to = next();
             }
-            else if (arg == "--stage") options.stage = next();
+            else if (arg == "--stage") {
+                options.stage = next();
+                options.stage_given = true;
+            }
             else if (arg == "--smoke-test") options.smoke_frames = std::stoi(next());
             else if (arg == "--screenshot") options.screenshot = next();
             else if (arg == "--screenshot-frames") {
