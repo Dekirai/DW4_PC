@@ -547,9 +547,17 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     const CameraRam* demo_info = nullptr;
     for (const auto& ram : rams_)
         if (ram->demo_active && ram->demo_path == -2 && engine.time() - ram->demo_start <= ram->demo_duration) demo_info = ram.get();
-    for (const auto& owned : rams_) {
-        const CameraRam* ram = demo_info ? demo_info : owned.get();
-        if (!demo_info && ram->paths.empty()) continue;
+    // Otherwise a running named path, then the active box camera, then the
+    // first camera with a path.
+    const CameraRam* chosen = demo_info;
+    for (const auto& ram : rams_)
+        if (!chosen && !ram->paths.empty() && ram->demo_active && ram->demo_path >= 0) chosen = ram.get();
+    for (const auto& ram : rams_)
+        if (!chosen && !ram->paths.empty() && ram->box && ram->active) chosen = ram.get();
+    for (const auto& ram : rams_)
+        if (!chosen && !ram->paths.empty()) chosen = ram.get();
+    if (chosen) {
+        const CameraRam* ram = chosen;
         const bool demo = demo_info || (ram->demo_active && ram->demo_path >= 0);
         const auto& path = demo_info ? *ram->demo_data : ram->paths[std::size_t(demo ? ram->demo_path : 0)];
         const std::int64_t at = demo ? std::min(engine.time() - ram->demo_start, ram->demo_duration) : 0;
@@ -586,7 +594,6 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
         }
         Mat4 view;
         if (invert(world, view)) camera.view = view;
-        break;
     }
 }
 
