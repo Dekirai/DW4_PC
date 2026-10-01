@@ -668,7 +668,13 @@ void StageCtlManager::update(Engine& engine) {
 }
 bool StageCtlManager::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
     if (command == "NEXTSTAGE") {
-        if (!packet.strings.empty()) engine.request_stage(std::string(packet.string(0)));
+        // 80347F94: the sound effects and the ambience stop at once.
+        if (!packet.strings.empty()) {
+            Packet stop;
+            engine.messenger().send(engine, "SOUND", std::nullopt, -1, "SESTOP", stop);
+            engine.messenger().send(engine, "SOUND", std::nullopt, -1, "ENVSTOP", stop);
+            engine.request_stage(std::string(packet.string(0)));
+        }
         return true;
     }
     if (command == "ISRESETSTART") {
