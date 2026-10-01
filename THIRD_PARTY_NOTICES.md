@@ -20,8 +20,10 @@ The native application builds these pinned dependencies using CMake:
 | [Dear ImGui](https://github.com/ocornut/imgui) | `f1cc2ae15e53a861a874c3034aae6798fde194ab` (1.92.9b) | MIT, upstream LICENSE.txt |
 | [pl_mpeg](https://github.com/phoboslab/pl_mpeg) | `c871f2be022ece7ef4f64230b4fb8e1fb9eb6023` | MIT (SPDX in pl_mpeg.h), `licenses/pl_mpeg-MIT.txt` |
 | [stb](https://github.com/nothings/stb) (stb_image, stb_image_write) | `2c980bb59875b0d32144a71867fbdebb2f77cd20` | MIT or public domain (LICENSE), installed as `licenses/stb.txt` |
+| [Zstandard](https://github.com/facebook/zstd) (decoder sources) | `v1.5.6` | BSD-3-Clause (LICENSE), installed as `licenses/zstd.txt` |
 
 stb reads and writes the PNG files of texture packs and texture dumps.
+Zstandard decodes RVZ disc images when they are converted to a plain image.
 pl_mpeg decodes the MPEG-1 video of the opening movie; the program stream
 demuxer and the movie's ADX sound use the project's own parsers.
 `cmake --install` includes the dependency license files. Binary packages must

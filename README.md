@@ -119,9 +119,12 @@ This configures `build\Release`, builds everything and runs the tests.
 
 The runtime reads the USA disc (GDJEB2, revision 0) straight from an
 uncompressed disc image (`.iso` / `.gcm`) or from a Dolphin extraction
-(*Properties > Filesystem > Extract Entire Disc*). On the first start it asks
-for one and checks it; compressed images (RVZ, WIA, CISO, NKit) can be
-converted back to ISO in Dolphin (*Convert File...*). The choice is kept in
+(*Properties > Filesystem > Extract Entire Disc*). Dolphin's RVZ images
+(Zstandard or uncompressed) are converted once into `data/<name>.iso` next to
+the program (a few seconds, bit-identical to the original disc;
+`dw4_game --convert-rvz IN.rvz OUT.iso` does the same from the command line).
+On the first start it asks for one and checks it; WIA, CISO and NKit images
+can be converted to ISO or RVZ in Dolphin (*Convert File...*). The choice is kept in
 `settings.ini` (`local\settings.ini` or `settings.ini` in the working folder,
 else next to the program) and `--data PATH` overrides it:
 

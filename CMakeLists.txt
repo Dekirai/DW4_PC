@@ -85,7 +85,20 @@ if(DW4_BUILD_APP)
     URL https://codeload.github.com/nothings/stb/zip/2c980bb59875b0d32144a71867fbdebb2f77cd20
     URL_HASH SHA256=8e59f72b0780690cda64726804269f638a3be77b9d1506ea95f443f7964bccf0
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src stb_src)
+  # Zstandard decoding for RVZ disc images (decoder sources only).
+  FetchContent_Declare(zstd_src
+    URL https://codeload.github.com/facebook/zstd/zip/refs/tags/v1.5.6
+    URL_HASH SHA256=3b1c3b46e416d36931efd34663122d7f51b550c87f74de2d38249516fe7d8be5
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src stb_src zstd_src)
+  set(ZSTD_LIB ${zstd_src_SOURCE_DIR}/lib)
+  add_library(zstd_decoder STATIC
+    ${ZSTD_LIB}/common/debug.c ${ZSTD_LIB}/common/entropy_common.c ${ZSTD_LIB}/common/error_private.c
+    ${ZSTD_LIB}/common/fse_decompress.c ${ZSTD_LIB}/common/xxhash.c ${ZSTD_LIB}/common/zstd_common.c
+    ${ZSTD_LIB}/decompress/huf_decompress.c ${ZSTD_LIB}/decompress/zstd_ddict.c
+    ${ZSTD_LIB}/decompress/zstd_decompress.c ${ZSTD_LIB}/decompress/zstd_decompress_block.c)
+  target_include_directories(zstd_decoder PUBLIC ${ZSTD_LIB})
+  target_compile_definitions(zstd_decoder PRIVATE ZSTD_DISABLE_ASM)
   find_package(OpenGL REQUIRED)
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
@@ -96,14 +109,15 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/interpolation.cpp src/game/texture_pack.cpp)
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp src/game/settings.cpp src/game/interpolation.cpp src/game/texture_pack.cpp src/game/rvz.cpp)
   target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR} ${stb_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
-  target_link_libraries(dw4_game PRIVATE dw4_engine imgui SDL3::SDL3 OpenGL::GL)
+  target_link_libraries(dw4_game PRIVATE dw4_engine imgui zstd_decoder SDL3::SDL3 OpenGL::GL)
   install(TARGETS dw4_game RUNTIME DESTINATION .)
   install(FILES ${SDL3_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME SDL.txt)
   install(FILES ${imgui_src_SOURCE_DIR}/LICENSE.txt DESTINATION licenses RENAME imgui.txt)
   install(FILES ${stb_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME stb.txt)
+  install(FILES ${zstd_src_SOURCE_DIR}/LICENSE DESTINATION licenses RENAME zstd.txt)
 endif()
 install(TARGETS dw4_inspect dw4_catalog RUNTIME DESTINATION .)
 install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION .)

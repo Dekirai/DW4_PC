@@ -3,6 +3,7 @@
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
 #include "movie_decoder.hpp"
+#include "rvz.hpp"
 #include "settings.hpp"
 #include "texture_pack.hpp"
 
@@ -20,6 +21,7 @@
 
 #include <array>
 #include <atomic>
+#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +46,7 @@ struct Options {
     std::vector<float> debug_camera; // eye xyz, target xyz
     std::vector<std::pair<int, int>> flags;
     std::filesystem::path card_dir; // memory card GCI folders (Card A / Card B)
+    std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
 };
 
 
@@ -159,8 +162,8 @@ std::string check_game_data(const std::filesystem::path& path) {
         return "This folder is not a Digimon World 4 extraction (no files/ndmw.igb):\n" + path.string();
     }
     if (!dw4::DiscImage::looks_like_disc(path))
-        return "This is not an uncompressed GameCube disc image:\n" + path.string() +
-               "\n\nCompressed images (RVZ, WIA, CISO, NKit) can be converted back to ISO in Dolphin "
+        return "This is not a GameCube disc image the runtime can read:\n" + path.string() +
+               "\n\nWIA, CISO and NKit images can be converted to ISO or RVZ in Dolphin "
                "(right-click the game > Convert File...).";
     try {
         const auto disc = dw4::DiscImage::open(path);
@@ -174,6 +177,56 @@ std::string check_game_data(const std::filesystem::path& path) {
     return {};
 }
 
+// An RVZ image becomes a plain disc image once, in data/ next to the program
+// (a window shows the progress; closing it cancels). Returns the problem.
+std::string prepare_rvz(const std::filesystem::path& rvz, const std::filesystem::path& iso) {
+    std::atomic<double> progress{0.0};
+    std::atomic<bool> cancel{false}, done{false};
+    std::string result;
+    std::thread worker([&] {
+        result = dw4::game::convert_rvz(rvz, iso, &progress, &cancel);
+        done.store(true);
+    });
+    SDL_Init(SDL_INIT_VIDEO);
+    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", 520, 96, 0);
+    SDL_Renderer* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+    while (!done.load()) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+            if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancel.store(true);
+        if (renderer) {
+            SDL_SetRenderDrawColor(renderer, 24, 28, 40, 255);
+            SDL_RenderClear(renderer);
+            SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+            SDL_RenderDebugText(renderer, 16, 16, "Preparing the game data from the RVZ image (once)...");
+            const SDL_FRect frame{16, 48, 488, 24};
+            SDL_RenderRect(renderer, &frame);
+            const SDL_FRect bar{18, 50, float(484.0 * std::clamp(progress.load(), 0.0, 1.0)), 20};
+            SDL_SetRenderDrawColor(renderer, 80, 160, 255, 255);
+            SDL_RenderFillRect(renderer, &bar);
+            SDL_RenderPresent(renderer);
+        }
+        SDL_Delay(16);
+    }
+    worker.join();
+    if (renderer) SDL_DestroyRenderer(renderer);
+    if (window) SDL_DestroyWindow(window);
+    return result;
+}
+
+// RVZ data: the converted image next to the program, converting it first
+// when needed. Other paths come back unchanged.
+std::filesystem::path resolve_rvz(const std::filesystem::path& path, std::string& problem) {
+    if (!dw4::game::is_rvz(path)) return path;
+    std::filesystem::path base;
+    if (const char* program = SDL_GetBasePath()) base = program;
+    const auto iso = base / "data" / (path.stem().string() + ".iso");
+    std::error_code error;
+    if (std::filesystem::is_regular_file(iso, error)) return iso;
+    problem = prepare_rvz(path, iso);
+    return problem.empty() ? iso : std::filesystem::path();
+}
+
 // First start without game data: ask for the disc image or extraction folder.
 std::filesystem::path choose_game_data() {
     if (!SDL_Init(SDL_INIT_VIDEO)) return {};
@@ -183,8 +236,9 @@ std::filesystem::path choose_game_data() {
         {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
     };
     const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "Digimon World 4 PC",
-                                 "Choose your Digimon World 4 (USA) game data: an uncompressed disc image "
-                                 "(.iso / .gcm) or a Dolphin extraction folder. The choice is saved in settings.ini.",
+                                 "Choose your Digimon World 4 (USA) game data: a disc image (.iso / .gcm, or "
+                                 "Dolphin's .rvz, converted once) or a Dolphin extraction folder. The choice is "
+                                 "saved in settings.ini.",
                                  3, buttons, nullptr};
     int choice = 0;
     if (!SDL_ShowMessageBox(&box, &choice) || choice == 0) return {};
@@ -198,7 +252,7 @@ std::filesystem::path choose_game_data() {
         if (files && files[0]) r->path = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(files[0])));
         r->done.store(true);
     };
-    static const SDL_DialogFileFilter filters[] = {{"GameCube disc image", "iso;gcm"}, {"All files", "*"}};
+    static const SDL_DialogFileFilter filters[] = {{"GameCube disc image", "iso;gcm;rvz"}, {"All files", "*"}};
     if (choice == 1) SDL_ShowOpenFileDialog(callback, &result, nullptr, filters, 2, nullptr, false);
     else SDL_ShowOpenFolderDialog(callback, &result, nullptr, nullptr, false);
     while (!result.done.load()) {
@@ -980,6 +1034,10 @@ int main(int argc, char** argv) {
             };
             if (arg == "--data") options.data = next();
             else if (arg == "--card-dir") options.card_dir = next();
+            else if (arg == "--convert-rvz") {
+                options.convert_from = next();
+                options.convert_to = next();
+            }
             else if (arg == "--stage") options.stage = next();
             else if (arg == "--smoke-test") options.smoke_frames = std::stoi(next());
             else if (arg == "--screenshot") options.screenshot = next();
@@ -1014,15 +1072,38 @@ int main(int argc, char** argv) {
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }
+        if (!options.convert_from.empty()) {
+            // --convert-rvz IN OUT: write the plain disc image and exit.
+            std::atomic<double> progress{0.0};
+            std::atomic<bool> done{false};
+            std::string problem;
+            std::thread worker([&] {
+                problem = dw4::game::convert_rvz(options.convert_from, options.convert_to, &progress, nullptr);
+                done.store(true);
+            });
+            int shown = -1;
+            while (!done.load()) {
+                const int percent = int(progress.load() * 100.0);
+                if (percent / 10 != shown / 10) std::cout << percent << "%\n" << std::flush;
+                shown = percent;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            worker.join();
+            if (!problem.empty()) throw std::runtime_error(problem);
+            std::cout << "wrote " << options.convert_to.string() << '\n';
+            return 0;
+        }
         auto settings = dw4::game::Settings::load();
         if (options.data.empty()) options.data = settings.data;
         // First start: pick and check the disc image or extraction, then
         // remember it.
         if (options.data.empty() && !options.smoke_frames) {
             for (;;) {
-                const auto chosen = choose_game_data();
+                auto chosen = choose_game_data();
                 if (chosen.empty()) return 1;
-                const auto problem = check_game_data(chosen);
+                std::string problem;
+                chosen = resolve_rvz(chosen, problem);
+                if (problem.empty()) problem = check_game_data(chosen);
                 if (problem.empty()) {
                     settings.data = chosen;
                     settings.save();
@@ -1034,7 +1115,12 @@ int main(int argc, char** argv) {
         }
         if (options.data.empty())
             throw std::runtime_error("no --data given and " + settings.file.string() + " has no [data] path");
-        if (const auto problem = check_game_data(options.data); !problem.empty()) throw std::runtime_error(problem);
+        {
+            std::string problem;
+            options.data = resolve_rvz(options.data, problem);
+            if (problem.empty()) problem = check_game_data(options.data);
+            if (!problem.empty()) throw std::runtime_error(problem);
+        }
         return run(options, settings);
     } catch (const std::exception& error) {
         std::cerr << "dw4_game: " << error.what() << '\n';
