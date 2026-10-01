@@ -2524,7 +2524,347 @@ struct ShopLab : Window {
     }
 };
 
-// Programs whose windows are not reconstructed yet close at once.
+// ===========================================================================
+// The card keeper (program 10): beNDMWShopCtrlA0 picks a player, A1 opens a
+// booster pack (A2) or shows the album of the 50 cards of DATABASE "card".
+// ===========================================================================
+
+// ShopTitle03 (803AA938): the talk window.
+struct ShopTitle03 : Title {
+    void open(Engine& engine) override { open_model(engine, "i_messwn", 0, "SQ_OPEN", "SQ_CLOSE"); }
+};
+
+// ShopSelectA0 (803A9E54): the album, j_shcardcursor over its 9 pages.
+struct ShopSelectA0 : Select {
+    void open(Engine& engine) override {
+        open_model(engine, "j_shcardwin", 0, "SQ_OPEN", "SQ_CLOSE");
+        remember("STWINFONT34", "font000");
+        remember("STWINFONT34", "font001");
+        text_script(engine, "txt_shop.lua", 2001);
+        text(engine, "STWINFONT33", "font000", " ", "CENTER");
+        text(engine, "STWINFONT33", "font001", " ", "CENTER");
+        cursor = "j_shcardcursor";
+        count = 9;
+        position = {};
+        initial = 0;
+        no_cancel = false;
+    }
+};
+
+void cursor_ng(Engine& engine) {
+    Packet sound;
+    sound.strings.emplace_back("CURSOR_NG");
+    engine.messenger().send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
+}
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlA2 (8039A798): one booster pack of the mode packs left. Three
+// cards are drawn by their KAKURITSU weights (per mille), go into the
+// player's CARDLIST and are shown with their names coloured by rarity; the
+// parent's selection says where to go next (4 menu, 6 album).
+// ---------------------------------------------------------------------------
+struct ShopCardPack : Window {
+    static constexpr const char* lines[3] = {"font02", "font03", "font04"};
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        if (state == 0) {
+            next_state(1);
+            set_sub(7);
+            return;
+        }
+        if (sub == 7) {
+            if (step == 0) {
+                // The stack of packs: SQ_OPEN00 for one up to SQ_OPEN08 for nine.
+                char open[16];
+                std::snprintf(open, sizeof open, "SQ_OPEN%02d", std::clamp(mode, 1, 9) - 1);
+                open_model(engine, "j_shbooster", 0, open, "SQ_CLOSE");
+                add_child<ShopSelect03>(engine).mode = 2013;
+                mark();
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (!child_done()) return;
+                add_child<ShopSelect02>(engine).mode = 2008;
+                mark();
+                set_step(2);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 0) {
+                close_models(engine);
+                models.clear();
+                set_sub(8);
+            } else {
+                if (parent) parent->selection = selection == 1 ? 6 : 4;
+                next_state(2);
+            }
+            return;
+        }
+        if (step == 0) {
+            open_pack(engine);
+            set_step(1);
+            return;
+        }
+        if (!child_done()) return;
+        for (const char* line : lines) textctl(engine, "TALKFONT01", line, "DEFAULTCOLOR");
+        if (parent) parent->selection = 4;
+        next_state(2);
+    }
+    void open_pack(Engine& engine) {
+        auto& note = add_child<ShopSelect03>(engine);
+        mark();
+        auto* p = player_slot(engine);
+        auto* db = engine.get<DatabaseManager>();
+        if (!p || !db) return;
+        if (int& packs = p->disk_count(10); packs > 0) --packs;
+        static const char* opens[3] = {"SQ_CARD06OPEN", "SQ_CARD07OPEN", "SQ_CARD08OPEN"};
+        const int rows = db->rows("card");
+        int best = 0;
+        for (int i = 0; i < 3 && rows > 0; ++i) {
+            const std::uint32_t roll = fight::random() % 1000u * 1000u;
+            std::uint32_t sum = 0;
+            int card = rows - 1;
+            for (int row = 0; row < rows; ++row) {
+                sum += std::uint32_t(db->number("card", row, "KAKURITSU").value_or(0)) * 1000u;
+                if (roll < sum) {
+                    card = row;
+                    break;
+                }
+            }
+            p->cards[card] = 1;
+            const int rare = db->number("card", card, "RARE").value_or(0);
+            best = std::max(best, rare);
+            note.text(engine, "TALKFONT01", lines[i], db->text("card", card, "NAME"), "LEFT");
+            note.open_model(engine, db->text("card", card, "CARDINFO"), i, opens[i], "SQ_CLOSE");
+            // Rare green, uncommon yellow, common white.
+            const Vec3f rgb = rare == 2 ? Vec3f{0.0f, 1.0f, 0.0f} : rare == 1 ? Vec3f{1.0f, 1.0f, 0.0f} : Vec3f{1.0f, 1.0f, 1.0f};
+            textctl(engine, "TALKFONT01", lines[i], "COLOR", &rgb);
+        }
+        note.mode = best == 2 ? 2010 : best == 1 ? 2011 : 2012;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlA1 (80399314): Open Booster Pack / View Album for a player.
+// The album shows six cards a page: owned ones as their CARDINFO model,
+// missing ones as the blank j_shcard00 in that place (SQALBUM of the row).
+// ---------------------------------------------------------------------------
+struct ShopCardMenu : Window {
+    // +84 / +88: the model in each of the six places, index -1 for none.
+    std::vector<std::pair<std::string, int>> places;
+
+    bool owned(Engine& engine, int card) const {
+        auto* p = player_slot(engine);
+        if (!p) return false;
+        const auto found = p->cards.find(card);
+        return found != p->cards.end() && found->second != 0;
+    }
+    // 80399CC4: the first page.
+    void first_page(Engine& engine) {
+        auto* db = engine.get<DatabaseManager>();
+        if (!db) return;
+        for (int slot = 0; slot < 6; ++slot) {
+            if (owned(engine, slot)) {
+                const auto name = db->text("card", slot, "CARDINFO");
+                open_model(engine, name, 0, db->text("card", slot, "SQALBUM"), "");
+                places.emplace_back(name, 0);
+            } else {
+                open_model(engine, "j_shcard00", slot, db->text("card", slot, "SQALBUM"), "");
+                places.emplace_back("j_shcard00", slot);
+            }
+        }
+    }
+    // 80399FF8: page number and the six places of a page.
+    void show_page(Engine& engine, int page) {
+        textset(engine, "STWINFONT33", "font000", std::string(1, char('1' + page)));
+        auto* db = engine.get<DatabaseManager>();
+        if (!db || page < 0 || page >= 9) return;
+        for (int slot = 0; slot < 6 && slot < int(places.size()); ++slot) {
+            const int card = page * 6 + slot;
+            auto& [name, index] = places[std::size_t(slot)];
+            if (card > 49) {
+                if (index != -1) model(engine, name, index, "SQ_CLOSE");
+                name = "blank";
+                index = -1;
+            } else if (owned(engine, card)) {
+                if (index != -1) model(engine, name, index, "SQ_CLOSE");
+                name = db->text("card", card, "CARDINFO");
+                index = 0;
+                open_model(engine, name, 0, db->text("card", card, "SQALBUM"), "");
+            } else {
+                if (index != -1) {
+                    if (name == "j_shcard00") continue; // a blank card stays
+                    model(engine, name, index, "SQ_CLOSE");
+                }
+                name = "j_shcard00";
+                index = slot;
+                open_model(engine, name, slot, db->text("card", slot, "SQALBUM"), "");
+            }
+        }
+    }
+    // 8039A604
+    void close_places(Engine& engine) {
+        for (const auto& [name, index] : places)
+            if (index != -1) model(engine, name, index, "SQ_CLOSE");
+        places.clear();
+    }
+    void generate(Engine& engine, const char* name) {
+        Packet p;
+        p.strings.emplace_back("SQ_OPEN");
+        p.vectors.push_back({});
+        engine.messenger().send(engine, "MODELCTRL", std::string(name), 0, "GENERATE", p);
+    }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        if (state == 0) {
+            next_state(1);
+            set_sub(4);
+            return;
+        }
+        switch (sub) {
+        case 4: // Open Booster Pack / View Album
+            if (step == 0) {
+                if (model_in(engine, "j_shbase", player, "SQ_OPEN")) return;
+                add_child<ShopSelect02>(engine).mode = 2005;
+                mark();
+                set_step(1);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection == 0) set_sub(5);
+            else if (selection == 1) set_sub(6);
+            else next_state(2);
+            return;
+        case 5: // a booster pack (DISKFOLDER record 10)
+            if (step == 0) {
+                auto* p = player_slot(engine);
+                const int packs = p ? p->disk_count(10) : 0;
+                if (packs <= 0) {
+                    add_child<ShopSelect03>(engine).mode = 2007;
+                    cursor_ng(engine);
+                } else {
+                    add_child<ShopCardPack>(engine).mode = packs;
+                }
+                mark();
+                set_step(1);
+                return;
+            }
+            if (child_done()) set_sub(selection == 6 ? 6 : 4);
+            return;
+        case 6: // the album
+            if (step == 0) {
+                model(engine, "i_staccount", 0, "SQ_CLOSE");
+                model(engine, "i_messwn", 0, "SQ_CLOSE");
+                switch_line(engine, "STWINFONT34", "font002", false);
+                add_child<ShopSelectA0>(engine);
+                mark();
+                first_page(engine);
+                set_step(1);
+                return;
+            }
+            if (step == 1) {
+                if (model_in(engine, "j_shcardwin", 0, "SQ_OPEN")) return;
+                textset(engine, "STWINFONT33", "font000", "1");
+                textset(engine, "STWINFONT33", "font001", "9");
+                set_step(2);
+            }
+            if (!child_done()) {
+                if (selection != -1 && last != selection) {
+                    show_page(engine, selection);
+                    last = selection;
+                }
+                return;
+            }
+            close_places(engine);
+            text_script(engine, "txt_status.lua", 0);
+            switch_line(engine, "STWINFONT34", "font002", true);
+            generate(engine, "i_staccount");
+            generate(engine, "i_messwn");
+            set_sub(4);
+            return;
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// beNDMWShopCtrlA0 (803988A0): the card keeper. Select a Digimon / Exit, then
+// one of the joined players for A1.
+// ---------------------------------------------------------------------------
+struct ShopCardKeeper : Window {
+    std::vector<int> players; // +88: ISUSE players
+
+    // 803930EC on the account panel (+84): its font002 label greyed or not.
+    void account_color(Engine& engine, bool on) const {
+        textctl(engine, "STWINFONT34", "font002", on ? "DEFAULTCOLOR" : "CANCELCOLOR");
+    }
+    void update(Engine& engine) override {
+        if (close_states(engine)) return;
+        if (state == 0) {
+            if (sub == 0) {
+                open_model(engine, "j_shback", 0, "SQ_OPENCARD", "SQ_CLOSE");
+                open_model(engine, "i_bgclear", 0, "SQ_OPEN", "SQ_CLOSE");
+                set_sub(1);
+                return;
+            }
+            if (model_in(engine, "j_shback", 0, "SQ_OPENCARD")) return;
+            add_child<ShopTitle03>(engine);
+            add_child<Title03>(engine);
+            account_color(engine, false);
+            add_child<ShopTitle01>(engine).mode = mode;
+            players.clear();
+            if (auto* sys = engine.get<GameSystem>())
+                for (int k = 0; k < 4; ++k)
+                    if (sys->players[std::size_t(k)].joined) players.push_back(k);
+            status_panel(*this, engine, player, true);
+            next_state(1);
+            return;
+        }
+        switch (sub) {
+        case 0:
+            if (!model_in(engine, "i_messwn", 0, "SQ_OPEN") && mode == 10) set_sub(1);
+            return;
+        case 1: // Select a Digimon / Exit
+            if (step == 0) {
+                add_child<ShopSelect02>(engine).mode = 2003;
+                account_color(engine, false);
+                mark();
+                set_step(1);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection != 0) next_state(2);
+            else set_sub(2);
+            return;
+        case 2: // the players
+            if (step == 0) {
+                auto& choice = add_child<ShopSelect02>(engine);
+                choice.mode = -1;
+                choice.players = players;
+                account_color(engine, true);
+                mark();
+                set_step(1);
+                return;
+            }
+            if (!child_done()) return;
+            if (selection < 0 || selection >= 4 || selection >= int(players.size())) {
+                set_sub(1);
+                return;
+            }
+            player = players[std::size_t(selection)];
+            status_panel(*this, engine, player, true);
+            add_child<ShopCardMenu>(engine);
+            mark();
+            set_sub(3);
+            return;
+        case 3:
+            if (child_done()) set_sub(2);
+            return;
+        }
+    }
+};
+
+// Unknown programs close at once.
 struct ShopPending : Window {
     void update(Engine& engine) override {
         if (close_states(engine)) return;
@@ -2536,7 +2876,8 @@ struct ShopPending : Window {
 };
 
 // ---------------------------------------------------------------------------
-// beNDMWShopCtrl00 (8039334C): the frame of the shop programs 1 and 3..9.
+// beNDMWShopCtrl00 (8039334C): the frame of the shop programs 1 and 3..9;
+// 8034F504 starts the card keeper (10) directly.
 // ---------------------------------------------------------------------------
 struct ShopCtrl00 : Window {
     void update(Engine& engine) override {
@@ -2584,6 +2925,11 @@ std::unique_ptr<Window> make_shop_program(int program) {
         auto lab = std::make_unique<ShopLab>();
         lab->mode = program;
         return lab;
+    }
+    if (program == 10) {
+        auto keeper = std::make_unique<ShopCardKeeper>();
+        keeper->mode = program;
+        return keeper;
     }
     auto window = std::make_unique<ShopCtrl00>();
     window->mode = program;

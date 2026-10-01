@@ -1129,6 +1129,11 @@ void SubWindowManager::update(Engine& engine) {
     if (!running_) return;
     auto& messenger = engine.messenger();
     if (state_ == 0) {
+        // The port creates players on first use; a program needs them made.
+        if (auto* sys = engine.get<GameSystem>())
+            for (int slot = 0; slot < 4; ++slot)
+                if (sys->players[std::size_t(slot)].joined && !sys->players[std::size_t(slot)].stats.ready)
+                    sys->prepare_player(engine, slot);
         fill_stocks(engine);
         Packet pad;
         pad.strings.emplace_back("ENABLE");

@@ -49,7 +49,9 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   donations, the bank (devices and bits), the X data keeper (stats and chip
   upgrades), the appraiser for unknown devices and the Digi-Lab: digivolution
   into the forms reached (each form keeps its level, EXP, skills and stat
-  ups), the strongest usable weapon equipped, then the evolution scene.
+  ups), the strongest usable weapon equipped, then the evolution scene;
+  the card keeper opens booster packs (three cards drawn by their weights,
+  named in their rarity colours) and shows the album of the 50 cards.
 - Status effects of players and enemies: poison ticks, sleep, stun, bind,
   attack and power down (plus the speed/power up, refract and metal
   commands) with the original FIGHTCALC chances and times, their DOWN/UP
@@ -68,8 +70,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
-Not yet reconstructed: the card keeper (booster packs and album), the raise technique,
-voices and the opening movie,
+Not yet reconstructed: the raise technique, voices and the opening movie,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 

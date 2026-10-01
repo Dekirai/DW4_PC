@@ -656,6 +656,8 @@ public:
     std::optional<std::int32_t> number(std::string_view table, int row, std::string_view column) const;
     // First row whose string column equals value, or -1.
     int find_row(std::string_view table, std::string_view column, std::string_view value) const;
+    // 8031F760: the row count, from the string cells per string column.
+    int rows(std::string_view table) const;
 
 private:
     std::vector<std::unique_ptr<Ram>> rams_;

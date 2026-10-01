@@ -228,6 +228,13 @@ int DatabaseManager::find_row(std::string_view table, std::string_view column, s
     return -1;
 }
 
+int DatabaseManager::rows(std::string_view table) const {
+    const auto found = tables_.find(table);
+    if (found == tables_.end()) return 0;
+    const auto names = found->second.list(12);
+    return names.empty() ? 0 : int(found->second.list(13).size() / names.size());
+}
+
 // ---------------------------------------------------------------------------
 // LOADINTF2
 void LoadIntf2Manager::add_info(Engine& engine, const ObjectView& info) {
