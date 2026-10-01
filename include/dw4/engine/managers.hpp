@@ -488,7 +488,8 @@ private:
     std::int32_t point_no_{}; // manager-wide _pointNo, survives stage loads
 };
 
-// beHitLandModel: static collision geometry (provisional host queries).
+// beHitLandModel / beHitLandDeliv: the collision geometry with its original
+// HITLANDMODEL queries and the models' HITLANDDELIVER responses.
 class HitLandManager final : public Manager {
 public:
     HitLandManager() : Manager("beHitLandModel") {}
@@ -1108,8 +1109,8 @@ private:
 };
 
 // PLAYERARMS (beWeapon, commands 80318474): weapon infos. Their sequence rows
-// become SETLABEL overrides of the carrying player (WEAPON_RUNTIME.md); the
-// weapon geometry attachment to the hand bone is not reconstructed yet.
+// become SETLABEL overrides of the carrying player (WEAPON_RUNTIME.md);
+// GENERATE hangs the weapon parts on their bones of the player's actors.
 class WeaponManager final : public Manager {
 public:
     WeaponManager() : Manager("beWeapon") {}
