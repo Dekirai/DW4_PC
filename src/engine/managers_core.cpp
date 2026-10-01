@@ -168,7 +168,8 @@ bool LayerManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (packet.strings.size() < 2) return true;
         const auto group = packet.string(0);
         const auto mode = packet.string(1);
-        const int value = mode == "DISPOFF" ? 0 : mode == "DISPON" ? 1 : mode == "FLIP" ? 2 : -1;
+        // SwtCtl (802D38DC): CLR / DISPOFF hide, SET / DISPON show, FLIP toggles.
+        const int value = mode == "CLR" || mode == "DISPOFF" ? 0 : mode == "SET" || mode == "DISPON" ? 1 : mode == "FLIP" ? 2 : -1;
         if (group == "ALL") {
             if (value == 1) layer_switch_->set_all_children(true);
             else if (value == 0) layer_switch_->set_all_children(false);
