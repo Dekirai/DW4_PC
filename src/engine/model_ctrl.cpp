@@ -817,40 +817,36 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     }
     Vec3f next{matrix[12], matrix[13], matrix[14]};
     bool wall_hit = false, floor_hit = false;
-    if (!ram.is_player && ram.category != "ENEMY" && (!ram.lua_whit.empty() || !ram.lua_fhit.empty())) {
-        // PROVISIONAL wall and floor hits (8030 9C74: HITLANDDELIVER HITWALL
-        // and the landing check) on the host collision query.
-        if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
-            const auto& world = hitland->world();
-            std::uint32_t mask = hitland->mask(ram.info_name);
-            if (mask == 0) mask = 7u;
-            const float radius = std::max(hitland->radius(ram.info_name), 1.0f);
-            if (!ram.lua_whit.empty()) {
-                const Vec3f pushed = world.resolve_walls(next, radius, -radius, radius, mask);
-                const float dx = pushed.x - next.x, dz = pushed.z - next.z;
-                wall_hit = dx * dx + dz * dz > 1e-4f;
-            }
-            float floor = 0;
-            if (!ram.lua_fhit.empty() &&
-                world.floor_height({next.x, position.y, next.z}, 0.0f, std::max(position.y - next.y, 0.0f) + 0.5f, floor,
-                                   nullptr, mask))
-                floor_hit = next.y <= floor + 0.5f;
-        }
-    }
-    if (ram.is_player || ram.category == "ENEMY") {
+    // Players, enemies and every model with a HitLandDeliv row (bullets,
+    // bouncing effects) meet walls and floors (80309C74).
+    auto* hitland = engine.get<HitLandManager>();
+    const std::uint32_t deliv_mask = hitland ? hitland->mask(ram.info_name) : 0u;
+    const bool body = ram.is_player || ram.category == "ENEMY";
+    if (body || deliv_mask != 0) {
         // PROVISIONAL collision response (see collision.hpp).
-        if (auto* hitland = engine.get<HitLandManager>(); hitland && hitland->world().triangle_count()) {
+        if (hitland && hitland->world().triangle_count()) {
             auto& world = hitland->world();
-            std::uint32_t mask = hitland->mask(ram.info_name);
+            std::uint32_t mask = deliv_mask;
             if (mask == 0) mask = ram.is_player ? 7u : 11u;
+            const bool was_on_ground = ram.on_ground;
             // OPEN QUESTION: kind 4 "limit" geometry (e.g. stag0101's inward-facing
             // limit_Circle around the path) would block the only route if queried,
             // so it is left out of wall queries until its gate is understood.
-            next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask & ~4u);
+            const Vec3f before_walls = next;
+            if (body) {
+                next = world.resolve_walls(next, 3.0f, 2.0f, 12.0f, mask & ~4u);
+            } else {
+                const float radius = std::max(hitland->radius(ram.info_name), 1.0f);
+                next = world.resolve_walls(next, radius, -radius, radius, mask & ~4u);
+            }
+            {
+                const float dx = next.x - before_walls.x, dz = next.z - before_walls.z;
+                wall_hit = dx * dx + dz * dz > 1e-4f;
+            }
             // PROVISIONAL model-to-model separation (the original delivers
             // CHECKWALL between the models' HitLandDeliv cylinders).
             const float own = std::max(hitland->radius(ram.info_name), 2.0f);
-            for (const auto& other : rams_) {
+            if (body) for (const auto& other : rams_) {
                 if (other.get() == &ram || !other->generated || !other->node) continue;
                 if (!other->is_player && other->category != "ENEMY") continue;
                 if (other->seq_name == "SQ_ERAS") continue;
@@ -893,6 +889,7 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                     ram.fall_speed = 0;
                 }
             }
+            floor_hit = !was_on_ground && ram.on_ground;
         }
     }
     // PROVISIONAL: a model that fell far below its last floor returns there
@@ -910,8 +907,8 @@ void ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     matrix[13] = next.y;
     matrix[14] = next.z;
     std::copy(matrix.begin(), matrix.end(), m.m.begin());
-    if (wall_hit) run_model_script(engine, ram, ram.lua_whit, "WHit");
-    else if (floor_hit) run_model_script(engine, ram, ram.lua_fhit, "FHit");
+    if (wall_hit && !ram.lua_whit.empty()) run_model_script(engine, ram, ram.lua_whit, "WHit");
+    else if (floor_hit && !ram.lua_fhit.empty()) run_model_script(engine, ram, ram.lua_fhit, "FHit");
 }
 
 void ModelCtrlManager::update(Engine& engine) {
