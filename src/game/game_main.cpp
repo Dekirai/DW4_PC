@@ -1223,6 +1223,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ImGui::Begin("DW4 PC (F1)");
                 if (ImGui::BeginTabBar("menu")) {
                 if (ImGui::BeginTabItem("Settings")) {
+                    {
+                        // Presets: Original (the GameCube presentation and
+                        // balance) or Modernized (widescreen, smooth motion,
+                        // anti-aliasing, straight to the title).
+                        const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
+                                              !settings.skip_intro && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
+                                              settings.damage_taken == 100 && settings.drop_seed == 0;
+                        const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro;
+                        int preset = original ? 0 : modernized ? 1 : 2;
+                        static const char* presets[] = {"Original", "Modernized", "Custom"};
+                        if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
+                            const bool modern = preset == 1;
+                            settings.widescreen = modern;
+                            settings.smooth_motion = modern;
+                            settings.msaa = modern ? 4 : 0;
+                            settings.skip_intro = modern;
+                            if (!modern) {
+                                settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
+                                settings.drop_seed = 0;
+                                apply_gameplay(engine.cheats());
+                            }
+                            settings_changed = true;
+                        }
+                        ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro and the original balance.");
+                    }
                     if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
                         if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
                             SDL_SetWindowFullscreen(window, settings.fullscreen);

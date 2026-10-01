@@ -224,7 +224,8 @@ gamepads control players 2 to 4. As on the original, holding B and X and
 then START for a second on player 1's controller returns to the title
 (outside the logo, opening, title and ending stages).
 
-F1 opens the menu: the Settings tab (display, widescreen, frame limit, anti-aliasing,
+F1 opens the menu: the Settings tab (an Original / Modernized preset, display,
+widescreen, frame limit, anti-aliasing,
 window size, volume, keyboard and controller bindings), the Cheats tab
 (god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
 session only and off by default; plus the saved rebalancing and randomizer
