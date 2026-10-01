@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,7 @@ struct Settings {
     // [mods]
     std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
     bool dump_textures = false;         // write decoded textures to mods/dump/textures
+    std::set<std::string> disabled_mods; // content mods (mods/<id>) switched off
     // [data]
     std::filesystem::path data;
     std::filesystem::path cards; // memory card root (Card A / Card B), empty: saves/GC/USA

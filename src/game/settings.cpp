@@ -160,6 +160,18 @@ Settings Settings::load() {
     }
     settings.texture_pack = ini.get_or("mods", "textures", "");
     settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
+    {
+        const std::string list = ini.get_or("mods", "disabled", "");
+        std::size_t start = 0;
+        while (start < list.size()) {
+            const auto comma = std::min(list.find(',', start), list.size());
+            std::string id = list.substr(start, comma - start);
+            while (!id.empty() && id.front() == ' ') id.erase(id.begin());
+            while (!id.empty() && id.back() == ' ') id.pop_back();
+            if (!id.empty()) settings.disabled_mods.insert(id);
+            start = comma + 1;
+        }
+    }
     settings.data = ini.get_or("data", "path", "");
     settings.cards = ini.get_or("data", "cards", "");
     return settings;
@@ -203,6 +215,11 @@ bool Settings::save() {
     }
     if (!texture_pack.empty()) ini_.set("mods", "textures", texture_pack.string());
     ini_.set_bool("mods", "dump_textures", dump_textures);
+    {
+        std::string list;
+        for (const auto& id : disabled_mods) list += (list.empty() ? "" : ",") + id;
+        ini_.set("mods", "disabled", list);
+    }
     if (!data.empty()) ini_.set("data", "path", data.string());
     return ini_.save(file);
 }

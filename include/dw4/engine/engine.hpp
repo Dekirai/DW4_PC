@@ -248,6 +248,8 @@ public:
     DemoManager& demo() { return demo_; }
     SceneCache& scenes() { return scenes_; }
     const MountedResources& resources() const { return resources_; }
+    // Mods (folders replacing logical paths, first wins); before the first stage.
+    void set_resource_overrides(std::vector<std::filesystem::path> roots) { resources_.set_overrides(std::move(roots)); }
     // Memory card folders (Dolphin's GCI layout: <root>/Card A, <root>/Card B).
     void set_card_root(std::filesystem::path root) { card_root_ = std::move(root); }
     const std::filesystem::path& card_root() const { return card_root_; }

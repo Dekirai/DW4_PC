@@ -56,8 +56,15 @@ public:
     const std::vector<assets::AfsArchive>& archives() const noexcept { return archives_; }
     std::vector<std::uint8_t> read(std::string_view logical_path,
         std::size_t max_bytes = 64u * 1024u * 1024u) const;
+    // Mods: folders whose files replace (or add) logical paths, the first
+    // folder winning. Only validated logical paths are looked up there.
+    void set_overrides(std::vector<std::filesystem::path> roots) { overrides_ = std::move(roots); }
+    const std::vector<std::filesystem::path>& overrides() const noexcept { return overrides_; }
+    // The override file for a logical path, if a mod has one.
+    std::optional<std::filesystem::path> override_for(std::string_view logical_path) const;
 
 private:
+    std::vector<std::filesystem::path> overrides_;
     ResourceCatalog catalog_;
     std::vector<assets::AfsArchive> archives_;
 };

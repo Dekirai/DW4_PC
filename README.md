@@ -173,6 +173,31 @@ are off online; a guest that leaves plays on released, a host that leaves ends
 the session for the others (they play on alone). The host needs the port
 open (router / firewall) for guests outside the local network.
 
+### Content mods
+
+A mod is a folder `mods/<id>` (next to the program, else in the working
+folder) with a versioned manifest `mod.ini` and the replacement files under
+`files/` at their logical paths, for example
+`mods/mydesert/files/loadingusa/ldag0101.igb` for the Death Valley loading
+screen or `files/stag0101.igb` for a stage package (models, collision,
+scripts and databases live inside the packages):
+
+```ini
+[mod]
+name=My Desert
+version=1.0
+author=me
+description=Replaces the Death Valley loading screen
+priority=10     ; higher wins when two mods replace the same file
+game=GDJEB2
+```
+
+`dw4_catalog ROOT --find TEXT` lists logical paths and `--read PATH --out
+FILE` writes an original file as a template (ROOT may be the disc image). The
+F1 menu lists the mods and switches them on or off for the next start
+(`[mods] disabled=id,...`). Online sessions only accept machines whose game
+data, mods included, match.
+
 ### Texture packs
 
 With *Dump textures* in the F1 menu (or `[mods] dump_textures=true`) every

@@ -2,6 +2,7 @@
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
+#include "mods.hpp"
 #include "netplay.hpp"
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
@@ -410,6 +411,18 @@ std::uint64_t data_hash(const dw4::MountedResources& resources) {
         }
     };
     for (const auto& archive : resources.catalog().archives) mix(&archive.declared_entries, sizeof archive.declared_entries);
+    // Mods change the data: their file names and sizes count.
+    for (const auto& folder : resources.overrides()) {
+        std::vector<std::string> files;
+        std::error_code error;
+        for (auto it = std::filesystem::recursive_directory_iterator(folder, error);
+             !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error))
+            if (it->is_regular_file(error))
+                files.push_back(std::filesystem::relative(it->path(), folder, error).generic_string() + ":" +
+                                std::to_string(it->file_size(error)));
+        std::sort(files.begin(), files.end());
+        for (const auto& file : files) mix(file.data(), file.size());
+    }
     for (const auto& resource : resources.catalog().resources) {
         mix(resource.logical_path.data(), resource.logical_path.size());
         if (resource.location) {
@@ -435,6 +448,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
     else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
+    // Content mods: mods/<id> next to the program (else in the working
+    // folder); test runs only with DW4_MODS=<mods folder>.
+    std::filesystem::path mods_root;
+    if (options.smoke_frames) {
+        if (const char* folder = std::getenv("DW4_MODS")) mods_root = folder;
+    } else {
+        std::error_code error;
+        if (const char* program = SDL_GetBasePath(); program && std::filesystem::is_directory(std::filesystem::path(program) / "mods", error))
+            mods_root = std::filesystem::path(program) / "mods";
+        else
+            mods_root = "mods";
+    }
+    std::vector<dw4::game::ModInfo> mods = mods_root.empty() ? std::vector<dw4::game::ModInfo>{} : dw4::game::scan_mods(mods_root, settings.disabled_mods);
+    const auto mod_folders = dw4::game::mod_overrides(mods);
+    engine.set_resource_overrides(mod_folders);
+    for (const auto& mod : mods)
+        if (mod.enabled && mod.problem.empty()) std::cout << "mod: " << mod.name << " " << mod.version << " (" << mod.file_count << " files)\n";
     // Rebalancing / randomizer (settings.ini [gameplay]; test runs:
     // DW4_GAMEPLAY=exp,dealt,taken,seed).
     auto apply_gameplay = [&](dw4::engine::Cheats& cheats) {
@@ -731,6 +761,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto started = std::chrono::steady_clock::now();
             engine_storage.reset();
             engine_storage.emplace(options.data);
+            engine.set_resource_overrides(mod_folders);
             engine.set_card_root(card_root);
             engine.restore(state.snapshot);
             std::vector<dw4::engine::DrawItem> replay_items;
@@ -771,6 +802,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             const auto real_cards = card_root;
             engine_storage.reset();
             engine_storage.emplace(options.data);
+            engine.set_resource_overrides(mod_folders);
             engine.cheats().god = started.cheats & 1;
             engine.cheats().infinite_mp = started.cheats & 2;
             engine.cheats().one_hit = started.cheats & 4;
@@ -1384,6 +1416,26 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             else
                                 ImGui::TextDisabled("%zu: empty", slot + 1);
                             ImGui::PopID();
+                        }
+                    }
+                    if (ImGui::CollapsingHeader("Mods")) {
+                        ImGui::TextDisabled("Folders in %s with a mod.ini; changes apply at the next start.", mods_root.string().c_str());
+                        if (mods.empty()) ImGui::TextDisabled("No mods found.");
+                        for (auto& mod : mods) {
+                            bool enabled = !settings.disabled_mods.count(mod.id);
+                            if (ImGui::Checkbox(("##mod" + mod.id).c_str(), &enabled)) {
+                                if (enabled) settings.disabled_mods.erase(mod.id);
+                                else settings.disabled_mods.insert(mod.id);
+                                settings_changed = true;
+                            }
+                            ImGui::SameLine();
+                            ImGui::Text("%s %s%s%s (%zu files)", mod.name.c_str(), mod.version.c_str(), mod.author.empty() ? "" : " by ",
+                                        mod.author.c_str(), mod.file_count);
+                            if (!mod.problem.empty()) {
+                                ImGui::SameLine();
+                                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "- %s", mod.problem.c_str());
+                            }
+                            if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
                         }
                     }
                     if (ImGui::CollapsingHeader("Texture packs")) {

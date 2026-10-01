@@ -3,6 +3,7 @@
 #include "dw4/igb_document.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -194,7 +195,32 @@ MountedResources MountedResources::open(const std::filesystem::path& root) {
     return result;
 }
 
+std::optional<std::filesystem::path> MountedResources::override_for(std::string_view path) const {
+    if (overrides_.empty()) return std::nullopt;
+    try {
+        logical_path(path);
+    } catch (const assets::AssetError&) {
+        return std::nullopt;
+    }
+    std::error_code error;
+    for (const auto& root : overrides_) {
+        const auto candidate = root / std::filesystem::path(std::string(path));
+        if (std::filesystem::is_regular_file(candidate, error)) return candidate;
+    }
+    return std::nullopt;
+}
+
 std::vector<std::uint8_t> MountedResources::read(std::string_view path, std::size_t limit) const {
+    if (const auto file = override_for(path)) {
+        std::error_code error;
+        const auto size = std::filesystem::file_size(*file, error);
+        if (error || size > limit) fail("mod file is unreadable or too large: " + std::string(path));
+        std::ifstream in(*file, std::ios::binary);
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+        in.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()));
+        if (!in) fail("mod file could not be read: " + std::string(path));
+        return bytes;
+    }
     const auto* resource = catalog_.find(path);
     if (!resource) fail("logical path is not present: " + std::string(path));
     if (!resource->location) fail("resource has no archive entry: " + std::string(path));
