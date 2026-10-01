@@ -271,16 +271,189 @@ void CameraManager::add_info(Engine& engine, const ObjectView& info) {
             if (demo_duration <= 0) demo_duration = std::int64_t(data.f32(4) * 1e9f);
         }
     }
+    std::optional<BoxData> box;
+    if (const auto data = info.ref(7); data && data.type() == "beCameraBoxData") {
+        BoxData b;
+        for (const auto& node : data.list(4)) if (node && !b.pivot) b.pivot = engine.scenes().node(node);
+        for (const auto& node : data.list(5)) b.eyes.push_back(node ? engine.scenes().node(node) : nullptr);
+        for (const auto& node : data.list(6)) b.targets.push_back(node ? engine.scenes().node(node) : nullptr);
+        for (const auto& geometry : data.list(3)) {
+            const auto bound = geometry ? geometry.ref(3) : ObjectView{};
+            b.boxes.push_back({bound ? bound.vec3(2).value_or(Vec3f{}) : Vec3f{}, bound ? bound.vec3(3).value_or(Vec3f{}) : Vec3f{}});
+        }
+        if (b.pivot && !b.eyes.empty() && b.eyes[0] && !b.targets.empty() && b.targets[0]) box = std::move(b);
+    }
     for (auto* ram : created) {
         ram->paths = paths;
         ram->demo_data = demo;
         ram->demo_data_duration = demo_duration;
+        ram->box = box;
     }
 }
 
 void CameraManager::clear_stage(Engine&) {
     rams_.clear();
     current_.reset();
+    centre_ = {-1.0f, -1.0f, -1.0f};
+    centre_moved_ = false;
+    blend_ = 0.0f;
+    box_ = previous_box_ = 0;
+}
+
+bool CameraManager::demo_running(Engine& engine) const {
+    for (const auto& ram : rams_)
+        if (ram->demo_active && engine.time() - ram->demo_start <= ram->demo_duration) return true;
+    return false;
+}
+
+namespace {
+void set_translation(Mat4& m, const Vec3f& v) {
+    m(3, 0) = v.x;
+    m(3, 1) = v.y;
+    m(3, 2) = v.z;
+}
+Vec3f translation_of(const Mat4& m) { return {m(3, 0), m(3, 1), m(3, 2)}; }
+
+// 8012B8A8: the rotation part of a matrix as a quaternion (x, y, z, w).
+Vec4f matrix_quaternion(const Mat4& m) {
+    const float trace = m(0, 0) + m(1, 1) + m(2, 2);
+    Vec4f q;
+    if (trace > 0.0f) {
+        const float s = std::sqrt(trace + 1.0f) * 2.0f;
+        q = {(m(1, 2) - m(2, 1)) / s, (m(2, 0) - m(0, 2)) / s, (m(0, 1) - m(1, 0)) / s, 0.25f * s};
+    } else if (m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2)) {
+        const float s = std::sqrt(1.0f + m(0, 0) - m(1, 1) - m(2, 2)) * 2.0f;
+        q = {0.25f * s, (m(0, 1) + m(1, 0)) / s, (m(2, 0) + m(0, 2)) / s, (m(1, 2) - m(2, 1)) / s};
+    } else if (m(1, 1) > m(2, 2)) {
+        const float s = std::sqrt(1.0f + m(1, 1) - m(0, 0) - m(2, 2)) * 2.0f;
+        q = {(m(0, 1) + m(1, 0)) / s, 0.25f * s, (m(1, 2) + m(2, 1)) / s, (m(2, 0) - m(0, 2)) / s};
+    } else {
+        const float s = std::sqrt(1.0f + m(2, 2) - m(0, 0) - m(1, 1)) * 2.0f;
+        q = {(m(2, 0) + m(0, 2)) / s, (m(1, 2) + m(2, 1)) / s, 0.25f * s, (m(0, 1) - m(1, 0)) / s};
+    }
+    return q;
+}
+
+// 8012C15C: spherical interpolation along the shorter arc.
+Vec4f quaternion_slerp(Vec4f a, Vec4f b, float t) {
+    float cosine = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+    if (cosine < 0.0f) {
+        b = {-b.x, -b.y, -b.z, -b.w};
+        cosine = -cosine;
+    }
+    float wa = 1.0f - t, wb = t;
+    if (cosine < 0.9999f) {
+        const float angle = std::acos(cosine), sine = std::sin(angle);
+        wa = std::sin((1.0f - t) * angle) / sine;
+        wb = std::sin(t * angle) / sine;
+    }
+    return {a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
+}
+
+// 801299D8: the rotation of a quaternion, keeping the translation.
+void set_rotation(Mat4& m, const Vec4f& q) {
+    const Vec3f keep = translation_of(m);
+    m = quaternion_matrix(q.x, q.y, q.z, q.w);
+    set_translation(m, keep);
+}
+
+// SHK direction tables (804DD8D8 / 804DD8FC), indexed by pattern digit.
+constexpr float kShakeX[9] = {0, 0, 1, 1, 1, 0, -1, -1, -1};
+constexpr float kShakeY[9] = {0, 1, 1, 0, -1, -1, -1, 0, 1};
+} // namespace
+
+// 802F2BC0: the box camera. The pivot stands at the players' centre; the
+// camera box containing the centre selects the rotation and distance
+// transforms, blended in over 120 steps (one per frame while the players
+// move, 1.5 while they stand); SHAKE offsets the live transforms.
+void CameraManager::update_box(Engine& engine, CameraRam& ram) {
+    auto& box = *ram.box;
+    Node* eye = box.eyes[0];
+    Node* target = box.targets[0];
+    // PLAYER GETMATRIX: 2 players halve, 3 divide, 4 quarter, else the sum.
+    std::vector<Vec3f> players;
+    if (auto* models = engine.get<ModelCtrlManager>())
+        for (const auto& model : models->rams())
+            if (model->is_player && model->generated && model->node) players.push_back(translation_of(model->node->matrix));
+    if (players.empty()) return;
+    Vec3f centre{};
+    for (const auto& p : players) centre = centre + p;
+    if (players.size() == 2) centre = centre * 0.5f;
+    else if (players.size() == 3) centre = centre * (1.0f / 3.0f);
+    else if (players.size() == 4) centre = centre * 0.25f;
+    centre_moved_ = centre.x != centre_.x || centre.y != centre_.y || centre.z != centre_.z;
+    if (centre_moved_) centre_ = centre;
+    // The last frame's shake offset is taken back (not on its first frame).
+    if (ram.shake) {
+        if (ram.shake->fresh) ram.shake->fresh = false;
+        else {
+            set_translation(eye->matrix, ram.shake->eye);
+            set_translation(target->matrix, ram.shake->target);
+        }
+    }
+    if (centre_moved_) {
+        set_translation(box.pivot->matrix, centre_);
+        int found = 0;
+        for (std::size_t k = 1; k < box.boxes.size(); ++k) {
+            const auto& [lo, hi] = box.boxes[k];
+            if (centre_.x >= lo.x && centre_.y >= lo.y && centre_.z >= lo.z && centre_.x <= hi.x && centre_.y <= hi.y &&
+                centre_.z <= hi.z) {
+                found = int(k);
+                break;
+            }
+        }
+        if (found != 0 && found != box_) {
+            previous_box_ = box_;
+            box_ = found;
+            saved_eye_ = eye->matrix;
+            saved_target_ = target->matrix;
+            blend_ = 0.0f;
+        }
+    }
+    const std::size_t k = std::size_t(box_);
+    if (box_ != previous_box_ && k < box.eyes.size() && k < box.targets.size() && box.eyes[k] && box.targets[k]) {
+        if (previous_box_ == 0 || blend_ >= 120.0f) {
+            previous_box_ = box_;
+            eye->matrix = box.eyes[k]->matrix;
+            target->matrix = box.targets[k]->matrix;
+        } else {
+            const float t = blend_ / 120.0f;
+            auto blend = [&](Node* live, const Mat4& saved, const Mat4& goal) {
+                const Vec3f a = translation_of(saved), b = translation_of(goal);
+                set_translation(live->matrix, a + (b - a) * t);
+                set_rotation(live->matrix, quaternion_slerp(matrix_quaternion(saved), matrix_quaternion(goal), t));
+            };
+            blend(eye, saved_eye_, box.eyes[k]->matrix);
+            blend(target, saved_target_, box.targets[k]->matrix);
+            blend_ += centre_moved_ ? 1.0f : 1.5f;
+        }
+    }
+    // 802F3370: the shake offsets both live transforms by the pattern's
+    // direction; SHAKEONE steps the pattern, SHAKEALL ends it.
+    if (ram.shake) {
+        auto& shake = *ram.shake;
+        const char c = shake.index < shake.pattern.size() ? shake.pattern[shake.index] : '0';
+        const int digit = std::clamp(c - '0', 0, 8);
+        shake.eye = translation_of(eye->matrix);
+        shake.target = translation_of(target->matrix);
+        for (Node* node : {eye, target}) {
+            Vec3f p = translation_of(node->matrix);
+            p.x += kShakeX[digit] * shake.amplitude;
+            p.y += kShakeY[digit] * shake.amplitude;
+            set_translation(node->matrix, p);
+        }
+        const std::int64_t now = engine.time();
+        if (now >= shake.step_end) {
+            ++shake.index;
+            if (shake.index >= shake.pattern.size()) shake.index = 0;
+            shake.step_end = now + std::int64_t(1.0e9f * shake.step / 60.0f);
+        }
+        if (now >= shake.all_end) {
+            set_translation(eye->matrix, shake.eye);
+            set_translation(target->matrix, shake.target);
+            ram.shake.reset();
+        }
+    }
 }
 
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
@@ -336,10 +509,36 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
         ram.demo_path = -1;
         return true;
     }
+    if (command == "GETPOSITION") {
+        // 802F3A60: the players' centre of the box camera.
+        packet.vectors.push_back(centre_);
+        return true;
+    }
+    if (command == "SHAKE") {
+        // 802F3B2C: only the box camera shakes.
+        if (!ram.box) return true;
+        Shake shake;
+        shake.pattern = std::string(packet.string(0));
+        shake.amplitude = packet.real(0);
+        shake.step = packet.real(1);
+        shake.total = packet.real(2);
+        shake.all_end = engine.time() + std::int64_t(1.0e9f * shake.total / 60.0f);
+        shake.step_end = engine.time(); // SHAKEONE cleared: the first update steps
+        ram.shake = std::move(shake);
+        return true;
+    }
+    if (command == "SHOWPOLYGON" || command == "HIDEPOLYGON") return true; // debug box display
     return false;
 }
 
-void CameraManager::update(Engine&) {}
+void CameraManager::update(Engine& engine) {
+    if (demo_running(engine)) return;
+    for (auto& ram : rams_)
+        if (ram->box && ram->active) {
+            update_box(engine, *ram);
+            break;
+        }
+}
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
     camera.projection = perspective(54.4322f * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
@@ -371,8 +570,9 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
             const float far_plane = path.camera->object.f32(10, 2000.0f);
             camera.projection = perspective(fov * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, near_plane, far_plane);
         }
-        // Follow the first player: keep the authored angle and distance.
-        if (!demo) {
+        // Without box data: follow the first player with the authored angle
+        // and distance.
+        if (!demo && !ram->box) {
             if (auto* models = engine.get<ModelCtrlManager>()) {
                 if (const auto* player = models->player(0); player && player->node) {
                     const auto& pm = player->node->matrix;

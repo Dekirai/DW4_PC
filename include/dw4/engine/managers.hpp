@@ -131,7 +131,28 @@ public:
     };
 
 private:
+    // beCameraBoxData ([7] of a box camera info): the pivot that follows the
+    // players' centre, the rotation ("target") and distance ("eye")
+    // transforms, [0] the live ones and [k] those of camera box k, and the
+    // boxes' bounds ([0] unused).
+    struct BoxData {
+        Node* pivot{};
+        std::vector<Node*> eyes, targets;
+        std::vector<std::pair<Vec3f, Vec3f>> boxes;
+    };
+    // The "SHK" data of SHAKE (802F3B2C): a digit pattern of directions,
+    // each held for `step` frames, for `total` frames.
+    struct Shake {
+        std::string pattern;
+        float amplitude{}, step{}, total{};
+        std::size_t index{};
+        bool fresh = true;
+        Vec3f eye{}, target{};
+        std::int64_t step_end{}, all_end{};
+    };
     struct CameraRam : Ram {
+        std::optional<BoxData> box;
+        std::optional<Shake> shake;
         std::vector<CameraPath> paths;
         // beCameraDemoData ([7]): a demo camera info's own path and length.
         std::optional<CameraPath> demo_data;
@@ -143,6 +164,14 @@ private:
     };
     std::vector<std::unique_ptr<CameraRam>> rams_;
     std::optional<FrameCamera> current_;
+    // Box camera state (802F2BC0, manager +2C..+D4).
+    Vec3f centre_{-1.0f, -1.0f, -1.0f};
+    bool centre_moved_{};
+    float blend_{};
+    int box_{}, previous_box_{};
+    Mat4 saved_eye_, saved_target_;
+    void update_box(Engine& engine, CameraRam& ram);
+    bool demo_running(Engine& engine) const;
 };
 
 class StageCtlManager final : public Manager {

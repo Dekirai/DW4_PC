@@ -65,7 +65,7 @@ original scripts keep running.
 | --- | --- | --- |
 | `GameSystem` | beSystem / GAMERAM script services | players, difficulty, modes, flags, counters, text call number |
 | `SceneManager`, `LayerManager`, `BkColorManager` | igSceneInfo, LAYERCTL, BKCOLOR | layer ORDER/SWITCH/REMOVE, clear colour |
-| `CameraManager` | beCameraCtrl | follow and box cameras, named demo camera paths |
+| `CameraManager` | beCameraCtrl | box camera (802F2BC0: pivot at the players' centre, per-box rotation and distance transforms blended over 120 steps, SHAKE), named demo camera paths |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
 | `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience, sound effects and the opening movie play |
 | `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, provisional enemy AI |
