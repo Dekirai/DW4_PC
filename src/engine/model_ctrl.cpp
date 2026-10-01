@@ -528,7 +528,9 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         return true;
     }
-    if (command == "GETRECNO") { packet.ints.push_back(ram.record >= 0 ? ram.record : ram.index); return true; }
+    // Case 16: the record of the control work (+10), zero unless a
+    // generator GENERATE set it.
+    if (command == "GETRECNO") { packet.ints.push_back(std::max(ram.record, 0)); return true; }
     if (command == "FIND_SPACE") {
         // First free RAM of this info answers (generator spawn).
         if (!ram.generated && packet.ints.empty()) packet.ints.push_back(ram.index);

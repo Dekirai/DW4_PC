@@ -400,7 +400,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     }
     if (method == "MDLgetRecNo") {
         auto* model = context_model();
-        return number(model ? (model->record >= 0 ? model->record : model->index) : 0);
+        return number(model ? std::max(model->record, 0) : 0); // work +10, zero unless GENERATE set it
     }
     if (method == "MDLgetInfoName") return string_result(context ? context->name : std::string());
     if (method == "MDLsetSD") {
@@ -543,7 +543,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     auto shooter_record = [&]() {
         auto* models = get<ModelCtrlManager>();
         const auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
-        return shooter ? (shooter->record >= 0 ? shooter->record : shooter->index) : -1;
+        return shooter ? std::max(shooter->record, 0) : -1;
     };
     if (method == "BLPisHitCheck") {
         const auto* stats = target_stats();
