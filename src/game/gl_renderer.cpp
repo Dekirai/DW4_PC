@@ -1,4 +1,5 @@
 #include "gl_renderer.hpp"
+#include "texture_pack.hpp"
 
 #include "dw4/textures.hpp"
 
@@ -11,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -385,10 +387,25 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
     Texture t;
     try {
         const auto image = decode_igb_texture(*binding->image.document(), binding->image.reference());
+        int width = int(image.width), height = int(image.height);
+        const std::uint8_t* pixels = image.rgba.data();
+        std::optional<TextureImage> replaced;
+        if (pack_) {
+            // Texture packs: dumps and replacements by pixel hash.
+            const auto hash = TexturePack::hash(pixels, image.rgba.size(), width, height);
+            const std::string name(binding->image.str(22));
+            pack_->dump(name, pixels, width, height, hash);
+            replaced = pack_->replacement(hash);
+            if (replaced) {
+                width = replaced->width;
+                height = replaced->height;
+                pixels = replaced->rgba.data();
+            }
+        }
         glGenTextures(1, &t.id);
         glBindTexture(GL_TEXTURE_2D, t.id);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GLsizei(image.width), GLsizei(image.height), 0, GL_RGBA, GL_UNSIGNED_BYTE, image.rgba.data());
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GLsizei(width), GLsizei(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         gl_->GenerateMipmap(GL_TEXTURE_2D);
         const auto& s = binding->sampler;
         auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : v == 2 ? GL_MIRRORED_REPEAT : GL_REPEAT; };

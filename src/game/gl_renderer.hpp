@@ -15,10 +15,14 @@ struct Viewport {
 };
 
 // OpenGL 3.3 renderer for engine draw lists. Requires a current context.
+class TexturePack;
+
 class GlRenderer {
 public:
     GlRenderer();
     ~GlRenderer();
+    // Texture dumps and replacements (null for none); clear_cache() reloads.
+    void set_texture_pack(TexturePack* pack) { pack_ = pack; }
     GlRenderer(const GlRenderer&) = delete;
     GlRenderer& operator=(const GlRenderer&) = delete;
 
@@ -71,6 +75,7 @@ private:
     unsigned shadow_fbo_{}, shadow_texture_{};
     int shadow_size_{};
     bool shadow_ready_{};
+    TexturePack* pack_{};
 };
 
 } // namespace dw4::game

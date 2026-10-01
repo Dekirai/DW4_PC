@@ -153,6 +153,8 @@ Settings Settings::load() {
             start = comma + 1;
         }
     }
+    settings.texture_pack = ini.get_or("mods", "textures", "");
+    settings.dump_textures = ini.get_bool("mods", "dump_textures", settings.dump_textures);
     settings.data = ini.get_or("data", "path", "");
     return settings;
 }
@@ -188,6 +190,8 @@ bool Settings::save() {
         }
         ini_.set("gamepad", kKeys[i].ini, value);
     }
+    if (!texture_pack.empty()) ini_.set("mods", "textures", texture_pack.string());
+    ini_.set_bool("mods", "dump_textures", dump_textures);
     if (!data.empty()) ini_.set("data", "path", data.string());
     return ini_.save(file);
 }

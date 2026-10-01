@@ -142,6 +142,16 @@ picture blends between the last two updates) and `msaa` (2/4/8 samples, applied 
 `[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
 leftshoulder`).
 
+### Texture packs
+
+With *Dump textures* in the F1 menu (or `[mods] dump_textures=true`) every
+decoded texture is written once to `mods/dump/textures` as
+`<name>_<width>x<height>_<hash>.png`. A PNG of any size whose name ends in the
+same `_<hash>.png` anywhere below `mods/textures` (or the `[mods] textures`
+folder) replaces that texture; *Reload texture pack* applies changes while
+playing. `mods` is looked up next to the program first, then in the working
+folder. Test runs take `DW4_TEXTURE_PACK=dir` and `DW4_DUMP_TEXTURES=dir`.
+
 `tools/verify_game.py` checks an ISO or extraction against the expected
 `main.dol` SHA-1 `e409a88a7379ed1a536f93b0a303a0ce7cd5d877` without copying data.
 

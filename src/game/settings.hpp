@@ -52,6 +52,9 @@ struct Settings {
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};
     // [gamepad]: up to three controller inputs per button, for every controller.
     std::array<std::array<PadInput, kKeysPerButton>, kPadKeyCount> pad{};
+    // [mods]
+    std::filesystem::path texture_pack; // replacement PNGs (default mods/textures)
+    bool dump_textures = false;         // write decoded textures to mods/dump/textures
     // [data]
     std::filesystem::path data;
 

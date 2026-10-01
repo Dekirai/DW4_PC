@@ -4,6 +4,7 @@
 #include "interpolation.hpp"
 #include "movie_decoder.hpp"
 #include "settings.hpp"
+#include "texture_pack.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -313,6 +314,32 @@ int run(const Options& options, dw4::game::Settings& settings) {
 
     {
         dw4::game::GlRenderer renderer;
+        // Texture packs: settings.ini [mods] textures (default mods/textures
+        // next to the program, else in the working folder); dumps go to
+        // mods/dump/textures. Test runs use neither.
+        dw4::game::TexturePack texture_pack;
+        auto mods_folder = [&](const char* sub) {
+            std::filesystem::path base;
+            if (const char* program = SDL_GetBasePath()) base = program;
+            std::error_code error;
+            if (!base.empty() && std::filesystem::is_directory(base / "mods", error)) return base / "mods" / sub;
+            return std::filesystem::path("mods") / sub;
+        };
+        auto configure_pack = [&] {
+            const auto pack = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
+            texture_pack.configure(pack, settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
+            renderer.clear_cache();
+        };
+        if (!options.smoke_frames) {
+            configure_pack();
+            renderer.set_texture_pack(&texture_pack);
+        } else if (std::getenv("DW4_TEXTURE_PACK") || std::getenv("DW4_DUMP_TEXTURES")) {
+            // Test runs: DW4_TEXTURE_PACK=dir and / or DW4_DUMP_TEXTURES=dir.
+            const char* pack = std::getenv("DW4_TEXTURE_PACK");
+            const char* dump = std::getenv("DW4_DUMP_TEXTURES");
+            texture_pack.configure(pack ? pack : "", dump ? dump : "");
+            renderer.set_texture_pack(&texture_pack);
+        }
         std::vector<SDL_Gamepad*> gamepads;
         ScriptedInput scripted;
         if (!options.input_script.empty()) scripted.load(options.input_script);
@@ -757,6 +784,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                             capture.reset();
                             settings_changed = true;
                         }
+                    }
+                    if (ImGui::CollapsingHeader("Texture packs")) {
+                        ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
+                        ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
+                                            (settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack).string().c_str());
+                        if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
+                            settings_changed = true;
+                            configure_pack();
+                        }
+                        if (ImGui::Button("Reload texture pack")) configure_pack();
                     }
                     if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
                     ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
