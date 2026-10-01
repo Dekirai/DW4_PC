@@ -28,6 +28,7 @@ struct Settings {
     bool vsync = true;
     bool widescreen = false; // 3D fills wide windows, 2D stays 4:3
     int fps_limit = 0;       // presented frames per second, 0 = no limit
+    bool smooth_motion = true; // blend between the 60 Hz steps when presenting faster
     int msaa = 4;            // samples, applied at start-up
     // [audio]
     int volume = 100;        // master volume in percent

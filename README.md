@@ -132,7 +132,8 @@ The same file keeps the PC settings that the F1 menu edits while playing:
 (the 3D view fills wide windows at the original vertical field of view while
 the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 `fps_limit` (presented frames per second, 0 = off; the game always updates
-60 times a second) and `msaa` (2/4/8 samples, applied at start-up),
+60 times a second), `smooth_motion` (above about 75 presents per second the
+picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open) and
 `[keyboard]` with up to three key names per button (`a=Return, Space, K`).
 

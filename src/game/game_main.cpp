@@ -1,6 +1,7 @@
 // Native Digimon World 4 runtime: SDL3 window, OpenGL renderer and the
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "gl_renderer.hpp"
+#include "interpolation.hpp"
 #include "movie_decoder.hpp"
 #include "settings.hpp"
 
@@ -264,6 +265,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool settings_changed = false;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
+        // Smooth motion above 60 presents per second (settings.ini smooth_motion).
+        dw4::game::MotionInterpolator interpolator;
+        double present_interval = 1.0 / 60.0;
+        auto last_present = std::chrono::steady_clock::now();
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
         auto last = std::chrono::steady_clock::now();
@@ -504,11 +509,16 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                 e->node->matrix(3, 2));
                         }
             }
+            if (steps > 0) interpolator.advance();
             if (rendered_stage != engine.stage_name()) {
                 renderer.clear_cache();
                 rendered_stage = engine.stage_name();
+                interpolator.reset();
             }
             engine.render(items, camera, clear, &shadow);
+            if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
+            if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
+                interpolator.blend(items, camera, shadow, float(accumulator * 60.0));
             renderer.set_shadow(&shadow);
             int width = 0, height = 0;
             SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -561,6 +571,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
                         if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off"))
                             settings_changed = true;
+                        if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) settings_changed = true;
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(now %.0f fps)", present_interval > 0 ? 1.0 / present_interval : 0.0);
                         ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
                         static const int sample_choices[] = {0, 2, 4, 8};
                         static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
@@ -715,6 +728,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
             }
             SDL_GL_SwapWindow(window);
+            {
+                const auto now = std::chrono::steady_clock::now();
+                const double seconds = std::chrono::duration<double>(now - last_present).count();
+                last_present = now;
+                present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
+            }
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
             if (!options.smoke_frames && settings.fps_limit > 0) {

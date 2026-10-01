@@ -79,6 +79,7 @@ Settings Settings::load() {
     settings.vsync = ini.get_bool("window", "vsync", settings.vsync);
     settings.widescreen = ini.get_bool("window", "widescreen", ini.get_or("preferences", "aspect", "") == "16:9");
     settings.fps_limit = std::clamp(ini.get_int("window", "fps_limit", settings.fps_limit), 0, 1000);
+    settings.smooth_motion = ini.get_bool("window", "smooth_motion", settings.smooth_motion);
     settings.msaa = std::clamp(ini.get_int("window", "msaa", settings.msaa), 0, 16);
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
@@ -108,6 +109,7 @@ bool Settings::save() {
     ini_.set_bool("window", "vsync", vsync);
     ini_.set_bool("window", "widescreen", widescreen);
     ini_.set_int("window", "fps_limit", fps_limit);
+    ini_.set_bool("window", "smooth_motion", smooth_motion);
     ini_.set_int("window", "msaa", msaa);
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
