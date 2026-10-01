@@ -125,6 +125,10 @@ Settings Settings::load() {
     settings.volume = std::clamp(ini.get_int("audio", "volume", settings.volume), 0, 100);
     settings.pause_in_menu = ini.get_bool("menu", "pause", settings.pause_in_menu);
     settings.skip_intro = ini.get_bool("preferences", "skip_intro", settings.skip_intro);
+    settings.exp_rate = std::clamp(ini.get_int("gameplay", "exp_rate", settings.exp_rate), 10, 1000);
+    settings.damage_dealt = std::clamp(ini.get_int("gameplay", "damage_dealt", settings.damage_dealt), 10, 1000);
+    settings.damage_taken = std::clamp(ini.get_int("gameplay", "damage_taken", settings.damage_taken), 10, 1000);
+    settings.drop_seed = std::uint32_t(std::max(0, ini.get_int("gameplay", "drop_seed", 0)));
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         const auto value = ini.get("keyboard", kKeys[i].ini);
         if (!value) continue;
@@ -173,6 +177,10 @@ bool Settings::save() {
     ini_.set_int("audio", "volume", volume);
     ini_.set_bool("menu", "pause", pause_in_menu);
     ini_.set_bool("preferences", "skip_intro", skip_intro);
+    ini_.set_int("gameplay", "exp_rate", exp_rate);
+    ini_.set_int("gameplay", "damage_dealt", damage_dealt);
+    ini_.set_int("gameplay", "damage_taken", damage_taken);
+    ini_.set_int("gameplay", "drop_seed", int(drop_seed & 0x7FFFFFFF));
     for (std::size_t i = 0; i < kPadKeyCount; ++i) {
         std::string value;
         for (const auto code : keys[i]) {

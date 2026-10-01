@@ -153,6 +153,30 @@ void GeneraterManager::refresh(Engine& engine, GeneRam& ram, bool last_pass) {
     }
 }
 
+int GeneraterManager::randomized_record(Engine& engine, const std::string& table, int record) {
+    auto* db = engine.get<DatabaseManager>();
+    if (!db) return record;
+    std::vector<int> rows;
+    for (int r = 0, n = db->rows(table); r < n; ++r)
+        if (!db->text(table, r, "NAME").empty()) rows.push_back(r);
+    const auto at = std::find(rows.begin(), rows.end(), record);
+    if (at == rows.end() || rows.size() < 2) return record;
+    // splitmix64 from the seed and the table name: the same seed gives the
+    // same game.
+    std::uint64_t state = engine.cheats().drop_seed;
+    for (const char c : table) state = state * 131 + std::uint8_t(c);
+    auto next = [&] {
+        state += 0x9E3779B97F4A7C15ull;
+        std::uint64_t z = state;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    auto shuffled = rows;
+    for (std::size_t i = shuffled.size() - 1; i > 0; --i) std::swap(shuffled[i], shuffled[std::size_t(next() % (i + 1))]);
+    return shuffled[std::size_t(at - rows.begin())];
+}
+
 void GeneraterManager::drop(Engine& engine, GeneRam& ram, const Vec3f& position, bool last) {
     const auto players = ram.data.list(14);
     if (players.empty()) return;
@@ -170,11 +194,14 @@ void GeneraterManager::drop(Engine& engine, GeneRam& ram, const Vec3f& position,
         roll -= one.i32(5);
         if (roll > 0) continue;
         const std::string table(one.str(2));
-        const int record = one.i32(3);
+        int record = one.i32(3);
         int table_id = -1;
         for (int t = 0; t < 7; ++t)
             if (table == GameSystem::item_tables[t]) table_id = t;
         if (table_id < 0) return;
+        // Randomizer option: drops swap within their table by a seeded
+        // permutation; key items (impItem) stay.
+        if (engine.cheats().drop_seed && table_id != 2) record = randomized_record(engine, table, record);
         static const char* models[7] = {nullptr, nullptr, "g_000key", "g_000weapon", "g_000armor", "g_000armor", "g_000access"};
         std::string model = models[table_id] ? models[table_id] : std::string();
         if (model.empty())

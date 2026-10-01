@@ -177,6 +177,14 @@ struct Cheats {
     bool god{};         // players lose no HP (also DW4_GOD for test runs)
     bool infinite_mp{}; // techniques cost no MP
     bool one_hit{};     // a damaging player hit defeats the target
+    // Optional rebalancing and randomizer (settings.ini [gameplay]).
+    int exp_rate = 100;          // percent of the EXP enemies give
+    int damage_dealt = 100;      // percent of the damage player hits do
+    int damage_taken = 100;      // percent of the damage enemies do
+    std::uint32_t drop_seed = 0; // item drop randomizer, 0 off
+    bool original() const {
+        return !god && !infinite_mp && !one_hit && exp_rate == 100 && damage_dealt == 100 && damage_taken == 100 && !drop_seed;
+    }
 };
 
 // The state that survives a stage load, taken when one starts (everything

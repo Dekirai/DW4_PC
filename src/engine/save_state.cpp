@@ -121,10 +121,14 @@ void serialize(StateArchive& a, Cheats& v) {
     a.io(v.god);
     a.io(v.infinite_mp);
     a.io(v.one_hit);
+    a.io(v.exp_rate);
+    a.io(v.damage_dealt);
+    a.io(v.damage_taken);
+    a.io(v.drop_seed);
 }
 
 namespace {
-constexpr std::uint32_t kSnapshotVersion = 1;
+constexpr std::uint32_t kSnapshotVersion = 2;
 
 void serialize_system(StateArchive& a, GameSystem& v) {
     a.io(v.flag_folder);

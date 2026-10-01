@@ -48,7 +48,10 @@ struct Settings {
     // [menu]
     bool pause_in_menu = true;
     // [preferences]
-    bool skip_intro = false; // boot straight to the title (no logos / opening movie)
+    bool skip_intro = false;
+    // [gameplay]: optional rebalancing and randomizer (100 / 0 = original)
+    int exp_rate = 100, damage_dealt = 100, damage_taken = 100;
+    std::uint32_t drop_seed = 0; // boot straight to the title (no logos / opening movie)
     // [keyboard]: up to three keys per button.
     static constexpr std::size_t kKeysPerButton = 3;
     std::array<std::array<SDL_Scancode, kKeysPerButton>, kPadKeyCount> keys{};

@@ -26,7 +26,7 @@ using socket_handle = int;
 namespace dw4::game {
 namespace {
 
-constexpr std::uint32_t kProtocol = 1;
+constexpr std::uint32_t kProtocol = 2;
 constexpr const char* kGame = "GDJEB2";
 enum : std::uint8_t { kHello = 1, kWelcome, kStart, kInput, kFingerprint, kDesync, kLeave, kReject };
 
@@ -400,6 +400,10 @@ void NetSession::handle(Peer& peer, std::uint8_t type, const std::vector<std::ui
         start_.delay = r.u8();
         start_.stage = r.text();
         start_.cheats = r.u8();
+        start_.exp_rate = int(r.u32());
+        start_.damage_dealt = int(r.u32());
+        start_.damage_taken = int(r.u32());
+        start_.drop_seed = r.u32();
         start_.card_a = r.cards();
         start_.card_b = r.cards();
         const auto mask = r.u8();
@@ -495,6 +499,10 @@ bool NetSession::lobby(const SessionStart& host_start, std::string& status, std:
     w.u8(std::uint8_t(start_.delay));
     w.text(start_.stage);
     w.u8(start_.cheats);
+    w.u32(std::uint32_t(start_.exp_rate));
+    w.u32(std::uint32_t(start_.damage_dealt));
+    w.u32(std::uint32_t(start_.damage_taken));
+    w.u32(start_.drop_seed);
     w.cards(start_.card_a);
     w.cards(start_.card_b);
     w.u8(mask);

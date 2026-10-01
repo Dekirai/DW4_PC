@@ -456,7 +456,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (!slot || !model || !context) return number(0);
         auto result =
             fight::player_damage(*this, *slot, model->record, bullet_kind, to_int(arg(0)) != 0, down_of(model, 5));
-        // One-hit cheat: a damaging hit takes all the target's HP.
+        // Rebalancing option, then the one-hit cheat (all the target's HP).
+        if (cheats().damage_dealt != 100 && result.damage > 0)
+            result.damage = std::max(1, int(std::int64_t(result.damage) * cheats().damage_dealt / 100));
         if (cheats().one_hit && result.damage > 0) result.damage = std::max(result.damage, model->hp);
         context->damage = result.damage;
         context->attribute = result.attribute;
@@ -562,8 +564,10 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (!stats || !model || !context) return number(0);
         auto* models = get<ModelCtrlManager>();
         auto* shooter = models && context ? models->find(context->shooter_name, context->shooter) : nullptr;
-        const auto result = fight::enemy_damage(*this, *stats, model->max_hp, shooter_record(), bullet_kind, down_of(shooter, 4),
-                                                down_of(shooter, 1));
+        auto result = fight::enemy_damage(*this, *stats, model->max_hp, shooter_record(), bullet_kind, down_of(shooter, 4),
+                                          down_of(shooter, 1));
+        if (cheats().damage_taken != 100 && result.damage > 0)
+            result.damage = std::max(1, int(std::int64_t(result.damage) * cheats().damage_taken / 100));
         context->damage = result.damage;
         context->attribute = result.attribute;
         context->damage_flag = result.flag;

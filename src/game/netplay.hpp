@@ -32,6 +32,8 @@ struct SessionStart {
     int delay{};              // input delay in steps
     std::string stage;        // the stage both start with
     std::uint8_t cheats{};    // bit 0 god, 1 infinite MP, 2 one hit
+    int exp_rate = 100, damage_dealt = 100, damage_taken = 100; // rebalancing
+    std::uint32_t drop_seed{};                                  // randomizer
     std::vector<CardFile> card_a, card_b;
 };
 

@@ -803,6 +803,9 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
 
+    // Randomizer: a drop's record after the seeded permutation of its table.
+    static int randomized_record(Engine& engine, const std::string& table, int record);
+
 private:
     struct GeneRam : Ram {
         ObjectView data;           // beGeneraterData

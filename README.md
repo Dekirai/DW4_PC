@@ -141,7 +141,9 @@ the 2D layers stay 4:3 and full-screen fades stretch), `vsync`,
 60 times a second), `smooth_motion` (above about 75 presents per second the
 picture blends between the last two updates) and `msaa` (2/4/8 samples, applied at start-up),
 `[audio] volume` (percent), `[menu] pause` (pause while the menu is open),
-`[preferences] skip_intro` (boot straight to the title), `[data] cards` (the
+`[preferences] skip_intro` (boot straight to the title), `[gameplay]`
+`exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original) and
+`drop_seed` (item drop randomizer, 0 = off; key items stay), `[data] cards` (the
 memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
 program; Dolphin's `GC/USA` folder works too) and
 `[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
@@ -224,8 +226,9 @@ then START for a second on player 1's controller returns to the title
 
 F1 opens the menu: the Settings tab (display, widescreen, frame limit, anti-aliasing,
 window size, volume, keyboard and controller bindings), the Cheats tab
-(god mode, infinite MP, one-hit defeats, refills, levels and bits per player;
-session only, off by default) and the Debug tab (stage loader, player state,
+(god mode, infinite MP, one-hit defeats, refills, levels and bits per player,
+session only and off by default; plus the saved rebalancing and randomizer
+options) and the Debug tab (stage loader, player state,
 notes, script log). F11 toggles fullscreen,
 F2 a free camera.
 

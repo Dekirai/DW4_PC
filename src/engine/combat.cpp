@@ -1029,6 +1029,8 @@ int GameSystem::experience_up(Engine& engine, int killer, int enemy_record) {
         default: exp = exp * 100 / 2; break;
         }
         exp = slot == killer ? exp / 50 : exp / 100;
+        // Rebalancing option: the EXP rate.
+        if (engine.cheats().exp_rate != 100) exp = int(std::int64_t(exp) * engine.cheats().exp_rate / 100);
         if (slot == killer) killer_gain = exp;
         stats.exp += exp;
         apply_level_ups(engine, slot);

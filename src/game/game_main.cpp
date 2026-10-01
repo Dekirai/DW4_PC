@@ -435,6 +435,23 @@ int run(const Options& options, dw4::game::Settings& settings) {
     else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
+    // Rebalancing / randomizer (settings.ini [gameplay]; test runs:
+    // DW4_GAMEPLAY=exp,dealt,taken,seed).
+    auto apply_gameplay = [&](dw4::engine::Cheats& cheats) {
+        if (options.smoke_frames) {
+            if (const char* text = std::getenv("DW4_GAMEPLAY")) {
+                unsigned seed = 0;
+                std::sscanf(text, "%d,%d,%d,%u", &cheats.exp_rate, &cheats.damage_dealt, &cheats.damage_taken, &seed);
+                cheats.drop_seed = seed;
+            }
+            return;
+        }
+        cheats.exp_rate = settings.exp_rate;
+        cheats.damage_dealt = settings.damage_dealt;
+        cheats.damage_taken = settings.damage_taken;
+        cheats.drop_seed = settings.drop_seed;
+    };
+    apply_gameplay(engine.cheats());
     // DW4_PLAYERS=n: test runs start with n joined players.
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
@@ -460,6 +477,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         start.stage = first_stage;
         start.cheats = std::uint8_t((engine.cheats().god ? 1 : 0) | (engine.cheats().infinite_mp ? 2 : 0) | (engine.cheats().one_hit ? 4 : 0));
         start.card_a = my_card;
+        start.exp_rate = engine.cheats().exp_rate;
+        start.damage_dealt = engine.cheats().damage_dealt;
+        start.damage_taken = engine.cheats().damage_taken;
+        start.drop_seed = engine.cheats().drop_seed;
         std::string status, shown;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
         SDL_Init(SDL_INIT_VIDEO);
@@ -499,6 +520,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         engine.cheats().god = started.cheats & 1;
         engine.cheats().infinite_mp = started.cheats & 2;
         engine.cheats().one_hit = started.cheats & 4;
+        engine.cheats().exp_rate = started.exp_rate;
+        engine.cheats().damage_dealt = started.damage_dealt;
+        engine.cheats().damage_taken = started.damage_taken;
+        engine.cheats().drop_seed = started.drop_seed;
         // Every machine plays from the same card copies.
         session_cards = std::filesystem::temp_directory_path() /
                         ("dw4_session_" + std::to_string(net.local_slot()) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -747,6 +772,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.cheats().god = started.cheats & 1;
             engine.cheats().infinite_mp = started.cheats & 2;
             engine.cheats().one_hit = started.cheats & 4;
+            engine.cheats().exp_rate = started.exp_rate;
+            engine.cheats().damage_dealt = started.damage_dealt;
+            engine.cheats().damage_taken = started.damage_taken;
+            engine.cheats().drop_seed = started.drop_seed;
             session_cards = std::filesystem::temp_directory_path() /
                             ("dw4_session_" + std::to_string(net.local_slot()) + "_" +
                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -774,6 +803,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             own_card_name.clear();
             net.close();
             engine.set_card_root(card_root);
+            apply_gameplay(engine.cheats());
         };
         while (running) {
             SDL_Event event;
@@ -928,6 +958,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 start.cheats = std::uint8_t((engine.cheats().god ? 1 : 0) | (engine.cheats().infinite_mp ? 2 : 0) |
                                             (engine.cheats().one_hit ? 4 : 0));
                 start.card_a = read_card(card_root / "Card A");
+                start.exp_rate = engine.cheats().exp_rate;
+                start.damage_dealt = engine.cheats().damage_dealt;
+                start.damage_taken = engine.cheats().damage_taken;
+                start.drop_seed = engine.cheats().drop_seed;
                 std::string error;
                 if (net.lobby(start, lobby_status, error)) {
                     begin_session();
@@ -1374,10 +1408,34 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
                                        "give (levels, bits) stays in saves.");
                     auto& cheats = engine.cheats();
+                    ImGui::BeginDisabled(net.active());
                     ImGui::Checkbox("God mode (players lose no HP)", &cheats.god);
                     ImGui::Checkbox("Infinite MP", &cheats.infinite_mp);
                     ImGui::Checkbox("One-hit defeats (player hits)", &cheats.one_hit);
-                    if (auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                    ImGui::SeparatorText("Rebalancing (saved; 100% is the original)");
+                    bool gameplay_changed = false;
+                    gameplay_changed |= ImGui::SliderInt("EXP from enemies", &settings.exp_rate, 10, 1000, "%d%%");
+                    gameplay_changed |= ImGui::SliderInt("Damage of your hits", &settings.damage_dealt, 10, 1000, "%d%%");
+                    gameplay_changed |= ImGui::SliderInt("Damage enemies do", &settings.damage_taken, 10, 1000, "%d%%");
+                    ImGui::SeparatorText("Randomizer (saved; 0 is off)");
+                    int seed = int(settings.drop_seed & 0x7FFFFFFF);
+                    if (ImGui::InputInt("Item drop seed", &seed)) {
+                        settings.drop_seed = std::uint32_t(std::max(0, seed));
+                        gameplay_changed = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("New seed")) {
+                        settings.drop_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+                        gameplay_changed = true;
+                    }
+                    ImGui::TextDisabled("Drops change into other items of the same kind; key items stay. The same seed gives the same drops.");
+                    if (gameplay_changed) {
+                        apply_gameplay(cheats);
+                        settings_changed = true;
+                    }
+                    ImGui::EndDisabled();
+                    if (net.active()) ImGui::TextDisabled("Online, the host's settings apply.");
+                    if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !net.active()) {
                         for (int slot = 0; slot < 4; ++slot) {
                             auto& player = sys->players[std::size_t(slot)];
                             if (!player.joined || !player.stats.ready) continue;
