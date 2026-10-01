@@ -1481,8 +1481,11 @@ int player_poison(Engine& engine, const GameSystem::PlayerSlot& player, int enem
 int player_sleep_time(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
 int player_attack_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
 int player_power_down(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, std::string_view what);
-// P2PKOUKAMAGIC (80376EE4): a support technique of the caster; 1 when it acted.
+// P2PKOUKAMAGIC (80376EE4): a support technique of the caster (or a disk's
+// raise, kind -50); 1 when it acted.
 int support_magic(Engine& engine, int target, int shooter, int kind);
+// The combat random numbers.
+std::uint32_t random();
 // P2ESKILLUP (803736C8): the shooter's weapon or technique skill may grow.
 void skill_up(Engine& engine, int shooter, int kind, int hit, int critical);
 } // namespace fight

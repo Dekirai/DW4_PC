@@ -246,7 +246,19 @@ void PanelManager::display(Engine& engine, PanelRam& ram, List& list) {
             if (ram.no_cureling && record >= 6 && record <= 7) color = 2;
             colors.push_back(color);
         }
-    } // kind 2: the active status effects, none while they are not reconstructed
+    } else if (list.kind == 2) {
+        // 80349D80: the player's active status effects (status timers +F8,
+        // slots 0..9) with their wazaPanel names and colours.
+        auto* models = engine.get<ModelCtrlManager>();
+        const auto* model = models ? models->player(ram.index) : nullptr;
+        if (model && model->status)
+            for (int k = 0; k < 10; ++k)
+                if (model->status->timer[std::size_t(k)] != 0) {
+                    rows.push_back(k);
+                    names.push_back(db->text("wazaPanel", k, "NAME"));
+                    colors.push_back(db->number("wazaPanel", k, "COLOR").value_or(0));
+                }
+    }
     if (int(rows.size()) != list.count) {
         list.cursor = list.scroll = 0;
         list.count = int(rows.size());
@@ -306,7 +318,16 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
     const int mp = db->number("conItem", row, "MP").value_or(0);
     if (row <= 2 || row == 9) sys->change_hp(engine, ram.index, hp);
     if ((row >= 3 && row <= 5) || row == 9) sys->change_mp(engine, ram.index, mp);
-    if (row == 6 || row == 7) engine.note("disk " + std::to_string(row) + " (status effects)");
+    if (row == 6) {
+        // 803B1288: a cure disk ends the poison when 8 - its strength
+        // (gedoku, +104) reaches a roll of ten.
+        if (auto* models = engine.get<ModelCtrlManager>())
+            if (auto* model = models->find(player.digimon, ram.index); model && model->status && model->status->timer[0] != 0 &&
+                8 - model->status->gedoku >= int(fight::random() % 10u))
+                models->clear_poison(*model);
+    }
+    // 803B1328: the raise disk, P2PKOUKAMAGIC kind -50.
+    if (row == 7) fight::support_magic(engine, ram.index, ram.index, -50);
     if (row == 8) {
         engine.run_script("gatedisc.lua");
         close = true;

@@ -565,6 +565,27 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
         const auto& m = model->node->matrix;
         point = {m(3, 0), m(3, 1), m(3, 2)};
     }
+    // RAISE to the bit capsules around: EXP percent and HP of the rank
+    // (804EB164 / 804EB178).
+    auto raise = [&](int rank) {
+        static const int exp_percent[5] = {59, 68, 77, 86, 95};
+        static const int raise_hp[5] = {100, 400, 1600, 3200, 6400};
+        rank = std::clamp(rank, 0, 4);
+        Mat4 matrix;
+        if (const auto* model = models->player(slot); model && model->node) matrix = model->node->matrix;
+        for (const int capsule : models_around(engine, false, point, -1)) {
+            Packet packet;
+            packet.matrices.push_back(matrix);
+            packet.ints = {exp_percent[rank], raise_hp[rank]};
+            engine.messenger().send(engine, "PLAYER2", std::nullopt, capsule, "RAISE", packet);
+        }
+    };
+    // 8037754C: a negative kind is a disk's raise with the first entry.
+    if (kind < 0) {
+        if (kind % 10000 != -50) return 0;
+        raise(0);
+        return 1;
+    }
     const auto use = technique_use(engine, caster, kind);
     auto column = [&](const char* name) { return database(engine, "pcTech", use.row, name); };
     auto send = [&](int player, const char* command, Packet& packet) {
@@ -622,20 +643,9 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
             }
         break;
     }
-    case 50: { // raise: bit capsules around get RAISE (804EB164 / 804EB178)
-        static const int exp_percent[5] = {59, 68, 77, 86, 95};
-        static const int raise_hp[5] = {100, 400, 1600, 3200, 6400};
-        const int rank = std::clamp(use.row - 50, 0, 4);
-        Mat4 matrix;
-        if (const auto* model = models->player(slot); model && model->node) matrix = model->node->matrix;
-        for (const int capsule : models_around(engine, false, point, -1)) {
-            Packet packet;
-            packet.matrices.push_back(matrix);
-            packet.ints = {exp_percent[rank], raise_hp[rank]};
-            engine.messenger().send(engine, "PLAYER2", std::nullopt, capsule, "RAISE", packet);
-        }
+    case 50: // raise: bit capsules around get RAISE by the technique's rank
+        raise(use.row - 50);
         break;
-    }
     case 65: // speed up: SUBAYASA + skill / 5 and the hit values
         buff("SETSPEEDUP", {column("TIME") + caster.stats.kashikosa, use.skill / 5 + column("SUBAYASA"), column("CHIMEIRITSU"),
                             column("MHIRITSU"), column("KAIHIRITSU")});
