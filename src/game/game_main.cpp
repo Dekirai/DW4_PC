@@ -1,6 +1,7 @@
 // Native Digimon World 4 runtime: SDL3 window, OpenGL renderer and the
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "gl_renderer.hpp"
+#include "movie_decoder.hpp"
 
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
@@ -224,6 +225,8 @@ int run(const Options& options) {
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
         std::string rendered_stage;
+        std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
+        std::uint32_t movie_serial = 0;
         bool running = true, show_menu = false;
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
@@ -393,6 +396,21 @@ int run(const Options& options) {
             screen.x = (width - screen.width) / 2;
             screen.y = (height - screen.height) / 2;
             renderer.render(items, camera, clear, screen, width, height);
+            // A playing movie covers the screen with its current picture.
+            if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
+                const auto* movie = sound->movie();
+                if (!movie_decoder || movie_serial != movie->serial) {
+                    movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
+                    movie_serial = movie->serial;
+                }
+                const double seconds = double(engine.time() - movie->start) / 1e9;
+                const auto picture = static_cast<std::size_t>(std::max(0.0, seconds * movie->frame_rate));
+                if (movie_decoder->seek(picture))
+                    renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                        width, height);
+            } else {
+                movie_decoder.reset();
+            }
 
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplSDL3_NewFrame();

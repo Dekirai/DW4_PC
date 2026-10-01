@@ -58,7 +58,7 @@ the F1 notes and answer 0 so the original scripts keep running.
 | `SceneManager`, `LayerManager`, `BkColorManager` | igSceneInfo, LAYERCTL, BKCOLOR | layer ORDER/SWITCH/REMOVE, clear colour |
 | `CameraManager` | beCameraCtrl | follow and box cameras, named demo camera paths |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
-| `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience and sound effects play; movies are reported |
+| `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience, sound effects and the opening movie play |
 | `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, provisional enemy AI |
 | `GeneraterManager` | beGenerater (802FCF68, 802FD5C4) | enemy waves from DATABASE enemy rows, start/fill modes, `_callLua` on clear |
 | `WeaponManager` | beWeapon / PLAYERARMS (80318474) | weapon sequence labels for the carrying player |
@@ -96,7 +96,12 @@ model's SE set: the sounds an ACTION2 action plays after a frame delay; a
 looping sound (type 4) stops at the model's next action. `render()` mixes the
 streams and effect voices as 48 kHz stereo PCM that `dw4_game` queues on an
 SDL3 audio stream (`DW4_AUDIO_DUMP=FILE.wav` records it, `DW4_TRACE_SOUND=1`
-logs the effects).
+logs the effects). MOVIE PLAY (8031EDFC) looks up the beMovieInfoData of the
+file ([5] end script), splits the Sofdec program stream with `dw4::sfd`
+(MPEG-1 video 0xE0, ADX sound 0xC0) and plays the sound on a movie channel;
+the host decodes the video with pl_mpeg and draws the picture for the time
+since start over the screen. The movie ends after its last picture or on A or
+START from player 1 (8031EC10), then runs its end script.
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)

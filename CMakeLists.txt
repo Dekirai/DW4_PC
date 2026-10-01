@@ -12,7 +12,7 @@ include(CTest)
 add_library(dw4_core
   src/assets.cpp src/igb.cpp src/igb_document.cpp src/resources.cpp src/packages.cpp src/scripts.cpp
   src/lua4.cpp src/pad.cpp src/textures.cpp src/meshes.cpp src/skinning.cpp src/animation_math.cpp
-  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/save_data.cpp src/sfp.cpp)
+  src/enbaya.cpp src/motion.cpp src/motion_timer.cpp src/adx.cpp src/save_data.cpp src/sfp.cpp src/sfd.cpp)
 target_include_directories(dw4_core PUBLIC include)
 # Recovered scalar operations round separately; explicit std::fma remains
 # fused. Preserve IEEE zero-frame infinity/NaN behavior.
@@ -46,7 +46,7 @@ add_executable(dw4_catalog tools/dw4_catalog.cpp)
 target_link_libraries(dw4_catalog PRIVATE dw4_core)
 
 if(BUILD_TESTING)
-  foreach(suite assets igb igb_document resources packages scripts lua4 pad textures meshes skinning animation_math enbaya adx save_data sfp)
+  foreach(suite assets igb igb_document resources packages scripts lua4 pad textures meshes skinning animation_math enbaya adx save_data sfp sfd)
     add_executable(dw4_${suite}_tests tests/${suite}_tests.cpp)
     target_link_libraries(dw4_${suite}_tests PRIVATE dw4_core)
     add_test(NAME ${suite} COMMAND dw4_${suite}_tests)
@@ -69,7 +69,12 @@ if(DW4_BUILD_APP)
     URL https://codeload.github.com/ocornut/imgui/zip/f1cc2ae15e53a861a874c3034aae6798fde194ab
     URL_HASH SHA256=008e1f3398e1c6e4d317ae4a05d2dec597bd360f4f3717b1d96e9edb66dba34f
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_MakeAvailable(SDL3 imgui_src)
+  # MPEG-1 video of the Sofdec movies (single header, no CMake project).
+  FetchContent_Declare(pl_mpeg_src
+    URL https://codeload.github.com/phoboslab/pl_mpeg/zip/c871f2be022ece7ef4f64230b4fb8e1fb9eb6023
+    URL_HASH SHA256=67dd194f9de4af65937c057cf630e5e189e163a0ed9f489de2fcc75ee2117daf
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(SDL3 imgui_src pl_mpeg_src)
   find_package(OpenGL REQUIRED)
   add_library(imgui STATIC
     ${imgui_src_SOURCE_DIR}/imgui.cpp
@@ -80,7 +85,8 @@ if(DW4_BUILD_APP)
     ${imgui_src_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
   target_include_directories(imgui PUBLIC ${imgui_src_SOURCE_DIR} ${imgui_src_SOURCE_DIR}/backends)
   target_link_libraries(imgui PUBLIC SDL3::SDL3 OpenGL::GL)
-  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp)
+  add_executable(dw4_game src/game/game_main.cpp src/game/gl_renderer.cpp src/game/movie_decoder.cpp)
+  target_include_directories(dw4_game PRIVATE ${pl_mpeg_src_SOURCE_DIR})
   target_compile_definitions(dw4_game PRIVATE DW4_PC_VERSION="${PROJECT_VERSION}")
   target_link_libraries(dw4_game PRIVATE dw4_engine imgui SDL3::SDL3 OpenGL::GL)
   install(TARGETS dw4_game RUNTIME DESTINATION .)
@@ -90,5 +96,8 @@ endif()
 install(TARGETS dw4_inspect dw4_catalog RUNTIME DESTINATION .)
 install(FILES README.md LICENSE THIRD_PARTY_NOTICES.md DESTINATION .)
 install(FILES licenses/enbrip-MIT.txt DESTINATION licenses)
+if(DW4_BUILD_APP)
+  install(FILES licenses/pl_mpeg-MIT.txt DESTINATION licenses)
+endif()
 install(DIRECTORY docs DESTINATION . FILES_MATCHING PATTERN "*.md")
 install(FILES tools/verify_game.py DESTINATION tools)

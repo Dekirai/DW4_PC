@@ -188,7 +188,8 @@ private:
 // pulls them mixed through render(). Sound effects (types 3/4) are requests
 // into the sfp banks (the common allse.sfp and the stage's beStaticInfo
 // banks) or, without a request id, ADX files on the SE stream channels.
-// Movies are only tracked.
+// A movie (MOVIE PLAY, Sofdec) plays its ADX sound on the movie channel and
+// hands its MPEG-1 video to the host, which shows it over the screen.
 class SoundManager final : public Manager {
 public:
     SoundManager() : Manager("beSound") {}
@@ -204,6 +205,17 @@ public:
     // plays the action's sounds after their delays; a looping sound of the
     // model's previous action stops.
     void action_started(Engine& engine, const std::string& model, int index, std::string_view action);
+    // The movie playing: its video stream, picture rate and count; the
+    // picture shown is the time since start at that rate.
+    struct Movie {
+        std::string name, script; // beMovieInfoData [2] file, [5] end script
+        std::vector<std::uint8_t> video;
+        double frame_rate = 30000.0 / 1001.0;
+        std::size_t pictures{};
+        std::int64_t start{};
+        std::uint32_t serial{}; // changes with every PLAY
+    };
+    const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
 
 private:
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
@@ -256,6 +268,9 @@ private:
     void play_cue(Engine& engine, const std::string& sound, const std::string& owner);
     void stop_effects(const std::string& name, const std::string& owner);
     bool open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data);
+    void play_movie(Engine& engine, const Ram& ram, const std::string& name);
+    void end_movie(Engine& engine);
+    void mix_stream(Stream& stream, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
     void run_track(SeTrack& track);
     void mix_voices(float* mix, std::size_t frames);
@@ -285,8 +300,9 @@ private:
     std::uint32_t random_ = 0x12345678u;
     std::string current_bgm_;       // +0x24
     int se_volume_{};               // SNDFVOLUME: SNDF master 1..127, 0 unset (+56)
-    bool movie_playing_{};
-    std::int64_t movie_end_{};
+    std::optional<Movie> movie_;
+    Stream movie_stream_;
+    std::uint32_t movie_serial_{};
 };
 
 // beTextureCtrl (80324B30 / 80324C54): binds named pack textures to the

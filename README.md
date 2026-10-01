@@ -60,6 +60,9 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   raise: a defeated player's bit capsule brings the player back, and with it
   the bits and part of the EXP lost at the defeat)
   and the weapon and technique skill growth with the skill up panel.
+- The opening movie after the logos: the Sofdec file's program stream is
+  split natively; its MPEG-1 video is decoded with pl_mpeg and its ADX sound
+  plays through the sound mixer; A or START skips it.
 - Music and ambience: the stage sound lists' BGM and ambience streams are
   the CRI ADX files of ndmw.afs, decoded natively (loop points, volume, the
   fade-out before a change) and played through SDL3 audio.
@@ -72,7 +75,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
-Not yet reconstructed: voices and the opening movie,
+Not yet reconstructed: voices,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 

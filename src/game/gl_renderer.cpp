@@ -158,6 +158,23 @@ void main() {
 }
 )";
 
+// The movie picture: a screen-filling strip from the vertex index.
+const char* kMovieVertex = R"(#version 330 core
+out vec2 v_uv;
+void main() {
+    vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+    v_uv = vec2(p.x, 1.0 - p.y);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+const char* kMovieFragment = R"(#version 330 core
+in vec2 v_uv;
+uniform sampler2D u_tex;
+out vec4 o_color;
+void main() { o_color = vec4(texture(u_tex, v_uv).rgb, 1.0); }
+)";
+
 unsigned compile(GlRenderer::Impl& gl, unsigned type, const char* source) {
     const unsigned shader = gl.CreateShader(type);
     gl.ShaderSource(shader, 1, &source, nullptr);
@@ -226,7 +243,56 @@ GlRenderer::~GlRenderer() {
     if (shadow_fbo_) gl_->DeleteFramebuffers(1, &shadow_fbo_);
     if (shadow_texture_) glDeleteTextures(1, &shadow_texture_);
     if (white_texture_) glDeleteTextures(1, &white_texture_);
+    if (movie_texture_) glDeleteTextures(1, &movie_texture_);
+    if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
+    if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
+}
+
+void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
+                            int window_height) {
+    auto& gl = *gl_;
+    if (!movie_program_) {
+        const unsigned vs = compile(gl, GL_VERTEX_SHADER, kMovieVertex);
+        const unsigned fs = compile(gl, GL_FRAGMENT_SHADER, kMovieFragment);
+        movie_program_ = gl.CreateProgram();
+        gl.AttachShader(movie_program_, vs);
+        gl.AttachShader(movie_program_, fs);
+        gl.LinkProgram(movie_program_);
+        gl.DeleteShader(vs);
+        gl.DeleteShader(fs);
+        int ok = 0;
+        gl.GetProgramiv(movie_program_, GL_LINK_STATUS, &ok);
+        if (!ok) throw std::runtime_error("movie shader link failed");
+        gl.GenVertexArrays(1, &movie_vao_);
+        glGenTextures(1, &movie_texture_);
+    }
+    glBindTexture(GL_TEXTURE_2D, movie_texture_);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (width != movie_width_ || height != movie_height_) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        movie_width_ = width;
+        movie_height_ = height;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glViewport(screen.x, screen.y, screen.width, screen.height);
+    gl.UseProgram(movie_program_);
+    gl.ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, movie_texture_);
+    gl.Uniform1i(gl.GetUniformLocation(movie_program_, "u_tex"), 0);
+    gl.BindVertexArray(movie_vao_);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    gl.BindVertexArray(0);
+    gl.UseProgram(0);
+    glViewport(0, 0, window_width, window_height);
 }
 
 void GlRenderer::clear_cache() {

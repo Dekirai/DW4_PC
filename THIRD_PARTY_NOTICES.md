@@ -18,8 +18,11 @@ The native application builds these pinned dependencies using CMake:
 | --- | --- | --- |
 | [SDL](https://github.com/libsdl-org/SDL) | `fa2c02bb6e21974a89ea9824bc53c9932abe5f9c` (3.4.16) | zlib, upstream LICENSE.txt |
 | [Dear ImGui](https://github.com/ocornut/imgui) | `f1cc2ae15e53a861a874c3034aae6798fde194ab` (1.92.9b) | MIT, upstream LICENSE.txt |
+| [pl_mpeg](https://github.com/phoboslab/pl_mpeg) | `c871f2be022ece7ef4f64230b4fb8e1fb9eb6023` | MIT (SPDX in pl_mpeg.h), `licenses/pl_mpeg-MIT.txt` |
 
-`cmake --install` includes both dependency license files. Binary packages must
+pl_mpeg decodes the MPEG-1 video of the opening movie; the program stream
+demuxer and the movie's ADX sound use the project's own parsers.
+`cmake --install` includes the dependency license files. Binary packages must
 retain them. The core parsers and command-line tools have no external libraries.
 
 Lua 4 format and execution reference:

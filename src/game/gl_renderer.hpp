@@ -25,6 +25,9 @@ public:
     // `screen` is the 4:3 game area inside the window (GL window coordinates).
     void render(const std::vector<engine::DrawItem>& items, const engine::FrameCamera& camera,
                 const engine::Vec4f& clear_color, const Viewport& screen, int window_width, int window_height);
+    // A movie picture (RGBA rows, top first) over the whole 4:3 screen.
+    void draw_movie(const std::uint8_t* rgba, int width, int height, const Viewport& screen, int window_width,
+                    int window_height);
     // The projected shadow drawn with the next render (null: none).
     void set_shadow(const engine::ShadowFrame* shadow) { shadow_ = shadow; }
     // Drop all GPU resources (call when the engine changed stage).
@@ -58,6 +61,8 @@ private:
     std::map<std::pair<const void*, std::uint32_t>, Texture> textures_;
     unsigned white_texture_{};
     const engine::ShadowFrame* shadow_{};
+    unsigned movie_program_{}, movie_texture_{}, movie_vao_{};
+    int movie_width_{}, movie_height_{};
     unsigned shadow_fbo_{}, shadow_texture_{};
     int shadow_size_{};
     bool shadow_ready_{};

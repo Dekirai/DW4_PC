@@ -1,6 +1,7 @@
 #include "dw4/engine/managers.hpp"
 #include "dw4/engine/save_menu.hpp"
 #include "dw4/igb_document.hpp"
+#include "dw4/sfd.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -484,7 +485,8 @@ void SoundManager::clear_stage(Engine&) {
     rams_.clear();
     sounds_.clear();
     files_.clear();
-    movie_playing_ = false;
+    movie_.reset();
+    movie_stream_.decoder.reset();
     // The stage's banks go; one-shot effects finish, loops end.
     std::erase_if(banks_, [](const auto& bank) { return !bank->common; });
     std::erase_if(voices_, [](const SeVoice& voice) { return voice.loop; });
@@ -742,8 +744,24 @@ void SoundManager::stop(int channel) {
 
 void SoundManager::render(std::int16_t* out, std::size_t frames) {
     std::vector<float> mix(frames * 2, 0.0f);
-    for (auto& stream : streams_) {
-        if (!stream.decoder || stream.paused || stream.ready_in > 0) continue;
+    for (auto& stream : streams_) mix_stream(stream, mix.data(), frames);
+    mix_stream(movie_stream_, mix.data(), frames);
+    mix_voices(mix.data(), frames);
+    // Peaks where effects meet the music bend towards full scale instead of
+    // clipping.
+    constexpr float knee = 24576.0f;
+    for (std::size_t i = 0; i < frames * 2; ++i) {
+        float value = mix[i];
+        const float over = std::abs(value) - knee;
+        if (over > 0.0f) value = std::copysign(knee + over / (1.0f + over / 8192.0f), value);
+        out[i] = static_cast<std::int16_t>(std::clamp(value, -32768.0f, 32767.0f));
+    }
+}
+
+// One stream resampled into the mix.
+void SoundManager::mix_stream(Stream& stream, float* mix, std::size_t frames) {
+    {
+        if (!stream.decoder || stream.paused || stream.ready_in > 0) return;
         const auto& header = stream.decoder->header();
         float ramp = stream.ramp_to;
         if (stream.ramp_left > 0 && stream.ramp_frames > 0)
@@ -776,31 +794,70 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
         }
         if (ended) stream.decoder.reset();
     }
-    mix_voices(mix.data(), frames);
-    // Peaks where effects meet the music bend towards full scale instead of
-    // clipping.
-    constexpr float knee = 24576.0f;
-    for (std::size_t i = 0; i < frames * 2; ++i) {
-        float value = mix[i];
-        const float over = std::abs(value) - knee;
-        if (over > 0.0f) value = std::copysign(knee + over / (1.0f + over / 8192.0f), value);
-        out[i] = static_cast<std::int16_t>(std::clamp(value, -32768.0f, 32767.0f));
+}
+
+// 8031EDFC: MOVIE PLAY finds the movie's beMovieInfoData and starts the
+// Sofdec player on the file (video stream 0xE0, ADX sound in 0xC0).
+void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string& name) {
+    Movie movie;
+    movie.name = name;
+    auto lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        return text;
+    };
+    for (const auto& data : ram.info.list(5))
+        if (data && lower(std::string(data.str(2))) == lower(name)) {
+            movie.script = std::string(data.str(5));
+            break;
+        }
+    movie_stream_.decoder.reset();
+    try {
+        auto streams = sfd::demux(engine.resources().read(lower(name), 512u * 1024u * 1024u));
+        const auto info = sfd::video_info(streams.video);
+        if (info.frame_rate > 0.0) movie.frame_rate = info.frame_rate;
+        movie.pictures = info.pictures;
+        movie.video = std::move(streams.video);
+        if (!streams.audio.empty()) {
+            movie_stream_.decoder = std::make_unique<adx::Decoder>(std::move(streams.audio));
+            movie_stream_.name = name;
+            movie_stream_.gain = 1.0f;
+            movie_stream_.fade_left = movie_stream_.ready_in = movie_stream_.ramp_frames = movie_stream_.ramp_left = 0;
+            movie_stream_.paused = false;
+            movie_stream_.ramp_from = movie_stream_.ramp_to = 1.0f;
+            movie_stream_.phase = 1.0;
+            movie_stream_.previous = movie_stream_.next = {};
+        }
+    } catch (const std::exception& error) {
+        engine.note("movie " + name + ": " + error.what());
     }
+    movie.start = engine.time();
+    movie.serial = ++movie_serial_;
+    movie_ = std::move(movie);
+}
+
+// 8031EC10: the movie ends after its last picture or when player 1 presses
+// A or START; its end script runs.
+void SoundManager::end_movie(Engine& engine) {
+    const std::string script = movie_ ? movie_->script : std::string();
+    movie_.reset();
+    movie_stream_.decoder.reset();
+    if (!script.empty()) engine.run_script(script);
 }
 bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
     const auto& t = ram.info.type();
     if (t == "beMovieInfo") {
         if (command == "PLAY") {
-            engine.note("movie playback (Sofdec SFD) " + std::string(packet.string(0)));
-            movie_playing_ = true;
-            movie_end_ = engine.time() + kFrameNs * 2;
+            play_movie(engine, ram, std::string(packet.string(0)));
             return true;
         }
         if (command == "ISPLAY" || command == "ISRUN") {
-            packet.bools.push_back(movie_playing_ ? 1 : 0);
+            packet.bools.push_back(movie_ ? 1 : 0);
             return true;
         }
-        if (command == "STOP") { movie_playing_ = false; return true; }
+        if (command == "STOP") {
+            if (movie_) end_movie(engine);
+            return true;
+        }
         return false;
     }
     if (t == "beSoundInfo") {
@@ -897,9 +954,11 @@ void SoundManager::update(Engine& engine) {
         cues_.erase(cues_.begin() + std::ptrdiff_t(i));
         play_cue(engine, cue.sound, cue.owner);
     }
-    if (movie_playing_ && engine.time() >= movie_end_) {
-        movie_playing_ = false;
-        engine.run_script("nextStage.lua");
+    if (movie_) {
+        const auto& pad = engine.pads()[0];
+        const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
+        const double length = movie_->frame_rate > 0.0 ? double(movie_->pictures) / movie_->frame_rate : 0.0;
+        if (skip || double(engine.time() - movie_->start) >= length * 1e9) end_movie(engine);
     }
 }
 
