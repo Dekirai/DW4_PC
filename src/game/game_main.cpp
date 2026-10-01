@@ -532,6 +532,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool settings_changed = false;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
+        std::vector<dw4::engine::DrawItem> catch_up_items;
+        dw4::engine::FrameCamera catch_up_camera;
+        dw4::engine::Vec4f catch_up_clear{};
+        dw4::engine::ShadowFrame catch_up_shadow;
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
         double present_interval = 1.0 / 60.0;
@@ -749,6 +753,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (steps == 4) accumulator = 0;
             }
             for (int i = 0; i < steps; ++i) {
+                // As on the original (one picture per 60 Hz step), the scene
+                // is traversed once after every step: catching up several
+                // steps traverses the skipped pictures without drawing them
+                // (loading screens and route animations run on that clock).
+                if (i > 0) {
+                    engine.render(catch_up_items, catch_up_camera, catch_up_clear, &catch_up_shadow);
+                    if (last_step_loaded) load_step_drawn = true;
+                    else if (!input_log.empty()) input_log.back().drawn = true;
+                }
                 for (const auto& send : scripted.sends) {
                     if (send.frame != frame) continue;
                     dw4::engine::Packet packet;
