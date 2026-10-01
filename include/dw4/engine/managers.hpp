@@ -964,6 +964,7 @@ public:
         int ai_map{};
         std::int64_t ai_timer_end = -1; // AITIMER
         std::string ai_request;         // AI work +58
+        Vec3f ai_world_target{};        // AI work +10: a WPOS map's target
         const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)
         int homing_state{}, homing_steps{};
         // MOVERL "JOINT" (8030ADC0, ctrl work +A8/+B4/+B8): the model follows a
@@ -1385,6 +1386,9 @@ std::uint32_t random();
 const char* bullet_name(int kind);
 bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down);
 bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
+// GETPATKZOKUSEI (80373580): a technique's ZOKUSEI or the player's ATTACKZOKUSEI
+// as 0 fire .. 3 dark (-1 none).
+int player_attack_attribute(Engine& engine, const GameSystem::PlayerSlot& player, int kind);
 FightResult player_damage(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind, bool critical,
                           int defense_down);
 int damage_rank(int hp, int max_hp, const FightResult& fight, bool critical, int kind);

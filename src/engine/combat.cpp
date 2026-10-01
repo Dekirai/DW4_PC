@@ -110,6 +110,14 @@ int technique_element(DatabaseManager& db, int row) {
     return -1;
 }
 
+int player_attack_attribute(Engine& engine, const GameSystem::PlayerSlot& player, int kind) {
+    if (kind / 10000 != 4) return player.stats.attack_zokusei;
+    auto* db = engine.get<DatabaseManager>();
+    if (!db) return -1;
+    const int element = technique_element(*db, technique_row(player, kind));
+    return element >= 0 && element < 4 ? element : -1;
+}
+
 const char* const kResistColumns[5] = {"RES_FIRE", "RES_ICE", "RES_THUNDER", "RES_DARK", "RES_POISON"};
 
 // P2EISCRITICAL (80372C00): weapons CHIMEIRITSU > random % 200; techniques

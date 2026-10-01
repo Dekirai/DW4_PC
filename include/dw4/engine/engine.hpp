@@ -164,6 +164,8 @@ struct ModelScriptContext {
     std::int32_t bullet_kind{};
     bool turn = true;              // cleared by MDLsetDMGTurn(0)
     std::string call_name;         // MDLisCallName
+    std::int32_t bullet_box{};     // MDLgetBulletBoxNo: the body box a bullet reached (80535934)
+    Vec3f* world_target{};         // MDLsetWorldPosTarget's destination (AIMAP WPOS, 8053594C)
     // Last FIGHTCALC results of this hit (80535A54..5C): damage, attribute, flag.
     std::int32_t damage{}, attribute = -1, damage_flag{};
 };

@@ -314,6 +314,22 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         std::snprintf(buffer, sizeof buffer, "V<%g,%g,%g>", v.x, v.y, v.z);
         return std::string(buffer);
     };
+    if (method == "MDLsetWorldPosTarget") {
+        // 802EDF20: only while an AIMAP WPOS call waits for the target.
+        if (context && context->world_target)
+            *context->world_target = {float(to_number(arg(0))), float(to_number(arg(1))), float(to_number(arg(2)))};
+        return {};
+    }
+    if (method == "MDLgetKyoriSquare") {
+        // 802EDF84: squared distance from the model to the point.
+        auto* model = context_model();
+        if (!model || !model->node) return number(0);
+        const auto& m = model->node->matrix;
+        const float dx = m(3, 0) - float(to_number(arg(0))), dy = m(3, 1) - float(to_number(arg(1))),
+                    dz = m(3, 2) - float(to_number(arg(2)));
+        return number(dx * dx + dy * dy + dz * dz);
+    }
+    if (method == "MDLgetBulletBoxNo") return number(context ? context->bullet_box : 0); // 802EDC44
     if (method == "MDLisLive") {
         if (args.size() >= 2) return number(explicit_model("ISRUN", std::nullopt).value_or(false) ? 1 : 0);
         auto* model = context_model();
@@ -458,6 +474,13 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (context) result = {context->damage, context->attribute, context->damage_flag};
         return number(fight::damage_rank(to_int(arg(0)), model ? model->max_hp : 0, result, to_int(arg(1)) != 0, bullet_kind));
     }
+    if (method == "BLPgetAttackZokusei") {
+        // 802EF518: FIGHTCALC GETPATKZOKUSEI of the shooter and bullet.
+        static const char* names[] = {"fire", "ice", "thunder", "dark"};
+        const auto* slot = shooter_slot();
+        const int attribute = slot ? fight::player_attack_attribute(*this, *slot, bullet_kind) : -1;
+        return string_result(attribute >= 0 && attribute < 4 ? names[attribute] : "common");
+    }
     if (method == "BLTgetAttributeStr") {
         static const char* names[] = {"fire", "ice", "thunder", "dark"};
         const int attribute = context ? context->attribute : -1;
@@ -577,6 +600,51 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "SYSgetArea") return number(area());
     if (method == "SYSgetCountry") return number(country());
     if (method == "SYSgetIsPackOnly") return number(1);
+    if (method == "SYSgetTarget") return number(2); // 802EBC98
+    if (method == "SYSctlShinka") {
+        // 802EC590: GETEXP / GETLEVEL of a reached species (-1 otherwise);
+        // SETSHINKA marks one reached (1 when it was new).
+        auto* sys = get<GameSystem>();
+        const std::string op = opt_string(arg(0)).value_or("");
+        const int species = to_int(arg(2));
+        if (!sys || species < 0 || species >= 16) return number(0);
+        auto& player = sys->players[std::size_t(std::clamp(to_int(arg(1)), 0, 3))];
+        const auto found = player.base_isuse.find(species);
+        const bool reached = found != player.base_isuse.end() && found->second != 0;
+        if (op == "GETEXP") return number(reached ? player.base_exp[std::size_t(species)] : -1);
+        if (op == "GETLEVEL") return number(reached ? player.base_level[std::size_t(species)] : -1);
+        if (op == "SETSHINKA") {
+            if (reached) return number(0);
+            player.base_isuse[species] = 1;
+            return number(1);
+        }
+        return number(0);
+    }
+    if (method == "PLAYERgetPosStr") {
+        // 802EE36C: the player's position moved by a local offset; nil
+        // without the player.
+        Packet packet;
+        messenger().send(*this, "PLAYER", std::nullopt, to_int(arg(0)), "GETMATRIX", packet);
+        if (packet.matrices.empty()) return {Lua4Value{}};
+        const auto& m = packet.matrices[0];
+        const float x = float(to_number(arg(1))), y = float(to_number(arg(2))), z = float(to_number(arg(3)));
+        char buffer[96];
+        std::snprintf(buffer, sizeof buffer, "V<%f,%f,%f>", m(3, 0) + x * m(0, 0) + y * m(1, 0) + z * m(2, 0),
+                      m(3, 1) + x * m(0, 1) + y * m(1, 1) + z * m(2, 1), m(3, 2) + x * m(0, 2) + y * m(1, 2) + z * m(2, 2));
+        return string_result(buffer);
+    }
+    if (method == "PLAYERgetDataStr") {
+        // 802EE240: PLAYERPOINT GETMATRIXDIRECT as a placement, the heading
+        // in degrees plus the given angle.
+        Packet packet;
+        packet.ints = {to_int(arg(0)), to_int(arg(1))};
+        messenger().send(*this, "PLAYERPOINT", std::nullopt, -1, "GETMATRIXDIRECT", packet);
+        const Mat4 m = packet.matrices.empty() ? Mat4{} : packet.matrices[0];
+        const float yaw = std::atan2(m(2, 0), m(2, 2)) * 57.29578f + float(to_number(arg(2)));
+        char buffer[128];
+        std::snprintf(buffer, sizeof buffer, "V<%f,%f,%f>/V<0,%f,0>", m(3, 0), m(3, 1), m(3, 2), yaw);
+        return string_result(buffer);
+    }
     if (method == "SYSgetRandom") {
         static std::mt19937 rng{0x4457344u};
         const auto limit = std::max(1, to_int(arg(0), 1));

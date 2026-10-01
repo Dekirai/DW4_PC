@@ -331,11 +331,30 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             ram.labels[std::string(command.str(3))] = name;
             ++ram.cursor;
         } else if (type == "beModelCtrlAIMAP") {
-            // Select the AI map by name.
+            // 8030BB3C: select the AI map by name; a WPOS map asks
+            // aim_<model>.lua (call name "WPos") for its world target. The
+            // AITIMER ends so the next update picks from the new map.
+            ++ram.cursor;
             if (ram.ai_maps)
                 for (std::size_t i = 0; i < ram.ai_maps->size(); ++i)
                     if ((*ram.ai_maps)[i].str(2) == name) ram.ai_map = int(i);
-            ++ram.cursor;
+            if (ram.ai_maps && ram.ai_map >= 0 && ram.ai_map < int(ram.ai_maps->size()) &&
+                (*ram.ai_maps)[std::size_t(ram.ai_map)].str(11) == "WPOS") {
+                Vec3f target{};
+                ModelScriptContext context;
+                context.category = ram.category;
+                context.name = ram.info_name;
+                context.index = ram.index;
+                context.call_name = "WPos";
+                context.world_target = &target;
+                const auto* seq = ram.seq;
+                engine.push_model_context(std::move(context));
+                engine.run_script("aim_" + ram.info_name + ".lua");
+                engine.pop_model_context();
+                ram.ai_world_target = target;
+                if (ram.seq != seq) return;
+            }
+            ram.ai_timer_end = -1;
         } else if (type == "beModelCtrlLUACALL") {
             // 8030B8A4: BHit, WHit and FHit keep the name for after this
             // model's hitbox hits something, it meets a wall or the floor
@@ -1355,16 +1374,27 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
     if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
         const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
         const auto& m = ram.node->matrix;
-        const ModelRam* target = nullptr;
+        // 80308654: [11] WPOS steers to the map's world target, otherwise the
+        // nearest player.
+        Vec3f goal{};
         float best = 1e30f;
-        for (const auto& other : rams_) {
-            if (!other->is_player || !other->generated || !other->node) continue;
-            const auto& o = other->node->matrix;
-            const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
-            const float d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 < best) { best = d2; target = other.get(); }
+        if (map.str(11) == "WPOS") {
+            goal = ram.ai_world_target;
+            const float dx = goal.x - m(3, 0), dy = goal.y - m(3, 1), dz = goal.z - m(3, 2);
+            best = dx * dx + dy * dy + dz * dz;
+        } else {
+            const ModelRam* target = nullptr;
+            for (const auto& other : rams_) {
+                if (!other->is_player || !other->generated || !other->node) continue;
+                const auto& o = other->node->matrix;
+                const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
+                const float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < best) { best = d2; target = other.get(); }
+            }
+            if (!target) return;
+            const auto& o = target->node->matrix;
+            goal = {o(3, 0), o(3, 1), o(3, 2)};
         }
-        if (!target) return;
         ram.turn_rate_y = map.f32(6);
         const std::uint16_t band = best < map.f32(3) ? 7 : best < map.f32(4) ? 8 : best < map.f32(5) ? 9 : 10;
         const auto entries = map.list(band);
@@ -1373,8 +1403,7 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
             ObjectView pick = entries.back();
             for (const auto& entry : entries)
                 if (entry && roll < entry.i32(5)) { pick = entry; break; }
-            const auto& o = target->node->matrix;
-            ram.desired[1] = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2)) + pick.f32(3);
+            ram.desired[1] = std::atan2(goal.x - m(3, 0), goal.z - m(3, 2)) + pick.f32(3);
             request = std::string(pick.str(2));
             ram.ai_timer_end = engine.time() + frames_to_time(pick.f32(4));
         }
@@ -1445,7 +1474,9 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     const Vec3f in_min = packet.vectors[0], in_max = packet.vectors[1];
     const auto& m = ram.node->matrix;
     bool overlap = false;
+    int box = -1;
     for (const auto& [lo, hi] : ram.hit->boxes) {
+        ++box;
         // General AABox transform (80122D04): bounds of the eight transformed corners.
         Vec3f wmin{1e30f, 1e30f, 1e30f}, wmax{-1e30f, -1e30f, -1e30f};
         for (int corner = 0; corner < 8; ++corner) {
@@ -1475,6 +1506,7 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     context.bullet_kind = packet.integer(0);
     context.shooter = packet.integer(1, -1);
     context.shooter_name = std::string(packet.string(0));
+    context.bullet_box = box;
     engine.push_model_context(std::move(context));
     engine.run_script("hit_" + ram.info_name + ".lua");
     const auto done = engine.pop_model_context();
