@@ -1500,6 +1500,9 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     for (const auto& other : rams_) {
         if (!other->generated || !other->node || other.get() == &ram) continue;
         if (enemy_bullet ? !other->is_player : other->category != "ENEMY") continue;
+        // 8031C67C: enemies come from ENEMY GETMATRIX_ACTIVE (not while
+        // invulnerable), players from PLAYER GETMATRIX.
+        if (!enemy_bullet && other->muteki != 0.0f) continue;
         const auto& o = other->node->matrix;
         const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
         const float d2 = dx * dx + dy * dy + dz * dz;
