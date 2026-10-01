@@ -148,6 +148,27 @@ program; Dolphin's `GC/USA` folder works too) and
 `[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
 leftshoulder`).
 
+### Online co-op
+
+Up to four machines play one session in lockstep (TCP, the host relays):
+
+```bat
+dw4_game.exe --host --players 2            rem waits for one guest on port 52040
+dw4_game.exe --join 192.168.1.20           rem or --join host:port
+```
+
+`--port N` and `--net-delay N` (input delay in steps, default 3) adjust the
+session. Every machine starts the same way (the host's stage and cheats) and
+each step waits for every player's input, so the simulation stays identical;
+guests report state fingerprints and a desync shows on screen. Each machine's
+keyboard and first controller play its own player (host 1, guests 2-4). The
+host's Card A and the first guest's Card A (as Card B) are copied to every
+machine, so both can call their Digimon at the character select; when the
+session ends each owner gets its card back with what was saved. Save states
+are off online; a guest that leaves plays on released, a host that leaves ends
+the session for the others (they play on alone). The host needs the port
+open (router / firewall) for guests outside the local network.
+
 ### Texture packs
 
 With *Dump textures* in the F1 menu (or `[mods] dump_textures=true`) every

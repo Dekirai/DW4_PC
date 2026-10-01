@@ -2,6 +2,7 @@
 // reconstructed engine in dw4::engine. Original data is read from --data.
 #include "gl_renderer.hpp"
 #include "interpolation.hpp"
+#include "netplay.hpp"
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
 #include "settings.hpp"
@@ -49,6 +50,10 @@ struct Options {
     std::vector<std::pair<int, int>> flags;
     std::filesystem::path card_dir; // memory card GCI folders (Card A / Card B)
     std::filesystem::path convert_from, convert_to; // --convert-rvz IN OUT
+    // Online co-op: --host (with --players, --port, --net-delay) or --join ADDRESS[:PORT].
+    bool net_host{};
+    std::string net_join;
+    int net_port = 52040, net_players = 2, net_delay = 3;
 };
 
 
@@ -369,6 +374,52 @@ std::optional<SaveState> read_state_file(const std::filesystem::path& path) {
     }
 }
 
+// Online co-op card handling: the GCI files of a card folder, a session copy
+// of the shared cards, and the owner's copy written back at the end.
+std::vector<dw4::game::CardFile> read_card(const std::filesystem::path& folder) {
+    std::vector<dw4::game::CardFile> files;
+    std::error_code error;
+    if (!std::filesystem::is_directory(folder, error)) return files;
+    for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
+        if (!entry.is_regular_file(error)) continue;
+        std::ifstream in(entry.path(), std::ios::binary);
+        files.push_back({entry.path().filename().string(), std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)), {})});
+    }
+    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+    return files;
+}
+
+void write_card(const std::filesystem::path& folder, const std::vector<dw4::game::CardFile>& files) {
+    std::error_code error;
+    std::filesystem::create_directories(folder, error);
+    for (const auto& file : files) {
+        if (file.name.find_first_of("/\\:") != std::string::npos || file.name == ".." || file.name == ".") continue;
+        std::ofstream out(folder / file.name, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(file.bytes.data()), std::streamsize(file.bytes.size()));
+    }
+}
+
+// The game data identity peers compare (catalog paths and locations).
+std::uint64_t data_hash(const dw4::MountedResources& resources) {
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](const void* data, std::size_t size) {
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 0x100000001b3ull;
+        }
+    };
+    for (const auto& archive : resources.catalog().archives) mix(&archive.declared_entries, sizeof archive.declared_entries);
+    for (const auto& resource : resources.catalog().resources) {
+        mix(resource.logical_path.data(), resource.logical_path.size());
+        if (resource.location) {
+            mix(&resource.location->archive_index, sizeof resource.location->archive_index);
+            mix(&resource.location->entry_index, sizeof resource.location->entry_index);
+        }
+    }
+    return h;
+}
+
 int run(const Options& options, dw4::game::Settings& settings) {
     // The engine is replaced in place when a save state loads (same storage,
     // so `engine` keeps naming the running one).
@@ -390,8 +441,76 @@ int run(const Options& options, dw4::game::Settings& settings) {
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
     // Skip intro: boot straight to the title (stagIS10) instead of the
     // license, logos and opening movie.
-    engine.request_stage(!options.smoke_frames && settings.skip_intro && !options.stage_given ? std::string("stagis10")
-                                                                                               : options.stage);
+    std::string first_stage = !options.smoke_frames && settings.skip_intro && !options.stage_given ? std::string("stagis10") : options.stage;
+    // Online co-op: wait in the lobby, then start every machine the same way
+    // with the shared cards.
+    dw4::game::NetSession net;
+    std::filesystem::path session_cards, own_card_folder;
+    std::string own_card_name; // "Card A" (host) or "Card B" (first guest) in the session copy
+    if (options.net_host || !options.net_join.empty()) {
+        std::string error;
+        const auto real_cards = engine.card_root();
+        const auto my_card = read_card(real_cards / "Card A");
+        const bool ok = options.net_host
+                            ? net.host(options.net_port, options.net_players, options.net_delay, data_hash(engine.resources()), error,
+                                       options.smoke_frames != 0)
+                            : net.join(options.net_join, options.net_port, data_hash(engine.resources()), my_card, error);
+        if (!ok) throw std::runtime_error(error);
+        dw4::game::SessionStart start;
+        start.stage = first_stage;
+        start.cheats = std::uint8_t((engine.cheats().god ? 1 : 0) | (engine.cheats().infinite_mp ? 2 : 0) | (engine.cheats().one_hit ? 4 : 0));
+        start.card_a = my_card;
+        std::string status, shown;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(options.smoke_frames ? 1 : 30);
+        SDL_Init(SDL_INIT_VIDEO);
+        SDL_Window* lobby_window = options.smoke_frames ? nullptr : SDL_CreateWindow("Digimon World 4 PC - Online", 560, 96, 0);
+        SDL_Renderer* lobby_renderer = lobby_window ? SDL_CreateRenderer(lobby_window, nullptr) : nullptr;
+        bool cancelled = false;
+        while (!net.lobby(start, status, error)) {
+            if (!error.empty()) break;
+            if (status != shown) {
+                std::cout << "online: " << status << '\n';
+                shown = status;
+            }
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+                if (event.type == SDL_EVENT_QUIT || event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) cancelled = true;
+            if (lobby_renderer) {
+                SDL_SetRenderDrawColor(lobby_renderer, 24, 28, 40, 255);
+                SDL_RenderClear(lobby_renderer);
+                SDL_SetRenderDrawColor(lobby_renderer, 230, 230, 230, 255);
+                const std::string where = options.net_host ? "Hosting on port " + std::to_string(options.net_port)
+                                                           : "Joining " + options.net_join + ":" + std::to_string(options.net_port);
+                SDL_RenderDebugText(lobby_renderer, 16, 20, where.c_str());
+                SDL_RenderDebugText(lobby_renderer, 16, 52, status.c_str());
+                SDL_RenderPresent(lobby_renderer);
+            }
+            if (cancelled || std::chrono::steady_clock::now() > deadline) {
+                error = cancelled ? "Cancelled." : "Nobody joined in time.";
+                break;
+            }
+            SDL_Delay(10);
+        }
+        if (lobby_renderer) SDL_DestroyRenderer(lobby_renderer);
+        if (lobby_window) SDL_DestroyWindow(lobby_window);
+        if (!error.empty()) throw std::runtime_error("online: " + error);
+        const auto& started = net.start();
+        first_stage = started.stage;
+        engine.cheats().god = started.cheats & 1;
+        engine.cheats().infinite_mp = started.cheats & 2;
+        engine.cheats().one_hit = started.cheats & 4;
+        // Every machine plays from the same card copies.
+        session_cards = std::filesystem::temp_directory_path() /
+                        ("dw4_session_" + std::to_string(net.local_slot()) + "_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        write_card(session_cards / "Card A", started.card_a);
+        write_card(session_cards / "Card B", started.card_b);
+        if (net.local_slot() == 0) own_card_name = "Card A";
+        else if (net.local_slot() == 1) own_card_name = "Card B";
+        own_card_folder = real_cards / "Card A";
+        engine.set_card_root(session_cards);
+        std::cout << "online: started as player " << net.local_slot() + 1 << " of " << started.players << ", delay " << started.delay << '\n';
+    }
+    engine.request_stage(first_stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
         c.view = dw4::engine::look_at(eye, target, {0, 1, 0});
@@ -532,6 +651,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         bool settings_changed = false;
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
+        std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
         std::vector<dw4::engine::DrawItem> catch_up_items;
         dw4::engine::FrameCamera catch_up_camera;
         dw4::engine::Vec4f catch_up_clear{};
@@ -552,6 +672,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         if (!options.smoke_frames && !state_dir.empty())
             for (std::size_t slot = 0; slot < state_slots.size(); ++slot) state_slots[slot] = read_state_file(state_path(slot));
         auto can_save = [&]() -> std::string {
+            if (net.active()) return "Save states are off in online sessions.";
             const auto* snapshot = engine.stage_snapshot();
             if (!snapshot) return "No stage has loaded yet.";
             if (snapshot->stage.rfind("stagis", 0) == 0) return "Save states work after the title screens.";
@@ -569,6 +690,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         };
         auto load_state = [&](std::size_t slot) {
+            if (net.active()) {
+                state_message = "Save states are off in online sessions.";
+                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                return;
+            }
             if (!state_slots[slot]) {
                 state_message = "State " + std::to_string(slot + 1) + " is empty.";
                 message_until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -746,13 +872,37 @@ int run(const Options& options, dw4::game::Settings& settings) {
             accumulator += std::chrono::duration<double>(now - last).count();
             last = now;
             int steps = options.smoke_frames ? 1 : 0;
-            const bool paused = show_menu && settings.pause_in_menu && !options.smoke_frames;
+            const bool paused = show_menu && settings.pause_in_menu && !options.smoke_frames && !net.active();
+            if (net.active())
+                if (auto message = net.take_message(); !message.empty()) {
+                    std::cout << "online: " << message << '\n';
+                    state_message = message;
+                    message_until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+                }
             if (paused) accumulator = 0;
             if (!options.smoke_frames && !paused) {
                 while (accumulator >= 1.0 / 60.0 && steps < 4) { accumulator -= 1.0 / 60.0; ++steps; }
                 if (steps == 4) accumulator = 0;
             }
+            // Online: a step runs once every player's input for it is here.
+            std::uint64_t net_frame = 0;
             for (int i = 0; i < steps; ++i) {
+                if (net.active()) {
+                    net_frame = engine.frame() + 1;
+                    net.poll();
+                    if (options.smoke_frames) {
+                        const auto wait_until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+                        while (!net.ready(net_frame) && std::chrono::steady_clock::now() < wait_until) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                            net.poll();
+                        }
+                    }
+                    if (!net.ready(net_frame)) {
+                        if (options.smoke_frames) throw std::runtime_error("online: inputs stopped arriving");
+                        accumulator = std::min(accumulator, 4.0 / 60.0);
+                        break;
+                    }
+                }
                 // As on the original (one picture per 60 Hz step), the scene
                 // is traversed once after every step: catching up several
                 // steps traverses the skipped pictures without drawing them
@@ -866,7 +1016,18 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     pads[i].left = scale(left);
                     pads[i].right = scale(slot_right[i]);
                 }
+                if (net.active()) {
+                    // This machine's controller plays its slot; the others
+                    // come from the session.
+                    while (net_submitted < net_frame + std::uint64_t(net.start().delay)) {
+                        ++net_submitted;
+                        net.submit_local(net_submitted, pads[0]);
+                    }
+                    net.poll();
+                    pads = net.take(net_frame);
+                }
                 engine.step(pads);
+                if (net.active() && engine.frame() % 60 == 0) net.report_fingerprint(engine.frame(), engine.fingerprint());
                 // The input since the running stage's load, for save states.
                 if (const auto* snapshot = engine.stage_snapshot(); snapshot && snapshot->serial != log_serial) {
                     log_serial = snapshot->serial;
@@ -1230,6 +1391,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                       << " (" << state_fingerprints.size() << " frames compared)\n";
         if (settings_changed && !options.smoke_frames) settings.save();
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
+        if (net.active()) {
+            std::cout << "online: final fingerprint " << std::hex << engine.fingerprint() << std::dec
+                      << (net.desync() ? " (desync at step " + std::to_string(*net.desync()) + ")" : "") << '\n';
+            // The owner keeps what the session saved on its card.
+            if (!own_card_name.empty() && !options.smoke_frames) write_card(own_card_folder, read_card(session_cards / own_card_name));
+            std::error_code error;
+            std::filesystem::remove_all(session_cards, error);
+        }
         if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
             if (const auto* p = models->player(0); p && p->node)
                 std::printf("player0 seq=%s pos=(%.2f, %.2f, %.2f) ctrl=%d mode=%d ground=%d\n", p->seq_name.c_str(), p->node->matrix(3, 0),
@@ -1313,6 +1482,16 @@ int main(int argc, char** argv) {
             };
             if (arg == "--data") options.data = next();
             else if (arg == "--card-dir") options.card_dir = next();
+            else if (arg == "--host") options.net_host = true;
+            else if (arg == "--join") {
+                options.net_join = next();
+                if (const auto colon = options.net_join.rfind(':'); colon != std::string::npos) {
+                    options.net_port = std::stoi(options.net_join.substr(colon + 1));
+                    options.net_join.resize(colon);
+                }
+            } else if (arg == "--port") options.net_port = std::stoi(next());
+            else if (arg == "--players") options.net_players = std::stoi(next());
+            else if (arg == "--net-delay") options.net_delay = std::stoi(next());
             else if (arg == "--convert-rvz") {
                 options.convert_from = next();
                 options.convert_to = next();
