@@ -614,9 +614,20 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
             }
         break;
     }
-    case 50: // raise: bit capsules around get RAISE (804EB164 / 804EB178)
-        engine.note("P2PKOUKAMAGIC raise of bit capsules");
+    case 50: { // raise: bit capsules around get RAISE (804EB164 / 804EB178)
+        static const int exp_percent[5] = {59, 68, 77, 86, 95};
+        static const int raise_hp[5] = {100, 400, 1600, 3200, 6400};
+        const int rank = std::clamp(use.row - 50, 0, 4);
+        Mat4 matrix;
+        if (const auto* model = models->player(slot); model && model->node) matrix = model->node->matrix;
+        for (const int capsule : models_around(engine, false, point, -1)) {
+            Packet packet;
+            packet.matrices.push_back(matrix);
+            packet.ints = {exp_percent[rank], raise_hp[rank]};
+            engine.messenger().send(engine, "PLAYER2", std::nullopt, capsule, "RAISE", packet);
+        }
         break;
+    }
     case 65: // speed up: SUBAYASA + skill / 5 and the hit values
         buff("SETSPEEDUP", {column("TIME") + caster.stats.kashikosa, use.skill / 5 + column("SUBAYASA"), column("CHIMEIRITSU"),
                             column("MHIRITSU"), column("KAIHIRITSU")});
@@ -773,6 +784,10 @@ void GameSystem::create_player(Engine& engine, int slot) {
     if (const char* level = std::getenv("DW4_LEVEL")) {
         stats.level = std::clamp(std::atoi(level), 1, 999);
         player.base_level[std::size_t(std::clamp(stats.species, 0, 15))] = stats.level;
+        // The EXP that reaches the level (NEXTEXP of the level below).
+        const int below = stats.level - 1;
+        stats.exp = (below + 140) * below * below + below * 200;
+        player.base_exp[std::size_t(std::clamp(stats.species, 0, 15))] = stats.exp;
     }
     player.hp = 0; // RECALCPLAYER refills HP and MP from 0
     recalc_player(engine, slot);
@@ -928,6 +943,24 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     for (std::size_t i = 0; i < player.power_socket.size() && i < 3; ++i)
         if (const auto* d = player.device(player.power_socket[i])) player.weapons[i] = db->text("weapon", d->record, "MODEL");
     stats.weapon_model = player.weapons[0];
+}
+
+void GameSystem::store_bit_chip(int slot) {
+    auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+    auto& chip = bit_chips[std::size_t(std::clamp(slot, 0, 3))];
+    chip.digimon = player.digimon;
+    chip.bits = player.bits;
+    player.bits = 0;
+    const int level = player.stats.level;
+    if (level == 999 || level == 1) return;
+    // The EXP that reaches this level and the one before (NEXTEXP of the
+    // levels below): a fifth of the step is lost, never below this level.
+    const int reach = (level - 1) * 200 + (level + 139) * (level - 1) * (level - 1);
+    const int before = (level - 2) * 200 + (level + 138) * (level - 2) * (level - 2);
+    const int exp = player.stats.exp;
+    const int kept = std::max(exp - 2 * (reach - before) / 10, reach);
+    chip.exp = exp - kept;
+    player.stats.exp = kept;
 }
 
 void GameSystem::change_hp(Engine& engine, int slot, int delta) {

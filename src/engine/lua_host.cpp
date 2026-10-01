@@ -207,7 +207,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (auto path = opt_string(arg(0))) {
             std::string lower = *path;
             std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            common_file_queue().push_back(lower);
+            // 802EC8B8: a name already in the list is not added again.
+            auto& queue = common_file_queue();
+            if (std::find(queue.begin(), queue.end(), lower) == queue.end()) queue.push_back(lower);
         }
         return {};
     }

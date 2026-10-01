@@ -99,10 +99,12 @@ struct ScriptedInput {
                 continue;
             }
             if (name == "SEND") {
-                // "frame SEND CATEGORY COMMAND [a/b/I<n>]": a messenger command
-                // like the stage scripts' DMsetSD (row -1), e.g. opening a shop.
+                // "frame SEND CATEGORY COMMAND [a/b/I<n> [ROW]]": a messenger
+                // command like the stage scripts' DMsetSD (row -1 unless given,
+                // "-" for no arguments), e.g. opening a shop.
                 Send send{frame};
-                fields >> send.category >> send.command >> send.argument;
+                fields >> send.category >> send.command >> send.argument >> send.row;
+                if (send.argument == "-") send.argument.clear();
                 sends.push_back(send);
                 continue;
             }
@@ -124,7 +126,7 @@ struct ScriptedInput {
             presses.push_back({frame, bit, duration});
         }
     }
-    struct Send { int frame; std::string category, command, argument; };
+    struct Send { int frame; std::string category, command, argument; int row = -1; };
     std::vector<Send> sends;
     struct Press { int frame; std::uint32_t bit; int duration; };
     std::vector<Press> presses;
@@ -149,6 +151,10 @@ int run(const Options& options) {
     else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
+    // DW4_PLAYERS=n: test runs start with n joined players.
+    if (const char* count = std::getenv("DW4_PLAYERS"))
+        if (auto* sys = engine.get<dw4::engine::GameSystem>())
+            for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
     engine.request_stage(options.stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
@@ -303,7 +309,7 @@ int run(const Options& options) {
                     if (send.frame != frame) continue;
                     dw4::engine::Packet packet;
                     if (!send.argument.empty()) dw4::engine::parse_packet_arguments(send.argument, packet);
-                    engine.messenger().send(engine, send.category, std::nullopt, -1, send.command, packet);
+                    engine.messenger().send(engine, send.category, std::nullopt, send.row, send.command, packet);
                 }
                 std::uint32_t input = held | scripted.held(frame);
                 float stick_x = sx, stick_y = sy;

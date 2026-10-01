@@ -56,7 +56,9 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   attack and power down (plus the speed/power up, refract and metal
   commands) with the original FIGHTCALC chances and times, their DOWN/UP
   values in the stat recalculation and damage, and the icons above the model;
-  the support techniques (heal, heal all, cure, speed and power up, refract)
+  the support techniques (heal, heal all, cure, speed and power up, refract,
+  raise: a defeated player's bit capsule brings the player back, and with it
+  the bits and part of the EXP lost at the defeat)
   and the weapon and technique skill growth with the skill up panel.
 - Music and ambience: the stage sound lists' BGM and ambience streams are
   the CRI ADX files of ndmw.afs, decoded natively (loop points, volume, the
@@ -70,7 +72,7 @@ the game. Builds and tests run locally; GitHub Actions is disabled.
   the projected character shadows (the shadow proxy meshes drawn from a light above the players onto the
   stages' receiver meshes), the stages' light sets and the particle effects (torches, warps, hits).
 
-Not yet reconstructed: the raise technique, voices and the opening movie,
+Not yet reconstructed: voices and the opening movie,
 the options' text and many smaller managers. Collision uses a provisional host query built
 on the original floor/wall geometry. See [ROADMAP.md](docs/ROADMAP.md).
 
@@ -121,11 +123,13 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
-`frame BUTTON [duration]`), `--screenshot FILE.bmp`, `--screenshot-frames
-N,M`, `--flag N=V`.
+`frame BUTTON [duration]`, `frame GOTO x z [duration]`, `frame SEEK duration`
+and `frame SEND CATEGORY COMMAND [arguments|- [row]]`), `--screenshot
+FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
 Test-run environment variables: `DW4_GOD` keeps players alive,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
-`DW4_BITS=n`, `DW4_XDATA=n` and `DW4_FORMS=species,...` fill a new player's folders and forms,
+`DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
+`DW4_PLAYERS=n` joins n players,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER` and `DW4_TRACE_HIT`
 log menu cursors, text, player state and hits.
 

@@ -361,6 +361,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
 
 bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<ModelRam&>(base);
+    if (ram.category == "PLAYER2" && capsule_command(engine, ram, command, packet)) return true;
     if (command == "GENERATE" || command == "GENERATE_NDSP") {
         ram.generated = true;
         ram.active = true;
@@ -386,6 +387,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         ram.muteki = 0;
         ram.capsule_on = ram.capsule_ended = false;
+        ram.capsule_age = 0;
         ram.ai_timer_end = -1;
         ram.ai_request.clear();
         ram.homing_state = ram.homing_steps = 0;
@@ -441,7 +443,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
         else if (ram.node && !packet.matrices.empty())
             ram.node->matrix = packet.matrices[0];
-        if (ram.is_player && ram.node) {
+        // 8034D8B4: a player placed by neither vector nor matrix stands on its point.
+        if (ram.is_player && ram.node && packet.vectors.empty() && packet.matrices.empty()) {
             if (auto* points = engine.get<PlayerPointManager>())
                 if (auto m = points->point_matrix(points->point_no(), ram.index)) ram.node->matrix = *m;
         }
@@ -452,6 +455,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.desired = ram.applied;
         }
         select_sequence(engine, ram, seq);
+        if (ram.category == "PLAYER2" && ram.node) {
+            // 8034E8FC: the capsule remembers its stage and position.
+            if (auto* sys = engine.get<GameSystem>()) {
+                auto& chip = sys->bit_chips[std::size_t(std::clamp(ram.index, 0, 3))];
+                chip.stage = engine.stage_name();
+                const auto& m = ram.node->matrix;
+                chip.position = {m(3, 0), m(3, 1), m(3, 2)};
+            }
+        }
         return true;
     }
     if (command == "REMOVE") {
@@ -893,6 +905,10 @@ void ModelCtrlManager::update(Engine& engine) {
                 capsule.matrices.push_back(last);
                 capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
                 engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
+                Packet run;
+                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "ISRUN", run);
+                if (run.boolean(0))
+                    if (auto* sys = engine.get<GameSystem>()) sys->store_bit_chip(ram.index);
                 engine.log("player " + std::to_string(ram.index) + " defeated");
             }
             continue;
@@ -1115,6 +1131,7 @@ void ModelCtrlManager::place_attached(ModelRam& ram) {
 // end_g_000bcaps.lua, the stage's game over.
 void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
     if (!ram.node) return;
+    if (ram.capsule_age < 10) ++ram.capsule_age;
     const auto& m = ram.node->matrix;
     bool any = false;
     float best = 1e30f;
@@ -1139,6 +1156,69 @@ void ModelCtrlManager::update_capsule(Engine& engine, ModelRam& ram) {
         ram.capsule_on = false;
         select_sequence(engine, ram, "SQ_SWOF");
     }
+}
+
+// beNDMWMdlPlayer2 commands (8034ED34).
+bool ModelCtrlManager::capsule_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet) {
+    auto* sys = engine.get<GameSystem>();
+    const int slot = std::clamp(ram.index, 0, 3);
+    if (command == "GENERATE") {
+        // A capsule still out is removed before it is generated again.
+        if (ram.generated) {
+            Packet p;
+            this->command(engine, ram, "REMOVE", p);
+        }
+        return false;
+    }
+    if (command == "GENESTAGE") {
+        // The player's capsule left in this stage comes back where it was.
+        if (!sys) return true;
+        const auto& chip = sys->bit_chips[std::size_t(slot)];
+        if (chip.stage.empty() || chip.stage != engine.stage_name()) return true;
+        Packet p;
+        p.vectors.push_back(chip.position);
+        char entry[16];
+        std::snprintf(entry, sizeof entry, "SQ_ENTR%dP", ram.index + 1);
+        p.strings.emplace_back(entry);
+        engine.messenger().post(engine.time() + kFrameNs, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", p);
+        return true;
+    }
+    if (command == "RAISE") {
+        // Ten updates after it appeared: a defeated player comes back where
+        // the caster stands with the given HP; its bits come back and, for
+        // the same species, the given percentage of the EXP; the capsule
+        // leaves.
+        if (ram.capsule_age < 10 || !sys) return true;
+        const Mat4 matrix = packet.matrices.empty() ? Mat4{} : packet.matrices[0];
+        const int percent = packet.integer(0, 0);
+        const int hp = packet.integer(1, 0);
+        bool alive = false;
+        for (const auto& other : rams_)
+            if (other->is_player && other->generated && other->index == ram.index) alive = true;
+        auto& player = sys->players[std::size_t(slot)];
+        if (!alive) {
+            player.hp = std::clamp(hp, 1, std::max(1, player.max_hp));
+            Packet generate;
+            generate.matrices.push_back(matrix);
+            generate.strings.emplace_back("SQ_CMBK");
+            engine.messenger().send(engine, "MODELCTRL", player.digimon.empty() ? "p_agumon" : player.digimon, ram.index,
+                                    "GENERATE", generate);
+        }
+        auto& chip = sys->bit_chips[std::size_t(slot)];
+        const int exp = player.digimon == chip.digimon ? chip.exp * percent / 100 : 0;
+        engine.log("player " + std::to_string(ram.index) + (alive ? "" : " raised,") + " bits +" + std::to_string(chip.bits) +
+                   ", EXP +" + std::to_string(exp));
+        player.bits = std::clamp(player.bits + chip.bits, 0, 9999999);
+        chip.bits = 0;
+        if (player.digimon == chip.digimon) {
+            player.stats.exp += exp;
+            chip.exp = 0;
+        }
+        engine.messenger().post(engine.time() + kFrameNs, "PLAYER2", std::nullopt, ram.index, "SQ_EXIT", {});
+        chip.stage.clear();
+        return true;
+    }
+    return false;
 }
 
 // PROVISIONAL enemy behaviour until the original enemy controller (AIMAP,

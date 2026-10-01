@@ -941,6 +941,7 @@ public:
         float slam_timer{};
         bool capsule_on{};           // KIND_PLAYER2 work +EC: a player is close
         bool capsule_ended{};        // end_g_000bcaps.lua already started
+        int capsule_age{};           // KIND_PLAYER2 work +F0: updates since generated (to 10)
         // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
         const std::vector<ObjectView>* ai_maps{};
         int ai_map{};
@@ -992,6 +993,7 @@ private:
     void follow_bone(Engine& engine, ModelRam& ram);
     void apply_control(Engine& engine, ModelRam& ram);
     void update_capsule(Engine& engine, ModelRam& ram);
+    bool capsule_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
     void update_item(Engine& engine, ModelRam& ram);
     void item_label(Engine& engine, ModelRam& ram, bool show);
     bool pick_item(Engine& engine, ModelRam& ram, int player);
@@ -1293,6 +1295,19 @@ public:
     // weapon, armor1, armor2, abChip.
     static constexpr const char* item_tables[7] = {"conItem", "insItem", "impItem", "weapon", "armor1", "armor2", "abChip"};
     std::map<int, std::uint8_t> flag_folder; // common FLAGFOLDER, set by impItem pickups
+    // Common BKCHIPSTAGE / BKCHIPPOS / BKCHIPDATA / BKCHIPNAME: the bit capsule
+    // each player leaves when defeated (stage and position, set when it is
+    // generated) with the bits and EXP lost and the species that lost them.
+    struct BitChip {
+        std::string stage; // "" none
+        Vec3f position{};
+        int bits{}, exp{};
+        std::string digimon;
+    };
+    std::array<BitChip, 4> bit_chips{};
+    // BKCHIPBITEXP (80377F70): a defeated player's bits and a fifth of the
+    // EXP of its last level go into its capsule.
+    void store_bit_chip(int slot);
     // CTRLITEM (GAMERAM 80372054): SYSctlDeviceFolder/DiskFolder/FlagFolder/Bit.
     int control_item(std::string_view folder, std::string_view command, int player, std::string_view table,
                      int a, int b, int c);
