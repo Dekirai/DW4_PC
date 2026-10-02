@@ -531,9 +531,11 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
-            if (pass == 0 && defending && !structure) continue;
-            // A structure's body keeps the player further off.
-            float cost = map.cost_to(at, pass == 1 ? 8.0f : structure ? 30.0f : 14.0f);
+            const bool boss = e->info_name.rfind("f_", 0) == 0;
+            if (pass == 0 && defending && !structure && !boss) continue;
+            // A structure's or a boss's body keeps the player further off (a
+            // boss may stand on a platform its body covers).
+            float cost = map.cost_to(at, pass == 1 ? 8.0f : boss ? 60.0f : structure ? 30.0f : 14.0f);
             if (!std::isfinite(cost)) {
                 unreachable_[e.get()] = frame + 300;
                 continue;
@@ -942,9 +944,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         }
     } else if (target && (target->category == "ENEMY" || gimmick_ == Gimmick::strike)) {
         const float d2 = (aim.x - me.x) * (aim.x - me.x) + (aim.z - me.z) * (aim.z - me.z);
-        // Structures (towers) are walked up to until their body stops the
-        // player; others are attacked from 20 units.
-        const bool structure = target->category == "ENEMY" && target->info_name.rfind("g_", 0) == 0;
+        // Structures (towers) and bosses are walked up to until their body
+        // stops the player; others are attacked from 20 units.
+        const bool structure = target->category == "ENEMY" &&
+                               (target->info_name.rfind("g_", 0) == 0 || target->info_name.rfind("f_", 0) == 0);
         decision.reach = structure ? 1.0f : flat(aim, me) <= close ? 400.0f : 4.0f;
         if (d2 <= 400.0f || (d2 <= 6400.0f && stalled_ > 20)) {
             decision.attack = true;
