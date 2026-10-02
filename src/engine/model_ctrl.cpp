@@ -1123,7 +1123,13 @@ void ModelCtrlManager::update(Engine& engine) {
             if (ram.is_player) update_player(engine, ram);
             else if (ram.category == "ENEMY") update_enemy(engine, ram);
             else if (ram.category == "PLAYER2") update_capsule(engine, ram);
-            else {
+            else if (ram.ai_maps && !ram.ai_maps->empty()) {
+                // 80308FF4, the AI slot (vtable +A0) of beModelCtrl and of
+                // most model classes (objects, bullets, effects): the AIM map,
+                // else the AIH homing. Floor switches (g_dbutton*) are objects
+                // whose NEAR map picks SQ_SWON when a player stands on them.
+                update_ai_map(engine, ram);
+            } else {
                 if (ram.homing) update_homing(engine, ram);
                 apply_control(engine, ram);
             }

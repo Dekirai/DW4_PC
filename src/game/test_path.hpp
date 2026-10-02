@@ -104,8 +104,12 @@ private:
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
     std::map<const void*, int> unreachable_;     // target -> frame it was found unreachable
-    std::map<const void*, int> struck_;          // gimmick -> frames spent attacking it
-    bool striking_{};                            // the target is a gimmick
+    std::map<const void*, int> struck_;          // gimmick -> frames spent attacking it, pressing it or standing on it
+    std::map<const void*, int> struck_at_;       // gimmick -> frame its budget ran out (switches are tried again later)
+    enum class Gimmick { none, strike, talk, step } gimmick_{}; // how the target gimmick is worked
+    std::map<std::string, int> mat_frames_;      // mat -> steps the player has been inside it
+    std::optional<engine::Vec3f> frontier_;      // the explored point being walked to
+    int last_reset_ = -100000;                   // when the visited ground and mats were last forgotten
     std::vector<engine::Vec3f> route_;
     std::size_t next_{};
     std::string what_;                           // the planned target, for traces
