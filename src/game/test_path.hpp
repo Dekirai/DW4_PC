@@ -41,9 +41,11 @@ private:
     std::optional<bool> saved_;
 };
 
-// An XZ rectangle the walking map keeps out of (stage change mats).
+// A box the walking map keeps out of (stage change and hazard mats): floor
+// inside its XZ rectangle and height range.
 struct AvoidBox {
     float min_x, min_z, max_x, max_z;
+    float min_y = -1e30f, max_y = 1e30f;
 };
 
 // Everything reachable on foot within `range` of a start point: a flood of
@@ -171,6 +173,8 @@ private:
     std::string target_portal_;                  // the maze link being walked to
     std::set<std::string> cleared_generators_;   // generators seen cleared (progress)
     int waiting_since_ = -1;                     // waiting for defeated enemies since
+    int on_goal_ = 0;                            // steps standing on the goal mat with control
+    int goal_later_until_ = -1;                  // the goal did nothing yet (a gate not up): other targets first
     int wait_skip_until_ = -1;                   // a wait that never ended is skipped until
     // Endless waves: after a long fight without progress elsewhere, only
     // nearby enemies are fought for a while.

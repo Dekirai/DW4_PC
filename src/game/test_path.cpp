@@ -142,9 +142,9 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
     floor_.assign(cells, -100000.0f);
     parent_.assign(cells, -2);
     jumped_.assign(cells, 0);
-    auto blocked = [&](float x, float z) {
+    auto blocked = [&](float x, float y, float z) {
         for (const auto& box : avoid)
-            if (x >= box.min_x && x <= box.max_x && z >= box.min_z && z <= box.max_z) return true;
+            if (x >= box.min_x && x <= box.max_x && z >= box.min_z && z <= box.max_z && y >= box.min_y && y <= box.max_y) return true;
         return false;
     };
     // A cell's floor is looked up from the floor it is entered from, so
@@ -196,9 +196,9 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
             if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
             const int next_cell = nz * w_ + nx;
             const auto b = centre(nx, nz);
-            if (blocked(b.x, b.z)) continue;
             const float yb = reached[std::size_t(next_cell)] ? floor_[std::size_t(next_cell)] : floor_from(next_cell, ya);
             if (yb < -99999.0f) continue; // outside the level
+            if (ya - yb <= drop && blocked(b.x, yb, b.z)) continue;
             // A pit (deeper than a ledge drop): try to jump it.
             if (ya - yb > drop) {
                 // The jump (X) carries about 28 units over 40 frames and rises
@@ -209,10 +209,10 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                     if (lx < 0 || lz < 0 || lx >= w_ || lz >= h_) break;
                     const int land = lz * w_ + lx;
                     const auto l = centre(lx, lz);
-                    if (blocked(l.x, l.z)) break;
                     const float yl = floor_from(land, ya + 5.0f);
                     if (yl < -99999.0f) break;
                     if (ya - yl > drop) continue; // still over the pit
+                    if (blocked(l.x, yl, l.z)) break;
                     if (yl - ya > 12.0f || ya - yl > 30.0f) break;
                     bool clear = true;
                     for (int i = 0; i < k && clear; ++i)
@@ -235,7 +235,8 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                 // up: the jump rises about 13.6.
                 if (d & 1) continue;
                 const float yu = floor_from(next_cell, ya + 4.0f);
-                if (yu < -99999.0f || yu - ya <= climb || yu - ya > 12.5f || wall_between(x, z, nx, nz, yu + 1.0f)) continue;
+                if (yu < -99999.0f || yu - ya <= climb || yu - ya > 12.5f || blocked(b.x, yu, b.z) || wall_between(x, z, nx, nz, yu + 1.0f))
+                    continue;
                 jumps.push_back({at, next_cell, 7.0f});
                 if (!reached[std::size_t(next_cell)]) {
                     reached[std::size_t(next_cell)] = 1;
@@ -500,8 +501,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
         if (goals.count(key) || (!exit_mat(engine, box.name) && !hazard_mat(engine, box.name))) continue;
-        const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f};
-        if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z) continue;
+        const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f, box.min.y - 5.0f, box.max.y + 5.0f};
+        if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z && me.y >= a.min_y && me.y <= a.max_y) continue;
         avoid.push_back(a);
     }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index));
@@ -578,7 +579,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         if (!goal_inside) goal_inside = map.reached_inside(box.min.x + 1.0f, box.min.z + 1.0f, box.max.x - 1.0f, box.max.z - 1.0f);
     }
     if (goal_centre) {
-        if (goal_inside) {
+        if (goal_inside && frame >= goal_later_until_) {
             go(*goal_inside, nullptr, "goal " + goal);
             to_goal_ = true;
             return;
@@ -785,6 +786,8 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
         progress_at_ = frame;
         defend_until_ = -1;
+        goal_later_until_ = -1;
+        on_goal_ = 0;
         portals_.clear();
         exits_.clear();
         hazards_.clear();
@@ -1000,6 +1003,16 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
+    // Standing on the goal with control and nothing happening: its exit is
+    // not open yet (a boss gate after the last wave); do the rest first.
+    on_goal_ = to_goal_ && flat(goal_point_, me) < 6.0f && player.control_enabled ? on_goal_ + 1 : 0;
+    if (on_goal_ > 300) {
+        on_goal_ = 0;
+        goal_later_until_ = frame + 3000;
+        mats_done_.clear();
+        mat_frames_.clear();
+        planned_ = -1000;
+    }
     // Defending: strike an enemy that comes close, without chasing it.
     if (frame < defend_until_ && !decision.attack && !decision.press_a && models)
         for (const auto& e : models->rams())
