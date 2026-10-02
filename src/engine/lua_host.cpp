@@ -68,6 +68,9 @@ bool Engine::has_script(std::string_view name) const {
 
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
+    // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).
+    if (static const char* trace = std::getenv("DW4_TRACE_SCRIPT"); trace && (std::string_view(trace) == "1" || name == trace))
+        log("script " + std::string(name));
     bool ran = false;
     for (const auto& info : lua_infos_) {
         for (const auto& data : info.list(7)) {

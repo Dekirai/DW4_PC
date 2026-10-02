@@ -172,6 +172,9 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
 }
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
+    // DW4_TRACE_SEQ=<model> logs that model's sequence changes.
+    if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && ram.info_name == trace)
+        engine.log("seq " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name + " -> " + std::string(name));
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)

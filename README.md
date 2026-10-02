@@ -234,7 +234,8 @@ player hits defeat their target,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT` and `DW4_TRACE_EXPLORE`
-log menu cursors, text, player state, hits and the exploring bot's targets.
+log menu cursors, text, player state, hits and the exploring bot's targets; `DW4_TRACE_SCRIPT=1` (or a
+script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes.
 
 ### Controls
 
