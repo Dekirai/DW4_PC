@@ -1089,6 +1089,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 input |= dw4::pad_button::a;
                             if (decision.press_b) input |= dw4::pad_button::b;
                             if (decision.jump) input |= dw4::pad_button::x;
+                            if (decision.press_r) input |= dw4::pad_button::r;
                         } else if (g->seek && g->target.rfind("mat:", 0) == 0) {
                             if (auto* mats = engine.get<dw4::engine::MatCtrlManager>())
                                 if (const auto centre = mats->mat_centre(g->target.substr(4))) {

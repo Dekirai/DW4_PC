@@ -118,11 +118,12 @@ public:
         bool press_a{};     // press A now (text windows, wall switches)
         bool press_b{};     // press B now (cancels another exit's prompt)
         bool jump{};        // press X now (a gap in the route)
+        bool press_r{};     // press R now (the technique panel)
     };
     Decision update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
 
 private:
-    enum class Gimmick { none, strike, talk, step };
+    enum class Gimmick { none, strike, talk, step, tech };
     void plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     void give_up(int frame);
     // A z-mat that moves the player to another room of the same stage
@@ -174,6 +175,7 @@ private:
     std::set<std::string> cleared_generators_;   // generators seen cleared (progress)
     int waiting_since_ = -1;                     // waiting for defeated enemies since
     int on_goal_ = 0;                            // steps standing on the goal mat with control
+    bool tech_used_{};                           // the technique of this panel round was cast
     int goal_later_until_ = -1;                  // the goal did nothing yet (a gate not up): other targets first
     int wait_skip_until_ = -1;                   // a wait that never ended is skipped until
     // Endless waves: after a long fight without progress elsewhere, only

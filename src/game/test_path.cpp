@@ -617,10 +617,20 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 if (switched_on(*e)) continue;
                 kind = Gimmick::talk;
             } else if (boxes && e->hit->player_bullet) {
-                // Walls that break only to an element (fire, thunder) need a
-                // technique or chip the bot does not use.
-                if (engine.script_mentions("hit_" + e->info_name + ".lua", "BLPgetAttackZokusei")) continue;
+                // Walls that break only to an element (fire, thunder): struck
+                // when the player's attack (a power pocket chip) has it,
+                // otherwise hit with the first technique (R panel, A).
                 kind = Gimmick::strike;
+                const std::string hit = "hit_" + e->info_name + ".lua";
+                if (engine.script_mentions(hit, "BLPgetAttackZokusei")) {
+                    static constexpr const char* elements[] = {"fire", "ice", "thunder", "dark"};
+                    int wanted = -1;
+                    for (int i = 0; i < 4 && wanted < 0; ++i)
+                        if (engine.script_mentions(hit, elements[i])) wanted = i;
+                    int own = -1;
+                    if (auto* sys = engine.get<engine::GameSystem>()) own = sys->players[std::size_t(std::clamp(player.index, 0, 3))].stats.attack_zokusei;
+                    if (wanted < 0 || own != wanted) kind = Gimmick::tech;
+                }
             } else {
                 continue;
             }
@@ -628,10 +638,10 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // power each other back on would otherwise take turns forever).
             if (kind != Gimmick::strike)
                 if (const auto on = switched_.find(e.get()); on != switched_.end() && frame - on->second < 6000) continue;
-            const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : 60;
+            const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : kind == Gimmick::tech ? 3 : 60;
             const auto spent = struck_.find(e.get());
             if (spent != struck_.end() && spent->second >= budget) {
-                if (kind == Gimmick::strike || frame - struck_at_[e.get()] < 900) continue;
+                if (kind == Gimmick::strike || kind == Gimmick::tech || frame - struck_at_[e.get()] < 900) continue;
                 spent->second = 1; // tried again later, after the mats
             }
             // A wall that was started on is finished first (it takes several hits).
@@ -652,7 +662,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             }
         }
         if (!best) return false;
-        static constexpr const char* kinds[] = {"", "strike ", "press ", "step on "};
+        static constexpr const char* kinds[] = {"", "strike ", "press ", "step on ", "cast at "};
         go(position_of(*best), best, std::string(kinds[int(best_kind)]) + best->info_name + "#" + std::to_string(best->index));
         route_ = map.route_to(position_of(*best), best_kind == Gimmick::step ? 6.0f : 20.0f);
         gimmick_ = best_kind;
@@ -911,7 +921,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
-    const float close = !target ? 8.0f : gimmick_ == Gimmick::step ? 3.0f : gimmick_ == Gimmick::talk ? 12.0f : 25.0f;
+    const float close = !target ? 8.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;
     if (flat(aim, me) > close && next_ < route_.size()) {
         decision.x = route_[next_].point.x;
         decision.z = route_[next_].point.z;
@@ -939,6 +949,28 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // Stand on the switch (its NEAR band is 6 units).
         decision.reach = 1.0f;
         if (flat(aim, me) < 3.0f) spend(60);
+    } else if (target && gimmick_ == Gimmick::tech) {
+        // Face the wall from up to 12 units, open the technique panel (R),
+        // cast the first technique (A) and close the panel again (R).
+        decision.reach = 0.25f;
+        if (flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5)) {
+            watch.since = frame;
+            if (player.seq_name == "SQ_WAZA") tech_used_ = true;
+            if (frame % 30 < 3) {
+                if (!player.panel_open) {
+                    if (tech_used_) {
+                        tech_used_ = false;
+                        spend(3);
+                    } else {
+                        decision.press_r = true;
+                    }
+                } else if (!tech_used_) {
+                    decision.press_a = true;
+                } else {
+                    decision.press_r = true;
+                }
+            }
+        }
     } else if (target && gimmick_ == Gimmick::talk) {
         // Wall switches sit inside the wall: keep pushing toward the origin
         // (facing it) and press A; the attack's talk box reaches 8.5 ahead.
@@ -1003,6 +1035,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
+    // A panel left open (A would pick from it instead of attacking): close.
+    if (player.panel_open && gimmick_ != Gimmick::tech && frame % 30 < 3) {
+        decision.press_r = true;
+        decision.attack = decision.press_a = decision.confirm = decision.pick_up = false;
+    }
     // Standing on the goal with control and nothing happening: its exit is
     // not open yet (a boss gate after the last wave); do the rest first.
     on_goal_ = to_goal_ && flat(goal_point_, me) < 6.0f && player.control_enabled ? on_goal_ + 1 : 0;
