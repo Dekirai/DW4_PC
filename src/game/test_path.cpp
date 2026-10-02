@@ -535,11 +535,13 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
-    // Without control (a text window or a prompt) only A goes through: on
-    // another stage change mat the prompt is answered "No" (down, then A),
-    // elsewhere text windows are advanced.
-    no_control_ = player.control_enabled ? 0 : no_control_ + 1;
-    if (player.control_enabled) declined_ = false;
+    // Without control (a text window, a prompt, or a demo sequence like
+    // SQ_DEMOWAIT holding the player while a message waits) only A goes
+    // through: on another stage change mat the prompt is answered "No"
+    // (down, then A), elsewhere text windows are advanced.
+    const bool controllable = player.control_enabled && player.seq_name.rfind("SQ_DEMO", 0) != 0;
+    no_control_ = controllable ? 0 : no_control_ + 1;
+    if (controllable) declined_ = false;
     else {
         decision.attack = decision.pick_up = false;
         bool on_other_exit = false;
