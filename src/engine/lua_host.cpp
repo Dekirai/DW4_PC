@@ -386,20 +386,23 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "MDLgetBulletKind") return number(context ? context->bullet_kind : 0);
     if (method == "BLTgetShootRamNo") return number(context ? context->shooter : 0);
     if (method == "MDLgetPosStr" || method == "MDLgetRotStr") {
+        // 802ED8E0 / 802ED9A4: from the script model's node matrix (the
+        // "ONE" node, 8030B81C). The position adds the arguments along the
+        // model's own axes (80128DC8); the rotation is the yaw of its +Z
+        // axis (8012D434) plus the Y argument, X and Z pass through.
         auto* model = context_model();
-        Vec3f value{};
+        const float a = float(to_number(arg(0))), b = float(to_number(arg(1))), c = float(to_number(arg(2)));
+        Vec3f value{a, b, c};
         if (model && model->node) {
+            const auto& m = model->node->matrix;
             if (method == "MDLgetPosStr") {
-                const auto& m = model->node->matrix;
-                value = {m(3, 0), m(3, 1), m(3, 2)};
+                value = {m(3, 0) + a * m(0, 0) + b * m(1, 0) + c * m(2, 0), m(3, 1) + a * m(0, 1) + b * m(1, 1) + c * m(2, 1),
+                         m(3, 2) + a * m(0, 2) + b * m(1, 2) + c * m(2, 2)};
             } else {
-                constexpr float to_degrees = 57.29577951308232f;
-                value = {model->applied[0] * to_degrees, model->applied[1] * to_degrees, model->applied[2] * to_degrees};
+                constexpr float to_degrees = 57.2958f; // 80425EF4
+                value = {a, std::atan2(m(2, 0), m(2, 2)) * to_degrees + b, c};
             }
         }
-        value.x += float(to_number(arg(0)));
-        value.y += float(to_number(arg(1)));
-        value.z += float(to_number(arg(2)));
         return string_result(vector_string(value));
     }
     if (method == "MDLgetHp" || method == "MDLaddHp") {

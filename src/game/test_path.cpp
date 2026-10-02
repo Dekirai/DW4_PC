@@ -528,6 +528,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         for (const auto& e : models->rams()) {
             if (!e->generated || !e->node) continue;
             if (pass == 0 ? (e->category != "ENEMY" || e->hp <= 0) : (e->category != "ITEM" || e->item_table < 0)) continue;
+            // Hits reach a model through its hit script; without one (a
+            // boss's head or decoration) it cannot be hurt.
+            if (pass == 0 && !engine.has_script("hit_" + e->info_name + ".lua")) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
@@ -942,6 +945,43 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (decision.press_a) spend(12);
             else watch.since = frame;
         }
+    } else if (target && target->category == "ENEMY" && target->info_name.rfind("f_", 0) == 0 && target->hit &&
+               !target->hit->boxes.empty() && std::abs(aim.y - me.y) <= 8.0f) {
+        // A boss on the player's level: its body box (as the hit check sees
+        // it) and the contact box of its attacks reach furthest on the
+        // diagonals, so the bot takes position on a world axis, 8 units off
+        // the body face (inside the weapon's reach, outside the contact),
+        // strikes from there and returns to the axis after a knockback.
+        const auto& m = target->node->matrix;
+        engine::Vec3f lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+        for (const auto& [box_lo, box_hi] : target->hit->boxes)
+            for (int corner = 0; corner < 8; ++corner) {
+                const engine::Vec3f c{corner & 1 ? box_hi.x : box_lo.x, corner & 2 ? box_hi.y : box_lo.y, corner & 4 ? box_hi.z : box_lo.z};
+                const engine::Vec3f w{c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0), 0.0f,
+                                      c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
+                lo = {std::min(lo.x, w.x), 0.0f, std::min(lo.z, w.z)};
+                hi = {std::max(hi.x, w.x), 0.0f, std::max(hi.z, w.z)};
+            }
+        const engine::Vec3f centre{(lo.x + hi.x) * 0.5f, me.y, (lo.z + hi.z) * 0.5f};
+        const float dx = me.x - centre.x, dz = me.z - centre.z;
+        const bool along_x = std::abs(dx) >= std::abs(dz);
+        const float half = along_x ? (hi.x - lo.x) * 0.5f : (hi.z - lo.z) * 0.5f;
+        const float along = along_x ? std::abs(dx) : std::abs(dz), across = along_x ? std::abs(dz) : std::abs(dx);
+        const float stand = half + 8.0f;
+        const engine::Vec3f post{along_x ? centre.x + (dx >= 0 ? stand : -stand) : centre.x, me.y,
+                                 along_x ? centre.z : centre.z + (dz >= 0 ? stand : -stand)};
+        if (std::hypot(dx, dz) > stand + 40.0f) {
+            // Still on the way: follow the route.
+        } else if (across > 5.0f || along > stand + 12.0f) {
+            decision.x = post.x; // back onto the axis first
+            decision.z = post.z;
+            decision.reach = 4.0f;
+        } else {
+            decision.x = centre.x; // face the boss, closing in to the post
+            decision.z = centre.z;
+            decision.reach = (stand - 1.0f) * (stand - 1.0f);
+        }
+        if (along - half <= 10.0f && across <= 6.0f) decision.attack = true;
     } else if (target && (target->category == "ENEMY" || gimmick_ == Gimmick::strike)) {
         const float d2 = (aim.x - me.x) * (aim.x - me.x) + (aim.z - me.z) * (aim.z - me.z);
         // Structures (towers) and bosses are walked up to until their body

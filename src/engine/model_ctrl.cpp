@@ -174,7 +174,10 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
     // DW4_TRACE_SEQ=<model> logs that model's sequence changes.
     if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && ram.info_name == trace)
-        engine.log("seq " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name + " -> " + std::string(name));
+        engine.log("seq " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name + " -> " + std::string(name) +
+                   (ram.node ? " at (" + std::to_string(int(ram.node->matrix(3, 0))) + "," + std::to_string(int(ram.node->matrix(3, 1))) + "," +
+                                   std::to_string(int(ram.node->matrix(3, 2))) + ")"
+                             : std::string()));
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)
@@ -299,8 +302,19 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
-            ram.follow_model.clear(); // 8030A71C: a new move ends the follow
-            ram.follow_trace = nullptr;
+            // 8030A71C (MOVE only): a new move ends a MOVERL follow and takes
+            // the facing it left on the node (the yaw of its +Z axis) as the
+            // controller's Y angles (+9C/+84); later frames rebuild the basis
+            // from them.
+            if (type == "beModelCtrlMOVE" && (ram.follow_trace || !ram.follow_model.empty())) {
+                if (ram.node) {
+                    const auto& m = ram.node->matrix;
+                    ram.applied[1] = ram.desired[1] = std::atan2(m(2, 0), m(2, 2));
+                }
+                ram.follow_model.clear();
+                ram.follow_bone.clear();
+                ram.follow_trace = nullptr;
+            }
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
