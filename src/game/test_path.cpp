@@ -613,12 +613,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
     // Without control (a text window, a prompt, or a demo sequence like
     // SQ_DEMOWAIT holding the player while a message waits) only A goes
-    // through: on another stage change mat the prompt is answered "No"
-    // (down, then A), elsewhere text windows are advanced.
+    // through: on another stage change mat the prompt is cancelled with B,
+    // elsewhere text windows are advanced with A.
     const bool controllable = player.control_enabled && player.seq_name.rfind("SQ_DEMO", 0) != 0;
     no_control_ = controllable ? 0 : no_control_ + 1;
-    if (controllable) declined_ = false;
-    else {
+    if (!controllable) {
         decision.attack = decision.pick_up = false;
         bool on_other_exit = false;
         if (auto* mats = engine.get<engine::MatCtrlManager>())
@@ -629,12 +628,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                     on_other_exit = true;
             }
         if (on_other_exit) {
+            // B cancels the prompt (no stage change) once it takes input.
             decision.confirm = false;
-            if (!declined_ && no_control_ >= 40 && no_control_ < 43) decision.press_down = true;
-            if (!declined_ && no_control_ == 60) {
-                decision.press_a = true;
-                declined_ = true;
-            }
+            decision.press_b = frame % 20 < 3;
         } else if (!decision.confirm && no_control_ > 90 && no_control_ % 45 < 3) {
             decision.press_a = true;
         }
