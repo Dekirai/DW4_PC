@@ -828,6 +828,12 @@ public:
 
     // Randomizer: a drop's record after the seeded permutation of its table.
     static int randomized_record(Engine& engine, const std::string& table, int record);
+    // Each generator's data name and whether its waves were ever cleared (test bot).
+    std::vector<std::pair<std::string, bool>> cleared() const {
+        std::vector<std::pair<std::string, bool>> out;
+        for (const auto& ram : rams_) out.emplace_back(ram->data ? std::string(ram->data.str(2)) : std::string(), ram->done);
+        return out;
+    }
 
 private:
     struct GeneRam : Ram {

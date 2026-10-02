@@ -259,6 +259,8 @@ public:
     bool run_script(std::string_view name);
     // The stage packages hold a script of that name.
     bool has_script(std::string_view name) const;
+    // That script's compiled chunk contains `text` (a string constant; test bot).
+    bool script_mentions(std::string_view name, std::string_view text) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
     bool soft_reset_allowed() const { return soft_reset_allowed_; }

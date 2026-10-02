@@ -66,6 +66,19 @@ bool Engine::has_script(std::string_view name) const {
     return false;
 }
 
+bool Engine::script_mentions(std::string_view name, std::string_view text) const {
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7)) {
+            if (!data || data.str(2) != name) continue;
+            const auto object = data.ref(3);
+            if (!object) continue;
+            const auto bytes = object.memory(3);
+            const std::string_view chunk(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            if (chunk.find(text) != std::string_view::npos) return true;
+        }
+    return false;
+}
+
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
     // DW4_TRACE_SCRIPT=1 logs every script run (=name: only that one).

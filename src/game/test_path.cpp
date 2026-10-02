@@ -375,7 +375,36 @@ engine::Vec3f mat_centre(const engine::MatCtrlManager::MatBox& box, float y) {
 }
 // A wall switch shows it is on (SQ_SWON, then SQ_ONLOOP until it turns off).
 bool switched_on(const engine::ModelCtrlManager::ModelRam& ram) { return ram.seq_name == "SQ_SWON" || ram.seq_name == "SQ_ONLOOP"; }
+// Hit reactions and status effects hold the player in place; that is not
+// being stuck.
+bool held_by_hit(const engine::ModelCtrlManager::ModelRam& ram) {
+    for (const char* name : {"SQ_LDMG", "SQ_MDMG", "SQ_SDMG", "SQ_DDMG", "SQ_STUN", "SQ_SLEEP", "SQ_BIND", "SQ_DOWN"})
+        if (ram.seq_name == name) return true;
+    return false;
+}
 } // namespace
+
+// The goal mats: "matz02", or alternatives "matz15|matz16" (exits to the
+// same stage), as keys without "mat".
+std::set<std::string> goal_keys(const std::string& goal) {
+    std::set<std::string> keys;
+    std::size_t start = 0;
+    while (start <= goal.size()) {
+        const auto end = std::min(goal.find('|', start), goal.size());
+        if (end > start) keys.insert(mat_key(std::string_view(goal).substr(start, end - start)));
+        start = end + 1;
+    }
+    return keys;
+}
+
+bool ExploreBot::portal(engine::Engine& engine, const std::string& mat) {
+    const auto it = portals_.find(mat);
+    if (it != portals_.end()) return it->second;
+    const std::string script = mat + ".lua";
+    const bool link = engine.script_mentions(script, "trans.lua") && !engine.script_mentions(script, "funcStageChange");
+    portals_[mat] = link;
+    return link;
+}
 
 void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame) {
     const void* previous = target_;
@@ -385,6 +414,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     next_ = 0;
     target_ = nullptr;
     target_mat_.clear();
+    target_portal_.clear();
     to_goal_ = false;
     gimmick_ = Gimmick::none;
     what_ = "nothing";
@@ -396,14 +426,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     const WithoutLimitCircle without_limit(*hitland);
     const auto me = position_of(player);
     const auto flags = hitland->delivery_flags(player.info_name, player.index);
-    const std::string goal_key = mat_key(goal);
+    const auto goals = goal_keys(goal);
     std::vector<AvoidBox> avoid;
     std::vector<engine::MatCtrlManager::MatBox> boxes;
     if (mats) boxes = mats->mat_boxes();
     for (const auto& box : boxes) {
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
-        if (key.empty() || key[0] != 'z' || key == goal_key) continue;
+        if (key.empty() || key[0] != 'z' || goals.count(key) || portal(engine, box.name)) continue;
         const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f};
         if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z) continue;
         avoid.push_back(a);
@@ -456,17 +486,24 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     }
     // Defeated enemies stay until their model is removed; a wave counts as
     // cleared only then, and leaving its mat earlier stops the generator.
-    if (!defending)
+    if (!defending && frame >= wait_skip_until_)
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp <= 0 && flat(position_of(*e), me) < 200.0f) {
                 goal_point_ = me;
                 what_ = "wait for the defeated";
+                if (waiting_since_ < 0) waiting_since_ = frame;
+                if (frame - waiting_since_ > 900) wait_skip_until_ = frame + 1800; // a body that never goes
                 return;
             }
+    waiting_since_ = -1;
     // The goal mat once it can be reached.
+    // (Of several, the one reachable or else the first.)
     std::optional<engine::Vec3f> goal_centre;
-    for (const auto& box : boxes)
-        if (mat_key(box.name) == goal_key) goal_centre = mat_centre(box, (box.min.y + box.max.y) * 0.5f);
+    for (const auto& box : boxes) {
+        if (!goals.count(mat_key(box.name))) continue;
+        const auto centre = mat_centre(box, (box.min.y + box.max.y) * 0.5f);
+        if (!goal_centre || (map.nearest(centre, 8.0f) && !map.nearest(*goal_centre, 8.0f))) goal_centre = centre;
+    }
     if (goal_centre) {
         if (map.nearest(*goal_centre, 8.0f)) {
             go(*goal_centre, nullptr, "goal " + goal);
@@ -516,11 +553,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 if (kind == Gimmick::strike || frame - struck_at_[e.get()] < 900) continue;
                 struck_.erase(spent);
             }
-            const bool was_tried = struck_.count(e.get()) && struck_[e.get()] > 0;
+            // A wall that was started on is finished first (it takes several hits).
+            const bool was_tried = kind != Gimmick::strike && struck_.count(e.get()) && struck_[e.get()] > 0;
             if (was_tried != tried) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
-            const float cost = keep(e.get(), map.cost_to(at, kind == Gimmick::step ? 6.0f : 20.0f));
+            float cost = keep(e.get(), map.cost_to(at, kind == Gimmick::step ? 6.0f : 20.0f));
+            // A wall being broken (or walked to) is finished first.
+            if (kind == Gimmick::strike && (struck_.count(e.get()) || e.get() == previous)) cost *= 0.3f;
+            // A switch whose script also switches walls back on may lock a
+            // door behind the player: last.
+            if (kind != Gimmick::strike && engine.script_mentions("hit_" + e->info_name + ".lua", "ONHIT")) cost += 400.0f;
             if (cost < best_cost) {
                 best_cost = cost;
                 best = e.get();
@@ -572,6 +615,25 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         go(*frontier, nullptr, "explore");
         return;
     }
+    // The room is done and the goal is not here: take a maze link (a mat
+    // that moves the player to another room of the stage).
+    if (!(goal_centre && map.nearest(*goal_centre, 8.0f))) {
+        const engine::MatCtrlManager::MatBox* best_link = nullptr;
+        float best_link_cost = std::numeric_limits<float>::infinity();
+        for (const auto& box : boxes) {
+            if (!portal(engine, box.name) || portals_taken_.count(box.name)) continue;
+            const float cost = map.cost_to(mat_centre(box, me.y), 6.0f);
+            if (cost < best_link_cost) {
+                best_link_cost = cost;
+                best_link = &box;
+            }
+        }
+        if (best_link) {
+            go(mat_centre(*best_link, me.y), nullptr, "link " + best_link->name);
+            target_portal_ = best_link->name;
+            return;
+        }
+    }
     // Everything seen: forget the visited ground and mats once in a while, so
     // waves stopped by leaving their mat are started again and opened doors
     // are walked through.
@@ -613,6 +675,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
 void ExploreBot::give_up(int frame) {
     if (target_) unreachable_[target_] = frame + 1800;
     if (!target_mat_.empty()) mats_done_.insert(target_mat_);
+    if (!target_portal_.empty()) portals_taken_.insert(target_portal_);
     if (what_ == "explore") {
         visited_.insert(coarse(goal_point_.x, goal_point_.z));
         frontier_.reset();
@@ -639,7 +702,28 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
         progress_at_ = frame;
         defend_until_ = -1;
+        portals_.clear();
+        portals_taken_.clear();
+        cleared_generators_.clear();
+        watch_.clear();
     }
+    // Moved to another room of the stage (a maze link): a fresh start there.
+    if (flat(me, last_) > 100.0f && frame > 1) {
+        if (!target_portal_.empty()) portals_taken_.insert(target_portal_);
+        visited_.clear();
+        mats_done_.clear();
+        mat_frames_.clear();
+        unreachable_.clear();
+        frontier_.reset();
+        watch_.clear();
+        planned_ = -1000;
+        progress_at_ = frame;
+    }
+    // A generator cleared for the first time is progress.
+    if (frame % 30 == 0)
+        if (auto* generators = engine.get<engine::GeneraterManager>())
+            for (const auto& [name, done] : generators->cleared())
+                if (done && cleared_generators_.insert(name).second) progress_at_ = frame;
     const auto visited_before = visited_.size();
     for (const float ox : {-8.0f, 8.0f})
         for (const float oz : {-8.0f, 8.0f}) visited_.insert(coarse(me.x + ox, me.z + oz));
@@ -668,7 +752,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         struck_at_[target_] = frame;
         progress_at_ = frame;
     }
-    stalled_ = std::hypot(me.x - last_.x, me.z - last_.z) < 0.1f ? stalled_ + 1 : 0;
+    stalled_ = std::hypot(me.x - last_.x, me.z - last_.z) < 0.1f && !held_by_hit(player) ? stalled_ + 1 : 0;
     last_ = me;
     // In the air after a jump: keep steering at the landing.
     if (leap_ && frame - leap_frame_ < 70 && (!player.on_ground || frame - leap_frame_ < 5)) {
@@ -692,7 +776,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // Walking against something: give the spot up.
             visited_.insert(coarse(goal_point_.x, goal_point_.z));
             frontier_.reset();
-            if (target_) unreachable_[target_] = frame + 300;
+            if (target_ && what_.rfind("enemy", 0) != 0) unreachable_[target_] = frame + 300;
         }
         plan(engine, player, goal, frame);
         if (std::getenv("DW4_TRACE_EXPLORE"))
@@ -706,20 +790,22 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     engine::Vec3f aim = target ? position_of(*target) : goal_point_;
     // Watchdog: a gimmick, mat, pickup or explored point that is not
     // approached (or worked) for 600 frames is given up for a while.
-    if (what_ != watch_what_) {
-        watch_what_ = what_;
-        watch_best_ = std::numeric_limits<float>::infinity();
-        watch_since_ = frame;
+    const std::string watch_key = what_ == "explore" ? "explore " + std::to_string(coarse(goal_point_.x, goal_point_.z).first) + "," +
+                                                           std::to_string(coarse(goal_point_.x, goal_point_.z).second)
+                                                     : what_;
+    auto& watch = watch_[watch_key];
+    if (frame - watch.seen > 300) watch = {std::numeric_limits<float>::infinity(), frame, frame};
+    watch.seen = frame;
+    if (flat(aim, me) < watch.best - 2.0f) {
+        watch.best = flat(aim, me);
+        watch.since = frame;
     }
-    if (flat(aim, me) < watch_best_ - 2.0f) {
-        watch_best_ = flat(aim, me);
-        watch_since_ = frame;
-    }
-    const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || what_ == "explore" || what_.rfind("item", 0) == 0;
-    if (watched && frame - watch_since_ > 600) {
+    const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || what_ == "explore" ||
+                         what_.rfind("item", 0) == 0;
+    if (watched && frame - watch.since > 600) {
         if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up %s\n", frame, what_.c_str());
         give_up(frame);
-        watch_since_ = frame;
+        watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
     const float close = !target ? 8.0f : gimmick_ == Gimmick::step ? 3.0f : gimmick_ == Gimmick::talk ? 12.0f : 25.0f;
@@ -740,7 +826,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         decision.z = aim.z;
     }
     const auto spend = [&](int budget) {
-        watch_since_ = frame;
+        watch.since = frame;
         if (++struck_[target] == budget) {
             struck_at_[target] = frame;
             progress_at_ = frame;
@@ -795,11 +881,21 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (auto* mats = engine.get<engine::MatCtrlManager>())
             for (const auto& box : mats->mat_boxes()) {
                 const auto key = mat_key(box.name);
-                if (!key.empty() && key[0] == 'z' && key != mat_key(goal) && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 &&
+                if (!key.empty() && key[0] == 'z' && !goal_keys(goal).count(key) && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 &&
                     me.z >= box.min.z - 2 && me.z <= box.max.z + 2)
                     on_other_exit = true;
             }
-        if (on_other_exit) {
+        bool on_link = false;
+        if (!target_portal_.empty())
+            if (auto* mats = engine.get<engine::MatCtrlManager>())
+                for (const auto& box : mats->mat_boxes())
+                    if (box.name == target_portal_ && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 && me.z >= box.min.z - 2 &&
+                        me.z <= box.max.z + 2)
+                        on_link = true;
+        if (on_link) {
+            // The maze link: yes (A) moves the player to the next room.
+            decision.press_a = frame % 20 < 3;
+        } else if (on_other_exit) {
             // B cancels the prompt (no stage change) once it takes input.
             decision.confirm = false;
             decision.press_b = frame % 20 < 3;

@@ -117,6 +117,9 @@ private:
     enum class Gimmick { none, strike, talk, step };
     void plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     void give_up(int frame);
+    // A z-mat that moves the player to another room of the same stage
+    // (its script runs trans.lua instead of funcStageChange): a maze link.
+    bool portal(engine::Engine& engine, const std::string& mat);
     std::string stage_;
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
@@ -140,10 +143,19 @@ private:
     int escape_until_ = -1;  // stuck: sidestep until this frame
     int escape_turn_{};      // which way the last sidestep went
     int no_control_{};       // steps the player has had no control
-    // Watchdog: a target that brings no progress for a while is given up.
-    std::string watch_what_;
-    float watch_best_{};
-    int watch_since_{};
+    // Watchdog: a target that brings no progress for a while is given up
+    // (kept per target, so two targets taking turns both run out).
+    struct Watch {
+        float best{};
+        int since{}, seen{};
+    };
+    std::map<std::string, Watch> watch_;
+    std::map<std::string, bool> portals_;        // mat -> is a maze link (cached per stage)
+    std::set<std::string> portals_taken_;        // maze links already walked through
+    std::string target_portal_;                  // the maze link being walked to
+    std::set<std::string> cleared_generators_;   // generators seen cleared (progress)
+    int waiting_since_ = -1;                     // waiting for defeated enemies since
+    int wait_skip_until_ = -1;                   // a wait that never ended is skipped until
     // Endless waves: after a long fight without progress elsewhere, only
     // nearby enemies are fought for a while.
     int progress_at_{};      // the last new ground, mat or finished gimmick

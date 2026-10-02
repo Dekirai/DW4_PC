@@ -209,6 +209,13 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     ram.ctrl_mode = 0;
     ram.ctrl_phase = 0;
     ram.pdmove_set = false;
+    // 8030E9D4: every sequence start drops the LUACALL BHit/WHit/FHit
+    // scripts (ctrl +30/+34/+38); a stale one would run in a later
+    // sequence (a wall touched while dying jumped e_mecha4 back to an
+    // attack, leaving it alive at 0 HP).
+    ram.lua_bhit.clear();
+    ram.lua_whit.clear();
+    ram.lua_fhit.clear();
     // 8030E9F8: every sequence starts with wall, floor and fall checks on.
     ram.wall_check = ram.floor_check = ram.fall_check = true;
     try { if (ram.channels.allocated()) ram.channels.on_sequence_change(); } catch (const std::exception&) {}
