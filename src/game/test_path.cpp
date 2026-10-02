@@ -388,6 +388,22 @@ std::vector<WalkMap::Waypoint> WalkMap::route_to(const engine::Vec3f& p) const {
     return thinned;
 }
 
+std::vector<WalkMap::Waypoint> WalkMap::route_to(const engine::Vec3f& p, float tolerance) const {
+    const int radius = int(std::ceil(tolerance / Grid::step));
+    const int centre = nearest_cell(p);
+    const int cx = centre % w_, cz = centre / w_;
+    int best = -1;
+    for (int z = std::max(0, cz - radius); z <= std::min(h_ - 1, cz + radius); ++z)
+        for (int x = std::max(0, cx - radius); x <= std::min(w_ - 1, cx + radius); ++x) {
+            const int cell = z * w_ + x;
+            if (parent_[std::size_t(cell)] == -2) continue;
+            const auto q = point(cell);
+            if (std::hypot(q.x - p.x, q.z - p.z) > tolerance) continue;
+            if (best < 0 || cost_[std::size_t(cell)] < cost_[std::size_t(best)]) best = cell;
+        }
+    return best < 0 ? route_to(p) : route_to(point(best));
+}
+
 std::vector<engine::Vec3f> WalkMap::samples() const {
     std::vector<engine::Vec3f> out;
     for (int cell = 0; cell < w_ * h_; ++cell)
@@ -427,6 +443,16 @@ std::set<std::string> goal_keys(const std::string& goal) {
         start = end + 1;
     }
     return keys;
+}
+
+bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
+    const auto it = hazards_.find(mat);
+    if (it != hazards_.end()) return it->second;
+    const std::string script = mat + ".lua";
+    const bool hazard = engine.script_mentions(script, "QuickSand") || engine.script_mentions(script, "QUICKSAND") ||
+                        (engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE"));
+    hazards_[mat] = hazard;
+    return hazard;
 }
 
 bool ExploreBot::exit_mat(engine::Engine& engine, const std::string& mat) {
@@ -473,7 +499,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     for (const auto& box : boxes) {
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
-        if (goals.count(key) || !exit_mat(engine, box.name)) continue;
+        if (goals.count(key) || (!exit_mat(engine, box.name) && !hazard_mat(engine, box.name))) continue;
         const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f};
         if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z) continue;
         avoid.push_back(a);
@@ -521,6 +547,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         }
         if (best) {
             go(position_of(*best), best, (pass == 0 ? "enemy " : "item ") + best->info_name);
+            waiting_since_ = -1;
             return;
         }
     }
@@ -584,18 +611,25 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 if (switched_on(*e)) continue;
                 kind = Gimmick::talk;
             } else if (boxes && e->hit->player_bullet) {
+                // Walls that break only to an element (fire, thunder) need a
+                // technique or chip the bot does not use.
+                if (engine.script_mentions("hit_" + e->info_name + ".lua", "BLPgetAttackZokusei")) continue;
                 kind = Gimmick::strike;
             } else {
                 continue;
             }
-            const int budget = kind == Gimmick::strike ? 240 : 60;
+            // A switch seen switched on is done for a long while (pairs that
+            // power each other back on would otherwise take turns forever).
+            if (kind != Gimmick::strike)
+                if (const auto on = switched_.find(e.get()); on != switched_.end() && frame - on->second < 6000) continue;
+            const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : 60;
             const auto spent = struck_.find(e.get());
             if (spent != struck_.end() && spent->second >= budget) {
                 if (kind == Gimmick::strike || frame - struck_at_[e.get()] < 900) continue;
-                struck_.erase(spent);
+                spent->second = 1; // tried again later, after the mats
             }
             // A wall that was started on is finished first (it takes several hits).
-            const bool was_tried = kind != Gimmick::strike && struck_.count(e.get()) && struck_[e.get()] > 0;
+            const bool was_tried = kind != Gimmick::strike && struck_.count(e.get()) && struck_[e.get()] > 0 && e.get() != previous;
             if (was_tried != tried) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
@@ -614,6 +648,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         if (!best) return false;
         static constexpr const char* kinds[] = {"", "strike ", "press ", "step on "};
         go(position_of(*best), best, std::string(kinds[int(best_kind)]) + best->info_name + "#" + std::to_string(best->index));
+        route_ = map.route_to(position_of(*best), best_kind == Gimmick::step ? 6.0f : 20.0f);
         gimmick_ = best_kind;
         return true;
     };
@@ -623,7 +658,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     float best_cost = std::numeric_limits<float>::infinity();
     for (const auto& box : boxes) {
         const auto key = mat_key(box.name);
-        if (key.empty() || goals.count(key) || exit_mat(engine, box.name) || portal(engine, box.name) || mats_done_.count(box.name)) continue;
+        if (key.empty() || goals.count(key) || exit_mat(engine, box.name) || portal(engine, box.name) || hazard_mat(engine, box.name) ||
+            mats_done_.count(box.name))
+            continue;
         float cost = map.cost_to(mat_centre(box, me.y), 6.0f);
         if (box.name == previous_mat) cost *= 0.6f;
         if (cost < best_cost) {
@@ -745,13 +782,17 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         defend_until_ = -1;
         portals_.clear();
         exits_.clear();
+        hazards_.clear();
+        switched_.clear();
+        health_.clear();
         portals_taken_.clear();
         cleared_generators_.clear();
         watch_.clear();
     }
     // Moved to another room of the stage (a maze link): a fresh start there.
-    if (flat(me, last_) > 100.0f && frame > 1) {
-        if (!target_portal_.empty()) portals_taken_.insert(target_portal_);
+    // (A fall respawn keeps what was done.)
+    if (flat(me, last_) > 100.0f && frame > 1 && !target_portal_.empty()) {
+        portals_taken_.insert(target_portal_);
         visited_.clear();
         mats_done_.clear();
         mat_frames_.clear();
@@ -787,6 +828,15 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (e.get() == target_ && e->generated && e->node && (e->category == "ITEM" || e->hp > 0) &&
                 !(gimmick_ == Gimmick::step && e->ctrl_mode == 0) && !(gimmick_ == Gimmick::talk && switched_on(*e)))
                 target = e.get();
+    if (target_ && models && (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::step))
+        for (const auto& e : models->rams())
+            if (e.get() == target_ && ((gimmick_ == Gimmick::talk && switched_on(*e)) || (gimmick_ == Gimmick::step && e->ctrl_mode == 0)))
+                switched_[target_] = frame;
+    if (target && gimmick_ == Gimmick::strike) {
+        auto [it, fresh] = health_.emplace(target_, target->hp);
+        if (!fresh && target->hp < it->second) struck_[target_] = 1; // it takes damage: keep at it
+        it->second = target->hp;
+    }
     if (target_ && !target && gimmick_ != Gimmick::none) {
         // A switch went on (or a gimmick broke): on to the next, e.g. the
         // other switch of a pair that must be pressed within moments.
@@ -838,8 +888,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     auto& watch = watch_[watch_key];
     if (frame - watch.seen > 300) watch = {std::numeric_limits<float>::infinity(), frame, frame};
     watch.seen = frame;
-    if (flat(aim, me) < watch.best - 2.0f) {
-        watch.best = flat(aim, me);
+    // Progress is measured along the route (waypoints left), so a detour that
+    // first leads away is not given up.
+    const float remaining = next_ < route_.size() ? float(route_.size() - next_) * 15.0f : flat(aim, me);
+    if (remaining < watch.best - 2.0f) {
+        watch.best = remaining;
         watch.since = frame;
     }
     const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || what_ == "explore" ||
@@ -884,7 +937,8 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         decision.reach = 0.25f;
         if (flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5)) {
             decision.press_a = frame % 35 < 3;
-            spend(60);
+            if (decision.press_a) spend(12);
+            else watch.since = frame;
         }
     } else if (target && (target->category == "ENEMY" || gimmick_ == Gimmick::strike)) {
         const float d2 = (aim.x - me.x) * (aim.x - me.x) + (aim.z - me.z) * (aim.z - me.z);
@@ -895,7 +949,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (d2 <= 400.0f || (d2 <= 6400.0f && stalled_ > 20)) {
             decision.attack = true;
             decision.jump_attack = aim.y > me.y + 8.0f;
-            if (gimmick_ == Gimmick::strike) spend(240);
+            if (gimmick_ == Gimmick::strike && !held_by_hit(player)) spend(240);
         }
     } else if (target) {
         // A pickup: some are taken by touch, others (keys) with A.

@@ -789,8 +789,12 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             }
         }
         if (ram.panel_open) {
+            // The key flag (+70) is set before the panel branch (8034C6BC,
+            // 8034C960) and 80309168 applies the walk/wait change after this
+            // handler, so the player walks with a panel open.
             if (trigger & dw4::pad_button::x) {
                 select_sequence(engine, ram, "SQ_JUMP");
+                return;
             } else if (trigger & dw4::pad_button::y) {
                 if (!panel("GENEEMGHEAL").bools.empty()) ram.panel_open = true;
             } else if (trigger & dw4::pad_button::start) {
@@ -798,6 +802,7 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 sound.strings.emplace_back("CURSOR_NG");
                 messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
             }
+            apply_control(engine, ram);
             return;
         }
         // 8034D0CC: START opens the status window, refused while a panel runs.

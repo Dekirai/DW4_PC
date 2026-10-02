@@ -72,6 +72,9 @@ public:
         bool jump = false;
     };
     std::vector<Waypoint> route_to(const engine::Vec3f& p) const;
+    // Waypoints to the cheapest reached point within `tolerance` of `p`
+    // (the same point cost_to prices), else as route_to.
+    std::vector<Waypoint> route_to(const engine::Vec3f& p, float tolerance) const;
     // Reached floor points (every third grid cell).
     std::vector<engine::Vec3f> samples() const;
     // The collision (info, child) pairs that stopped the walk, with counts.
@@ -126,6 +129,9 @@ private:
     // A mat whose script changes the stage (funcStageChange), whatever its
     // name: other exits are kept away from.
     bool exit_mat(engine::Engine& engine, const std::string& mat);
+    // A mat that hurts or drops the player (quicksand, a pit that removes
+    // the player): kept away from, never a place to stand on.
+    bool hazard_mat(engine::Engine& engine, const std::string& mat);
     std::string stage_;
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
@@ -158,6 +164,9 @@ private:
     std::map<std::string, Watch> watch_;
     std::map<std::string, bool> portals_;        // mat -> is a maze link (cached per stage)
     std::map<std::string, bool> exits_;          // mat -> changes the stage (cached per stage)
+    std::map<std::string, bool> hazards_;        // mat -> quicksand or pit (cached per stage)
+    std::map<const void*, int> switched_;        // switch -> frame it was seen switched on
+    std::map<const void*, int> health_;          // strike gimmick -> HP when last seen
     std::set<std::string> portals_taken_;        // maze links already walked through
     std::string target_portal_;                  // the maze link being walked to
     std::set<std::string> cleared_generators_;   // generators seen cleared (progress)
