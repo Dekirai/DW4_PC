@@ -1451,9 +1451,6 @@ bool ModelCtrlManager::capsule_command(Engine& engine, ModelRam& ram, std::strin
     return false;
 }
 
-// PROVISIONAL enemy behaviour until the original enemy controller (AIMAP,
-// beActionStarter) is reconstructed: face the nearest player, walk towards
-// it and attack at close range after a cooldown.
 // AIM map AI (803084B8), run through the control logic (80309168): when
 // AITIMER expires, the distance to the nearest player picks the map's near /
 // middle / far / outside table; a roll below 16 picks the first entry whose
@@ -1601,40 +1598,14 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
 }
 
 void ModelCtrlManager::update_enemy(Engine& engine, ModelRam& ram) {
+    // 80309168: the AI (vtable +A0) runs only for a model with AI data (+44);
+    // without it the control logic sees no key input and the model stands.
     if (ram.ai_maps) {
         update_ai_map(engine, ram);
         return;
     }
-    if (ram.ai_timer > 0) --ram.ai_timer;
     ram.key_input = false;
-    ram.turn_rate_y = 0.2f;
-    if (!ram.control_enabled || !ram.node) return;
-    if (ram.seq_name != "SQ_WAIT" && ram.seq_name != "SQ_WALK") return;
-    const auto& m = ram.node->matrix;
-    const ModelRam* target = nullptr;
-    float best = 1e30f;
-    for (const auto& other : rams_) {
-        if (!other->is_player || !other->generated || !other->node) continue;
-        const auto& o = other->node->matrix;
-        const float dx = o(3, 0) - m(3, 0), dz = o(3, 2) - m(3, 2);
-        const float d = std::sqrt(dx * dx + dz * dz);
-        if (d < best) { best = d; target = other.get(); }
-    }
-    if (target && best < 80.0f) {
-        const auto& o = target->node->matrix;
-        ram.desired[1] = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2));
-        if (best < 10.0f) {
-            if (ram.ai_timer == 0 && ram.sequences &&
-                std::any_of(ram.sequences->begin(), ram.sequences->end(), [](const Sequence& q) { return q.name == "SQ_ATCK1"; })) {
-                ram.ai_timer = 120;
-                select_sequence(engine, ram, "SQ_ATCK1");
-                return;
-            }
-        } else {
-            ram.key_input = true;
-        }
-    }
-    apply_control(engine, ram);
+    if (ram.control_enabled && ram.node) apply_control(engine, ram);
 }
 
 // 8030E56C: base CHKBULLET target path. Gates, body overlap, target hit script

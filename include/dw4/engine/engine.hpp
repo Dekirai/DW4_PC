@@ -257,6 +257,8 @@ public:
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
     bool run_script(std::string_view name);
+    // The stage packages hold a script of that name.
+    bool has_script(std::string_view name) const;
     // Scene graph root management.
     Node* global_root() { return &global_root_; }
     bool soft_reset_allowed() const { return soft_reset_allowed_; }

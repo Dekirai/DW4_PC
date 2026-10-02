@@ -1062,7 +1062,6 @@ public:
         bool panel_open{};           // player work +124: an NDMWPANEL panel is up
         bool frozen{};               // ONFREEZE: control, AI and motion paused
         bool previous_live{};        // enemy AI: generated last frame
-        int ai_timer{};              // PROVISIONAL enemy AI cooldown
         std::string lua_bhit;        // LUACALL BHit script prefix (ctrl work +30)
         std::string lua_whit, lua_fhit; // LUACALL WHit / FHit prefixes (+34 / +38)
         std::array<int, 8> spin{};   // player work +114: direction history (Spiral Attack)

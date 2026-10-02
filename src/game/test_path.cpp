@@ -137,7 +137,6 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
     const std::size_t cells = std::size_t(w_) * std::size_t(h_);
     floor_.assign(cells, -100000.0f);
     parent_.assign(cells, -2);
-    std::vector<float> cost(cells, std::numeric_limits<float>::infinity());
     auto blocked = [&](float x, float z) {
         for (const auto& box : avoid)
             if (x >= box.min_x && x <= box.max_x && z >= box.min_z && z <= box.max_z) return true;
@@ -150,9 +149,72 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         const auto land = world.check_land(p, 1.0f, 400.0f, 1.0f);
         return land.found ? land.position.y : -100000.0f;
     };
+    // Pass 1: flood the reachable cells, recording which of the eight steps
+    // out of each cell are open.
+    static constexpr int kDx[8] = {1, 1, 0, -1, -1, -1, 0, 1}, kDz[8] = {0, 1, 1, 1, 0, -1, -1, -1};
+    std::vector<std::uint8_t> open_steps(cells, 0);
     const int start = nearest_cell(from);
     floor_[std::size_t(start)] = floor_from(start, from.y);
     if (floor_[std::size_t(start)] < -99999.0f) floor_[std::size_t(start)] = from.y;
+    std::vector<std::uint8_t> reached(cells, 0);
+    reached[std::size_t(start)] = 1;
+    std::vector<int> queue{start};
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        const int at = queue[head];
+        const int x = at % w_, z = at / w_;
+        const float ya = floor_[std::size_t(at)];
+        for (int d = 0; d < 8; ++d) {
+            const int nx = x + kDx[d], nz = z + kDz[d];
+            if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
+            const int next_cell = nz * w_ + nx;
+            const float bx = x0_ + float(nx) * step, bz = z0_ + float(nz) * step;
+            if (blocked(bx, bz)) continue;
+            const float yb = reached[std::size_t(next_cell)] ? floor_[std::size_t(next_cell)] : floor_from(next_cell, ya);
+            if (yb < -99999.0f || std::abs(ya - yb) > climb) continue;
+            const float ax = x0_ + float(x) * step, az = z0_ + float(z) * step;
+            const float length = std::hypot(bx - ax, bz - az);
+            const engine::Vec3f direction{(bx - ax) / length, 0.0f, (bz - az) / length};
+            const engine::Vec3f middle{(ax + bx) * 0.5f, std::max(ya, yb), (az + bz) * 0.5f};
+            if (const auto wall = world.check_wall(middle, direction, width, 4.0f, wall_flags, false); wall.hit) {
+                for (const auto& hit : wall.hits) {
+                    auto& blocker = blockers_[{hit.info, hit.child}];
+                    if (!blocker.count++) {
+                        blocker.first = hit.position;
+                        blocker.normal = hit.normal;
+                    }
+                }
+                continue;
+            }
+            open_steps[std::size_t(at)] |= std::uint8_t(1u << d);
+            if (!reached[std::size_t(next_cell)]) {
+                reached[std::size_t(next_cell)] = 1;
+                floor_[std::size_t(next_cell)] = yb;
+                queue.push_back(next_cell);
+            }
+        }
+    }
+    // Pass 2: steps from the nearest cell beside a wall (walls are not slid
+    // along, so routes keep to the middle of corridors).
+    std::vector<std::uint8_t> wall_distance(cells, 255);
+    std::vector<int> edge;
+    for (const int at : queue)
+        if (open_steps[std::size_t(at)] != 0xFF) {
+            wall_distance[std::size_t(at)] = 0;
+            edge.push_back(at);
+        }
+    for (std::size_t head = 0; head < edge.size(); ++head) {
+        const int at = edge[head];
+        if (wall_distance[std::size_t(at)] >= 2) continue;
+        for (int d = 0; d < 8; d += 2) {
+            if (!(open_steps[std::size_t(at)] & (1u << d))) continue;
+            const int next_cell = (at / w_ + kDz[d]) * w_ + at % w_ + kDx[d];
+            if (wall_distance[std::size_t(next_cell)] <= wall_distance[std::size_t(at)] + 1) continue;
+            wall_distance[std::size_t(next_cell)] = std::uint8_t(wall_distance[std::size_t(at)] + 1);
+            edge.push_back(next_cell);
+        }
+    }
+    // Pass 3: cheapest routes from the start; cells beside walls cost extra.
+    std::vector<float> cost(cells, std::numeric_limits<float>::infinity());
     cost[std::size_t(start)] = 0.0f;
     parent_[std::size_t(start)] = -1;
     using Entry = std::pair<float, int>;
@@ -162,39 +224,17 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         const auto [g, at] = open.top();
         open.pop();
         if (g > cost[std::size_t(at)]) continue;
-        const int x = at % w_, z = at / w_;
-        const float ya = floor_[std::size_t(at)];
-        for (int dz = -1; dz <= 1; ++dz)
-            for (int dx = -1; dx <= 1; ++dx) {
-                if (!dx && !dz) continue;
-                const int nx = x + dx, nz = z + dz;
-                if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
-                const int next_cell = nz * w_ + nx;
-                const float next = g + ((dx && dz) ? 1.4142f : 1.0f);
-                if (next >= cost[std::size_t(next_cell)]) continue;
-                const float bx = x0_ + float(nx) * step, bz = z0_ + float(nz) * step;
-                if (blocked(bx, bz)) continue;
-                const float yb = parent_[std::size_t(next_cell)] == -2 ? floor_from(next_cell, ya) : floor_[std::size_t(next_cell)];
-                if (yb < -99999.0f || std::abs(ya - yb) > climb) continue;
-                const float ax = x0_ + float(x) * step, az = z0_ + float(z) * step;
-                const float length = std::hypot(bx - ax, bz - az);
-                const engine::Vec3f direction{(bx - ax) / length, 0.0f, (bz - az) / length};
-                const engine::Vec3f middle{(ax + bx) * 0.5f, std::max(ya, yb), (az + bz) * 0.5f};
-                if (const auto wall = world.check_wall(middle, direction, width, 4.0f, wall_flags, false); wall.hit) {
-                    for (const auto& hit : wall.hits) {
-                        auto& blocker = blockers_[{hit.info, hit.child}];
-                        if (!blocker.count++) {
-                            blocker.first = hit.position;
-                            blocker.normal = hit.normal;
-                        }
-                    }
-                    continue;
-                }
-                floor_[std::size_t(next_cell)] = yb;
-                cost[std::size_t(next_cell)] = next;
-                parent_[std::size_t(next_cell)] = at;
-                open.push({next, next_cell});
-            }
+        for (int d = 0; d < 8; ++d) {
+            if (!(open_steps[std::size_t(at)] & (1u << d))) continue;
+            const int next_cell = (at / w_ + kDz[d]) * w_ + at % w_ + kDx[d];
+            const auto near_wall = wall_distance[std::size_t(next_cell)];
+            const float penalty = near_wall == 0 ? 4.0f : near_wall == 1 ? 1.5f : 0.0f;
+            const float next = g + ((d & 1) ? 1.4142f : 1.0f) + penalty;
+            if (next >= cost[std::size_t(next_cell)]) continue;
+            cost[std::size_t(next_cell)] = next;
+            parent_[std::size_t(next_cell)] = at;
+            open.push({next, next_cell});
+        }
     }
 }
 
@@ -271,6 +311,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     next_ = 0;
     target_ = nullptr;
     to_goal_ = false;
+    striking_ = false;
     what_ = "nothing";
     goal_point_ = position_of(player);
     auto* hitland = engine.get<engine::HitLandManager>();
@@ -344,6 +385,30 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             }
         }
     }
+    // Gimmicks that take hits (boxes, buttons, breakable walls): each is
+    // attacked for a while, then left alone.
+    {
+        const engine::ModelCtrlManager::ModelRam* best = nullptr;
+        float best_distance = 1e9f;
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || !e->hit || !e->control_enabled || e->hp <= 0 || e->info_name.rfind("g_", 0) != 0) continue;
+            if (e->category == "ITEM" || e->category == "ENEMY" || e->category == "PLAYER") continue;
+            if (!engine.has_script("hit_" + e->info_name + ".lua")) continue;
+            if (const auto it = struck_.find(e.get()); it != struck_.end() && it->second >= 240) continue;
+            if (const auto it = unreachable_.find(e.get()); it != unreachable_.end() && frame - it->second < 300) continue;
+            const auto at = position_of(*e);
+            if (!map.nearest(at, 20.0f)) continue;
+            if (flat(at, me) < best_distance) {
+                best_distance = flat(at, me);
+                best = e.get();
+            }
+        }
+        if (best) {
+            go(position_of(*best), best, "gimmick " + best->info_name + "#" + std::to_string(best->index));
+            striking_ = true;
+            return;
+        }
+    }
     // Mats not stood on yet (they start enemy waves and events).
     const engine::MatCtrlManager::MatBox* best_mat = nullptr;
     float best_distance = 1e9f;
@@ -413,6 +478,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         visited_.clear();
         mats_done_.clear();
         unreachable_.clear();
+        struck_.clear();
         planned_ = -1000;
     }
     for (const float ox : {-8.0f, 8.0f})
@@ -425,7 +491,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     const engine::ModelCtrlManager::ModelRam* target = nullptr;
     if (target_ && models)
         for (const auto& e : models->rams())
-            if (e.get() == target_ && e->generated && e->node && (e->category != "ENEMY" || e->hp > 0)) target = e.get();
+            if (e.get() == target_ && e->generated && e->node && (e->category == "ITEM" || e->hp > 0)) target = e.get();
     stalled_ = std::hypot(me.x - last_.x, me.z - last_.z) < 0.1f ? stalled_ + 1 : 0;
     last_ = me;
     const bool lost = target_ && !target;
@@ -455,17 +521,33 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         decision.x = aim.x;
         decision.z = aim.z;
     }
-    if (target && target->category == "ENEMY") {
+    if (target && (target->category == "ENEMY" || striking_)) {
         const float d2 = (aim.x - me.x) * (aim.x - me.x) + (aim.z - me.z) * (aim.z - me.z);
         decision.reach = flat(aim, me) <= close ? 400.0f : 4.0f;
         if (d2 <= 400.0f || (d2 <= 6400.0f && stalled_ > 20)) {
             decision.attack = true;
             decision.jump_attack = aim.y > me.y + 8.0f;
+            if (striking_) ++struck_[target];
         }
     } else if (target) {
+        // A pickup: some are taken by touch, others (keys) with A.
         decision.reach = flat(aim, me) <= close ? 9.0f : 4.0f;
+        if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
+    // Stuck at a corner (walls stop the player instead of sliding it):
+    // sidestep left, right or back for a moment, then take the route again.
+    if (stalled_ >= 25 && !decision.attack && frame >= escape_until_) {
+        escape_until_ = frame + 20;
+        escape_turn_ = (escape_turn_ + 1) % 3;
+    }
+    if (frame < escape_until_) {
+        constexpr float turns[3] = {1.5708f, -1.5708f, 3.1416f};
+        const float heading = std::atan2(decision.x - me.x, decision.z - me.z) + turns[escape_turn_];
+        decision.x = me.x + std::sin(heading) * 10.0f;
+        decision.z = me.z + std::cos(heading) * 10.0f;
+        decision.reach = 4.0f;
+    }
     return decision;
 }
 

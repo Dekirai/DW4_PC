@@ -59,6 +59,13 @@ void Engine::install_lua() {
     });
 }
 
+bool Engine::has_script(std::string_view name) const {
+    for (const auto& info : lua_infos_)
+        for (const auto& data : info.list(7))
+            if (data && data.str(2) == name) return true;
+    return false;
+}
+
 bool Engine::run_script(std::string_view name) {
     if (!lua_) install_lua();
     bool ran = false;

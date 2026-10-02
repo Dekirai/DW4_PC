@@ -46,9 +46,10 @@ struct AvoidBox {
     float min_x, min_z, max_x, max_z;
 };
 
-// Everything reachable on foot within `range` of a start point (Dijkstra
-// over the grid; heights follow the walked floor, so ramps and stairs are
-// climbed).
+// Everything reachable on foot within `range` of a start point: a flood of
+// the grid (heights follow the walked floor, so ramps and stairs are
+// climbed), then the cheapest routes, which keep away from walls (the
+// original does not slide along walls: a player touching one stops).
 class WalkMap {
 public:
     WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
@@ -79,7 +80,8 @@ private:
 };
 
 // SEEK explore:<mat>: plays a dungeon like a player heading for an exit:
-// fights live enemies, picks up items, steps on the stage's other mats (they
+// fights live enemies, picks up items, strikes gimmicks that take hits
+// (buttons, breakable walls, boxes), steps on the stage's other mats (they
 // start the enemy waves whose defeat opens doors) and walks unvisited
 // reachable ground until the route to the goal mat is free.
 class ExploreBot {
@@ -90,6 +92,7 @@ public:
         bool attack{};      // press A (an enemy is in reach)
         bool confirm{};     // press A (standing on the goal mat)
         bool jump_attack{}; // the target floats above the player
+        bool pick_up{};     // press A (standing at a pickup)
     };
     Decision update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
 
@@ -99,6 +102,8 @@ private:
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
     std::map<const void*, int> unreachable_;     // target -> frame it was found unreachable
+    std::map<const void*, int> struck_;          // gimmick -> frames spent attacking it
+    bool striking_{};                            // the target is a gimmick
     std::vector<engine::Vec3f> route_;
     std::size_t next_{};
     std::string what_;                           // the planned target, for traces
@@ -108,6 +113,8 @@ private:
     bool to_goal_{};
     engine::Vec3f last_{}; // the player's position one step ago
     int stalled_{};        // steps without moving
+    int escape_until_ = -1; // stuck: sidestep until this frame
+    int escape_turn_{};    // which way the last sidestep went
 };
 
 } // namespace dw4::game
