@@ -535,6 +535,32 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
     if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
+    // Without control (a text window or a prompt) only A goes through: on
+    // another stage change mat the prompt is answered "No" (down, then A),
+    // elsewhere text windows are advanced.
+    no_control_ = player.control_enabled ? 0 : no_control_ + 1;
+    if (player.control_enabled) declined_ = false;
+    else {
+        decision.attack = decision.pick_up = false;
+        bool on_other_exit = false;
+        if (auto* mats = engine.get<engine::MatCtrlManager>())
+            for (const auto& box : mats->mat_boxes()) {
+                const auto key = mat_key(box.name);
+                if (!key.empty() && key[0] == 'z' && key != mat_key(goal) && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 &&
+                    me.z >= box.min.z - 2 && me.z <= box.max.z + 2)
+                    on_other_exit = true;
+            }
+        if (on_other_exit) {
+            decision.confirm = false;
+            if (!declined_ && no_control_ >= 40 && no_control_ < 43) decision.press_down = true;
+            if (!declined_ && no_control_ == 60) {
+                decision.press_a = true;
+                declined_ = true;
+            }
+        } else if (!decision.confirm && no_control_ > 90 && no_control_ % 45 < 3) {
+            decision.press_a = true;
+        }
+    }
     // Stuck at a corner (walls stop the player instead of sliding it):
     // sidestep left, right or back for a moment, then take the route again.
     if (stalled_ >= 25 && !decision.attack && frame >= escape_until_) {

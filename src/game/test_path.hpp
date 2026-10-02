@@ -93,6 +93,8 @@ public:
         bool confirm{};     // press A (standing on the goal mat)
         bool jump_attack{}; // the target floats above the player
         bool pick_up{};     // press A (standing at a pickup)
+        bool press_a{};     // press A now (text windows, the answer to a prompt)
+        bool press_down{};  // hold down now (prompt cursor to "No")
     };
     Decision update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
 
@@ -115,6 +117,8 @@ private:
     int stalled_{};        // steps without moving
     int escape_until_ = -1; // stuck: sidestep until this frame
     int escape_turn_{};    // which way the last sidestep went
+    int no_control_{};     // steps the player has had no control
+    bool declined_{};      // an unwanted stage change prompt was answered
 };
 
 } // namespace dw4::game
