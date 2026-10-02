@@ -58,6 +58,9 @@ public:
     // The reached floor point nearest to `p` (flat distance) if it lies
     // within `tolerance`.
     std::optional<engine::Vec3f> nearest(const engine::Vec3f& p, float tolerance) const;
+    // The reached point inside an XZ rectangle nearest to its middle (a mat
+    // that reaches into a wall still has floor inside).
+    std::optional<engine::Vec3f> reached_inside(float min_x, float min_z, float max_x, float max_z) const;
     // The route cost to the reached point nearest to `p` within `tolerance`
     // (infinity without one): walking distance in cells plus wall and jump
     // surcharges.
@@ -120,6 +123,9 @@ private:
     // A z-mat that moves the player to another room of the same stage
     // (its script runs trans.lua instead of funcStageChange): a maze link.
     bool portal(engine::Engine& engine, const std::string& mat);
+    // A mat whose script changes the stage (funcStageChange), whatever its
+    // name: other exits are kept away from.
+    bool exit_mat(engine::Engine& engine, const std::string& mat);
     std::string stage_;
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
@@ -151,6 +157,7 @@ private:
     };
     std::map<std::string, Watch> watch_;
     std::map<std::string, bool> portals_;        // mat -> is a maze link (cached per stage)
+    std::map<std::string, bool> exits_;          // mat -> changes the stage (cached per stage)
     std::set<std::string> portals_taken_;        // maze links already walked through
     std::string target_portal_;                  // the maze link being walked to
     std::set<std::string> cleared_generators_;   // generators seen cleared (progress)

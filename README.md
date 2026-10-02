@@ -230,6 +230,8 @@ Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` mak
 player hits defeat their target,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
+`DW4_FLAG_FOLDER=item,...` gives key items (story progress items such as boss IDs), `DW4_ENTRY=n` starts a
+test run's first stage at player point group n (as when arriving from another exit),
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,

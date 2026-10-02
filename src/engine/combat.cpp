@@ -790,6 +790,14 @@ void GameSystem::create_player(Engine& engine, int slot) {
             if (*at == ',') ++at;
         }
     }
+    // DW4_FLAG_FOLDER=item,...: key items (FLAG folder) a test run owns.
+    if (const char* items = std::getenv("DW4_FLAG_FOLDER")) {
+        for (const char* at = items; *at;) {
+            flag_folder[std::atoi(at)] = 1;
+            while (*at && *at != ',') ++at;
+            if (*at == ',') ++at;
+        }
+    }
     // DW4_FORMS=species,...: forms a test run has reached (BASE_ISUSE).
     if (const char* forms = std::getenv("DW4_FORMS")) {
         for (const char* at = forms; *at;) {

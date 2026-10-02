@@ -568,6 +568,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
         engine.set_card_root(session_cards);
         std::cout << "online: started as player " << net.local_slot() + 1 << " of " << started.players << ", delay " << started.delay << '\n';
     }
+    // DW4_ENTRY=n (test runs): the first stage starts at its player point
+    // group n, as when arriving from another stage's exit.
+    if (const char* entry = std::getenv("DW4_ENTRY"); entry && options.smoke_frames)
+        if (auto* points = engine.get<dw4::engine::PlayerPointManager>()) points->set_point_no(std::atoi(entry));
     engine.request_stage(first_stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;

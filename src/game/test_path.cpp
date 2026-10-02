@@ -229,8 +229,21 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                 continue;
             }
             // Steps up to `climb`; ledges are walked off (one way) up to `drop`.
-            if (yb - ya > climb) continue;
-            if (wall_between(x, z, nx, nz, std::max(ya, yb))) continue;
+            if (yb - ya > climb || wall_between(x, z, nx, nz, std::max(ya, yb))) {
+                // A step face of up to 12 units (stairs of 10-unit blocks;
+                // the player's wall probe sits 4 above its feet) is jumped
+                // up: the jump rises about 13.6.
+                if (d & 1) continue;
+                const float yu = floor_from(next_cell, ya + 4.0f);
+                if (yu < -99999.0f || yu - ya <= climb || yu - ya > 12.5f || wall_between(x, z, nx, nz, yu + 1.0f)) continue;
+                jumps.push_back({at, next_cell, 7.0f});
+                if (!reached[std::size_t(next_cell)]) {
+                    reached[std::size_t(next_cell)] = 1;
+                    floor_[std::size_t(next_cell)] = yu;
+                    queue.push_back(next_cell);
+                }
+                continue;
+            }
             open_steps[std::size_t(at)] |= std::uint8_t(1u << d);
             if (!reached[std::size_t(next_cell)]) {
                 reached[std::size_t(next_cell)] = 1;
@@ -326,6 +339,25 @@ std::optional<engine::Vec3f> WalkMap::nearest(const engine::Vec3f& p, float tole
     return point(cell);
 }
 
+std::optional<engine::Vec3f> WalkMap::reached_inside(float min_x, float min_z, float max_x, float max_z) const {
+    const engine::Vec3f middle{(min_x + max_x) * 0.5f, 0.0f, (min_z + max_z) * 0.5f};
+    std::optional<engine::Vec3f> best;
+    float best_distance = std::numeric_limits<float>::infinity();
+    const int x0 = std::max(0, int(std::ceil((min_x - x0_) / Grid::step))), x1 = std::min(w_ - 1, int(std::floor((max_x - x0_) / Grid::step)));
+    const int z0 = std::max(0, int(std::ceil((min_z - z0_) / Grid::step))), z1 = std::min(h_ - 1, int(std::floor((max_z - z0_) / Grid::step)));
+    for (int z = z0; z <= z1; ++z)
+        for (int x = x0; x <= x1; ++x) {
+            if (parent_[std::size_t(z * w_ + x)] == -2) continue;
+            const auto q = point(z * w_ + x);
+            const float distance = std::hypot(q.x - middle.x, q.z - middle.z);
+            if (distance < best_distance) {
+                best_distance = distance;
+                best = q;
+            }
+        }
+    return best;
+}
+
 float WalkMap::cost_to(const engine::Vec3f& p, float tolerance) const {
     const int cell = nearest_reached(p, tolerance);
     return cell < 0 ? std::numeric_limits<float>::infinity() : cost_[std::size_t(cell)];
@@ -397,6 +429,14 @@ std::set<std::string> goal_keys(const std::string& goal) {
     return keys;
 }
 
+bool ExploreBot::exit_mat(engine::Engine& engine, const std::string& mat) {
+    const auto it = exits_.find(mat);
+    if (it != exits_.end()) return it->second;
+    const bool exit = engine.script_mentions(mat + ".lua", "funcStageChange") && !portal(engine, mat);
+    exits_[mat] = exit;
+    return exit;
+}
+
 bool ExploreBot::portal(engine::Engine& engine, const std::string& mat) {
     const auto it = portals_.find(mat);
     if (it != portals_.end()) return it->second;
@@ -433,7 +473,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     for (const auto& box : boxes) {
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
-        if (key.empty() || key[0] != 'z' || goals.count(key) || portal(engine, box.name)) continue;
+        if (goals.count(key) || !exit_mat(engine, box.name)) continue;
         const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f};
         if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z) continue;
         avoid.push_back(a);
@@ -497,16 +537,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             }
     waiting_since_ = -1;
     // The goal mat once it can be reached.
-    // (Of several, the one reachable or else the first.)
-    std::optional<engine::Vec3f> goal_centre;
+    // (Of several, a reachable one; the point walked to is reached floor
+    // inside the mat, whose middle may lie in a wall.)
+    std::optional<engine::Vec3f> goal_centre, goal_inside;
     for (const auto& box : boxes) {
         if (!goals.count(mat_key(box.name))) continue;
-        const auto centre = mat_centre(box, (box.min.y + box.max.y) * 0.5f);
-        if (!goal_centre || (map.nearest(centre, 8.0f) && !map.nearest(*goal_centre, 8.0f))) goal_centre = centre;
+        if (!goal_centre) goal_centre = mat_centre(box, (box.min.y + box.max.y) * 0.5f);
+        if (!goal_inside) goal_inside = map.reached_inside(box.min.x + 1.0f, box.min.z + 1.0f, box.max.x - 1.0f, box.max.z - 1.0f);
     }
     if (goal_centre) {
-        if (map.nearest(*goal_centre, 8.0f)) {
-            go(*goal_centre, nullptr, "goal " + goal);
+        if (goal_inside) {
+            go(*goal_inside, nullptr, "goal " + goal);
             to_goal_ = true;
             return;
         }
@@ -582,7 +623,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     float best_cost = std::numeric_limits<float>::infinity();
     for (const auto& box : boxes) {
         const auto key = mat_key(box.name);
-        if (key.empty() || key[0] == 'z' || mats_done_.count(box.name)) continue;
+        if (key.empty() || goals.count(key) || exit_mat(engine, box.name) || portal(engine, box.name) || mats_done_.count(box.name)) continue;
         float cost = map.cost_to(mat_centre(box, me.y), 6.0f);
         if (box.name == previous_mat) cost *= 0.6f;
         if (cost < best_cost) {
@@ -617,7 +658,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     }
     // The room is done and the goal is not here: take a maze link (a mat
     // that moves the player to another room of the stage).
-    if (!(goal_centre && map.nearest(*goal_centre, 8.0f))) {
+    if (!goal_inside) {
         const engine::MatCtrlManager::MatBox* best_link = nullptr;
         float best_link_cost = std::numeric_limits<float>::infinity();
         for (const auto& box : boxes) {
@@ -703,6 +744,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         progress_at_ = frame;
         defend_until_ = -1;
         portals_.clear();
+        exits_.clear();
         portals_taken_.clear();
         cleared_generators_.clear();
         watch_.clear();
@@ -881,7 +923,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (auto* mats = engine.get<engine::MatCtrlManager>())
             for (const auto& box : mats->mat_boxes()) {
                 const auto key = mat_key(box.name);
-                if (!key.empty() && key[0] == 'z' && !goal_keys(goal).count(key) && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 &&
+                if (!goal_keys(goal).count(key) && exit_mat(engine, box.name) && me.x >= box.min.x - 2 && me.x <= box.max.x + 2 &&
                     me.z >= box.min.z - 2 && me.z <= box.max.z + 2)
                     on_other_exit = true;
             }
