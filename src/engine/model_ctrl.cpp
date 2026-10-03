@@ -171,6 +171,22 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
     return nullptr;
 }
 
+namespace {
+// 8030A71C: a running MOVERL follow (+A8) ends; the facing it left on the
+// node (the yaw of its +Z axis) becomes the controller's Y angles
+// (+9C/+84), from which later frames rebuild the basis.
+void end_follow(ModelCtrlManager::ModelRam& ram) {
+    if (!ram.follow_trace && ram.follow_model.empty()) return;
+    if (ram.node) {
+        const auto& m = ram.node->matrix;
+        ram.applied[1] = ram.desired[1] = std::atan2(m(2, 0), m(2, 2));
+    }
+    ram.follow_model.clear();
+    ram.follow_bone.clear();
+    ram.follow_trace = nullptr;
+}
+} // namespace
+
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
     // DW4_TRACE_SEQ=<model> logs that model's sequence changes.
     if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && ram.info_name == trace)
@@ -285,10 +301,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
         } else if (type == "beModelCtrlMOVERL") {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
             // recorder under its animated route: boats, trains, rails);
-            // anything else (ACTOR) keeps the model and bone names.
-            ram.follow_model.clear();
-            ram.follow_bone.clear();
-            ram.follow_trace = nullptr;
+            // anything else (ACTOR) keeps the model and bone names. The
+            // shared move handler first ends a running follow (8030A71C).
+            end_follow(ram);
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
                 ram.follow_bone = std::string(command.str(4));
@@ -302,19 +317,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
-            // 8030A71C (MOVE only): a new move ends a MOVERL follow and takes
-            // the facing it left on the node (the yaw of its +Z axis) as the
-            // controller's Y angles (+9C/+84); later frames rebuild the basis
-            // from them.
-            if (type == "beModelCtrlMOVE" && (ram.follow_trace || !ram.follow_model.empty())) {
-                if (ram.node) {
-                    const auto& m = ram.node->matrix;
-                    ram.applied[1] = ram.desired[1] = std::atan2(m(2, 0), m(2, 2));
-                }
-                ram.follow_model.clear();
-                ram.follow_bone.clear();
-                ram.follow_trace = nullptr;
-            }
+            // 8030A71C (the handler of MOVE, MOVEEX and MOVERL): a new move
+            // ends a MOVERL follow.
+            end_follow(ram);
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
@@ -445,6 +450,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.capsule_age = 0;
         ram.ai_timer_end = -1;
         ram.ai_request.clear();
+        ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
+        ram.ai_world_target = {};
         ram.homing_state = ram.homing_steps = 0;
         ram.follow_model.clear();
         ram.follow_bone.clear();
@@ -573,7 +580,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         return true;
     }
     if (command == "ONCTRL" || command == "OFCTRL") {
-        ram.control_enabled = command == "ONCTRL";
+        // 8030E0AC / 8030E0D0: only a generated model's _isOnCtrl changes.
+        if (ram.generated) ram.control_enabled = command == "ONCTRL";
         return true;
     }
     if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
@@ -586,12 +594,33 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         return true;
     }
     if (command == "MOVETRANS") {
-        if (ram.generated && ram.node && packet.vectors.size() >= 2)
+        if (ram.generated && ram.node && packet.vectors.size() >= 2) {
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors[1]);
+            // 8030E400: desired Y = rotY; 8030C85C (rebuild) sets the basis
+            // from the desired angles and keeps them as applied, so the yaw
+            // holds and X/Z of the rotation are dropped.
+            ram.desired[1] = packet.vectors[1].y * 0.0174533f;
+            ram.applied = ram.desired;
+            std::array<float, 16> matrix{};
+            std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+            const Vec3f position{matrix[12], matrix[13], matrix[14]};
+            try {
+                dw4::original_model_turn_basis(matrix, ram.applied);
+                matrix[12] = position.x;
+                matrix[13] = position.y;
+                matrix[14] = position.z;
+                std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+            } catch (const std::exception&) {}
+        }
         return true;
     }
     if (command == "SETMATRIX") {
-        if (ram.generated && ram.node && !packet.matrices.empty()) ram.node->matrix = packet.matrices[0];
+        if (ram.generated && ram.node && !packet.matrices.empty()) {
+            ram.node->matrix = packet.matrices[0];
+            // 8030DF50: applied/desired Y from the matrix's +Z axis.
+            const auto& m = ram.node->matrix;
+            ram.applied[1] = ram.desired[1] = std::atan2(m(2, 0), m(2, 2));
+        }
         return true;
     }
     if (command == "GETMATRIX" || command == "GETMATRIX_ALL") {
@@ -775,9 +804,22 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     // 8034C3C8 buttons while standing or walking: B guards (outside the main
     // lobby), X jumps, A attacks - or, in the main lobby, appends the talk
     // hitbox (kind 60000, delay 1, length 1, offset (0,4,7), size 3).
+    // The handler leaves a request (+74) for 80309168: B asks for the guard
+    // first (8034C6CC, not while jumping); X, a panel decision and A replace
+    // it, panel shortcuts and START keep it. Without a request the walk/wait
+    // transitions run.
+    const auto trigger = pad.buttons.trigger;
+    std::string request;
+    if (ram.control_enabled && !engine.main_lobby() && ram.seq_name != "SQ_JUMP" && (trigger & dw4::pad_button::b)) request = "SQ_GUARD";
+    auto finish = [&] {
+        if (request.empty()) apply_control(engine, ram);
+        else if (request != ram.seq_name) select_sequence(engine, ram, request);
+    };
+    // START is taken only standing still with nothing else held (8034CBD0 /
+    // 8034D0B8).
+    const bool start_alone = (trigger & dw4::pad_button::start) && !ram.key_input && (pad.buttons.held & ~dw4::pad_button::start) == 0;
     const bool free = ram.seq_name != "SQ_JUMP" && ram.seq_name != "SQ_FALL";
     if (ram.control_enabled && free) {
-        const auto trigger = pad.buttons.trigger;
         auto& messenger = engine.messenger();
         auto panel = [&](const char* command) {
             Packet p;
@@ -788,6 +830,9 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
         // 8034C960: with a panel up, ISCHECK reports a decided line: a disk
         // plays SQ_ITEM, a technique sets its label on SQ_WAZA and plays it.
         // X still jumps, Y asks for the emergency heal, START is refused.
+        // A panel that ISCHECK reports closed keeps the restricted set for
+        // this frame (8034C9AC -> 8034CAF8).
+        const bool panel_branch = ram.panel_open;
         if (ram.panel_open) {
             Packet check = panel("ISCHECK");
             if (check.bools.empty() || !check.bools[0]) {
@@ -802,43 +847,33 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 return;
             }
         }
-        if (ram.panel_open) {
+        if (panel_branch) {
             // The key flag (+70) is set before the panel branch (8034C6BC,
             // 8034C960) and 80309168 applies the walk/wait change after this
-            // handler, so the player walks with a panel open.
+            // handler, so the player walks (or guards) with a panel open.
             if (trigger & dw4::pad_button::x) {
                 select_sequence(engine, ram, "SQ_JUMP");
                 return;
             } else if (trigger & dw4::pad_button::y) {
                 if (!panel("GENEEMGHEAL").bools.empty()) ram.panel_open = true;
-            } else if (trigger & dw4::pad_button::start) {
+            } else if (start_alone) {
                 Packet sound;
                 sound.strings.emplace_back("CURSOR_NG");
                 messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
             }
-            apply_control(engine, ram);
-            return;
-        }
-        // 8034D0CC: START opens the status window, refused while a panel runs.
-        if ((trigger & dw4::pad_button::start) && messenger.count("SUBWND", std::nullopt, -1)) {
-            Packet status;
-            status.ints.push_back(ram.index);
-            status.strings.emplace_back("STATUS");
-            messenger.send(engine, "SUBWND", std::nullopt, 0, "GENERATE", status);
+            finish();
             return;
         }
         if (has_panel && (trigger & dw4::pad_button::y)) {
             if (!panel("GENEEMGHEAL").bools.empty()) ram.panel_open = true;
+            finish();
             return;
         }
         if (has_panel && (trigger & (dw4::pad_button::l | dw4::pad_button::r | dw4::pad_button::z))) {
             const char* command = (trigger & dw4::pad_button::l) ? "GENERATEITEM"
                                   : (trigger & dw4::pad_button::r) ? "GENERATEWAZA" : "GENERATESTAT";
             if (!panel(command).bools.empty()) ram.panel_open = true;
-            return;
-        }
-        if (!engine.main_lobby() && (trigger & dw4::pad_button::b)) {
-            select_sequence(engine, ram, "SQ_GUARD");
+            finish();
             return;
         }
         if (trigger & dw4::pad_button::x) {
@@ -868,8 +903,24 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 return;
             }
         }
+        // 8034D0B8 (after A): START opens the status window, refused with
+        // CURSOR_NG while a panel of any player runs (NDMWPANEL ISRUN, row -1).
+        if (start_alone && messenger.count("SUBWND", std::nullopt, -1)) {
+            Packet run;
+            messenger.send(engine, "NDMWPANEL", std::nullopt, -1, "ISRUN", run);
+            if (!run.bools.empty() && run.bools[0]) {
+                Packet sound;
+                sound.strings.emplace_back("CURSOR_NG");
+                messenger.send(engine, "SOUND", std::nullopt, -1, "PLAY", sound);
+            } else {
+                Packet status;
+                status.ints.push_back(ram.index);
+                status.strings.emplace_back("STATUS");
+                messenger.send(engine, "SUBWND", std::nullopt, 0, "GENERATE", status);
+            }
+        }
     }
-    apply_control(engine, ram);
+    finish();
 }
 
 // 80309168: post-input control transitions of the CTRL modes.
@@ -1295,10 +1346,12 @@ void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::stri
     context.index = ram.index;
     context.call_name = std::string(mode);
     engine.push_model_context(std::move(context));
-    const bool ran = engine.run_script(std::string(prefix) + "_" + ram.info_name + ".lua");
+    // (The name is taken before the script runs: it may start another
+    // sequence, which clears the LUACALL name `prefix` points at.)
+    const std::string script = std::string(prefix) + "_" + ram.info_name + ".lua";
+    const bool ran = engine.run_script(script);
     if (static const bool trace = std::getenv("DW4_TRACE_LUACALL") != nullptr; trace)
-        engine.log("luacall " + std::string(prefix) + "_" + ram.info_name + ".lua #" + std::to_string(ram.index) + " mode '" +
-                   std::string(mode) + "'" + (ran ? "" : " (no script)"));
+        engine.log("luacall " + script + " #" + std::to_string(ram.index) + " mode '" + std::string(mode) + "'" + (ran ? "" : " (no script)"));
     engine.pop_model_context();
 }
 
@@ -1587,7 +1640,15 @@ void ModelCtrlManager::follow_bone(Engine& engine, ModelRam& ram) {
 }
 
 void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
-    if (!ram.control_enabled || !ram.node || ram.ai_maps->empty()) return;
+    // 8030CC68: every frame starts with no key input and no request (+70/
+    // +74); the AI (vtable +A0) runs only while _isOnCtrl (+44) is set, the
+    // control transitions of 80309168 always.
+    if (!ram.node) return;
+    ram.key_input = false;
+    if (!ram.control_enabled || ram.ai_maps->empty()) {
+        apply_control(engine, ram);
+        return;
+    }
     std::string request = ram.ai_request;
     if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
         const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
@@ -1609,7 +1670,11 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
                 const float d2 = dx * dx + dy * dy + dz * dz;
                 if (d2 < best) { best = d2; target = other.get(); }
             }
-            if (!target) return;
+            if (!target) {
+                // 803086DC: no player, nothing written: no request.
+                apply_control(engine, ram);
+                return;
+            }
             const auto& o = target->node->matrix;
             goal = {o(3, 0), o(3, 1), o(3, 2)};
         }
@@ -1633,14 +1698,14 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
 }
 
 void ModelCtrlManager::update_enemy(Engine& engine, ModelRam& ram) {
-    // 80309168: the AI (vtable +A0) runs only for a model with AI data (+44);
-    // without it the control logic sees no key input and the model stands.
+    // 80308FF4 (vtable +A0) finds no AIM or AIH data: the control logic of
+    // 80309168 sees no key input and the model stands.
     if (ram.ai_maps) {
         update_ai_map(engine, ram);
         return;
     }
     ram.key_input = false;
-    if (ram.control_enabled && ram.node) apply_control(engine, ram);
+    if (ram.node) apply_control(engine, ram);
 }
 
 // 8030E56C: base CHKBULLET target path. Gates, body overlap, target hit script

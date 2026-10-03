@@ -334,7 +334,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     };
     auto vector_string = [](Vec3f v) {
         char buffer[96];
-        std::snprintf(buffer, sizeof buffer, "V<%g,%g,%g>", v.x, v.y, v.z);
+        std::snprintf(buffer, sizeof buffer, "V<%f,%f,%f>", v.x, v.y, v.z);
         return std::string(buffer);
     };
     if (method == "MDLsetWorldPosTarget") {
@@ -396,10 +396,12 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         if (model && model->node) {
             const auto& m = model->node->matrix;
             if (method == "MDLgetPosStr") {
-                value = {m(3, 0) + a * m(0, 0) + b * m(1, 0) + c * m(2, 0), m(3, 1) + a * m(0, 1) + b * m(1, 1) + c * m(2, 1),
-                         m(3, 2) + a * m(0, 2) + b * m(1, 2) + c * m(2, 2)};
+                // 80128DC8 per column: b*row1, + a*row0, + c*row2 (fused),
+                // then the translation.
+                auto column = [&](int j) { return m(3, j) + std::fma(m(2, j), c, std::fma(m(0, j), a, m(1, j) * b)); };
+                value = {column(0), column(1), column(2)};
             } else {
-                constexpr float to_degrees = 57.2958f; // 80425EF4
+                constexpr float to_degrees = 57.29577951308232f; // 80424B38 (0x42652EE1)
                 value = {a, std::atan2(m(2, 0), m(2, 2)) * to_degrees + b, c};
             }
         }
