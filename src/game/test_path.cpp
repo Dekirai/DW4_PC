@@ -459,7 +459,9 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
 bool ExploreBot::exit_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = exits_.find(mat);
     if (it != exits_.end()) return it->second;
-    const bool exit = engine.script_mentions(mat + ".lua", "funcStageChange") && !portal(engine, mat);
+    // (funcStageChange, or a script of its own ending in STAGECTL NEXTSTAGE.)
+    const std::string script = mat + ".lua";
+    const bool exit = (engine.script_mentions(script, "funcStageChange") || engine.script_mentions(script, "NEXTSTAGE")) && !portal(engine, mat);
     exits_[mat] = exit;
     return exit;
 }
@@ -798,6 +800,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         defend_until_ = -1;
         goal_later_until_ = -1;
         on_goal_ = 0;
+        model_last_.clear();
         portals_.clear();
         exits_.clear();
         hazards_.clear();
@@ -928,9 +931,35 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // A gap: jump from the take-off point toward the landing.
         if (route_[next_].jump) {
             const auto& takeoff = next_ > 0 ? route_[next_ - 1].point : me;
-            if (flat(takeoff, me) < 4.0f && player.on_ground) {
+            const auto& landing = route_[next_].point;
+            // A moving platform at the landing: jump only when it will be
+            // under the landing at touch-down (about 24 frames on; the floor
+            // there then is the floor now 24 steps of its motion back),
+            // else wait at the take-off.
+            bool ready = true;
+            if (auto* hitland = engine.get<engine::HitLandManager>(); hitland && models && flat(takeoff, me) < 8.0f)
+                for (const auto& e : models->rams()) {
+                    if (!e->generated || !e->node || e->is_player || e->category == "ENEMY") continue;
+                    const auto at = position_of(*e);
+                    if (flat(at, landing) > 30.0f || std::abs(at.y - landing.y) > 20.0f) continue;
+                    const auto last = model_last_.find(e.get());
+                    if (last == model_last_.end()) continue;
+                    const float vx = at.x - last->second.x, vz = at.z - last->second.z;
+                    if (std::hypot(vx, vz) < 0.05f || std::hypot(vx, vz) > 5.0f) continue;
+                    const engine::Vec3f probe{landing.x - vx * 24.0f, landing.y + 5.0f, landing.z - vz * 24.0f};
+                    const auto land = hitland->world().check_land(probe, 1.0f, 400.0f, 1.0f);
+                    ready = land.found && std::abs(land.position.y - landing.y) < 4.0f;
+                    break;
+                }
+            if (!ready) {
+                decision.x = takeoff.x;
+                decision.z = takeoff.z;
+                decision.reach = 1.0f;
+                stalled_ = 0; // waiting on purpose
+                watch.since = frame;
+            } else if (flat(takeoff, me) < 4.0f && player.on_ground) {
                 decision.jump = true;
-                leap_ = route_[next_].point;
+                leap_ = landing;
                 leap_frame_ = frame;
             }
         }
@@ -1092,6 +1121,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             decision.press_a = true;
         }
     }
+    // Nearby models' positions for the platform speeds next step.
+    if (models)
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && !e->is_player && e->category != "ENEMY" && flat(position_of(*e), me) < 120.0f)
+                model_last_[e.get()] = position_of(*e);
     // Stuck at a corner (walls stop the player instead of sliding it):
     // sidestep left, right or back for a moment, then take the route again.
     // Not while pushing into a wall switch on purpose.

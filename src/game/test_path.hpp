@@ -129,7 +129,7 @@ private:
     // A z-mat that moves the player to another room of the same stage
     // (its script runs trans.lua instead of funcStageChange): a maze link.
     bool portal(engine::Engine& engine, const std::string& mat);
-    // A mat whose script changes the stage (funcStageChange), whatever its
+    // A mat whose script changes the stage (funcStageChange or NEXTSTAGE), whatever its
     // name: other exits are kept away from.
     bool exit_mat(engine::Engine& engine, const std::string& mat);
     // A mat that hurts or drops the player (quicksand, a pit that removes
@@ -176,6 +176,7 @@ private:
     int waiting_since_ = -1;                     // waiting for defeated enemies since
     int on_goal_ = 0;                            // steps standing on the goal mat with control
     bool tech_used_{};                           // the technique of this panel round was cast
+    std::map<const void*, engine::Vec3f> model_last_; // nearby models' positions one step ago (platform speeds)
     int goal_later_until_ = -1;                  // the goal did nothing yet (a gate not up): other targets first
     int wait_skip_until_ = -1;                   // a wait that never ended is skipped until
     // Endless waves: after a long fight without progress elsewhere, only
