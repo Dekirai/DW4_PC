@@ -790,6 +790,8 @@ void GameSystem::create_player(Engine& engine, int slot) {
             if (*at == ',') ++at;
         }
     }
+    // DW4_DIFFICULTY=n: the difficulty a test run plays (0 easy, 1 hard, 2 very hard).
+    if (const char* level = std::getenv("DW4_DIFFICULTY")) difficulty = std::clamp(std::atoi(level), 0, 2);
     // DW4_FLAG_FOLDER=item,...: key items (FLAG folder) a test run owns.
     if (const char* items = std::getenv("DW4_FLAG_FOLDER")) {
         for (const char* at = items; *at;) {
