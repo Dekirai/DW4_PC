@@ -255,7 +255,8 @@ int ModelCtrlManager::status_icon(Engine& engine, ModelRam& ram, int slot, int i
 // on (ONCTRL); the icons follow in either case. At 0 HP every icon goes and
 // all timers stop.
 void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
-    for (auto& [name, left] : ram.named_timers) left -= kFrameNs;
+    // Named timers run on world time (8031DE44): each frame takes one field.
+    for (auto& [name, left] : ram.named_timers) left -= engine.frame_delta();
     if (!ram.status) return;
     auto& st = *ram.status;
     auto play = [&](const char* sequence) {

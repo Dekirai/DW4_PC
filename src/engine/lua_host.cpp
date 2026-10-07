@@ -679,8 +679,9 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         return string_result(buffer);
     }
     if (method == "SYSgetRandom") {
+        // 802EBCA8: the system generator modulo the limit.
         const auto limit = std::max(1, to_int(arg(0), 1));
-        return number(double(script_random_() % std::uint32_t(limit)));
+        return number(double(fight::random() % std::uint32_t(limit)));
     }
     if (method.starts_with("MAT")) {
         if (auto* mats = get<MatCtrlManager>()) {

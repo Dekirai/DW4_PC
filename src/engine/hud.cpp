@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace dw4::engine {
 
@@ -242,6 +243,9 @@ void show_number(Engine& engine, int kind, int value, const Vec3f& position) {
         {"i_pcdmgnum", "dmgnm1", {"SQ_DMGNM01", "SQ_DMGNM02", "SQ_DMGNM03", "SQ_DMGNM04", "SQ_DMGNM05"}},
         {"i_bitnum", "bitnum0", {"SQ_BITNM01", "SQ_BITNM02", "SQ_BITNM03", "SQ_BITNM04", "SQ_BITNM04"}}};
     if (kind < 0 || kind > 4) return;
+    // DW4_TRACE_HIT also logs the numbers shown.
+    if (static const bool trace = std::getenv("DW4_TRACE_HIT") != nullptr; trace)
+        engine.log("number " + std::string(popups[kind].model) + " " + std::to_string(value));
     const auto& popup = popups[kind];
     auto& messenger = engine.messenger();
     Packet find;

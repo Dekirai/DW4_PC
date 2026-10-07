@@ -620,4 +620,151 @@ void LoadCtrl2Manager::update(Engine& engine) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// NDMW logo (beNDMWLogo, update 803B18BC). State 0 checks the memory cards
+// before the logos: sub 0 starts the card worker (8033F1CC / 803675D8,
+// GENERATE 80367900, ISRDY 80367980); sub 1 opens i_messwn, shows "Checking
+// Memory Card. Do not touch the Memory Card or POWER Button." (text 92200)
+// once SQ_OPEN has finished and probes slot A, then B (USE_CHECK, FILEFIND,
+// GETFREESIZE through 80367AE4; the worker steps every frame, 80367B18)
+// until a slot can hold the save; sub 100 removes the worker (80367A18 /
+// 80367A60), closes the window, clears the text (803B35C4) and waits until
+// i_messwn has stopped. State 2 runs logo.lua once.
+// ---------------------------------------------------------------------------
+void LogoManager::update(Engine& engine) {
+    for (auto& owned : rams_) {
+        auto& ram = *owned;
+        if (ram.state == 2) {
+            engine.run_script("logo.lua");
+            ram.state = 3;
+            ram.sub = ram.step = ram.substep = 0;
+            continue;
+        }
+        if (ram.state == 1) {
+            // 803B18BC state 1 reports card problems (texts 92000 / 92204..)
+            // and waits for a key. The card folders always give slot A a
+            // usable card, so it is not reached; go on to the logos.
+            engine.note("LOGO card error state");
+            ram.state = 2;
+            continue;
+        }
+        if (ram.state != 0) continue;
+        auto set_sub = [&](int sub) { ram.sub = sub; ram.step = ram.substep = 0; };
+        auto set_step = [&](int step) { ram.step = step; ram.substep = 0; };
+        auto messwn = [&](std::string_view command) { send(engine, "MODELCTRL", "i_messwn", 0, command); };
+        // 803B3560: the call number for TXTgetCallNo, then txt_Tar.lua.
+        auto show_text = [&](int call) {
+            if (auto* sys = engine.get<GameSystem>()) sys->text_call = call;
+            engine.run_script("txt_Tar.lua");
+        };
+        // 803B35C4: clear the three talk lines.
+        auto clear_text = [&] {
+            for (const char* font : {"font00", "font01", "font02"}) menu::text_command(engine, "SWITCH", {"TALKFONT01", font, "CLR"});
+        };
+        if (ram.sub == 0) {
+            if (ram.step == 0) {
+                ram.io = std::make_shared<CardIo>();
+                set_step(1);
+            } else if (ram.step == 1) {
+                ram.io->generate(engine);
+                set_step(2);
+            } else if (ram.io->is_ready(engine)) {
+                set_sub(1);
+            }
+            continue;
+        }
+        if (ram.sub == 1) {
+            auto& io = *ram.io;
+            io.update(engine);
+            if (ram.step == 0) {
+                if (ram.substep == 0) {
+                    ram.flags = {};
+                    ram.slot = 0;
+                    ram.usable = false;
+                    messwn("GENERATE");
+                    messwn("SQ_OPEN");
+                    ram.substep = 1;
+                } else if (!query(engine, "MODELCTRL", "i_messwn", 0, "ISSEQNAME", "SQ_OPEN")) {
+                    show_text(92200);
+                    set_step(1);
+                }
+            } else if (ram.step == 1) {
+                // Mount the card.
+                if (ram.substep == 0) {
+                    io.start(CardIo::kUseCheck, ram.slot);
+                    ram.substep = 1;
+                } else if (io.done) {
+                    auto& flags = ram.flags[std::size_t(ram.slot)];
+                    if (io.result == 7) {
+                        flags |= 0x10;
+                        // No card: slot A (or B after a clean A) asks for one
+                        // (sub 50, not reached with the card folders).
+                        if (ram.slot != 1 || (ram.flags[0] & 0x7C) == 0) {
+                            engine.note("LOGO no card prompt");
+                            set_sub(100);
+                        } else {
+                            set_step(3);
+                        }
+                    } else if (io.result == 2) {
+                        set_step(2);
+                    } else {
+                        if (io.result == 11) flags |= 0x20;
+                        else if (io.result != 12) flags |= 4;
+                        set_step(3);
+                    }
+                }
+            } else if (ram.step == 2) {
+                // The save file, else room for one.
+                if (ram.substep == 0) {
+                    io.start(CardIo::kFileFind, ram.slot);
+                    ram.substep = 1;
+                } else if (ram.substep == 1) {
+                    if (!io.done) continue;
+                    if (io.result == 2) {
+                        ram.usable = true;
+                        set_sub(100);
+                    } else {
+                        ram.substep = 2;
+                    }
+                } else if (ram.substep == 2) {
+                    io.start(CardIo::kGetFreeSize, ram.slot);
+                    ram.substep = 3;
+                } else if (io.done) {
+                    auto& flags = ram.flags[std::size_t(ram.slot)];
+                    if (io.result == 2) {
+                        ram.usable = true;
+                        set_sub(100);
+                    } else {
+                        if (io.result == 10) flags |= 0x40;
+                        else if (io.result == 9) flags |= 8;
+                        set_step(3);
+                    }
+                }
+            } else if (ram.step == 3) {
+                if (++ram.slot < 2) set_step(1);
+                else set_sub(100);
+            }
+            continue;
+        }
+        if (ram.sub == 100) {
+            if (ram.step == 0) {
+                ram.io->remove(engine);
+                set_step(1);
+            } else if (ram.step == 1) {
+                if (ram.io->gone(engine)) {
+                    ram.io.reset();
+                    set_step(2);
+                }
+            } else if (ram.substep == 0) {
+                messwn("SQ_CLOSE");
+                clear_text();
+                ram.substep = 1;
+            } else if (!query(engine, "MODELCTRL", "i_messwn", 0, "ISRUN")) {
+                ram.state = ram.usable ? 2 : 1;
+                ram.sub = ram.step = ram.substep = 0;
+            }
+        }
+    }
+}
+
 } // namespace dw4::engine

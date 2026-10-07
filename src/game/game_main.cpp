@@ -648,6 +648,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
     const char* audio_dump_path = std::getenv("DW4_AUDIO_DUMP");
     std::vector<std::int16_t> audio_dump;
     constexpr int kAudioFrameSamples = dw4::engine::SoundManager::kOutputRate / 60;
+    // Output samples of the step that reached `frame`: one NTSC field
+    // (800.8 at 48 kHz), so music and movie sound keep pace with world time.
+    auto step_samples = [](std::uint64_t frame) {
+        constexpr std::uint64_t rate = dw4::engine::SoundManager::kOutputRate;
+        const auto upto = [](std::uint64_t f) { return f * rate * 1001 / 60000; };
+        return int(upto(frame) - upto(frame ? frame - 1 : 0));
+    };
     auto mix_audio = [&](int frames) {
         auto* sound = engine.get<dw4::engine::SoundManager>();
         if (!sound || (!audio && !audio_dump_path)) return;
@@ -699,6 +706,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string rendered_stage;
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
+        std::string movie_stage; // stage the decoder's movie played in
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots).
         bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
         // Save states (this session): four slots, F5 saves and F9 loads slot 1.
@@ -780,11 +788,11 @@ int run(const Options& options, dw4::game::Settings& settings) {
             dw4::engine::Vec4f replay_clear{};
             dw4::engine::ShadowFrame replay_shadow;
             if (state.load_step_drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
-            std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples) * 2);
+            std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
             auto* sound = engine.get<dw4::engine::SoundManager>();
             for (const auto& step : state.inputs) {
                 engine.step(step.pads);
-                if (sound) sound->render(scratch.data(), std::size_t(kAudioFrameSamples)); // music position
+                if (sound) sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
                 if (step.drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
             }
             const bool exact = engine.fingerprint() == state.fingerprint;
@@ -981,7 +989,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 if (slot_left[0].x != 0.0f) sx = slot_left[0].x;
                 if (slot_left[0].y != 0.0f) sy = slot_left[0].y;
             }
-            // Fixed 60 Hz simulation.
+            // Fixed-step simulation at the NTSC field rate (59.94 Hz, one
+            // original frame per field; Engine::step adds a field of time).
             const auto now = std::chrono::steady_clock::now();
             accumulator += std::chrono::duration<double>(now - last).count();
             last = now;
@@ -1028,7 +1037,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
             if (paused) accumulator = 0;
             if (!options.smoke_frames && !paused) {
-                while (accumulator >= 1.0 / 60.0 && steps < 4) { accumulator -= 1.0 / 60.0; ++steps; }
+                while (accumulator >= dw4::engine::kFieldSeconds && steps < 4) { accumulator -= dw4::engine::kFieldSeconds; ++steps; }
                 if (steps == 4) accumulator = 0;
             }
             // Online: a step runs once every player's input for it is here.
@@ -1046,7 +1055,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     if (!net.ready(net_frame)) {
                         if (options.smoke_frames) throw std::runtime_error("online: inputs stopped arriving");
-                        accumulator = std::min(accumulator, 4.0 / 60.0);
+                        accumulator = std::min(accumulator, 4.0 * dw4::engine::kFieldSeconds);
                         break;
                     }
                 }
@@ -1254,7 +1263,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     input_log.push_back({pads, false});
                     last_step_loaded = false;
                 }
-                mix_audio(kAudioFrameSamples);
+                mix_audio(step_samples(engine.frame()));
                 ++frame;
                 if (state_test) {
                     if (state_pass == 1) {
@@ -1295,7 +1304,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
             if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
-                interpolator.blend(items, camera, shadow, float(accumulator * 60.0));
+                interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));
             renderer.set_shadow(&shadow);
             int width = 0, height = 0;
             SDL_GetWindowSizeInPixels(window, &width, &height);
@@ -1310,21 +1319,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 wide.x = 0;
                 wide.width = width;
             }
-            renderer.render(items, camera, clear, screen, wide, width, height);
-            // A playing movie covers the screen with its current picture.
-            if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
-                const auto* movie = sound->movie();
-                if (!movie_decoder || movie_serial != movie->serial) {
-                    movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
-                    movie_serial = movie->serial;
-                }
-                const double seconds = double(engine.time() - movie->start) / 1e9;
-                const auto picture = static_cast<std::size_t>(std::max(0.0, seconds * movie->frame_rate));
-                if (movie_decoder->seek(picture))
+            // From the step that took a stage change on, the original presents
+            // nothing new: the last picture stays until the loader draws.
+            if (engine.presenting() || !renderer.draw_kept_picture(width, height)) {
+                renderer.render(items, camera, clear, screen, wide, width, height);
+                // A playing movie covers the screen with its current picture.
+                // After its end Sofdec's last picture stays up until the
+                // stage changes (the opening's end script switches a frame
+                // later).
+                if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
+                    const auto* movie = sound->movie();
+                    if (!movie_decoder || movie_serial != movie->serial) {
+                        movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
+                        movie_serial = movie->serial;
+                        movie_stage = engine.stage_name();
+                    }
+                    if (movie_decoder->seek(movie->picture_at(engine.time())))
+                        renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                            width, height);
+                } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
                     renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
                                         width, height);
-            } else {
-                movie_decoder.reset();
+                } else {
+                    movie_decoder.reset();
+                }
+                renderer.keep_picture(width, height);
             }
 
             ImGui_ImplOpenGL3_NewFrame();

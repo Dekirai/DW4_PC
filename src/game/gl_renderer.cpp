@@ -174,6 +174,16 @@ void main() {
 }
 )";
 
+// The kept picture: the window as copied, rows bottom first.
+const char* kKeptVertex = R"(#version 330 core
+out vec2 v_uv;
+void main() {
+    vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+    v_uv = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+)";
+
 const char* kMovieFragment = R"(#version 330 core
 in vec2 v_uv;
 uniform sampler2D u_tex;
@@ -250,6 +260,8 @@ GlRenderer::~GlRenderer() {
     if (shadow_texture_) glDeleteTextures(1, &shadow_texture_);
     if (white_texture_) glDeleteTextures(1, &white_texture_);
     if (movie_texture_) glDeleteTextures(1, &movie_texture_);
+    if (kept_texture_) glDeleteTextures(1, &kept_texture_);
+    if (kept_program_) gl_->DeleteProgram(kept_program_);
     if (movie_vao_) gl_->DeleteVertexArrays(1, &movie_vao_);
     if (movie_program_) gl_->DeleteProgram(movie_program_);
     if (program_) gl_->DeleteProgram(program_);
@@ -270,7 +282,7 @@ void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, con
         int ok = 0;
         gl.GetProgramiv(movie_program_, GL_LINK_STATUS, &ok);
         if (!ok) throw std::runtime_error("movie shader link failed");
-        gl.GenVertexArrays(1, &movie_vao_);
+        if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
         glGenTextures(1, &movie_texture_);
     }
     glBindTexture(GL_TEXTURE_2D, movie_texture_);
@@ -299,6 +311,54 @@ void GlRenderer::draw_movie(const std::uint8_t* rgba, int width, int height, con
     gl.BindVertexArray(0);
     gl.UseProgram(0);
     glViewport(0, 0, window_width, window_height);
+}
+
+void GlRenderer::keep_picture(int window_width, int window_height) {
+    if (window_width <= 0 || window_height <= 0) return;
+    if (!kept_texture_) glGenTextures(1, &kept_texture_);
+    glBindTexture(GL_TEXTURE_2D, kept_texture_);
+    if (window_width != kept_width_ || window_height != kept_height_) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, window_width, window_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        kept_width_ = window_width;
+        kept_height_ = window_height;
+    }
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, window_width, window_height);
+}
+
+bool GlRenderer::draw_kept_picture(int window_width, int window_height) {
+    if (!kept_texture_ || window_width != kept_width_ || window_height != kept_height_) return false;
+    auto& gl = *gl_;
+    if (!kept_program_) {
+        const unsigned vs = compile(gl, GL_VERTEX_SHADER, kKeptVertex);
+        const unsigned fs = compile(gl, GL_FRAGMENT_SHADER, kMovieFragment);
+        kept_program_ = gl.CreateProgram();
+        gl.AttachShader(kept_program_, vs);
+        gl.AttachShader(kept_program_, fs);
+        gl.LinkProgram(kept_program_);
+        gl.DeleteShader(vs);
+        gl.DeleteShader(fs);
+        int ok = 0;
+        gl.GetProgramiv(kept_program_, GL_LINK_STATUS, &ok);
+        if (!ok) throw std::runtime_error("kept picture shader link failed");
+    }
+    if (!movie_vao_) gl.GenVertexArrays(1, &movie_vao_);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glViewport(0, 0, window_width, window_height);
+    gl.UseProgram(kept_program_);
+    gl.ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, kept_texture_);
+    gl.Uniform1i(gl.GetUniformLocation(kept_program_, "u_tex"), 0);
+    gl.BindVertexArray(movie_vao_);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    gl.BindVertexArray(0);
+    gl.UseProgram(0);
+    return true;
 }
 
 void GlRenderer::clear_cache() {

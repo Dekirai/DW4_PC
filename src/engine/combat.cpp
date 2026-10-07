@@ -32,15 +32,16 @@ int grown_value(int level, bool health, int grow, int initial, int upcnt, int ca
     return std::min(base * grow / 100 + upcnt + initial, cap);
 }
 
-std::mt19937& rng() {
-    static std::mt19937 generator{0x44573446u};
+// The one system generator (beSystem +0x30), seeded at boot.
+SystemRandom& rng() {
+    static SystemRandom generator;
     return generator;
 }
 } // namespace
 
 namespace fight {
 std::uint32_t random() { return rng()(); }
-std::mt19937& generator() { return rng(); }
+SystemRandom& generator() { return rng(); }
 
 namespace {
 int database(Engine& engine, std::string_view table, int row, std::string_view column, int fallback = 0) {

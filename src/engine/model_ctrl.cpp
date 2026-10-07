@@ -28,6 +28,17 @@ std::string category_for_kind(std::string_view kind) {
     if (kind == "KIND_EBULLET") return "EBULLET";
     return "MODELCTRL";
 }
+
+// The model class managers update in their registration order (80346F74):
+// beNDMWMdlPlayer2, PBullet, EBullet, Object, Item, Effect, MapBase,
+// MapCursor, Player, Enemy; each accepts the infos of its KIND.
+int update_rank(std::string_view kind) {
+    static constexpr std::string_view kOrder[] = {"KIND_PLAYER2", "KIND_PBULLET", "KIND_EBULLET", "KIND_OBJECT", "KIND_ITEM",
+                                                  "KIND_EFFECT",  "KIND_MAPBASE", "KIND_MAPCURSOR", "KIND_PLAYER", "KIND_ENEMY"};
+    for (int i = 0; i < int(std::size(kOrder)); ++i)
+        if (kind == kOrder[i]) return i;
+    return 3; // an unknown kind as an object
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -114,6 +125,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         break;
     }
     const std::string category = category_for_kind(info.str(7));
+    const int rank = update_rank(info.str(7));
     std::int32_t index = 0;
     for (const auto& record : info.list(6)) {
         auto ram = std::make_unique<ModelRam>();
@@ -152,12 +164,17 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
             if (hit->player_talk) engine.messenger().add_row("HITPLAYERTALK", ram->info_name, ram->index, ram.get());
             if (hit->enemy_bullet) engine.messenger().add_row("HITENEMYBULLET", ram->info_name, ram->index, ram.get());
         }
+        // Keep the update order: by class, then as accepted.
+        const auto at = std::upper_bound(update_order_.begin(), update_order_.end(), rank,
+                                         [](int r, const UpdateEntry& e) { return r < e.rank; });
+        update_order_.insert(at, {rank, ram.get()});
         rams_.push_back(std::move(ram));
     }
 }
 
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
+    update_order_.clear();
     ai_maps_.clear();
     item_labels_.fill(false);
     sequences_.clear();
@@ -256,8 +273,35 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
         return;
     }
     run_commands(engine, ram);
-    // 8030EA8C: the sequence-change hook (vtable +B8) checks sleep and stun.
-    if (ram.is_player || ram.category == "ENEMY") status_sequence_check(engine, ram);
+    // 8030EA8C: the sequence-change hook (vtable +B8) after the commands ran;
+    // a JUMP selects through the same path (8030BCB8 -> vtable +8C, 8030D910),
+    // so a jumped-to sequence runs the hook before the outer one does.
+    if (ram.is_player) player_sequence_hook(engine, ram);
+    else if (ram.category == "ENEMY") status_sequence_check(engine, ram);
+}
+
+// beNDMWMdlPlayer +B8 (8034E1B0): standing in SQ_WAIT, the player's number
+// icon i_pcnumic (SQ_OPENP<ram>) follows 480 frames later, 10 above the
+// model (SETEFFECT, ends with the sequence, attached); a hit, death, sleep
+// or stun (PanelCloseSeqList 804E2738) takes an open quick panel down; then
+// the status check (803AE1A4).
+void ModelCtrlManager::player_sequence_hook(Engine& engine, ModelRam& ram) {
+    if (ram.seq_name == "SQ_WAIT") {
+        Packet effect;
+        effect.strings.emplace_back("i_pcnumic");
+        effect.strings.emplace_back("SQ_OPENP" + std::to_string(ram.index));
+        effect.floats.push_back(480.0f);       // 80457290
+        effect.vectors.push_back({0, 10, 0});  // 80456F68 / 80457294
+        effect.bools = {1, 1};
+        engine.messenger().send(engine, "MODELCTRL", ram.info_name, ram.index, "SETEFFECT", effect);
+    }
+    static constexpr std::string_view kPanelClose[] = {"SQ_SDMG", "SQ_MDMG", "SQ_LDMG", "SQ_DDMG", "SQ_DEAD", "SQ_SLEP", "SQ_STUN"};
+    if (ram.panel_open && std::find(std::begin(kPanelClose), std::end(kPanelClose), ram.seq_name) != std::end(kPanelClose)) {
+        ram.panel_open = false;
+        Packet remove;
+        engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
+    }
+    status_sequence_check(engine, ram);
 }
 
 void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
@@ -1181,8 +1225,8 @@ void ModelCtrlManager::collide(Engine& engine, ModelRam& ram) {
 }
 
 void ModelCtrlManager::update(Engine& engine) {
-    for (auto& owned : rams_) {
-        auto& ram = *owned;
+    for (const auto& entry : update_order_) {
+        auto& ram = *entry.ram;
         if (!ram.generated) continue;
         // 8030CB2C: an erased model is removed on its next update.
         if (ram.seq_name == "SQ_ERAS") {
@@ -2103,8 +2147,19 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         case 'M': ram.wait_state = 2; break;
         case 'J': ram.wait_state = 3; break;
         case 'R': {
+            // 802F0400: a name with 'S' as its fourth letter keeps its
+            // frames as the minimum (one value for all actions) and goes on;
+            // otherwise the wait lasts minimum + (random % span) / 100 frames,
+            // span = 100 * frames - 100 * minimum (fmsubs, then fctiwz).
+            if (c.name.size() > 3 && c.name[3] == 'S') {
+                random_wait_min_ = c.first;
+                return true;
+            }
+            const auto span = std::uint32_t(std::int32_t(std::fma(100.0f, c.first, -(100.0f * random_wait_min_))));
+            const auto roll = span ? fight::random() % span : fight::random();
+            const float frames = random_wait_min_ + float(roll) / 100.0f;
             auto& timer = ram.timers["WAIT"];
-            timer_start(timer, engine.time(), frames_to_time(c.first));
+            timer_start(timer, engine.time(), frames_to_time(frames));
             ram.wait_state = 1;
             break;
         }
@@ -2144,8 +2199,13 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
 
 void ActionManager::run(Engine& engine, ActionRam& ram) {
     if (!ram.current) return;
+    // DW4_TRACE_ACTION=model (or *) also logs every command as it runs.
+    static const char* trace = std::getenv("DW4_TRACE_ACTION");
     while (ram.cursor < ram.current->commands.size()) {
         const auto& c = ram.current->commands[ram.cursor];
+        if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.current->name + "[" +
+                       std::to_string(ram.cursor) + "] " + c.type.substr(9) + " " + c.name + " " + std::to_string(c.first));
         const bool keep = execute(engine, ram, c);
         ++ram.cursor;
         if (!keep) break;

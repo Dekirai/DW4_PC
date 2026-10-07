@@ -28,9 +28,22 @@ namespace dw4::engine {
 class Engine;
 class Manager;
 
-// One original frame is 16,666,666 ns (the messenger's delay unit, 802ECA74 /
-// 803061BC). Simulation always advances by exactly this step.
+// The messenger's delay unit: one nominal frame is 16,666,666 ns (802ECA74 /
+// 803061BC). Delays and frame counts in the data use this constant.
 constexpr std::int64_t kFrameNs = 16666666;
+
+// The world clock is not a frame counter: igInsightCore 8028AF84 adds the
+// sampled OSGetTime delta (timer 8007734C, ticks * 8000 / 324) every frame,
+// and the game runs one frame per NTSC field. A field is 675,675 timebase
+// ticks = 1001/60000 s, so the clock advances 16,683,333 or 16,683,334 ns
+// (50,050,000 ns every three fields), and an n-frame WAIT ends after exactly
+// n fields.
+constexpr std::int64_t kFieldNsPer3 = 50050000;
+constexpr double kFieldSeconds = 1001.0 / 60000.0;
+// World time after `frame` fields.
+constexpr std::int64_t field_time(std::uint64_t frame) {
+    return static_cast<std::int64_t>(frame / 3) * kFieldNsPer3 + static_cast<std::int64_t>(frame % 3) * kFieldNsPer3 / 3;
+}
 
 // Shared messenger argument/result buffer (typed lists, as 80306xxx).
 struct Packet {
@@ -200,9 +213,8 @@ struct StageSnapshot {
     bool pad_input_enabled{};
     Cheats cheats;
     OriginalPads pads;
-    std::string combat_random, script_random; // generator states
-    std::shared_ptr<const void> system;       // GameSystem copy
-    std::uint32_t particle_random{};
+    std::string random;                  // system generator state (fight::generator)
+    std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
 };
@@ -240,9 +252,15 @@ public:
     std::vector<std::string> scene_report();
 
     void request_stage(std::string name);
+    // False after the step that took a stage change (NEXTSTAGE, 80347F2C):
+    // the original presents no new picture from then on, the screen keeps
+    // the last one until the loader draws.
+    bool presenting() const { return pending_stage_.empty(); }
     const std::string& stage_name() const { return stage_name_; }
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }
+    // World time added by the last step (one NTSC field).
+    std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
 
     Messenger& messenger() { return messenger_; }
     DemoManager& demo() { return demo_; }
@@ -287,7 +305,6 @@ public:
     std::map<std::int32_t, std::int32_t>& counters() { return counters_; }
     bool pad_input_enabled() const { return pad_input_enabled_; }
     void set_pad_input_enabled(bool value) { pad_input_enabled_ = value; }
-    std::mt19937& script_random() { return script_random_; }
     std::int32_t area() const { return 1; }     // USA disc: AUS assets (SYSgetArea)
     std::int32_t country() const { return 1; }  // USA text (SYSgetCountry)
 
@@ -345,7 +362,6 @@ private:
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;
     std::uint64_t snapshot_serial_{};
-    std::mt19937 script_random_{0x4457344u}; // SYSgetRandom
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};

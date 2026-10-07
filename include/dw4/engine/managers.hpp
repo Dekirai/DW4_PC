@@ -3,6 +3,7 @@
 #include "dw4/adx.hpp"
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/random.hpp"
 #include "dw4/motion.hpp"
 #include "dw4/sfp.hpp"
 
@@ -19,6 +20,8 @@ struct Record;
 }
 
 namespace dw4::engine {
+
+struct CardIo; // save_menu.hpp
 
 void register_default_managers(Engine& engine);
 
@@ -228,7 +231,16 @@ public:
     void update(Engine& engine) override;
 
 private:
-    struct LogoRam : Ram { int state{}; };
+    // CTRL data of 803B18BC: state / sub / step / substep ([4]..[7]), the
+    // card slot being checked (+44), the per-slot error flags (+72 / +76),
+    // whether a slot can hold the save (+56) and the card worker (+40).
+    struct LogoRam : Ram {
+        int state{}, sub{}, step{}, substep{};
+        int slot{};
+        std::array<std::uint32_t, 2> flags{};
+        bool usable{};
+        std::shared_ptr<CardIo> io;
+    };
     std::vector<std::unique_ptr<LogoRam>> rams_;
 };
 
@@ -264,6 +276,13 @@ public:
         std::size_t pictures{};
         std::int64_t start{};
         std::uint32_t serial{}; // changes with every PLAY
+        // Picture shown at world time `now`. Fields and pictures are both
+        // NTSC rates (two fields per picture at 29.97); the small bias keeps
+        // the nanosecond rounding of field times from landing a field early.
+        std::size_t picture_at(std::int64_t now) const {
+            const double seconds = double(now - start) / 1e9;
+            return seconds > 0.0 ? static_cast<std::size_t>(seconds * frame_rate + 1e-6) : 0;
+        }
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
     // Save states: the streams that play on into the next stage, and back.
@@ -393,8 +412,6 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
-    std::uint32_t random_state() const { return random_; }
-    void set_random_state(std::uint32_t value) { random_ = value; }
 
 private:
     struct ParticleRam : Ram {
@@ -409,7 +426,6 @@ private:
     };
     void stop(ParticleRam& ram);
     std::vector<std::unique_ptr<ParticleRam>> rams_;
-    std::uint32_t random_ = 0x2545F491u;
 };
 
 // beWaterPlain (update 803178CC): rippling water. Players and enemies in the
@@ -1188,6 +1204,8 @@ private:
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
+    // The player's sequence-change hook (beNDMWMdlPlayer vtable +B8).
+    void player_sequence_hook(Engine& engine, ModelRam& ram);
     // Status effects (status.cpp).
     bool status_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
     void update_status(Engine& engine, ModelRam& ram);
@@ -1197,6 +1215,11 @@ private:
     void set_down(Engine& engine, ModelRam& ram, int index, int value);
     void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
+    struct UpdateEntry {
+        int rank{};
+        ModelRam* ram{};
+    };
+    std::vector<UpdateEntry> update_order_; // rams_ in class order (update)
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
     std::map<const void*, std::unique_ptr<Homing>> homings_;
@@ -1377,6 +1400,7 @@ private:
     std::vector<std::unique_ptr<ActionRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Action>>> actions_;
     std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<AnimationDatabase>> databases_;
+    float random_wait_min_{}; // 80535A60: minimum of the random WAITCHECKs
     std::map<const Node*, ActionRam*> actor_owner_;
 };
 
@@ -1559,8 +1583,10 @@ struct FightResult {
     std::int32_t flag{};         // largest variance step
 };
 namespace fight {
+// One draw from the system generator (vtable +60, 8021EB40), for every
+// random number of the game (see SystemRandom).
 std::uint32_t random();
-std::mt19937& generator(); // FIGHTCALC random numbers (state for save states)
+SystemRandom& generator(); // its state, for save states
 const char* bullet_name(int kind);
 bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down);
 bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);

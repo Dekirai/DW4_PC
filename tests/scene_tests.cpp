@@ -1,8 +1,11 @@
 #include "dw4/engine/math.hpp"
+#include "dw4/engine/engine.hpp"
+#include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -189,6 +192,30 @@ void test_horizontal_perspective() {
 }
 } // namespace
 
+// The system generator: genrand 8021B338 after sgenrand 8021B2A0 with the
+// boot seed 5150 (values of an independent model of the two routines).
+void test_system_random() {
+    SystemRandom random;
+    check(random() == 0xCDB83DD3u, "First draw after the boot seed");
+    check(random() == 0xD10604D7u, "Second draw");
+    for (int i = 2; i < 623; ++i) random();
+    check(random() == 0x1BCA2800u, "Last word of the first state");
+    check(random() == 0xAFB44022u, "First word after the refill");
+    std::stringstream saved;
+    saved << random;
+    SystemRandom copy;
+    saved >> copy;
+    check(copy == random, "A save state keeps the generator");
+    for (int i = 625; i < 999; ++i) random();
+    check(random() == 0xD4A34A9Cu, "Draw 1000");
+}
+
+// World time: one NTSC field per frame, 50,050,000 ns every three.
+void test_field_time() {
+    check(field_time(0) == 0 && field_time(1) == 16683333 && field_time(2) == 33366666, "Field times");
+    check(field_time(3) == 50050000 && field_time(3000) == 50050000000, "Three fields");
+}
+
 int main() {
     try {
         test_start_and_advance();
@@ -199,6 +226,8 @@ int main() {
         test_sequence_interpolation_methods();
         test_compressed_sequence();
         test_horizontal_perspective();
+        test_system_random();
+        test_field_time();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

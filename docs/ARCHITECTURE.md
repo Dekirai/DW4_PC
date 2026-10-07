@@ -19,7 +19,12 @@ as they do on the console. Addresses below refer to the USA revision-0
 
 ## Frame step (`Engine::step`)
 
-One step is one original 60 Hz frame (16,666,666 ns). In order:
+One step is one original frame, one NTSC field: the world clock advances by
+the field length, 16,683,333 or 16,683,334 ns (50,050,000 ns per three
+fields), as the original adds the measured OSGetTime delta (8028AF84) and
+runs one frame per field. Delays and frame counts in the data still use the
+nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
+exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
    samples (disabled while STAGECTL `PADINPUT DISABLE` is active).
@@ -33,7 +38,15 @@ One step is one original 60 Hz frame (16,666,666 ns). In order:
    it), info registration, `start.lua`, `first.lua`.
 4. Deferred messenger sends (`sd(..., delay)`), then the demo manager
    (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
-5. Every manager's `update`, in registration order.
+5. Every manager's `update`, in registration order, which is the original
+   scheduler order (`register_default_managers`: the engine plugin's
+   managers of 80318A24, then the game plugin's of 80346F74, so ACTION2 runs
+   before the models and the menu controllers before the models; the models
+   update by class: Player2, PBullet, EBullet, Object, Item, Effect, MapBase,
+   MapCursor, Player, Enemy).
+
+Every random number comes from one generator (`SystemRandom`, beSystem's
+igMersenneTwisterRandomNumber seeded 5150 at boot) through `fight::random()`.
 
 `Engine::render` traverses the attached scene roots (layer switches under
 `ROOTATTR`) into draw items for the host renderer.

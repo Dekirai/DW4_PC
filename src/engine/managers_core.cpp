@@ -762,22 +762,9 @@ bool SwitchCtrlManager::command(Engine& engine, Ram& ram, std::string_view comma
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// NDMW logo (803B18BC). The original first checks both memory card slots;
-// the PC build keeps saves beside the executable, so the check succeeds and
-// the controller proceeds to state 2, which runs logo.lua once.
-// ---------------------------------------------------------------------------
+// NDMW logo (803B18BC): title.cpp, next to the other card worker users.
 void LogoManager::add_info(Engine& engine, const ObjectView& info) { make_rams(engine, this, info, rams_, "LOGO"); }
 void LogoManager::clear_stage(Engine&) { rams_.clear(); }
-void LogoManager::update(Engine& engine) {
-    for (auto& ram : rams_) {
-        if (ram->state == 0) ram->state = 2;
-        if (ram->state == 2) {
-            engine.run_script("logo.lua");
-            ram->state = 3;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Sound / SE / movie requests
@@ -1432,7 +1419,7 @@ void SoundManager::update(Engine& engine) {
     for (std::size_t channel = 0; channel < streams_.size(); ++channel)
         if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
     for (auto& track : tracks_) {
-        track.wait_ms -= 1000.0 / 60.0;
+        track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
         run_track(track);
     }
     std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
@@ -1448,8 +1435,8 @@ void SoundManager::update(Engine& engine) {
     if (movie_) {
         const auto& pad = engine.pads()[0];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
-        const double length = movie_->frame_rate > 0.0 ? double(movie_->pictures) / movie_->frame_rate : 0.0;
-        if (skip || double(engine.time() - movie_->start) >= length * 1e9) end_movie(engine);
+        // Ends once the time for the last picture has passed.
+        if (skip || movie_->frame_rate <= 0.0 || movie_->picture_at(engine.time()) >= movie_->pictures) end_movie(engine);
     }
 }
 
@@ -1856,10 +1843,9 @@ bool ParticleCtrlManager::command(Engine& engine, Ram& base, std::string_view co
             Vec3f rotation{};
             if (packet.vectors.size() == 2) {
                 rotation = packet.vectors[1];
-                if (rotation.y > 6.28319f) {
-                    random_ = random_ * 1103515245u + 12345u;
-                    rotation.y = float((random_ >> 8) % 6144u) / 1000.0f;
-                }
+                // 80312554: a heading above 2 pi is drawn from the system
+                // generator, 0 .. 6.143 radians.
+                if (rotation.y > 6.28319f) rotation.y = float(fight::random() % 6144u) / 1000.0f;
             }
             if (auto* models = engine.get<ModelCtrlManager>())
                 if (const auto* target = models->find(owner, index); target && target->node) m = target->node->matrix;
@@ -2116,46 +2102,55 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
 }
 
 // ---------------------------------------------------------------------------
+// Managers update in the original scheduler order. Each plugin registers its
+// managers with the context (8028A268): the engine plugin 80318A24 (beSystem,
+// beMessenger, beDBManager, beLua, beDemoManager, ...), then the game plugin
+// 80346F74 (StageCtl, PanelWaza, Logo, Title2, ..., the model classes last).
+// A manager that gets an info schedules itself (8028A398 -> 8028B8C8), and
+// 80041E40 inserts it into the active list at its registration position.
+// So beAction2 runs before the models: a model's WCHECK Action sees an
+// action that finished its wait in the same frame. The messenger and the
+// demo manager run in Engine::step before these.
 void register_default_managers(Engine& engine) {
-    engine.add_manager(std::make_unique<GameSystem>());
-    engine.add_manager(std::make_unique<SceneManager>());
-    engine.add_manager(std::make_unique<LayerManager>());
-    engine.add_manager(std::make_unique<BkColorManager>());
-    engine.add_manager(std::make_unique<StageCtlManager>());
-    engine.add_manager(std::make_unique<SwitchCtrlManager>());
-    engine.add_manager(std::make_unique<LogoManager>());
-    engine.add_manager(std::make_unique<SoundManager>());
-    engine.add_manager(std::make_unique<SaveUtilManager>());
+    engine.add_manager(std::make_unique<GameSystem>());           // beSystem
+    engine.add_manager(std::make_unique<DatabaseManager>());      // beDBManager
+    engine.add_manager(std::make_unique<BkColorManager>());       // beBkColor
+    engine.add_manager(std::make_unique<SoundManager>());         // beSound, beSeCtl, beMovie
+    engine.add_manager(std::make_unique<LayerManager>());         // beLayerCtl
+    engine.add_manager(std::make_unique<TextCtlManager>());       // beFont
+    engine.add_manager(std::make_unique<SaveUtilManager>());      // beSaveUtil
+    engine.add_manager(std::make_unique<WaterPlainManager>());    // beWaterPlain
+    engine.add_manager(std::make_unique<ChangePosManager>());     // beChangePosTransform
+    engine.add_manager(std::make_unique<HitLandManager>());       // beHitLandModel, beHitLandDeliv
+    engine.add_manager(std::make_unique<SelectCtrlManager>());    // beSelectCtrl
+    engine.add_manager(std::make_unique<MeterCtrlManager>());     // beMeterCtrl
+    engine.add_manager(std::make_unique<ActionManager>());        // beAction2
+    engine.add_manager(std::make_unique<WeaponManager>());        // beWeapon
+    engine.add_manager(std::make_unique<CameraManager>());        // beCameraCtrl
+    engine.add_manager(std::make_unique<ShadowManager>());        // beShadow01
+    engine.add_manager(std::make_unique<GeneraterManager>());     // beGenerater
+    engine.add_manager(std::make_unique<PlayerPointManager>());   // bePoint01
+    engine.add_manager(std::make_unique<MatCtrlManager>());       // beMatCtrl
+    engine.add_manager(std::make_unique<ActionStarterManager>()); // beActionStarter
+    engine.add_manager(std::make_unique<ParticleCtrlManager>());  // beParticleCtrl2
+    engine.add_manager(std::make_unique<SwitchCtrlManager>());    // beSwitchCtrl
+    engine.add_manager(std::make_unique<LightCtrlManager>());     // beLightCtrl
+    engine.add_manager(std::make_unique<NumberCtrlManager>());    // beNumberCtrl
+    engine.add_manager(std::make_unique<TextureCtrlManager>());   // beTextureCtrl
+    engine.add_manager(std::make_unique<SceneManager>());         // igSceneInfo (no update)
+    engine.add_manager(std::make_unique<StageCtlManager>());      // beNDMWStageCtl
     // The quick panels run before the models, so the opening trigger is not
     // seen again by the panel in the frame the player opens it.
-    engine.add_manager(std::make_unique<PanelManager>());
-    engine.add_manager(std::make_unique<SubWindowManager>());
-    engine.add_manager(std::make_unique<ChangePosManager>());
-    engine.add_manager(std::make_unique<ModelCtrlManager>());
-    engine.add_manager(std::make_unique<ActionManager>());
-    engine.add_manager(std::make_unique<CameraManager>());
-    engine.add_manager(std::make_unique<TextureCtrlManager>());
-    engine.add_manager(std::make_unique<PlayerPointManager>());
-    engine.add_manager(std::make_unique<HitLandManager>());
-    engine.add_manager(std::make_unique<TextCtlManager>());
-    engine.add_manager(std::make_unique<SelectCtrlManager>());
-    engine.add_manager(std::make_unique<Title2Manager>());
-    engine.add_manager(std::make_unique<LoadCtrl2Manager>());
-    engine.add_manager(std::make_unique<LoadIntf2Manager>());
-    engine.add_manager(std::make_unique<SaveCtrlManager>());
-    engine.add_manager(std::make_unique<SaveIntfManager>());
-    engine.add_manager(std::make_unique<DatabaseManager>());
-    engine.add_manager(std::make_unique<MatCtrlManager>());
-    engine.add_manager(std::make_unique<GeneraterManager>());
-    engine.add_manager(std::make_unique<NumberCtrlManager>());
-    engine.add_manager(std::make_unique<MeterCtrlManager>());
-    engine.add_manager(std::make_unique<WeaponManager>());
-    engine.add_manager(std::make_unique<ActionStarterManager>());
-    engine.add_manager(std::make_unique<LightCtrlManager>());
-    engine.add_manager(std::make_unique<WaterPlainManager>());
-    engine.add_manager(std::make_unique<ParticleCtrlManager>());
-    engine.add_manager(std::make_unique<ShadowManager>());
-    engine.add_manager(std::make_unique<PassiveManager>());
+    engine.add_manager(std::make_unique<PanelManager>());         // beNDMWPanelWaza
+    engine.add_manager(std::make_unique<LogoManager>());          // beNDMWLogo
+    engine.add_manager(std::make_unique<Title2Manager>());        // beNDMWTitle2
+    engine.add_manager(std::make_unique<LoadCtrl2Manager>());     // beNDMWLoadCtrl2
+    engine.add_manager(std::make_unique<LoadIntf2Manager>());     // beNDMWLoadIntf2
+    engine.add_manager(std::make_unique<SaveCtrlManager>());      // beNDMWSaveCtrl
+    engine.add_manager(std::make_unique<SaveIntfManager>());      // beNDMWSaveIntf
+    engine.add_manager(std::make_unique<SubWindowManager>());     // beNDMWStatus
+    engine.add_manager(std::make_unique<ModelCtrlManager>());     // beNDMWMdl* model classes
+    engine.add_manager(std::make_unique<PassiveManager>());       // infos without a runtime
 }
 
 } // namespace dw4::engine
