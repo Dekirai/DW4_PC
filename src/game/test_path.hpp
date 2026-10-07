@@ -177,12 +177,27 @@ private:
     std::string hold_mat_;                       // the mat whose wave is held
     int hold_since_ = -1;                        // the last plan that held it
     std::map<std::string, int> hold_left_;       // mat -> frames it may still be held
+    std::map<std::string, int> mat_skip_;        // given-up mat -> frame until which it is skipped
+    std::set<std::string> mats_ever_;            // mats ever stood on in this stage (forget keeps them)
+    std::map<std::string, int> mat_done_at_;     // mat -> frame it was stood on
+    int world_change_ = -1;                      // the last switch turned on or generator first cleared
+    std::map<std::string, bool> gen_started_;    // generator -> started one step ago
+    std::map<std::string, std::set<std::string>> gen_mats_; // generator -> mats the player stood in when it started
+    bool goal_first_failed_{};                   // the goal was tried first and did nothing
+    // DW4_MAT_SEQUENCE=m1,m2,...: mats stood on once each, in this order,
+    // before anything but the goal (a switch puzzle's solution, given like a
+    // preset); DW4_AVOID_MATS=<prefix>: the other mats of that prefix are kept
+    // away from.
+    std::vector<std::string> mat_sequence_;
+    std::size_t mat_sequence_next_{};
+    std::string avoid_mats_;
 
     std::map<const void*, int> switched_;        // switch -> frame it was seen switched on
     std::map<const void*, int> health_;          // strike gimmick -> lowest HP seen
     std::map<const void*, int> lowest_hp_;       // attacked enemy -> lowest HP seen
     std::map<const void*, int> fruitless_;       // attacked enemy -> attack steps since its last new low
     std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
+    std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
     std::map<const void*, engine::Vec3f> enemy_last_; // attacked enemy -> position one step ago (moving ones are no vents)
@@ -213,6 +228,7 @@ private:
     std::optional<engine::Vec3f> leap_; // the landing of the jump in progress
     int leap_frame_{};
     bool runup_ready_{};     // at the run-up point of a long jump: run and jump
+    int platform_wait_since_ = -1; // waiting at a take-off for a moving platform since
     bool closest_{};         // the goal cannot be reached: wait at the nearest point
 };
 
