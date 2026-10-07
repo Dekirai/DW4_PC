@@ -48,7 +48,7 @@ struct GlRenderer::Impl {
 #undef LOAD
     }
     int u_model{}, u_view{}, u_proj{}, u_color{}, u_modulate{}, u_use_vcol{}, u_use_tex{}, u_alpha_func{}, u_alpha_ref{};
-    int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_ambient{}, u_diffuse{}, u_emission{}, u_tex{};
+    int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_diffuse{}, u_tex{};
     int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_darkness{}, u_shadow_pass{};
@@ -74,7 +74,7 @@ uniform vec3 u_light_dir[4];
 uniform vec3 u_light_col[4];
 uniform int u_light_count;
 uniform vec3 u_light_ambient;
-uniform vec4 u_ambient, u_diffuse, u_emission;
+uniform vec4 u_diffuse;
 uniform mat4 u_shadow_matrix;
 out vec4 v_color;
 out vec2 v_uv;
@@ -98,14 +98,15 @@ void main() {
     gl_Position = u_proj * eye;
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
-        // GX channel: the lights' ambient times the material ambient plus
-        // each light's diffuse, over the material (or vertex) colour.
+        // GX channel as Alchemy sets it up (800F6DC0): the material colour
+        // times the clamped sum of the ambient register and each light's
+        // colour times its diffuse term (the registers come in prepared).
         vec3 n = normalize(mat3(u_model) * normal);
-        vec3 lit = u_light_ambient * u_ambient.rgb;
+        vec3 lit = u_light_ambient;
         for (int i = 0; i < u_light_count; ++i)
             lit += u_light_col[i] * max(dot(n, -normalize(u_light_dir[i])), 0.0);
         vec4 material = u_use_vcol != 0 ? a_color : u_diffuse;
-        base = vec4(clamp(lit, 0.0, 1.0) * material.rgb + u_emission.rgb, material.a);
+        base = vec4(clamp(lit, 0.0, 1.0) * material.rgb, material.a);
     }
     v_color = base;
     v_uv = (u_tex_matrix * vec4(a_uv, 0.0, 1.0)).xy;
@@ -232,7 +233,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     gl.DeleteShader(fs);
 #define U(name) gl.u_##name = gl.GetUniformLocation(program_, "u_" #name);
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
-    U(lighting) U(light_dir) U(light_col) U(light_count) U(ambient) U(diffuse) U(emission) U(tex) U(light_ambient)
+    U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
     U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass)
 #undef U
@@ -677,30 +678,39 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const bool lighting = s.lighting && m->has_normals && !s.lights.empty();
         gl.Uniform1i(gl.u_lighting, lighting ? 1 : 0);
         if (lighting) {
-            float dirs[12]{}, cols[12]{}, ambient[3]{};
+            // 800F6DC0 builds the GX registers in 8 bits: the ambient register
+            // is emission + sum(light ambient * material ambient), a light's
+            // colour is light diffuse, times the material diffuse unless the
+            // material colour comes from the vertices (modes 2/3, mat_src
+            // VTX); each channel is clamped to 1 and truncated (fctiwz of
+            // c * 255 at 0x800F7228..0x800F727C, 0x800F7604..0x800F7678).
+            // A light diffuse above 1 (the lobby's 1.1) adds no more than 1.
+            auto reg = [](float v) { return std::floor(std::clamp(v, 0.0f, 1.0f) * 255.0f) / 255.0f; };
+            const engine::Vec4f tint = m->has_colors ? engine::Vec4f{1, 1, 1, 1} : s.diffuse;
+            float dirs[12]{}, cols[12]{};
+            engine::Vec3f ambient{s.emission.x, s.emission.y, s.emission.z};
             int count = 0;
             for (const auto* light : s.lights) {
                 if (count >= 4) break;
                 const engine::Attribute* attr = light;
                 if (light->kind == engine::AttrKind::light_state) continue;
-                ambient[0] += attr->ambient.x;
-                ambient[1] += attr->ambient.y;
-                ambient[2] += attr->ambient.z;
+                ambient.x += attr->ambient.x * s.ambient.x;
+                ambient.y += attr->ambient.y * s.ambient.y;
+                ambient.z += attr->ambient.z * s.ambient.z;
                 dirs[count * 3] = attr->matrix(0, 0);
                 dirs[count * 3 + 1] = attr->matrix(0, 1);
                 dirs[count * 3 + 2] = attr->matrix(0, 2);
-                cols[count * 3] = attr->color.x;
-                cols[count * 3 + 1] = attr->color.y;
-                cols[count * 3 + 2] = attr->color.z;
+                cols[count * 3] = reg(attr->color.x * tint.x);
+                cols[count * 3 + 1] = reg(attr->color.y * tint.y);
+                cols[count * 3 + 2] = reg(attr->color.z * tint.z);
                 ++count;
             }
+            const float ambient_reg[3] = {reg(ambient.x), reg(ambient.y), reg(ambient.z)};
             gl.Uniform3fv(gl.u_light_dir, 4, dirs);
             gl.Uniform3fv(gl.u_light_col, 4, cols);
-            gl.Uniform3fv(gl.u_light_ambient, 1, ambient);
+            gl.Uniform3fv(gl.u_light_ambient, 1, ambient_reg);
             gl.Uniform1i(gl.u_light_count, count);
-            gl.Uniform4f(gl.u_ambient, s.ambient.x, s.ambient.y, s.ambient.z, s.ambient.w);
             gl.Uniform4f(gl.u_diffuse, s.diffuse.x, s.diffuse.y, s.diffuse.z, s.diffuse.w);
-            gl.Uniform4f(gl.u_emission, s.emission.x, s.emission.y, s.emission.z, s.emission.w);
         }
         const bool fog = s.fog && s.fog_params && !s.projection;
         gl.Uniform1i(gl.u_fog, fog ? 1 : 0);
