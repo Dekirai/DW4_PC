@@ -261,6 +261,10 @@ Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResou
     cheats_.god = std::getenv("DW4_GOD") != nullptr;
     cheats_.one_hit = std::getenv("DW4_ONE_HIT") != nullptr;
     cheats_.infinite_mp = std::getenv("DW4_INFINITE_MP") != nullptr;
+    // A new engine is a new boot: beSystem makes its generator then (8021B2F4
+    // seeds 5150), so an online session's fresh engine starts every machine
+    // on the same stream.
+    fight::generator().seed(SystemRandom::kBootSeed);
     register_default_managers(*this);
 }
 

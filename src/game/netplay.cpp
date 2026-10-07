@@ -26,7 +26,7 @@ using socket_handle = int;
 namespace dw4::game {
 namespace {
 
-constexpr std::uint32_t kProtocol = 2;
+constexpr std::uint32_t kProtocol = 3; // 3: NTSC field clock, original update order and generator
 constexpr const char* kGame = "GDJEB2";
 enum : std::uint8_t { kHello = 1, kWelcome, kStart, kInput, kFingerprint, kDesync, kLeave, kReject };
 
