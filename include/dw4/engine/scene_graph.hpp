@@ -197,6 +197,9 @@ struct RenderState {
     bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
     std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
+    // Set by runtime ACTION2 overrides: deeper attributes of the kind no
+    // longer change the value (override push, 801D5190).
+    bool texture_forced{}, lighting_forced{}, blend_forced{};
     // igTransform flag 8: the transform (sequence) applies to the texture coordinates.
     std::optional<Mat4> texture_matrix;
     Vec4f diffuse{1, 1, 1, 1}, ambient{0.2f, 0.2f, 0.2f, 1}, emission{0, 0, 0, 1};
