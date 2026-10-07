@@ -303,6 +303,7 @@ void GeneraterManager::update(Engine& engine) {
             ram.work = false;
             ram.done = true;
             ram.state = 0;
+            ++ram.clears;
             if (const auto lua = ram.data.str(13); !lua.empty()) {
                 engine.log("generator " + std::string(ram.data.str(2)) + " cleared -> " + std::string(lua));
                 engine.run_script(lua);

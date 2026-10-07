@@ -132,9 +132,11 @@ private:
     // A mat whose script changes the stage (funcStageChange or NEXTSTAGE), whatever its
     // name: other exits are kept away from.
     bool exit_mat(engine::Engine& engine, const std::string& mat);
-    // A mat that hurts or drops the player (quicksand, a pit that removes
-    // the player): kept away from, never a place to stand on.
+    // A mat that drops the player into a pit (ADDHP and REMOVE): kept away
+    // from, never a place to stand on.
     bool hazard_mat(engine::Engine& engine, const std::string& mat);
+    // A quicksand mat (QuickSandOn/Off): walked over, but nothing to visit.
+    bool quicksand_mat(engine::Engine& engine, const std::string& mat);
     std::string stage_;
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
@@ -150,6 +152,7 @@ private:
     const void* target_{};
     Gimmick gimmick_{};                          // how the target gimmick is worked
     std::string target_mat_;                     // the mat being walked to
+    std::string target_radar_;                   // the radar generator whose base is walked to
     engine::Vec3f goal_point_{};
     int planned_ = -1000;
     bool to_goal_{};
@@ -167,15 +170,39 @@ private:
     std::map<std::string, Watch> watch_;
     std::map<std::string, bool> portals_;        // mat -> is a maze link (cached per stage)
     std::map<std::string, bool> exits_;          // mat -> changes the stage (cached per stage)
-    std::map<std::string, bool> hazards_;        // mat -> quicksand or pit (cached per stage)
+    std::map<std::string, bool> hazards_;        // mat -> pit (cached per stage)
+    std::map<std::string, bool> quicksands_;     // mat -> quicksand (cached per stage)
+    std::map<std::string, int> clears_seen_;     // generator -> clears seen (restarting waves)
+    engine::Vec3f wait_point_{};                 // where the wait for the defeated began
+    std::string hold_mat_;                       // the mat whose wave is held
+    int hold_since_ = -1;                        // the last plan that held it
+    std::map<std::string, int> hold_left_;       // mat -> frames it may still be held
+
     std::map<const void*, int> switched_;        // switch -> frame it was seen switched on
-    std::map<const void*, int> health_;          // strike gimmick -> HP when last seen
+    std::map<const void*, int> health_;          // strike gimmick -> lowest HP seen
+    std::map<const void*, int> lowest_hp_;       // attacked enemy -> lowest HP seen
+    std::map<const void*, int> fruitless_;       // attacked enemy -> attack steps since its last new low
+    std::map<const void*, int> fruitless_runs_;  // enemy -> times it was left alone for taking no damage
+    std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
+    std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
+    std::map<const void*, engine::Vec3f> enemy_last_; // attacked enemy -> position one step ago (moving ones are no vents)
+    std::map<const void*, int> enemy_hp_;        // enemies' HP one step ago (kills count as progress)
+    int kill_credits_{};                         // kills counted as progress since the last newly cleared generator
+    // Walls a mat switches with the player's presence: XZ/Y bounds of each
+    // HITLANDMODEL child (found by switching it once), cached per stage.
+    struct ChildBox {
+        bool found{};
+        engine::Vec3f lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+    };
+    std::map<std::string, ChildBox> child_boxes_;
     std::set<std::string> portals_taken_;        // maze links already walked through
     std::string target_portal_;                  // the maze link being walked to
     std::set<std::string> cleared_generators_;   // generators seen cleared (progress)
     int waiting_since_ = -1;                     // waiting for defeated enemies since
     int on_goal_ = 0;                            // steps standing on the goal mat with control
     bool tech_used_{};                           // the technique of this panel round was cast
+    std::set<const void*> switches_done_;        // switches seen on that no longer react: done for the stage
+    std::map<std::string, int> radar_skip_;      // radar generator -> frame until which its base is left alone
     std::map<const void*, engine::Vec3f> model_last_; // nearby models' positions one step ago (platform speeds)
     int goal_later_until_ = -1;                  // the goal did nothing yet (a gate not up): other targets first
     int wait_skip_until_ = -1;                   // a wait that never ended is skipped until
@@ -185,6 +212,8 @@ private:
     int defend_until_ = -1;
     std::optional<engine::Vec3f> leap_; // the landing of the jump in progress
     int leap_frame_{};
+    bool runup_ready_{};     // at the run-up point of a long jump: run and jump
+    bool closest_{};         // the goal cannot be reached: wait at the nearest point
 };
 
 } // namespace dw4::game

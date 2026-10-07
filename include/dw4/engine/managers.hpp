@@ -834,6 +834,33 @@ public:
         for (const auto& ram : rams_) out.emplace_back(ram->data ? std::string(ram->data.str(2)) : std::string(), ram->done);
         return out;
     }
+    // Each generator's state and how often its waves were cleared (a
+    // restarted generator clears again; test bot).
+    struct Status {
+        std::string name;
+        bool started{}, done{};
+        int clears{};
+    };
+    std::vector<Status> status() const {
+        std::vector<Status> out;
+        for (const auto& ram : rams_)
+            if (ram->data) out.push_back({std::string(ram->data.str(2)), ram->started, ram->done, ram->clears});
+        return out;
+    }
+    // Started "radar" generators still waiting for a player within reach of
+    // their base (test bot).
+    struct Radar {
+        std::string name;
+        Vec3f base;
+        float range_sq{};
+    };
+    std::vector<Radar> radar_waiting() const {
+        std::vector<Radar> out;
+        for (const auto& ram : rams_)
+            if (ram->data && ram->started && !ram->done && ram->state == 0 && ram->data.str(9).starts_with('r'))
+                out.push_back({std::string(ram->data.str(2)), ram->data.vec3(3).value_or(Vec3f{}), ram->data.f32(10)});
+        return out;
+    }
 
 private:
     struct GeneRam : Ram {
@@ -851,6 +878,7 @@ private:
         int enemy_record{};        // work +20
         int enemy_max_hp{};        // work +24
         std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
+        int clears{};              // waves cleared so far (test bot)
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
     void refresh(Engine& engine, GeneRam& ram, bool last_pass = false);

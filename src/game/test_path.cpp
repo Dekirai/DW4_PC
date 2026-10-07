@@ -191,6 +191,7 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         const int at = queue[head];
         const int x = at % w_, z = at / w_;
         const float ya = floor_[std::size_t(at)];
+        std::uint8_t pits_left = 0; // directions of pits no straight jump crosses
         for (int d = 0; d < 8; ++d) {
             const int nx = x + kDx[d], nz = z + kDz[d];
             if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
@@ -204,6 +205,7 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                 // The jump (X) carries about 28 units over 40 frames and rises
                 // 14: gaps of up to four cells (20 units, diagonals three).
                 const int longest = (d & 1) ? 3 : 4;
+                pits_left |= std::uint8_t(1u << d);
                 for (int k = 2; k <= longest; ++k) {
                     const int lx = x + kDx[d] * k, lz = z + kDz[d] * k;
                     if (lx < 0 || lz < 0 || lx >= w_ || lz >= h_) break;
@@ -219,6 +221,7 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                         clear = !wall_between(x + kDx[d] * i, z + kDz[d] * i, x + kDx[d] * (i + 1), z + kDz[d] * (i + 1), ya);
                     if (!clear) break;
                     jumps.push_back({at, land, float(k) * ((d & 1) ? 1.4142f : 1.0f) + 8.0f});
+                    pits_left &= std::uint8_t(~(1u << d));
                     if (!reached[std::size_t(land)]) {
                         reached[std::size_t(land)] = 1;
                         floor_[std::size_t(land)] = yl;
@@ -250,6 +253,59 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                 reached[std::size_t(next_cell)] = 1;
                 floor_[std::size_t(next_cell)] = yb;
                 queue.push_back(next_cell);
+            }
+        }
+        // Long jumps: with a run-up of two cells the jump carries about 28
+        // units from the very edge, so wider pits are crossed at any angle
+        // (15-degree steps, toward the pits found above) onto floor at most a
+        // little higher (cell centres up to 32.5 apart: both edges reach
+        // past them).
+        if (pits_left) {
+            const auto a = centre(x, z);
+            auto cell_at = [&](float px, float pz) {
+                const int cx = int(std::lround((px - x0_) / step)), cz = int(std::lround((pz - z0_) / step));
+                return cx < 0 || cz < 0 || cx >= w_ || cz >= h_ ? -1 : cz * w_ + cx;
+            };
+            for (int angle = 0; angle < 24; ++angle) {
+                const int d = ((angle + 1) / 3) % 8; // nearest of the eight directions
+                if (!(pits_left & (1u << d))) continue;
+                const float radians = float(angle) * 0.2617994f;
+                const float ux = std::cos(radians), uz = std::sin(radians);
+                bool runup = true;
+                for (const float back : {5.0f, 10.0f}) {
+                    const int behind = cell_at(a.x - ux * back, a.z - uz * back);
+                    const float yr = behind < 0 ? -100000.0f : floor_from(behind, ya);
+                    runup = runup && std::abs(yr - ya) <= 3.0f;
+                }
+                if (!runup) continue;
+                for (float distance = 22.5f; distance <= 32.5f; distance += 2.5f) {
+                    const int land = cell_at(a.x + ux * distance, a.z + uz * distance);
+                    if (land < 0) break;
+                    const auto l = centre(land % w_, land / w_);
+                    const float yl = floor_from(land, ya + 5.0f);
+                    if (yl < -99999.0f || yl - ya > 2.0f || ya - yl > 30.0f || blocked(l.x, yl, l.z)) continue;
+                    // Floor beyond the landing and to both sides of it (a
+                    // cell centre at the very rim may lie just off the floor).
+                    bool inside = true;
+                    for (const auto [ox, oz] : {std::pair{ux, uz}, std::pair{-uz, ux}, std::pair{uz, -ux}}) {
+                        const int around = cell_at(l.x + ox * step, l.z + oz * step);
+                        inside = inside && around >= 0 && std::abs(floor_from(around, yl) - yl) <= 3.0f;
+                    }
+                    if (!inside) continue;
+                    bool clear = true;
+                    for (float t = 0.0f; t < distance && clear; t += step) {
+                        const engine::Vec3f middle{a.x + ux * (t + step * 0.5f), ya + 6.0f, a.z + uz * (t + step * 0.5f)};
+                        clear = !world.check_wall(middle, {ux, 0.0f, uz}, width, 4.0f, wall_flags, false).hit;
+                    }
+                    if (!clear) break;
+                    jumps.push_back({at, land, distance / step + 8.0f});
+                    if (!reached[std::size_t(land)]) {
+                        reached[std::size_t(land)] = 1;
+                        floor_[std::size_t(land)] = yl;
+                        queue.push_back(land);
+                    }
+                    break;
+                }
             }
         }
     }
@@ -450,10 +506,18 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = hazards_.find(mat);
     if (it != hazards_.end()) return it->second;
     const std::string script = mat + ".lua";
-    const bool hazard = engine.script_mentions(script, "QuickSand") || engine.script_mentions(script, "QUICKSAND") ||
-                        (engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE"));
+    const bool hazard = engine.script_mentions(script, "ADDHP") && engine.script_mentions(script, "REMOVE");
     hazards_[mat] = hazard;
     return hazard;
+}
+
+bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
+    const auto it = quicksands_.find(mat);
+    if (it != quicksands_.end()) return it->second;
+    const std::string script = mat + ".lua";
+    const bool sand = engine.script_mentions(script, "QuickSand") || engine.script_mentions(script, "QUICKSAND");
+    quicksands_[mat] = sand;
+    return sand;
 }
 
 bool ExploreBot::exit_mat(engine::Engine& engine, const std::string& mat) {
@@ -484,7 +548,10 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     target_ = nullptr;
     target_mat_.clear();
     target_portal_.clear();
+    target_radar_.clear();
     to_goal_ = false;
+    closest_ = false;
+    runup_ready_ = false;
     gimmick_ = Gimmick::none;
     what_ = "nothing";
     goal_point_ = position_of(player);
@@ -499,13 +566,93 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     std::vector<AvoidBox> avoid;
     std::vector<engine::MatCtrlManager::MatBox> boxes;
     if (mats) boxes = mats->mat_boxes();
+    // A pit inside a quicksand basin is kept well away from (the sand pulls
+    // a player standing near it in); the sand itself is walked over.
+    bool sandy = false;
+    for (const auto& box : boxes) sandy = sandy || quicksand_mat(engine, box.name);
+    std::vector<AvoidBox> pits;
     for (const auto& box : boxes) {
         // Other stage change mats would open their prompt.
         const auto key = mat_key(box.name);
-        if (goals.count(key) || (!exit_mat(engine, box.name) && !hazard_mat(engine, box.name))) continue;
-        const AvoidBox a{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f, box.min.y - 5.0f, box.max.y + 5.0f};
-        if (me.x >= a.min_x && me.x <= a.max_x && me.z >= a.min_z && me.z <= a.max_z && me.y >= a.min_y && me.y <= a.max_y) continue;
+        const bool pit = hazard_mat(engine, box.name);
+        if (goals.count(key) || (!exit_mat(engine, box.name) && !pit)) continue;
+        const float grow = pit && sandy ? 25.0f : 4.0f, above = pit && sandy ? 35.0f : 5.0f;
+        const AvoidBox a{box.min.x - grow, box.min.z - grow, box.max.x + grow, box.max.z + grow, box.min.y - 5.0f, box.max.y + above};
+        if (pit) pits.push_back(a);
+        auto inside = [&](const AvoidBox& b) {
+            return me.x >= b.min_x && me.x <= b.max_x && me.z >= b.min_z && me.z <= b.max_z && me.y >= b.min_y && me.y <= b.max_y;
+        };
+        if (inside(a)) {
+            // Fallen into the basin: its sink stays closed for the way out.
+            const AvoidBox core{box.min.x - 4.0f, box.min.z - 4.0f, box.max.x + 4.0f, box.max.z + 4.0f, box.min.y - 5.0f, box.max.y + 5.0f};
+            if (pit && sandy && !inside(core)) avoid.push_back(core);
+            continue;
+        }
         avoid.push_back(a);
+    }
+    // `margin` widens the boxes (enemies near the sand edge: a hit throws the
+    // player 35 units, over the edge).
+    auto in_pit = [&](const engine::Vec3f& p, float margin) {
+        for (const auto& a : pits)
+            if (p.x >= a.min_x - margin && p.x <= a.max_x + margin && p.z >= a.min_z - margin && p.z <= a.max_z + margin && p.y >= a.min_y &&
+                p.y <= a.max_y)
+                return true;
+        return false;
+    };
+    // A mat that switches a wall on only while the player stands in it
+    // (MATisPlayer, HITLANDMODEL ONHIT/OFFHIT) and the wall lies outside the
+    // mat: the player meets that wall only after leaving the mat, when it is
+    // off again, so it is planned off (else the plan flips each time the
+    // player steps out and back in). Switched back after the plan.
+    struct MatWalls {
+        engine::HitLandManager& hitland;
+        std::vector<std::pair<std::string, bool>> saved;
+        ~MatWalls() {
+            for (auto it = saved.rbegin(); it != saved.rend(); ++it) hitland.set_child_hit(it->first, it->second);
+        }
+    } mat_walls{*hitland, {}};
+    for (const auto& box : boxes) {
+        if (me.x < box.min.x || me.x > box.max.x || me.z < box.min.z || me.z > box.max.z || me.y < box.min.y || me.y > box.max.y) continue;
+        const std::string script = box.name + ".lua";
+        if (!engine.script_mentions(script, "MATisPlayer") || !engine.script_mentions(script, "HITLANDMODEL") ||
+            !engine.script_mentions(script, "ONHIT") || !engine.script_mentions(script, "OFFHIT"))
+            continue;
+        for (const auto& row : engine.messenger().rows()) {
+            if (row.category != "HITLANDMODEL" || !row.name || !engine.script_mentions(script, *row.name)) continue;
+            const std::string& name = *row.name;
+            const auto on = hitland->child_hit(name);
+            if (!on || !*on) continue;
+            bool seen = false;
+            for (const auto& [saved_name, state] : mat_walls.saved) seen = seen || saved_name == name;
+            if (seen) continue;
+            auto it = child_boxes_.find(name);
+            if (it == child_boxes_.end()) {
+                // The triangles that change when the child is switched once.
+                ChildBox found;
+                auto& world = hitland->world();
+                const auto& triangles = world.triangles();
+                std::vector<char> before(triangles.size());
+                for (std::size_t i = 0; i < triangles.size(); ++i) before[i] = world.group_enabled(triangles[i].group) ? 1 : 0;
+                hitland->set_child_hit(name, false);
+                for (std::size_t i = 0; i < triangles.size(); ++i) {
+                    if ((world.group_enabled(triangles[i].group) ? 1 : 0) == before[i]) continue;
+                    found.found = true;
+                    for (const auto& v : {triangles[i].a, triangles[i].b, triangles[i].c}) {
+                        found.lo = {std::min(found.lo.x, v.x), std::min(found.lo.y, v.y), std::min(found.lo.z, v.z)};
+                        found.hi = {std::max(found.hi.x, v.x), std::max(found.hi.y, v.y), std::max(found.hi.z, v.z)};
+                    }
+                }
+                hitland->set_child_hit(name, true);
+                it = child_boxes_.emplace(name, found).first;
+            }
+            const auto& wall = it->second;
+            if (!wall.found) continue;
+            // A wall within reach of the mat is met while standing in it.
+            if (wall.hi.x >= box.min.x - 5.0f && wall.lo.x <= box.max.x + 5.0f && wall.hi.z >= box.min.z - 5.0f && wall.lo.z <= box.max.z + 5.0f)
+                continue;
+            hitland->set_child_hit(name, false);
+            mat_walls.saved.push_back({name, true});
+        }
     }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index));
     auto go = [&](const engine::Vec3f& where, const void* target, std::string what) {
@@ -518,10 +665,82 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         const auto it = unreachable_.find(target);
         return it != unreachable_.end() && frame < it->second;
     };
+    // Fallen into a quicksand basin: out along the cheapest route to floor
+    // outside it (walking straight away from the sink only pins the player
+    // against the basin walls).
+    if (sandy && in_pit(me, 0.0f)) {
+        std::optional<engine::Vec3f> out;
+        float out_cost = std::numeric_limits<float>::infinity();
+        for (const auto& q : map.samples()) {
+            if (in_pit(q, 0.0f)) continue;
+            const float cost = map.cost_to(q, 1.0f);
+            if (cost < out_cost) {
+                out_cost = cost;
+                out = q;
+            }
+        }
+        if (out) {
+            go(*out, nullptr, "out of the basin");
+            return;
+        }
+    }
     // The kept target counts as nearer, so two equally far ones do not take
     // turns.
     auto keep = [&](const void* target, float cost) { return target == previous ? cost * 0.6f : cost; };
     const bool defending = frame < defend_until_;
+    // A started radar generator waits for a player near its base: walk
+    // into its range. Before the mats only one the mat underfoot started
+    // (leaving that mat would stop it again), after them any.
+    auto radar = [&](bool underfoot_only) {
+        auto* generators = engine.get<engine::GeneraterManager>();
+        if (!generators) return false;
+        for (const auto& waiting : generators->radar_waiting()) {
+            if (const auto skip = radar_skip_.find(waiting.name); skip != radar_skip_.end() && frame < skip->second) continue;
+            if (underfoot_only) {
+                bool started_here = false;
+                for (const auto& box : boxes)
+                    if (me.x >= box.min.x && me.x <= box.max.x && me.z >= box.min.z && me.z <= box.max.z &&
+                        engine.script_mentions(box.name + ".lua", waiting.name))
+                        started_here = true;
+                if (!started_here) continue;
+            }
+            const float dy = waiting.base.y - me.y;
+            if (waiting.range_sq <= dy * dy + 25.0f) continue; // out of reach from the floor
+            const float reach = std::sqrt(waiting.range_sq - dy * dy) - 5.0f;
+            if (reach < 3.0f || flat(waiting.base, me) <= reach) continue;
+            if (!std::isfinite(map.cost_to(waiting.base, reach))) continue;
+            go(waiting.base, nullptr, "radar " + waiting.name);
+            route_ = map.route_to(waiting.base, reach);
+            target_radar_ = waiting.name;
+            return true;
+        }
+        return false;
+    };
+    // A wave the mat underfoot started runs only while a player stays on it
+    // (leaving or falling off stops the generator): for up to 3000 frames
+    // only enemies and pickups on it are gone for (or a radar base).
+    const engine::MatCtrlManager::MatBox* hold = nullptr;
+    if (auto* generators = engine.get<engine::GeneraterManager>())
+        for (const auto& box : boxes) {
+            if (me.x < box.min.x || me.x > box.max.x || me.z < box.min.z || me.z > box.max.z) continue;
+            const std::string script = box.name + ".lua";
+            if (!engine.script_mentions(script, "START")) continue;
+            for (const auto& status : generators->status())
+                if (status.started && !status.done && engine.script_mentions(script, status.name)) hold = &box;
+        }
+    // Each mat is held for 3000 frames in all (crossing it again later
+    // does not start over).
+    if (hold) {
+        auto& left = hold_left_.try_emplace(hold->name, 3000).first->second;
+        left -= hold_mat_ == hold->name ? std::min(45, frame - hold_since_) : 0;
+        hold_mat_ = hold->name;
+        hold_since_ = frame;
+        if (left <= 0) hold = nullptr;
+    }
+    if (!hold) hold_mat_.clear();
+    auto on_hold = [&](const engine::Vec3f& p) {
+        return p.x >= hold->min.x - 10.0f && p.x <= hold->max.x + 10.0f && p.z >= hold->min.z - 10.0f && p.z <= hold->max.z + 10.0f;
+    };
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in
     // passing (update), except structures.
@@ -534,11 +753,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // Hits reach a model through its hit script; without one (a
             // boss's head or decoration) it cannot be hurt.
             if (pass == 0 && !engine.has_script("hit_" + e->info_name + ".lua")) continue;
-            if (left_alone(e.get())) continue;
+            if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
             if (pass == 0 && defending && !structure && !boss) continue;
+            if (hold && !on_hold(at)) continue;
+            // Near a pit in a quicksand basin: struck only in passing.
+            if (sandy && in_pit(at, 20.0f)) {
+                unreachable_[e.get()] = frame + 120;
+                continue;
+            }
             // A structure's or a boss's body keeps the player further off (a
             // boss may stand on a platform its body covers).
             float cost = map.cost_to(at, pass == 1 ? 8.0f : boss ? 60.0f : structure ? 30.0f : 14.0f);
@@ -561,12 +786,18 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     }
     // Defeated enemies stay until their model is removed; a wave counts as
     // cleared only then, and leaving its mat earlier stops the generator.
-    if (!defending && frame >= wait_skip_until_)
+    const bool in_sand = player.ride && player.ride->kind == engine::ModelCtrlManager::ModelRam::Ride::Kind::quicksand;
+    if (!defending && frame >= wait_skip_until_ && !in_sand)
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category == "ENEMY" && e->hp <= 0 && flat(position_of(*e), me) < 200.0f) {
-                goal_point_ = me;
+                // Waited for at the point the wait began (a drifting point
+                // would let quicksand pull the player along).
+                if (waiting_since_ < 0) {
+                    waiting_since_ = frame;
+                    wait_point_ = me;
+                }
+                goal_point_ = wait_point_;
                 what_ = "wait for the defeated";
-                if (waiting_since_ < 0) waiting_since_ = frame;
                 if (frame - waiting_since_ > 900) wait_skip_until_ = frame + 1800; // a body that never goes
                 return;
             }
@@ -595,6 +826,13 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 to_goal_ = true;
                 return;
             }
+        }
+    }
+    if (hold) {
+        if (radar(true)) return;
+        if (const auto inside = map.reached_inside(hold->min.x + 1.0f, hold->min.z + 1.0f, hold->max.x - 1.0f, hold->max.z - 1.0f)) {
+            go(*inside, nullptr, "hold the wave of " + hold->name);
+            return;
         }
     }
     // Gimmicks with a hit script: floor switches (an AIM map, no bullet
@@ -629,21 +867,42 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                     int wanted = -1;
                     for (int i = 0; i < 4 && wanted < 0; ++i)
                         if (engine.script_mentions(hit, elements[i])) wanted = i;
-                    int own = -1;
-                    if (auto* sys = engine.get<engine::GameSystem>()) own = sys->players[std::size_t(std::clamp(player.index, 0, 3))].stats.attack_zokusei;
-                    if (wanted < 0 || own != wanted) kind = Gimmick::tech;
+                    int own = -1, first = -1;
+                    if (auto* sys = engine.get<engine::GameSystem>()) {
+                        const auto& slot = sys->players[std::size_t(std::clamp(player.index, 0, 3))];
+                        own = slot.stats.attack_zokusei;
+                        // The first technique of the panel is the one cast.
+                        if (auto* db = engine.get<engine::DatabaseManager>(); db && !slot.wazalist.empty()) {
+                            const auto element = db->text("pcTech", slot.wazalist[0], "ZOKUSEI");
+                            for (int i = 0; i < 4 && first < 0; ++i)
+                                if (element == elements[i]) first = i;
+                        }
+                    }
+                    if (wanted < 0 || own != wanted) {
+                        if (wanted < 0 || first != wanted) continue; // nothing this player has breaks it
+                        kind = Gimmick::tech;
+                    }
                 }
             } else {
                 continue;
             }
             // A switch seen switched on is done for a long while (pairs that
             // power each other back on would otherwise take turns forever).
-            if (kind != Gimmick::strike)
+            if (kind != Gimmick::strike) {
+                if (switches_done_.count(e.get())) continue;
                 if (const auto on = switched_.find(e.get()); on != switched_.end() && frame - on->second < 6000) continue;
+            }
             const int budget = kind == Gimmick::strike ? 240 : kind == Gimmick::talk ? 12 : kind == Gimmick::tech ? 3 : 60;
             const auto spent = struck_.find(e.get());
             if (spent != struck_.end() && spent->second >= budget) {
                 if (kind == Gimmick::strike || kind == Gimmick::tech || frame - struck_at_[e.get()] < 900) continue;
+                // A wall switch that went on before and now takes its presses
+                // without going on again (its script ignores it once its flag
+                // is set; the model fell back to SQ_WAIT) is done.
+                if (kind == Gimmick::talk && switched_.count(e.get())) {
+                    switches_done_.insert(e.get());
+                    continue;
+                }
                 spent->second = 1; // tried again later, after the mats
             }
             // A wall that was started on is finished first (it takes several hits).
@@ -671,13 +930,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         return true;
     };
     if (pick_gimmick(false)) return;
+    if (radar(true)) return;
     // Mats not stood on yet (they start enemy waves and events).
     const engine::MatCtrlManager::MatBox* best_mat = nullptr;
     float best_cost = std::numeric_limits<float>::infinity();
     for (const auto& box : boxes) {
         const auto key = mat_key(box.name);
         if (key.empty() || goals.count(key) || exit_mat(engine, box.name) || portal(engine, box.name) || hazard_mat(engine, box.name) ||
-            mats_done_.count(box.name))
+            quicksand_mat(engine, box.name) || mats_done_.count(box.name))
             continue;
         float cost = map.cost_to(mat_centre(box, me.y), 6.0f);
         if (box.name == previous_mat) cost *= 0.6f;
@@ -691,6 +951,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         target_mat_ = best_mat->name;
         return;
     }
+    if (radar(false)) return;
     if (pick_gimmick(true)) return;
     // Unvisited ground, preferring the goal's side; the point being walked
     // to is kept until it is reached or given up.
@@ -738,12 +999,20 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         visited_.clear();
         mats_done_.clear();
         mat_frames_.clear();
-        unreachable_.clear();
+        // Targets given up for a moment are tried again, not those left
+        // alone for taking no damage.
+        std::erase_if(unreachable_, [&](const auto& entry) { return entry.second - frame < 2000; });
         planned_ = -1000;
         what_ = "forget the explored ground";
         return;
     }
-    if (goal_centre) go(*goal_centre, nullptr, "goal " + goal + " (closest)");
+    if (goal_centre) {
+        // Wait at the nearest reached point (walking on at the centre would
+        // step off a pillar into the pit around it).
+        go(*goal_centre, nullptr, "goal " + goal + " (closest)");
+        goal_point_ = route_.empty() ? me : route_.back().point;
+        closest_ = true;
+    }
     // Nothing left to explore: what stops the walk (DW4_TRACE_EXPLORE).
     if (std::getenv("DW4_TRACE_EXPLORE") && frame % 600 < 45) {
         const auto samples = map.samples();
@@ -772,6 +1041,7 @@ void ExploreBot::give_up(int frame) {
     if (target_) unreachable_[target_] = frame + 1800;
     if (!target_mat_.empty()) mats_done_.insert(target_mat_);
     if (!target_portal_.empty()) portals_taken_.insert(target_portal_);
+    if (!target_radar_.empty()) radar_skip_[target_radar_] = frame + 3000;
     if (what_ == "explore") {
         visited_.insert(coarse(goal_point_.x, goal_point_.z));
         frontier_.reset();
@@ -804,8 +1074,23 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         portals_.clear();
         exits_.clear();
         hazards_.clear();
+        quicksands_.clear();
+        clears_seen_.clear();
+        hold_left_.clear();
+        hold_mat_.clear();
         switched_.clear();
         health_.clear();
+        lowest_hp_.clear();
+        fruitless_.clear();
+        fruitless_runs_.clear();
+        unkillable_.clear();
+        regenerating_.clear();
+        enemy_last_.clear();
+        enemy_hp_.clear();
+        kill_credits_ = 0;
+        child_boxes_.clear();
+        switches_done_.clear();
+        radar_skip_.clear();
         portals_taken_.clear();
         cleared_generators_.clear();
         watch_.clear();
@@ -825,13 +1110,40 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     }
     // A generator cleared for the first time is progress.
     if (frame % 30 == 0)
-        if (auto* generators = engine.get<engine::GeneraterManager>())
+        if (auto* generators = engine.get<engine::GeneraterManager>()) {
             for (const auto& [name, done] : generators->cleared())
-                if (done && cleared_generators_.insert(name).second) progress_at_ = frame;
+                if (done && cleared_generators_.insert(name).second) {
+                    progress_at_ = frame;
+                    kill_credits_ = 0;
+                }
+            // A wave cleared again was restarted (until something else is
+            // done, e.g. a tower destroyed): stop chasing it for a while.
+            for (const auto& status : generators->status()) {
+                auto& seen = clears_seen_[status.name];
+                if (status.clears > seen && status.clears >= 2 && frame >= defend_until_) {
+                    defend_until_ = frame + 2400;
+                    planned_ = -1000;
+                }
+                seen = status.clears;
+            }
+        }
+    // A defeated enemy nearby is progress (a wave whose defeated come back
+    // until its count is done is not left for defend mode), at most 16 times
+    // between newly cleared generators so endless waves still are.
+    if (auto* all = engine.get<engine::ModelCtrlManager>())
+        for (const auto& e : all->rams()) {
+            if (!e->generated || !e->node || e->category != "ENEMY") continue;
+            auto [hp, fresh] = enemy_hp_.emplace(e.get(), e->hp);
+            if (!fresh && hp->second > 0 && e->hp <= 0 && flat(position_of(*e), me) < 80.0f && kill_credits_ < 16) {
+                ++kill_credits_;
+                progress_at_ = frame;
+            }
+            hp->second = e->hp;
+        }
     const auto visited_before = visited_.size();
     for (const float ox : {-8.0f, 8.0f})
         for (const float oz : {-8.0f, 8.0f}) visited_.insert(coarse(me.x + ox, me.z + oz));
-    if (visited_.size() != visited_before) progress_at_ = frame;
+    if (visited_.size() != visited_before && what_.rfind("enemy", 0) != 0) progress_at_ = frame;
     auto* models = engine.get<engine::ModelCtrlManager>();
     // A mat counts as stood on near its centre or after a while inside (a
     // radar-started wave needs the player well inside).
@@ -854,21 +1166,33 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (e.get() == target_ && ((gimmick_ == Gimmick::talk && switched_on(*e)) || (gimmick_ == Gimmick::step && e->ctrl_mode == 0)))
                 switched_[target_] = frame;
     if (target && gimmick_ == Gimmick::strike) {
+        // It takes damage: keep at it. Only a new low counts, so one that
+        // heals itself back up does not restart its budget forever.
         auto [it, fresh] = health_.emplace(target_, target->hp);
-        if (!fresh && target->hp < it->second) struck_[target_] = 1; // it takes damage: keep at it
-        it->second = target->hp;
+        if (!fresh && target->hp < it->second) {
+            struck_[target_] = 1;
+            it->second = target->hp;
+        }
+    }
+    if (target_ && !target) {
+        lowest_hp_.erase(target_);
+        fruitless_.erase(target_);
     }
     if (target_ && !target && gimmick_ != Gimmick::none) {
         // A switch went on (or a gimmick broke): on to the next, e.g. the
         // other switch of a pair that must be pressed within moments.
-        struck_[target_] = gimmick_ == Gimmick::strike ? 240 : 60;
+        // (A wall switch that went on gets a fresh budget: if it falls back
+        // off, e.g. a pair pressed too slowly, it is pressed again later.)
+        struck_[target_] = gimmick_ == Gimmick::strike ? 240 : gimmick_ == Gimmick::talk ? 0 : 60;
         struck_at_[target_] = frame;
         progress_at_ = frame;
     }
     stalled_ = std::hypot(me.x - last_.x, me.z - last_.z) < 0.1f && !held_by_hit(player) ? stalled_ + 1 : 0;
     last_ = me;
-    // In the air after a jump: keep steering at the landing.
-    if (leap_ && frame - leap_frame_ < 70 && (!player.on_ground || frame - leap_frame_ < 5)) {
+    // In the air after a jump: keep steering at the landing (on_ground stays
+    // set while a jump rises, the sequence tells).
+    const bool airborne = !player.on_ground || player.seq_name.rfind("SQ_JUMP", 0) == 0 || player.seq_name == "SQ_FALL";
+    if (leap_ && frame - leap_frame_ < 70 && (airborne || frame - leap_frame_ < 5)) {
         decision.x = leap_->x;
         decision.z = leap_->z;
         decision.reach = 0.25f;
@@ -883,7 +1207,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
     }
     const bool lost = target_ && !target;
-    if (lost || frame - planned_ >= 45 || (!target && next_ >= route_.size() && flat(goal_point_, me) < 6.0f) || stalled_ >= 90) {
+    if (airborne && frame - planned_ < 120) {
+        // keep the plan while in the air
+    } else if (lost || frame - planned_ >= 45 || (!target && !to_goal_ && !closest_ && waiting_since_ < 0 && next_ >= route_.size() && flat(goal_point_, me) < 6.0f) ||
+        stalled_ >= 90) {
         if (stalled_ >= 90) {
             stalled_ = 0;
             // Walking against something: give the spot up.
@@ -916,8 +1243,8 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.best = remaining;
         watch.since = frame;
     }
-    const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || what_ == "explore" ||
-                         what_.rfind("item", 0) == 0;
+    const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || !target_radar_.empty() ||
+                         what_ == "explore" || what_.rfind("item", 0) == 0;
     if (watched && frame - watch.since > 600) {
         if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up %s\n", frame, what_.c_str());
         give_up(frame);
@@ -932,12 +1259,49 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         if (route_[next_].jump) {
             const auto& takeoff = next_ > 0 ? route_[next_ - 1].point : me;
             const auto& landing = route_[next_].point;
+            const float span = flat(takeoff, landing);
             // A moving platform at the landing: jump only when it will be
             // under the landing at touch-down (about 24 frames on; the floor
             // there then is the floor now 24 steps of its motion back),
             // else wait at the take-off.
             bool ready = true;
-            if (auto* hitland = engine.get<engine::HitLandManager>(); hitland && models && flat(takeoff, me) < 8.0f)
+            if (span > 21.0f) {
+                // A long jump: from a run-up point 8 units back, run along the
+                // line and jump at the edge.
+                const float ux = (landing.x - takeoff.x) / span, uz = (landing.z - takeoff.z) / span;
+                const float along = (me.x - takeoff.x) * ux + (me.z - takeoff.z) * uz;
+                const float lateral = std::abs((me.z - takeoff.z) * ux - (me.x - takeoff.x) * uz);
+                const engine::Vec3f runup{takeoff.x - ux * 8.0f, takeoff.y, takeoff.z - uz * 8.0f};
+                if (runup_ready_ && (lateral > 3.0f || along < -12.0f)) runup_ready_ = false; // knocked off the line
+                if (!runup_ready_) {
+                    decision.x = runup.x;
+                    decision.z = runup.z;
+                    decision.reach = 1.0f;
+                    stalled_ = 0;
+                    watch.since = frame;
+                    if (flat(runup, me) < 1.5f) runup_ready_ = true;
+                } else {
+                    decision.x = landing.x;
+                    decision.z = landing.z;
+                    decision.reach = 0.25f;
+                    // Jump at the very edge: past the take-off cell's centre,
+                    // once the floor 2 units ahead ends (or 2.5 past it).
+                    bool edge = along >= 2.5f;
+                    if (!edge && along >= -0.3f)
+                        if (auto* hitland = engine.get<engine::HitLandManager>()) {
+                            const engine::Vec3f ahead{me.x + ux * 2.0f, me.y + 5.0f, me.z + uz * 2.0f};
+                            const auto land = hitland->world().check_land(ahead, 1.0f, 400.0f, 1.0f);
+                            edge = !land.found || land.position.y < me.y - 3.0f;
+                        }
+                    if (edge && !airborne) {
+                        decision.jump = true;
+                        leap_ = landing;
+                        leap_frame_ = frame;
+                        runup_ready_ = false;
+                    }
+                }
+                ready = false;
+            } else if (auto* hitland = engine.get<engine::HitLandManager>(); hitland && models && flat(takeoff, me) < 8.0f)
                 for (const auto& e : models->rams()) {
                     if (!e->generated || !e->node || e->is_player || e->category == "ENEMY") continue;
                     const auto at = position_of(*e);
@@ -951,13 +1315,15 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                     ready = land.found && std::abs(land.position.y - landing.y) < 4.0f;
                     break;
                 }
-            if (!ready) {
+            if (span > 21.0f) {
+                // handled above
+            } else if (!ready) {
                 decision.x = takeoff.x;
                 decision.z = takeoff.z;
                 decision.reach = 1.0f;
                 stalled_ = 0; // waiting on purpose
                 watch.since = frame;
-            } else if (flat(takeoff, me) < 4.0f && player.on_ground) {
+            } else if (flat(takeoff, me) < 4.0f && !airborne) {
                 decision.jump = true;
                 leap_ = landing;
                 leap_frame_ = frame;
@@ -1053,10 +1419,42 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         const bool structure = target->category == "ENEMY" &&
                                (target->info_name.rfind("g_", 0) == 0 || target->info_name.rfind("f_", 0) == 0);
         decision.reach = structure ? 1.0f : flat(aim, me) <= close ? 400.0f : 4.0f;
-        if (d2 <= 400.0f || (d2 <= 6400.0f && stalled_ > 20)) {
+        // Blocked further off: swing half the time only, so the sidestep
+        // (never while attacking) can free the player.
+        if (d2 <= 400.0f || (d2 <= 6400.0f && stalled_ > 20 && frame % 120 < 60)) {
             decision.attack = true;
             decision.jump_attack = aim.y > me.y + 8.0f;
             if (gimmick_ == Gimmick::strike && !held_by_hit(player)) spend(240);
+        }
+        // An enemy whose HP reaches no new low for a long while is left alone
+        // for a good while: a poison vent heals itself and turns invulnerable,
+        // a cannon behind rocks is never reached. Attacking counts double; a
+        // boss gets longer for its invulnerable phases.
+        if (target->category == "ENEMY") {
+            // Only a target standing still counts (vents and cannons do; a
+            // knight that stuns the player about is no vent), and not while
+            // the player is held by a hit.
+            const auto now_at = position_of(*target);
+            auto [last_at, first_seen] = enemy_last_.emplace(target_, now_at);
+            const bool still = !first_seen && flat(last_at->second, now_at) <= 0.05f && !held_by_hit(player);
+            last_at->second = now_at;
+            auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
+            if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+            if (fresh || target->hp < low->second) {
+                low->second = target->hp;
+                fruitless_[target_] = 0;
+            } else if (still && (fruitless_[target_] += decision.attack ? 2 : 1) > (target->info_name.rfind("f_", 0) == 0 ? 6000 : 1800)) {
+                if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore leaves %s alone (no damage)\n", frame, what_.c_str());
+                fruitless_[target_] = 0;
+                // For good once it was seen healing itself or the third time
+                // (a stage full of vents would otherwise be gone round
+                // forever; a cannon that knocks the player back may still be
+                // reached later).
+                if (++fruitless_runs_[target_] >= 3 || regenerating_.count(target_)) unkillable_.insert(target_);
+                unreachable_[target_] = frame + 6000;
+                planned_ = -1000;
+                progress_at_ = frame;
+            }
         }
     } else if (target) {
         // A pickup: some are taken by touch, others (keys) with A.
@@ -1082,7 +1480,8 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     // Defending: strike an enemy that comes close, without chasing it.
     if (frame < defend_until_ && !decision.attack && !decision.press_a && models)
         for (const auto& e : models->rams())
-            if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f) {
+            if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f &&
+                !(unreachable_.count(e.get()) && frame < unreachable_[e.get()]) && !unkillable_.count(e.get())) {
                 decision.attack = frame % 20 < 3;
                 break;
             }
@@ -1126,10 +1525,26 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         for (const auto& e : models->rams())
             if (e->generated && e->node && !e->is_player && e->category != "ENEMY" && flat(position_of(*e), me) < 120.0f)
                 model_last_[e.get()] = position_of(*e);
+    // On quicksand the pull toward its centre is allowed for: the stick
+    // leans away from the centre by the share of the pull in the walking
+    // speed (about 0.3 of 0.75 units a frame).
+    if (player.ride && player.ride->kind == engine::ModelCtrlManager::ModelRam::Ride::Kind::quicksand && player.control_enabled) {
+        const auto& centre = player.ride->point;
+        const float to_x = decision.x - me.x, to_z = decision.z - me.z, to = std::hypot(to_x, to_z);
+        const float out = flat(me, centre);
+        if (to > 0.01f && out > 0.01f) {
+            const float dx = to_x / to + (me.x - centre.x) / out * 0.4f, dz = to_z / to + (me.z - centre.z) / out * 0.4f;
+            const float d = std::max(0.01f, std::hypot(dx, dz));
+            const float ahead = std::max(to, 2.0f);
+            decision.x = me.x + dx / d * ahead;
+            decision.z = me.z + dz / d * ahead;
+        }
+    }
     // Stuck at a corner (walls stop the player instead of sliding it):
     // sidestep left, right or back for a moment, then take the route again.
     // Not while pushing into a wall switch on purpose.
-    if (stalled_ >= 25 && !decision.attack && !(gimmick_ == Gimmick::talk && flat(aim, me) <= 15.0f) && frame >= escape_until_) {
+    if (stalled_ >= 25 && !decision.attack && !((gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) && flat(aim, me) <= 15.0f) &&
+        frame >= escape_until_) {
         escape_until_ = frame + 20;
         escape_turn_ = (escape_turn_ + 1) % 3;
     }
