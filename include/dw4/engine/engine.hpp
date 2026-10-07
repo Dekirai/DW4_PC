@@ -213,9 +213,8 @@ struct StageSnapshot {
     bool pad_input_enabled{};
     Cheats cheats;
     OriginalPads pads;
-    std::string combat_random, script_random; // generator states
-    std::shared_ptr<const void> system;       // GameSystem copy
-    std::uint32_t particle_random{};
+    std::string random;                  // system generator state (fight::generator)
+    std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
 };
@@ -302,7 +301,6 @@ public:
     std::map<std::int32_t, std::int32_t>& counters() { return counters_; }
     bool pad_input_enabled() const { return pad_input_enabled_; }
     void set_pad_input_enabled(bool value) { pad_input_enabled_ = value; }
-    std::mt19937& script_random() { return script_random_; }
     std::int32_t area() const { return 1; }     // USA disc: AUS assets (SYSgetArea)
     std::int32_t country() const { return 1; }  // USA text (SYSgetCountry)
 
@@ -360,7 +358,6 @@ private:
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;
     std::uint64_t snapshot_serial_{};
-    std::mt19937 script_random_{0x4457344u}; // SYSgetRandom
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};

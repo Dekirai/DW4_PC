@@ -342,14 +342,11 @@ void Engine::begin_stage_load() {
     snapshot.cheats = cheats_;
     snapshot.pads = pads_;
     {
-        std::ostringstream combat, script;
-        combat << fight::generator();
-        script << script_random_;
-        snapshot.combat_random = combat.str();
-        snapshot.script_random = script.str();
+        std::ostringstream random;
+        random << fight::generator();
+        snapshot.random = random.str();
     }
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
-    if (auto* particles = get<ParticleCtrlManager>()) snapshot.particle_random = particles->random_state();
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
     snapshot.serial = ++snapshot_serial_;
     snapshot_ = std::move(snapshot);
@@ -364,9 +361,8 @@ void Engine::restore(const StageSnapshot& snapshot) {
     cheats_ = snapshot.cheats;
     pads_ = snapshot.pads;
     {
-        std::istringstream combat(snapshot.combat_random), script(snapshot.script_random);
-        combat >> fight::generator();
-        script >> script_random_;
+        std::istringstream random(snapshot.random);
+        random >> fight::generator();
     }
     if (auto* sys = get<GameSystem>(); sys && snapshot.system) {
         const Ram keep = sys->ram_;
@@ -374,7 +370,6 @@ void Engine::restore(const StageSnapshot& snapshot) {
         sys->ram_ = keep;
         sys->registered_ = false;
     }
-    if (auto* particles = get<ParticleCtrlManager>()) particles->set_random_state(snapshot.particle_random);
     if (auto* sound = get<SoundManager>()) sound->restore(*this, snapshot.sound);
     // The rest of the step that started the load (Engine::step).
     pending_stage_ = snapshot.stage;

@@ -1788,10 +1788,9 @@ bool ParticleCtrlManager::command(Engine& engine, Ram& base, std::string_view co
             Vec3f rotation{};
             if (packet.vectors.size() == 2) {
                 rotation = packet.vectors[1];
-                if (rotation.y > 6.28319f) {
-                    random_ = random_ * 1103515245u + 12345u;
-                    rotation.y = float((random_ >> 8) % 6144u) / 1000.0f;
-                }
+                // 80312554: a heading above 2 pi is drawn from the system
+                // generator, 0 .. 6.143 radians.
+                if (rotation.y > 6.28319f) rotation.y = float(fight::random() % 6144u) / 1000.0f;
             }
             if (auto* models = engine.get<ModelCtrlManager>())
                 if (const auto* target = models->find(owner, index); target && target->node) m = target->node->matrix;

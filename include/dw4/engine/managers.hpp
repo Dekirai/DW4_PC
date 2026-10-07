@@ -3,6 +3,7 @@
 #include "dw4/adx.hpp"
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/random.hpp"
 #include "dw4/motion.hpp"
 #include "dw4/sfp.hpp"
 
@@ -395,8 +396,6 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
-    std::uint32_t random_state() const { return random_; }
-    void set_random_state(std::uint32_t value) { random_ = value; }
 
 private:
     struct ParticleRam : Ram {
@@ -411,7 +410,6 @@ private:
     };
     void stop(ParticleRam& ram);
     std::vector<std::unique_ptr<ParticleRam>> rams_;
-    std::uint32_t random_ = 0x2545F491u;
 };
 
 // beWaterPlain (update 803178CC): rippling water. Players and enemies in the
@@ -1201,6 +1199,11 @@ private:
     void set_down(Engine& engine, ModelRam& ram, int index, int value);
     void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
+    struct UpdateEntry {
+        int rank{};
+        ModelRam* ram{};
+    };
+    std::vector<UpdateEntry> update_order_; // rams_ in class order (update)
     std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
     std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
     std::map<const void*, std::unique_ptr<Homing>> homings_;
@@ -1381,6 +1384,7 @@ private:
     std::vector<std::unique_ptr<ActionRam>> rams_;
     std::map<const void*, std::unique_ptr<std::vector<Action>>> actions_;
     std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<AnimationDatabase>> databases_;
+    float random_wait_min_{}; // 80535A60: minimum of the random WAITCHECKs
     std::map<const Node*, ActionRam*> actor_owner_;
 };
 
@@ -1563,8 +1567,10 @@ struct FightResult {
     std::int32_t flag{};         // largest variance step
 };
 namespace fight {
+// One draw from the system generator (vtable +60, 8021EB40), for every
+// random number of the game (see SystemRandom).
 std::uint32_t random();
-std::mt19937& generator(); // FIGHTCALC random numbers (state for save states)
+SystemRandom& generator(); // its state, for save states
 const char* bullet_name(int kind);
 bool player_hits(Engine& engine, const GameSystem::Stats& stats, int enemy_record, int kind, int evade_down);
 bool player_critical(Engine& engine, const GameSystem::PlayerSlot& player, int enemy_record, int kind);
