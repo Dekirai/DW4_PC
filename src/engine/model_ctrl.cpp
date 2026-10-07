@@ -2144,8 +2144,13 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
 
 void ActionManager::run(Engine& engine, ActionRam& ram) {
     if (!ram.current) return;
+    // DW4_TRACE_ACTION=model (or *) also logs every command as it runs.
+    static const char* trace = std::getenv("DW4_TRACE_ACTION");
     while (ram.cursor < ram.current->commands.size()) {
         const auto& c = ram.current->commands[ram.cursor];
+        if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.current->name + "[" +
+                       std::to_string(ram.cursor) + "] " + c.type.substr(9) + " " + c.name + " " + std::to_string(c.first));
         const bool keep = execute(engine, ram, c);
         ++ram.cursor;
         if (!keep) break;
