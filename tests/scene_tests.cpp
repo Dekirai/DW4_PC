@@ -1,3 +1,4 @@
+#include "dw4/engine/math.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cmath>
@@ -170,6 +171,22 @@ void test_compressed_sequence() {
     check(close(m(0, 1), -1) && close(m(3, 0), 1), "QS keys use 8012BBF4 and set the translation");
     check(close(seq.evaluate(1'500'000'000)(3, 0), 1), "QS LOOP blends the last key into key 0");
 }
+
+void test_horizontal_perspective() {
+    // A stage camera's _horizontalFieldOfView (54.4322, dng101b1 cameraShape00)
+    // on the 640x448 viewer window: the width keeps tan(fov / 2) (801DB6E4).
+    const float fov = 54.4322f * 3.14159265f / 180.0f;
+    const float half = std::tan(fov * 0.5f);
+    const Mat4 p = perspective_horizontal(fov, 640.0f / 448.0f, 10.0f, 2000.0f);
+    check(std::fabs(p(0, 0) - 1.0f / half) < 1e-4f, "The horizontal field of view spans the width");
+    check(std::fabs(p(1, 1) - (640.0f / 448.0f) / half) < 1e-4f, "The height follows from the 640x448 aspect");
+    // Against the field of view taken as a vertical one at 4:3, the picture
+    // is 4/3 wider and 10/7 taller, as measured against Dolphin.
+    const Mat4 old = perspective(fov, 4.0f / 3.0f, 10.0f, 2000.0f);
+    check(std::fabs(p(0, 0) / old(0, 0) - 4.0f / 3.0f) < 1e-4f, "4/3 horizontal zoom");
+    check(std::fabs(p(1, 1) / old(1, 1) - 10.0f / 7.0f) < 1e-4f, "10/7 vertical zoom");
+    check(p(2, 2) == old(2, 2) && p(3, 2) == old(3, 2), "The depth range is unchanged");
+}
 } // namespace
 
 int main() {
@@ -181,6 +198,7 @@ int main() {
         test_sequence_play_modes();
         test_sequence_interpolation_methods();
         test_compressed_sequence();
+        test_horizontal_perspective();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

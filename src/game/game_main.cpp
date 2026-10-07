@@ -578,7 +578,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
         c.view = dw4::engine::look_at(eye, target, {0, 1, 0});
-        c.projection = dw4::engine::perspective(54.43f * 3.14159265f / 180.0f, 4.0f / 3.0f, 1.0f, 4000.0f);
+        // The stage cameras' horizontal field of view on the 640x448 viewer
+        // window, as CameraManager::frame_camera.
+        c.projection = dw4::engine::perspective_horizontal(54.43f * 3.14159265f / 180.0f, 640.0f / 448.0f, 1.0f, 4000.0f);
         return c;
     };
     if (options.debug_camera.size() >= 6)

@@ -294,16 +294,16 @@ void CameraManager::add_info(Engine& engine, const ObjectView& info) {
 
 void CameraManager::clear_stage(Engine&) {
     rams_.clear();
-    current_.reset();
+    viewer_.reset();
     centre_ = {-1.0f, -1.0f, -1.0f};
     centre_moved_ = false;
     blend_ = 0.0f;
     box_ = previous_box_ = 0;
 }
 
-bool CameraManager::demo_running(Engine& engine) const {
+bool CameraManager::named_demo_running(const Engine& engine) const {
     for (const auto& ram : rams_)
-        if (ram->demo_active && engine.time() - ram->demo_start <= ram->demo_duration) return true;
+        if (ram->named_active && engine.time() - ram->named_start <= ram->named_duration) return true;
     return false;
 }
 
@@ -361,16 +361,45 @@ void set_rotation(Mat4& m, const Vec4f& q) {
 // SHK direction tables (804DD8D8 / 804DD8FC), indexed by pattern digit.
 constexpr float kShakeX[9] = {0, 0, 1, 1, 1, 0, -1, -1, -1};
 constexpr float kShakeY[9] = {0, 1, 1, 0, -1, -1, -1, 0, 1};
+
+// 802F414C copies the igCamera's _horizontalFieldOfView (+2C), _nearPlane
+// (+30; 0 means far / 1000, 80425320) and _farPlane (+34) into the viewer;
+// 8040B834 passes them to setPerspective 801DB6E4 with the vertical field of
+// view unset (-1.0, 80462E28), so the horizontal one is kept for the 640x448
+// viewer window (8028BB10/8028BB18). The video copy stretches the 448 lines
+// to the 480-line picture, the same NDC as a 640x480 viewport.
+Mat4 camera_projection(float fov_x_degrees, float near_plane, float far_plane) {
+    if (near_plane == 0.0f) near_plane = far_plane / 1000.0f;
+    return perspective_horizontal(fov_x_degrees * std::numbers::pi_v<float> / 180.0f, 640.0f / 448.0f, near_plane,
+                                  far_plane);
+}
 } // namespace
+
+// 802F4030 + 8040F870: the viewer takes the path, restarts its clock (+58..+70
+// cleared, the first step adds nothing) and becomes the current viewer.
+void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration) {
+    viewer_ = Viewer{&ram, &path, 0, duration, 0, false};
+}
 
 // 802F2BC0: the box camera. The pivot stands at the players' centre; the
 // camera box containing the centre selects the rotation and distance
 // transforms, blended in over 120 steps (one per frame while the players
-// move, 1.5 while they stand); SHAKE offsets the live transforms.
+// move, 1.5 while they stand); SHAKE offsets the live transforms. The box
+// camera's path becomes the current viewer only when the centre enters
+// another box (0x802F2F70..0x802F30E8); without players it does nothing
+// (0x802F2C68), so a demo viewer stays current.
 void CameraManager::update_box(Engine& engine, CameraRam& ram) {
     auto& box = *ram.box;
     Node* eye = box.eyes[0];
     Node* target = box.targets[0];
+    // First run after SETBOXCAMERA (RAM +18 == 0): the players' centre is
+    // reset to (-1, -1, -1) (80425238) and the box (+4C) to 0, so the first
+    // box found is copied directly instead of blended.
+    if (ram.state == 0) {
+        centre_ = {-1.0f, -1.0f, -1.0f};
+        box_ = 0;
+        ram.state = 1;
+    }
     // PLAYER GETMATRIX: 2 players halve, 3 divide, 4 quarter, else the sum.
     std::vector<Vec3f> players;
     if (auto* models = engine.get<ModelCtrlManager>())
@@ -409,6 +438,8 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
             saved_eye_ = eye->matrix;
             saved_target_ = target->matrix;
             blend_ = 0.0f;
+            // The scene camera's path with no length: evaluated as it stands.
+            if (!ram.paths.empty()) set_viewer(ram, ram.paths.front(), 0);
         }
     }
     const std::size_t k = std::size_t(box_);
@@ -460,54 +491,60 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
 bool CameraManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<CameraRam&>(base);
     if (command == "SETDEMOCAMERA") {
-        // Play the named camera once: a demo camera info of that name uses its
-        // beCameraDemoData path and length; otherwise a path of this camera
-        // whose node has the name plays for its longest transform sequence
-        // (at least one frame so ISDEMOCAMERA reports it).
+        // 802F37AC case 6: the demo camera info of that name starts over (its
+        // next update makes it the current viewer), every other demo camera
+        // stops, and the box camera stops while such a demo camera exists.
         const auto name = packet.string(0);
-        if (ram.demo_data && ram.info_name == name) {
-            ram.demo_path = -2;
-            ram.demo_duration = std::max<std::int64_t>(ram.demo_data_duration, kFrameNs);
-            ram.demo_active = true;
-            ram.demo_start = engine.time();
-            return true;
-        }
-        ram.demo_path = -1;
         bool named_info = false;
         for (const auto& other : rams_) named_info = named_info || (other->demo_data && other->info_name == name);
-        if (named_info) {
-            ram.demo_active = false;
-            return true;
-        }
-        for (std::size_t i = 0; i < ram.paths.size() && ram.demo_path < 0; ++i)
+        ram.named_active = false;
+        if (ram.box) ram.active = !named_info;
+        else if (ram.demo_data && ram.info_name == name) {
+            ram.active = true;
+            ram.state = 0;
+        } else ram.active = false;
+        if (named_info) return true;
+        // Without such an info the original keeps the box camera and
+        // ISDEMOCAMERA answers 0 at once. Port fallback (older than the demo
+        // camera infos): a path of this camera whose node has the name plays
+        // for its longest transform sequence (at least one frame so
+        // ISDEMOCAMERA reports it).
+        ram.named_path = -1;
+        for (std::size_t i = 0; i < ram.paths.size() && ram.named_path < 0; ++i)
             for (auto* node : ram.paths[i].nodes)
-                if (node && node->name == name) { ram.demo_path = int(i); break; }
-        ram.demo_duration = kFrameNs;
-        if (ram.demo_path >= 0)
-            for (auto* node : ram.paths[std::size_t(ram.demo_path)].nodes)
+                if (node && node->name == name) { ram.named_path = int(i); break; }
+        ram.named_duration = kFrameNs;
+        if (ram.named_path >= 0) {
+            const auto& path = ram.paths[std::size_t(ram.named_path)];
+            for (auto* node : path.nodes)
                 if (node && node->sequence && node->sequence->valid && !node->sequence->times.empty())
-                    ram.demo_duration = std::max(ram.demo_duration, node->sequence->duration > 0 ? node->sequence->duration
-                                                                                                 : node->sequence->times.back());
-        else engine.note("CAMERA demo path " + std::string(name));
-        ram.demo_active = true;
-        ram.demo_start = engine.time();
+                    ram.named_duration = std::max(ram.named_duration, node->sequence->duration > 0 ? node->sequence->duration
+                                                                                                   : node->sequence->times.back());
+            set_viewer(ram, path, ram.named_duration);
+        } else engine.note("CAMERA demo path " + std::string(name));
+        ram.named_active = true;
+        ram.named_start = engine.time();
         return true;
     }
     if (command == "ISDEMOCAMERA") {
-        // One answer for the broadcast: whether any camera demo still runs.
+        // 802F37AC case 8, one answer for the broadcast: an active demo camera
+        // info runs until its update has set the viewer up (+18 == 0) and the
+        // viewer's clock has reached the end (+70).
         if (&ram != rams_.front().get()) return true;
-        bool active = false;
-        for (auto& other : rams_) {
-            if (other->demo_active && engine.time() - other->demo_start > other->demo_duration) other->demo_active = false;
-            active = active || other->demo_active;
-        }
-        packet.bools.push_back(active ? 1 : 0);
+        bool running = named_demo_running(engine);
+        for (const auto& other : rams_)
+            if (other->active && !other->box && other->demo_data)
+                running = running || other->state == 0 || (viewer_ && !viewer_->finished);
+        packet.bools.push_back(running ? 1 : 0);
         return true;
     }
     if (command == "SETBOXCAMERA") {
-        ram.box_camera = true;
-        ram.demo_active = false;
-        ram.demo_path = -1;
+        // 802F37AC case 5: the box camera runs again from a fresh state (+18
+        // and its work +1C..+24 cleared); every other camera stops. The
+        // viewer stays as it is until the box camera sets its own.
+        ram.active = ram.box.has_value();
+        if (ram.box) ram.state = 0;
+        ram.named_active = false;
         return true;
     }
     if (command == "GETPOSITION") {
@@ -533,35 +570,51 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
 }
 
 void CameraManager::update(Engine& engine) {
-    if (demo_running(engine)) return;
-    for (auto& ram : rams_)
-        if (ram->box && ram->active) {
-            update_box(engine, *ram);
-            break;
+    // 802F3710 for each active camera: the box update for a box camera
+    // (one box camera drives the shared box state), the demo update else.
+    bool box_done = false;
+    for (auto& ram : rams_) {
+        if (!ram->active) continue;
+        if (ram->box) {
+            if (!box_done && !named_demo_running(engine)) update_box(engine, *ram);
+            box_done = true;
+        } else if (ram->demo_data && ram->state == 0) {
+            // 802F3568 state 0: the viewer plays the demo path from 0 for the
+            // beCameraDemoData length and becomes the current viewer.
+            set_viewer(*ram, *ram->demo_data, ram->demo_data_duration);
+            ram->state = 1;
         }
+    }
+    // 802F4268: the viewer's clock advances by the world step (at most 50 ms,
+    // nothing on its first update) and stops at the duration (+70 finished);
+    // the path is still evaluated there, so the last pose stays.
+    if (viewer_ && !viewer_->finished) {
+        const std::int64_t now = engine.time();
+        const std::int64_t step = viewer_->last != 0 ? std::min<std::int64_t>(now - viewer_->last, 50'000'000) : 0;
+        viewer_->time += step;
+        viewer_->last = now;
+        if (viewer_->time >= viewer_->duration) {
+            viewer_->finished = true;
+            viewer_->time = viewer_->duration;
+        }
+    }
 }
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
-    camera.projection = perspective(54.4322f * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
+    camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
-    // A running demo camera info takes over from the stage camera.
-    const CameraRam* demo_info = nullptr;
-    for (const auto& ram : rams_)
-        if (ram->demo_active && ram->demo_path == -2 && engine.time() - ram->demo_start <= ram->demo_duration) demo_info = ram.get();
-    // Otherwise a running named path, then the active box camera, then the
-    // first camera with a path.
-    const CameraRam* chosen = demo_info;
-    for (const auto& ram : rams_)
-        if (!chosen && !ram->paths.empty() && ram->demo_active && ram->demo_path >= 0) chosen = ram.get();
+    // The current viewer's path at its clock. Before the box or a demo camera
+    // has set one, the stage's scene camera (8040E7DC): the active box
+    // camera's path, else the first camera with a path.
+    const CameraRam* chosen = viewer_ ? viewer_->ram : nullptr;
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty() && ram->box && ram->active) chosen = ram.get();
     for (const auto& ram : rams_)
         if (!chosen && !ram->paths.empty()) chosen = ram.get();
     if (chosen) {
         const CameraRam* ram = chosen;
-        const bool demo = demo_info || (ram->demo_active && ram->demo_path >= 0);
-        const auto& path = demo_info ? *ram->demo_data : ram->paths[std::size_t(demo ? ram->demo_path : 0)];
-        const std::int64_t at = demo ? std::min(engine.time() - ram->demo_start, ram->demo_duration) : 0;
+        const auto& path = viewer_ ? *viewer_->path : ram->paths.front();
+        const std::int64_t at = viewer_ ? viewer_->time : 0;
         // World matrices along the path; the last transform places the camera
         // relative to its parent group, whose origin is the look-at pivot.
         Mat4 world, pivot;
@@ -574,14 +627,16 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
             world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix) * world;
         }
         if (path.camera) {
-            const float fov = path.camera->object.f32(8, 54.4322f);
+            // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
+            // 80566CD4), _nearPlane, _farPlane.
+            const float fov = path.camera->object.f32(8, 45.0f);
             const float near_plane = path.camera->object.f32(9, 10.0f);
             const float far_plane = path.camera->object.f32(10, 2000.0f);
-            camera.projection = perspective(fov * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, near_plane, far_plane);
+            camera.projection = camera_projection(fov, near_plane, far_plane);
         }
-        // Without box data: follow the first player with the authored angle
-        // and distance.
-        if (!demo && !ram->box) {
+        // Without a viewer and box data: follow the first player with the
+        // authored angle and distance.
+        if (!viewer_ && !ram->box) {
             if (auto* models = engine.get<ModelCtrlManager>()) {
                 if (const auto* player = models->player(0); player && player->node) {
                     const auto& pm = player->node->matrix;

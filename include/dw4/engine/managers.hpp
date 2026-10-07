@@ -158,13 +158,28 @@ private:
         // beCameraDemoData ([7]): a demo camera info's own path and length.
         std::optional<CameraPath> demo_data;
         std::int64_t demo_data_duration{};
-        int demo_path = -1; // index into paths, or -2 for demo_data
-        std::int64_t demo_start{}, demo_duration{};
-        bool demo_active{};
-        bool box_camera{};
+        // RAM +18: 0 until the box or demo update has run once after
+        // SETBOXCAMERA / SETDEMOCAMERA (802F37AC clears it).
+        int state{};
+        // Port fallback for a SETDEMOCAMERA name without a demo camera info
+        // (the original's ISDEMOCAMERA wait would never end): the path of
+        // this camera holding a node of that name, -1 for none.
+        int named_path = -1;
+        std::int64_t named_start{}, named_duration{};
+        bool named_active{};
+    };
+    // The manager's one viewer (+28, 802E1478) once the box or the demo
+    // update made it the current viewer (8040F870): the camera path it
+    // evaluates and its time, which 802F4268 advances by the frame step and
+    // holds at the duration (+68), so a finished demo keeps its end pose.
+    struct Viewer {
+        const CameraRam* ram{};
+        const CameraPath* path{};
+        std::int64_t time{}, duration{}, last{};
+        bool finished{};
     };
     std::vector<std::unique_ptr<CameraRam>> rams_;
-    std::optional<FrameCamera> current_;
+    std::optional<Viewer> viewer_;
     // Box camera state (802F2BC0, manager +2C..+D4).
     Vec3f centre_{-1.0f, -1.0f, -1.0f};
     bool centre_moved_{};
@@ -172,7 +187,8 @@ private:
     int box_{}, previous_box_{};
     Mat4 saved_eye_, saved_target_;
     void update_box(Engine& engine, CameraRam& ram);
-    bool demo_running(Engine& engine) const;
+    void set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration);
+    bool named_demo_running(const Engine& engine) const;
 };
 
 class StageCtlManager final : public Manager {
