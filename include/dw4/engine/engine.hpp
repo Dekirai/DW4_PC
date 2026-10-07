@@ -28,9 +28,22 @@ namespace dw4::engine {
 class Engine;
 class Manager;
 
-// One original frame is 16,666,666 ns (the messenger's delay unit, 802ECA74 /
-// 803061BC). Simulation always advances by exactly this step.
+// The messenger's delay unit: one nominal frame is 16,666,666 ns (802ECA74 /
+// 803061BC). Delays and frame counts in the data use this constant.
 constexpr std::int64_t kFrameNs = 16666666;
+
+// The world clock is not a frame counter: igInsightCore 8028AF84 adds the
+// sampled OSGetTime delta (timer 8007734C, ticks * 8000 / 324) every frame,
+// and the game runs one frame per NTSC field. A field is 675,675 timebase
+// ticks = 1001/60000 s, so the clock advances 16,683,333 or 16,683,334 ns
+// (50,050,000 ns every three fields), and an n-frame WAIT ends after exactly
+// n fields.
+constexpr std::int64_t kFieldNsPer3 = 50050000;
+constexpr double kFieldSeconds = 1001.0 / 60000.0;
+// World time after `frame` fields.
+constexpr std::int64_t field_time(std::uint64_t frame) {
+    return static_cast<std::int64_t>(frame / 3) * kFieldNsPer3 + static_cast<std::int64_t>(frame % 3) * kFieldNsPer3 / 3;
+}
 
 // Shared messenger argument/result buffer (typed lists, as 80306xxx).
 struct Packet {
@@ -243,6 +256,8 @@ public:
     const std::string& stage_name() const { return stage_name_; }
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }
+    // World time added by the last step (one NTSC field).
+    std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
 
     Messenger& messenger() { return messenger_; }
     DemoManager& demo() { return demo_; }

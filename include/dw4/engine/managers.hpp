@@ -248,6 +248,13 @@ public:
         std::size_t pictures{};
         std::int64_t start{};
         std::uint32_t serial{}; // changes with every PLAY
+        // Picture shown at world time `now`. Fields and pictures are both
+        // NTSC rates (two fields per picture at 29.97); the small bias keeps
+        // the nanosecond rounding of field times from landing a field early.
+        std::size_t picture_at(std::int64_t now) const {
+            const double seconds = double(now - start) / 1e9;
+            return seconds > 0.0 ? static_cast<std::size_t>(seconds * frame_rate + 1e-6) : 0;
+        }
     };
     const Movie* movie() const { return movie_ ? &*movie_ : nullptr; }
     // Save states: the streams that play on into the next stage, and back.

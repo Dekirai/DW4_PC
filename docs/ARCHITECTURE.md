@@ -19,7 +19,12 @@ as they do on the console. Addresses below refer to the USA revision-0
 
 ## Frame step (`Engine::step`)
 
-One step is one original 60 Hz frame (16,666,666 ns). In order:
+One step is one original frame, one NTSC field: the world clock advances by
+the field length, 16,683,333 or 16,683,334 ns (50,050,000 ns per three
+fields), as the original adds the measured OSGetTime delta (8028AF84) and
+runs one frame per field. Delays and frame counts in the data still use the
+nominal 16,666,666 ns frame (`kFrameNs`), so an n-frame wait ends after
+exactly n steps. In order:
 
 1. Pads: `dw4::OriginalPads` computes trigger/repeat masks from the host
    samples (disabled while STAGECTL `PADINPUT DISABLE` is active).

@@ -611,7 +611,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     try { pads_.update(input); } catch (const std::exception& error) { note(std::string("pad input: ") + error.what()); }
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
-    time_ += kFrameNs;
+    // One NTSC field of world time (8028AF84), see field_time.
+    time_ += field_time(frame_ + 1) - field_time(frame_);
     ++frame_;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();

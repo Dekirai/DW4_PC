@@ -1377,7 +1377,7 @@ void SoundManager::update(Engine& engine) {
     for (std::size_t channel = 0; channel < streams_.size(); ++channel)
         if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
     for (auto& track : tracks_) {
-        track.wait_ms -= 1000.0 / 60.0;
+        track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
         run_track(track);
     }
     std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
@@ -1393,8 +1393,8 @@ void SoundManager::update(Engine& engine) {
     if (movie_) {
         const auto& pad = engine.pads()[0];
         const bool skip = (pad.buttons.trigger & (pad_button::a | pad_button::start)) != 0;
-        const double length = movie_->frame_rate > 0.0 ? double(movie_->pictures) / movie_->frame_rate : 0.0;
-        if (skip || double(engine.time() - movie_->start) >= length * 1e9) end_movie(engine);
+        // Ends once the time for the last picture has passed.
+        if (skip || movie_->frame_rate <= 0.0 || movie_->picture_at(engine.time()) >= movie_->pictures) end_movie(engine);
     }
 }
 
