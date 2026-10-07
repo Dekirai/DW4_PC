@@ -471,6 +471,11 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 if (slot.hp <= 0) sys->players[std::size_t(std::clamp(ram.index, 0, 3))].hp = slot.max_hp;
                 ram.max_hp = std::max(1, slot.max_hp);
                 ram.hp = std::max(1, slot.hp);
+                // A direct stage start made the player only now, after
+                // boot.lua listed the weapon packages: load them.
+                if (auto* weapons = engine.get<WeaponManager>(); weapons && sys->direct_start)
+                    for (const auto& weapon : slot.weapons)
+                        if (!weapon.empty() && !weapons->labels(weapon)) engine.load_common_now("_common/" + weapon + ".igb");
                 if (auto* weapons = engine.get<WeaponManager>())
                     if (const auto* rows = weapons->labels(stats.weapon_model))
                         for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;

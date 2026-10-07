@@ -461,6 +461,16 @@ void Engine::load_file(const std::string& logical_path, bool member, std::vector
     }
 }
 
+bool Engine::load_common_now(const std::string& logical_path) {
+    for (const auto& file : files_)
+        if (file.logical_path == logical_path) return true;
+    const auto before = files_.size();
+    std::vector<ObjectView> infos;
+    load_file(logical_path, false, infos);
+    for (const auto& info : infos) register_info(info);
+    return files_.size() != before;
+}
+
 void Engine::register_info(const ObjectView& info) {
     bool accepted = false;
     for (auto& m : managers_) {

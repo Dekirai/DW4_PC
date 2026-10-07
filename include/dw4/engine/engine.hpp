@@ -306,6 +306,9 @@ public:
     std::string loader_state() const;
     const std::vector<LoadedFile>& loaded_files() const { return files_; }
     std::vector<std::string>& common_file_queue() { return common_queue_; }
+    // Loads a common package now and registers its infos (a direct stage
+    // start's weapon packages); false if it cannot be read.
+    bool load_common_now(const std::string& logical_path);
     std::string folder_name() const { return stage_folder_; }
 
 private:

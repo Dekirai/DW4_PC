@@ -1521,6 +1521,10 @@ public:
     GameSystem() : Manager("beSystem") { players[0].joined = true; }
     std::int32_t difficulty{};
     std::int32_t difficulty_max{};
+    // A stage started directly (--stage): the players are only made at their
+    // GENERATE, after boot.lua listed the weapon packages (in the game the
+    // character select made them), so their weapon packages load then.
+    bool direct_start{};
     std::int32_t camera_mode{};
     std::int32_t light_mode{};
     std::int32_t ninzu = 1;

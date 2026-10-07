@@ -489,6 +489,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
+    if (options.stage_given)
+        if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->direct_start = true;
     // Skip intro: boot straight to the title (stagIS10) instead of the
     // license, logos and opening movie.
     std::string first_stage = !options.smoke_frames && settings.skip_intro && !options.stage_given ? std::string("stagis10") : options.stage;
