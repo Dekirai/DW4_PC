@@ -252,6 +252,10 @@ public:
     std::vector<std::string> scene_report();
 
     void request_stage(std::string name);
+    // False after the step that took a stage change (NEXTSTAGE, 80347F2C):
+    // the original presents no new picture from then on, the screen keeps
+    // the last one until the loader draws.
+    bool presenting() const { return pending_stage_.empty(); }
     const std::string& stage_name() const { return stage_name_; }
     std::int64_t time() const { return time_; }
     std::uint64_t frame() const { return frame_; }

@@ -704,6 +704,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::string rendered_stage;
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
+        std::string movie_stage; // stage the decoder's movie played in
         // DW4_OPEN_MENU=1 opens the F1 menu at start (menu screenshots).
         bool running = true, show_menu = std::getenv("DW4_OPEN_MENU") != nullptr;
         // Save states (this session): four slots, F5 saves and F9 loads slot 1.
@@ -1316,19 +1317,31 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 wide.x = 0;
                 wide.width = width;
             }
-            renderer.render(items, camera, clear, screen, wide, width, height);
-            // A playing movie covers the screen with its current picture.
-            if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
-                const auto* movie = sound->movie();
-                if (!movie_decoder || movie_serial != movie->serial) {
-                    movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
-                    movie_serial = movie->serial;
-                }
-                if (movie_decoder->seek(movie->picture_at(engine.time())))
+            // From the step that took a stage change on, the original presents
+            // nothing new: the last picture stays until the loader draws.
+            if (engine.presenting() || !renderer.draw_kept_picture(width, height)) {
+                renderer.render(items, camera, clear, screen, wide, width, height);
+                // A playing movie covers the screen with its current picture.
+                // After its end Sofdec's last picture stays up until the
+                // stage changes (the opening's end script switches a frame
+                // later).
+                if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
+                    const auto* movie = sound->movie();
+                    if (!movie_decoder || movie_serial != movie->serial) {
+                        movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
+                        movie_serial = movie->serial;
+                        movie_stage = engine.stage_name();
+                    }
+                    if (movie_decoder->seek(movie->picture_at(engine.time())))
+                        renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                            width, height);
+                } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
                     renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
                                         width, height);
-            } else {
-                movie_decoder.reset();
+                } else {
+                    movie_decoder.reset();
+                }
+                renderer.keep_picture(width, height);
             }
 
             ImGui_ImplOpenGL3_NewFrame();
