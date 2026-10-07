@@ -445,6 +445,12 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
         ram.muteki = 0;
+        // The KIND vtable +0x98 hook (8034BB48 enemy, 8034BEA8 object,
+        // 8034D61C player) installs a fresh info work at ONE+0x14 on every
+        // GENERATE, so _isOnCtrl (+0x44) and _isOnFreeze start at their
+        // defaults again (802C6D18), also after an OFCTRL before an erase.
+        ram.control_enabled = true;
+        ram.frozen = false;
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
