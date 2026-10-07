@@ -185,7 +185,7 @@ struct RenderState {
     bool depth_test = true, depth_write = true;
     std::int32_t depth_func = 3;
     bool cull_enabled{};
-    std::int32_t cull_mode = 1;
+    std::int32_t cull_mode = 0; // IG_GFX_CULL_FACE_MODE_BACK
     bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
     std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)

@@ -716,8 +716,10 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         else glDisable(GL_DEPTH_TEST);
         glDepthMask(s.depth_write ? GL_TRUE : GL_FALSE);
         if (s.cull_enabled) {
+            // IG_GFX_CULL_FACE_MODE (enum pairs at 0x8048F570): BACK = 0,
+            // FRONT = 1; front faces wind counter-clockwise as in OpenGL.
             glEnable(GL_CULL_FACE);
-            glCullFace(s.cull_mode == 0 ? GL_FRONT : s.cull_mode == 2 ? GL_FRONT_AND_BACK : GL_BACK);
+            glCullFace(s.cull_mode == 1 ? GL_FRONT : s.cull_mode == 2 ? GL_FRONT_AND_BACK : GL_BACK);
         } else {
             glDisable(GL_CULL_FACE);
         }

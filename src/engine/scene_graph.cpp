@@ -381,7 +381,7 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
     } else if (type == "igCullFaceAttr") {
         a->kind = AttrKind::cull_face;
         a->enabled = view.boolean(4);
-        a->e0 = view.i32(5, 1);
+        a->e0 = view.i32(5, 0); // 0 BACK, 1 FRONT (0x8048F570)
     } else if (type == "igLightingStateAttr") {
         a->kind = AttrKind::lighting_state;
         a->enabled = view.boolean(4);
