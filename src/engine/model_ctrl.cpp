@@ -256,8 +256,35 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
         return;
     }
     run_commands(engine, ram);
-    // 8030EA8C: the sequence-change hook (vtable +B8) checks sleep and stun.
-    if (ram.is_player || ram.category == "ENEMY") status_sequence_check(engine, ram);
+    // 8030EA8C: the sequence-change hook (vtable +B8) after the commands ran;
+    // a JUMP selects through the same path (8030BCB8 -> vtable +8C, 8030D910),
+    // so a jumped-to sequence runs the hook before the outer one does.
+    if (ram.is_player) player_sequence_hook(engine, ram);
+    else if (ram.category == "ENEMY") status_sequence_check(engine, ram);
+}
+
+// beNDMWMdlPlayer +B8 (8034E1B0): standing in SQ_WAIT, the player's number
+// icon i_pcnumic (SQ_OPENP<ram>) follows 480 frames later, 10 above the
+// model (SETEFFECT, ends with the sequence, attached); a hit, death, sleep
+// or stun (PanelCloseSeqList 804E2738) takes an open quick panel down; then
+// the status check (803AE1A4).
+void ModelCtrlManager::player_sequence_hook(Engine& engine, ModelRam& ram) {
+    if (ram.seq_name == "SQ_WAIT") {
+        Packet effect;
+        effect.strings.emplace_back("i_pcnumic");
+        effect.strings.emplace_back("SQ_OPENP" + std::to_string(ram.index));
+        effect.floats.push_back(480.0f);       // 80457290
+        effect.vectors.push_back({0, 10, 0});  // 80456F68 / 80457294
+        effect.bools = {1, 1};
+        engine.messenger().send(engine, "MODELCTRL", ram.info_name, ram.index, "SETEFFECT", effect);
+    }
+    static constexpr std::string_view kPanelClose[] = {"SQ_SDMG", "SQ_MDMG", "SQ_LDMG", "SQ_DDMG", "SQ_DEAD", "SQ_SLEP", "SQ_STUN"};
+    if (ram.panel_open && std::find(std::begin(kPanelClose), std::end(kPanelClose), ram.seq_name) != std::end(kPanelClose)) {
+        ram.panel_open = false;
+        Packet remove;
+        engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
+    }
+    status_sequence_check(engine, ram);
 }
 
 void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {

@@ -1190,6 +1190,8 @@ private:
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
     void run_commands(Engine& engine, ModelRam& ram);
+    // The player's sequence-change hook (beNDMWMdlPlayer vtable +B8).
+    void player_sequence_hook(Engine& engine, ModelRam& ram);
     // Status effects (status.cpp).
     bool status_command(Engine& engine, ModelRam& ram, std::string_view command, Packet& packet);
     void update_status(Engine& engine, ModelRam& ram);
