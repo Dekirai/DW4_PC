@@ -1745,16 +1745,15 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     int box = -1;
     for (const auto& [lo, hi] : ram.hit->boxes) {
         ++box;
-        // General AABox transform (80122D04): bounds of the eight transformed corners.
-        Vec3f wmin{1e30f, 1e30f, 1e30f}, wmax{-1e30f, -1e30f, -1e30f};
-        for (int corner = 0; corner < 8; ++corner) {
-            const Vec3f c{corner & 1 ? hi.x : lo.x, corner & 2 ? hi.y : lo.y, corner & 4 ? hi.z : lo.z};
-            const Vec3f w{c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0),
-                          c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1),
-                          c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
-            wmin = {std::min(wmin.x, w.x), std::min(wmin.y, w.y), std::min(wmin.z, w.z)};
-            wmax = {std::max(wmax.x, w.x), std::max(wmax.y, w.y), std::max(wmax.z, w.z)};
-        }
+        // 80307EAC (from 8030E6A4): the root matrix moves only the box centre
+        // (80122D04 on the box, then its centre); the authored half extents
+        // are put back around it, so turning or scaling does not grow it.
+        const Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        const Vec3f half{(hi.x - lo.x) * 0.5f, (hi.y - lo.y) * 0.5f, (hi.z - lo.z) * 0.5f};
+        const Vec3f w{c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0),
+                      c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1),
+                      c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
+        const Vec3f wmin{w.x - half.x, w.y - half.y, w.z - half.z}, wmax{w.x + half.x, w.y + half.y, w.z + half.z};
         if (trace) {
             char line[160];
             std::snprintf(line, sizeof line, "  body (%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f)", wmin.x, wmin.y, wmin.z, wmax.x, wmax.y, wmax.z);
