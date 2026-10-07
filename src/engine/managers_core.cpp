@@ -361,6 +361,18 @@ void set_rotation(Mat4& m, const Vec4f& q) {
 // SHK direction tables (804DD8D8 / 804DD8FC), indexed by pattern digit.
 constexpr float kShakeX[9] = {0, 0, 1, 1, 1, 0, -1, -1, -1};
 constexpr float kShakeY[9] = {0, 1, 1, 0, -1, -1, -1, 0, 1};
+
+// 802F414C copies the igCamera's _horizontalFieldOfView (+2C), _nearPlane
+// (+30; 0 means far / 1000, 80425320) and _farPlane (+34) into the viewer;
+// 8040B834 passes them to setPerspective 801DB6E4 with the vertical field of
+// view unset (-1.0, 80462E28), so the horizontal one is kept for the 640x448
+// viewer window (8028BB10/8028BB18). The video copy stretches the 448 lines
+// to the 480-line picture, the same NDC as a 640x480 viewport.
+Mat4 camera_projection(float fov_x_degrees, float near_plane, float far_plane) {
+    if (near_plane == 0.0f) near_plane = far_plane / 1000.0f;
+    return perspective_horizontal(fov_x_degrees * std::numbers::pi_v<float> / 180.0f, 640.0f / 448.0f, near_plane,
+                                  far_plane);
+}
 } // namespace
 
 // 802F2BC0: the box camera. The pivot stands at the players' centre; the
@@ -542,7 +554,7 @@ void CameraManager::update(Engine& engine) {
 }
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
-    camera.projection = perspective(54.4322f * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, 10.0f, 2000.0f);
+    camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
     // A running demo camera info takes over from the stage camera.
     const CameraRam* demo_info = nullptr;
@@ -574,10 +586,12 @@ void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
             world = (node->sequence && node->sequence->valid ? node->sequence->evaluate(at) : node->matrix) * world;
         }
         if (path.camera) {
-            const float fov = path.camera->object.f32(8, 54.4322f);
+            // igCamera fields (804B0F14): _horizontalFieldOfView (default 45,
+            // 80566CD4), _nearPlane, _farPlane.
+            const float fov = path.camera->object.f32(8, 45.0f);
             const float near_plane = path.camera->object.f32(9, 10.0f);
             const float far_plane = path.camera->object.f32(10, 2000.0f);
-            camera.projection = perspective(fov * std::numbers::pi_v<float> / 180.0f, 4.0f / 3.0f, near_plane, far_plane);
+            camera.projection = camera_projection(fov, near_plane, far_plane);
         }
         // Without box data: follow the first player with the authored angle
         // and distance.

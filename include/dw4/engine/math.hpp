@@ -68,6 +68,11 @@ Mat4 quaternion_matrix(float x, float y, float z, float w);
 // Right-handed perspective in OpenGL clip space, row-vector layout.
 Mat4 perspective(float fov_y_radians, float aspect, float near_plane, float far_plane);
 
+// The same from a horizontal field of view, as Alchemy's setPerspective
+// (801DB6E4) builds it when the vertical one is not set: the width keeps
+// tan(fov_x / 2), the height follows as tan(fov_y / 2) = tan(fov_x / 2) / aspect.
+Mat4 perspective_horizontal(float fov_x_radians, float aspect, float near_plane, float far_plane);
+
 // Right-handed look-at view matrix in row-vector layout.
 Mat4 look_at(const Vec3f& eye, const Vec3f& target, const Vec3f& up);
 

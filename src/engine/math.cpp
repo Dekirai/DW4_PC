@@ -58,6 +58,10 @@ Mat4 perspective(float fov_y, float aspect, float n, float f) {
     return r;
 }
 
+Mat4 perspective_horizontal(float fov_x, float aspect, float n, float f) {
+    return perspective(2.0f * std::atan(std::tan(fov_x * 0.5f) / aspect), aspect, n, f);
+}
+
 Mat4 look_at(const Vec3f& eye, const Vec3f& target, const Vec3f& up) {
     const Vec3f zaxis = normalize(eye - target);
     const Vec3f xaxis = normalize(cross(up, zaxis));
