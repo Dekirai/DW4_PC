@@ -140,15 +140,18 @@ void main() {
     vec4 c = v_color;
     if (u_use_tex != 0) c *= texture(u_tex, v_uv);
     c *= u_modulate;
-    float a = c.a;
+    // GX alpha compare (800F8FB0): the 8-bit TEV alpha against the 8-bit
+    // reference (int)(255.0 * ref); IG functions map 1:1 (table 0x80490530).
+    float a = floor(c.a * 255.0 + 0.5);
+    float r = floor(u_alpha_ref * 255.0);
     bool pass = true;
     if (u_alpha_func == 0) pass = false;
-    else if (u_alpha_func == 1) pass = a < u_alpha_ref;
-    else if (u_alpha_func == 2) pass = abs(a - u_alpha_ref) < 0.002;
-    else if (u_alpha_func == 3) pass = a <= u_alpha_ref;
-    else if (u_alpha_func == 4) pass = a > u_alpha_ref;
-    else if (u_alpha_func == 5) pass = abs(a - u_alpha_ref) >= 0.002;
-    else if (u_alpha_func == 6) pass = a >= u_alpha_ref;
+    else if (u_alpha_func == 1) pass = a < r;
+    else if (u_alpha_func == 2) pass = a == r;
+    else if (u_alpha_func == 3) pass = a <= r;
+    else if (u_alpha_func == 4) pass = a > r;
+    else if (u_alpha_func == 5) pass = a != r;
+    else if (u_alpha_func == 6) pass = a >= r;
     if (!pass) discard;
     // Shadow map pass: casters are black on the white map.
     if (u_shadow_pass != 0) { o_color = vec4(0.0, 0.0, 0.0, 1.0); return; }

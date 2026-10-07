@@ -179,9 +179,17 @@ struct RenderState {
     bool texture_enabled{};
     bool blend_enabled{};
     std::int32_t blend_src = 1, blend_dst = 0, blend_equation = 0;
-    bool alpha_test{};
-    std::int32_t alpha_func = 7;
-    float alpha_ref{};
+    // The original's GX alpha compare is in effect GREATER 0.1 wherever no
+    // igAlphaStateAttr / igAlphaFunctionAttr says otherwise. Deferred render
+    // packages record only attributes that differ from the stack defaults
+    // (801D44A8 via 80205FAC), so the window particle layer's GREATER 0.1
+    // (WN04 attr set of every stage) stays set in the GX context for later
+    // packages: with the compare forced off (flag 0x8056350D read at
+    // 0x800F8F4C) Dolphin shows the fade steps at alpha <= 25/255, the font
+    // fringes and, behind the j_digifacewin portrait, the 3D background.
+    bool alpha_test = true;
+    std::int32_t alpha_func = 4; // IG_GFX_ALPHA_FUNCTION_GREATER
+    float alpha_ref = 0.1f;
     bool depth_test = true, depth_write = true;
     std::int32_t depth_func = 3;
     bool cull_enabled{};
