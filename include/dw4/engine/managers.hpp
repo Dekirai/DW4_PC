@@ -20,6 +20,8 @@ struct Record;
 
 namespace dw4::engine {
 
+struct CardIo; // save_menu.hpp
+
 void register_default_managers(Engine& engine);
 
 // Game text: bytes with the high bit set pair into Shift JIS codes that the
@@ -212,7 +214,16 @@ public:
     void update(Engine& engine) override;
 
 private:
-    struct LogoRam : Ram { int state{}; };
+    // CTRL data of 803B18BC: state / sub / step / substep ([4]..[7]), the
+    // card slot being checked (+44), the per-slot error flags (+72 / +76),
+    // whether a slot can hold the save (+56) and the card worker (+40).
+    struct LogoRam : Ram {
+        int state{}, sub{}, step{}, substep{};
+        int slot{};
+        std::array<std::uint32_t, 2> flags{};
+        bool usable{};
+        std::shared_ptr<CardIo> io;
+    };
     std::vector<std::unique_ptr<LogoRam>> rams_;
 };
 

@@ -707,22 +707,9 @@ bool SwitchCtrlManager::command(Engine& engine, Ram& ram, std::string_view comma
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// NDMW logo (803B18BC). The original first checks both memory card slots;
-// the PC build keeps saves beside the executable, so the check succeeds and
-// the controller proceeds to state 2, which runs logo.lua once.
-// ---------------------------------------------------------------------------
+// NDMW logo (803B18BC): title.cpp, next to the other card worker users.
 void LogoManager::add_info(Engine& engine, const ObjectView& info) { make_rams(engine, this, info, rams_, "LOGO"); }
 void LogoManager::clear_stage(Engine&) { rams_.clear(); }
-void LogoManager::update(Engine& engine) {
-    for (auto& ram : rams_) {
-        if (ram->state == 0) ram->state = 2;
-        if (ram->state == 2) {
-            engine.run_script("logo.lua");
-            ram->state = 3;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Sound / SE / movie requests
