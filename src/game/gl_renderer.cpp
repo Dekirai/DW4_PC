@@ -406,13 +406,47 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         glBindTexture(GL_TEXTURE_2D, t.id);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GLsizei(width), GLsizei(height), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        gl_->GenerateMipmap(GL_TEXTURE_2D);
+        // The GX texture object (800FE744) is mipmapped only when the texture
+        // carries mip images: GXInitTexObj(mipmap = count != 0) at 0x800FEDE4,
+        // GXInitTexObjLOD(max_lod = count) at 0x800FEE50. Without them GX
+        // samples level 0 only, whatever the min filter says. The game's IGBs
+        // never store mip images (igTextureAttr _imageCount 1, empty
+        // _imageMipMaps), so the original's textures stay sharp when shrunk.
+        int levels = 0;
+        if (!replaced) {
+            if (const auto mips = binding->texture.ref(16)) {
+                int w = width, h = height;
+                for (const auto& mip : mips.elements()) {
+                    if (!mip || (w <= 1 && h <= 1)) break;
+                    w = std::max(w / 2, 1), h = std::max(h / 2, 1);
+                    const auto level = decode_igb_texture(*mip.document(), mip.reference());
+                    if (int(level.width) != w || int(level.height) != h) break;
+                    glTexImage2D(GL_TEXTURE_2D, levels + 1, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, level.rgba.data());
+                    ++levels;
+                }
+            }
+        } else if (width > int(image.width) || height > int(image.height)) {
+            // A larger texture-pack replacement is not original data; mipmap
+            // it so it does not shimmer when drawn at the original size.
+            gl_->GenerateMipmap(GL_TEXTURE_2D);
+            levels = 1000;
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels);
         const auto& s = binding->sampler;
         auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : v == 2 ? GL_MIRRORED_REPEAT : GL_REPEAT; };
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap(s.wrap_s));
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap(s.wrap_t));
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, s.mag_filter == 0 ? GL_NEAREST : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, s.min_filter == 0 ? GL_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
+        // IG_GFX_TEXTURE_FILTER: 0 NEAREST, 1 LINEAR, 2 NEAREST_MIPMAP_NEAREST,
+        // 3 NEAREST_MIPMAP_LINEAR, 4 LINEAR_MIPMAP_NEAREST, 5 LINEAR_MIPMAP_LINEAR
+        // (min -> GX table 0x80414A40, mag table 0x80414A58 = nearest for 0/2/3).
+        static const GLenum min_filters[] = {GL_NEAREST, GL_LINEAR, GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST_MIPMAP_LINEAR,
+                                             GL_LINEAR_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_LINEAR};
+        const bool mag_nearest = s.mag_filter == 0 || s.mag_filter == 2 || s.mag_filter == 3;
+        GLenum min_filter = s.min_filter >= 0 && s.min_filter < 6 ? min_filters[s.min_filter] : GL_LINEAR;
+        if (replaced && levels) min_filter = GL_LINEAR_MIPMAP_LINEAR;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_nearest ? GL_NEAREST : GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
     } catch (const std::exception& error) {
         std::cerr << "texture decode failed: " << error.what() << '\n';
         t.id = 0;
