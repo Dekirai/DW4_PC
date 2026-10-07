@@ -101,17 +101,37 @@ struct NodeAnim {
     bool finished() const { return play_limit < played; }    // 80311674
 };
 
+// igTransformSequence1_5 (time 80209B74, blend 80209578, single key 80208084)
+// and igCompressedAnimationSequenceQS (time 801E2FF0, keys 801E32B8),
+// evaluated into a local matrix.
 struct TransformSequence {
+    // _drivenChannels (+0x48, QS +0x38; enum DRIVEN_CHANNEL 804AB6D0).
+    enum Channel : std::uint8_t { translation = 1, quaternion = 2, euler = 4, scale = 8 };
+    // _interpolationMethod (+0x49..+0x4B, QS +0x39..+0x3B) for T, R, S
+    // (enum INTERPOLATION_METHOD 804AB700).
+    enum Method : std::uint8_t { none = 0, linear = 1, bezier = 2, slerp = 3 };
+    // _playMode (+0x24, QS +0x30; enum PLAY_MODE 804AB758).
+    enum PlayMode : std::int32_t { repeat = 0, clamp = 1, bounce = 2, loop = 3 };
     std::vector<Vec3f> translations;
-    std::vector<Vec4f> rotations;
+    std::vector<Vec4f> rotations; // quaternions, or Euler degrees in xyz
     std::vector<Vec3f> scales;
+    // _interpolationData{Translation,Rotation,Scale}: two Bezier control
+    // points per key.
+    std::vector<Vec3f> translation_tangents, rotation_tangents, scale_tangents;
     std::vector<std::int64_t> times; // nanoseconds
-    std::uint32_t driven_channels{};
-    std::int32_t play_mode{};
+    std::uint8_t driven_channels = translation | quaternion | scale;
+    std::uint8_t methods[3]{linear, linear, linear};
+    std::int32_t play_mode = repeat;
+    bool uniform{};    // _uniformTimeEnabled (+0x20): times[0] is the key spacing
+    bool compressed{}; // QS: no time offset, Euler, centre or scale channel
     std::int64_t time_offset{}, duration{};
     Vec3f center{};
     bool valid{};
     Mat4 evaluate(std::int64_t time) const;
+    // One key without interpolation (80208084; QS 801E32B8 outside the keys).
+    Mat4 key(std::size_t index) const;
+    // Keys i and j blended by alpha (80209578; QS 801E32B8).
+    Mat4 blend(std::size_t i, std::size_t j, float alpha) const;
 };
 
 // Runtime mirror of one serialized igNode. Shared DAG nodes stay shared, so a

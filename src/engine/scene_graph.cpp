@@ -1,7 +1,10 @@
 #include "dw4/engine/scene_graph.hpp"
 #include "dw4/engine/particles.hpp"
+#include "dw4/animation_math.hpp"
+#include "dw4/motion.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 
@@ -10,24 +13,96 @@ namespace {
 
 constexpr std::uint32_t kNullRef = 0xffffffffu;
 
-Vec3f lerp(const Vec3f& a, const Vec3f& b, float t) { return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t}; }
+// 8012D3F4: a + t * (b - a) per component.
+Vec3f lerp(const Vec3f& a, const Vec3f& b, float t) { return {t * (b.x - a.x) + a.x, t * (b.y - a.y) + a.y, t * (b.z - a.z) + a.z}; }
 
-Vec4f slerp(Vec4f a, Vec4f b, float t) {
-    float d = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-    if (d < 0) { b = {-b.x, -b.y, -b.z, -b.w}; d = -d; }
-    float wa, wb;
-    if (d > 0.9995f) { wa = 1 - t; wb = t; }
-    else {
-        const float angle = std::acos(std::clamp(d, -1.0f, 1.0f));
-        const float s = std::sin(angle);
-        wa = std::sin((1 - t) * angle) / s;
-        wb = std::sin(t * angle) / s;
-    }
-    Vec4f r{a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
-    const float l = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
-    if (l > 0) { r.x /= l; r.y /= l; r.z /= l; r.w /= l; }
-    return r;
+// 8012D59C: cubic Bezier from p0 to p1 with control points c0, c1, built from
+// six 8012D3F4 steps (de Casteljau).
+Vec3f bezier(const Vec3f& p0, const Vec3f& c0, const Vec3f& c1, const Vec3f& p1, float t) {
+    const Vec3f a = lerp(p0, c0, t), b = lerp(c0, c1, t), c = lerp(c1, p1, t);
+    return lerp(lerp(a, b, t), lerp(b, c, t), t);
 }
+
+// 8012C15C: linear blend on the shorter arc (b negated when the dot product
+// is below 0), then normalized; no spherical weights.
+Vec4f nlerp(const Vec4f& a, Vec4f b, float t) {
+    if (a.w * b.w + (a.z * b.z + (a.x * b.x + a.y * b.y)) < 0.0f) b = {-b.x, -b.y, -b.z, -b.w};
+    const float s = 1.0f - t;
+    const Vec4f r{s * a.x + t * b.x, s * a.y + t * b.y, s * a.z + t * b.z, s * a.w + t * b.w};
+    float length = r.w * r.w + (r.z * r.z + (r.x * r.x + r.y * r.y));
+    if (length > 0.0f) length = std::sqrt(length);
+    const float inverse = 1.0f / length;
+    return {r.x * inverse, r.y * inverse, r.z * inverse, r.w * inverse};
+}
+
+// 8012BE90 (dw4::original_interpolate_rotation): polynomial slerp, nothing
+// normalized. Its native boundary rejects non-finite input; such keys keep
+// the first quaternion instead of throwing out of the frame.
+Vec4f alchemy_slerp(const Vec4f& a, const Vec4f& b, float t) {
+    try {
+        const auto r = original_interpolate_rotation({a.x, a.y, a.z, a.w}, {b.x, b.y, b.z, b.w}, std::clamp(t, 0.0f, 1.0f));
+        return {r[0], r[1], r[2], r[3]};
+    } catch (const std::exception&) {
+        return a;
+    }
+}
+
+// 8012BBF4: quaternion (x, y, z, w) to a rotation matrix with zero
+// translation. Row vectors as everywhere in Alchemy; this is the transpose of
+// quaternion_matrix (math.cpp), with the signs of 8012BCDC / skinning.cpp.
+Mat4 alchemy_quaternion_matrix(const Vec4f& q) {
+    const float x2 = 2.0f * q.x, y2 = 2.0f * q.y, z2 = 2.0f * q.z;
+    Mat4 m;
+    m(0, 0) = 1.0f - (y2 * q.y + z2 * q.z);
+    m(0, 1) = y2 * q.x - z2 * q.w;
+    m(0, 2) = z2 * q.x + y2 * q.w;
+    m(1, 0) = y2 * q.x + z2 * q.w;
+    m(1, 1) = 1.0f - (x2 * q.x + z2 * q.z);
+    m(1, 2) = z2 * q.y - x2 * q.w;
+    m(2, 0) = z2 * q.x - y2 * q.w;
+    m(2, 1) = z2 * q.y + x2 * q.w;
+    m(2, 2) = 1.0f - (x2 * q.x + y2 * q.y);
+    return m;
+}
+
+// 801292D4 (dw4::original_model_turn_basis): Rx * Ry * Rz of radians.
+Mat4 alchemy_euler_matrix(const Vec3f& radians) {
+    Mat4 m;
+    try {
+        original_model_turn_basis(m.m, {radians.x, radians.y, radians.z});
+    } catch (const std::exception&) {
+        m = Mat4{};
+    }
+    return m;
+}
+
+// The original converts 64-bit nanosecond spans to float through bits
+// 18..49 (rotlwi/insrwi, then the 0x43300000 double trick, 80566D08).
+float coarse_time(std::int64_t ns) { return static_cast<float>(static_cast<std::uint32_t>(static_cast<std::uint64_t>(ns) >> 18)); }
+
+// Key blend factor: numerator / denominator, 0 below 1e-6 (80566D4C, 80566CA0).
+float blend_ratio(std::int64_t numerator, std::int64_t denominator) {
+    const float d = coarse_time(denominator);
+    return d >= 1e-6f ? coarse_time(numerator) / d : 0.0f;
+}
+
+template <class T>
+T key_at(const std::vector<T>& list, std::size_t i, const T& fallback) {
+    return list.empty() ? fallback : list[std::min(i, list.size() - 1)];
+}
+
+// One vec3 channel from key a (index i) to key b: NONE = key a, LINEAR =
+// 8012D3F4, otherwise BEZIER = 8012D59C with the control points 2i and 2i+1
+// of the channel's _interpolationData list (802094B8 and the rotation /
+// scale parts of 80209578).
+Vec3f blend_vec3(std::uint8_t method, const Vec3f& a, const Vec3f& b, const std::vector<Vec3f>& tangents,
+                 std::size_t i, float alpha) {
+    if (method == TransformSequence::none) return a;
+    if (method == TransformSequence::linear || 2 * i + 1 >= tangents.size()) return lerp(a, b, alpha);
+    return bezier(a, tangents[2 * i], tangents[2 * i + 1], b, alpha);
+}
+
+Vec3f xyz(const Vec4f& v) { return {v.x, v.y, v.z}; }
 
 std::vector<Vec3f> vec3_list(const ObjectView& list) {
     std::vector<Vec3f> out;
@@ -104,6 +179,13 @@ std::shared_ptr<TransformSequence> compressed_sequence(const ObjectView& input) 
     }
     seq->duration = input.i64(9);
     seq->play_mode = input.i32(10);
+    // _drivenChannels (+0x38, slot 12: 1 translation, 2 quaternion) and
+    // _interpolationMethod (+0x39..+0x3B, slot 13).
+    seq->compressed = true;
+    const auto channels = input.raw(12);
+    seq->driven_channels = channels.empty() ? std::uint8_t(TransformSequence::translation | TransformSequence::quaternion) : channels[0];
+    const auto methods = input.raw(13);
+    for (std::size_t k = 0; k < 3 && k < methods.size(); ++k) seq->methods[k] = methods[k];
     seq->valid = !seq->times.empty();
     return seq;
 }
@@ -263,38 +345,164 @@ std::int64_t NodeAnim::time(std::int64_t now) {
     return t;
 }
 
-Mat4 TransformSequence::evaluate(std::int64_t time) const {
-    if (!valid || times.empty()) return Mat4{};
-    std::int64_t t = time - time_offset;
-    const std::int64_t span = duration > 0 ? duration : times.back();
-    if (span > 0) {
-        if (play_mode == 0) {
-            t %= span;
-            if (t < 0) t += span;
+namespace {
+
+// pi / 180 as loaded by 80208084 / 80209578 (80566D3C).
+constexpr float kDegreesToRadians = 0.0174532925f;
+static_assert(std::bit_cast<std::uint32_t>(kDegreesToRadians) == 0x3C8EFA35u);
+
+// The tail of 80208084 / 80209578. A rotated matrix turns about _center:
+// translation = centre - centre * R (8012D434). The translation channel then
+// adds its key, and the scale channel scales rows 0..2 (80128F88), so the
+// scale applies before the rotation and does not scale the centre term.
+void turn_about_center(Mat4& m, const Vec3f& center) {
+    const Vec3f turned{center.x * m(0, 0) + center.y * m(1, 0) + center.z * m(2, 0),
+                       center.x * m(0, 1) + center.y * m(1, 1) + center.z * m(2, 1),
+                       center.x * m(0, 2) + center.y * m(1, 2) + center.z * m(2, 2)};
+    m(3, 0) = center.x - turned.x;
+    m(3, 1) = center.y - turned.y;
+    m(3, 2) = center.z - turned.z;
+}
+
+void add_translation(Mat4& m, const Vec3f& t) {
+    m(3, 0) += t.x;
+    m(3, 1) += t.y;
+    m(3, 2) += t.z;
+}
+
+void scale_rows(Mat4& m, const Vec3f& s) {
+    for (int c = 0; c < 4; ++c) {
+        m(0, c) *= s.x;
+        m(1, c) *= s.y;
+        m(2, c) *= s.z;
+    }
+}
+
+} // namespace
+
+Mat4 TransformSequence::key(std::size_t index) const {
+    Mat4 m;
+    if (compressed) {
+        // 801E32B8 before the first / after the last key: 8012BBF4 of the
+        // raw key, then 80128D90 sets the translation.
+        if (driven_channels & quaternion) m = alchemy_quaternion_matrix(key_at(rotations, index, Vec4f{0, 0, 0, 1}));
+        if (driven_channels & translation) {
+            const Vec3f t = key_at(translations, index, Vec3f{});
+            m(3, 0) = t.x;
+            m(3, 1) = t.y;
+            m(3, 2) = t.z;
+        }
+        return m;
+    }
+    // 80208084: the stored key (quaternions are not normalized).
+    if (driven_channels & quaternion) {
+        m = alchemy_quaternion_matrix(key_at(rotations, index, Vec4f{0, 0, 0, 1}));
+        turn_about_center(m, center);
+    } else if (driven_channels & euler) {
+        m = alchemy_euler_matrix(xyz(key_at(rotations, index, Vec4f{})) * kDegreesToRadians);
+        turn_about_center(m, center);
+    }
+    if (driven_channels & translation) add_translation(m, key_at(translations, index, Vec3f{}));
+    if (driven_channels & scale) scale_rows(m, key_at(scales, index, Vec3f{1, 1, 1}));
+    return m;
+}
+
+Mat4 TransformSequence::blend(std::size_t i, std::size_t j, float alpha) const {
+    Mat4 m;
+    if (driven_channels & quaternion) {
+        // 80209858 / QS 801E36F0: NONE = key i, SLERP = 8012BE90, otherwise
+        // (LINEAR, BEZIER) the normalized linear blend 8012C15C.
+        const Vec4f a = key_at(rotations, i, Vec4f{0, 0, 0, 1});
+        Vec4f q = a;
+        if (methods[1] == slerp) q = alchemy_slerp(a, key_at(rotations, j, Vec4f{0, 0, 0, 1}), alpha);
+        else if (methods[1] != none) q = nlerp(a, key_at(rotations, j, Vec4f{0, 0, 0, 1}), alpha);
+        m = alchemy_quaternion_matrix(q);
+        if (!compressed) turn_about_center(m, center);
+    } else if ((driven_channels & euler) && !compressed) {
+        // Euler degrees, interpolated like a vec3 channel (method +0x4A).
+        const Vec3f e = blend_vec3(methods[1], xyz(key_at(rotations, i, Vec4f{})), xyz(key_at(rotations, j, Vec4f{})),
+                                   rotation_tangents, i, alpha);
+        m = alchemy_euler_matrix(e * kDegreesToRadians);
+        turn_about_center(m, center);
+    }
+    if (driven_channels & translation) {
+        // 802094B8 / QS 801E3C20. This QS version serializes no translation
+        // control points (no +0x40 list), so its BEZIER falls back to LINEAR.
+        const Vec3f t = blend_vec3(methods[0], key_at(translations, i, Vec3f{}), key_at(translations, j, Vec3f{}),
+                                   translation_tangents, i, alpha);
+        if (compressed) {
+            m(3, 0) = t.x;
+            m(3, 1) = t.y;
+            m(3, 2) = t.z;
         } else {
-            t = std::clamp<std::int64_t>(t, 0, span);
+            add_translation(m, t);
         }
     }
-    std::size_t i = 0;
-    while (i + 1 < times.size() && times[i + 1] <= t) ++i;
-    float alpha = 0;
-    std::size_t j = i;
-    if (i + 1 < times.size() && times[i + 1] > times[i]) {
-        j = i + 1;
-        alpha = std::clamp(static_cast<float>(double(t - times[i]) / double(times[j] - times[i])), 0.0f, 1.0f);
-    }
-    Vec3f translate{};
-    Vec4f rotate{0, 0, 0, 1};
-    Vec3f scale{1, 1, 1};
-    if (!translations.empty()) translate = lerp(translations[std::min(i, translations.size() - 1)], translations[std::min(j, translations.size() - 1)], alpha);
-    if (!rotations.empty()) rotate = slerp(rotations[std::min(i, rotations.size() - 1)], rotations[std::min(j, rotations.size() - 1)], alpha);
-    if (!scales.empty()) scale = lerp(scales[std::min(i, scales.size() - 1)], scales[std::min(j, scales.size() - 1)], alpha);
-    Mat4 m = translation(-center.x, -center.y, -center.z) * scaling(scale.x, scale.y, scale.z) *
-             quaternion_matrix(rotate.x, rotate.y, rotate.z, rotate.w) * translation(center.x, center.y, center.z);
-    m(3, 0) += translate.x;
-    m(3, 1) += translate.y;
-    m(3, 2) += translate.z;
+    if ((driven_channels & scale) && !compressed)
+        scale_rows(m, blend_vec3(methods[2], key_at(scales, i, Vec3f{1, 1, 1}), key_at(scales, j, Vec3f{1, 1, 1}),
+                                 scale_tangents, i, alpha));
     return m;
+}
+
+// 80209B74 (igTransformSequence1_5) and 801E2FF0 (QS): the sequence time is
+// time - _keyframeTimeOffset (QS: no offset). Inside [first key, first key +
+// _animationDuration] the time is used as is, so the end itself evaluates the
+// last key; the play mode applies only beyond the end: REPEAT and LOOP wrap
+// by the duration, BOUNCE runs back on odd passes, CLAMP holds the last key.
+// Before the first key (or for an unknown play mode) key 0 applies. Between
+// the last key and the end, LOOP blends the last key into key 0; the other
+// modes hold the last key.
+Mat4 TransformSequence::evaluate(std::int64_t time) const {
+    if (!valid || times.empty()) return Mat4{};
+    const std::size_t count = times.size();
+    const std::int64_t t = compressed ? time : time - time_offset;
+    std::int64_t first = times.front(), last = times.back(), end = first + duration;
+    if (uniform && !compressed) {
+        // _uniformTimeEnabled: keys every times[0] from 0; the last key time
+        // counts the _quatList keys (80209BFC).
+        first = 0;
+        last = times.front() * (static_cast<std::int64_t>(rotations.size()) - 1);
+        end = duration;
+    }
+    // 80209C58: no duration evaluates key 0. (QS has no such test; its
+    // division by a zero duration is undefined, so it gets the same answer.)
+    if (duration == 0) return key(0);
+    std::int64_t at = t;
+    if (t > end) {
+        const std::int64_t passes = (t - first) / duration, rest = (t - first) % duration; // 802077D0
+        switch (play_mode) {
+        case bounce: at = (passes & 1) ? end - rest : first + rest; break;
+        case repeat:
+        case loop: at = first + rest; break;
+        case clamp: return key(count - 1);
+        default: return key(0);
+        }
+    } else if (t < first) {
+        return key(0);
+    }
+    if (at > last) {
+        if (play_mode != loop) return key(count - 1);
+        if (uniform && !compressed) {
+            const float step = coarse_time(times.front());
+            const float alpha = step >= 1e-6f ? static_cast<float>(std::fmod(double(coarse_time(at)), double(step))) / step : 0.0f;
+            return blend(count - 1, 0, alpha);
+        }
+        return blend(count - 1, 0, blend_ratio(at - last, end - last));
+    }
+    if (uniform && !compressed) {
+        // 80209AC0: key index = truncated time / spacing, blend = the
+        // remainder (800A2CB4 fmod) / spacing.
+        const float step = coarse_time(times.front()), x = coarse_time(at);
+        if (!(step > 0.0f)) return key(0);
+        const auto i = static_cast<std::size_t>(std::max(0.0f, std::trunc(x / step)));
+        return blend(i, i + 1, static_cast<float>(std::fmod(double(x), double(step))) / step);
+    }
+    if (count < 2) return key(0);
+    // 80209900 / 801E34C8: the first key j >= 1 whose time is not before the
+    // sequence time; the blend runs from key j - 1.
+    std::size_t j = 1;
+    while (j + 1 < count && times[j] < at) ++j;
+    return blend(j - 1, j, blend_ratio(at - times[j - 1], times[j] - times[j - 1]));
 }
 
 bool Node::child_enabled(std::size_t index) const {
@@ -545,10 +753,16 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
             seq->translations = vec3_list(input.ref(2));
             seq->rotations = vec4_list(input.ref(3));
             seq->scales = vec3_list(input.ref(4));
+            seq->uniform = !input.raw(7).empty() && input.raw(7)[0] != 0;
             seq->play_mode = input.i32(8);
             seq->center = input.vec3(10).value_or(Vec3f{});
             seq->times = long_list(input.ref(11));
-            seq->driven_channels = input.raw(15).empty() ? 0u : input.raw(15)[0];
+            seq->translation_tangents = vec3_list(input.ref(12));
+            seq->rotation_tangents = vec3_list(input.ref(13));
+            seq->scale_tangents = vec3_list(input.ref(14));
+            seq->driven_channels = input.raw(15).empty() ? std::uint8_t(0) : input.raw(15)[0];
+            const auto methods = input.raw(16);
+            for (std::size_t k = 0; k < 3 && k < methods.size(); ++k) seq->methods[k] = methods[k];
             seq->time_offset = input.i64(17);
             seq->duration = input.i64(18);
             seq->valid = !seq->times.empty();
