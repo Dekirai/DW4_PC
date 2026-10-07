@@ -199,16 +199,27 @@ struct RenderState {
     bool texture_enabled{};
     bool blend_enabled{};
     std::int32_t blend_src = 1, blend_dst = 0, blend_equation = 0;
-    bool alpha_test{};
-    std::int32_t alpha_func = 7;
-    float alpha_ref{};
+    // The original's GX alpha compare is in effect GREATER 0.1 wherever no
+    // igAlphaStateAttr / igAlphaFunctionAttr says otherwise. Deferred render
+    // packages record only attributes that differ from the stack defaults
+    // (801D44A8 via 80205FAC), so the window particle layer's GREATER 0.1
+    // (WN04 attr set of every stage) stays set in the GX context for later
+    // packages: with the compare forced off (flag 0x8056350D read at
+    // 0x800F8F4C) Dolphin shows the fade steps at alpha <= 25/255, the font
+    // fringes and, behind the j_digifacewin portrait, the 3D background.
+    bool alpha_test = true;
+    std::int32_t alpha_func = 4; // IG_GFX_ALPHA_FUNCTION_GREATER
+    float alpha_ref = 0.1f;
     bool depth_test = true, depth_write = true;
     std::int32_t depth_func = 3;
     bool cull_enabled{};
-    std::int32_t cull_mode = 1;
+    std::int32_t cull_mode = 0; // IG_GFX_CULL_FACE_MODE_BACK
     bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
     std::optional<Vec4f> modulate; // runtime ACTION2 color (multiplied)
+    // Set by runtime ACTION2 overrides: deeper attributes of the kind no
+    // longer change the value (override push, 801D5190).
+    bool texture_forced{}, lighting_forced{}, blend_forced{};
     // igTransform flag 8: the transform (sequence) applies to the texture coordinates.
     std::optional<Mat4> texture_matrix;
     Vec4f diffuse{1, 1, 1, 1}, ambient{0.2f, 0.2f, 0.2f, 1}, emission{0, 0, 0, 1};

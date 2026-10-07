@@ -589,7 +589,7 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
     } else if (type == "igCullFaceAttr") {
         a->kind = AttrKind::cull_face;
         a->enabled = view.boolean(4);
-        a->e0 = view.i32(5, 1);
+        a->e0 = view.i32(5, 0); // 0 BACK, 1 FRONT (0x8048F570)
     } else if (type == "igLightingStateAttr") {
         a->kind = AttrKind::lighting_state;
         a->enabled = view.boolean(4);
@@ -848,7 +848,7 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         if (a->unit == 0) s.texture = a;
         break;
     case AttrKind::texture_state:
-        if (a->unit == 0) s.texture_enabled = a->enabled;
+        if (a->unit == 0 && !s.texture_forced) s.texture_enabled = a->enabled;
         break;
     case AttrKind::color: s.color = a->color; break;
     case AttrKind::material:
@@ -861,7 +861,9 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         s.blend_dst = a->e1;
         s.blend_equation = a->e2;
         break;
-    case AttrKind::blend_state: s.blend_enabled = a->enabled; break;
+    case AttrKind::blend_state:
+        if (!s.blend_forced) s.blend_enabled = a->enabled;
+        break;
     case AttrKind::alpha_function:
         s.alpha_func = a->e0;
         s.alpha_ref = a->f0;
@@ -874,7 +876,9 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         s.cull_enabled = a->enabled;
         s.cull_mode = a->e0;
         break;
-    case AttrKind::lighting_state: s.lighting = a->enabled; break;
+    case AttrKind::lighting_state:
+        if (!s.lighting_forced) s.lighting = a->enabled;
+        break;
     case AttrKind::light_state:
         if (a->enabled && a->light) s.lights.push_back(a->light);
         break;
@@ -894,20 +898,33 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
     }
 }
 
+// Runtime ACTION2 attributes. FADESET / FLASHSET append theirs to the
+// beModelCtrlNode2 attribute list (+0x88), which the node's traversal
+// (8030FAA4) pushes as overrides (801D5190: the stack keeps the outermost
+// override as its effective top), so deeper igTextureStateAttr /
+// igLightingStateAttr / igBlendStateAttr in the skin graphs cannot undo
+// them: the 4-frame FLASH draws the model untextured and unlit, white.
 void apply_overrides(const Node& n, RenderState& s) {
     if (n.color_override) {
         const auto c = *n.color_override;
         s.modulate = s.modulate ? Vec4f{s.modulate->x * c.x, s.modulate->y * c.y, s.modulate->z * c.z, s.modulate->w * c.w} : c;
     }
-    if (n.blend_override) {
+    if (n.blend_override && !s.blend_forced) {
         s.blend_enabled = *n.blend_override;
+        s.blend_forced = true;
         if (s.blend_enabled) {
             s.blend_src = 4;
             s.blend_dst = 5;
         }
     }
-    if (n.texture_override) s.texture_enabled = *n.texture_override;
-    if (n.lighting_override) s.lighting = *n.lighting_override;
+    if (n.texture_override && !s.texture_forced) {
+        s.texture_enabled = *n.texture_override;
+        s.texture_forced = true;
+    }
+    if (n.lighting_override && !s.lighting_forced) {
+        s.lighting = *n.lighting_override;
+        s.lighting_forced = true;
+    }
 }
 } // namespace
 
