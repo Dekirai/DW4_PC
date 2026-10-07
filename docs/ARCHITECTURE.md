@@ -127,7 +127,13 @@ and DEGISTATECTRL (`StatusWindow`) are separate classes.
 transforms with `igTransformSequence1_5` or the quantized
 `igCompressedAnimationSequenceQS` (keys base + value * range, key times
 `(value & 0x7FFF) << 23` ns), geometry, actors, LOD, billboards, blend/bone
-selects, `beModelCtrlNode2` with its scaled node clock). Managers
+selects, `beModelCtrlNode2` with its scaled node clock). Sequences are
+evaluated like 80209B74 / 80209578 (QS: 801E2FF0 / 801E32B8): only the
+`_drivenChannels` apply (translation, quaternion via the 8012BBF4 layout,
+Euler degrees via 801292D4, scale), each with its `_interpolationMethod`
+(step, linear, Bezier control points; quaternions 8012C15C or the 8012BE90
+slerp), and the play mode only beyond first key + `_animationDuration`, so
+the end time shows the last key. Managers
 change nodes through overrides (switch masks, colours, runtime text geometry,
 actor poses). Matrices are row-vector and share the column-major memory layout
 of the original. The GL renderer maps IGB attributes to fixed-function-like
