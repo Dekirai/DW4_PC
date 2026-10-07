@@ -392,6 +392,14 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
     auto& box = *ram.box;
     Node* eye = box.eyes[0];
     Node* target = box.targets[0];
+    // First run after SETBOXCAMERA (RAM +18 == 0): the players' centre is
+    // reset to (-1, -1, -1) (80425238) and the box (+4C) to 0, so the first
+    // box found is copied directly instead of blended.
+    if (ram.state == 0) {
+        centre_ = {-1.0f, -1.0f, -1.0f};
+        box_ = 0;
+        ram.state = 1;
+    }
     // PLAYER GETMATRIX: 2 players halve, 3 divide, 4 quarter, else the sum.
     std::vector<Vec3f> players;
     if (auto* models = engine.get<ModelCtrlManager>())
@@ -531,9 +539,11 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
         return true;
     }
     if (command == "SETBOXCAMERA") {
-        // 802F37AC case 5: the box camera runs again; every other camera
-        // stops. The viewer stays as it is until the box camera sets its own.
+        // 802F37AC case 5: the box camera runs again from a fresh state (+18
+        // and its work +1C..+24 cleared); every other camera stops. The
+        // viewer stays as it is until the box camera sets its own.
         ram.active = ram.box.has_value();
+        if (ram.box) ram.state = 0;
         ram.named_active = false;
         return true;
     }
