@@ -1167,6 +1167,12 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
 
 void ExploreBot::give_up(int frame) {
     platform_wait_since_ = -1;
+    // The way to the goal leads nowhere (a gate in front of it not open
+    // yet): the rest first for a while.
+    if (to_goal_) {
+        goal_first_failed_ = true;
+        goal_later_until_ = frame + 3000;
+    }
     if (target_) unreachable_[target_] = frame + 1800;
     if (!target_mat_.empty()) mat_skip_[target_mat_] = frame + 3000;
     if (!target_portal_.empty()) portals_taken_.insert(target_portal_);
@@ -1425,7 +1431,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || !target_radar_.empty() ||
-                         what_ == "explore" || what_.rfind("item", 0) == 0;
+                         to_goal_ || what_ == "explore" || what_.rfind("item", 0) == 0;
     if (watched && frame - watch.since > 600) {
         if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up %s\n", frame, what_.c_str());
         give_up(frame);
