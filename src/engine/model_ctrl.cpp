@@ -496,8 +496,13 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // 8034D61C player) installs a fresh info work at ONE+0x14 on every
         // GENERATE, so _isOnCtrl (+0x44) and _isOnFreeze start at their
         // defaults again (802C6D18), also after an OFCTRL before an erase.
+        // The SETLABEL/LABELCTRL lists (info +0x24/+0x28/+0x2C, 8030B014;
+        // read at a sequence start by 8030D084) start empty with it: a
+        // respawned player runs SQ_ENTR's unlabelled 'dual' section until the
+        // weapon's labels come with the posted PLAYERARMS GENERATE.
         ram.control_enabled = true;
         ram.frozen = false;
+        ram.labels.clear();
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
@@ -523,9 +528,6 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 if (auto* weapons = engine.get<WeaponManager>(); weapons && sys->direct_start)
                     for (const auto& weapon : slot.weapons)
                         if (!weapon.empty() && !weapons->labels(weapon)) engine.load_common_now("_common/" + weapon + ".igb");
-                if (auto* weapons = engine.get<WeaponManager>())
-                    if (const auto* rows = weapons->labels(stats.weapon_model))
-                        for (const auto& [sequence, label] : *rows) ram.labels[sequence] = label;
                 // 8034DC60: PLAYERARMS GENERATE of POWERSOCKETNAME[0] hangs the weapon on,
                 // posted (8030650C) so the weapon package is registered by then.
                 if (!slot.weapons[0].empty())
