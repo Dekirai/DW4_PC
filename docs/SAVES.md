@@ -100,6 +100,14 @@ PLAYERNAME is written in full-width forms (U+FF21.. = 'A'..), terminated by
 80364894 then refreshes the slot summary (ISUSE, LEVEL, HP, MHP, MP, MMP,
 digimon name, player name, UNIQUE) shown by the data select window.
 
+BASE_FLAG, BASE_FLAGFOLDER and BASE_COUNTER belong to each player. New
+player data (8036CE1C, GAMEDATAINIT) has BASE_FLAG[960] = 1 (a constant byte
+at 80561411; nothing reads it), so every character the game creates carries
+that byte at record offset 1752. BASE2CURRENT (8036DBA8) points the common
+FLAG, FLAGFOLDER and COUNTER, which the scripts change, at player 1's arrays;
+the other players keep their own, and each record is written from its own
+player (80364AEC).
+
 Packed device word (item class vtable +100 / +104): bits 0-9 record, bit 10
 equipped, bits 12-15 kind (+8), bits 16-19 rank (+0x18; a disk's count),
 bits 20-30 value (+0x14). Weapons and armor1 use every field, armor2 has no
