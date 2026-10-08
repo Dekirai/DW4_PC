@@ -2894,8 +2894,12 @@ struct ShopCtrl00 : Window {
             return;
         }
         if (state == 0) {
+            // 8039334C: the shop background, the player's full status page
+            // (beNDMWStatusTitle01 mode 0, 80393434: the values and their
+            // ONPREVIEW colours beside the lists), the message window, the
+            // account panel and the program title.
             add_child<ShopTitle00>(engine);
-            add_child<Title00>(engine);
+            add_status_page(*this, engine, 0);
             add_child<Title02>(engine);
             add_child<Title03>(engine);
             add_child<ShopTitle01>(engine).mode = mode;

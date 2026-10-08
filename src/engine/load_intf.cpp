@@ -215,6 +215,15 @@ std::optional<std::int32_t> DatabaseManager::number(std::string_view table, int 
     return std::nullopt;
 }
 
+bool DatabaseManager::has_column(std::string_view table, std::string_view column) const {
+    const auto found = tables_.find(table);
+    if (found == tables_.end()) return false;
+    for (const std::uint16_t names : {2, 4, 6, 10})
+        for (const auto& name : found->second.list(names))
+            if (name && name.str(2) == column) return true;
+    return false;
+}
+
 int DatabaseManager::find_row(std::string_view table, std::string_view column, std::string_view value) const {
     const auto found = tables_.find(table);
     if (found == tables_.end()) return -1;

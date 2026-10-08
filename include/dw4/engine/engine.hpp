@@ -333,6 +333,7 @@ private:
     void begin_stage_load();
     void load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred_infos);
     void register_info(const ObjectView& info);
+    void update_managers();
     void install_lua();
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
@@ -342,6 +343,18 @@ private:
     DemoManager demo_;
     SceneCache scenes_;
     std::vector<std::unique_ptr<Manager>> managers_;
+    // igSerialScheduler's active list (8028B7B0): the managers in the order
+    // their first info of the stage was accepted (802F251C -> 8028A398 ->
+    // 80041E40 append-unique); every stage clear unschedules them (802F2628).
+    // One entry per original manager: a port manager that stands for several
+    // (the beNDMWMdl* model classes) is scheduled once per slot.
+    struct Scheduled {
+        Manager* manager{};
+        int slot{};
+        bool operator==(const Scheduled&) const = default;
+    };
+    std::vector<Scheduled> schedule_;
+    std::vector<Scheduled> schedule_run_; // the copy one run walks (8028B7B0 -> +0x0C)
     std::vector<LoadedFile> files_;
     std::vector<std::shared_ptr<const IgbDocument>> retired_;
     std::vector<ObjectView> deferred_infos_;
@@ -384,6 +397,15 @@ public:
     virtual void add_info(Engine& engine, const ObjectView& info) = 0;
     virtual void clear_stage(Engine& engine) { (void)engine; }
     virtual void update(Engine& engine) { (void)engine; }
+    // Scheduled when the plugin registers it (+5C -> 8028A398), so it runs
+    // before every manager an info schedules and stays scheduled across
+    // stage clears (beSystem, bePadManager, beMessenger, ...).
+    virtual bool scheduled_at_registration() const { return false; }
+    // The original manager among those this one stands for that accepts the
+    // info (its schedule slot), and the update of that manager alone.
+    virtual int schedule_slot(const ObjectView& info) const { (void)info; return 0; }
+    virtual void update_slot(Engine& engine, int slot) { (void)slot; update(engine); }
+    virtual std::string slot_name(int slot) const { (void)slot; return type_name_; }
     virtual bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
         (void)engine; (void)ram; (void)command; (void)packet;
         return false;

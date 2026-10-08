@@ -788,6 +788,8 @@ public:
     std::string text(std::string_view table, int row, std::string_view column) const;
     // 8031F3CC / 8031F608: integer cell of a char, short, int or bool column.
     std::optional<std::int32_t> number(std::string_view table, int row, std::string_view column) const;
+    // The table exists and has that char, short, int or bool column (8031F54C finds it).
+    bool has_column(std::string_view table, std::string_view column) const;
     // First row whose string column equals value, or -1.
     int find_row(std::string_view table, std::string_view column, std::string_view value) const;
     // 8031F760: the row count, from the string cells per string column.
@@ -1025,6 +1027,12 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // Each model class (beNDMWMdlPlayer, ...Enemy, ...Object, 80346F74) is a
+    // manager of its own that accepts the infos of its KIND, so each is
+    // scheduled by its first info.
+    int schedule_slot(const ObjectView& info) const override;
+    void update_slot(Engine& engine, int slot) override;
+    std::string slot_name(int slot) const override;
     void install_actor_hook(Engine& engine, TraversalContext& context);
 
     struct Sequence {
@@ -1296,7 +1304,10 @@ private:
 // NDMWPANEL (beNDMWPanelWaza, vtable 804E71E8): the per-player quick panels
 // opened with R (techniques), L (disks) and Z (status), and Y's emergency
 // heal. A picks the line; the panel stays open for the next use after the
-// technique's DELAY (one second for disks).
+// technique's DELAY (one second for disks). Its info comes with the stage,
+// so it updates before beNDMWMdlPlayer (common file): a panel the player's
+// R/L/Z opens first updates in the next frame, without that trigger, and
+// the base it closes is removed by the next model update.
 class PanelManager final : public Manager {
 public:
     PanelManager() : Manager("beNDMWPanelWaza") {}
@@ -1409,6 +1420,7 @@ class GameSystem final : public Manager {
 public:
     bool accepts(const ObjectView&) const override { return false; }
     void add_info(Engine&, const ObjectView&) override {}
+    bool scheduled_at_registration() const override { return true; }
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
     // GAMERAM messages (803717A4); the row is registered again after each stage load.
     void update(Engine& engine) override;

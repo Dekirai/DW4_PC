@@ -2102,15 +2102,14 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
 }
 
 // ---------------------------------------------------------------------------
-// Managers update in the original scheduler order. Each plugin registers its
-// managers with the context (8028A268): the engine plugin 80318A24 (beSystem,
-// beMessenger, beDBManager, beLua, beDemoManager, ...), then the game plugin
-// 80346F74 (StageCtl, PanelWaza, Logo, Title2, ..., the model classes last).
-// A manager that gets an info schedules itself (8028A398 -> 8028B8C8), and
-// 80041E40 inserts it into the active list at its registration position.
-// So beAction2 runs before the models: a model's WCHECK Action sees an
-// action that finished its wait in the same frame. The messenger and the
-// demo manager run in Engine::step before these.
+// The managers in the plugins' registration order with the context
+// (8028A268): the engine plugin 80318A24 (beSystem, beMessenger, beDBManager,
+// beLua, beDemoManager, ...), then the game plugin 80346F74 (StageCtl,
+// PanelWaza, Logo, Title2, ..., the model classes last). The order only
+// decides which manager accepts an info and how the managers without an info
+// follow; the updates run in the scheduler order, by first info of the stage
+// (Engine::update_managers). The messenger and the demo manager run in
+// Engine::step before these.
 void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<GameSystem>());           // beSystem
     engine.add_manager(std::make_unique<DatabaseManager>());      // beDBManager
@@ -2139,8 +2138,6 @@ void register_default_managers(Engine& engine) {
     engine.add_manager(std::make_unique<TextureCtrlManager>());   // beTextureCtrl
     engine.add_manager(std::make_unique<SceneManager>());         // igSceneInfo (no update)
     engine.add_manager(std::make_unique<StageCtlManager>());      // beNDMWStageCtl
-    // The quick panels run before the models, so the opening trigger is not
-    // seen again by the panel in the frame the player opens it.
     engine.add_manager(std::make_unique<PanelManager>());         // beNDMWPanelWaza
     engine.add_manager(std::make_unique<LogoManager>());          // beNDMWLogo
     engine.add_manager(std::make_unique<Title2Manager>());        // beNDMWTitle2
