@@ -7,6 +7,7 @@
 #include "movie_decoder.hpp"
 #include "rvz.hpp"
 #include "settings.hpp"
+#include "campaign.hpp"
 #include "test_path.hpp"
 #include "texture_pack.hpp"
 
@@ -47,6 +48,7 @@ struct Options {
     std::string screenshot;
     std::vector<int> screenshot_frames;
     std::string input_script;
+    std::filesystem::path load_state; // --load-state FILE: start from a save state file
     bool overlay = true;
     std::vector<float> debug_camera; // eye xyz, target xyz
     std::vector<std::pair<int, int>> flags;
@@ -85,7 +87,8 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 // which steers player 1's stick toward world (x, z) relative to the camera, and
 // "frame SEEK duration [target]", which walks to the nearest pickup or live
 // enemy and presses A next to it (target: a model prefix first, mat:<name> a
-// route onto a mat, explore:<mat> play through the stage to that mat), and
+// route onto a mat, explore:<mat> play through the stage to that mat,
+// campaign: the story from a new game, src/game/campaign.cpp), and
 // "frame SEND CATEGORY COMMAND [argument]".
 struct ScriptedInput {
     void load(const std::string& path) {
@@ -858,6 +861,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_card_root(card_root);
             apply_gameplay(engine.cheats());
         };
+        // --load-state FILE: the run starts where that state was saved.
+        if (!options.load_state.empty()) {
+            state_slots[0] = read_state_file(options.load_state);
+            if (!state_slots[0]) throw std::runtime_error("unreadable state file " + options.load_state.string());
+            load_state(0);
+        }
+        // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
+        // (DIR/<frame>_<stage>.dw4state), for resuming long scripted runs.
+        const char* stage_states = std::getenv("DW4_STAGE_STATES");
         while (running) {
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
@@ -1076,7 +1088,28 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 }
                 std::uint32_t input = held | scripted.held(frame);
                 float stick_x = sx, stick_y = sy;
-                if (const auto* g = scripted.active_goto(frame); g && stick_x == 0 && stick_y == 0) {
+                if (const auto* g = scripted.active_goto(frame); g && g->seek && g->target == "campaign" && stick_x == 0 && stick_y == 0) {
+                    // SEEK campaign: the story from a new game (src/game/campaign.cpp).
+                    static dw4::game::CampaignBot campaign;
+                    auto* models = engine.get<dw4::engine::ModelCtrlManager>();
+                    auto* cameras = engine.get<dw4::engine::CameraManager>();
+                    const auto* p = models ? models->player(0) : nullptr;
+                    const auto out = campaign.update(engine, p, frame);
+                    input |= out.buttons;
+                    if (out.walk && p && p->node && cameras) {
+                        const float dx = out.x - p->node->matrix(3, 0), dz = out.z - p->node->matrix(3, 2);
+                        if (dx * dx + dz * dz > out.reach) {
+                            dw4::engine::FrameCamera camera;
+                            cameras->frame_camera(engine, camera);
+                            dw4::engine::Mat4 inverse;
+                            if (dw4::engine::invert(camera.view, inverse)) {
+                                const float relative = std::atan2(dx, dz) - std::atan2(inverse(2, 0), inverse(2, 2));
+                                stick_x = std::sin(relative);
+                                stick_y = -std::cos(relative);
+                            }
+                        }
+                    }
+                } else if (const auto* g = scripted.active_goto(frame); g && stick_x == 0 && stick_y == 0) {
                     auto* models = engine.get<dw4::engine::ModelCtrlManager>();
                     auto* cameras = engine.get<dw4::engine::CameraManager>();
                     if (const auto* p = models ? models->player(0) : nullptr; p && p->node && cameras) {
@@ -1302,6 +1335,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 save_state(0);
                 state_test_save = false;
             }
+            if (stage_states && steps > 0 && last_step_loaded && can_save().empty())
+                write_state_file(std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state"),
+                                 SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
             if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
             if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
                 interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));
@@ -1869,6 +1905,7 @@ int main(int argc, char** argv) {
                     start = comma + 1;
                 }
             } else if (arg == "--input") options.input_script = next();
+            else if (arg == "--load-state") options.load_state = next();
             else if (arg == "--flag") {
                 const std::string value = next();
                 const auto eq = value.find('=');
@@ -1886,7 +1923,8 @@ int main(int argc, char** argv) {
             }
             else if (arg == "--help" || arg == "-h") {
                 std::cout << "dw4_game [--data EXTRACTED_ROOT] [--stage NAME] [--smoke-test FRAMES] [--screenshot FILE.bmp]\n"
-                             "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n";
+                             "         [--screenshot-frames N,M,...] [--input SCRIPT] [--card-dir GCI_ROOT]\n"
+                             "         [--load-state FILE]\n";
                 return 0;
             } else throw std::runtime_error("unknown option " + arg);
         }

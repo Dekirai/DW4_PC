@@ -396,6 +396,14 @@ void SelectCtrlManager::add_info(Engine& engine, const ObjectView& info) {
 
 void SelectCtrlManager::clear_stage(Engine&) { rams_.clear(); }
 
+std::vector<SelectCtrlManager::OpenSelect> SelectCtrlManager::open_selects() const {
+    std::vector<OpenSelect> open;
+    for (const auto& ram : rams_)
+        if (ram->running)
+            open.push_back({ram->info_name, ram->index, ram->cursor, ram->items, ram->vertical, ram->cancel, ram->state == 1 && ram->sub == 0});
+    return open;
+}
+
 bool SelectCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     (void)engine;
     auto& ram = static_cast<SelectRam&>(base);

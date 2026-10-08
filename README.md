@@ -224,8 +224,11 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
-enemies, picks up items, steps on the other mats and explores until the way is open), `--screenshot
-FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
+enemies, picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
+campaign` plays the story from the boot logos: a new game, then the story objectives in order, see
+`src/game/campaign.cpp`), `--screenshot FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`,
+`--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
+every stage start, `<frame>_<stage>.dw4state`).
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
@@ -236,8 +239,9 @@ test run's first stage at player point group n (as when arriving from another ex
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,
-`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT` and `DW4_TRACE_EXPLORE`
-log menu cursors, text, player state, hits and the exploring bot's targets; `DW4_TRACE_SCRIPT=1` (or a
+`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
+`DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
+campaign driver's menu answers; `DW4_TRACE_SCRIPT=1` (or a
 script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes.
 
 ### Controls
