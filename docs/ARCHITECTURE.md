@@ -184,11 +184,15 @@ Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
 beShadow01): beShadow01Info entries name casters (model switches, or
 `beCopyModelCtrl2` "Kage" proxies that copy a model instance's matrix and
 actor pose) and receivers (simplified ground meshes outside the visible scene).
-`Engine::render` hands the renderer a `ShadowFrame`: the casters are drawn
-black into a 256x256 map from an orthographic light 200 units above the
-players' centre (+-100 units, looking down), and the receivers multiply the map
-(darkness 0.4) over the 3D scene before the 2D layers. `DW4_TRACE_SHADOW=1`
-logs the light and item counts.
+`Engine::render` hands the renderer a `ShadowFrame`: the map (_shadowTexW x
+_shadowTexH, default 128, the stages ship 256) is cleared white and the casters
+are drawn in the grey _shadowFactor (801FDCCC) into an inner viewport that
+keeps a 7-texel border (801FD040 / loc_801FCBE4: ceil(6 * blur offset) + 1),
+seen from the light with lookAt(light, light + igLightAttr direction,
+_upVector) (801FE5E4) and an orthographic box from _left/_right/_bottom/_top
+(+-5 by default, +-100 for beShadow01's +-5). The receivers multiply the map
+(ZERO / SOURCE_COLOR) over the opaque 3D scene, before the blended items.
+`DW4_TRACE_SHADOW=1` logs the light, the box and the item counts.
 
 ## Collision
 
