@@ -63,6 +63,16 @@ std::string AnimationDatabase::first_clip_name() const {
     return {};
 }
 
+bool AnimationDatabase::looping(std::string_view name) const {
+    const auto found = looping_.find(name);
+    return found == looping_.end() || found->second;
+}
+
+void AnimationDatabase::set_looping(std::string_view name, bool loop) {
+    if (auto found = looping_.find(name); found != looping_.end()) found->second = loop;
+    else looping_.emplace(std::string(name), loop);
+}
+
 const Clip* AnimationDatabase::clip(std::string_view name) {
     if (auto found = clips_.find(name); found != clips_.end()) return found->second->valid ? found->second.get() : nullptr;
     auto clip = std::make_unique<Clip>();
@@ -119,12 +129,12 @@ std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, 
 }
 
 namespace {
-bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, bool loop, std::int64_t time,
+bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, std::int64_t time,
                    std::vector<Mat4>& locals) {
     const Clip* clip = database.clip(name);
     const auto& skel = database.skeleton();
     if (!clip) return false;
-    const auto local = motion_local_time(*clip, start, loop, time);
+    const auto local = motion_local_time(*clip, start, database.looping(name), time);
     const float seconds = std::min(static_cast<float>(double(local) / 1e9), clip->channels.duration());
     std::vector<EnbayaTransform> samples;
     try {
@@ -147,21 +157,29 @@ bool sample_locals(AnimationDatabase& database, const std::string& name, std::in
 }
 } // namespace
 
+bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals) {
+    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, time, locals)) return false;
+    if (motion.fading(time)) {
+        std::vector<Mat4> sampled;
+        const std::vector<Mat4>* previous = &motion.previous_pose;
+        if (motion.previous_pose.empty())
+            previous = sample_locals(database, motion.previous_clip, motion.previous_start, time, sampled) ? &sampled : nullptr;
+        if (previous) {
+            const float t = std::clamp(float(double(time - motion.blend_start) / double(motion.blend)), 0.0f, 1.0f);
+            for (std::size_t i = 0; i < locals.size() && i < previous->size(); ++i) locals[i] = lerp_matrix((*previous)[i], locals[i], t);
+        }
+    }
+    return true;
+}
+
 bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose) {
     const auto& skel = database.skeleton();
     pose.skeleton = &skel;
     pose.bone_world.assign(skel.names.size(), Mat4{});
     std::vector<Mat4> locals;
-    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, motion.loop, time, locals)) {
+    if (!motion_locals(database, motion, time, locals)) {
         pose.bind_pose = true;
         return false;
-    }
-    if (motion.blend > 0 && !motion.previous_clip.empty() && time - motion.blend_start < motion.blend) {
-        std::vector<Mat4> previous;
-        if (sample_locals(database, motion.previous_clip, motion.previous_start, motion.previous_loop, time, previous)) {
-            const float t = std::clamp(float(double(time - motion.blend_start) / double(motion.blend)), 0.0f, 1.0f);
-            for (std::size_t i = 0; i < locals.size() && i < previous.size(); ++i) locals[i] = lerp_matrix(previous[i], locals[i], t);
-        }
     }
     for (std::size_t b = 0; b < locals.size(); ++b) {
         const int p = skel.parent[b];

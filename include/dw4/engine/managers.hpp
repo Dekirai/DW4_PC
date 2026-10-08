@@ -1400,6 +1400,7 @@ public:
         const Action* current{};
         std::size_t cursor{};
         bool action_active{}, visible{}, frozen{};
+        bool motion_immediate{}; // work+0x10: the next MOTIONSET cuts in without a fade
         int joint_state{}, fade_state{}, wait_state{}, flash_state{};
         std::int64_t joint_start{}, joint_end{};
         bool joint_ended{};

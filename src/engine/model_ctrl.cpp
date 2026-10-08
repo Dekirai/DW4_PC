@@ -2235,18 +2235,35 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         return true;
     }
     if (c.type == "beAction2MOTIONSET") {
+        // 802F1160: every MOTIONSET adds its clip to the actor's combiner as a
+        // new state from now on (loc_801D26FC at 0x802F128C, the time set by
+        // loc_801CFFB4 at 0x802F12B0), also when that clip is already playing.
+        // The state fades in over `first` frames (1e9 * first / 60 ns), or cuts
+        // in for first == 0 and for the first MOTIONSET after the action became
+        // active (work+0x10, 0x802F11F4). With two states or more, i.e. a
+        // cross-fade still running, loc_801D2840 (0x802F1248) first bakes the
+        // combined pose into one static state, which the new clip fades from.
+        // The 'S' freezes of field 3 (0x802F12C0, 0x802F1370) are left out:
+        // every MOTIONSET in the stage data has "RR" there.
         const auto now = static_cast<std::int64_t>(scaled_clock(engine.time(), ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
         auto& m = ram.motion;
-        if (m.clip != c.name || !(!c.loop.empty() && c.loop[0] == 'L')) {
+        std::vector<Mat4> baked;
+        if (ram.database && m.fading(now)) motion_locals(*ram.database, m, now, baked);
+        if (!baked.empty()) {
+            m.previous_clip.clear();
+            m.previous_pose = std::move(baked);
+        } else {
             m.previous_clip = m.clip;
             m.previous_start = m.start;
-            m.previous_loop = m.loop;
-            m.blend_start = now;
-            m.blend = m.previous_clip.empty() ? 0 : frames_to_time(c.first);
-            m.clip = c.name;
-            m.start = now;
-            m.loop = !c.loop.empty() && c.loop[0] == 'L';
+            m.previous_pose.clear();
         }
+        m.blend_start = now;
+        m.blend = ram.motion_immediate ? 0 : frames_to_time(c.first);
+        ram.motion_immediate = false;
+        m.clip = c.name;
+        m.start = now;
+        // 0x802F1440-0x802F14CC: 'L' loops the clip, anything else plays it once.
+        if (ram.database) ram.database->set_looping(c.name, !c.loop.empty() && c.loop[0] == 'L');
         ram.pose_time = -1;
         return true;
     }
@@ -2286,6 +2303,19 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
         ram.action_active = true;
         ram.fade_state = 0;
         ram.wait_state = 0;
+        // 0x802F1EA0-0x802F20DC: activation starts the combiner with the
+        // database's first animation (loc_801D2810) and lets the next
+        // MOTIONSET cut in (work+0x10 = 1 at 0x802F1F00).
+        if (ram.database) {
+            const auto now = node_time(ram.node_clock, engine.time());
+            ram.motion = MotionState{};
+            ram.motion.clip = ram.database->first_clip_name();
+            ram.motion.start = now;
+            ram.pose_time = -1;
+        }
+        ram.motion_immediate = true;
+    } else {
+        ram.motion_immediate = false; // 0x802F212C, also for the action already running
     }
     ram.visible = true;
     if (ram.current == found) { apply_visuals(ram); return; }
@@ -2420,11 +2450,14 @@ void ActionManager::update(Engine& engine) {
             auto found = ram.timers.find("WAIT");
             ready = found == ram.timers.end() || timer_expired(found->second, now);
         } else if (ram.wait_state == 2) {
+            // 802F0264: only once the combiner is down to one state (the
+            // cross-fade done, 0x802F0300) and that state's time has reached
+            // the clip's duration (0x802F03B8), looping or not.
             ready = true;
             if (ram.database && !ram.motion.clip.empty()) {
                 if (const Clip* clip = ram.database->clip(ram.motion.clip)) {
                     const auto t = static_cast<std::int64_t>(scaled_clock(now, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-                    ready = t - ram.motion.start >= clip->duration;
+                    ready = !ram.motion.fading(t) && t - ram.motion.start >= clip->duration;
                 }
             }
         } else if (ram.wait_state == 3) {

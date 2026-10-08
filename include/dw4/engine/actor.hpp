@@ -41,12 +41,19 @@ public:
     bool has_clip(std::string_view name) const;
     std::string first_clip_name() const;
     const ObjectView& object() const { return object_; }
+    // The play mode belongs to the clip's animation source, which every state
+    // of that clip shares: a MOTIONSET sets it for all of them (802F1160 at
+    // 0x802F1440-0x802F14CC, enbaya source +0xC: 0 loops, 4 plays once). A
+    // clip no MOTIONSET has set yet keeps the source's default 0 (loop).
+    bool looping(std::string_view name) const;
+    void set_looping(std::string_view name, bool loop);
 
 private:
     ObjectView object_;
     Skeleton skeleton_;
     std::vector<ObjectView> animations_;
     std::map<std::string, std::unique_ptr<Clip>, std::less<>> clips_;
+    std::map<std::string, bool, std::less<>> looping_;
 };
 
 // Pose in actor space: world matrix per bone (row-vector layout).
@@ -56,19 +63,26 @@ struct ActorPose {
     bool bind_pose{}; // true: palette is identity (stored vertices)
 };
 
-// One layer of the simple original-style motion state: current clip with a
-// cross-fade from the previous pose over `blend` nanoseconds.
+// The actor's animation combiner as ACTION's MOTIONSET drives it: the current
+// clip, fading in over `blend` nanoseconds from the state before it - the
+// previous clip, still playing, or a static pose baked from a cross-fade that
+// was still running (loc_801D2840). Loop modes live in the database.
 struct MotionState {
     std::string clip;
     std::int64_t start{};   // node time when started
-    bool loop = true;
     std::int64_t blend{};
+    std::int64_t blend_start{};
     std::string previous_clip;
     std::int64_t previous_start{};
-    bool previous_loop = true;
-    std::int64_t blend_start{};
+    std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
+    // Two combiner states or more: the cross-fade has not reached weight 1.
+    bool fading(std::int64_t time) const {
+        return blend > 0 && (!previous_clip.empty() || !previous_pose.empty()) && time - blend_start < blend;
+    }
 };
 
+// Bone locals of the combined motion at node time `time`.
+bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals);
 // Evaluate pose from clips at node time `time`.
 bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose);
 // Local clip time (looping or clamped) of a motion at node time.
