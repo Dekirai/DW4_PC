@@ -183,6 +183,8 @@ private:
         int named_path = -1;
         std::int64_t named_start{}, named_duration{};
         bool named_active{};
+        // The RAM's CAMHOKAN timer, the box camera's blend step (802F2BC0).
+        std::optional<NodeTimer> hokan;
     };
     // The manager's one viewer (+28, 802E1478) once the box or the demo
     // update made it the current viewer (8040F870): the camera path it
@@ -1400,6 +1402,8 @@ public:
         const Action* current{};
         std::size_t cursor{};
         bool action_active{}, visible{}, frozen{};
+        bool motion_immediate{}; // work+0x10: the next MOTIONSET cuts in without a fade
+        int motion_work{};       // work+0x14: MOTIONSET's combiner update phase (802F0EB0)
         int joint_state{}, fade_state{}, wait_state{}, flash_state{};
         std::int64_t joint_start{}, joint_end{};
         bool joint_ended{};
@@ -1413,8 +1417,14 @@ public:
         MotionState motion;
         ActorPose pose;
         std::int64_t pose_time = -1;
+        std::vector<Mat4> locals;         // the bone locals of `pose`
+        std::vector<Mat4> combiner_cache; // combiner +0x40: the last traversal's bone locals
     };
-    const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
+    // The actor's pose at `world_time`. The scene traversal (`traversal`)
+    // evaluates the combiner as 801D0C14 does: its update retires finished
+    // fades and its output stays in the combiner cache MOTIONSET bakes from;
+    // a query (GETBONEMATRIX) only reads the pose.
+    const ActorPose* pose_for(const Node& actor, std::int64_t world_time, bool traversal = false);
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).
     const ActionRam* find(std::string_view name, int index) const;
@@ -1529,6 +1539,14 @@ public:
         }();
         std::array<std::array<int, 11>, 16> base_upcnt{};
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
+        // BASE_FLAG / BASE_FLAGFOLDER / BASE_COUNTER of this player's record.
+        // Player 1's are the common FLAG / FLAGFOLDER / COUNTER (Engine::flags(),
+        // flag_folder, Engine::counters()), which BASE2CURRENT points at them
+        // (link_common). New player data (8036CE1C, 0x8036D148-0x8036D174)
+        // has BASE_FLAG[960] = 1, the constant byte at 80561411.
+        std::map<std::int32_t, std::uint8_t> base_flags{{960, 1}};
+        std::map<int, std::uint8_t> base_flag_folder;
+        std::map<std::int32_t, std::int32_t> base_counters;
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,
     // weapon, armor1, armor2, abChip.
@@ -1557,6 +1575,10 @@ public:
     void create_player(Engine& engine, int slot);
     // CURRENT2BASE (8036DF70): the current species keeps LEVEL, EXP, SKILL and UPCNT.
     void store_species(int slot);
+    // BASE2CURRENT for player 1 (8036DBA8 at 0x8036DE40): the common FLAG,
+    // FLAGFOLDER and COUNTER become its BASE_FLAG, BASE_FLAGFOLDER and
+    // BASE_COUNTER. Other players keep theirs to themselves.
+    void link_common(Engine& engine, int slot);
     // Memory card records (save_game.cpp, docs/SAVES.md).
     save::Record make_record(Engine& engine, int slot);
     void apply_record(Engine& engine, int slot, const save::Record& record, bool common);
@@ -1603,7 +1625,6 @@ public:
     std::int32_t text_call{}; // TEXTORDER call number read by TXTgetCallNo (80535950)
     std::string gate_stage_name;
     std::int32_t gate_stage_no{};
-    std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
 };
 
 // FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38). The

@@ -109,6 +109,9 @@ void serialize(StateArchive& a, GameSystem::PlayerSlot& v) {
     a.io(v.base_skill);
     a.io(v.base_upcnt);
     a.io(v.cards);
+    a.io(v.base_flags);
+    a.io(v.base_flag_folder);
+    a.io(v.base_counters);
 }
 void serialize(StateArchive& a, GameSystem::BitChip& v) {
     a.io(v.stage);
@@ -128,7 +131,7 @@ void serialize(StateArchive& a, Cheats& v) {
 }
 
 namespace {
-constexpr std::uint32_t kSnapshotVersion = 6; // 6: effect owners, frame camera first; 5: HUD attack-delay ring; 4: first-info update order (replays differ); 3: one system generator
+constexpr std::uint32_t kSnapshotVersion = 8; // 8: generate point in the snapshot, no player_pos, motion end/bake/box camera timer (replays differ); 7: MOTIONSET restarts, MOVEEX rotation, player base flags; 6: effect owners, frame camera first; 5: HUD attack-delay ring; 4: first-info update order (replays differ); 3: one system generator
 
 void serialize_system(StateArchive& a, GameSystem& v) {
     a.io(v.flag_folder);
@@ -142,7 +145,6 @@ void serialize_system(StateArchive& a, GameSystem& v) {
     a.io(v.game_started);
     a.io(v.gate_stage_name);
     a.io(v.gate_stage_no);
-    a.io(v.player_pos);
 }
 
 void serialize_snapshot(StateArchive& a, StageSnapshot& s) {
@@ -160,6 +162,7 @@ void serialize_snapshot(StateArchive& a, StageSnapshot& s) {
     a.io(pads);
     if (a.reading()) s.pads.restore(pads);
     a.io(s.random);
+    a.io(s.point_no);
     // The GameSystem copy.
     bool has_system = s.system != nullptr;
     a.io(has_system);

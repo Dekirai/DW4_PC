@@ -1044,13 +1044,33 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
     if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
         const auto s = ram.channels.states();
-        char line[256];
+        char line[320];
         std::snprintf(line, sizeof line,
-                      "motion %s#%d %s (%.1f, %.1f, %.1f) ch0 active=%d speed=%.2f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f wait=%s",
+                      "motion %s#%d %s (%.1f, %.1f, %.1f) ch0 active=%d speed=%.2f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f ch3 active=%d speed=%.2f yaw=%.3f wait=%s",
                       ram.info_name.c_str(), ram.index, ram.seq_name.c_str(), position.x, position.y, position.z, int(s[0].active),
                       s[0].speed, int(s[1].active), int(s[1].mode), s[1].speed, s[1].end_time, int(s[2].active), s[2].speed,
-                      ram.wait_name ? ram.wait_name->c_str() : "-");
+                      int(s[3].active), s[3].speed, ram.applied[1], ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
+    }
+    // The channels advance first (8031E4C4 KEIKATIMER step): the rotation
+    // channel of MOVEEX R?xxx (channel 3) turns the wanted yaw by its step in
+    // degrees (0x8030A4A8-0x8030A4F4: +84 += pi/180 * step, the yaw rate +90 =
+    // 1.25 * |that|) before the model turns, the translation channels move it
+    // after the turn.
+    dw4::MotionStep step;
+    if (ram.channels.allocated()) {
+        const bool rotating = ram.channels.states()[3].active;
+        try {
+            step = ram.channels.advance(1.0f);
+        } catch (const std::exception& error) {
+            engine.note(std::string("model motion: ") + error.what());
+            return false;
+        }
+        if (rotating) {
+            const float turn = 0.0174532924f * step.rotation;
+            ram.desired[1] = turn + ram.desired[1];
+            ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
+        }
     }
     // Turning (8030C85C): shortest arc at the stored rate per frame.
     for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -1069,11 +1089,8 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         matrix[12] = position.x;
         matrix[13] = position.y;
         matrix[14] = position.z;
-        if (ram.channels.allocated()) {
-            const auto step = ram.channels.advance(1.0f);
-            if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
-            moved = step.translation_updated;
-        }
+        if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
+        moved = step.translation_updated;
     } catch (const std::exception& error) {
         engine.note(std::string("model motion: ") + error.what());
         return false;
@@ -2140,16 +2157,23 @@ const ActionManager::ActionRam* ActionManager::find(std::string_view name, int i
     return nullptr;
 }
 
-const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time) {
+const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time, bool traversal) {
     auto found = actor_owner_.find(&actor);
     if (found == actor_owner_.end()) return nullptr;
     auto& ram = *found->second;
     if (!ram.database) return nullptr;
+    const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+    // The traversal's combiner evaluation (801D0C14) updates the combiner
+    // first (801CFFB4 at 0x801D0CB8): a fade whose weight reached 1 retires
+    // the states before it. That leaves the pose at this time as it is.
+    if (traversal) ram.motion.update(time);
     if (ram.pose_time != world_time) {
-        const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-        evaluate_pose(*ram.database, ram.motion, time, ram.pose);
+        evaluate_pose(*ram.database, ram.motion, time, ram.pose, ram.locals);
         ram.pose_time = world_time;
     }
+    // The evaluated bone locals stay in the combiner (+0x40) until the next
+    // evaluation; GETBONEMATRIX (802F18A4) reads matrices without one.
+    if (traversal && !ram.locals.empty()) ram.combiner_cache = ram.locals;
     return &ram.pose;
 }
 
@@ -2247,18 +2271,44 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         return true;
     }
     if (c.type == "beAction2MOTIONSET") {
+        // 802F1160: every MOTIONSET adds its clip to the actor's combiner as a
+        // new state from now on (loc_801D26FC at 0x802F128C, the time set by
+        // loc_801CFFB4 at 0x802F12B0), also when that clip is already playing.
+        // The state fades in over `first` frames (1e9 * first / 60 ns), or cuts
+        // in for first == 0 and for the first MOTIONSET after the action became
+        // active (work+0x10, 0x802F11F4). With two states or more still in the
+        // combiner (0x802F1238: a cross-fade its last update had not finished),
+        // loc_801D2840 (0x802F1248) first removes them all (801D215C) and adds
+        // one fixed state built from the combiner's cached bone matrices
+        // (+0x40), the output of its last evaluation - the scene traversal of
+        // the last picture, not the pose at this time. The new clip fades
+        // from that. The 'S' freezes of field 3 (0x802F12C0, 0x802F1370) are
+        // left out: every MOTIONSET in the stage data has "RR" there.
         const auto now = static_cast<std::int64_t>(scaled_clock(engine.time(), ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
         auto& m = ram.motion;
-        if (m.clip != c.name || !(!c.loop.empty() && c.loop[0] == 'L')) {
+        if (m.layered()) {
+            std::vector<Mat4> baked = ram.combiner_cache;
+            // Never traversed (no cached output yet): the pose at this time.
+            if (baked.empty() && ram.database) motion_locals(*ram.database, m, now, baked);
+            m.previous_clip.clear();
+            m.previous_pose = std::move(baked);
+            m.hidden = false;
+        } else {
             m.previous_clip = m.clip;
             m.previous_start = m.start;
-            m.previous_loop = m.loop;
-            m.blend_start = now;
-            m.blend = m.previous_clip.empty() ? 0 : frames_to_time(c.first);
-            m.clip = c.name;
-            m.start = now;
-            m.loop = !c.loop.empty() && c.loop[0] == 'L';
+            m.previous_pose.clear();
         }
+        m.blend_start = now;
+        m.blend = ram.motion_immediate ? 0 : frames_to_time(c.first);
+        ram.motion_immediate = false;
+        m.clip = c.name;
+        m.start = now;
+        // loc_801CFFB4 at 0x802F12B0 updates the combiner at node time: the new
+        // state's fade starts now, and a state that cuts in retires the others.
+        m.update(now);
+        // 0x802F1440-0x802F14CC: 'L' loops the clip, anything else plays it once.
+        if (ram.database) ram.database->set_looping(c.name, !c.loop.empty() && c.loop[0] == 'L');
+        ram.motion_work = 1; // 0x802F14E4
         ram.pose_time = -1;
         return true;
     }
@@ -2296,8 +2346,36 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
     if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
     if (!ram.action_active) {
         ram.action_active = true;
+        // 0x802F1EC0-0x802F1EC8: work +14 (motion), +34 (fade), +44 (wait).
+        ram.motion_work = 0;
         ram.fade_state = 0;
         ram.wait_state = 0;
+        // 0x802F1EA0-0x802F20DC: activation lets the next MOTIONSET cut in
+        // (work+0x10 = 1 at 0x802F1F00) and appends the database's first
+        // animation (loc_801D2810 -> 801D2044 -> 801D1BCC) as a replacing base
+        // state (combine mode 0, transition 4, active: 0x802F20C4-0x802F20D0).
+        // That shows only the first animation but deletes nothing: the states
+        // from before (after NDSP, say) stay in the combiner and count, so
+        // WAITCHECK 'M' waits and the next MOTIONSET bakes (and its cut-in
+        // retires the bake at once). Combiner +0x10 = 100000000 there
+        // (0x802F1F38-0x802F1F50) is the request time 801D0A38 stamps into new
+        // states (+0x98); only the optional cleanCombinerStates pass 801D0A90
+        // reads it, which is off (byte 0x704(r13)), so poses do not change.
+        if (ram.database) {
+            const auto now = node_time(ram.node_clock, engine.time());
+            auto& m = ram.motion;
+            m.hidden = !m.clip.empty();
+            m.previous_clip.clear();
+            m.previous_pose.clear();
+            m.clip = ram.database->first_clip_name();
+            m.start = now;
+            m.blend = 0;
+            m.blend_start = now;
+            ram.pose_time = -1;
+        }
+        ram.motion_immediate = true;
+    } else {
+        ram.motion_immediate = false; // 0x802F212C, also for the action already running
     }
     ram.visible = true;
     if (ram.current == found) { apply_visuals(ram); return; }
@@ -2388,6 +2466,18 @@ void ActionManager::update(Engine& engine) {
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.action_active || ram.frozen) { continue; }
+        // 802F0EB0, the first phase of 802F16CC: after a MOTIONSET the motion
+        // work waits one frame (1 -> 2), then updates the combiner at node
+        // time (801CFFB4 at 0x802F0F50) each frame until one state is left
+        // (0x802F1070), so WAITCHECK 'M' and the next MOTIONSET count this
+        // frame's states. The speed alignment there (0x802F108C) has no
+        // counterpart: the port's states run on the node clock.
+        if (ram.motion_work == 1) {
+            ram.motion_work = 2;
+        } else if (ram.motion_work == 2) {
+            if (ram.motion.layered()) ram.motion.update(node_time(ram.node_clock, now));
+            if (!ram.motion.layered()) ram.motion_work = 0;
+        }
         // Joint section.
         if (ram.joint_state == 1 || ram.joint_state == 2) {
             auto local = node_time(ram.node_clock, now);
@@ -2432,11 +2522,15 @@ void ActionManager::update(Engine& engine) {
             auto found = ram.timers.find("WAIT");
             ready = found == ram.timers.end() || timer_expired(found->second, now);
         } else if (ram.wait_state == 2) {
+            // 802F0264: only once the combiner is down to one state (0x802F0300:
+            // the count its last update left, from the traversal of the last
+            // picture or the motion phase above) and that state's time has
+            // reached the clip's duration (0x802F03B8), looping or not.
             ready = true;
             if (ram.database && !ram.motion.clip.empty()) {
                 if (const Clip* clip = ram.database->clip(ram.motion.clip)) {
                     const auto t = static_cast<std::int64_t>(scaled_clock(now, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-                    ready = t - ram.motion.start >= clip->duration;
+                    ready = !ram.motion.layered() && t - ram.motion.start >= clip->duration;
                 }
             }
         } else if (ram.wait_state == 3) {

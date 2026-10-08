@@ -94,7 +94,11 @@ In the local disassembly these are PCs 372 through 383 and 384 through 392 of
 that helper. This connects point-group selection to transitions, but does not
 establish which group is the initial startup state. `first.lua` reads
 `PLAYERgetPos` before choosing an entry sequence; that read is not itself a
-new placement command.
+new placement command. It returns the group the last `SETGENERATEPOS` chose:
+`802EB4C4` calls `802EE1F0`, which queues `PLAYERPOINT`, `GETGENERATEPOS`
+and returns int 0 of the reply (so `stagML12` takes its transporter entrance,
+group 3, after the evolution scene). The group survives stage loads, so save
+state snapshots keep it.
 
 ## Orientation is retained as a matrix
 

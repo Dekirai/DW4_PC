@@ -352,6 +352,7 @@ void Engine::begin_stage_load() {
         random << fight::generator();
         snapshot.random = random.str();
     }
+    if (auto* points = get<PlayerPointManager>()) snapshot.point_no = points->point_no();
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
     snapshot.serial = ++snapshot_serial_;
@@ -370,6 +371,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
         std::istringstream random(snapshot.random);
         random >> fight::generator();
     }
+    if (auto* points = get<PlayerPointManager>()) points->set_point_no(snapshot.point_no);
     if (auto* sys = get<GameSystem>(); sys && snapshot.system) {
         const Ram keep = sys->ram_;
         *sys = *static_cast<const GameSystem*>(snapshot.system.get());
@@ -677,7 +679,7 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     context.output = &out;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
-        context.actor_pose = [this, actions](const Node& actor) { return actions->pose_for(actor, time_); };
+        context.actor_pose = [this, actions](const Node& actor) { return actions->pose_for(actor, time_, true); };
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
     traverse(&global_root_, context);

@@ -746,6 +746,10 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                             target.name = ram.names.name();
                             target.joined = true;
                             target.unique = std::random_device{}();
+                            // GAMESTART's player creation (8036EB0C) runs
+                            // BASE2CURRENT first: the host's fresh BASE_FLAG
+                            // (flag 960 set, 8036CE1C) becomes the common FLAG.
+                            sys->link_common(engine, idx);
                             sys->prepare_player(engine, idx);
                             common.records[std::size_t(idx)] = sys->make_record(engine, idx);
                         } else if (entry.card) {

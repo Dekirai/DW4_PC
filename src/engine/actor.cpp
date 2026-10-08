@@ -3,6 +3,7 @@
 #include "dw4/skinning.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 namespace dw4::engine {
@@ -63,6 +64,16 @@ std::string AnimationDatabase::first_clip_name() const {
     return {};
 }
 
+bool AnimationDatabase::looping(std::string_view name) const {
+    const auto found = looping_.find(name);
+    return found == looping_.end() || found->second;
+}
+
+void AnimationDatabase::set_looping(std::string_view name, bool loop) {
+    if (auto found = looping_.find(name); found != looping_.end()) found->second = loop;
+    else looping_.emplace(std::string(name), loop);
+}
+
 const Clip* AnimationDatabase::clip(std::string_view name) {
     if (auto found = clips_.find(name); found != clips_.end()) return found->second->valid ? found->second.get() : nullptr;
     auto clip = std::make_unique<Clip>();
@@ -108,24 +119,41 @@ const Clip* AnimationDatabase::clip(std::string_view name) {
     return raw->valid ? raw : nullptr;
 }
 
-std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, std::int64_t time) {
-    std::int64_t local = time - start;
-    if (local < 0) local = 0;
-    if (clip.duration > 0) {
-        if (loop) local %= clip.duration;
-        else local = std::min(local, clip.duration);
+float motion_source_time(const Clip& clip, std::int64_t local, bool loop) {
+    // 801E52FC: the state's 64-bit time >> 18 as a signed 32-bit count of
+    // 2^18 ns, times 2.62144e-4 s (0x3989705f at 80566D50); the source's
+    // duration (vtable +0x18 of its enbaya data) of at most 1/30 s counts as
+    // 0.05 s (0x801E5394-0x801E53A4).
+    const auto coarse = static_cast<std::int32_t>(static_cast<std::uint32_t>(static_cast<std::uint64_t>(local) >> 18));
+    const float t = static_cast<float>(coarse) * std::bit_cast<float>(0x3989705fu);
+    float duration = clip.channels.duration();
+    if (duration <= std::bit_cast<float>(0x3d088889u)) duration = std::bit_cast<float>(0x3d4cccceu);
+    // 801E4FE8 with the source mode MOTIONSET set (0x802F1488/0x802F1494):
+    // mode 4 (played once) limits the time to duration + [8056578C], which
+    // ACTION2's init 802EFDC8 sets to -1/30 s (0xbd088889 at 80424F80), and
+    // returns the limit past it (0x801E5018-0x801E502C), so a finished clip
+    // holds its last full 1/30 s key instead of reaching the partial key the
+    // stream appends behind the duration. Mode 0 (loop) and the times inside
+    // the limit take the remainder path: the truncated cycle count (fctiwz),
+    // t - cycles * duration fused (fnmsubs), nothing below 0. At exactly the
+    // limit that path gives 0, as on the original.
+    if (!loop) {
+        duration = duration + std::bit_cast<float>(0xbd088889u);
+        if (t > duration) return duration;
+        if (t < 0.0f) return 0.0f;
     }
-    return local;
+    const float cycles = std::trunc(t / duration);
+    const float wrapped = std::fma(-cycles, duration, t);
+    return wrapped > 0.0f ? wrapped : 0.0f;
 }
 
 namespace {
-bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, bool loop, std::int64_t time,
+bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, std::int64_t time,
                    std::vector<Mat4>& locals) {
     const Clip* clip = database.clip(name);
     const auto& skel = database.skeleton();
     if (!clip) return false;
-    const auto local = motion_local_time(*clip, start, loop, time);
-    const float seconds = std::min(static_cast<float>(double(local) / 1e9), clip->channels.duration());
+    const float seconds = motion_source_time(*clip, time - start, database.looping(name));
     std::vector<EnbayaTransform> samples;
     try {
         samples = sample_enbaya_original(clip->channels, seconds);
@@ -147,21 +175,51 @@ bool sample_locals(AnimationDatabase& database, const std::string& name, std::in
 }
 } // namespace
 
-bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose) {
+float MotionState::weight(std::int64_t time) const {
+    // A state that cuts in (first == 0 or the first MOTIONSET after the
+    // activation) starts at ratio 1 with no range (0x802F11F8-0x802F1208).
+    if (blend <= 0) return 1.0f;
+    // 801D0668-801D06AC: elapsed time and duration through double to float,
+    // divided, clamped above 1, then start ratio 0 + range 1 * that.
+    float ratio = static_cast<float>(static_cast<double>(time - blend_start)) / static_cast<float>(static_cast<double>(blend));
+    if (ratio > 1.0f) ratio = 1.0f;
+    return ratio;
+}
+
+void MotionState::update(std::int64_t time) {
+    // A replacing base state (combine mode 0) retires nothing (801CFFB4 skips
+    // it); only a fade that reached weight 1 does.
+    if (has_previous() && !(weight(time) < 1.0f)) {
+        previous_clip.clear();
+        previous_pose.clear();
+        hidden = false;
+    }
+}
+
+bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals) {
+    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, time, locals)) return false;
+    if (motion.fading(time)) {
+        std::vector<Mat4> sampled;
+        const std::vector<Mat4>* previous = &motion.previous_pose;
+        if (motion.previous_pose.empty())
+            previous = sample_locals(database, motion.previous_clip, motion.previous_start, time, sampled) ? &sampled : nullptr;
+        if (previous) {
+            const float t = std::clamp(motion.weight(time), 0.0f, 1.0f);
+            for (std::size_t i = 0; i < locals.size() && i < previous->size(); ++i) locals[i] = lerp_matrix((*previous)[i], locals[i], t);
+        }
+    }
+    return true;
+}
+
+bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose,
+                   std::vector<Mat4>& locals) {
     const auto& skel = database.skeleton();
     pose.skeleton = &skel;
     pose.bone_world.assign(skel.names.size(), Mat4{});
-    std::vector<Mat4> locals;
-    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, motion.loop, time, locals)) {
+    if (!motion_locals(database, motion, time, locals)) {
+        locals.clear();
         pose.bind_pose = true;
         return false;
-    }
-    if (motion.blend > 0 && !motion.previous_clip.empty() && time - motion.blend_start < motion.blend) {
-        std::vector<Mat4> previous;
-        if (sample_locals(database, motion.previous_clip, motion.previous_start, motion.previous_loop, time, previous)) {
-            const float t = std::clamp(float(double(time - motion.blend_start) / double(motion.blend)), 0.0f, 1.0f);
-            for (std::size_t i = 0; i < locals.size() && i < previous.size(); ++i) locals[i] = lerp_matrix(previous[i], locals[i], t);
-        }
     }
     for (std::size_t b = 0; b < locals.size(); ++b) {
         const int p = skel.parent[b];

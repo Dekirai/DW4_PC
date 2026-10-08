@@ -41,12 +41,19 @@ public:
     bool has_clip(std::string_view name) const;
     std::string first_clip_name() const;
     const ObjectView& object() const { return object_; }
+    // The play mode belongs to the clip's animation source, which every state
+    // of that clip shares: a MOTIONSET sets it for all of them (802F1160 at
+    // 0x802F1440-0x802F14CC, enbaya source +0xC: 0 loops, 4 plays once). A
+    // clip no MOTIONSET has set yet keeps the source's default 0 (loop).
+    bool looping(std::string_view name) const;
+    void set_looping(std::string_view name, bool loop);
 
 private:
     ObjectView object_;
     Skeleton skeleton_;
     std::vector<ObjectView> animations_;
     std::map<std::string, std::unique_ptr<Clip>, std::less<>> clips_;
+    std::map<std::string, bool, std::less<>> looping_;
 };
 
 // Pose in actor space: world matrix per bone (row-vector layout).
@@ -56,22 +63,47 @@ struct ActorPose {
     bool bind_pose{}; // true: palette is identity (stored vertices)
 };
 
-// One layer of the simple original-style motion state: current clip with a
-// cross-fade from the previous pose over `blend` nanoseconds.
+// The actor's animation combiner as ACTION's MOTIONSET drives it: the current
+// clip, fading in over `blend` nanoseconds from the state before it - the
+// previous clip, still playing, or a static pose baked from a cross-fade that
+// was still running (loc_801D2840). Loop modes live in the database.
 struct MotionState {
     std::string clip;
     std::int64_t start{};   // node time when started
-    bool loop = true;
-    std::int64_t blend{};
+    std::int64_t blend{};   // fade-in of `clip`; 0: weight 1 at once
+    std::int64_t blend_start{};
     std::string previous_clip;
     std::int64_t previous_start{};
-    bool previous_loop = true;
-    std::int64_t blend_start{};
+    std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
+    // States that stay in the combiner behind `clip` without showing: the
+    // activation appends the first animation as a replacing base state
+    // (801D2810), which no update retires; the next MOTIONSET's bake removes
+    // them with everything else.
+    bool hidden{};
+    // The current state's fade-in weight at node time `time` (801D0668).
+    float weight(std::int64_t time) const;
+    // A fade source (the previous clip or the baked pose) is still a state.
+    bool has_previous() const { return !previous_clip.empty() || !previous_pose.empty(); }
+    // The combiner holds two states or more, as MOTIONSET (0x802F1238) and
+    // WAITCHECK 'M' (0x802F0300) count them. Only the combiner updates retire
+    // a fade source, see update().
+    bool layered() const { return has_previous() || hidden; }
+    // The fade source still shows in a pose evaluated at `time`.
+    bool fading(std::int64_t time) const { return has_previous() && weight(time) < 1.0f; }
+    // The combiner update (801CFFB4): once the current state's weight reaches
+    // 1, the states before it retire (801CFEA8) and one state is left.
+    void update(std::int64_t time);
 };
 
-// Evaluate pose from clips at node time `time`.
-bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose);
-// Local clip time (looping or clamped) of a motion at node time.
-std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, std::int64_t time);
+// Bone locals of the combined motion at node time `time`.
+bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals);
+// Evaluate pose from clips at node time `time`; `locals` gets the combined
+// bone locals (empty when the motion has no clip to sample).
+bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose,
+                   std::vector<Mat4>& locals);
+// Seconds the clip's enbaya source samples for a state `local` ns after its
+// start (801E52FC -> 801E4FE8): a looping clip wraps at its duration, a clip
+// played once holds at duration - 1/30 s.
+float motion_source_time(const Clip& clip, std::int64_t local, bool loop);
 
 } // namespace dw4::engine
