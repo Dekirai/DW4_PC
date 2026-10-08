@@ -659,7 +659,11 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
 // beAction2 .. beNDMWMdl*) has the shared traversal 802F28F8 at +0x74: it
 // calls the RAM update (+0x84) of each RAM only while 80316808 says the
 // stage is active (beSystem +0x2C set and +0x2D clear), the manager's +0x1C
-// is set and beSystem +0x2E is clear. The modules outside that base keep
+// is set and beSystem +0x2E is clear. +0x2D is only set by beSystem's
+// reset hook (vtable +0x70, 8031624C) when the application reloads every
+// module (8028A87C) and cleared by its next update (803167E4); nothing in
+// the retail code writes +0x2E; a manager's +0x1C is cleared only while a
+// disc error freezes the game (80316974). The modules outside that base keep
 // running: beSystem, bePadManager, beMessenger, beDemoManager, beCameraMode
 // (CameraManager::begin_frame), beCri (the sound driver) and the loader.
 void Engine::update_managers() {
