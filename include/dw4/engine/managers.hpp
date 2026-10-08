@@ -788,6 +788,8 @@ public:
     std::string text(std::string_view table, int row, std::string_view column) const;
     // 8031F3CC / 8031F608: integer cell of a char, short, int or bool column.
     std::optional<std::int32_t> number(std::string_view table, int row, std::string_view column) const;
+    // The table exists and has that char, short, int or bool column (8031F54C finds it).
+    bool has_column(std::string_view table, std::string_view column) const;
     // First row whose string column equals value, or -1.
     int find_row(std::string_view table, std::string_view column, std::string_view value) const;
     // 8031F760: the row count, from the string cells per string column.
