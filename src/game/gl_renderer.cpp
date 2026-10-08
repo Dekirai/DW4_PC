@@ -594,7 +594,7 @@ void GlRenderer::render_shadow_map() {
     shadow_ready_ = true;
 }
 
-// The receivers multiply the map over the 3D scene drawn so far.
+// The receivers multiply the map over the opaque scene drawn so far.
 void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     auto& gl = *gl_;
     if (!shadow_ready_ || shadow_->receivers.empty()) return;
@@ -683,8 +683,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const auto* m = mesh(item.geometry);
         if (!m || !m->index_count) continue;
         const auto& s = item.state;
-        // The shadow goes over the 3D scene, before the 2D layers.
-        if (!receivers_drawn && s.projection && s.projection->operator()(2, 3) == 0.0f) {
+        // igProjectiveShadowShader draws its receivers in a compound package
+        // (801FE348 opens it with neither flag, 802062E0), which the sorter's
+        // flush appends after the opaque packages and before the transparent
+        // ones (Engine::render puts the blended items last).
+        if (!receivers_drawn && s.blend_enabled) {
             glViewport(wide.x, wide.y, wide.width, wide.height);
             glScissor(wide.x, wide.y, wide.width, wide.height);
             render_shadow_receivers(camera);

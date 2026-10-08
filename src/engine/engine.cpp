@@ -676,6 +676,20 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
     traverse(&global_root_, context);
+    // The scene traversal submits its packages to the igSorter it holds at
+    // +0x44 (geometry 801DDB84 -> 80205684). Its begin (801DB82C) resets the
+    // sorter (8020551C), its end (801DB688) flushes it (80204A80, vtable
+    // 804B37AC +5C). DW4 runs it with _mode (+0xC) SORT_TRANSPARENT (1) and
+    // _transparencyDrawMode (+0x4C) 0: a package whose effective
+    // igBlendStateAttr is on goes to _transpPackages (+0x18), every other one
+    // is drawn at once in traversal order; the flush appends the closed
+    // compound packages (_opaquePackages +0x1C: in the stages only the
+    // igProjectiveShadowShader receiver pass 801FE348, which the renderer
+    // draws at the boundary) and then the transparent ones in submission
+    // order, without a distance sort (bits 4/8 clear). The whole frame is one
+    // traversal of ROOTATTR (the layers live under its LAYERPARENT, 80301368),
+    // so the 2D layers share both lists with the 3D scene.
+    std::stable_partition(out.begin(), out.end(), [](const DrawItem& item) { return !item.state.blend_enabled; });
     if (shadow) {
         shadow->active = false;
         if (auto* shadows = get<ShadowManager>()) shadows->render(*this, context, *shadow);
