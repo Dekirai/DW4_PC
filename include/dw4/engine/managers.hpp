@@ -510,7 +510,8 @@ private:
 // light; infos with [8] add casters (model switches or beCopyModelCtrl2
 // shadow proxies) to the shader's caster list and infos with [7] add
 // receivers as the shader's children (803144D0). The light stays 200 units
-// above the players' centre (8031476C, 8031C1FC) and looks down.
+// above the players' centre (8031476C, 8031C1FC) and looks along its
+// igLightAttr's direction with the shader's _upVector (801FE5E4).
 class ShadowManager final : public Manager {
 public:
     ShadowManager() : Manager("beShadow01") {}
@@ -525,10 +526,13 @@ public:
 private:
     std::vector<Node*> casters_, receivers_;
     bool shader_{};
-    float darkness_ = 0.4f;
-    int size_ = 256;
-    float extent_ = 100.0f;             // [48]/[49]: the light's box half size
+    float factor_ = 0.3f;               // [13] _shadowFactor
+    int width_ = 128, height_ = 128;    // [14]/[15] _shadowTexW/_shadowTexH
+    // [48]..[51] _top/_bottom/_right/_left: the light box
+    float top_ = 100.0f, bottom_ = -100.0f, right_ = 100.0f, left_ = -100.0f;
     float near_ = 0.1f, far_ = 1000.0f; // [27]/[28]
+    Vec3f up_{1, 0, 0};                 // [29] _upVector
+    Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
 };
 
