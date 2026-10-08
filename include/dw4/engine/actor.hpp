@@ -75,14 +75,21 @@ struct MotionState {
     std::string previous_clip;
     std::int64_t previous_start{};
     std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
+    // States that stay in the combiner behind `clip` without showing: the
+    // activation appends the first animation as a replacing base state
+    // (801D2810), which no update retires; the next MOTIONSET's bake removes
+    // them with everything else.
+    bool hidden{};
     // The current state's fade-in weight at node time `time` (801D0668).
     float weight(std::int64_t time) const;
-    // The combiner still holds a second state (the fade source): two states
-    // or more, as MOTIONSET (0x802F1238) and WAITCHECK 'M' (0x802F0300) count
-    // them. Only the combiner updates retire it, see update().
-    bool layered() const { return !previous_clip.empty() || !previous_pose.empty(); }
+    // A fade source (the previous clip or the baked pose) is still a state.
+    bool has_previous() const { return !previous_clip.empty() || !previous_pose.empty(); }
+    // The combiner holds two states or more, as MOTIONSET (0x802F1238) and
+    // WAITCHECK 'M' (0x802F0300) count them. Only the combiner updates retire
+    // a fade source, see update().
+    bool layered() const { return has_previous() || hidden; }
     // The fade source still shows in a pose evaluated at `time`.
-    bool fading(std::int64_t time) const { return layered() && weight(time) < 1.0f; }
+    bool fading(std::int64_t time) const { return has_previous() && weight(time) < 1.0f; }
     // The combiner update (801CFFB4): once the current state's weight reaches
     // 1, the states before it retire (801CFEA8) and one state is left.
     void update(std::int64_t time);

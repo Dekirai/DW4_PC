@@ -2280,6 +2280,7 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
             if (baked.empty() && ram.database) motion_locals(*ram.database, m, now, baked);
             m.previous_clip.clear();
             m.previous_pose = std::move(baked);
+            m.hidden = false;
         } else {
             m.previous_clip = m.clip;
             m.previous_start = m.start;
@@ -2337,14 +2338,27 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
         ram.motion_work = 0;
         ram.fade_state = 0;
         ram.wait_state = 0;
-        // 0x802F1EA0-0x802F20DC: activation starts the combiner with the
-        // database's first animation (loc_801D2810) and lets the next
-        // MOTIONSET cut in (work+0x10 = 1 at 0x802F1F00).
+        // 0x802F1EA0-0x802F20DC: activation lets the next MOTIONSET cut in
+        // (work+0x10 = 1 at 0x802F1F00) and appends the database's first
+        // animation (loc_801D2810 -> 801D2044 -> 801D1BCC) as a replacing base
+        // state (combine mode 0, transition 4, active: 0x802F20C4-0x802F20D0).
+        // That shows only the first animation but deletes nothing: the states
+        // from before (after NDSP, say) stay in the combiner and count, so
+        // WAITCHECK 'M' waits and the next MOTIONSET bakes (and its cut-in
+        // retires the bake at once). Combiner +0x10 = 100000000 there
+        // (0x802F1F38-0x802F1F50) is the request time 801D0A38 stamps into new
+        // states (+0x98); only the optional cleanCombinerStates pass 801D0A90
+        // reads it, which is off (byte 0x704(r13)), so poses do not change.
         if (ram.database) {
             const auto now = node_time(ram.node_clock, engine.time());
-            ram.motion = MotionState{};
-            ram.motion.clip = ram.database->first_clip_name();
-            ram.motion.start = now;
+            auto& m = ram.motion;
+            m.hidden = !m.clip.empty();
+            m.previous_clip.clear();
+            m.previous_pose.clear();
+            m.clip = ram.database->first_clip_name();
+            m.start = now;
+            m.blend = 0;
+            m.blend_start = now;
             ram.pose_time = -1;
         }
         ram.motion_immediate = true;

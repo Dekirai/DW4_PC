@@ -187,9 +187,12 @@ float MotionState::weight(std::int64_t time) const {
 }
 
 void MotionState::update(std::int64_t time) {
-    if (layered() && !(weight(time) < 1.0f)) {
+    // A replacing base state (combine mode 0) retires nothing (801CFFB4 skips
+    // it); only a fade that reached weight 1 does.
+    if (has_previous() && !(weight(time) < 1.0f)) {
         previous_clip.clear();
         previous_pose.clear();
+        hidden = false;
     }
 }
 
