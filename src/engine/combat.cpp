@@ -1209,12 +1209,47 @@ void GameSystem::update(Engine& engine) {
 }
 
 bool GameSystem::command(Engine& engine, Ram&, std::string_view command, Packet& packet) {
-    // ADDHP / ADDMP (I<player>/I<amount>): the amount added within the maximum.
+    // ADDHP / ADDMP (GAMERAM cases 9 / 10, 80371BCC / 80371D08):
+    // I<player>/I<amount>[/I<effect>[/I<absolute>]]. ADDHP (8036F220) adds the
+    // amount within the maximum, nothing at 0 HP; an absolute value other
+    // than -1 sets the HP within 0..maximum even at 0 HP (the pit respawn sets
+    // 1). The effect flag plays the heal effect on the player whenever
+    // 8036F220 did not refuse (relative at 0 HP); ADDMP plays it only with
+    // exactly three ints.
     if (command == "ADDHP" || command == "ADDMP") {
         const int slot = packet.integer(0, 0);
         const int amount = packet.integer(1, 0);
-        if (command == "ADDHP") change_hp(engine, slot, amount);
-        else change_mp(engine, slot, amount);
+        const bool effect = packet.ints.size() >= 3 && packet.integer(2, 0) != 0;
+        bool applied = true;
+        if (command == "ADDHP") {
+            const int absolute = packet.ints.size() >= 4 ? packet.integer(3, -1) : -1;
+            auto& player = players[std::size_t(std::clamp(slot, 0, 3))];
+            if (absolute != -1) {
+                player.hp = std::clamp(absolute, 0, player.max_hp);
+                if (auto* models = engine.get<ModelCtrlManager>())
+                    if (auto* model = models->find(player.digimon, slot)) model->hp = player.hp;
+                Packet percent, value;
+                percent.floats.push_back(100.0f * float(player.hp) / float(std::max(player.max_hp, 1)));
+                value.ints.push_back(player.hp);
+                engine.messenger().send(engine, "METERCTRL", "hpmt", slot, "SETPERCENT", percent);
+                engine.messenger().send(engine, "NUMBERCTRL", "hpnm", slot, "SETVALUE", value);
+            } else {
+                applied = player.hp != 0;
+                change_hp(engine, slot, amount);
+            }
+        } else {
+            change_mp(engine, slot, amount);
+        }
+        if (applied && effect && (command == "ADDHP" || packet.ints.size() == 3)) {
+            Packet heal;
+            heal.strings.emplace_back(std::string("x_250healhit00"));
+            heal.strings.emplace_back(std::string("SQ_HEALEFONLY"));
+            heal.floats.push_back(1.0f);
+            heal.vectors.push_back(Vec3f{});
+            heal.bools.push_back(0);
+            heal.bools.push_back(1);
+            engine.messenger().send(engine, "PLAYER", players[std::size_t(std::clamp(slot, 0, 3))].digimon, slot, "SETEFFECT", heal);
+        }
         return true;
     }
     if (command == "RECALCPLAYER") {

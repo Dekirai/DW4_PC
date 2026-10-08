@@ -594,8 +594,18 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         }
         return true;
     }
+    // The player class hooks of OFCTRL (+0xA8 8034DF40), ONFREEZE (+0xAC
+    // 8034E078) and REMOVE (+0xB0 8034E594) close an open quick panel
+    // (ctrl +0x124) with NDMWPANEL REMOVE, for a generated model.
+    auto close_panel = [&] {
+        if (!ram.is_player || !ram.generated || !ram.panel_open) return;
+        ram.panel_open = false;
+        Packet remove;
+        engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
+    };
     if (command == "REMOVE") {
         if (ram.generated) {
+            close_panel(); // 0x8030DC1C, before ACTION NDSP
             Packet p;
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "NDSP", p);
             ram.generated = false;
@@ -648,11 +658,13 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
     if (command == "ONCTRL" || command == "OFCTRL") {
         // 8030E0AC / 8030E0D0: only a generated model's _isOnCtrl changes.
         if (ram.generated) ram.control_enabled = command == "ONCTRL";
+        if (command == "OFCTRL") close_panel(); // 0x8030E0F8
         return true;
     }
     if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
     if (command == "ONFREEZE" || command == "OFFREEZE") {
         ram.frozen = command == "ONFREEZE" && ram.generated;
+        if (command == "ONFREEZE") close_panel(); // 0x8030E168
         if (ram.generated) {
             Packet p;
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, std::string(command), p);
