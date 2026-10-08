@@ -1668,7 +1668,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         decision.reach = flat(aim, me) <= close ? 9.0f : 4.0f;
         if (flat(aim, me) <= 3.0f) decision.pick_up = true;
     }
-    if (to_goal_ && flat(goal_point_, me) < 20.0f) decision.confirm = true;
+    // The exit's prompt is answered once it holds the player (A before it
+    // would only swing and stop the walk into the mat).
+    if (to_goal_ && flat(goal_point_, me) < 20.0f && !player.control_enabled) decision.confirm = true;
     // A panel left open (A would pick from it instead of attacking): close.
     if (player.panel_open && gimmick_ != Gimmick::tech && frame % 30 < 3) {
         decision.press_r = true;
