@@ -198,7 +198,9 @@ struct RenderState {
     const Attribute* texture{};
     bool texture_enabled{};
     bool blend_enabled{};
-    std::int32_t blend_src = 1, blend_dst = 0, blend_equation = 0;
+    // igBlendFunctionAttr defaults (0x8055E6AC..B4, registered by 800BA89C):
+    // SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ADD.
+    std::int32_t blend_src = 4, blend_dst = 5, blend_equation = 0;
     // The original's GX alpha compare is in effect GREATER 0.1 wherever no
     // igAlphaStateAttr / igAlphaFunctionAttr says otherwise. Deferred render
     // packages record only attributes that differ from the stack defaults
