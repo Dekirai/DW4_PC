@@ -432,7 +432,10 @@ void PanelManager::update(Engine& engine) {
             }
             if (ram.counter < 2) ++ram.counter;
         }
-        auto& shown = ram.lists[std::size_t(ram.kind)];
+        // 8034A9A4 shows the list picked at the start of the frame (8034A298,
+        // r29): after a switch the new kind's base and lines follow on the
+        // next frame, when state 0 restarts with the new list.
+        auto& shown = list;
         display(engine, ram, shown);
         if (previous_count != shown.count) {
             // 80348C64: base model with the sequence for the line count.
