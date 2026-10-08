@@ -1094,7 +1094,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                 if (decision.jump_attack) {
                                     if (frame % 40 < 3) input |= dw4::pad_button::x;
                                     else if (frame % 40 >= 10 && frame % 40 < 13) input |= dw4::pad_button::a;
-                                } else if (frame % 20 < 3) {
+                                } else if (frame % (decision.fast_attack ? 10 : 20) < 3) {
                                     input |= dw4::pad_button::a;
                                 }
                             }

@@ -48,6 +48,24 @@ struct AvoidBox {
     float min_y = -1e30f, max_y = 1e30f;
 };
 
+// Enemy fire lanes for the walking map: grid cells (keys round(x / 5),
+// round(z / 5)) with the floor heights at which a player standing there is
+// in the fire. While a FireLanes guard is alive, every WalkMap built prices
+// stepping into such a cell higher, so routes go round a lane where they can
+// and cross it where they must.
+using FireLaneCells = std::map<std::pair<int, int>, std::pair<float, float>>;
+class FireLanes {
+public:
+    explicit FireLanes(const FireLaneCells& cells) { active_ = &cells; }
+    ~FireLanes() { active_ = nullptr; }
+    FireLanes(const FireLanes&) = delete;
+    FireLanes& operator=(const FireLanes&) = delete;
+    static const FireLaneCells* active() { return active_; }
+
+private:
+    static inline const FireLaneCells* active_ = nullptr;
+};
+
 // Everything reachable on foot within `range` of a start point: a flood of
 // the grid (heights follow the walked floor, so ramps and stairs are
 // climbed, ledges are walked off and gaps over pits are jumped), then the
@@ -114,6 +132,7 @@ public:
         bool attack{};      // press A (an enemy is in reach)
         bool confirm{};     // press A (standing on the goal mat)
         bool jump_attack{}; // the target floats above the player
+        bool fast_attack{}; // press A at every chance (the attack delay)
         bool pick_up{};     // press A (standing at a pickup)
         bool press_a{};     // press A now (text windows, wall switches)
         bool press_b{};     // press B now (cancels another exit's prompt)
@@ -158,6 +177,36 @@ private:
     // stagBS01 dais): the point next to its body on that floor the route
     // leads to (no swing reaches it from below, none is taken in the air).
     std::optional<engine::Vec3f> boss_stand_;
+    // The post an enemy is fought from: for one hovering out of the swing
+    // from its own floor (stag0404 e_impdra: body 13..28 above its root, the
+    // swing reaches 0..8) reached floor near it high enough for the swing to
+    // meet the body (no swing is taken in the air); for a turret a place next
+    // to its body, behind it where that can be reached.
+    std::optional<engine::Vec3f> perch_;
+    std::map<std::pair<int, int>, int> perch_skip_; // post cell -> frame until which it is not used (nothing came in reach)
+    int perch_since_ = -1;                         // standing on the post since
+    int perch_hit_at_ = -1;                        // the last new HP low of the enemy fought from it
+    // Enemy fire from turrets (stag0304 cannons): the cells their bullets
+    // crossed lately with the floor heights at which a player there is hit,
+    // and each turret's shot times (its volleys repeat). Routes avoid the
+    // lanes where they can; where they must cross one, the bot waits out of
+    // the fire for the long gap between two volleys.
+    void track_fire(engine::Engine& engine, int frame);
+    bool in_fire(const engine::Vec3f& p, int frame) const;
+    struct FireCell {
+        float lo{}, hi{};
+        int frame{};
+        const void* shooter{};
+    };
+    std::map<std::pair<int, int>, FireCell> fire_cells_;
+    std::map<const void*, std::vector<int>> shots_;                       // turret -> frames of its last bullets' starts
+    std::map<const void*, std::pair<engine::Vec3f, const void*>> bullets_; // live enemy bullet -> position, turret
+    std::map<const void*, std::pair<engine::Vec3f, int>> standing_;      // enemy -> where it stands and since when
+    std::map<const void*, float> bullet_speed_;                          // turret -> how far its bullets fly in a step
+    std::map<const void*, std::pair<float, float>> turret_band_;         // turret -> floor heights its fire meets
+    int fire_wait_since_ = -1;                                           // waiting for a gap in the fire since
+    int fire_go_until_ = -1;                                             // crossing (or a wait that ran out): no waiting until
+    bool fire_leap_to_post_{};                                           // the crossing's jump steers on to the turret's post
     int planned_ = -1000;
     bool to_goal_{};
     engine::Vec3f last_{};   // the player's position one step ago
