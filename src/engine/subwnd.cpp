@@ -62,6 +62,12 @@ void status_panel(Window& parent, Engine& engine, int player, bool shop) {
     panel.mode = 1;
 }
 
+Window& add_status_page(Window& parent, Engine& engine, int mode) {
+    auto& page = parent.add_child<Title01>(engine);
+    page.mode = mode;
+    return page;
+}
+
 // Select00 (80390730): Equipment / Folder / Skill.
 struct Select00 : Select {
     void open(Engine& engine) override {

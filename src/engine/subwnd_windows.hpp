@@ -702,6 +702,9 @@ inline void show_digits(Engine& engine, const Window& window, int value, int wid
 // 8039E320 / 80392AE0: point the parent's status panel (StatusTitle01) at
 // player, the lobby variant (created in mode 1 when missing) or the full page.
 void status_panel(Window& parent, Engine& engine, int player, bool shop);
+// beNDMWStatusTitle01 (8032802C) as a child: mode 0 the full page on i_stbase
+// (803920D0 -> 80392AE0), mode 1 the lobby variant on j_shbase (80392BF8).
+Window& add_status_page(Window& parent, Engine& engine, int mode);
 // beNDMWStatusCtrlEquip (subwnd.cpp); mode 1 is the Digi-Lab's variant.
 Window& add_equip_page(Window& parent, Engine& engine, int mode);
 
