@@ -1530,6 +1530,14 @@ public:
         }();
         std::array<std::array<int, 11>, 16> base_upcnt{};
         std::map<int, std::uint8_t> cards;      // CARDLIST (kept in player 1's RAM)
+        // BASE_FLAG / BASE_FLAGFOLDER / BASE_COUNTER of this player's record.
+        // Player 1's are the common FLAG / FLAGFOLDER / COUNTER (Engine::flags(),
+        // flag_folder, Engine::counters()), which BASE2CURRENT points at them
+        // (link_common). New player data (8036CE1C, 0x8036D148-0x8036D174)
+        // has BASE_FLAG[960] = 1, the constant byte at 80561411.
+        std::map<std::int32_t, std::uint8_t> base_flags{{960, 1}};
+        std::map<int, std::uint8_t> base_flag_folder;
+        std::map<std::int32_t, std::int32_t> base_counters;
     };
     // Drop tables in generator order (804DE098): conItem, insItem, impItem,
     // weapon, armor1, armor2, abChip.
@@ -1558,6 +1566,10 @@ public:
     void create_player(Engine& engine, int slot);
     // CURRENT2BASE (8036DF70): the current species keeps LEVEL, EXP, SKILL and UPCNT.
     void store_species(int slot);
+    // BASE2CURRENT for player 1 (8036DBA8 at 0x8036DE40): the common FLAG,
+    // FLAGFOLDER and COUNTER become its BASE_FLAG, BASE_FLAGFOLDER and
+    // BASE_COUNTER. Other players keep theirs to themselves.
+    void link_common(Engine& engine, int slot);
     // Memory card records (save_game.cpp, docs/SAVES.md).
     save::Record make_record(Engine& engine, int slot);
     void apply_record(Engine& engine, int slot, const save::Record& record, bool common);

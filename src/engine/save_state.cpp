@@ -109,6 +109,9 @@ void serialize(StateArchive& a, GameSystem::PlayerSlot& v) {
     a.io(v.base_skill);
     a.io(v.base_upcnt);
     a.io(v.cards);
+    a.io(v.base_flags);
+    a.io(v.base_flag_folder);
+    a.io(v.base_counters);
 }
 void serialize(StateArchive& a, GameSystem::BitChip& v) {
     a.io(v.stage);

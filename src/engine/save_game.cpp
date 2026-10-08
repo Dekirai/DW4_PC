@@ -22,8 +22,17 @@ template <std::size_t N> std::vector<int> indices(const std::array<std::int32_t,
 }
 } // namespace
 
-// 80364AEC after GAMERAM CURRENT2BASE: the player's record, carrying the
-// common flags, flag folder and counters.
+void GameSystem::link_common(Engine& engine, int slot) {
+    if (slot != 0) return;
+    const auto& p = players[0];
+    engine.flags() = p.base_flags;
+    flag_folder = p.base_flag_folder;
+    engine.counters() = p.base_counters;
+}
+
+// 80364AEC after GAMERAM CURRENT2BASE: the player's record with its
+// BASE_FLAG, BASE_FLAGFOLDER and BASE_COUNTER (0x80365278 on): player 1's
+// are the common flags, flag folder and counters.
 save::Record GameSystem::make_record(Engine& engine, int slot) {
     store_species(slot);
     const auto& p = players[std::size_t(std::clamp(slot, 0, 3))];
@@ -56,11 +65,12 @@ save::Record GameSystem::make_record(Engine& engine, int slot) {
     r.main_slot = p.main_slot.empty() ? -1 : p.main_slot[0];
     copy_indices(r.main_pocket, p.main_pocket);
     r.sub_slot = p.sub_slot.empty() ? -1 : p.sub_slot[0];
-    for (const auto& [flag, value] : engine.flags())
+    const bool host = slot == 0;
+    for (const auto& [flag, value] : host ? engine.flags() : p.base_flags)
         if (flag >= 0 && flag < int(r.flags.size())) r.flags[std::size_t(flag)] = value;
-    for (const auto& [index, value] : flag_folder)
+    for (const auto& [index, value] : host ? flag_folder : p.base_flag_folder)
         if (index >= 0 && index < int(r.flag_folder.size())) r.flag_folder[std::size_t(index)] = value;
-    for (const auto& [index, value] : engine.counters())
+    for (const auto& [index, value] : host ? engine.counters() : p.base_counters)
         if (index >= 0 && index < int(r.counters.size())) r.counters[std::size_t(index)] = value;
     for (const auto& [species, used] : p.base_isuse)
         if (species >= 0 && species < 16) r.base_isuse[std::size_t(species)] = used;
@@ -114,17 +124,18 @@ void GameSystem::apply_record(Engine& engine, int slot, const save::Record& r, b
     p.mp = r.mp;
     p.max_mp = r.max_mp;
     p.stats.ready = true;
-    if (common) {
-        engine.flags().clear();
-        for (std::size_t i = 0; i < r.flags.size(); ++i)
-            if (r.flags[i]) engine.flags()[std::int32_t(i)] = r.flags[i];
-        flag_folder.clear();
-        for (std::size_t i = 0; i < r.flag_folder.size(); ++i)
-            if (r.flag_folder[i]) flag_folder[int(i)] = r.flag_folder[i];
-        engine.counters().clear();
-        for (std::size_t i = 0; i < r.counters.size(); ++i)
-            if (r.counters[i]) engine.counters()[std::int32_t(i)] = r.counters[i];
-    }
+    // 803657D8: the record's BASE_FLAG, BASE_FLAGFOLDER and BASE_COUNTER
+    // replace the new player data's (BASE_FLAG[960] included).
+    p.base_flags.clear();
+    for (std::size_t i = 0; i < r.flags.size(); ++i)
+        if (r.flags[i]) p.base_flags[std::int32_t(i)] = r.flags[i];
+    p.base_flag_folder.clear();
+    for (std::size_t i = 0; i < r.flag_folder.size(); ++i)
+        if (r.flag_folder[i]) p.base_flag_folder[int(i)] = r.flag_folder[i];
+    p.base_counters.clear();
+    for (std::size_t i = 0; i < r.counters.size(); ++i)
+        if (r.counters[i]) p.base_counters[std::int32_t(i)] = r.counters[i];
+    if (common) link_common(engine, slot);
     recalc_player(engine, slot);
 }
 
