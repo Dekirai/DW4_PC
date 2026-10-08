@@ -313,6 +313,21 @@ constexpr StageSetting kStageSettings[] = {
     {"stag0403", "DW4_AVOID_MATS", "maty"},
 };
 
+// Targets struck in passing from a ride (the stag0103 boat: the six factory
+// towers and the two shelves must all break before the boat reaches the
+// bomb, stag0103 hit_g_facttowerz06.lua / hit_g_shelfz06.lua: flags 481-489,
+// else matf00 blows it up and sends the player back to stag0102). Each model
+// prefix listed is attacked whenever one with HP is within `range`, enemies
+// within `fight`; shots within `guard` are guarded against.
+struct RideTargets {
+    const char* stage;
+    const char* prefixes; // '|'-separated model name prefixes
+    float range, fight, guard;
+};
+constexpr RideTargets kRideTargets[] = {
+    {"stag0103", "g_facttowerz06|g_shelfz06", 70.0f, 20.0f, 40.0f},
+};
+
 std::string lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     return text;
@@ -611,6 +626,59 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             return out;
         }
     }
+    // Targets of a ride: faced and struck while they are in range.
+    if (controllable)
+        for (const auto& ride : kRideTargets) {
+            if (stage != ride.stage) continue;
+            auto* models = engine.get<engine::ModelCtrlManager>();
+            if (!models) break;
+            const std::string prefixes = std::string("|") + ride.prefixes + "|";
+            const engine::ModelCtrlManager::ModelRam* best = nullptr;
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->hp <= 0) continue;
+                bool listed = false;
+                for (std::size_t at = 1; at < prefixes.size() && !listed;) {
+                    const auto bar = prefixes.find('|', at);
+                    listed = e->info_name.rfind(prefixes.substr(at, bar - at), 0) == 0;
+                    at = bar + 1;
+                }
+                if (listed && flat(position_of(*e), me) < ride.range && (!best || flat(position_of(*e), me) < flat(position_of(*best), me)))
+                    best = e.get();
+            }
+            // Enemies boarding or next to the ride are struck down; shots
+            // and throws on the way are guarded against (on the boat every
+            // hit on a player costs the boat HP, stag0103 hit_p_*.lua; the
+            // guard (B, SQ_GUARD) takes none).
+            const engine::ModelCtrlManager::ModelRam* foe = nullptr;
+            bool threat = false, incoming = false;
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->is_player) continue;
+                const float d = flat(position_of(*e), me);
+                if (e->category == "EBULLET" && d < ride.guard) threat = true;
+                if (e->category == "EBULLET" && d < 18.0f) incoming = true;
+                if (e->category == "ENEMY" && e->hp > 0 && engine.has_script("hit_" + e->info_name + ".lua")) {
+                    if (d < ride.fight && (!foe || d < flat(position_of(*foe), me))) foe = e.get();
+                    if (d < ride.guard && e->seq_name.rfind("SQ_FIRE", 0) == 0) threat = true;
+                }
+            }
+            // A shot about to arrive is guarded against; otherwise close
+            // enemies first (their touch hurts too), then the targets, else
+            // the guard while something is aimed at the ride.
+            if (foe) best = foe;
+            if (!best && !threat) break;
+            if (best && !incoming) {
+                out.walk = true;
+                out.x = position_of(*best).x;
+                out.z = position_of(*best).z;
+                out.reach = 4.0f;
+                if (frame % 12 < 3) out.buttons |= pad_button::a;
+            } else {
+                // (B is read on its press: pulsed so the guard is taken again.)
+                if (frame % 8 < 4) out.buttons |= pad_button::b;
+            }
+            last_ = me;
+            return out;
+        }
     // Fields and dungeons: the ExploreBot plays them (it answers its own
     // prompts and text windows).
     if (step->action.rfind("explore:", 0) == 0) {
