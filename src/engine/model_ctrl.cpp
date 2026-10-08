@@ -956,6 +956,18 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
                 ram.combo_phase = 0;
                 if (spiral) ram.spin.fill(0);
                 select_sequence(engine, ram, spiral ? "SQ_ATCK2" : "SQ_ATCK1");
+                // 8034D084..8034D0B0: the HUD portrait ring blinks for the
+                // delay, sd MODELCTRL i_stpnl05 <player> with the sequence
+                // (ATTACKDELAY - 22) / 4 (srawi/addze: truncated) of the
+                // SQ_DLTM01..SQ_DLTM13 table at 804E7C34. The original does
+                // not check the index; one outside the table reads past it.
+                static constexpr const char* kDelayRings[13] = {"SQ_DLTM01", "SQ_DLTM02", "SQ_DLTM03", "SQ_DLTM04", "SQ_DLTM05",
+                                                                "SQ_DLTM06", "SQ_DLTM07", "SQ_DLTM08", "SQ_DLTM09", "SQ_DLTM10",
+                                                                "SQ_DLTM11", "SQ_DLTM12", "SQ_DLTM13"};
+                if (const int ring = (delay - 22) / 4; ring >= 0 && ring < 13) {
+                    Packet blink;
+                    messenger.send(engine, "MODELCTRL", "i_stpnl05", ram.index, kDelayRings[ring], blink);
+                }
                 return;
             }
         }
