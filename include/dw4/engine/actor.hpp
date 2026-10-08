@@ -70,21 +70,30 @@ struct ActorPose {
 struct MotionState {
     std::string clip;
     std::int64_t start{};   // node time when started
-    std::int64_t blend{};
+    std::int64_t blend{};   // fade-in of `clip`; 0: weight 1 at once
     std::int64_t blend_start{};
     std::string previous_clip;
     std::int64_t previous_start{};
     std::vector<Mat4> previous_pose; // baked bone locals; when set, the fade source
-    // Two combiner states or more: the cross-fade has not reached weight 1.
-    bool fading(std::int64_t time) const {
-        return blend > 0 && (!previous_clip.empty() || !previous_pose.empty()) && time - blend_start < blend;
-    }
+    // The current state's fade-in weight at node time `time` (801D0668).
+    float weight(std::int64_t time) const;
+    // The combiner still holds a second state (the fade source): two states
+    // or more, as MOTIONSET (0x802F1238) and WAITCHECK 'M' (0x802F0300) count
+    // them. Only the combiner updates retire it, see update().
+    bool layered() const { return !previous_clip.empty() || !previous_pose.empty(); }
+    // The fade source still shows in a pose evaluated at `time`.
+    bool fading(std::int64_t time) const { return layered() && weight(time) < 1.0f; }
+    // The combiner update (801CFFB4): once the current state's weight reaches
+    // 1, the states before it retire (801CFEA8) and one state is left.
+    void update(std::int64_t time);
 };
 
 // Bone locals of the combined motion at node time `time`.
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals);
-// Evaluate pose from clips at node time `time`.
-bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose);
+// Evaluate pose from clips at node time `time`; `locals` gets the combined
+// bone locals (empty when the motion has no clip to sample).
+bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose,
+                   std::vector<Mat4>& locals);
 // Seconds the clip's enbaya source samples for a state `local` ns after its
 // start (801E52FC -> 801E4FE8): a looping clip wraps at its duration, a clip
 // played once holds at duration - 1/30 s.

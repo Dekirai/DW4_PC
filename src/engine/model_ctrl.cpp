@@ -2145,16 +2145,23 @@ const ActionManager::ActionRam* ActionManager::find(std::string_view name, int i
     return nullptr;
 }
 
-const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time) {
+const ActorPose* ActionManager::pose_for(const Node& actor, std::int64_t world_time, bool traversal) {
     auto found = actor_owner_.find(&actor);
     if (found == actor_owner_.end()) return nullptr;
     auto& ram = *found->second;
     if (!ram.database) return nullptr;
+    const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
+    // The traversal's combiner evaluation (801D0C14) updates the combiner
+    // first (801CFFB4 at 0x801D0CB8): a fade whose weight reached 1 retires
+    // the states before it. That leaves the pose at this time as it is.
+    if (traversal) ram.motion.update(time);
     if (ram.pose_time != world_time) {
-        const auto time = static_cast<std::int64_t>(scaled_clock(world_time, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-        evaluate_pose(*ram.database, ram.motion, time, ram.pose);
+        evaluate_pose(*ram.database, ram.motion, time, ram.pose, ram.locals);
         ram.pose_time = world_time;
     }
+    // The evaluated bone locals stay in the combiner (+0x40) until the next
+    // evaluation; GETBONEMATRIX (802F18A4) reads matrices without one.
+    if (traversal && !ram.locals.empty()) ram.combiner_cache = ram.locals;
     return &ram.pose;
 }
 
@@ -2257,16 +2264,20 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         // loc_801CFFB4 at 0x802F12B0), also when that clip is already playing.
         // The state fades in over `first` frames (1e9 * first / 60 ns), or cuts
         // in for first == 0 and for the first MOTIONSET after the action became
-        // active (work+0x10, 0x802F11F4). With two states or more, i.e. a
-        // cross-fade still running, loc_801D2840 (0x802F1248) first bakes the
-        // combined pose into one static state, which the new clip fades from.
-        // The 'S' freezes of field 3 (0x802F12C0, 0x802F1370) are left out:
-        // every MOTIONSET in the stage data has "RR" there.
+        // active (work+0x10, 0x802F11F4). With two states or more still in the
+        // combiner (0x802F1238: a cross-fade its last update had not finished),
+        // loc_801D2840 (0x802F1248) first removes them all (801D215C) and adds
+        // one fixed state built from the combiner's cached bone matrices
+        // (+0x40), the output of its last evaluation - the scene traversal of
+        // the last picture, not the pose at this time. The new clip fades
+        // from that. The 'S' freezes of field 3 (0x802F12C0, 0x802F1370) are
+        // left out: every MOTIONSET in the stage data has "RR" there.
         const auto now = static_cast<std::int64_t>(scaled_clock(engine.time(), ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
         auto& m = ram.motion;
-        std::vector<Mat4> baked;
-        if (ram.database && m.fading(now)) motion_locals(*ram.database, m, now, baked);
-        if (!baked.empty()) {
+        if (m.layered()) {
+            std::vector<Mat4> baked = ram.combiner_cache;
+            // Never traversed (no cached output yet): the pose at this time.
+            if (baked.empty() && ram.database) motion_locals(*ram.database, m, now, baked);
             m.previous_clip.clear();
             m.previous_pose = std::move(baked);
         } else {
@@ -2279,8 +2290,12 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         ram.motion_immediate = false;
         m.clip = c.name;
         m.start = now;
+        // loc_801CFFB4 at 0x802F12B0 updates the combiner at node time: the new
+        // state's fade starts now, and a state that cuts in retires the others.
+        m.update(now);
         // 0x802F1440-0x802F14CC: 'L' loops the clip, anything else plays it once.
         if (ram.database) ram.database->set_looping(c.name, !c.loop.empty() && c.loop[0] == 'L');
+        ram.motion_work = 1; // 0x802F14E4
         ram.pose_time = -1;
         return true;
     }
@@ -2318,6 +2333,8 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
     if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
     if (!ram.action_active) {
         ram.action_active = true;
+        // 0x802F1EC0-0x802F1EC8: work +14 (motion), +34 (fade), +44 (wait).
+        ram.motion_work = 0;
         ram.fade_state = 0;
         ram.wait_state = 0;
         // 0x802F1EA0-0x802F20DC: activation starts the combiner with the
@@ -2423,6 +2440,18 @@ void ActionManager::update(Engine& engine) {
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.action_active || ram.frozen) { continue; }
+        // 802F0EB0, the first phase of 802F16CC: after a MOTIONSET the motion
+        // work waits one frame (1 -> 2), then updates the combiner at node
+        // time (801CFFB4 at 0x802F0F50) each frame until one state is left
+        // (0x802F1070), so WAITCHECK 'M' and the next MOTIONSET count this
+        // frame's states. The speed alignment there (0x802F108C) has no
+        // counterpart: the port's states run on the node clock.
+        if (ram.motion_work == 1) {
+            ram.motion_work = 2;
+        } else if (ram.motion_work == 2) {
+            if (ram.motion.layered()) ram.motion.update(node_time(ram.node_clock, now));
+            if (!ram.motion.layered()) ram.motion_work = 0;
+        }
         // Joint section.
         if (ram.joint_state == 1 || ram.joint_state == 2) {
             auto local = node_time(ram.node_clock, now);
@@ -2467,14 +2496,15 @@ void ActionManager::update(Engine& engine) {
             auto found = ram.timers.find("WAIT");
             ready = found == ram.timers.end() || timer_expired(found->second, now);
         } else if (ram.wait_state == 2) {
-            // 802F0264: only once the combiner is down to one state (the
-            // cross-fade done, 0x802F0300) and that state's time has reached
-            // the clip's duration (0x802F03B8), looping or not.
+            // 802F0264: only once the combiner is down to one state (0x802F0300:
+            // the count its last update left, from the traversal of the last
+            // picture or the motion phase above) and that state's time has
+            // reached the clip's duration (0x802F03B8), looping or not.
             ready = true;
             if (ram.database && !ram.motion.clip.empty()) {
                 if (const Clip* clip = ram.database->clip(ram.motion.clip)) {
                     const auto t = static_cast<std::int64_t>(scaled_clock(now, ram.node_clock.scale) + static_cast<std::uint64_t>(ram.node_clock.bias));
-                    ready = !ram.motion.fading(t) && t - ram.motion.start >= clip->duration;
+                    ready = !ram.motion.layered() && t - ram.motion.start >= clip->duration;
                 }
             }
         } else if (ram.wait_state == 3) {

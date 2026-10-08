@@ -1401,6 +1401,7 @@ public:
         std::size_t cursor{};
         bool action_active{}, visible{}, frozen{};
         bool motion_immediate{}; // work+0x10: the next MOTIONSET cuts in without a fade
+        int motion_work{};       // work+0x14: MOTIONSET's combiner update phase (802F0EB0)
         int joint_state{}, fade_state{}, wait_state{}, flash_state{};
         std::int64_t joint_start{}, joint_end{};
         bool joint_ended{};
@@ -1414,8 +1415,14 @@ public:
         MotionState motion;
         ActorPose pose;
         std::int64_t pose_time = -1;
+        std::vector<Mat4> locals;         // the bone locals of `pose`
+        std::vector<Mat4> combiner_cache; // combiner +0x40: the last traversal's bone locals
     };
-    const ActorPose* pose_for(const Node& actor, std::int64_t world_time);
+    // The actor's pose at `world_time`. The scene traversal (`traversal`)
+    // evaluates the combiner as 801D0C14 does: its update retires finished
+    // fades and its output stays in the combiner cache MOTIONSET bakes from;
+    // a query (GETBONEMATRIX) only reads the pose.
+    const ActorPose* pose_for(const Node& actor, std::int64_t world_time, bool traversal = false);
     // GETAPPEARANCELIST (802F1870): the action of a model (its igActor nodes
     // and animation database with the skeleton).
     const ActionRam* find(std::string_view name, int index) const;

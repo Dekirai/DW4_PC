@@ -175,6 +175,24 @@ bool sample_locals(AnimationDatabase& database, const std::string& name, std::in
 }
 } // namespace
 
+float MotionState::weight(std::int64_t time) const {
+    // A state that cuts in (first == 0 or the first MOTIONSET after the
+    // activation) starts at ratio 1 with no range (0x802F11F8-0x802F1208).
+    if (blend <= 0) return 1.0f;
+    // 801D0668-801D06AC: elapsed time and duration through double to float,
+    // divided, clamped above 1, then start ratio 0 + range 1 * that.
+    float ratio = static_cast<float>(static_cast<double>(time - blend_start)) / static_cast<float>(static_cast<double>(blend));
+    if (ratio > 1.0f) ratio = 1.0f;
+    return ratio;
+}
+
+void MotionState::update(std::int64_t time) {
+    if (layered() && !(weight(time) < 1.0f)) {
+        previous_clip.clear();
+        previous_pose.clear();
+    }
+}
+
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals) {
     if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, time, locals)) return false;
     if (motion.fading(time)) {
@@ -183,19 +201,20 @@ bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::
         if (motion.previous_pose.empty())
             previous = sample_locals(database, motion.previous_clip, motion.previous_start, time, sampled) ? &sampled : nullptr;
         if (previous) {
-            const float t = std::clamp(float(double(time - motion.blend_start) / double(motion.blend)), 0.0f, 1.0f);
+            const float t = std::clamp(motion.weight(time), 0.0f, 1.0f);
             for (std::size_t i = 0; i < locals.size() && i < previous->size(); ++i) locals[i] = lerp_matrix((*previous)[i], locals[i], t);
         }
     }
     return true;
 }
 
-bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose) {
+bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose,
+                   std::vector<Mat4>& locals) {
     const auto& skel = database.skeleton();
     pose.skeleton = &skel;
     pose.bone_world.assign(skel.names.size(), Mat4{});
-    std::vector<Mat4> locals;
     if (!motion_locals(database, motion, time, locals)) {
+        locals.clear();
         pose.bind_pose = true;
         return false;
     }
