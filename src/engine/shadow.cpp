@@ -51,6 +51,12 @@ void ShadowManager::add_info(Engine& engine, const ObjectView& info) {
         extent_ = std::max(std::abs(shader.f32(48, 100.0f)), std::abs(shader.f32(49, -100.0f)));
         near_ = shader.f32(27, 0.1f);
         far_ = shader.f32(28, 1000.0f);
+        up_ = shader.vec3(29).value_or(Vec3f{1, 0, 0});
+        // 8031476C (0x80314888..0x803148B8) gives the shader's _light (an
+        // igLightAttr, [45]) the new position and its direction, and 801FE718
+        // copies both into _lightPos/_lightDir ([8]/[9]) every traversal.
+        direction_ = shader.vec3(9).value_or(Vec3f{0, -1, 0});
+        if (const auto light = shader.ref(45)) direction_ = light.vec3(10).value_or(direction_);
     }
     if (const auto caster = info.ref(8))
         if (Node* node = engine.scenes().node(caster)) casters_.push_back(node);
@@ -105,7 +111,8 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.factor = factor_;
     frame.size = size_;
     frame.border = shadow_border();
-    frame.light_view = look_at(*light_, *light_ - Vec3f{0, 1, 0}, {0, 0, -1});
+    // 801FE5E4 (0x801FE640): lookAt(_lightPos, _lightPos + _lightDir, _upVector).
+    frame.light_view = look_at(*light_, *light_ + direction_, up_);
     frame.light_projection = orthographic(extent_, near_, far_);
     TraversalContext caster = context;
     caster.output = &frame.casters;
@@ -116,7 +123,10 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && engine.frame() % 120 == 0) {
         const std::size_t receiving = frame.receivers.size();
         engine.log("shadow light (" + std::to_string(light_->x) + ", " + std::to_string(light_->y) + ", " +
-                   std::to_string(light_->z) + ") casters " + std::to_string(casters_.size()) + " items " +
+                   std::to_string(light_->z) + ") dir (" + std::to_string(direction_.x) + ", " +
+                   std::to_string(direction_.y) + ", " + std::to_string(direction_.z) + ") up (" +
+                   std::to_string(up_.x) + ", " + std::to_string(up_.y) + ", " + std::to_string(up_.z) +
+                   ") casters " + std::to_string(casters_.size()) + " items " +
                    std::to_string(frame.casters.size()) + " receiver items " + std::to_string(receiving));
     }
 }
