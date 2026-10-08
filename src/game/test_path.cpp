@@ -1614,12 +1614,18 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         const bool structure = target->category == "ENEMY" &&
                                (target->info_name.rfind("g_", 0) == 0 || target->info_name.rfind("f_", 0) == 0);
         // (One that took no new damage for a while is walked up to 5 units.)
-        decision.reach = structure ? 1.0f : flat(aim, me) <= close ? (fruitless_[target_] > 240 ? 25.0f : 400.0f) : 4.0f;
+        // A struck gimmick (a breakable wall, a box) is walked up to as well:
+        // its body box (80307EAC, authored half extents) is small next to
+        // its centre's distance.
+        const bool walk_up = structure || (gimmick_ == Gimmick::strike && target->hit && !target->hit->boxes.empty());
+        decision.reach = walk_up ? 1.0f : flat(aim, me) <= close ? (fruitless_[target_] > 240 ? 25.0f : 400.0f) : 4.0f;
         // A structure is struck once its body is within 15 (a big body keeps
         // the player further from its centre); others from 20. Blocked within
         // 30, swing half the time only, so the sidestep (never while
         // attacking) can free the player.
-        const bool in_reach = structure && target->category == "ENEMY" ? body_gap(*target, me) <= 15.0f : d2 <= 400.0f;
+        const bool in_reach = structure && target->category == "ENEMY" ? body_gap(*target, me) <= 15.0f
+                              : walk_up                                ? body_gap(*target, me) <= 12.0f
+                                                                       : d2 <= 400.0f;
         if (in_reach || (d2 <= 900.0f && stalled_ > 20 && frame % 120 < 60)) {
             decision.attack = true;
             decision.jump_attack = aim.y > me.y + 8.0f;
