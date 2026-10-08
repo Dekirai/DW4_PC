@@ -385,7 +385,11 @@ void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std
 // 802F2BC0: the box camera. The pivot stands at the players' centre; the
 // camera box containing the centre selects the rotation and distance
 // transforms, blended in over 120 steps (one per frame while the players
-// move, 1.5 while they stand); SHAKE offsets the live transforms. The box
+// move, 1.5 while they stand); SHAKE offsets the live transforms. The step
+// is exactly 1.0: 0x802F3280 restarts the CAMHOKAN timer (8031DE44 stamps
+// it with this frame's time, step 1.0 at 80452BE8) right before 8031E4C4
+// reads it. "Stand" means the centre equals last frame's bit for bit
+// (fcmpu, 0x802F2D24..0x802F2D3C). The box
 // camera's path becomes the current viewer only when the centre enters
 // another box (0x802F2F70..0x802F30E8); without players it does nothing
 // (0x802F2C68), so a demo viewer stays current.
