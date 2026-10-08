@@ -8,6 +8,28 @@
 namespace dw4::engine {
 namespace {
 
+// 0x804152A8: the eight blur sample offsets (x, y) of the map's blur quads.
+constexpr float kBlurOffsets[16] = {0.5625f, 0.4375f, 0.0625f, 0.9375f, 0.3125f, 0.6875f, 0.6875f, 0.8125f,
+                                    0.8125f, 0.1875f, 0.9375f, 0.5625f, 0.4375f, 0.0625f, 0.1875f, 0.3125f};
+
+// 801FD040 starts the map border at 1 texel (0x801FD05C) and the blur quad
+// builder loc_801FCBE4 raises it to ceil(6 * offset) + 1 for every sample
+// offset beyond it (0x801FCE28..0x801FCE88), whatever _blurState is; the
+// border then insets _shadowInnerViewport (0x801FD1D0) and the texture
+// matrix flt_804F8CC8 (0x801FD288..0x801FD2EC).
+constexpr int shadow_border() {
+    int border = 1;
+    for (const float offset : kBlurOffsets) {
+        const float scaled = 6.0f * offset;
+        if (scaled <= float(border)) continue;
+        int ceiling = int(scaled);
+        if (float(ceiling) < scaled) ++ceiling;
+        border = ceiling + 1;
+    }
+    return border;
+}
+static_assert(shadow_border() == 7);
+
 // A row-vector orthographic projection (GX-style depth mapped to GL clip).
 Mat4 orthographic(float half, float near_plane, float far_plane) {
     Mat4 r;
@@ -82,6 +104,7 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     if (!frame.active) return;
     frame.factor = factor_;
     frame.size = size_;
+    frame.border = shadow_border();
     frame.light_view = look_at(*light_, *light_ - Vec3f{0, 1, 0}, {0, 0, -1});
     frame.light_projection = orthographic(extent_, near_, far_);
     TraversalContext caster = context;

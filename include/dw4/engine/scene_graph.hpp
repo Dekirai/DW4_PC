@@ -261,6 +261,9 @@ struct ShadowFrame {
     Mat4 light_view{}, light_projection{};
     float factor = 0.4f; // _shadowFactor: the multiplier inside a shadow
     int size = 256;
+    // The casters fill the inner viewport (border, border, size - 2 border,
+    // ...); the receivers' texture matrix maps the light box into it.
+    int border = 7;
     std::vector<DrawItem> casters, receivers;
 };
 

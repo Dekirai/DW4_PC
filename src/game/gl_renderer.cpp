@@ -131,11 +131,10 @@ out vec4 o_color;
 void main() {
     // Receiver pass (801FE190): the light's map is the multiplier (white
     // where lit, _shadowFactor inside a shadow), MODULATE with white.
+    // v_shadow is already the map coordinate; outside the light box the
+    // clamped lookup lands on the map's white border (GX has no range test).
     if (u_shadow_pass == 2) {
-        vec3 p = v_shadow.xyz / v_shadow.w * 0.5 + 0.5;
-        float lit = 1.0;
-        if (p.x > 0.0 && p.x < 1.0 && p.y > 0.0 && p.y < 1.0) lit = texture(u_shadow_tex, p.xy).r;
-        o_color = vec4(vec3(lit), 1.0);
+        o_color = vec4(vec3(texture(u_shadow_tex, v_shadow.xy / v_shadow.w).r), 1.0);
         return;
     }
     vec4 c = v_color;
@@ -546,6 +545,10 @@ void GlRenderer::render_shadow_map() {
     glViewport(0, 0, shadow_size_, shadow_size_);
     glClearColor(1, 1, 1, 1);
     glClear(GL_COLOR_BUFFER_BIT);
+    // 801FD040 (0x801FD1D0): the casters go into _shadowInnerViewport, the
+    // map inset by the border on every side.
+    const int border = shadow_->border;
+    glViewport(border, border, shadow_size_ - 2 * border, shadow_size_ - 2 * border);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_BLEND);
@@ -602,7 +605,16 @@ void GlRenderer::render_shadow_map() {
 void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     auto& gl = *gl_;
     if (!shadow_ready_ || shadow_->receivers.empty()) return;
-    const auto matrix = shadow_->light_view * shadow_->light_projection;
+    // 801FE504: the texture matrix is light view * projection * the bias
+    // (0.5, 0.5) * the border matrix flt_804F8CC8 (scale (W - 2b) / W, offset
+    // b / W). GL's map rows run bottom-up, so t keeps +0.5 where GX's bias
+    // flips it.
+    const float inner = float(shadow_size_ - 2 * shadow_->border) / float(shadow_size_);
+    const float offset = float(shadow_->border) / float(shadow_size_);
+    engine::Mat4 bias;
+    bias(0, 0) = bias(1, 1) = 0.5f * inner;
+    bias(3, 0) = bias(3, 1) = 0.5f * inner + offset;
+    const auto matrix = shadow_->light_view * shadow_->light_projection * bias;
     gl.UniformMatrix4fv(gl.u_shadow_matrix, 1, GL_FALSE, matrix.m.data());
     gl.ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadow_texture_);
