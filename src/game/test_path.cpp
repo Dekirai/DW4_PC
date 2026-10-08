@@ -502,6 +502,20 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
     }
     return gap;
 }
+// The top of a model's body boxes in world Y (80307EAC: the root matrix moves
+// the box centre, the authored half extents stay); the root's Y without boxes.
+float body_top(const engine::ModelCtrlManager::ModelRam& e) {
+    if (!e.node) return -std::numeric_limits<float>::infinity();
+    const auto& m = e.node->matrix;
+    if (!e.hit || e.hit->boxes.empty()) return m(3, 1);
+    float top = -std::numeric_limits<float>::infinity();
+    for (const auto& [lo, hi] : e.hit->boxes) {
+        const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        const float wy = c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1);
+        top = std::max(top, wy + (hi.y - lo.y) * 0.5f);
+    }
+    return top;
+}
 // Hit reactions and status effects hold the player in place; that is not
 // being stuck.
 bool held_by_hit(const engine::ModelCtrlManager::ModelRam& ram) {
@@ -566,6 +580,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     const std::string previous_mat = target_mat_;
     planned_ = frame;
     route_.clear();
+    boss_stand_.reset();
     next_ = 0;
     target_ = nullptr;
     target_mat_.clear();
@@ -878,6 +893,50 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                     }
                 }
                 if (flank) route_ = map.route_to(*flank, 3.0f);
+            }
+            // A boss whose body starts above the player's swing box (feet to
+            // feet + 8; Apocalymon's body y 30..70 hovers over the stagBS01
+            // dais at y 30, the floor round it is y 20): no swing reaches it
+            // from below and A is not taken in the air (8034C3C8 runs only
+            // standing or walking), so the route leads up onto its floor, to
+            // the cheapest reached point next to its body there.
+            if (pass == 0 && best->info_name.rfind("f_", 0) == 0 && best->node && best->hit && !best->hit->boxes.empty()) {
+                const auto& m = best->node->matrix;
+                float bottom = 1e30f, top = -1e30f;
+                engine::Vec3f lo{1e30f, 0.0f, 1e30f}, hi{-1e30f, 0.0f, -1e30f};
+                for (const auto& [box_lo, box_hi] : best->hit->boxes) {
+                    // 80307EAC: the root matrix moves the centre, the half extents stay.
+                    const engine::Vec3f c{(box_lo.x + box_hi.x) * 0.5f, (box_lo.y + box_hi.y) * 0.5f, (box_lo.z + box_hi.z) * 0.5f};
+                    const engine::Vec3f half{(box_hi.x - box_lo.x) * 0.5f, (box_hi.y - box_lo.y) * 0.5f, (box_hi.z - box_lo.z) * 0.5f};
+                    const engine::Vec3f w{c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0) + m(3, 0), c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1),
+                                          c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2) + m(3, 2)};
+                    bottom = std::min(bottom, w.y - half.y);
+                    top = std::max(top, w.y + half.y);
+                    lo = {std::min(lo.x, w.x - half.x), 0.0f, std::min(lo.z, w.z - half.z)};
+                    hi = {std::max(hi.x, w.x + half.x), 0.0f, std::max(hi.z, w.z + half.z)};
+                }
+                const auto my_floor = map.nearest(me, 5.0f);
+                if (bottom > (my_floor ? my_floor->y : me.y) + 7.0f) {
+                    const engine::Vec3f centre{(lo.x + hi.x) * 0.5f, 0.0f, (lo.z + hi.z) * 0.5f};
+                    const float half = std::max(hi.x - lo.x, hi.z - lo.z) * 0.5f;
+                    float stand_cost = std::numeric_limits<float>::infinity();
+                    for (int step = 0; step < 24; ++step) {
+                        const float angle = float(step) * 0.2617994f;
+                        const engine::Vec3f p{centre.x + std::sin(angle) * (half + 6.0f), bottom, centre.z + std::cos(angle) * (half + 6.0f)};
+                        const auto floor = map.nearest(p, 3.0f);
+                        if (!floor || floor->y < bottom - 7.0f || floor->y > top) continue;
+                        const float cost = map.cost_to(p, 3.0f);
+                        if (cost < stand_cost) {
+                            stand_cost = cost;
+                            boss_stand_ = *floor;
+                        }
+                    }
+                    if (boss_stand_) route_ = map.route_to(*boss_stand_, 3.0f);
+                    if (std::getenv("DW4_TRACE_EXPLORE"))
+                        std::printf("[%d] explore: %s body y %.0f..%.0f above the swing, stand %s (%.0f,%.0f,%.0f)\n", frame, best->info_name.c_str(),
+                                    bottom, top, boss_stand_ ? "at" : "none", boss_stand_ ? boss_stand_->x : 0.0f,
+                                    boss_stand_ ? boss_stand_->y : 0.0f, boss_stand_ ? boss_stand_->z : 0.0f);
+                }
             }
             return;
         }
@@ -1445,7 +1504,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
     const float close = !target ? 8.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;
-    if (flat(aim, me) > close && next_ < route_.size()) {
+    // Below a boss whose body starts above the swing: the route up onto its
+    // floor is followed however close the boss is (straight at it only runs
+    // into the step under its body).
+    const bool climbing = boss_stand_ && target && aim.y > me.y + 8.0f;
+    if ((flat(aim, me) > close || climbing) && next_ < route_.size()) {
         decision.x = route_[next_].point.x;
         decision.z = route_[next_].point.z;
         // A gap: jump from the take-off point toward the landing.
@@ -1618,15 +1681,26 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // its body box (80307EAC, authored half extents) is small next to
         // its centre's distance.
         const bool walk_up = structure || (gimmick_ == Gimmick::strike && target->hit && !target->hit->boxes.empty());
-        decision.reach = walk_up ? 1.0f : flat(aim, me) <= close ? (fruitless_[target_] > 240 ? 25.0f : 400.0f) : 4.0f;
+        // The player's swing (CHKBULLET 10000) spans its feet to 8 above: an
+        // enemy whose body top stays below the feet (at the foot of a terrace
+        // step, 10 down; e_mecha2's body is 7 high) is never hit from the
+        // ledge however close. Walk onto it to drop down to its level.
+        const float drop = me.y - body_top(*target);
+        const bool below = !structure && target->category == "ENEMY" && drop > 0.0f && drop <= 25.0f;
+        decision.reach = walk_up || below ? 1.0f : flat(aim, me) <= close ? (fruitless_[target_] > 240 ? 25.0f : 400.0f) : 4.0f;
         // A structure is struck once its body is within 15 (a big body keeps
         // the player further from its centre); others from 20. Blocked within
         // 30, swing half the time only, so the sidestep (never while
         // attacking) can free the player.
-        const bool in_reach = structure && target->category == "ENEMY" ? body_gap(*target, me) <= 15.0f
+        const bool in_reach = below                                    ? false
+                              : structure && target->category == "ENEMY" ? body_gap(*target, me) <= 15.0f
                               : walk_up                                ? body_gap(*target, me) <= 12.0f
                                                                        : d2 <= 400.0f;
-        if (in_reach || (d2 <= 900.0f && stalled_ > 20 && frame % 120 < 60)) {
+        if (climbing && next_ >= route_.size()) {
+            decision.x = boss_stand_->x; // the route ran out below: to the stand point
+            decision.z = boss_stand_->z;
+        }
+        if (!climbing && (in_reach || (!below && d2 <= 900.0f && stalled_ > 20 && frame % 120 < 60))) {
             decision.attack = true;
             decision.jump_attack = aim.y > me.y + 8.0f;
             if (gimmick_ == Gimmick::strike && !held_by_hit(player)) spend(240);
@@ -1645,7 +1719,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             last_at->second = now_at;
             // A structure never got within reach of is given up for a while
             // (not counted as taking no damage).
-            if (structure && !in_reach && !held_by_hit(player)) {
+            if ((structure || below) && !in_reach && !held_by_hit(player)) {
                 if (++approach_[target_] > 1800) {
                     if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up reaching %s\n", frame, what_.c_str());
                     approach_[target_] = 0;
@@ -1661,7 +1735,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (fresh || target->hp < low->second) {
                 low->second = target->hp;
                 fruitless_[target_] = 0;
-            } else if (still && (!structure || in_reach) &&
+            } else if (still && !below && (!structure || in_reach) &&
                        (fruitless_[target_] += decision.attack ? 2 : 1) > (target->info_name.rfind("f_", 0) == 0 ? 6000 : 1800)) {
                 if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore leaves %s alone (no damage)\n", frame, what_.c_str());
                 fruitless_[target_] = 0;

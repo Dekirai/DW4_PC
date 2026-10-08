@@ -154,6 +154,10 @@ private:
     std::string target_mat_;                     // the mat being walked to
     std::string target_radar_;                   // the radar generator whose base is walked to
     engine::Vec3f goal_point_{};
+    // A boss whose body starts above the player's swing (Apocalymon over the
+    // stagBS01 dais): the point next to its body on that floor the route
+    // leads to (no swing reaches it from below, none is taken in the air).
+    std::optional<engine::Vec3f> boss_stand_;
     int planned_ = -1000;
     bool to_goal_{};
     engine::Vec3f last_{};   // the player's position one step ago
