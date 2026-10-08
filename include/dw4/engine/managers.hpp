@@ -126,6 +126,14 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // The current viewer's own update (beCameraMode vfunc +0x78, 802F4268):
+    // the viewer is attached to its camera as an observer (8040F870 ->
+    // 8011D0D4 -> 8011BDC0), not scheduled with the managers, and advances
+    // its clock and sets the camera matrix the frame is drawn and steered
+    // with before the demo or the camera update can change the viewer.
+    // Engine::step calls it before the messenger, the demo and the managers.
+    void begin_frame(Engine& engine);
+    // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
 
     struct CameraPath {
@@ -189,8 +197,10 @@ private:
     float blend_{};
     int box_{}, previous_box_{};
     Mat4 saved_eye_, saved_target_;
+    std::optional<FrameCamera> frame_;
     void update_box(Engine& engine, CameraRam& ram);
     void set_viewer(const CameraRam& ram, const CameraPath& path, std::int64_t duration);
+    void compute_camera(Engine& engine, FrameCamera& camera);
     bool named_demo_running(const Engine& engine) const;
 };
 
@@ -1122,11 +1132,15 @@ public:
             int ram = -1;
         };
         std::vector<Effect> effects;
-        // An effect placed on an owner model (GENERATE with attachment strings).
+        // An effect placed on its source model (GENERATE effect form: string0/int0).
         std::string attach_name;
         int attach_index = -1;
         Vec3f attach_offset{}, attach_rotation{};
         bool attach_lock{};
+        // The model its bullets shoot for (string2/int1, effect work +0xDC/+0xE0);
+        // a chained effect inherits its source's owner (80310340).
+        std::string owner_name;
+        int owner_index = -1;
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)

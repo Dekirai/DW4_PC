@@ -295,6 +295,7 @@ void CameraManager::add_info(Engine& engine, const ObjectView& info) {
 void CameraManager::clear_stage(Engine&) {
     rams_.clear();
     viewer_.reset();
+    frame_.reset();
     centre_ = {-1.0f, -1.0f, -1.0f};
     centre_moved_ = false;
     blend_ = 0.0f;
@@ -585,9 +586,19 @@ void CameraManager::update(Engine& engine) {
             ram->state = 1;
         }
     }
-    // 802F4268: the viewer's clock advances by the world step (at most 50 ms,
-    // nothing on its first update) and stops at the duration (+70 finished);
-    // the path is still evaluated there, so the last pose stays.
+}
+
+// 802F4268 (beCameraMode vfunc +0x78) ticks before the managers: a viewer
+// set by this frame's demo or camera update is first drawn next frame, at
+// its time 0, and the demo waiting on ISDEMOCAMERA sees the end the frame
+// the viewer reaches it. Dolphin shows it at the boss intro: the frame the
+// demo sends SETDEMOCAMERA still draws the box camera, and the demo camera,
+// its end and the cut to the box camera come one frame after the world
+// events the same demo posts.
+void CameraManager::begin_frame(Engine& engine) {
+    // The viewer's clock advances by the world step (at most 50 ms, nothing
+    // on its first update) and stops at the duration (+70 finished); the
+    // path is still evaluated there, so the last pose stays.
     if (viewer_ && !viewer_->finished) {
         const std::int64_t now = engine.time();
         const std::int64_t step = viewer_->last != 0 ? std::min<std::int64_t>(now - viewer_->last, 50'000'000) : 0;
@@ -598,9 +609,17 @@ void CameraManager::update(Engine& engine) {
             viewer_->time = viewer_->duration;
         }
     }
+    FrameCamera camera;
+    compute_camera(engine, camera);
+    frame_ = camera;
 }
 
 void CameraManager::frame_camera(Engine& engine, FrameCamera& camera) {
+    if (frame_) camera = *frame_;
+    else compute_camera(engine, camera);
+}
+
+void CameraManager::compute_camera(Engine& engine, FrameCamera& camera) {
     camera.projection = camera_projection(54.4322f, 10.0f, 2000.0f);
     camera.view = look_at({0, 50, 300}, {0, 0, 0}, {0, 1, 0});
     // The current viewer's path at its clock. Before the box or a demo camera
