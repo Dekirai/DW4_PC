@@ -7,6 +7,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 
@@ -319,6 +320,7 @@ void Engine::begin_stage_load() {
     pending_stage_.clear();
     log("stage change -> " + next);
     for (auto& m : managers_) m->clear_stage(*this);
+    schedule_.clear();
     messenger_.clear();
     demo_.clear();
     global_root_.children.clear();
@@ -381,7 +383,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     process_stage_loader();
     messenger_.update(*this);
     demo_.update(*this);
-    for (auto& m : managers_) m->update(*this);
+    update_managers();
 }
 
 std::uint64_t Engine::fingerprint() {
@@ -475,6 +477,11 @@ void Engine::register_info(const ObjectView& info) {
     for (auto& m : managers_) {
         if (m->accepts(info)) {
             m->add_info(*this, info);
+            // 802F251C: an accepted info schedules its manager (8028A398);
+            // the scheduler appends it unless it is already active (80041E40
+            // with an empty dependency order -> 800694EC).
+            const Scheduled entry{m.get(), m->schedule_slot(info)};
+            if (std::find(schedule_.begin(), schedule_.end(), entry) == schedule_.end()) schedule_.push_back(entry);
             accepted = true;
             break;
         }
@@ -595,6 +602,12 @@ void Engine::process_stage_loader() {
                               stage_name_ != "stagis12";
         loader_state_ = -1;
         log("stage " + stage_name_ + " started");
+        // DW4_TRACE_SCHEDULE=1 logs the manager update order of the stage.
+        if (std::getenv("DW4_TRACE_SCHEDULE")) {
+            std::string order = "schedule:";
+            for (const auto& entry : schedule_) order += " " + entry.manager->slot_name(entry.slot);
+            log(order);
+        }
         break;
     default:
         loader_state_ = -1;
@@ -617,7 +630,27 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     process_stage_loader();
     messenger_.update(*this);
     demo_.update(*this);
-    for (auto& m : managers_) m->update(*this);
+    update_managers();
+}
+
+// The scheduler run (8028B7B0): the managers scheduled at registration, then
+// the stage's managers in the order of their first info. So beAction2 runs
+// before beModelCtrl, both before beSelectCtrl and the menu managers
+// (beNDMWStatus, beNDMWPanelWaza), and beFont comes last, as the stage files
+// list their infos. A manager without an info in this stage is not scheduled
+// in the original; the port still runs it after the others (idle).
+void Engine::update_managers() {
+    for (auto& m : managers_)
+        if (m->scheduled_at_registration()) m->update(*this);
+    // 8028B7B0 walks a copy, so a manager scheduled during the run (a file
+    // loaded on demand) first runs in the next frame.
+    schedule_run_ = schedule_;
+    for (const auto& entry : schedule_run_)
+        if (!entry.manager->scheduled_at_registration()) entry.manager->update_slot(*this, entry.slot);
+    for (auto& m : managers_)
+        if (!m->scheduled_at_registration() &&
+            std::none_of(schedule_run_.begin(), schedule_run_.end(), [&](const Scheduled& e) { return e.manager == m.get(); }))
+            m->update(*this);
 }
 
 bool Engine::main_lobby() const {

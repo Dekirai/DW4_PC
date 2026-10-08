@@ -1025,6 +1025,12 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // Each model class (beNDMWMdlPlayer, ...Enemy, ...Object, 80346F74) is a
+    // manager of its own that accepts the infos of its KIND, so each is
+    // scheduled by its first info.
+    int schedule_slot(const ObjectView& info) const override;
+    void update_slot(Engine& engine, int slot) override;
+    std::string slot_name(int slot) const override;
     void install_actor_hook(Engine& engine, TraversalContext& context);
 
     struct Sequence {
@@ -1296,7 +1302,10 @@ private:
 // NDMWPANEL (beNDMWPanelWaza, vtable 804E71E8): the per-player quick panels
 // opened with R (techniques), L (disks) and Z (status), and Y's emergency
 // heal. A picks the line; the panel stays open for the next use after the
-// technique's DELAY (one second for disks).
+// technique's DELAY (one second for disks). Its info comes with the stage,
+// so it updates before beNDMWMdlPlayer (common file): a panel the player's
+// R/L/Z opens first updates in the next frame, without that trigger, and
+// the base it closes is removed by the next model update.
 class PanelManager final : public Manager {
 public:
     PanelManager() : Manager("beNDMWPanelWaza") {}
@@ -1409,6 +1418,7 @@ class GameSystem final : public Manager {
 public:
     bool accepts(const ObjectView&) const override { return false; }
     void add_info(Engine&, const ObjectView&) override {}
+    bool scheduled_at_registration() const override { return true; }
     bool script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args, std::vector<Lua4Value>& out);
     // GAMERAM messages (803717A4); the row is registered again after each stage load.
     void update(Engine& engine) override;

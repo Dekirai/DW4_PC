@@ -29,9 +29,10 @@ std::string category_for_kind(std::string_view kind) {
     return "MODELCTRL";
 }
 
-// The model class managers update in their registration order (80346F74):
-// beNDMWMdlPlayer2, PBullet, EBullet, Object, Item, Effect, MapBase,
-// MapCursor, Player, Enemy; each accepts the infos of its KIND.
+// The model class managers of the game plugin (80346F74: beNDMWMdlPlayer2,
+// PBullet, EBullet, Object, Item, Effect, MapBase, MapCursor, Player, Enemy);
+// each accepts the infos of its KIND and is scheduled by the first of them
+// (Engine::update_managers). The rank is the class's schedule slot.
 int update_rank(std::string_view kind) {
     static constexpr std::string_view kOrder[] = {"KIND_PLAYER2", "KIND_PBULLET", "KIND_EBULLET", "KIND_OBJECT", "KIND_ITEM",
                                                   "KIND_EFFECT",  "KIND_MAPBASE", "KIND_MAPCURSOR", "KIND_PLAYER", "KIND_ENEMY"};
@@ -164,7 +165,7 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
             if (hit->player_talk) engine.messenger().add_row("HITPLAYERTALK", ram->info_name, ram->index, ram.get());
             if (hit->enemy_bullet) engine.messenger().add_row("HITENEMYBULLET", ram->info_name, ram->index, ram.get());
         }
-        // Keep the update order: by class, then as accepted.
+        // Group the RAMs by class (one slot each), then as accepted.
         const auto at = std::upper_bound(update_order_.begin(), update_order_.end(), rank,
                                          [](int r, const UpdateEntry& e) { return r < e.rank; });
         update_order_.insert(at, {rank, ram.get()});
@@ -1224,8 +1225,28 @@ void ModelCtrlManager::collide(Engine& engine, ModelRam& ram) {
     }
 }
 
+int ModelCtrlManager::schedule_slot(const ObjectView& info) const { return update_rank(info.str(7)); }
+
+std::string ModelCtrlManager::slot_name(int slot) const {
+    static constexpr const char* kNames[] = {"beNDMWMdlPlayer2", "beNDMWMdlPBullet", "beNDMWMdlEBullet", "beNDMWMdlObject",
+                                             "beNDMWMdlItem",    "beNDMWMdlEffect",  "beNDMWMdlMapBase", "beNDMWMdlMapCursor",
+                                             "beNDMWMdlPlayer",  "beNDMWMdlEnemy"};
+    return slot >= 0 && slot < int(std::size(kNames)) ? kNames[slot] : type_name_;
+}
+
 void ModelCtrlManager::update(Engine& engine) {
-    for (const auto& entry : update_order_) {
+    for (int slot = 0; slot < 10; ++slot) update_slot(engine, slot);
+}
+
+// 802F28F8 of one model class: its RAMs in the order their infos came.
+void ModelCtrlManager::update_slot(Engine& engine, int slot) {
+    const auto first = std::lower_bound(update_order_.begin(), update_order_.end(), slot,
+                                        [](const UpdateEntry& e, int r) { return e.rank < r; });
+    const auto count = std::size_t(std::upper_bound(first, update_order_.end(), slot,
+                                                    [](int r, const UpdateEntry& e) { return r < e.rank; }) - first);
+    const auto begin = std::size_t(first - update_order_.begin());
+    for (std::size_t i = begin; i < begin + count && i < update_order_.size(); ++i) {
+        const auto& entry = update_order_[i];
         auto& ram = *entry.ram;
         if (!ram.generated) continue;
         // 8030CB2C: an erased model is removed on its next update.

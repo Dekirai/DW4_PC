@@ -38,12 +38,19 @@ exactly n steps. In order:
    it), info registration, `start.lua`, `first.lua`.
 4. Deferred messenger sends (`sd(..., delay)`), then the demo manager
    (`DMsetSD` / `DMchkSD` / switch records, one blocking record at a time).
-5. Every manager's `update`, in registration order, which is the original
-   scheduler order (`register_default_managers`: the engine plugin's
-   managers of 80318A24, then the game plugin's of 80346F74, so ACTION2 runs
-   before the models and the menu controllers before the models; the models
-   update by class: Player2, PBullet, EBullet, Object, Item, Effect, MapBase,
-   MapCursor, Player, Enemy).
+5. The managers' updates in the original scheduler order
+   (`Engine::update_managers`, igSerialScheduler 8028B7B0): first beSystem,
+   which its plugin schedules at registration, then every manager in the
+   order its first info of the stage was accepted (802F251C -> 8028A398 ->
+   80041E40, append-unique; a stage clear unschedules them, 802F2628). The
+   stage files list their infos so that ACTION2 runs before the models and
+   the models before SELECTCTRL, the status window and the quick panels;
+   TEXTCTL (beFont, common file) comes last. Each model class of the game
+   plugin (beNDMWMdlPlayer, Enemy, Object, ...) is a manager of its own with
+   its own slot, so the player, from the common `f_m*.igb`, updates after
+   the stage's menu managers. Managers without an info in the stage, which
+   the original does not run, follow (idle). `DW4_TRACE_SCHEDULE=1` logs the
+   order at each stage start.
 
 Every random number comes from one generator (`SystemRandom`, beSystem's
 igMersenneTwisterRandomNumber seeded 5150 at boot) through `fight::random()`.
