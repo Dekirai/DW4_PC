@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <limits>
 #include <queue>
+#include <set>
 
 namespace dw4::game {
 namespace {
@@ -130,7 +131,7 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
 }
 
 WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
-                 const std::vector<AvoidBox>& avoid, float width) {
+                 const std::vector<AvoidBox>& avoid, float width, const std::vector<MovingFloor>& moving) {
     constexpr float step = Grid::step, climb = Grid::climb, drop = Grid::drop;
     // The grid is aligned to the world (multiples of three cells), so the
     // samples do not move with the player.
@@ -142,18 +143,55 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
     floor_.assign(cells, -100000.0f);
     parent_.assign(cells, -2);
     jumped_.assign(cells, 0);
+    support_.assign(cells, -1);
+    // The cells a moving platform's top covers somewhere along its path.
+    const std::size_t floors = std::min<std::size_t>(moving.size(), 100);
+    std::vector<std::int8_t> sweep(cells, -1);
+    std::vector<float> sweep_top(floors, 0.0f);
+    for (std::size_t m = 0; m < floors; ++m) {
+        const auto& f = moving[m];
+        if (f.centres.empty()) continue;
+        sweep_top[m] = f.centres.front().y;
+        for (const auto& c : f.centres) {
+            const int xa = std::max(0, int(std::ceil((c.x - f.half_x - x0_) / step)));
+            const int xb = std::min(w_ - 1, int(std::floor((c.x + f.half_x - x0_) / step)));
+            const int za = std::max(0, int(std::ceil((c.z - f.half_z - z0_) / step)));
+            const int zb = std::min(h_ - 1, int(std::floor((c.z + f.half_z - z0_) / step)));
+            for (int z = za; z <= zb; ++z)
+                for (int x = xa; x <= xb; ++x)
+                    if (sweep[std::size_t(z * w_ + x)] < 0) sweep[std::size_t(z * w_ + x)] = std::int8_t(m);
+        }
+    }
     auto blocked = [&](float x, float y, float z) {
         for (const auto& box : avoid)
             if (x >= box.min_x && x <= box.max_x && z >= box.min_z && z <= box.max_z && y >= box.min_y && y <= box.max_y) return true;
         return false;
     };
     // A cell's floor is looked up from the floor it is entered from, so
-    // heights follow ramps and stairs.
-    auto floor_from = [&](int cell, float reference) {
+    // heights follow ramps and stairs. A moving platform's floor is the
+    // platform where it stands now, and its top over a pit anywhere along its
+    // path.
+    struct Probe {
+        float y;
+        int support;
+    };
+    auto probe = [&](int cell, float reference) {
         const engine::Vec3f p{x0_ + float(cell % w_) * step, reference + climb, z0_ + float(cell / w_) * step};
         const auto land = world.check_land(p, 1.0f, 400.0f, 1.0f);
-        return land.found ? land.position.y : -100000.0f;
+        Probe r{land.found ? land.position.y : -100000.0f, -1};
+        if (land.found)
+            for (std::size_t m = 0; m < floors; ++m)
+                if (!moving[m].centres.empty() && land.info == moving[m].info && land.child == moving[m].child) {
+                    // (A platform not moving now has no path: plain floor.)
+                    r.support = int(m);
+                    return r;
+                }
+        const int s = sweep[std::size_t(cell)];
+        if (s >= 0 && r.y < sweep_top[std::size_t(s)] - climb && sweep_top[std::size_t(s)] <= reference + climb)
+            r = {sweep_top[std::size_t(s)], s};
+        return r;
     };
+    auto floor_from = [&](int cell, float reference) { return probe(cell, reference).y; };
     auto centre = [&](int x, int z) { return engine::Vec3f{x0_ + float(x) * step, 0.0f, z0_ + float(z) * step}; };
     // A wall across the way from one cell centre to the next at height y.
     auto wall_between = [&](int ax, int az, int bx, int bz, float y) {
@@ -182,7 +220,9 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
     };
     std::vector<Jump> jumps;
     const int start = nearest_cell(from);
-    floor_[std::size_t(start)] = floor_from(start, from.y);
+    const auto first = probe(start, from.y);
+    floor_[std::size_t(start)] = first.y;
+    support_[std::size_t(start)] = std::int8_t(first.support);
     if (floor_[std::size_t(start)] < -99999.0f) floor_[std::size_t(start)] = from.y;
     std::vector<std::uint8_t> reached(cells, 0);
     reached[std::size_t(start)] = 1;
@@ -191,13 +231,16 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         const int at = queue[head];
         const int x = at % w_, z = at / w_;
         const float ya = floor_[std::size_t(at)];
+        const int sa = support_[std::size_t(at)];
         std::uint8_t pits_left = 0; // directions of pits no straight jump crosses
         for (int d = 0; d < 8; ++d) {
             const int nx = x + kDx[d], nz = z + kDz[d];
             if (nx < 0 || nz < 0 || nx >= w_ || nz >= h_) continue;
             const int next_cell = nz * w_ + nx;
             const auto b = centre(nx, nz);
-            const float yb = reached[std::size_t(next_cell)] ? floor_[std::size_t(next_cell)] : floor_from(next_cell, ya);
+            const Probe pb = reached[std::size_t(next_cell)] ? Probe{floor_[std::size_t(next_cell)], support_[std::size_t(next_cell)]}
+                                                             : probe(next_cell, ya);
+            const float yb = pb.y;
             if (yb < -99999.0f) continue; // outside the level
             if (ya - yb <= drop && blocked(b.x, yb, b.z)) continue;
             // A pit (deeper than a ledge drop): try to jump it.
@@ -211,10 +254,12 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                     if (lx < 0 || lz < 0 || lx >= w_ || lz >= h_) break;
                     const int land = lz * w_ + lx;
                     const auto l = centre(lx, lz);
-                    const float yl = floor_from(land, ya + 5.0f);
+                    const auto pl = probe(land, ya + 5.0f);
+                    const float yl = pl.y;
                     if (yl < -99999.0f) break;
                     if (ya - yl > drop) continue; // still over the pit
                     if (blocked(l.x, yl, l.z)) break;
+                    if (sa >= 0 && pl.support == sa) break; // the platform carries the player there
                     if (yl - ya > 12.0f || ya - yl > 30.0f) break;
                     bool clear = true;
                     for (int i = 0; i < k && clear; ++i)
@@ -225,6 +270,7 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                     if (!reached[std::size_t(land)]) {
                         reached[std::size_t(land)] = 1;
                         floor_[std::size_t(land)] = yl;
+                        support_[std::size_t(land)] = std::int8_t(pl.support);
                         queue.push_back(land);
                     }
                     break;
@@ -237,13 +283,16 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                 // the player's wall probe sits 4 above its feet) is jumped
                 // up: the jump rises about 13.6.
                 if (d & 1) continue;
-                const float yu = floor_from(next_cell, ya + 4.0f);
-                if (yu < -99999.0f || yu - ya <= climb || yu - ya > 12.5f || blocked(b.x, yu, b.z) || wall_between(x, z, nx, nz, yu + 1.0f))
+                const auto pu = probe(next_cell, ya + 4.0f);
+                const float yu = pu.y;
+                if (yu < -99999.0f || yu - ya <= climb || yu - ya > 12.5f || blocked(b.x, yu, b.z) ||
+                    (sa >= 0 && pu.support == sa) || wall_between(x, z, nx, nz, yu + 1.0f))
                     continue;
                 jumps.push_back({at, next_cell, 7.0f});
                 if (!reached[std::size_t(next_cell)]) {
                     reached[std::size_t(next_cell)] = 1;
                     floor_[std::size_t(next_cell)] = yu;
+                    support_[std::size_t(next_cell)] = std::int8_t(pu.support);
                     queue.push_back(next_cell);
                 }
                 continue;
@@ -252,6 +301,7 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
             if (!reached[std::size_t(next_cell)]) {
                 reached[std::size_t(next_cell)] = 1;
                 floor_[std::size_t(next_cell)] = yb;
+                support_[std::size_t(next_cell)] = std::int8_t(pb.support);
                 queue.push_back(next_cell);
             }
         }
@@ -259,8 +309,9 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         // units from the very edge, so wider pits are crossed at any angle
         // (15-degree steps, toward the pits found above) onto floor at most a
         // little higher (cell centres up to 32.5 apart: both edges reach
-        // past them).
-        if (pits_left) {
+        // past them). Not from or onto a moving platform (its hops need no
+        // run-up across the stage floor).
+        if (pits_left && sa < 0) {
             const auto a = centre(x, z);
             auto cell_at = [&](float px, float pz) {
                 const int cx = int(std::lround((px - x0_) / step)), cz = int(std::lround((pz - z0_) / step));
@@ -282,8 +333,9 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
                     const int land = cell_at(a.x + ux * distance, a.z + uz * distance);
                     if (land < 0) break;
                     const auto l = centre(land % w_, land / w_);
-                    const float yl = floor_from(land, ya + 5.0f);
-                    if (yl < -99999.0f || yl - ya > 2.0f || ya - yl > 30.0f || blocked(l.x, yl, l.z)) continue;
+                    const auto pl = probe(land, ya + 5.0f);
+                    const float yl = pl.y;
+                    if (yl < -99999.0f || pl.support >= 0 || yl - ya > 2.0f || ya - yl > 30.0f || blocked(l.x, yl, l.z)) continue;
                     // Floor beyond the landing and to both sides of it (a
                     // cell centre at the very rim may lie just off the floor).
                     bool inside = true;
@@ -340,6 +392,8 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
     std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
     open.push({0.0f, start});
     auto relax = [&](int at, int next_cell, float next, bool jump) {
+        // A hop onto or off a moving platform waits for it.
+        if (support_[std::size_t(next_cell)] != support_[std::size_t(at)]) next += 40.0f;
         if (next >= cost_[std::size_t(next_cell)]) return;
         cost_[std::size_t(next_cell)] = next;
         parent_[std::size_t(next_cell)] = at;
@@ -387,16 +441,19 @@ int WalkMap::nearest_reached(const engine::Vec3f& p, float tolerance) const {
     const int cx = centre % w_, cz = centre / w_;
     int best = -1;
     float best_distance = tolerance;
-    for (int z = std::max(0, cz - radius); z <= std::min(h_ - 1, cz + radius); ++z)
-        for (int x = std::max(0, cx - radius); x <= std::min(w_ - 1, cx + radius); ++x) {
-            if (parent_[std::size_t(z * w_ + x)] == -2) continue;
-            const auto q = point(z * w_ + x);
-            const float distance = std::hypot(q.x - p.x, q.z - p.z);
-            if (distance <= best_distance) {
-                best_distance = distance;
-                best = z * w_ + x;
+    // (The stage floor first: a target is not walked to on a moving
+    // platform's path while floor next to it is in reach.)
+    for (int pass = 0; pass < 2 && best < 0; ++pass)
+        for (int z = std::max(0, cz - radius); z <= std::min(h_ - 1, cz + radius); ++z)
+            for (int x = std::max(0, cx - radius); x <= std::min(w_ - 1, cx + radius); ++x) {
+                if (parent_[std::size_t(z * w_ + x)] == -2 || (pass == 0 && support_[std::size_t(z * w_ + x)] >= 0)) continue;
+                const auto q = point(z * w_ + x);
+                const float distance = std::hypot(q.x - p.x, q.z - p.z);
+                if (distance <= best_distance) {
+                    best_distance = distance;
+                    best = z * w_ + x;
+                }
             }
-        }
     return best;
 }
 
@@ -406,23 +463,31 @@ std::optional<engine::Vec3f> WalkMap::nearest(const engine::Vec3f& p, float tole
     return point(cell);
 }
 
-std::optional<engine::Vec3f> WalkMap::reached_inside(float min_x, float min_z, float max_x, float max_z) const {
+std::optional<engine::Vec3f> WalkMap::reached_inside(float min_x, float min_z, float max_x, float max_z, bool stage_floor_only) const {
     const engine::Vec3f middle{(min_x + max_x) * 0.5f, 0.0f, (min_z + max_z) * 0.5f};
     std::optional<engine::Vec3f> best;
     float best_distance = std::numeric_limits<float>::infinity();
     const int x0 = std::max(0, int(std::ceil((min_x - x0_) / Grid::step))), x1 = std::min(w_ - 1, int(std::floor((max_x - x0_) / Grid::step)));
     const int z0 = std::max(0, int(std::ceil((min_z - z0_) / Grid::step))), z1 = std::min(h_ - 1, int(std::floor((max_z - z0_) / Grid::step)));
-    for (int z = z0; z <= z1; ++z)
-        for (int x = x0; x <= x1; ++x) {
-            if (parent_[std::size_t(z * w_ + x)] == -2) continue;
-            const auto q = point(z * w_ + x);
-            const float distance = std::hypot(q.x - middle.x, q.z - middle.z);
-            if (distance < best_distance) {
-                best_distance = distance;
-                best = q;
+    // (Stage floor first: a mat over a pit is stood on at its rim rather
+    // than on a platform crossing it.)
+    for (int pass = 0; pass < (stage_floor_only ? 1 : 2) && !best; ++pass)
+        for (int z = z0; z <= z1; ++z)
+            for (int x = x0; x <= x1; ++x) {
+                if (parent_[std::size_t(z * w_ + x)] == -2 || (pass == 0 && support_[std::size_t(z * w_ + x)] >= 0)) continue;
+                const auto q = point(z * w_ + x);
+                const float distance = std::hypot(q.x - middle.x, q.z - middle.z);
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best = q;
+                }
             }
-        }
     return best;
+}
+
+bool WalkMap::stage_floor_near(const engine::Vec3f& p, float tolerance) const {
+    const int cell = nearest_reached(p, tolerance);
+    return cell >= 0 && support_[std::size_t(cell)] < 0;
 }
 
 float WalkMap::cost_to(const engine::Vec3f& p, float tolerance) const {
@@ -436,7 +501,8 @@ std::vector<WalkMap::Waypoint> WalkMap::route_to(const engine::Vec3f& p) const {
     for (int cell = 0; cell < w_ * h_; ++cell) {
         if (parent_[std::size_t(cell)] == -2) continue;
         const auto q = point(cell);
-        const float distance = std::hypot(q.x - p.x, q.z - p.z);
+        // (A moving platform's path counts 10 units further.)
+        const float distance = std::hypot(q.x - p.x, q.z - p.z) + (support_[std::size_t(cell)] >= 0 ? 10.0f : 0.0f);
         if (distance < best) {
             best = distance;
             end = cell;
@@ -445,12 +511,15 @@ std::vector<WalkMap::Waypoint> WalkMap::route_to(const engine::Vec3f& p) const {
     std::vector<int> cells;
     for (int at = end; at >= 0; at = parent_[std::size_t(at)]) cells.push_back(at);
     std::reverse(cells.begin(), cells.end());
-    // Every third cell, the take-off and landing cells of jumps, and the end.
+    // Every third cell, the take-off and landing cells of jumps and hops,
+    // and the end.
     std::vector<Waypoint> thinned;
+    auto support_of = [&](std::size_t i) { return int(support_[std::size_t(cells[i])]); };
     for (std::size_t i = 1; i < cells.size(); ++i) {
-        const bool takeoff = i + 1 < cells.size() && jumped_[std::size_t(cells[i + 1])];
+        const bool takeoff = i + 1 < cells.size() && (jumped_[std::size_t(cells[i + 1])] || support_of(i + 1) != support_of(i));
         const bool landing = jumped_[std::size_t(cells[i])] != 0;
-        if (i % 3 == 0 || takeoff || landing || i + 1 == cells.size()) thinned.push_back({point(cells[i]), landing});
+        const bool hop = support_of(i) != support_of(i - 1);
+        if (i % 3 == 0 || takeoff || landing || hop || i + 1 == cells.size()) thinned.push_back({point(cells[i]), landing, support_of(i)});
     }
     return thinned;
 }
@@ -460,21 +529,23 @@ std::vector<WalkMap::Waypoint> WalkMap::route_to(const engine::Vec3f& p, float t
     const int centre = nearest_cell(p);
     const int cx = centre % w_, cz = centre / w_;
     int best = -1;
-    for (int z = std::max(0, cz - radius); z <= std::min(h_ - 1, cz + radius); ++z)
-        for (int x = std::max(0, cx - radius); x <= std::min(w_ - 1, cx + radius); ++x) {
-            const int cell = z * w_ + x;
-            if (parent_[std::size_t(cell)] == -2) continue;
-            const auto q = point(cell);
-            if (std::hypot(q.x - p.x, q.z - p.z) > tolerance) continue;
-            if (best < 0 || cost_[std::size_t(cell)] < cost_[std::size_t(best)]) best = cell;
-        }
+    for (int pass = 0; pass < 2 && best < 0; ++pass)
+        for (int z = std::max(0, cz - radius); z <= std::min(h_ - 1, cz + radius); ++z)
+            for (int x = std::max(0, cx - radius); x <= std::min(w_ - 1, cx + radius); ++x) {
+                const int cell = z * w_ + x;
+                if (parent_[std::size_t(cell)] == -2 || (pass == 0 && support_[std::size_t(cell)] >= 0)) continue;
+                const auto q = point(cell);
+                if (std::hypot(q.x - p.x, q.z - p.z) > tolerance) continue;
+                if (best < 0 || cost_[std::size_t(cell)] < cost_[std::size_t(best)]) best = cell;
+            }
     return best < 0 ? route_to(p) : route_to(point(best));
 }
 
 std::vector<engine::Vec3f> WalkMap::samples() const {
     std::vector<engine::Vec3f> out;
     for (int cell = 0; cell < w_ * h_; ++cell)
-        if (parent_[std::size_t(cell)] != -2 && (cell % w_) % 3 == 0 && (cell / w_) % 3 == 0) out.push_back(point(cell));
+        if (parent_[std::size_t(cell)] != -2 && support_[std::size_t(cell)] < 0 && (cell % w_) % 3 == 0 && (cell / w_) % 3 == 0)
+            out.push_back(point(cell));
     return out;
 }
 
@@ -590,6 +661,42 @@ bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
     return sand;
 }
 
+bool ExploreBot::trap_mat(engine::Engine& engine, const std::string& mat) {
+    const auto it = traps_.find(mat);
+    if (it != traps_.end()) return it->second;
+    const std::string script = mat + ".lua";
+    const bool trap = engine.script_mentions(script, "MATisPlayer") && engine.script_mentions(script, "SETLABEL");
+    traps_[mat] = trap;
+    return trap;
+}
+
+const std::vector<ExploreBot::Beam>& ExploreBot::beams(engine::Engine& engine, int frame) {
+    if (frame - beams_at_ < 600 && frame >= beams_at_) return beams_;
+    beams_at_ = frame;
+    beams_.clear();
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!mats || !models) return beams_;
+    for (const auto& box : mats->mat_boxes()) {
+        if (!trap_mat(engine, box.name)) continue;
+        const std::string script = box.name + ".lua";
+        bool armed = false;
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->is_player) continue;
+            const auto at = position_of(*e);
+            if (at.x < box.min.x || at.x > box.max.x || at.z < box.min.z || at.z > box.max.z) continue;
+            if (!engine.script_mentions(script, e->info_name)) continue;
+            const auto& m = e->node->matrix;
+            const float length = std::hypot(m(2, 0), m(2, 2));
+            if (length < 1e-4f) continue;
+            beams_.push_back({at, {m(2, 0) / length, 0.0f, m(2, 2) / length}, box.min, box.max});
+            armed = true;
+        }
+        if (!armed) beams_.push_back({{}, {}, box.min, box.max});
+    }
+    return beams_;
+}
+
 bool ExploreBot::exit_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = exits_.find(mat);
     if (it != exits_.end()) return it->second;
@@ -607,6 +714,442 @@ bool ExploreBot::portal(engine::Engine& engine, const std::string& mat) {
     const bool link = engine.script_mentions(script, "trans.lua") && !engine.script_mentions(script, "funcStageChange");
     portals_[mat] = link;
     return link;
+}
+
+namespace {
+// The player's jump (X) and walk, measured on the stage floor: a jump lands
+// 39 steps after the press at the height it left; on the ground and in the
+// air the speed follows the stick's direction at once and gains 0.038 a step
+// from standing up to 0.7 (a standing jump carries 20.6 units, a running
+// one 26.6); without the stick it stops within a few steps.
+constexpr int kHopFlight = 39;
+constexpr float kWalkSpeed = 0.7f;
+constexpr float kWalkAccel = 0.038f;
+// The distance covered in `steps` from speed `v` with the stick held.
+float covered(float v, int steps) {
+    float distance = 0.0f;
+    for (int i = 1; i <= steps; ++i) distance += std::min(kWalkSpeed, v + kWalkAccel * float(i));
+    return distance;
+}
+} // namespace
+
+bool ExploreBot::Platform::sideways() const {
+    if (trail.size() < 60 || moving_steps * 3 < int(trail.size())) return false;
+    float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
+    for (const auto& p : trail) {
+        x0 = std::min(x0, p.x), x1 = std::max(x1, p.x);
+        y0 = std::min(y0, p.y), y1 = std::max(y1, p.y);
+        z0 = std::min(z0, p.z), z1 = std::max(z1, p.z);
+    }
+    return std::max(x1 - x0, z1 - z0) >= 10.0f && y1 - y0 < 3.0f;
+}
+
+void ExploreBot::track_platforms(engine::Engine& engine, const engine::Vec3f& me, int frame) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    auto* hitland = engine.get<engine::HitLandManager>();
+    if (!models || !hitland) return;
+    const auto& world = hitland->world();
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player || e->category == "ENEMY" || e->category == "ITEM") continue;
+        const auto at = position_of(*e);
+        const auto known = std::find_if(platforms_.begin(), platforms_.end(), [&](const Platform& p) { return p.model == e.get(); });
+        if (known != platforms_.end()) {
+            auto& p = *known;
+            if (p.last_frame == frame) continue;
+            if (p.last_frame != frame - 1) {
+                p.trail.clear(); // a gap: the steps no longer follow each other
+                p.moving_steps = 0;
+            }
+            if (!p.trail.empty() && flat(at, p.trail.back()) > 0.02f) ++p.moving_steps;
+            p.trail.push_back(at);
+            p.last_frame = frame;
+            if (p.trail.size() > 4000) {
+                p.trail.erase(p.trail.begin(), p.trail.begin() + 1000);
+                p.moving_steps = 0;
+                for (std::size_t i = 1; i < p.trail.size(); ++i) p.moving_steps += flat(p.trail[i], p.trail[i - 1]) > 0.02f ? 1 : 0;
+            }
+            continue;
+        }
+        if (flat(at, me) > 600.0f || not_platforms_.count(e.get())) continue;
+        auto [last, fresh] = stirring_.try_emplace(e.get(), at);
+        const bool moved = !fresh && flat(at, last->second) > 0.02f;
+        last->second = at;
+        if (!moved) continue;
+        // Its own floor under its origin (the floor check answers with the
+        // model's name and index, 8030949C)?
+        const auto land = world.check_land({at.x, at.y + 30.0f, at.z}, 1.0f, 400.0f, 1.0f);
+        if (!land.found || land.info == 0xFFFF || land.child != std::uint16_t(e->index) || world.info_name(land.info) != e->info_name) {
+            not_platforms_.insert(e.get());
+            continue;
+        }
+        Platform p;
+        p.model = e.get();
+        p.info = land.info;
+        p.child = land.child;
+        p.top = land.position.y - at.y;
+        // The top's extents: where the floor check stops answering with it.
+        auto own = [&](float x, float z) {
+            const auto l = world.check_land({x, land.position.y + 5.0f, z}, 1.0f, 400.0f, 1.0f);
+            return l.found && l.info == p.info && l.child == p.child;
+        };
+        static constexpr float kDirs[4][2] = {{1.0f, 0.0f}, {-1.0f, 0.0f}, {0.0f, 1.0f}, {0.0f, -1.0f}};
+        float reach[4]{};
+        for (int d = 0; d < 4; ++d)
+            while (reach[d] < 40.0f && own(at.x + kDirs[d][0] * (reach[d] + 0.5f), at.z + kDirs[d][1] * (reach[d] + 0.5f))) reach[d] += 0.5f;
+        p.half_x = (reach[0] + reach[1]) * 0.5f;
+        p.half_z = (reach[2] + reach[3]) * 0.5f;
+        p.offset = {(reach[0] - reach[1]) * 0.5f, 0.0f, (reach[2] - reach[3]) * 0.5f};
+        p.trail.push_back(at);
+        p.last_frame = frame;
+        p.moving_steps = 1;
+        if (std::getenv("DW4_TRACE_EXPLORE"))
+            std::printf("[%d] explore: platform %s#%d at (%.0f,%.0f,%.0f), top %.1f half %.1f x %.1f\n", frame, e->info_name.c_str(), e->index,
+                        at.x, at.y, at.z, land.position.y, p.half_x, p.half_z);
+        platforms_.push_back(std::move(p));
+        planned_ = -1000;
+    }
+}
+
+engine::Vec3f ExploreBot::predict(const Platform& p, int k, bool* known) const {
+    if (known) *known = false;
+    const auto& t = p.trail;
+    const std::size_t n = t.size();
+    if (n == 0) return {};
+    const engine::Vec3f top{p.offset.x, p.top, p.offset.z};
+    const auto c = t[n - 1];
+    if (n < 2 || k <= 0) {
+        if (known) *known = k <= 0;
+        return c + top;
+    }
+    const engine::Vec3f v = c - t[n - 2];
+    if (std::hypot(v.x, v.z) < 0.02f) return c + top; // standing (it may set off any time)
+    // The latest earlier step at the same place moving the same way: the
+    // path from there on is the path from now on.
+    if (n >= std::size_t(k) + 3)
+        for (std::size_t j = n - 2 - std::size_t(k); j >= 1; --j) {
+            const auto& q = t[j];
+            if (std::abs(q.x - c.x) > 0.75f || std::abs(q.z - c.z) > 0.75f || std::abs(q.y - c.y) > 0.75f) continue;
+            const engine::Vec3f w = q - t[j - 1];
+            if (std::abs(w.x - v.x) > 0.1f || std::abs(w.z - v.z) > 0.1f) continue;
+            if (known) *known = true;
+            return c + (t[j + std::size_t(k)] - q) + top;
+        }
+    return c + v * float(k) + top;
+}
+
+int ExploreBot::platform_under(engine::Engine& engine, const engine::Vec3f& p) const {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    if (!hitland || platforms_.empty()) return -1;
+    const auto land = hitland->world().check_land({p.x, p.y + 5.0f, p.z}, 1.0f, 400.0f, 1.0f);
+    if (!land.found || land.position.y < p.y - 8.0f) return -1;
+    for (std::size_t i = 0; i < platforms_.size(); ++i)
+        if (platforms_[i].hop_on && platforms_[i].info == land.info && platforms_[i].child == land.child) return int(i);
+    return -1;
+}
+
+std::size_t ExploreBot::pending_hop(int standing_on, const engine::Vec3f& me) const {
+    std::size_t i = next_;
+    if (standing_on >= 0) {
+        // Riding: the waypoints up to the last on this platform's path are
+        // where it carries the player anyway (a hop lands far from them).
+        for (std::size_t j = next_; j < route_.size(); ++j)
+            if (route_[j].support == standing_on) i = j + 1;
+        return i;
+    }
+    // On the stage floor: a hop just ahead.
+    while (i < route_.size() && route_[i].support < 0 && flat(route_[i].point, me) < 15.0f) ++i;
+    return i < route_.size() && route_[i].support >= 0 ? i : route_.size();
+}
+
+bool ExploreBot::hop_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& me, bool airborne,
+                          int frame, Decision& decision) {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    if (!hitland || (platforms_.empty() && !hop_)) return false;
+    const auto& world = hitland->world();
+    const bool trace = std::getenv("DW4_TRACE_EXPLORE") != nullptr;
+    auto steer = [&](const engine::Vec3f& p, float reach) {
+        decision.x = p.x;
+        decision.z = p.z;
+        decision.reach = reach;
+    };
+    // A support's own motion over the next k steps (a ride goes on through
+    // a jump until the landing, 80309F58).
+    auto drift = [&](int support, int k) {
+        if (support < 0 || k <= 0) return engine::Vec3f{};
+        return predict(platforms_[std::size_t(support)], k) - predict(platforms_[std::size_t(support)], 0);
+    };
+    // Trap lines (a laser gun firing across the pit while a player stands
+    // in its mat; its beam is 5 wide, the player's body 5): kept out of
+    // where possible.
+    const auto& lines = beams(engine, frame);
+    // The distance from p to the nearest trap line (0 inside a trap mat
+    // without one); 6 or less is in the way.
+    auto trap_gap = [&](const engine::Vec3f& p) {
+        float gap = std::numeric_limits<float>::infinity();
+        for (const auto& b : lines) {
+            if (p.x < b.lo.x - 9.0f || p.x > b.hi.x + 9.0f || p.z < b.lo.z - 9.0f || p.z > b.hi.z + 9.0f || p.y < b.lo.y || p.y > b.hi.y)
+                continue;
+            if (b.axis.x == 0.0f && b.axis.z == 0.0f) {
+                if (p.x >= b.lo.x && p.x <= b.hi.x && p.z >= b.lo.z && p.z <= b.hi.z) gap = 0.0f;
+                continue;
+            }
+            const float dx = p.x - b.origin.x, dz = p.z - b.origin.z;
+            if (dx * b.axis.x + dz * b.axis.z >= -3.0f) gap = std::min(gap, std::abs(dz * b.axis.x - dx * b.axis.z));
+        }
+        return gap;
+    };
+    auto in_trap = [&](const engine::Vec3f& p) { return trap_gap(p) <= 6.0f; };
+    // The point of a platform's top (4 units in from its edges) nearest to p
+    // clear of the trap lines (else nearest to p); `free` tells which. With
+    // `later` (the platform's centre a little later) the point must stay
+    // clear while the platform carries it there.
+    auto inside = [&](int i, const engine::Vec3f& centre, const engine::Vec3f& p, bool* free = nullptr,
+                      const engine::Vec3f* later = nullptr) {
+        const auto& q = platforms_[std::size_t(i)];
+        const float ix = std::max(0.0f, q.half_x - 4.0f), iz = std::max(0.0f, q.half_z - 4.0f);
+        auto gap_of = [&](const engine::Vec3f& c) {
+            return later ? std::min(trap_gap(c), trap_gap(c + (*later - centre))) : trap_gap(c);
+        };
+        const engine::Vec3f nearest{std::clamp(p.x, centre.x - ix, centre.x + ix), centre.y, std::clamp(p.z, centre.z - iz, centre.z + iz)};
+        if (free) *free = true;
+        if (gap_of(nearest) >= 9.0f) return nearest;
+        // (Clear of the lines, 9 units off them where the top allows.)
+        std::optional<engine::Vec3f> best;
+        float best_score = std::numeric_limits<float>::infinity();
+        for (float dz = -iz; dz <= iz + 0.01f; dz += 1.0f)
+            for (float dx = -ix; dx <= ix + 0.01f; dx += 1.0f) {
+                const engine::Vec3f c{centre.x + dx, centre.y, centre.z + dz};
+                const float gap = gap_of(c);
+                if (gap <= 6.0f) continue;
+                const float score = flat(c, p) + std::max(0.0f, 9.0f - gap) * 2.0f;
+                if (score < best_score) {
+                    best_score = score;
+                    best = c;
+                }
+            }
+        if (free) *free = best.has_value();
+        return best.value_or(nearest);
+    };
+    // Stage floor (not a platform) at about height y.
+    auto stage_floor = [&](float x, float y, float z) {
+        const auto l = world.check_land({x, y + 9.0f, z}, 1.0f, 400.0f, 1.0f);
+        if (!l.found || std::abs(l.position.y - y) > 3.0f) return false;
+        for (const auto& q : platforms_)
+            if (q.info == l.info && q.child == l.child) return false;
+        return true;
+    };
+    // Riding: stay where the platform carries the player (kept on its top)
+    // and out of the trap lines; when it carries the player into one with
+    // no clear part on this side, jump over it, steering onto the part clear
+    // of it at touch-down.
+    auto ride = [&](int p) {
+        const auto& q = platforms_[std::size_t(p)];
+        // (At the middle, room for a run-up either way, unless the way there
+        // crosses a trap line: then where it is.)
+        const auto centre = predict(q, 0);
+        auto rest = inside(p, centre, centre);
+        for (int k = 1; k <= 4; ++k)
+            if (in_trap(me + (rest - me) * (float(k) / 4.0f))) {
+                rest = inside(p, centre, me);
+                break;
+            }
+        if (player.control_enabled && !airborne && !held_by_hit(player)) {
+            const auto carried = me + drift(p, 8);
+            bool free_soon = false;
+            const auto soon = inside(p, predict(q, 8), carried, &free_soon);
+            bool crossing = !free_soon;
+            if (!crossing && flat(soon, carried) > 3.0f)
+                for (int k = 1; k <= 4 && !crossing; ++k) crossing = in_trap(carried + (soon - carried) * (float(k) / 4.0f));
+            bool known = false, clear = false;
+            const auto later = predict(q, kHopFlight, &known), after = predict(q, kHopFlight + 20);
+            const auto base = me + drift(p, kHopFlight);
+            const auto landing = inside(p, later, base, &clear, &after);
+            if (crossing && known && clear && flat(landing, base) <= covered(0.0f, kHopFlight - 1) - 1.5f) {
+                hop_ = Hop{p, p, frame, frame, frame + kHopFlight, {}, landing, true};
+                decision.jump = true;
+                if (trace)
+                    std::printf("[%d] explore: hop over the trap on %d, landing (%.1f,%.1f,%.1f)\n", frame, p, landing.x, landing.y, landing.z);
+                steer(landing - drift(p, kHopFlight), 0.25f);
+                return;
+            }
+        }
+        steer(rest, 1.0f);
+    };
+    if (hop_) {
+        auto& hop = *hop_;
+        if (!hop.jumped) {
+            // The run-up: on along it until the jump step or the edge.
+            const auto ahead = world.check_land({me.x + hop.dir.x * 2.5f, me.y + 5.0f, me.z + hop.dir.z * 2.5f}, 1.0f, 400.0f, 1.0f);
+            const bool edge = !ahead.found || ahead.position.y < me.y - 3.0f;
+            if ((frame >= hop.jump_at || edge) && !airborne && player.control_enabled && !held_by_hit(player)) {
+                decision.jump = true;
+                hop.jumped = true;
+                hop.land_at = frame + kHopFlight;
+            } else if (frame - hop.started > 60) {
+                hop_.reset(); // never got off the ground
+                return false;
+            }
+            steer({me.x + hop.dir.x * 10.0f, me.y, me.z + hop.dir.z * 10.0f}, 0.25f);
+            return true;
+        }
+        // In the air: the stick on where the landing will be at touch-down,
+        // less what the take-off platform still carries the player.
+        const int rest = std::max(1, hop.land_at - frame);
+        const auto carried = drift(hop.from, rest);
+        auto landing = hop.landing;
+        if (hop.to >= 0) {
+            const auto after = predict(platforms_[std::size_t(hop.to)], rest + 20);
+            landing = inside(hop.to, predict(platforms_[std::size_t(hop.to)], rest), me + carried, nullptr, &after);
+        }
+        steer(landing - carried, 0.25f);
+        if ((frame > hop.land_at - kHopFlight + 4 && !airborne) || frame > hop.land_at + 40) {
+            if (trace)
+                std::printf("[%d] explore: hop landed at (%.1f,%.1f,%.1f) on %d (aimed at %d)\n", frame, me.x, me.y, me.z,
+                            platform_under(engine, me), hop.to);
+            hop_.reset();
+            hop_wait_since_ = -1;
+        }
+        return true;
+    }
+    const int on = platform_under(engine, me);
+    const std::size_t i = pending_hop(on, me);
+    if (i >= route_.size()) {
+        if (on < 0) {
+            hop_wait_since_ = -1;
+            return false;
+        }
+        // Riding with nothing to hop to.
+        ride(on);
+        return true;
+    }
+    const int to = route_[i].support;
+    if (to == on || to >= int(platforms_.size())) return false;
+    if (hop_wait_since_ < 0) hop_wait_since_ = frame;
+    if (frame - hop_wait_since_ > 3600) {
+        // The platform never came within reach: the target is given up.
+        if (trace) std::printf("[%d] explore gives up hopping onto %d (%s)\n", frame, to, what_.c_str());
+        hop_wait_since_ = -1;
+        give_up(frame);
+        return false;
+    }
+    const auto& target_point = route_[i].point;
+    // Landings on the stage floor round the route's landing, with floor
+    // 3.5 units round them.
+    if (to < 0 && flat(target_point, hop_spots_for_) > 0.1f) {
+        hop_spots_for_ = target_point;
+        hop_spots_.clear();
+        for (float dz = -25.0f; dz <= 25.0f; dz += 2.5f)
+            for (float dx = -25.0f; dx <= 25.0f; dx += 2.5f) {
+                const float x = target_point.x + dx, z = target_point.z + dz, y = target_point.y;
+                if (stage_floor(x, y, z) && stage_floor(x + 3.5f, y, z) && stage_floor(x - 3.5f, y, z) && stage_floor(x, y, z + 3.5f) &&
+                    stage_floor(x, y, z - 3.5f) && !in_trap({x, y, z}))
+                    hop_spots_.push_back({x, y, z});
+            }
+    }
+    // Where to wait on the stage floor: at the edge where the platform's
+    // clear part comes closest along its path, 10 units back (room for a
+    // run-up to nearly full speed).
+    if (on < 0 && to >= 0 && (flat(target_point, hop_wait_for_) > 0.1f || hop_wait_to_ != to)) {
+        hop_wait_for_ = target_point;
+        hop_wait_to_ = to;
+        const auto takeoff = i > 0 && route_[i - 1].support < 0 ? route_[i - 1].point : me;
+        const auto& q = platforms_[std::size_t(to)];
+        const engine::Vec3f top{q.offset.x, q.top, q.offset.z};
+        std::optional<engine::Vec3f> closest;
+        for (std::size_t j = 0; j < q.trail.size(); j += 4) {
+            bool clear = false;
+            const auto spot = inside(to, q.trail[j] + top, takeoff, &clear);
+            if (clear && (!closest || flat(spot, takeoff) < flat(*closest, takeoff))) closest = spot;
+        }
+        hop_wait_ = takeoff;
+        if (closest) {
+            const float gap = flat(*closest, takeoff);
+            const engine::Vec3f u{(takeoff.x - closest->x) / std::max(gap, 0.01f), 0.0f, (takeoff.z - closest->z) / std::max(gap, 0.01f)};
+            // The edge: the first stage floor from the platform's side.
+            for (float t = 0.0f; t <= gap + 10.0f; t += 1.0f) {
+                const engine::Vec3f e{closest->x + u.x * t, takeoff.y, closest->z + u.z * t};
+                if (!stage_floor(e.x, e.y, e.z)) continue;
+                const engine::Vec3f back{e.x + u.x * 10.0f, e.y, e.z + u.z * 10.0f};
+                hop_wait_ = stage_floor(back.x, back.y, back.z) && !in_trap(back) ? back : e;
+                break;
+            }
+        }
+        if (trace)
+            std::printf("[%d] explore: wait for %d at (%.1f,%.1f,%.1f)\n", frame, to, hop_wait_.x, hop_wait_.y, hop_wait_.z);
+    }
+    auto wait = on < 0 && to >= 0 ? hop_wait_ : me;
+    if (on < 0 && to < 0) wait = i > 0 ? route_[i - 1].point : me;
+    // Can a run-up of r steps (from standing) and a jump land on the next
+    // support? The first r that can is taken.
+    if (player.control_enabled && !airborne && !held_by_hit(player))
+        for (int r = 0; r <= 30; r += 2) {
+            const float run = covered(0.0f, r);
+            const float flight = covered(std::min(kWalkSpeed, kWalkAccel * float(r)), kHopFlight - 1);
+            bool known = true;
+            if (on >= 0) predict(platforms_[std::size_t(on)], r + kHopFlight, &known);
+            if (!known) break;
+            const auto run_drift = drift(on, r), all_drift = drift(on, r + kHopFlight);
+            // Where the player would land without moving itself.
+            const engine::Vec3f base{me.x + all_drift.x, me.y, me.z + all_drift.z};
+            engine::Vec3f landing{};
+            if (to >= 0) {
+                const auto centre = predict(platforms_[std::size_t(to)], r + kHopFlight, &known);
+                if (!known) break;
+                // (Clear of the trap lines while it carries the player on.)
+                const auto after = predict(platforms_[std::size_t(to)], r + kHopFlight + 20);
+                landing = inside(to, centre, base, nullptr, &after);
+            } else {
+                float best = std::numeric_limits<float>::infinity();
+                for (const auto& spot : hop_spots_)
+                    if (flat(spot, base) < best) {
+                        best = flat(spot, base);
+                        landing = spot;
+                    }
+                if (!std::isfinite(best)) break;
+            }
+            const float length = flat(landing, base);
+            if (length - run > flight - 1.5f) continue;
+            const engine::Vec3f dir = length > 0.01f ? engine::Vec3f{(landing.x - base.x) / length, 0.0f, (landing.z - base.z) / length}
+                                                     : engine::Vec3f{};
+            // The take-off must still be on the support (a longer run-up
+            // leaves it too).
+            const engine::Vec3f takeoff{me.x + run_drift.x + dir.x * run, me.y, me.z + run_drift.z + dir.z * run};
+            bool on_support = true;
+            if (on >= 0) {
+                const auto& q = platforms_[std::size_t(on)];
+                const auto c = predict(q, r);
+                on_support = std::abs(takeoff.x - c.x) <= q.half_x - 1.5f && std::abs(takeoff.z - c.z) <= q.half_z - 1.5f;
+            } else if (r > 0) {
+                on_support = stage_floor(takeoff.x, me.y, takeoff.z);
+            }
+            // (Not from inside a trap mat: a laser fires at once and hits a
+            // player still on the ground there.)
+            if (!on_support || (r > 0 && in_trap(takeoff) && !in_trap(me))) break;
+            hop_ = Hop{on, to, frame, frame + r, frame + r + kHopFlight, dir, landing, false};
+            if (trace)
+                std::printf("[%d] explore: hop from %d to %d: run %d steps, landing (%.1f,%.1f,%.1f) %.1f away (%s)\n", frame, on, to, r,
+                            landing.x, landing.y, landing.z, length, what_.c_str());
+            if (r == 0) {
+                decision.jump = true;
+                hop_->jumped = true;
+            }
+            steer({me.x + dir.x * 10.0f, me.y, me.z + dir.z * 10.0f}, 0.25f);
+            return true;
+        }
+    // Waiting for the platform; enemies coming close are struck.
+    if (on >= 0) {
+        ride(on);
+        if (hop_) return true;
+    } else {
+        steer(wait, 1.0f);
+    }
+    if (auto* models = engine.get<engine::ModelCtrlManager>(); models && !airborne)
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && flat(position_of(*e), me) < 12.0f) {
+                decision.attack = true;
+                break;
+            }
+    return true;
 }
 
 void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame) {
@@ -651,7 +1194,15 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         const bool next_in_sequence = mat_sequence_next_ < mat_sequence_.size() && mat_sequence_[mat_sequence_next_] == box.name;
         const bool avoided = !avoid_mats_.empty() && box.name.rfind(avoid_mats_, 0) == 0 && !next_in_sequence;
         if (goals.count(key) || (!exit_mat(engine, box.name) && !pit && !avoided)) continue;
-        const float grow = pit && sandy ? 25.0f : 4.0f, above = pit && sandy ? 35.0f : 5.0f;
+        // A pit a moving platform crosses ends at the mat's top: its banks
+        // and the platform stand just above it (dng412b4: mat top 96, floor
+        // 100), and the hops start and end at its rim.
+        bool crossed = false;
+        if (pit && !sandy)
+            for (const auto& p : platforms_)
+                for (std::size_t j = 0; j < p.trail.size() && !crossed; j += 10)
+                    crossed = p.trail[j].x >= box.min.x && p.trail[j].x <= box.max.x && p.trail[j].z >= box.min.z && p.trail[j].z <= box.max.z;
+        const float grow = pit && sandy ? 25.0f : 4.0f, above = pit && sandy ? 35.0f : crossed ? 1.0f : 5.0f;
         const AvoidBox a{box.min.x - grow, box.min.z - grow, box.max.x + grow, box.max.z + grow, box.min.y - 5.0f, box.max.y + above};
         if (pit) pits.push_back(a);
         auto inside = [&](const AvoidBox& b) {
@@ -734,7 +1285,25 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     for (const auto& [key, cell] : fire_cells_)
         if (frame - cell.frame <= 150) lanes[key] = {cell.lo, cell.hi};
     const FireLanes fire_guard(lanes);
-    const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index));
+    // The moving platforms' paths (in platforms_ order; one that does not
+    // keep moving sideways is plain floor where it stands).
+    std::vector<MovingFloor> moving;
+    for (auto& p : platforms_) {
+        MovingFloor floor;
+        // (One just seen setting off counts while it keeps moving, so no
+        // route takes it for fixed floor meanwhile.)
+        p.hop_on = p.trail.size() < 60 ? p.moving_steps * 2 >= int(p.trail.size()) : p.sideways();
+        if (p.hop_on) {
+            floor.info = p.info;
+            floor.child = p.child;
+            floor.half_x = p.half_x;
+            floor.half_z = p.half_z;
+            for (std::size_t j = 0; j < p.trail.size(); j += 3)
+                floor.centres.push_back({p.trail[j].x + p.offset.x, p.trail[j].y + p.top, p.trail[j].z + p.offset.z});
+        }
+        moving.push_back(std::move(floor));
+    }
+    const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index), moving);
     auto go = [&](const engine::Vec3f& where, const void* target, std::string what) {
         route_ = map.route_to(where);
         target_ = target;
@@ -1077,7 +1646,10 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             go_goal();
             return;
         }
-        if (flat(*goal_centre, me) > 280.0f) {
+        // (Not while the goal waits for the rest either: the far route and
+        // the other targets would take turns at 280 units, and its watchdog
+        // would put the goal off again and again.)
+        if (flat(*goal_centre, me) > 280.0f && frame >= goal_later_until_) {
             const auto path = find_walk_path(hitland->world(), me, *goal_centre, flags);
             if (!path.empty() && path.back().x == goal_centre->x && path.back().z == goal_centre->z) {
                 for (const auto& point : path) route_.push_back({point, false});
@@ -1239,6 +1811,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             quicksand_mat(engine, box.name) || mats_done_.count(box.name) || (!avoid_mats_.empty() && box.name.rfind(avoid_mats_, 0) == 0))
             continue;
         if (const auto skip = mat_skip_.find(box.name); skip != mat_skip_.end() && frame < skip->second) continue;
+        // (A mat over a pit that only a moving platform's path crosses is no
+        // place to stand on.)
+        if (!map.stage_floor_near(mat_centre(box, me.y), 6.0f) && !map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z, true)) continue;
         float cost = map.cost_to(mat_centre(box, me.y), 6.0f);
         if (box.name == previous_mat) cost *= 0.6f;
         if (mats_ever_.count(box.name)) cost += 100000.0f; // never stood on first
@@ -1350,6 +1925,18 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
 void ExploreBot::track_fire(engine::Engine& engine, int frame) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return;
+    // The stored models are read later (posts, the turret in front): keep
+    // only those still alive (a removed model, or a state load that builds a
+    // new engine on the same stage, leaves stale keys).
+    std::set<const void*> alive;
+    for (const auto& e : models->rams()) alive.insert(e.get());
+    const auto dead = [&](const auto& entry) { return !alive.count(entry.first); };
+    std::erase_if(shots_, dead);
+    std::erase_if(standing_, dead);
+    std::erase_if(bullet_speed_, dead);
+    std::erase_if(turret_band_, dead);
+    for (auto& [key, cell] : fire_cells_)
+        if (cell.shooter && !alive.count(cell.shooter)) cell.shooter = nullptr;
     std::map<const void*, std::pair<engine::Vec3f, const void*>> live;
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player) continue;
@@ -1458,6 +2045,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         exits_.clear();
         hazards_.clear();
         quicksands_.clear();
+        traps_.clear();
+        beams_.clear();
+        beams_at_ = -100000;
         clears_seen_.clear();
         hold_left_.clear();
         hold_mat_.clear();
@@ -1503,8 +2093,16 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         standing_.clear();
         perch_skip_.clear();
         fire_wait_since_ = fire_go_until_ = -1;
+        platforms_.clear();
+        stirring_.clear();
+        not_platforms_.clear();
+        hop_.reset();
+        hop_wait_since_ = -1;
+        hop_spots_for_ = {1e30f, 0.0f, 1e30f};
+        hop_wait_for_ = {1e30f, 0.0f, 1e30f};
     }
     track_fire(engine, frame);
+    track_platforms(engine, me, frame);
     // Moved to another room of the stage (a maze link): a fresh start there.
     // (A fall respawn keeps what was done.)
     if (flat(me, last_) > 100.0f && frame > 1 && !target_portal_.empty()) {
@@ -1656,8 +2254,13 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         planned_ = -1000;
     }
     const bool lost = target_ && !target;
+    // Riding a platform toward a hop: the route through it is kept.
+    const int standing_on = platform_under(engine, me);
+    const bool riding = standing_on >= 0 && pending_hop(standing_on, me) < route_.size();
     if (airborne && frame - planned_ < 120) {
         // keep the plan while in the air
+    } else if ((hop_ || riding) && !lost && frame - planned_ < 1800) {
+        // keep the plan through a hop
     } else if (lost || frame - planned_ >= 45 || (!target && !to_goal_ && !closest_ && waiting_since_ < 0 && hold_mat_.empty() && next_ >= route_.size() && flat(goal_point_, me) < 6.0f) ||
         stalled_ >= 90) {
         if (stalled_ >= 90) {
@@ -1712,6 +2315,15 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
+    // A hop onto or off a moving platform along the route (waiting on
+    // purpose; hop_step gives up on its own).
+    if (hop_step(engine, player, me, airborne, frame, decision)) {
+        watch.since = frame;
+        stalled_ = 0;
+        escape_until_ = -1;
+        if (!player.control_enabled) decision.jump = decision.attack = false;
+        return decision;
+    }
     const float close = !target ? 8.0f : (perching && !on_perch) ? 0.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;
     // Below a boss whose body starts above the swing: the route up onto its
     // floor is followed however close the boss is (straight at it only runs
