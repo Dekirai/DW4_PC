@@ -131,7 +131,7 @@ void serialize(StateArchive& a, Cheats& v) {
 }
 
 namespace {
-constexpr std::uint32_t kSnapshotVersion = 7; // 7: MOTIONSET restarts, MOVEEX rotation, player base flags; 6: effect owners, frame camera first; 5: HUD attack-delay ring; 4: first-info update order (replays differ); 3: one system generator
+constexpr std::uint32_t kSnapshotVersion = 8; // 8: generate point in the snapshot, no player_pos, motion end/bake/box camera timer (replays differ); 7: MOTIONSET restarts, MOVEEX rotation, player base flags; 6: effect owners, frame camera first; 5: HUD attack-delay ring; 4: first-info update order (replays differ); 3: one system generator
 
 void serialize_system(StateArchive& a, GameSystem& v) {
     a.io(v.flag_folder);
