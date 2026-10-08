@@ -1122,11 +1122,15 @@ public:
             int ram = -1;
         };
         std::vector<Effect> effects;
-        // An effect placed on an owner model (GENERATE with attachment strings).
+        // An effect placed on its source model (GENERATE effect form: string0/int0).
         std::string attach_name;
         int attach_index = -1;
         Vec3f attach_offset{}, attach_rotation{};
         bool attach_lock{};
+        // The model its bullets shoot for (string2/int1, effect work +0xDC/+0xE0);
+        // a chained effect inherits its source's owner (80310340).
+        std::string owner_name;
+        int owner_index = -1;
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)

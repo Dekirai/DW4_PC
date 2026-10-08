@@ -484,8 +484,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             int level = 1;
             if (auto* sys = engine.get<GameSystem>()) level = std::max(1, sys->players[0].stats.level);
             ram.item_device = roll_item_device(ram.item_table, ram.item_record, level);
-        } else if (packet.ints.size() >= 2) {
-            // Generator form: I<record>/I<max HP> (802FC9FC).
+        } else if (packet.ints.size() >= 2 && ram.category != "EFFECT" && ram.category != "PBULLET" && ram.category != "EBULLET") {
+            // Generator form: I<record>/I<max HP> (802FC9FC). The effect and
+            // bullet kinds (8034B928 / 8034C134 / 8034B730 -> 8030D260) read
+            // their ints as source and owner RAM, never as record or HP.
             ram.record = packet.ints[0];
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
@@ -548,11 +550,19 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.attach_name.clear();
         ram.attach_index = -1;
         ram.attach_lock = false;
-        // Effect form (80310340): source RAM/name, sequence, owner name/RAM,
-        // offset and rotation relative to the owner, position lock.
+        ram.owner_name.clear();
+        ram.owner_index = -1;
+        // Effect form (8030D260, sent by 80310340): ints source RAM, owner
+        // RAM; strings source name, sequence, owner name; offset and rotation
+        // relative to the source, position lock. The source places the
+        // effect (GETMATRIX of string0/int0, 8030D4A8..8030D4BC) and the lock
+        // follows it (+0xAC, 8030D4C0..8030D530); the owner goes to work
+        // +0xDC/+0xE0 (8030D468..8030D4A4) for the bullets (8030FEEC).
         if (ram.node && packet.strings.size() >= 3 && packet.ints.size() >= 2) {
-            ram.attach_name = std::string(packet.string(2));
-            ram.attach_index = packet.ints[1];
+            ram.attach_name = std::string(packet.string(0));
+            ram.attach_index = packet.ints[0];
+            ram.owner_name = std::string(packet.string(2));
+            ram.owner_index = packet.ints[1];
             ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
             ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
             ram.attach_lock = packet.boolean(0);
@@ -1412,14 +1422,16 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     else if (group == 6) mode = 1;
     else if (group == 7 || group == 8) mode = 2;
     static const char* categories[] = {"HITPLAYERBULLET", "HITPLAYERTALK", "HITENEMYBULLET"};
-    // An effect bullet (a technique's x_... model) shoots for the model that
-    // generated it (the GENERATE source strings / RAM of 80310340).
-    const bool owned = !ram.attach_name.empty() && ram.attach_index >= 0;
+    // An effect bullet (a technique's x_... model) shoots for its owner, work
+    // +0xDC/+0xE0 when set, else for itself (0x803101F4..0x8031023C): the
+    // model at the root of the effect chain, so the hit scripts' GETRECNO
+    // and FIGHTCALC see the enemy record or the player of the technique.
+    const bool owned = !ram.owner_name.empty() && ram.owner_index >= 0;
     Packet packet;
-    packet.ints = {box.kind, owned ? ram.attach_index : ram.index};
+    packet.ints = {box.kind, owned ? ram.owner_index : ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
-    packet.strings.emplace_back(owned ? ram.attach_name : ram.info_name);
+    packet.strings.emplace_back(owned ? ram.owner_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
     if (!packet.bools.empty() && !ram.lua_bhit.empty()) run_model_script(engine, ram, ram.lua_bhit, "BHit");
@@ -1494,16 +1506,27 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
             continue;
         }
         effect.ram = find.ints[0];
+        // 0x803104A8..0x803104F4: the owner is this model's own owner (work
+        // +0xDC/+0xE0) when it has one, else this model, so an effect started
+        // by an effect still shoots for the model at the root of the chain.
+        const bool owned = !ram.owner_name.empty() && ram.owner_index >= 0;
         Packet generate;
-        generate.ints = {ram.index, ram.index};
+        generate.ints = {ram.index, owned ? ram.owner_index : ram.index};
         generate.strings.emplace_back(ram.info_name);
         generate.strings.emplace_back(effect.sequence);
-        generate.strings.emplace_back(ram.info_name);
+        generate.strings.emplace_back(owned ? ram.owner_name : ram.info_name);
         generate.vectors = {effect.offset, effect.rotation};
         generate.bools.push_back(effect.lock ? 1 : 0);
         const std::string model = effect.model;
         const int target = effect.ram;
         const bool keep = effect.sequence_dead;
+        // DW4_TRACE_EFFECT logs every effect start with its source and owner.
+        if (static const bool trace = std::getenv("DW4_TRACE_EFFECT") != nullptr; trace) {
+            const auto* made = this->find(model, target);
+            engine.log("effect " + model + "#" + std::to_string(target) + " (" + (made ? made->category : std::string("?")) + ") " +
+                       effect.sequence + " from " + ram.info_name + "#" + std::to_string(ram.index) + " owner " +
+                       std::string(generate.string(2)) + "#" + std::to_string(generate.ints[1]));
+        }
         if (!keep) ram.effects.erase(ram.effects.begin() + std::ptrdiff_t(i));
         else ++i;
         engine.messenger().send(engine, "MODELCTRL", model, target, "GENERATE", generate);
@@ -1511,8 +1534,9 @@ void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
     }
 }
 
-// An attached effect (8030D534): the owner's matrix, the offset in its space
-// (80128DC8), then local rotations about X, Y and Z in radians (801298F0).
+// An attached effect (8030D534): the source's matrix (GETMATRIX of the
+// GENERATE string0/int0), the offset in its space (80128DC8), then local
+// rotations about X, Y and Z in radians (801298F0).
 void ModelCtrlManager::place_attached(ModelRam& ram) {
     const auto* owner = find(ram.attach_name, ram.attach_index);
     if (!owner || !owner->node || !ram.node) return;
