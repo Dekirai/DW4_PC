@@ -30,12 +30,14 @@ constexpr int shadow_border() {
 }
 static_assert(shadow_border() == 7);
 
-// A row-vector orthographic projection (GX-style depth mapped to GL clip).
-Mat4 orthographic(float half, float near_plane, float far_plane) {
+// 80129B38: a row-vector orthographic projection (depth to -1..1).
+Mat4 orthographic(float left, float right, float bottom, float top, float near_plane, float far_plane) {
     Mat4 r;
-    r(0, 0) = 1.0f / half;
-    r(1, 1) = 1.0f / half;
+    r(0, 0) = 2.0f / (right - left);
+    r(1, 1) = 2.0f / (top - bottom);
     r(2, 2) = -2.0f / (far_plane - near_plane);
+    r(3, 0) = -(right + left) / (right - left);
+    r(3, 1) = -(top + bottom) / (top - bottom);
     r(3, 2) = -(far_plane + near_plane) / (far_plane - near_plane);
     return r;
 }
@@ -44,11 +46,24 @@ Mat4 orthographic(float half, float near_plane, float far_plane) {
 
 void ShadowManager::add_info(Engine& engine, const ObjectView& info) {
     if (const auto shader = info.ref(9)) {
-        // 80314690: the shader's defaults; the light box is +-100 (+212..+224).
+        // The field defaults of the shader's registration (801B56B4, table
+        // 0x804AD81C): _shadowFactor 0.3, _shadowTexW/H 128, box +-5, near
+        // 0.1, far 1000, _upVector (1,0,0).
         shader_ = true;
-        factor_ = shader.f32(13, 0.4f);
-        size_ = std::clamp(shader.i32(14, 256), 32, 1024);
-        extent_ = std::max(std::abs(shader.f32(48, 100.0f)), std::abs(shader.f32(49, -100.0f)));
+        factor_ = shader.f32(13, 0.3f);
+        width_ = std::clamp(shader.i32(14, 128), 32, 1024);
+        height_ = std::clamp(shader.i32(15, 128), 32, 1024);
+        top_ = shader.f32(48, 5.0f);
+        bottom_ = shader.f32(49, -5.0f);
+        right_ = shader.f32(50, 5.0f);
+        left_ = shader.f32(51, -5.0f);
+        // 80314690: beShadow01 sets _drawReceiver 0, _useOrthographic 1 and
+        // _blurState 0 (the only path drawn here) and replaces the default
+        // box (_top == 5, 0x80314708) with +-100 (+0xD4..+0xE0).
+        if (top_ == 5.0f) {
+            top_ = right_ = 100.0f;
+            bottom_ = left_ = -100.0f;
+        }
         near_ = shader.f32(27, 0.1f);
         far_ = shader.f32(28, 1000.0f);
         up_ = shader.vec3(29).value_or(Vec3f{1, 0, 0});
@@ -109,11 +124,13 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.active = shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty();
     if (!frame.active) return;
     frame.factor = factor_;
-    frame.size = size_;
+    frame.width = width_;
+    frame.height = height_;
     frame.border = shadow_border();
     // 801FE5E4 (0x801FE640): lookAt(_lightPos, _lightPos + _lightDir, _upVector).
     frame.light_view = look_at(*light_, *light_ + direction_, up_);
-    frame.light_projection = orthographic(extent_, near_, far_);
+    // 801FE5E4 (0x801FE66C): ortho(_left, _right, _bottom, _top, near, far).
+    frame.light_projection = orthographic(left_, right_, bottom_, top_, near_, far_);
     TraversalContext caster = context;
     caster.output = &frame.casters;
     caster.actor_hook = nullptr;

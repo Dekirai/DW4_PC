@@ -524,10 +524,10 @@ void GlRenderer::render_shadow_map() {
     auto& gl = *gl_;
     shadow_ready_ = false;
     if (!shadow_ || !shadow_->active || shadow_->casters.empty()) return;
-    if (!shadow_fbo_ || shadow_size_ != shadow_->size) {
+    if (!shadow_fbo_ || shadow_width_ != shadow_->width || shadow_height_ != shadow_->height) {
         if (!shadow_texture_) glGenTextures(1, &shadow_texture_);
         glBindTexture(GL_TEXTURE_2D, shadow_texture_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, shadow_->size, shadow_->size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, shadow_->width, shadow_->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -538,17 +538,18 @@ void GlRenderer::render_shadow_map() {
         const bool complete = gl.CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
         if (!complete) return;
-        shadow_size_ = shadow_->size;
+        shadow_width_ = shadow_->width;
+        shadow_height_ = shadow_->height;
     }
     gl.BindFramebuffer(GL_FRAMEBUFFER, shadow_fbo_);
     glDisable(GL_SCISSOR_TEST);
-    glViewport(0, 0, shadow_size_, shadow_size_);
+    glViewport(0, 0, shadow_width_, shadow_height_);
     glClearColor(1, 1, 1, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     // 801FD040 (0x801FD1D0): the casters go into _shadowInnerViewport, the
     // map inset by the border on every side.
     const int border = shadow_->border;
-    glViewport(border, border, shadow_size_ - 2 * border, shadow_size_ - 2 * border);
+    glViewport(border, border, shadow_width_ - 2 * border, shadow_height_ - 2 * border);
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
     glDisable(GL_BLEND);
@@ -585,13 +586,13 @@ void GlRenderer::render_shadow_map() {
     gl.BindVertexArray(0);
     gl.Uniform1i(gl.u_shadow_pass, 0);
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && frame_ % 120 == 0) {
-        std::vector<std::uint8_t> pixels(std::size_t(shadow_size_ * shadow_size_) * 4);
-        glReadPixels(0, 0, shadow_size_, shadow_size_, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        std::vector<std::uint8_t> pixels(std::size_t(shadow_width_ * shadow_height_) * 4);
+        glReadPixels(0, 0, shadow_width_, shadow_height_, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
         std::size_t dark = 0;
-        int x0 = shadow_size_, y0 = shadow_size_, x1 = -1, y1 = -1;
-        for (int y = 0; y < shadow_size_; ++y)
-            for (int x = 0; x < shadow_size_; ++x)
-                if (pixels[std::size_t(y * shadow_size_ + x) * 4] < 255) {
+        int x0 = shadow_width_, y0 = shadow_height_, x1 = -1, y1 = -1;
+        for (int y = 0; y < shadow_height_; ++y)
+            for (int x = 0; x < shadow_width_; ++x)
+                if (pixels[std::size_t(y * shadow_width_ + x) * 4] < 255) {
                     ++dark;
                     x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
                 }
@@ -609,11 +610,14 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     // (0.5, 0.5) * the border matrix flt_804F8CC8 (scale (W - 2b) / W, offset
     // b / W). GL's map rows run bottom-up, so t keeps +0.5 where GX's bias
     // flips it.
-    const float inner = float(shadow_size_ - 2 * shadow_->border) / float(shadow_size_);
-    const float offset = float(shadow_->border) / float(shadow_size_);
+    const float border = float(shadow_->border);
+    const float inner_s = (float(shadow_width_) - 2.0f * border) / float(shadow_width_);
+    const float inner_t = (float(shadow_height_) - 2.0f * border) / float(shadow_height_);
     engine::Mat4 bias;
-    bias(0, 0) = bias(1, 1) = 0.5f * inner;
-    bias(3, 0) = bias(3, 1) = 0.5f * inner + offset;
+    bias(0, 0) = 0.5f * inner_s;
+    bias(1, 1) = 0.5f * inner_t;
+    bias(3, 0) = 0.5f * inner_s + border / float(shadow_width_);
+    bias(3, 1) = 0.5f * inner_t + border / float(shadow_height_);
     const auto matrix = shadow_->light_view * shadow_->light_projection * bias;
     gl.UniformMatrix4fv(gl.u_shadow_matrix, 1, GL_FALSE, matrix.m.data());
     gl.ActiveTexture(GL_TEXTURE1);

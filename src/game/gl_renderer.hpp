@@ -80,7 +80,7 @@ private:
     unsigned kept_program_{}, kept_texture_{};
     int kept_width_{}, kept_height_{};
     unsigned shadow_fbo_{}, shadow_texture_{};
-    int shadow_size_{};
+    int shadow_width_{}, shadow_height_{};
     bool shadow_ready_{};
     TexturePack* pack_{};
 };

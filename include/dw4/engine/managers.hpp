@@ -526,9 +526,10 @@ public:
 private:
     std::vector<Node*> casters_, receivers_;
     bool shader_{};
-    float factor_ = 0.4f;               // [13] _shadowFactor
-    int size_ = 256;
-    float extent_ = 100.0f;             // [48]/[49]: the light's box half size
+    float factor_ = 0.3f;               // [13] _shadowFactor
+    int width_ = 128, height_ = 128;    // [14]/[15] _shadowTexW/_shadowTexH
+    // [48]..[51] _top/_bottom/_right/_left: the light box
+    float top_ = 100.0f, bottom_ = -100.0f, right_ = 100.0f, left_ = -100.0f;
     float near_ = 0.1f, far_ = 1000.0f; // [27]/[28]
     Vec3f up_{1, 0, 0};                 // [29] _upVector
     Vec3f direction_{0, -1, 0};         // the light's direction
