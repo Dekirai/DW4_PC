@@ -1623,7 +1623,6 @@ public:
     std::int32_t text_call{}; // TEXTORDER call number read by TXTgetCallNo (80535950)
     std::string gate_stage_name;
     std::int32_t gate_stage_no{};
-    std::int32_t player_pos{}; // PLAYERgetPos: how the players entered this stage
 };
 
 // FIGHTCALC (GAMERAM dispatcher 803717A4, subcommand names 804E3F38). The

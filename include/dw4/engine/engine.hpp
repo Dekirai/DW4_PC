@@ -214,6 +214,7 @@ struct StageSnapshot {
     Cheats cheats;
     OriginalPads pads;
     std::string random;                  // system generator state (fight::generator)
+    std::int32_t point_no{};             // PLAYERPOINT's generate point (it survives stage loads)
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine

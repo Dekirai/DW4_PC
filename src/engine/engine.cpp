@@ -352,6 +352,7 @@ void Engine::begin_stage_load() {
         random << fight::generator();
         snapshot.random = random.str();
     }
+    if (auto* points = get<PlayerPointManager>()) snapshot.point_no = points->point_no();
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
     snapshot.serial = ++snapshot_serial_;
@@ -370,6 +371,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
         std::istringstream random(snapshot.random);
         random >> fight::generator();
     }
+    if (auto* points = get<PlayerPointManager>()) points->set_point_no(snapshot.point_no);
     if (auto* sys = get<GameSystem>(); sys && snapshot.system) {
         const Ram keep = sys->ram_;
         *sys = *static_cast<const GameSystem*>(snapshot.system.get());

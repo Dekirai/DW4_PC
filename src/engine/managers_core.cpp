@@ -2038,7 +2038,17 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         return true;
     }
     if (method == "SYSgetDifficulty") { out = {Lua4Value::number(difficulty)}; return true; }
-    if (method == "PLAYERgetPos") { out = {Lua4Value::number(player_pos)}; return true; }
+    if (method == "PLAYERgetPos") {
+        // 802EB4C4 -> 802EE1F0: PLAYERPOINT GETGENERATEPOS through the
+        // messenger (80305F58, strings 80424D0C/80424D18), int 0 of the reply
+        // (80306B00): the generate point SETGENERATEPOS chose before the stage
+        // change, so first.lua picks the entrance (stagML12 point 3: the
+        // transporter after the evolution scene).
+        Packet packet;
+        engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
+        out = {Lua4Value::number(packet.ints.empty() ? 0 : packet.ints[0])};
+        return true;
+    }
     if (method == "SYSsetDifficulty") { difficulty = arg_int(0); return true; }
     if (method == "LISsetDifficultMax") { difficulty_max = arg_int(0); return true; }
     if (method == "SYSgetCameraMode") { out = {Lua4Value::number(camera_mode)}; return true; }

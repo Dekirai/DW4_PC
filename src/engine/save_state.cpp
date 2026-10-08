@@ -145,7 +145,6 @@ void serialize_system(StateArchive& a, GameSystem& v) {
     a.io(v.game_started);
     a.io(v.gate_stage_name);
     a.io(v.gate_stage_no);
-    a.io(v.player_pos);
 }
 
 void serialize_snapshot(StateArchive& a, StageSnapshot& s) {
@@ -163,6 +162,7 @@ void serialize_snapshot(StateArchive& a, StageSnapshot& s) {
     a.io(pads);
     if (a.reading()) s.pads.restore(pads);
     a.io(s.random);
+    a.io(s.point_no);
     // The GameSystem copy.
     bool has_system = s.system != nullptr;
     a.io(has_system);
