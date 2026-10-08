@@ -1443,7 +1443,9 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     if (a.reading()) opaque = state;
 }
 
-void SoundManager::update(Engine& engine) {
+// The driver side (beCri, a module outside the managers' gate): it keeps
+// running during stage loads.
+void SoundManager::update_driver(Engine& engine) {
     for (auto& stream : streams_) {
         if (stream.ready_in > 0) --stream.ready_in;
         if (stream.ramp_left > 0 && !stream.paused) --stream.ramp_left;
@@ -1455,6 +1457,10 @@ void SoundManager::update(Engine& engine) {
         run_track(track);
     }
     std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
+}
+
+void SoundManager::update(Engine& engine) {
+    update_driver(engine);
     for (std::size_t i = 0; i < cues_.size();) {
         if (--cues_[i].frames > 0) {
             ++i;

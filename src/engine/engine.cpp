@@ -403,6 +403,7 @@ std::uint64_t Engine::fingerprint() {
     mix_value(time_);
     mix(stage_name_.data(), stage_name_.size());
     mix_value(loader_state_);
+    mix_value(stage_active_);
     for (const auto& [key, value] : flags_) {
         mix_value(key);
         mix_value(value);
@@ -496,6 +497,9 @@ void Engine::process_stage_loader() {
     if (loader_state_ < 0) return;
     switch (loader_state_) {
     case 0: {
+        // 802F8A64 state 0 clears beSystem +0x2C (_isActive, 0x802F8B54):
+        // no manager updates until state 8.
+        stage_active_ = false;
         // 802F8A64 state 0/1: loadingUSA/ld<stage name from its third
         // letter>.igb shows while the stage loads (its scene with a
         // beLoadingNode, later the LOADING layer).
@@ -595,6 +599,10 @@ void Engine::process_stage_loader() {
         break;
     }
     case 8:
+        // The step after start.lua sets beSystem +0x2C (0x802F9B68): the
+        // managers run from this step on (after the loader, 8028B7B0), so
+        // the RAMs start.lua created get their first update here.
+        stage_active_ = true;
         loader_state_ = 9;
         break;
     case 9:
@@ -646,9 +654,22 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
 // (beNDMWStatus, beNDMWPanelWaza), and beFont comes last, as the stage files
 // list their infos. A manager without an info in this stage is not scheduled
 // in the original; the port still runs it after the others (idle).
+//
+// Every manager class (the 51 vtables deriving from the info manager base,
+// beAction2 .. beNDMWMdl*) has the shared traversal 802F28F8 at +0x74: it
+// calls the RAM update (+0x84) of each RAM only while 80316808 says the
+// stage is active (beSystem +0x2C set and +0x2D clear), the manager's +0x1C
+// is set and beSystem +0x2E is clear. The modules outside that base keep
+// running: beSystem, bePadManager, beMessenger, beDemoManager, beCameraMode
+// (CameraManager::begin_frame), beCri (the sound driver) and the loader.
 void Engine::update_managers() {
     for (auto& m : managers_)
         if (m->scheduled_at_registration()) m->update(*this);
+    if (!stage_active_) {
+        for (auto& m : managers_)
+            if (!m->scheduled_at_registration()) m->update_inactive(*this);
+        return;
+    }
     // 8028B7B0 walks a copy, so a manager scheduled during the run (a file
     // loaded on demand) first runs in the next frame.
     schedule_run_ = schedule_;

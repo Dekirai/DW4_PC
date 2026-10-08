@@ -277,6 +277,9 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // The CRI driver part (stream ramps and fades, SE sequences) also runs
+    // while the stage is not active; the cues and the movie are RAM work.
+    void update_inactive(Engine& engine) override { update_driver(engine); }
     // Interleaved stereo 16-bit PCM at kOutputRate of the running streams.
     void render(std::int16_t* out, std::size_t frames);
     static constexpr int kOutputRate = 48000;
@@ -308,6 +311,7 @@ public:
     static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state);
 
 private:
+    void update_driver(Engine& engine);
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
     // list index, [6] SE request id (-1: an ADX file), [8] volume in 0.1 dB.
     struct SoundData {
@@ -972,6 +976,7 @@ private:
     };
     struct MatRam : Ram {
         bool running = true;  // RAM +20: PAUSE / RESTART
+        bool initialized{};   // RAM +0x18 == 1 after the first running update (803030A8)
         Node* visuals{};      // info [7] switch
         std::vector<Mat> mats;
     };

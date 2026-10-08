@@ -322,6 +322,10 @@ public:
 
     // Stage loader view.
     std::string loader_state() const;
+    // beSystem +0x2C (_isActive): cleared by the loader's state 0
+    // (0x802F8B54), set by its state 8, the step after start.lua
+    // (0x802F9B68). The managers' updates run only while it is set.
+    bool stage_active() const { return stage_active_; }
     const std::vector<LoadedFile>& loaded_files() const { return files_; }
     std::vector<std::string>& common_file_queue() { return common_queue_; }
     // Loads a common package now and registers its infos (a direct stage
@@ -372,6 +376,7 @@ private:
     std::string stage_folder_;
     std::string pending_stage_;
     int loader_state_ = -1;
+    bool stage_active_{}; // beSystem +0x2C, see stage_active()
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Cheats cheats_;
     std::optional<StageSnapshot> snapshot_;
@@ -398,6 +403,10 @@ public:
     virtual void add_info(Engine& engine, const ObjectView& info) = 0;
     virtual void clear_stage(Engine& engine) { (void)engine; }
     virtual void update(Engine& engine) { (void)engine; }
+    // The frame's update while the stage is not active (Engine::stage_active):
+    // the original skips every manager's RAM updates then (802F28F8); only
+    // what it runs outside them goes on (the sound driver).
+    virtual void update_inactive(Engine& engine) { (void)engine; }
     // Scheduled when the plugin registers it (+5C -> 8028A398), so it runs
     // before every manager an info schedules and stays scheduled across
     // stage clears (beSystem, bePadManager, beMessenger, ...).
