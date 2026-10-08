@@ -72,6 +72,19 @@ void MatCtrlManager::update(Engine& engine) {
     for (auto& owned : rams_) {
         auto& ram = *owned;
         if (!ram.running) continue;
+        // 803030A8: the first update of a running RAM (+0x18 != 1) only
+        // builds its per-mat arrays (current/previous player bits 0, every
+        // mat enabled, the manager's player bytes cleared) and sets +0x18;
+        // the mat test 80302F94 runs from the next update on. PAUSE/RESTART
+        // only switch +0x14 (80303B14), so this happens once per RAM.
+        if (!ram.initialized) {
+            for (auto& mat : ram.mats) {
+                mat.current = mat.previous = 0;
+                mat.enabled = true;
+            }
+            ram.initialized = true;
+            continue;
+        }
         // 80302F94: set bit (1 << player) for every mat box containing the player.
         for (auto& mat : ram.mats) mat.current = 0;
         for (int player = 0; player < 4 && models; ++player) {

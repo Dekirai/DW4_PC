@@ -972,6 +972,7 @@ private:
     };
     struct MatRam : Ram {
         bool running = true;  // RAM +20: PAUSE / RESTART
+        bool initialized{};   // RAM +0x18 == 1 after the first running update (803030A8)
         Node* visuals{};      // info [7] switch
         std::vector<Mat> mats;
     };
