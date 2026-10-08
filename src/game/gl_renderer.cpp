@@ -51,7 +51,7 @@ struct GlRenderer::Impl {
     int u_lighting{}, u_light_dir{}, u_light_col{}, u_light_count{}, u_diffuse{}, u_tex{};
     int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
-    int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_darkness{}, u_shadow_pass{};
+    int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
     PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
@@ -118,7 +118,6 @@ in vec2 v_uv;
 in float v_depth;
 in vec4 v_shadow;
 uniform sampler2D u_shadow_tex;
-uniform float u_shadow_darkness;
 uniform int u_shadow_pass;
 uniform int u_fog;
 uniform vec4 u_fog_color;
@@ -130,12 +129,13 @@ uniform int u_alpha_func;
 uniform float u_alpha_ref;
 out vec4 o_color;
 void main() {
-    // Receiver pass: the light's map as a multiplier (white where lit).
+    // Receiver pass (801FE190): the light's map is the multiplier (white
+    // where lit, _shadowFactor inside a shadow), MODULATE with white.
     if (u_shadow_pass == 2) {
         vec3 p = v_shadow.xyz / v_shadow.w * 0.5 + 0.5;
         float lit = 1.0;
         if (p.x > 0.0 && p.x < 1.0 && p.y > 0.0 && p.y < 1.0) lit = texture(u_shadow_tex, p.xy).r;
-        o_color = vec4(vec3(mix(1.0 - u_shadow_darkness, 1.0, lit)), 1.0);
+        o_color = vec4(vec3(lit), 1.0);
         return;
     }
     vec4 c = v_color;
@@ -154,8 +154,9 @@ void main() {
     else if (u_alpha_func == 5) pass = a != r;
     else if (u_alpha_func == 6) pass = a >= r;
     if (!pass) discard;
-    // Shadow map pass: casters are black on the white map.
-    if (u_shadow_pass != 0) { o_color = vec4(0.0, 0.0, 0.0, 1.0); return; }
+    // Shadow map pass: casters in the _shadowColor grey (u_modulate) on the
+    // white map, unlit and untextured.
+    if (u_shadow_pass != 0) { o_color = vec4(u_modulate.rgb, 1.0); return; }
     if (u_fog != 0) {
         float f = clamp((u_fog_range.y - v_depth) / max(u_fog_range.y - u_fog_range.x, 0.001), 0.0, 1.0);
         c.rgb = mix(u_fog_color.rgb, c.rgb, f);
@@ -245,7 +246,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -556,7 +557,10 @@ void GlRenderer::render_shadow_map() {
     gl.Uniform1i(gl.u_fog, 0);
     gl.Uniform1i(gl.u_use_tex, 0);
     gl.Uniform1i(gl.u_alpha_func, 7);
-    gl.Uniform4f(gl.u_modulate, 1, 1, 1, 1);
+    // 801FDCCC (0x801FDD10..0x801FDD3C): _shadowColor = (f, f, f, 1) with
+    // f = _shadowFactor, pushed while _useShadowFactor (default 1, never
+    // serialized) is set.
+    gl.Uniform4f(gl.u_modulate, shadow_->factor, shadow_->factor, shadow_->factor, 1);
     gl.UniformMatrix4fv(gl.u_view, 1, GL_FALSE, shadow_->light_view.m.data());
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, shadow_->light_projection.m.data());
     const engine::Mat4 identity{};
@@ -584,7 +588,7 @@ void GlRenderer::render_shadow_map() {
         int x0 = shadow_size_, y0 = shadow_size_, x1 = -1, y1 = -1;
         for (int y = 0; y < shadow_size_; ++y)
             for (int x = 0; x < shadow_size_; ++x)
-                if (pixels[std::size_t(y * shadow_size_ + x) * 4] < 128) {
+                if (pixels[std::size_t(y * shadow_size_ + x) * 4] < 255) {
                     ++dark;
                     x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
                 }
@@ -600,7 +604,6 @@ void GlRenderer::render_shadow_receivers(const engine::FrameCamera& camera) {
     if (!shadow_ready_ || shadow_->receivers.empty()) return;
     const auto matrix = shadow_->light_view * shadow_->light_projection;
     gl.UniformMatrix4fv(gl.u_shadow_matrix, 1, GL_FALSE, matrix.m.data());
-    gl.Uniform1f(gl.u_shadow_darkness, shadow_->darkness);
     gl.ActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, shadow_texture_);
     gl.ActiveTexture(GL_TEXTURE0);

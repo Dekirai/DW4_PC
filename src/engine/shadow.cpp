@@ -24,7 +24,7 @@ void ShadowManager::add_info(Engine& engine, const ObjectView& info) {
     if (const auto shader = info.ref(9)) {
         // 80314690: the shader's defaults; the light box is +-100 (+212..+224).
         shader_ = true;
-        darkness_ = shader.f32(13, 0.4f);
+        factor_ = shader.f32(13, 0.4f);
         size_ = std::clamp(shader.i32(14, 256), 32, 1024);
         extent_ = std::max(std::abs(shader.f32(48, 100.0f)), std::abs(shader.f32(49, -100.0f)));
         near_ = shader.f32(27, 0.1f);
@@ -80,7 +80,7 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.receivers.clear();
     frame.active = shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty();
     if (!frame.active) return;
-    frame.darkness = darkness_;
+    frame.factor = factor_;
     frame.size = size_;
     frame.light_view = look_at(*light_, *light_ - Vec3f{0, 1, 0}, {0, 0, -1});
     frame.light_projection = orthographic(extent_, near_, far_);

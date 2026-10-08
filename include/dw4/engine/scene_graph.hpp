@@ -252,13 +252,14 @@ struct FrameCamera {
 };
 
 // igProjectiveShadowShader state for one frame: the casters drawn from the
-// light into a size x size texture; the receivers (the shader's children,
-// simplified ground meshes outside the visible scene) multiply it over the
-// scene.
+// light into a size x size texture that is cleared white (0x938), the casters
+// in the grey _shadowFactor (801FDCCC: colour (f, f, f, 1)); the receivers
+// (the shader's children, simplified ground meshes outside the visible scene)
+// multiply the map over the scene (801FE190: MODULATE, blend ZERO/SRC_COLOR).
 struct ShadowFrame {
     bool active{};
     Mat4 light_view{}, light_projection{};
-    float darkness = 0.4f;
+    float factor = 0.4f; // _shadowFactor: the multiplier inside a shadow
     int size = 256;
     std::vector<DrawItem> casters, receivers;
 };

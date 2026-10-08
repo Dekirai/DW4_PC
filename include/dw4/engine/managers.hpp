@@ -525,7 +525,7 @@ public:
 private:
     std::vector<Node*> casters_, receivers_;
     bool shader_{};
-    float darkness_ = 0.4f;
+    float factor_ = 0.4f;               // [13] _shadowFactor
     int size_ = 256;
     float extent_ = 100.0f;             // [48]/[49]: the light's box half size
     float near_ = 0.1f, far_ = 1000.0f; // [27]/[28]
