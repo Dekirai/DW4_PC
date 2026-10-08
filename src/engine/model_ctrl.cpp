@@ -1032,13 +1032,33 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
     if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
         const auto s = ram.channels.states();
-        char line[256];
+        char line[320];
         std::snprintf(line, sizeof line,
-                      "motion %s#%d %s (%.1f, %.1f, %.1f) ch0 active=%d speed=%.2f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f wait=%s",
+                      "motion %s#%d %s (%.1f, %.1f, %.1f) ch0 active=%d speed=%.2f ch1 active=%d mode=%d speed=%.2f end=%.1f ch2 active=%d speed=%.2f ch3 active=%d speed=%.2f yaw=%.3f wait=%s",
                       ram.info_name.c_str(), ram.index, ram.seq_name.c_str(), position.x, position.y, position.z, int(s[0].active),
                       s[0].speed, int(s[1].active), int(s[1].mode), s[1].speed, s[1].end_time, int(s[2].active), s[2].speed,
-                      ram.wait_name ? ram.wait_name->c_str() : "-");
+                      int(s[3].active), s[3].speed, ram.applied[1], ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
+    }
+    // The channels advance first (8031E4C4 KEIKATIMER step): the rotation
+    // channel of MOVEEX R?xxx (channel 3) turns the wanted yaw by its step in
+    // degrees (0x8030A4A8-0x8030A4F4: +84 += pi/180 * step, the yaw rate +90 =
+    // 1.25 * |that|) before the model turns, the translation channels move it
+    // after the turn.
+    dw4::MotionStep step;
+    if (ram.channels.allocated()) {
+        const bool rotating = ram.channels.states()[3].active;
+        try {
+            step = ram.channels.advance(1.0f);
+        } catch (const std::exception& error) {
+            engine.note(std::string("model motion: ") + error.what());
+            return false;
+        }
+        if (rotating) {
+            const float turn = 0.0174532924f * step.rotation;
+            ram.desired[1] = turn + ram.desired[1];
+            ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
+        }
     }
     // Turning (8030C85C): shortest arc at the stored rate per frame.
     for (std::size_t axis = 0; axis < 3; ++axis) {
@@ -1057,11 +1077,8 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
         matrix[12] = position.x;
         matrix[13] = position.y;
         matrix[14] = position.z;
-        if (ram.channels.allocated()) {
-            const auto step = ram.channels.advance(1.0f);
-            if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
-            moved = step.translation_updated;
-        }
+        if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
+        moved = step.translation_updated;
     } catch (const std::exception& error) {
         engine.note(std::string("model motion: ") + error.what());
         return false;
