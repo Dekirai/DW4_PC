@@ -1817,6 +1817,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // (Its next bullet still has to fly to where the player will be.)
             const engine::Vec3f until = to_post && perch_ ? *perch_ : first_hot;
             if (remaining >= 0.0f && speed > 0.1f) remaining += std::max(0.0f, flat(until, at) - 6.0f) / speed;
+            // No pattern yet (one that fires only at a player near it shows
+            // little of it from further off): quiet for two seconds is a gap.
+            if (remaining < 0.0f && (shots.empty() || frame - shots.back() >= 120)) remaining = needed;
             if (remaining < needed) go = false;
             least = std::min(least, remaining);
         }
@@ -1994,7 +1997,18 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         // turn the player away); otherwise stand and let it come.
         if (!on_perch) {
             decision.reach = 1.0f;
+            // A post never got onto (a turret's fire throwing the player back
+            // each time, or never a gap to cross it) is given up for a while,
+            // as a structure never reached; for the stage the third time.
+            if (!held_by_hit(player) && ++approach_[target_] > 1800) {
+                if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up reaching %s\n", frame, what_.c_str());
+                approach_[target_] = 0;
+                unreachable_[target_] = frame + 3000;
+                if (++fruitless_runs_[target_] >= 3) unkillable_.insert(target_);
+                planned_ = -1000;
+            }
         } else {
+            approach_[target_] = 0;
             stalled_ = 0;
             watch.since = frame;
             if (perch_since_ < 0) perch_since_ = frame;
