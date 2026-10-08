@@ -183,6 +183,8 @@ private:
         int named_path = -1;
         std::int64_t named_start{}, named_duration{};
         bool named_active{};
+        // The RAM's CAMHOKAN timer, the box camera's blend step (802F2BC0).
+        std::optional<NodeTimer> hokan;
     };
     // The manager's one viewer (+28, 802E1478) once the box or the demo
     // update made it the current viewer (8040F870): the camera path it

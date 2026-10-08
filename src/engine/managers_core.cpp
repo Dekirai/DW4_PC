@@ -394,7 +394,7 @@ void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std
 // delta / 16666667 at most 3 (80452BF8/80452BFC), kept for the rest of the
 // frame (0x8031E5B8-0x8031E638). A running blend so steps 0.991 or 1.007 per
 // field (the NTSC field on the >> 18 clock); the end of the blend removes the
-// timer (8031E8BC at 0x802F316C). Here the step is a flat 1.0 (1.5).
+// timer (8031E8BC at 0x802F316C). The port keeps the same timer per RAM.
 // "Stand" means the centre equals last frame's bit for bit (fcmpu,
 // 0x802F2D24..0x802F2D3C). The box camera's path becomes the current viewer
 // only when the centre enters another box (0x802F2F70..0x802F30E8); without
@@ -459,6 +459,7 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
             previous_box_ = box_;
             eye->matrix = box.eyes[k]->matrix;
             target->matrix = box.targets[k]->matrix;
+            ram.hokan.reset(); // 0x802F316C: 8031E8BC removes CAMHOKAN
         } else {
             const float t = blend_ / 120.0f;
             auto blend = [&](Node* live, const Mat4& saved, const Mat4& goal) {
@@ -468,7 +469,9 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
             };
             blend(eye, saved_eye_, box.eyes[k]->matrix);
             blend(target, saved_target_, box.targets[k]->matrix);
-            blend_ += centre_moved_ ? 1.0f : 1.5f;
+            if (!ram.hokan) timer_start(ram.hokan.emplace(), engine.time());
+            const float frames = timer_frames(*ram.hokan, engine.time());
+            blend_ = centre_moved_ ? blend_ + frames : std::fma(1.5f, frames, blend_); // fadds / fmadds
         }
     }
     // 802F3370: the shake offsets both live transforms by the pattern's
