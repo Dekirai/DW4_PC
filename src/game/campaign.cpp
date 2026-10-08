@@ -108,6 +108,9 @@ struct Objective {
     const char* done;
     const char* stage;
     const char* action;
+    // "<stage>:<mat>": the objective's stage counts only when entered by
+    // that exit (a part of the stage reached only from that side).
+    const char* via = "";
 };
 constexpr Objective kObjectives[] = {
     // Phase 1. The Digi-Elf sends the new member to the Commander Room;
@@ -143,17 +146,19 @@ constexpr Objective kObjectives[] = {
     // (stagML02 first.lua: phase 4).
     {"lobby console 0 (stagML12)", "F329|P4", "stagml12", "strike:g_evenconsz05#0"},
     {"junk console (stagML13)", "F321|P4", "stagml13", "strike:g_junkconsz05#0"},
-    {"lobby console 2 (stagML12)", "F331|P4", "stagml12", "strike:g_evenconsz05#2"},
-    {"lobby console 3 (stagML12)", "F332|P4", "stagml12", "strike:g_evenconsz05#3"},
-    {"lobby console 1 (stagML12)", "F324|P4", "stagml12", "strike:g_evenconsz05#1"},
+    // (Consoles 1-3 lie behind the hiding box: the side reached from the
+    // stagML13 gate mate00, open once the junk console is off.)
+    {"lobby console 2 (stagML12)", "F331|P4", "stagml12", "strike:g_evenconsz05#2", "stagml13:mate00"},
+    {"lobby console 3 (stagML12)", "F332|P4", "stagml12", "strike:g_evenconsz05#3", "stagml13:mate00"},
+    {"lobby console 1 (stagML12)", "F324|P4", "stagml12", "strike:g_evenconsz05#1", "stagml13:mate00"},
     {"Seraphimon restores the lobby", "P4", "stagml02", "wait"},
     // Phase 4. Area 2: key items 4 (dng204b2) and 5 (dng205b3) open the way
     // from stag0202 to stag0204 (stag0202 start.lua), the energy plug in
     // stag0205 (reached through the gate fields, flag 49) the way into the
-    // dng206 tower with Belphemon.
+    // dng206 tower with Belphemon (all 36 plugs broken, brk_g_eneplugz02.lua).
     {"key item 4 (dng204b2 boss)", "K4|P5", "dng204b2", "explore:matz02"},
     {"key item 5 (dng205b3 boss)", "K5|P5", "dng205b3", "explore:matz02"},
-    {"energy plug (stag0205)", "F49|P5", "stag0205", "strike:g_eneplugz02#0"},
+    {"energy plugs (stag0205)", "F49|P5", "stag0205", "strike:g_eneplugz02#*"},
     {"Belphemon (stagBS02)", "F68|P5", "stagbs02", "explore:matz01"},
     // After Belphemon: Ophanimon (flag 334), Seraphimon (82), Leomon in
     // stagML12 (335), then Seraphimon's briefing on matf02 (phase 5).
@@ -202,6 +207,7 @@ constexpr Exit kExits[] = {
     {"stagml02", "mate00", "stagml11", ""},
     {"stagml12", "matz00", "stagml11", ""},     {"stagml12", "matz01", "stagml13", ""},
     {"stagml13", "matz00", "stagml11", ""},     {"stagml13", "matz01", "stagml12", ""},
+    {"stagml13", "mate00", "stagml12", "F321"},
     // Training field (stag0001 matz00.lua: both answers lead to stag0101).
     {"stag0001", "matz00", "stag0101", ""},
     // Area 1.
@@ -364,15 +370,23 @@ std::vector<TitlePress> title_presses() {
 
 } // namespace
 
-const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine& engine, const std::string& spec) const {
+// "<model>#<n>" names one RAM, "<model>#*" the nearest of that model that
+// still has HP.
+const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine& engine, const std::string& spec,
+                                                                  const engine::Vec3f& near) const {
     const auto hash = spec.find('#');
     const std::string name = spec.substr(0, hash);
-    const int index = hash == std::string::npos ? 0 : std::atoi(spec.c_str() + hash + 1);
+    const bool any = hash != std::string::npos && spec.compare(hash + 1, std::string::npos, "*") == 0;
+    const int index = hash == std::string::npos || any ? 0 : std::atoi(spec.c_str() + hash + 1);
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return nullptr;
-    for (const auto& ram : models->rams())
-        if (ram->generated && ram->node && ram->info_name == name && ram->index == index) return ram.get();
-    return nullptr;
+    const engine::ModelCtrlManager::ModelRam* best = nullptr;
+    for (const auto& ram : models->rams()) {
+        if (!ram->generated || !ram->node || ram->info_name != name) continue;
+        if (!any && ram->index == index) return ram.get();
+        if (any && ram->hp > 0 && (!best || flat(position_of(*ram), near) < flat(position_of(*best), near))) best = ram.get();
+    }
+    return best;
 }
 
 std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) const {
@@ -384,7 +398,17 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         }
     if (!objective) return std::nullopt;
     const std::string here = lower(engine.stage_name());
-    if (here == objective->stage) return Step{here, objective->action, -1, objective->name};
+    // An objective with an entrance: done on arrival by it, else the way
+    // leads to the stage of that exit and through it.
+    std::string target = objective->stage;
+    const std::string via = objective->via;
+    if (via.empty() || (came_from_ == via.substr(0, via.find(':')) && came_by_.find(via.substr(via.find(':') + 1)) != std::string::npos)) {
+        if (here == objective->stage) return Step{here, objective->action, -1, objective->name};
+    } else {
+        target = via.substr(0, via.find(':'));
+        if (here == target)
+            return Step{here, std::string(lobby(here) ? "mat:" : "explore:") + via.substr(via.find(':') + 1), -1, objective->name};
+    }
     // The cheapest way over the usable exits from here to the objective's
     // stage: a stage change costs 1, one into the lobby less (a cleared
     // dungeon is left by its return gate rather than walked back through).
@@ -406,7 +430,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
                 best = c;
                 at = stage;
             }
-        if (at.empty() || at == objective->stage) break;
+        if (at.empty() || at == target) break;
         done.insert(at);
         for (const auto& exit : kExits) {
             if (at != exit.stage || !usable(exit)) continue;
@@ -417,8 +441,8 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
             }
         }
     }
-    if (!parent.count(objective->stage)) return std::nullopt;
-    std::string next = objective->stage;
+    if (!parent.count(target)) return std::nullopt;
+    std::string next = target;
     while (parent[next] != here) next = parent[next];
     // Every mat of this stage leading there is a goal.
     Step step{here, "", -1, objective->name};
@@ -554,6 +578,8 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     Output out;
     const std::string stage = lower(engine.stage_name());
     if (stage != stage_) {
+        came_from_ = stage_;
+        came_by_ = last_action_;
         stage_ = stage;
         stage_frame_ = frame;
         route_.clear();
@@ -575,9 +601,15 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     if (stage.rfind("stagis", 0) == 0 || !player || !player->node) return boot(engine, frame);
     const auto step = next_step(engine);
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
+    if (step) last_action_ = step->action;
     if (key != traced_) {
         std::printf("[%d] campaign: %s\n", frame, key.c_str());
         traced_ = key;
+        traced_at_ = frame;
+    } else if ((frame - traced_at_) % 10000 == 0) {
+        // A long step: the place in the log where a run stalls.
+        std::printf("[%d] campaign: still %s for %d frames at (%.0f,%.0f,%.0f)\n", frame, key.c_str(), frame - traced_at_,
+                    player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2));
     }
     const auto me = position_of(*player);
     const bool controllable = player->control_enabled && player->seq_name.rfind("SQ_DEMO", 0) != 0;
@@ -752,7 +784,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
     } else if (kind == "talk" || kind == "strike") {
-        if (const auto* model = find_model(engine, what)) {
+        if (const auto* model = find_model(engine, what, me)) {
             // The player's hit or talk check has to meet the model's hit box,
             // which may lie well in front of the model (a console in a wall
             // niche): walked up to its middle, then A facing the model.
@@ -778,7 +810,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             }
         }
     } else if (kind == "step") {
-        if (const auto* model = find_model(engine, what)) walk_to(engine, *player, position_of(*model), 1.0f, frame, out);
+        if (const auto* model = find_model(engine, what, me)) walk_to(engine, *player, position_of(*model), 1.0f, frame, out);
     } else if (kind == "wait") {
         ++waited_;
     }

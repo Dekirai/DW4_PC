@@ -47,11 +47,14 @@ private:
     // second); true once within `close`.
     bool walk_to(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& goal, float close,
                  int frame, Output& out);
-    const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec) const;
+    const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near) const;
 
     std::string stage_;
+    std::string came_from_, came_by_; // the stage before this one and the step taken there (its exit mats)
+    std::string last_action_;    // the step's action this frame
     int stage_frame_{};          // the frame the current stage was requested
     std::string traced_;         // the last traced step
+    int traced_at_{};            // the frame it began
     ExploreBot explorer_;
     std::vector<WalkMap::Waypoint> route_;
     std::size_t route_next_{};
