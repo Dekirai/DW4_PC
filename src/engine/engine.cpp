@@ -381,6 +381,7 @@ void Engine::restore(const StageSnapshot& snapshot) {
     pending_stage_ = snapshot.stage;
     begin_stage_load();
     process_stage_loader();
+    if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     demo_.update(*this);
     update_managers();
@@ -628,9 +629,9 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     ++frame_;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
-    // The current camera viewer (802F4268, not a scheduled manager) sets the
-    // frame's camera before the demo and the managers run (8028AF84 ticks
-    // its +20 object before the scheduler at +C); see begin_frame.
+    // The current camera viewer (802F4268, a scheduled module ahead of the
+    // demo, the messenger and the managers) sets the frame's camera before
+    // they run; see CameraManager::begin_frame.
     if (auto* camera = get<CameraManager>()) camera->begin_frame(*this);
     messenger_.update(*this);
     demo_.update(*this);

@@ -127,11 +127,16 @@ public:
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
     // The current viewer's own update (beCameraMode vfunc +0x78, 802F4268):
-    // the viewer is attached to its camera as an observer (8040F870 ->
-    // 8011D0D4 -> 8011BDC0), not scheduled with the managers, and advances
-    // its clock and sets the camera matrix the frame is drawn and steered
-    // with before the demo or the camera update can change the viewer.
-    // Engine::step calls it before the messenger, the demo and the managers.
+    // the viewer module (vtable 804F1B40, +0x74 = 8040DA1C -> 8040F90C)
+    // sits in the same serial scheduler list (+0x0C) as the managers but
+    // ahead of them: it adds itself in its +0x5C (8040D488, 8028A398 at
+    // 0x8040D7A8) when the application adds its modules early (8040F1C8..
+    // 8040F1F8 -> 8028A268), while the demo (802F7C58) and the messenger
+    // (80304BB0) join only with the plugins. So it advances its clock and
+    // sets the camera matrix the frame is drawn and steered with before the
+    // demo or the camera update can change the viewer. Engine::step (and
+    // Engine::restore) call it before the messenger, the demo and the
+    // managers.
     void begin_frame(Engine& engine);
     // The camera of this frame (begin_frame's), or the live one before it ran.
     void frame_camera(Engine& engine, FrameCamera& camera);
