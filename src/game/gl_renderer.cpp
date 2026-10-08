@@ -52,6 +52,7 @@ struct GlRenderer::Impl {
     int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_darkness{}, u_shadow_pass{};
+    int u_texgen{};
     PFNGLUNIFORM2FPROC Uniform2f{};
 };
 
@@ -67,6 +68,7 @@ uniform mat4 u_model, u_view, u_proj;
 uniform int u_skinned;
 uniform mat4 u_palette[64];
 uniform mat4 u_tex_matrix;
+uniform int u_texgen;
 uniform int u_use_vcol;
 uniform vec4 u_color;
 uniform int u_lighting;
@@ -109,7 +111,17 @@ void main() {
         base = vec4(clamp(lit, 0.0, 1.0) * material.rgb, material.a);
     }
     v_color = base;
-    v_uv = (u_tex_matrix * vec4(a_uv, 0.0, 1.0)).xy;
+    if (u_texgen == 2) {
+        // igTextureCoordSourceAttr source 2 (800FCEA8 case 2): GX texgen
+        // from the normal through the modelview rotation (translation 0),
+        // normalised, then the post matrix MTXTrans(0.5, 0.5, 1) *
+        // MTXScale(0.5, -0.5, 0) (GX_PTTEXMTX0); the texture matrix stack is
+        // not used.
+        vec3 nv = normalize(mat3(u_view) * (mat3(u_model) * normal));
+        v_uv = vec2(0.5 + 0.5 * nv.x, 0.5 - 0.5 * nv.y);
+    } else {
+        v_uv = (u_tex_matrix * vec4(a_uv, 0.0, 1.0)).xy;
+    }
 }
 )";
 const char* kFragment = R"(#version 330 core
@@ -245,7 +257,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass)
+    U(shadow_matrix) U(shadow_tex) U(shadow_darkness) U(shadow_pass) U(texgen)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -561,6 +573,7 @@ void GlRenderer::render_shadow_map() {
     gl.UniformMatrix4fv(gl.u_proj, 1, GL_FALSE, shadow_->light_projection.m.data());
     const engine::Mat4 identity{};
     gl.UniformMatrix4fv(gl.u_tex_matrix, 1, GL_FALSE, identity.m.data());
+    gl.Uniform1i(gl.u_texgen, 0);
     for (const auto& item : shadow_->casters) {
         const auto* m = mesh(item.geometry);
         if (!m || !m->index_count) continue;
@@ -720,6 +733,8 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         gl.UniformMatrix4fv(gl.u_model, 1, GL_FALSE, item.model.m.data());
         const auto tex_matrix = s.texture_matrix.value_or(dw4::engine::Mat4{});
         gl.UniformMatrix4fv(gl.u_tex_matrix, 1, GL_FALSE, tex_matrix.m.data());
+        const int texgen = s.texcoord_source == 2 && m->has_normals ? 2 : 0;
+        gl.Uniform1i(gl.u_texgen, texgen);
         if (item.palette && !item.palette->empty()) {
             const auto count = std::min<std::size_t>(item.palette->size(), 64);
             gl.UniformMatrix4fv(gl.u_palette, GLsizei(count), GL_FALSE, item.palette->front().m.data());
@@ -733,7 +748,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const auto mod = s.modulate.value_or(engine::Vec4f{1, 1, 1, 1});
         gl.Uniform4f(gl.u_modulate, mod.x, mod.y, mod.z, mod.w);
         gl.Uniform1i(gl.u_use_vcol, m->has_colors ? 1 : 0);
-        const Texture* tex = (s.texture_enabled && m->has_uvs) ? texture(s.texture) : nullptr;
+        const Texture* tex = (s.texture_enabled && (m->has_uvs || texgen)) ? texture(s.texture) : nullptr;
         glBindTexture(GL_TEXTURE_2D, tex ? tex->id : white_texture_);
         gl.Uniform1i(gl.u_use_tex, tex ? 1 : 0);
         gl.Uniform1i(gl.u_alpha_func, s.alpha_test ? s.alpha_func : 7);

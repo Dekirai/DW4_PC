@@ -646,6 +646,15 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
     } else if (type == "igNormalizeNormalsStateAttr") {
         a->kind = AttrKind::normalize_normals;
         a->enabled = view.boolean(4);
+    } else if (type == "igTextureCoordSourceAttr") {
+        // Fields (registration 800AEFF4, size 0x18): [4] _source (+0xC),
+        // [5] the texture coordinate set (+0x10), [6] _unit (+0x14). The
+        // apply (800C3AA0 -> 800FF8F8 -> 800FF8D8) stores them per unit in
+        // the visual context (+0x1FC / +0x23C) for the texgen setup 800FCEA8.
+        a->kind = AttrKind::texcoord_source;
+        a->e0 = view.i32(4);
+        a->e1 = view.i32(5);
+        a->unit = view.i32(6);
     }
     auto* raw = a.get();
     attributes_.emplace(key, std::move(a));
@@ -894,6 +903,9 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         break;
     case AttrKind::color_mask: s.color_write = a->mask[0] || a->mask[1] || a->mask[2]; break;
     case AttrKind::vertex_blend_state: s.vertex_blend = a->enabled; break;
+    case AttrKind::texcoord_source:
+        if (a->unit == 0) s.texcoord_source = a->e0;
+        break;
     default: break;
     }
 }

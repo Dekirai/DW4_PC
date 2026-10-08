@@ -55,7 +55,7 @@ enum class AttrKind : std::uint8_t {
     unknown, texture_bind, texture_state, texture_matrix_state, color, material, blend_function, blend_state,
     alpha_function, alpha_state, depth_state, depth_write_state, depth_function, cull_face, lighting_state,
     light, light_state, fog, fog_state, shade_model, model_view_matrix, projection_matrix, viewport, color_mask,
-    vertex_blend_state, normalize_normals, geometry
+    vertex_blend_state, normalize_normals, geometry, texcoord_source
 };
 
 struct TextureSampler {
@@ -224,6 +224,10 @@ struct RenderState {
     bool texture_forced{}, lighting_forced{}, blend_forced{};
     // igTransform flag 8: the transform (sequence) applies to the texture coordinates.
     std::optional<Mat4> texture_matrix;
+    // igTextureCoordSourceAttr of unit 0 (_source): 0 the vertices' texture
+    // coordinates, 2 a sphere map from the view-space normals (800FCEA8
+    // case 2; only the beWaterPlain surfaces use it, always with 2).
+    std::int32_t texcoord_source{};
     Vec4f diffuse{1, 1, 1, 1}, ambient{0.2f, 0.2f, 0.2f, 1}, emission{0, 0, 0, 1};
     bool fog{};
     const Attribute* fog_params{};
