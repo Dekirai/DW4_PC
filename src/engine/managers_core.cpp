@@ -384,15 +384,21 @@ void CameraManager::set_viewer(const CameraRam& ram, const CameraPath& path, std
 
 // 802F2BC0: the box camera. The pivot stands at the players' centre; the
 // camera box containing the centre selects the rotation and distance
-// transforms, blended in over 120 steps (one per frame while the players
-// move, 1.5 while they stand); SHAKE offsets the live transforms. The step
-// is exactly 1.0: 0x802F3280 restarts the CAMHOKAN timer (8031DE44 stamps
-// it with this frame's time, step 1.0 at 80452BE8) right before 8031E4C4
-// reads it. "Stand" means the centre equals last frame's bit for bit
-// (fcmpu, 0x802F2D24..0x802F2D3C). The box
-// camera's path becomes the current viewer only when the centre enters
-// another box (0x802F2F70..0x802F30E8); without players it does nothing
-// (0x802F2C68), so a demo viewer stays current.
+// transforms, blended in over 120 steps (about one per frame while the
+// players move, 1.5 times that while they stand); SHAKE offsets the live
+// transforms. On the original the step is the RAM's CAMHOKAN timer, read on
+// every blend frame after the blend (0x802F3260-0x802F32C4): 8031E138 tells
+// whether the timer exists (0x8031E210-0x8031E220) and 8031DE44 creates it
+// only when it does not, so on a blend's first frame (stamped with that
+// frame: step 1); 8031E4C4 returns the frames since its last read, the time
+// delta / 16666667 at most 3 (80452BF8/80452BFC), kept for the rest of the
+// frame (0x8031E5B8-0x8031E638). A running blend so steps 0.991 or 1.007 per
+// field (the NTSC field on the >> 18 clock); the end of the blend removes the
+// timer (8031E8BC at 0x802F316C). Here the step is a flat 1.0 (1.5).
+// "Stand" means the centre equals last frame's bit for bit (fcmpu,
+// 0x802F2D24..0x802F2D3C). The box camera's path becomes the current viewer
+// only when the centre enters another box (0x802F2F70..0x802F30E8); without
+// players it does nothing (0x802F2C68), so a demo viewer stays current.
 void CameraManager::update_box(Engine& engine, CameraRam& ram) {
     auto& box = *ram.box;
     Node* eye = box.eyes[0];
