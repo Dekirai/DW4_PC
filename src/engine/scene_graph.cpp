@@ -904,6 +904,10 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
 // override as its effective top), so deeper igTextureStateAttr /
 // igLightingStateAttr / igBlendStateAttr in the skin graphs cannot undo
 // them: the 4-frame FLASH draws the model untextured and unlit, white.
+// FADESET (802F0800) adds only igColorAttr, igBlendStateAttr (on) and
+// igLightingStateAttr (off), no igBlendFunctionAttr: the function stays the
+// model's own (the warp beam x_099etrns01a keeps its additive SRC_ALPHA/ONE)
+// or the default SRC_ALPHA/ONE_MINUS_SRC_ALPHA.
 void apply_overrides(const Node& n, RenderState& s) {
     if (n.color_override) {
         const auto c = *n.color_override;
@@ -912,10 +916,6 @@ void apply_overrides(const Node& n, RenderState& s) {
     if (n.blend_override && !s.blend_forced) {
         s.blend_enabled = *n.blend_override;
         s.blend_forced = true;
-        if (s.blend_enabled) {
-            s.blend_src = 4;
-            s.blend_dst = 5;
-        }
     }
     if (n.texture_override && !s.texture_forced) {
         s.texture_enabled = *n.texture_override;
