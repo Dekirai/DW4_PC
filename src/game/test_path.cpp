@@ -1407,6 +1407,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (e.get() == target_ && ((gimmick_ == Gimmick::talk && switched_on(*e)) || (gimmick_ == Gimmick::step && e->ctrl_mode == 0))) {
                 switched_[target_] = frame;
                 world_change_ = frame;
+                // A switch may open the way to a goal given up before, and
+                // only for a while (stag0202's floor button lowers the boss
+                // symbols in front of matz02): head for the goal first again.
+                goal_later_until_ = -1;
+                goal_first_failed_ = false;
             }
     if (target && gimmick_ == Gimmick::strike) {
         // It takes damage: keep at it. Only a new low counts, so one that
