@@ -48,6 +48,17 @@ struct AvoidBox {
     float min_y = -1e30f, max_y = 1e30f;
 };
 
+// A moving platform for the walking map: the floor its top covers somewhere
+// along its recorded path (a rectangle of the top's half extents round each
+// recorded centre) counts as floor at its top height, reached and left only
+// by a hop (a support change in the route). Its own collision (the floor
+// check's info and child) is part of it wherever it stands now.
+struct MovingFloor {
+    std::vector<engine::Vec3f> centres; // recorded top centres (y: the top's height)
+    float half_x{}, half_z{};
+    std::uint16_t info = 0xFFFF, child{};
+};
+
 // Everything reachable on foot within `range` of a start point: a flood of
 // the grid (heights follow the walked floor, so ramps and stairs are
 // climbed, ledges are walked off and gaps over pits are jumped), then the
@@ -56,28 +67,36 @@ struct AvoidBox {
 class WalkMap {
 public:
     WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
-            const std::vector<AvoidBox>& avoid = {}, float width = 2.5f);
+            const std::vector<AvoidBox>& avoid = {}, float width = 2.5f, const std::vector<MovingFloor>& moving = {});
     // The reached floor point nearest to `p` (flat distance) if it lies
     // within `tolerance`.
     std::optional<engine::Vec3f> nearest(const engine::Vec3f& p, float tolerance) const;
     // The reached point inside an XZ rectangle nearest to its middle (a mat
-    // that reaches into a wall still has floor inside).
-    std::optional<engine::Vec3f> reached_inside(float min_x, float min_z, float max_x, float max_z) const;
+    // that reaches into a wall still has floor inside); the stage floor
+    // first, or only.
+    std::optional<engine::Vec3f> reached_inside(float min_x, float min_z, float max_x, float max_z, bool stage_floor_only = false) const;
+    // Whether stage floor (not a moving platform's path) is reached within
+    // `tolerance` of `p`.
+    bool stage_floor_near(const engine::Vec3f& p, float tolerance) const;
     // The route cost to the reached point nearest to `p` within `tolerance`
     // (infinity without one): walking distance in cells plus wall and jump
     // surcharges.
     float cost_to(const engine::Vec3f& p, float tolerance) const;
     // Waypoints from the start to the reached point nearest to `p`; `jump`
-    // marks a waypoint reached by jumping from the one before.
+    // marks a waypoint reached by jumping from the one before; `support` is
+    // the moving floor (index into `moving`) the waypoint lies on, -1 the
+    // stage floor (a change between two waypoints is a hop).
     struct Waypoint {
         engine::Vec3f point;
         bool jump = false;
+        int support = -1;
     };
     std::vector<Waypoint> route_to(const engine::Vec3f& p) const;
     // Waypoints to the cheapest reached point within `tolerance` of `p`
     // (the same point cost_to prices), else as route_to.
     std::vector<Waypoint> route_to(const engine::Vec3f& p, float tolerance) const;
-    // Reached floor points (every third grid cell).
+    // Reached stage floor points (every third grid cell; not the floor of
+    // moving platforms, which is no ground to explore).
     std::vector<engine::Vec3f> samples() const;
     // The collision (info, child) pairs that stopped the walk, with counts.
     struct Blocker {
@@ -96,6 +115,7 @@ private:
     std::vector<float> floor_;
     std::vector<int> parent_;         // -2 unreached, -1 start
     std::vector<std::uint8_t> jumped_; // reached from the parent by a jump
+    std::vector<std::int8_t> support_; // moving floor under the cell, -1 the stage floor
     std::vector<float> cost_;
     std::map<std::pair<int, int>, Blocker> blockers_;
 };
@@ -105,7 +125,9 @@ private:
 // switches, presses wall switches, strikes boxes, breakable walls and
 // towers), steps on the stage's other mats (they start the enemy waves
 // whose defeat opens doors) and walks unvisited reachable ground until the
-// route to the goal mat is free.
+// route to the goal mat is free. Moving platforms over pits are ridden:
+// it waits for one to come by, hops on, rides it (out of trap lines) and
+// hops off or on to the next where its route goes on.
 class ExploreBot {
 public:
     struct Decision {
@@ -137,6 +159,48 @@ private:
     bool hazard_mat(engine::Engine& engine, const std::string& mat);
     // A quicksand mat (QuickSandOn/Off): walked over, but nothing to visit.
     bool quicksand_mat(engine::Engine& engine, const std::string& mat);
+    // A trap mat: it switches a model's label while a player stands in it
+    // (MATisPlayer, SETLABEL), e.g. a laser gun that fires across a pit or a
+    // damage floor.
+    bool trap_mat(engine::Engine& engine, const std::string& mat);
+    // The line a trap mat's model fires along (its +Z, like the cannons the
+    // flank approach keeps off), within the mat; the whole mat when the
+    // model stands outside it. Kept out of while hopping and riding.
+    struct Beam {
+        engine::Vec3f origin{}, axis{}; // axis zero: the whole mat
+        engine::Vec3f lo{}, hi{};       // the mat's box
+    };
+    const std::vector<Beam>& beams(engine::Engine& engine, int frame);
+    // Moving platforms: models whose own collision is a floor (the floor
+    // check under them answers with their name and index) that keep moving
+    // sideways. Their path is recorded step by step: it repeats, so where
+    // one will be is read from the same moment of an earlier round.
+    struct Platform {
+        const void* model{};
+        std::uint16_t info = 0xFFFF, child{}; // its collision
+        float top{};                          // the top's height above the origin
+        engine::Vec3f offset{};               // the top's centre from the origin (X/Z)
+        float half_x{}, half_z{};             // the top's half extents
+        std::vector<engine::Vec3f> trail;     // the origin each step, oldest first
+        int last_frame = -1;
+        int moving_steps{};                   // steps it moved of the recorded ones
+        bool hop_on{};                        // moves sideways and keeps moving (set by each plan)
+        bool sideways() const;
+    };
+    void track_platforms(engine::Engine& engine, const engine::Vec3f& me, int frame);
+    // The platform's top centre k steps on; `known` tells whether its path
+    // showed it (else it is its present speed carried on).
+    engine::Vec3f predict(const Platform& p, int k, bool* known = nullptr) const;
+    // The platform (index) whose top is under p, -1 for the stage floor.
+    int platform_under(engine::Engine& engine, const engine::Vec3f& p) const;
+    // Hops between supports (the stage floor and moving platforms) along the
+    // route: wait for the platform, run up, jump and steer at where the
+    // landing will be. True while it steers the player.
+    bool hop_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& me, bool airborne,
+                  int frame, Decision& decision);
+    // The route waypoint a hop leads to from the support the player stands
+    // on (or route_.size()).
+    std::size_t pending_hop(int standing_on, const engine::Vec3f& me) const;
     std::string stage_;
     std::set<std::pair<int, int>> visited_;      // 20-unit cells the player stood in
     std::set<std::string> mats_done_;            // mats the player stood on
@@ -176,6 +240,9 @@ private:
     std::map<std::string, bool> exits_;          // mat -> changes the stage (cached per stage)
     std::map<std::string, bool> hazards_;        // mat -> pit (cached per stage)
     std::map<std::string, bool> quicksands_;     // mat -> quicksand (cached per stage)
+    std::map<std::string, bool> traps_;          // mat -> trap trigger (cached per stage)
+    std::vector<Beam> beams_;                    // the trap lines (found again every 600 frames)
+    int beams_at_ = -100000;
     std::map<std::string, int> clears_seen_;     // generator -> clears seen (restarting waves)
     engine::Vec3f wait_point_{};                 // where the wait for the defeated began
     std::string hold_mat_;                       // the mat whose wave is held
@@ -234,6 +301,25 @@ private:
     bool runup_ready_{};     // at the run-up point of a long jump: run and jump
     int platform_wait_since_ = -1; // waiting at a take-off for a moving platform since
     bool closest_{};         // the goal cannot be reached: wait at the nearest point
+    std::vector<Platform> platforms_;                  // in the order first seen (the walking map's moving floors)
+    std::map<const void*, engine::Vec3f> stirring_;    // other models' positions one step ago (platform candidates)
+    std::set<const void*> not_platforms_;              // moved, but their floor is not their own
+    // A hop under way: the run-up until `jump_at` (or the edge), then the
+    // jump with the stick on the landing until touch-down at `land_at`.
+    struct Hop {
+        int from = -1, to = -1; // supports: platform index, -1 the stage floor
+        int started{}, jump_at{}, land_at{};
+        engine::Vec3f dir{};     // the run-up
+        engine::Vec3f landing{}; // on the stage floor
+        bool jumped{};
+    };
+    std::optional<Hop> hop_;
+    int hop_wait_since_ = -1;                // waiting for a platform since
+    std::vector<engine::Vec3f> hop_spots_;   // safe landings on the stage floor round the route's landing
+    engine::Vec3f hop_spots_for_{1e30f, 0.0f, 1e30f};
+    engine::Vec3f hop_wait_{};               // where to wait on the stage floor for a platform
+    engine::Vec3f hop_wait_for_{1e30f, 0.0f, 1e30f};
+    int hop_wait_to_ = -1;
 };
 
 } // namespace dw4::game
