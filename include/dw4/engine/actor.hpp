@@ -85,7 +85,9 @@ struct MotionState {
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals);
 // Evaluate pose from clips at node time `time`.
 bool evaluate_pose(AnimationDatabase& database, const MotionState& motion, std::int64_t time, ActorPose& pose);
-// Local clip time (looping or clamped) of a motion at node time.
-std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, std::int64_t time);
+// Seconds the clip's enbaya source samples for a state `local` ns after its
+// start (801E52FC -> 801E4FE8): a looping clip wraps at its duration, a clip
+// played once holds at duration - 1/30 s.
+float motion_source_time(const Clip& clip, std::int64_t local, bool loop);
 
 } // namespace dw4::engine

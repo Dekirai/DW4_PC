@@ -3,6 +3,7 @@
 #include "dw4/skinning.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 namespace dw4::engine {
@@ -118,14 +119,32 @@ const Clip* AnimationDatabase::clip(std::string_view name) {
     return raw->valid ? raw : nullptr;
 }
 
-std::int64_t motion_local_time(const Clip& clip, std::int64_t start, bool loop, std::int64_t time) {
-    std::int64_t local = time - start;
-    if (local < 0) local = 0;
-    if (clip.duration > 0) {
-        if (loop) local %= clip.duration;
-        else local = std::min(local, clip.duration);
+float motion_source_time(const Clip& clip, std::int64_t local, bool loop) {
+    // 801E52FC: the state's 64-bit time >> 18 as a signed 32-bit count of
+    // 2^18 ns, times 2.62144e-4 s (0x3989705f at 80566D50); the source's
+    // duration (vtable +0x18 of its enbaya data) of at most 1/30 s counts as
+    // 0.05 s (0x801E5394-0x801E53A4).
+    const auto coarse = static_cast<std::int32_t>(static_cast<std::uint32_t>(static_cast<std::uint64_t>(local) >> 18));
+    const float t = static_cast<float>(coarse) * std::bit_cast<float>(0x3989705fu);
+    float duration = clip.channels.duration();
+    if (duration <= std::bit_cast<float>(0x3d088889u)) duration = std::bit_cast<float>(0x3d4cccceu);
+    // 801E4FE8 with the source mode MOTIONSET set (0x802F1488/0x802F1494):
+    // mode 4 (played once) limits the time to duration + [8056578C], which
+    // ACTION2's init 802EFDC8 sets to -1/30 s (0xbd088889 at 80424F80), and
+    // returns the limit past it (0x801E5018-0x801E502C), so a finished clip
+    // holds its last full 1/30 s key instead of reaching the partial key the
+    // stream appends behind the duration. Mode 0 (loop) and the times inside
+    // the limit take the remainder path: the truncated cycle count (fctiwz),
+    // t - cycles * duration fused (fnmsubs), nothing below 0. At exactly the
+    // limit that path gives 0, as on the original.
+    if (!loop) {
+        duration = duration + std::bit_cast<float>(0xbd088889u);
+        if (t > duration) return duration;
+        if (t < 0.0f) return 0.0f;
     }
-    return local;
+    const float cycles = std::trunc(t / duration);
+    const float wrapped = std::fma(-cycles, duration, t);
+    return wrapped > 0.0f ? wrapped : 0.0f;
 }
 
 namespace {
@@ -134,8 +153,7 @@ bool sample_locals(AnimationDatabase& database, const std::string& name, std::in
     const Clip* clip = database.clip(name);
     const auto& skel = database.skeleton();
     if (!clip) return false;
-    const auto local = motion_local_time(*clip, start, database.looping(name), time);
-    const float seconds = std::min(static_cast<float>(double(local) / 1e9), clip->channels.duration());
+    const float seconds = motion_source_time(*clip, time - start, database.looping(name));
     std::vector<EnbayaTransform> samples;
     try {
         samples = sample_enbaya_original(clip->channels, seconds);
