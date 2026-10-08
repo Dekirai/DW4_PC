@@ -214,7 +214,15 @@ struct RenderState {
     float alpha_ref = 0.1f;
     bool depth_test = true, depth_write = true;
     std::int32_t depth_func = 3;
-    bool cull_enabled{};
+    // Back faces are culled wherever no igCullFaceAttr says otherwise: the
+    // visual context's cull state (+0x4B0 enabled, +0x4B4 mode) starts
+    // enabled with IG mode 0 (BACK); only an igCullFaceAttr apply (800BDDDC
+    // -> 800F93B0 / 800F93DC) changes it and sets the dirty bit 0x20 for the
+    // flush 800F93F0 (GXSetCullMode through the table 0x8055EE98). Dolphin
+    // with GXSetCullMode forced to NONE shows the single-sided reeds of
+    // stag0301 (TA3BJ10A) from behind exactly as the port drew them; the
+    // stages' igCullFaceAttr (enabled 0) make only their subtrees two-sided.
+    bool cull_enabled = true;
     std::int32_t cull_mode = 0; // IG_GFX_CULL_FACE_MODE_BACK
     bool lighting = true; // Alchemy default: only igLightingStateAttr turns it off
     Vec4f color{1, 1, 1, 1};
