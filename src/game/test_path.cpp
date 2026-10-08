@@ -1420,8 +1420,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     const std::string watch_key = what_ == "explore" ? "explore " + std::to_string(coarse(goal_point_.x, goal_point_.z).first) + "," +
                                                            std::to_string(coarse(goal_point_.x, goal_point_.z).second)
                                                      : what_;
-    auto& watch = watch_[watch_key];
-    if (frame - watch.seen > 300) watch = {std::numeric_limits<float>::infinity(), frame, frame};
+    // (A new entry starts fresh too: its zero defaults would read as no
+    // progress since frame 0.)
+    auto [watched_entry, fresh_watch] = watch_.try_emplace(watch_key);
+    auto& watch = watched_entry->second;
+    if (fresh_watch || frame - watch.seen > 300) watch = {std::numeric_limits<float>::infinity(), frame, frame};
     watch.seen = frame;
     // Progress is measured along the route (waypoints left), so a detour that
     // first leads away is not given up.
@@ -1432,6 +1435,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     }
     const bool watched = gimmick_ != Gimmick::none || !target_mat_.empty() || !target_portal_.empty() || !target_radar_.empty() ||
                          to_goal_ || what_ == "explore" || what_.rfind("item", 0) == 0;
+    // Frames without control (an entrance demo, a text window) are not
+    // counted: the player could not have moved.
+    if (!player.control_enabled || player.seq_name.rfind("SQ_DEMO", 0) == 0) watch.since = frame;
     if (watched && frame - watch.since > 600) {
         if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up %s\n", frame, what_.c_str());
         give_up(frame);
