@@ -346,6 +346,15 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
         jumped_[std::size_t(next_cell)] = jump ? 1 : 0;
         open.push({next, next_cell});
     };
+    // Cells in an enemy fire lane (FireLanes) at their floor's height cost
+    // as much as a dozen steps.
+    const auto* lanes = FireLanes::active();
+    auto fire = [&](int cell) {
+        if (!lanes || lanes->empty()) return 0.0f;
+        const auto p = point(cell);
+        const auto it = lanes->find({int(std::lround(p.x / step)), int(std::lround(p.z / step))});
+        return it != lanes->end() && p.y >= it->second.first && p.y <= it->second.second ? 12.0f : 0.0f;
+    };
     while (!open.empty()) {
         const auto [g, at] = open.top();
         open.pop();
@@ -355,9 +364,10 @@ WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from,
             const int next_cell = (at / w_ + kDz[d]) * w_ + at % w_ + kDx[d];
             const auto near_wall = wall_distance[std::size_t(next_cell)];
             const float penalty = near_wall == 0 ? 4.0f : near_wall == 1 ? 1.5f : 0.0f;
-            relax(at, next_cell, g + ((d & 1) ? 1.4142f : 1.0f) + penalty, false);
+            relax(at, next_cell, g + ((d & 1) ? 1.4142f : 1.0f) + penalty + fire(next_cell), false);
         }
-        for (auto [it, end] = jumps_from.equal_range(at); it != end; ++it) relax(at, it->second->to, g + it->second->cost, true);
+        for (auto [it, end] = jumps_from.equal_range(at); it != end; ++it)
+            relax(at, it->second->to, g + it->second->cost + fire(it->second->to), true);
     }
 }
 
@@ -516,6 +526,30 @@ float body_top(const engine::ModelCtrlManager::ModelRam& e) {
     }
     return top;
 }
+// The bottom of a model's body boxes in world Y (as body_top).
+float body_bottom(const engine::ModelCtrlManager::ModelRam& e) {
+    if (!e.node) return std::numeric_limits<float>::infinity();
+    const auto& m = e.node->matrix;
+    if (!e.hit || e.hit->boxes.empty()) return m(3, 1);
+    float bottom = std::numeric_limits<float>::infinity();
+    for (const auto& [lo, hi] : e.hit->boxes) {
+        const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        const float wy = c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1);
+        bottom = std::min(bottom, wy - (hi.y - lo.y) * 0.5f);
+    }
+    return bottom;
+}
+// The player's swing (CHKBULLET 10000/30000) spans its feet to 8 above. An
+// enemy (not a structure or boss, which have their own approach) whose body
+// starts above that from its own floor hovers out of every swing there
+// (stag0404 e_impdra: body 13..28 above its root); A is not taken in the air
+// (8034C3C8 skips the buttons in SQ_JUMP/SQ_FALL).
+bool hovering(const engine::ModelCtrlManager::ModelRam& e) {
+    if (e.category != "ENEMY" || e.info_name.rfind("g_", 0) == 0 || e.info_name.rfind("f_", 0) == 0 || !e.node) return false;
+    return body_bottom(e) > e.node->matrix(3, 1) + 9.0f;
+}
+// Swings from floor y meet the body when feet..feet+8 overlaps it.
+bool swing_meets(float y, const engine::ModelCtrlManager::ModelRam& e) { return y + 7.0f > body_bottom(e) && y < body_top(e) - 1.0f; }
 // Hit reactions and status effects hold the player in place; that is not
 // being stuck.
 bool held_by_hit(const engine::ModelCtrlManager::ModelRam& ram) {
@@ -581,6 +615,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     planned_ = frame;
     route_.clear();
     boss_stand_.reset();
+    const auto previous_perch = perch_;
+    perch_.reset();
     next_ = 0;
     target_ = nullptr;
     target_mat_.clear();
@@ -693,6 +729,11 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             mat_walls.saved.push_back({name, true});
         }
     }
+    // Recent enemy fire lanes make the routes go round them where they can.
+    FireLaneCells lanes;
+    for (const auto& [key, cell] : fire_cells_)
+        if (frame - cell.frame <= 150) lanes[key] = {cell.lo, cell.hi};
+    const FireLanes fire_guard(lanes);
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index));
     auto go = [&](const engine::Vec3f& where, const void* target, std::string what) {
         route_ = map.route_to(where);
@@ -703,6 +744,56 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     auto left_alone = [&](const void* target) {
         const auto it = unreachable_.find(target);
         return it != unreachable_.end() && frame < it->second;
+    };
+    // The post an enemy is fought from when walking up to it does not do:
+    // a hovering enemy's perch (reached floor within 40 of it whose swing
+    // meets its body, a step beside the enemy's floor, close to the enemy:
+    // it comes after the player) or a place next to a turret, 3 to 11 units
+    // from its body, rather behind it and out of its lanes than in front
+    // (it fires along its +Z and turns to its target, but not while the hits
+    // stun it; turrets whose collision fills the way are fought from the
+    // front). Not at a rim (three of the four neighbours on the same floor,
+    // all four next to a turret: its bullets throw the player back), the
+    // cheapest to walk to; the previous one is kept while it serves.
+    auto find_perch = [&](const engine::ModelCtrlManager::ModelRam& e, bool turret) -> std::optional<engine::Vec3f> {
+        const auto at = position_of(e);
+        const float axis = std::atan2(e.node->matrix(2, 0), e.node->matrix(2, 2));
+        const float bx = std::round(at.x / Grid::step) * Grid::step, bz = std::round(at.z / Grid::step) * Grid::step;
+        std::optional<engine::Vec3f> best;
+        float best_cost = std::numeric_limits<float>::infinity();
+        for (float dz = -40.0f; dz <= 40.0f; dz += Grid::step)
+            for (float dx = -40.0f; dx <= 40.0f; dx += Grid::step) {
+                if (dx * dx + dz * dz > 1600.0f) continue;
+                const auto q = map.nearest(engine::Vec3f{bx + dx, at.y, bz + dz}, 1.0f);
+                if (!q || !swing_meets(q->y, e)) continue;
+                const float off = std::abs(std::remainder(std::atan2(q->x - at.x, q->z - at.z) - axis, 6.2831853f));
+                if (turret && (body_gap(e, *q) < 3.0f || body_gap(e, *q) > 11.0f)) continue;
+                if (const auto skip = perch_skip_.find({int(std::lround(q->x / Grid::step)), int(std::lround(q->z / Grid::step))});
+                    skip != perch_skip_.end() && frame < skip->second)
+                    continue;
+                int level = 0;
+                for (const auto [ox, oz] : {std::pair{Grid::step, 0.0f}, std::pair{-Grid::step, 0.0f}, std::pair{0.0f, Grid::step}, std::pair{0.0f, -Grid::step}})
+                    if (const auto n = map.nearest(engine::Vec3f{q->x + ox, q->y, q->z + oz}, 1.0f); n && std::abs(n->y - q->y) < 1.0f) ++level;
+                if (level < (turret ? 4 : 3)) continue;
+                float cost = map.cost_to(*q, 1.0f);
+                if (turret) {
+                    cost += (3.1415927f - off) * 10.0f + (in_fire(*q, frame) ? 10.0f : 0.0f);
+                    // (A post whose swing reaches other turrets too strikes them at once.)
+                    for (const auto& [other, shots] : shots_)
+                        if (other != &e && !shots.empty()) {
+                            const auto* o = static_cast<const engine::ModelCtrlManager::ModelRam*>(other);
+                            if (o->generated && o->hp > 0 && o->node && body_gap(*o, *q) <= 8.0f && swing_meets(q->y, *o)) cost -= 20.0f;
+                        }
+                } else {
+                    cost += 2.0f * flat(*q, at);
+                }
+                if (previous_perch && flat(*previous_perch, *q) < 1.0f && std::abs(previous_perch->y - q->y) < 1.0f) cost *= 0.5f;
+                if (cost < best_cost) {
+                    best_cost = cost;
+                    best = q;
+                }
+            }
+        return best;
     };
     // Fallen into a quicksand basin: out along the cheapest route to floor
     // outside it (walking straight away from the sink only pins the player
@@ -835,6 +926,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     for (int pass = 0; pass < 2; ++pass) {
         const engine::ModelCtrlManager::ModelRam* best = nullptr;
         float best_cost = std::numeric_limits<float>::infinity();
+        std::optional<engine::Vec3f> best_perch;
         for (const auto& e : models->rams()) {
             if (!e->generated || !e->node) continue;
             if (pass == 0 ? (e->category != "ENEMY" || e->hp <= 0) : (e->category != "ITEM" || e->item_table < 0)) continue;
@@ -845,7 +937,11 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;
             const bool boss = e->info_name.rfind("f_", 0) == 0;
-            if (pass == 0 && defending && !structure && !boss) continue;
+            const bool hover = pass == 0 && hovering(*e);
+            // (A structure seen firing along a lane is a turret.)
+            const auto fired = shots_.find(e.get());
+            const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
+            if (pass == 0 && defending && !structure && !boss && !hover) continue;
             if (hold && !on_hold(at)) continue;
             // Near a pit in a quicksand basin: struck only in passing.
             if (sandy && in_pit(at, 0.0f)) {
@@ -855,6 +951,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // A structure's or a boss's body keeps the player further off (a
             // boss may stand on a platform its body covers).
             float cost = map.cost_to(at, pass == 1 ? 8.0f : boss ? 60.0f : structure ? 30.0f : 14.0f);
+            // A hovering enemy counts by the walk to its perch (a turret by the
+            // walk to its post, if there is one out of its fire).
+            std::optional<engine::Vec3f> perch;
+            if (hover || turret) {
+                perch = find_perch(*e, turret);
+                if (perch) cost = map.cost_to(*perch, 1.0f);
+                else if (hover) cost = std::numeric_limits<float>::infinity();
+            }
             if (!std::isfinite(cost)) {
                 unreachable_[e.get()] = frame + 300;
                 continue;
@@ -864,15 +968,25 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (cost < best_cost) {
                 best_cost = cost;
                 best = e.get();
+                best_perch = perch;
             }
         }
         if (best) {
             go(position_of(*best), best, (pass == 0 ? "enemy " : "item ") + best->info_name);
             waiting_since_ = -1;
+            if (best_perch) {
+                perch_ = best_perch;
+                route_ = map.route_to(*best_perch, 1.0f);
+                what_ += " (perch)";
+                if (std::getenv("DW4_TRACE_EXPLORE") && !(previous_perch && flat(*previous_perch, *best_perch) < 1.0f))
+                    std::printf("[%d] explore: %s body y %.0f..%.0f %s, post (%.0f,%.0f,%.0f)\n", frame, best->info_name.c_str(),
+                                body_bottom(*best), body_top(*best), hovering(*best) ? "hovers above the swing" : "fires along lanes",
+                                best_perch->x, best_perch->y, best_perch->z);
+            }
             // A structure (a cannon whose beam or shots run along its +Z) is
             // walked up to from the side: the cheapest reached point next to
             // its body at least 30 degrees off that axis.
-            if (pass == 0 && best->info_name.rfind("g_", 0) == 0 && best->node) {
+            if (pass == 0 && !best_perch && best->info_name.rfind("g_", 0) == 0 && best->node) {
                 const auto& m = best->node->matrix;
                 const auto at = position_of(*best);
                 float reach = 4.0f;
@@ -1224,6 +1338,81 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     }
 }
 
+// Enemy bullets are models with hit boxes of the enemy kinds (kind / 10000
+// 7 or 8, CHKBULLET to the players) started from an enemy (the effect
+// chain's source, 8030D260). Only turrets count (structures, g_ enemies,
+// standing still: the fire of one that walks about leaves no lane, and
+// ordinary enemies only pause to shoot), and only boxes more than
+// 12 units from it (a lane, not a blow). Each box marks the cells under it,
+// grown by the player's half width and a margin, with the floor heights at
+// which the player's body (7 high) meets it. A bullet seen for the first
+// time (or far from where it was: a RAM used again) is a shot.
+void ExploreBot::track_fire(engine::Engine& engine, int frame) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!models) return;
+    std::map<const void*, std::pair<engine::Vec3f, const void*>> live;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        const auto at = position_of(*e);
+        if (e->category == "ENEMY") {
+            auto [stand, fresh] = standing_.try_emplace(e.get(), at, frame);
+            if (flat(stand->second.first, at) > 1.0f) stand->second = {at, frame};
+            continue;
+        }
+        bool enemy_fire = false;
+        for (const auto& h : e->hitboxes) enemy_fire = enemy_fire || h.kind / 10000 == 7 || h.kind / 10000 == 8;
+        if (!enemy_fire) continue;
+        engine::ModelCtrlManager::ModelRam* shooter = nullptr;
+        if (!e->attach_name.empty()) shooter = models->find(e->attach_name, e->attach_index);
+        if (!shooter && !e->owner_name.empty()) shooter = models->find(e->owner_name, e->owner_index);
+        if (!shooter || shooter->category != "ENEMY" || !shooter->node || shooter->info_name.rfind("g_", 0) != 0) continue;
+        const auto stand = standing_.find(shooter);
+        if (stand == standing_.end() || frame - stand->second.second < 60) continue;
+        const auto from = position_of(*shooter);
+        if (const auto last = bullets_.find(e.get()); last == bullets_.end() || flat(last->second.first, at) > 20.0f) {
+            // (Bullets started within a few steps are one shot.)
+            auto& shots = shots_[shooter];
+            if (shots.empty() || frame - shots.back() > 4) shots.push_back(frame);
+            if (shots.size() > 12) shots.erase(shots.begin());
+        } else {
+            auto& speed = bullet_speed_[shooter];
+            speed = std::max(speed * 0.999f, flat(last->second.first, at));
+        }
+        live[e.get()] = {at, shooter};
+        const auto& m = e->node->matrix;
+        for (const auto& h : e->hitboxes) {
+            if ((h.kind / 10000 != 7 && h.kind / 10000 != 8) || (!h.started && h.delay - h.elapsed > 20.0f)) continue;
+            // As fire_hitbox: the authored offset through the model's matrix, the size as full extents.
+            const engine::Vec3f c{h.offset.x * m(0, 0) + h.offset.y * m(1, 0) + h.offset.z * m(2, 0) + m(3, 0),
+                                  h.offset.x * m(0, 1) + h.offset.y * m(1, 1) + h.offset.z * m(2, 1) + m(3, 1),
+                                  h.offset.x * m(0, 2) + h.offset.y * m(1, 2) + h.offset.z * m(2, 2) + m(3, 2)};
+            if (flat(c, from) < 12.0f) continue;
+            const float grow = 3.5f;
+            const int x0 = int(std::lround((c.x - h.size.x * 0.5f - grow) / Grid::step)), x1 = int(std::lround((c.x + h.size.x * 0.5f + grow) / Grid::step));
+            const int z0 = int(std::lround((c.z - h.size.z * 0.5f - grow) / Grid::step)), z1 = int(std::lround((c.z + h.size.z * 0.5f + grow) / Grid::step));
+            for (int z = z0; z <= z1; ++z)
+                for (int x = x0; x <= x1; ++x) {
+                    auto& cell = fire_cells_[{x, z}];
+                    if (frame - cell.frame > 150 || !cell.shooter)
+                        cell = {std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), frame, nullptr};
+                    cell.lo = std::min(cell.lo, c.y - h.size.y * 0.5f - 7.5f);
+                    cell.hi = std::max(cell.hi, c.y + h.size.y * 0.5f + 0.5f);
+                    cell.frame = frame;
+                    cell.shooter = shooter;
+                }
+            auto [band, fresh] = turret_band_.try_emplace(shooter, c.y - h.size.y * 0.5f - 7.5f, c.y + h.size.y * 0.5f + 0.5f);
+            band->second = {std::min(band->second.first, c.y - h.size.y * 0.5f - 7.5f), std::max(band->second.second, c.y + h.size.y * 0.5f + 0.5f)};
+        }
+    }
+    bullets_ = std::move(live);
+    if (frame % 30 == 0) std::erase_if(fire_cells_, [&](const auto& entry) { return frame - entry.second.frame > 150; });
+}
+
+bool ExploreBot::in_fire(const engine::Vec3f& p, int frame) const {
+    const auto it = fire_cells_.find({int(std::lround(p.x / Grid::step)), int(std::lround(p.z / Grid::step))});
+    return it != fire_cells_.end() && frame - it->second.frame <= 150 && p.y >= it->second.lo && p.y <= it->second.hi;
+}
+
 void ExploreBot::give_up(int frame) {
     platform_wait_since_ = -1;
     // The way to the goal leads nowhere (a gate in front of it not open
@@ -1306,7 +1495,16 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         portals_taken_.clear();
         cleared_generators_.clear();
         watch_.clear();
+        fire_cells_.clear();
+        shots_.clear();
+        bullets_.clear();
+        bullet_speed_.clear();
+        turret_band_.clear();
+        standing_.clear();
+        perch_skip_.clear();
+        fire_wait_since_ = fire_go_until_ = -1;
     }
+    track_fire(engine, frame);
     // Moved to another room of the stage (a maze link): a fresh start there.
     // (A fall respawn keeps what was done.)
     if (flat(me, last_) > 100.0f && frame > 1 && !target_portal_.empty()) {
@@ -1474,6 +1672,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 if (e.get() == target_) target = e.get();
     }
     engine::Vec3f aim = target ? position_of(*target) : goal_point_;
+    // A hovering enemy or a turret is fought from its post: the route leads there first.
+    const bool perching = perch_ && target && target->category == "ENEMY";
+    const bool on_perch = perching && flat(*perch_, me) < 4.0f && std::abs(me.y - perch_->y) < 2.0f;
+    const engine::Vec3f enemy_at = aim;
+    if (perching && !on_perch) aim = *perch_;
+    if (!on_perch) perch_since_ = -1;
     // Watchdog: a gimmick, mat, pickup or explored point that is not
     // approached (or worked) for 600 frames is given up for a while.
     const std::string watch_key = what_ == "explore" ? "explore " + std::to_string(coarse(goal_point_.x, goal_point_.z).first) + "," +
@@ -1503,12 +1707,157 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
-    const float close = !target ? 8.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;
+    const float close = !target ? 8.0f : (perching && !on_perch) ? 0.0f : gimmick_ == Gimmick::step ? 3.0f : (gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) ? 12.0f : 25.0f;
     // Below a boss whose body starts above the swing: the route up onto its
     // floor is followed however close the boss is (straight at it only runs
     // into the step under its body).
     const bool climbing = boss_stand_ && target && aim.y > me.y + 8.0f;
-    if ((flat(aim, me) > close || climbing) && next_ < route_.size()) {
+    // Turret fire ahead: the route enters a lane within 30 units while the
+    // player stands out of the fire (one floor below its bullets, say). It
+    // walks to the last point out of the fire (a jump's take-off) and waits
+    // there until no bullet of the turret is still to pass that point and
+    // the turret's shot pattern (the interval that followed the last two the
+    // time before) leaves time to get through, or to the turret's post and a
+    // first swing: the long gap after a volley. Through means out of the
+    // lanes and out of the turret's front within 25 units at the heights of
+    // its fire (new bullets start at its muzzle).
+    bool hold_fire = false;
+    std::optional<engine::Vec3f> fire_entry;
+    if ((flat(aim, me) > close || climbing) && next_ < route_.size() && !airborne && player.control_enabled && frame >= fire_go_until_ &&
+        !fire_cells_.empty() && !in_fire(me, frame)) {
+        std::map<const void*, std::pair<float, float>> turrets; // turret -> heights of its fire
+        auto front = [&](const engine::Vec3f& p) {
+            for (const auto& [turret, band] : turrets) {
+                const auto stand = standing_.find(turret);
+                if (stand == standing_.end() || p.y < band.first || p.y > band.second) continue;
+                const auto* model = static_cast<const engine::ModelCtrlManager::ModelRam*>(turret);
+                if (!model->node || flat(p, stand->second.first) >= 25.0f) continue;
+                const auto& m = model->node->matrix;
+                if ((p.x - stand->second.first.x) * m(2, 0) + (p.z - stand->second.first.z) * m(2, 2) > 0.0f) return true;
+            }
+            return false;
+        };
+        // On the way to a turret's post the crossing ends there (and a swing).
+        const bool to_post = perching && target->info_name.rfind("g_", 0) == 0;
+        float before = 0.0f, inside = 0.0f;
+        int jumps = 0;
+        bool entered = false, left = false, jump_in = false;
+        engine::Vec3f from = me, last_safe = me, first_hot{};
+        for (std::size_t i = next_; i < route_.size() && !left && (entered || before < 30.0f); ++i) {
+            const auto& to = route_[i].point;
+            const float length = flat(from, to);
+            if (length < 0.5f) continue;
+            bool counted = false;
+            for (float t = std::min(2.5f, length); t <= length && !left; t += 2.5f) {
+                const engine::Vec3f p{from.x + (to.x - from.x) * t / length, to.y, from.z + (to.z - from.z) * t / length};
+                const bool hot = in_fire(p, frame);
+                if (hot) {
+                    const auto& cell = fire_cells_.at({int(std::lround(p.x / Grid::step)), int(std::lround(p.z / Grid::step))});
+                    turrets.try_emplace(cell.shooter, cell.lo, cell.hi);
+                }
+                if (!entered && hot) {
+                    entered = true;
+                    first_hot = p;
+                    // A jump into the fire: waited for at its take-off.
+                    jump_in = route_[i].jump;
+                    if (jump_in) last_safe = from;
+                }
+                if (entered && (hot || front(p) || to_post)) {
+                    inside += 2.5f;
+                    if (route_[i].jump && !counted) ++jumps;
+                    counted = true;
+                } else if (entered) {
+                    left = true;
+                } else {
+                    last_safe = p;
+                    if ((before += 2.5f) >= 30.0f) break;
+                }
+                left = left || inside >= 80.0f;
+            }
+            from = to;
+        }
+        // Every turret firing lately whose lanes reach the entry at its height
+        // (not only the last to mark the cells: two need not keep in step).
+        if (entered)
+            for (const auto& [turret, band] : turret_band_) {
+                const auto shots = shots_.find(turret);
+                const auto stand = standing_.find(turret);
+                if (shots == shots_.end() || shots->second.empty() || frame - shots->second.back() > 300 || stand == standing_.end()) continue;
+                if (first_hot.y >= band.first && first_hot.y <= band.second && flat(first_hot, stand->second.first) < 110.0f)
+                    turrets.try_emplace(turret, band);
+            }
+        // Frames from the entry until through: walking at 0.75 a step, a
+        // jump up takes about 38 and carries some 12 units, a swing lands 15
+        // after the press.
+        const float needed = std::max(0.0f, inside - 12.0f * float(jumps)) / 0.75f + float(jumps) * 38.0f + (to_post ? 15.0f : 0.0f) +
+                             flat(me, last_safe) / 0.75f;
+        bool go = true;
+        float least = std::numeric_limits<float>::infinity();
+        for (const auto& [turret, band] : turrets) {
+            const auto stand = standing_.find(turret);
+            if (stand == standing_.end()) continue;
+            // Turrets out of step may leave no gap for all: after a long wait
+            // only the one the post is for counts.
+            if (to_post && turret != target_ && fire_wait_since_ >= 0 && frame - fire_wait_since_ > 300) continue;
+            const auto at = stand->second.first;
+            // A bullet still to pass the entry.
+            const float speed = bullet_speed_[turret];
+            for (const auto& [bullet, info] : bullets_)
+                if (info.second == turret && flat(info.first, at) < flat(first_hot, at) + 3.0f) go = false;
+            const auto& shots = shots_[turret];
+            float remaining = -1.0f;
+            if (shots.size() >= 6) {
+                std::vector<int> gaps;
+                for (std::size_t i = 1; i < shots.size(); ++i) gaps.push_back(shots[i] - shots[i - 1]);
+                const std::size_t n = gaps.size();
+                for (std::size_t i = n - 1; i >= 2 && remaining < 0.0f; --i)
+                    if (std::abs(gaps[i - 2] - gaps[n - 2]) <= 4 && std::abs(gaps[i - 1] - gaps[n - 1]) <= 4)
+                        remaining = float(gaps[i] - (frame - shots.back()));
+            }
+            // (Its next bullet still has to fly to where the player will be.)
+            const engine::Vec3f until = to_post && perch_ ? *perch_ : first_hot;
+            if (remaining >= 0.0f && speed > 0.1f) remaining += std::max(0.0f, flat(until, at) - 6.0f) / speed;
+            if (remaining < needed) go = false;
+            least = std::min(least, remaining);
+        }
+        if (entered && !go) {
+            if (fire_wait_since_ < 0) {
+                fire_wait_since_ = frame;
+                if (std::getenv("DW4_TRACE_EXPLORE"))
+                    std::printf("[%d] explore waits at (%.0f,%.0f,%.0f) for a gap in the fire of %zu turret(s) ahead\n", frame, last_safe.x,
+                                last_safe.y, last_safe.z, turrets.size());
+            }
+            if (frame - fire_wait_since_ > 450) {
+                fire_go_until_ = frame + 300; // waited long enough: on regardless for a while
+                fire_wait_since_ = -1;
+            } else {
+                hold_fire = true;
+                fire_entry = last_safe;
+            }
+        } else {
+            if (entered && fire_wait_since_ >= 0 && std::getenv("DW4_TRACE_EXPLORE"))
+                std::printf("[%d] explore crosses the fire (needs %.0f of %.0f frames)\n", frame, needed, least);
+            // Once going, through without stopping (a jump on the way to a
+            // turret's post steers on to the post: the stick held, the jump
+            // carries the player well onto the floor above).
+            if (entered && fire_wait_since_ >= 0) {
+                fire_go_until_ = frame + int(needed);
+                fire_leap_to_post_ = to_post && jump_in;
+            }
+            fire_wait_since_ = -1;
+        }
+    } else if (in_fire(me, frame)) {
+        fire_wait_since_ = -1;
+    }
+    if (frame >= fire_go_until_) fire_leap_to_post_ = false;
+    if (hold_fire) {
+        // To the last point out of the fire, then stand.
+        decision.x = flat(*fire_entry, me) > 1.5f ? fire_entry->x : me.x;
+        decision.z = flat(*fire_entry, me) > 1.5f ? fire_entry->z : me.z;
+        decision.reach = 1.0f;
+        stalled_ = 0;
+        watch.since = frame;
+    } else if ((flat(aim, me) > close || climbing) && next_ < route_.size()) {
         decision.x = route_[next_].point.x;
         decision.z = route_[next_].point.z;
         // A gap: jump from the take-off point toward the landing.
@@ -1591,6 +1940,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         decision.x = aim.x;
         decision.z = aim.z;
     }
+    if (decision.jump && fire_leap_to_post_ && perch_ && leap_) {
+        leap_ = *perch_;
+        decision.x = perch_->x;
+        decision.z = perch_->z;
+        fire_leap_to_post_ = false;
+    }
     const auto spend = [&](int budget) {
         watch.since = frame;
         if (++struck_[target] == budget) {
@@ -1632,6 +1987,59 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             decision.press_a = frame % 35 < 3;
             if (decision.press_a) spend(12);
             else watch.since = frame;
+        }
+    } else if (perching) {
+        // On the post: strike once the enemy is in reach, facing it with a
+        // short tap of the stick (walking back to the post's middle would
+        // turn the player away); otherwise stand and let it come.
+        if (!on_perch) {
+            decision.reach = 1.0f;
+        } else {
+            stalled_ = 0;
+            watch.since = frame;
+            if (perch_since_ < 0) perch_since_ = frame;
+            decision.x = me.x;
+            decision.z = me.z;
+            // (A turret's body is near when the swing meets it.)
+            if (target->info_name.rfind("g_", 0) == 0 ? body_gap(*target, me) <= 12.0f : flat(enemy_at, me) <= 16.0f) {
+                decision.attack = true;
+                // A turret recovers from a hit (SQ_SDMG) in about the attack
+                // delay and fires at once: every swing as soon as it may.
+                decision.fast_attack = target->info_name.rfind("g_", 0) == 0;
+                const float want = std::atan2(enemy_at.x - me.x, enemy_at.z - me.z);
+                if (std::abs(std::remainder(want - player.applied[1], 6.2831853f)) > 0.5f && frame % 20 >= 16) {
+                    decision.x = enemy_at.x;
+                    decision.z = enemy_at.z;
+                    decision.reach = 0.25f;
+                }
+            } else if (flat(*perch_, me) > 2.0f) {
+                decision.x = perch_->x;
+                decision.z = perch_->z;
+                decision.reach = 1.0f;
+            }
+            // Nothing came within reach (or took a hit) for long: another post.
+            if (frame - std::max(perch_since_, perch_hit_at_) > 900) {
+                perch_skip_[{int(std::lround(perch_->x / Grid::step)), int(std::lround(perch_->z / Grid::step))}] = frame + 3000;
+                perch_since_ = -1;
+                planned_ = -1000;
+            }
+        }
+        // As below: one whose HP reaches no new low while struck at (a
+        // poison vent that heals itself and turns invulnerable) is left alone
+        // for a good while, for the stage when seen healing or the third time.
+        auto [low, fresh] = lowest_hp_.emplace(target_, target->hp);
+        if (!fresh && target->hp > low->second) regenerating_.insert(target_);
+        if (fresh || target->hp < low->second) {
+            low->second = target->hp;
+            perch_hit_at_ = frame;
+            fruitless_[target_] = 0;
+        } else if (decision.attack && (fruitless_[target_] += 2) > 1800) {
+            if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore leaves %s alone (no damage)\n", frame, what_.c_str());
+            fruitless_[target_] = 0;
+            if (++fruitless_runs_[target_] >= 3 || regenerating_.count(target_)) unkillable_.insert(target_);
+            unreachable_[target_] = frame + 6000;
+            planned_ = -1000;
+            progress_at_ = frame;
         }
     } else if (target && target->category == "ENEMY" && target->info_name.rfind("f_", 0) == 0 && target->hit &&
                !target->hit->boxes.empty() && std::abs(aim.y - me.y) <= 8.0f) {
