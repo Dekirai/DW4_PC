@@ -221,7 +221,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
-`frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
+`frame BUTTON [duration [player]]` (BUTTON A, B, X, Y, Z, L, R, START, UP, DOWN, LEFT, RIGHT or `STICK:x,y`
+with raw stick values -128..127, several joined by `+`), `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
 enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
