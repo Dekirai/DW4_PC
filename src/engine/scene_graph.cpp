@@ -894,6 +894,15 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         n->kind = NodeKind::light_state_set;
         children_from(7);
         attributes_from(8, n->attributes);
+    } else if (type == "beResetNode") {
+        // 802C0B64: an igGroup (parent meta 801BF938, 36 bytes) with the
+        // flags _isResetTime ([8], +0x20) and _isResetRotAndScale ([9],
+        // +0x21) of the field table 804CFFC4. Only stagBS04 has them
+        // (f_devl1e, f_devl1f2, f_devl1f3; all [8] 0, [9] 1).
+        n->kind = NodeKind::reset_node;
+        children_from(7);
+        n->reset_time = view.boolean(8);
+        n->reset_rot_scale = view.boolean(9);
     } else if (view.is_a("igGroup")) {
         n->kind = NodeKind::group;
         children_from(7);
@@ -1093,6 +1102,27 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     }
     case NodeKind::transform_recorder:
         n->recorded = model;
+        break;
+    case NodeKind::reset_node:
+        // beResetNode traversal 80312C28 (registered by 80313004 on the
+        // traversal 805656E4). The matrix stack holds modelview matrices:
+        // with _isResetRotAndScale it copies the traversal's view matrix
+        // (+0x64; the recorders' _m uses its inverse at +0xA4, 801DE9C0),
+        // puts the stack top's translation into it (80128DAC / 80128D90)
+        // and pushes that for the children, popped after them (8020B274).
+        // In world space: the parent's rotation and scale are dropped and
+        // only its world position stays, so the subtree is aligned to the
+        // world axes (Daemon's SQ_ATCKON1 spiral under f_devl1e stays fixed
+        // while the pivot turns). _isResetTime pushes the base of the
+        // traversal's time stack (+0xF0) as the children's time.
+        if (n->reset_rot_scale) {
+            Mat4 placed;
+            placed(3, 0) = model(3, 0);
+            placed(3, 1) = model(3, 1);
+            placed(3, 2) = model(3, 2);
+            model = placed;
+        }
+        if (n->reset_time) time = ctx.time;
         break;
     case NodeKind::copy_model: {
         // The source instance's placement and its actor's pose.

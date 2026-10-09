@@ -83,7 +83,7 @@ struct Attribute {
 enum class NodeKind : std::uint8_t {
     unknown, group, attr_set, switch_node, transform, geometry, actor, billboard, blend_matrix_select,
     light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select, copy_model, particle_timer,
-    transform_recorder, node_anim
+    transform_recorder, node_anim, reset_node
 };
 
 // beNodeAnim (fields 802C48A4, clock 80311230): the children run on its own
@@ -198,6 +198,10 @@ struct Node {
     std::vector<std::shared_ptr<GeometryData>> particle_geometry;
     // igTransformRecorder: the world matrix it was last drawn with (TRC data).
     std::optional<Mat4> recorded;
+    // beResetNode (802C0B64, fields 802C0C00): _isResetTime (+0x20) runs the
+    // children on the traversal's base time, _isResetRotAndScale (+0x21)
+    // keeps only the accumulated translation (traversal 80312C28).
+    bool reset_time{}, reset_rot_scale{};
     std::optional<NodeAnim> anim;
 
     bool child_enabled(std::size_t index) const;
