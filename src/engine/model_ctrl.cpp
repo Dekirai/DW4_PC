@@ -543,8 +543,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
-        // The named RAM timers (AITIMER, KEIKATIMER) are not part of the
-        // info work: they stay over a GENERATE and only REMOVE drops them.
+        // The named RAM timers (AITIMER, ATDELAY, KEIKATIMER) live in the
+        // RAM's data list (+0x28), not in the info work: they stay over a
+        // GENERATE (8034B928 / 8030D260 do not touch them) and only REMOVE
+        // drops them.
         ram.ai_request.clear();
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
