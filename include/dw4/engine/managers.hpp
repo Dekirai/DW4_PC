@@ -1385,7 +1385,11 @@ private:
     struct PanelRam : Ram {
         bool running{}, reopen{}, cursor_shown{}, decided{};
         int state{}, fire{}, counter{}, kind{};
-        std::int64_t fire_end{}, emergency_ng{};
+        // The panel RAM's named timers "FIRE" (the wait after a pick,
+        // 0x8034A4E0 / 0x8034A988 check, 0x8034A604 / 0x8034A66C start) and
+        // "EMGHEAL" (the CURSOR_NG pause of Y, 0x8034B408 / 0x8034B45C);
+        // missing counts as run out.
+        std::optional<NodeTimer> fire_timer, emgheal_timer;
         std::string label;
         std::array<List, 3> lists;
         bool no_gate_disk{}, no_healing{}, no_para_up{}, no_cureling{};

@@ -7,6 +7,14 @@ namespace dw4::engine {
 namespace {
 constexpr std::int64_t kFireNg = 266'666'666; // 0.2667 s "FIRE" / "EMGHEAL" timers
 
+// The named RAM timers (8031DE44 start, 8031E238 check: a missing timer counts
+// as run out, otherwise end < the 2^18 ns quantised clock since the start).
+bool timer_out(const std::optional<NodeTimer>& timer, std::int64_t world) { return !timer || timer_expired(*timer, world); }
+void timer_restart(std::optional<NodeTimer>& timer, std::int64_t world, std::int64_t end) {
+    if (!timer) timer.emplace();
+    timer_start(*timer, world, end);
+}
+
 // 804E70A4: open (4+, 3, 1-2 lines) and close sequences per panel kind.
 const char* const kBaseSequences[3][4] = {{"SQ_OPENWZ03", "SQ_OPENWZ02", "SQ_OPENWZ01", "SQ_CLOSEWZ"},
                                           {"SQ_OPENIT03", "SQ_OPENIT02", "SQ_OPENIT01", "SQ_CLOSEIT"},
@@ -77,9 +85,9 @@ bool PanelManager::command(Engine& engine, Ram& base, std::string_view command, 
         // technique, preselected and fired at once; otherwise CURSOR_NG.
         if (emergency_item(engine, ram)) open(ram, 1);
         else if (emergency_waza(engine, ram)) open(ram, 0);
-        else if (engine.time() >= ram.emergency_ng) {
+        else if (timer_out(ram.emgheal_timer, engine.time())) {
             play_sound(engine, "CURSOR_NG");
-            ram.emergency_ng = engine.time() + kFireNg;
+            timer_restart(ram.emgheal_timer, engine.time(), kFireNg);
         }
         packet.bools.push_back(1);
         return true;
@@ -395,14 +403,14 @@ void PanelManager::update(Engine& engine) {
             ram.fire = ram.counter = 0;
         }
         if (ram.fire == 1) {
-            if (engine.time() >= ram.fire_end) ram.fire = ram.counter = 0;
-        } else if (engine.time() >= ram.fire_end) {
+            if (timer_out(ram.fire_timer, engine.time())) ram.fire = ram.counter = 0;
+        } else if (timer_out(ram.fire_timer, engine.time())) {
             const bool press_a = (trigger & pad_button::a) && list.count > 0 && ram.kind != 2;
             if (list.fire_request || press_a) {
                 if (ram.counter >= 2) {
                     const std::int64_t delay = select(engine, ram, list);
                     if (delay == 0) {
-                        ram.fire_end = engine.time() + kFireNg;
+                        timer_restart(ram.fire_timer, engine.time(), kFireNg);
                         ++ram.fire;
                         ram.counter = 0;
                     } else if (delay < 0) {
@@ -410,7 +418,7 @@ void PanelManager::update(Engine& engine) {
                         ram.fire = ram.counter = 0;
                     } else {
                         ram.decided = true;
-                        ram.fire_end = engine.time() + delay;
+                        timer_restart(ram.fire_timer, engine.time(), delay);
                         ++ram.fire;
                         ram.counter = 0;
                         list.fire_request = false;
