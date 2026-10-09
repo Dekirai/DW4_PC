@@ -333,15 +333,12 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
         close = true;
     }
     --count;
-    if (row != 8) {
-        Packet effect;
-        effect.strings.emplace_back(row == 6 ? "x_250curehit00" : "x_250healhit00");
-        effect.strings.emplace_back(row == 6 ? "SQ_CUREEFONLY" : "SQ_HEALEFONLY");
-        effect.floats.push_back(0.0f);
-        effect.vectors.push_back({0.0f, 0.0f, 0.0f});
-        effect.bools = {0, 1};
-        engine.messenger().send(engine, "PLAYER", std::nullopt, ram.index, "SETEFFECT", effect);
-    }
+    // 80349BC4..80349D1C: records 0..5, 7 and 9 heal, 6 cures, 8 and the rest
+    // show nothing. The effect is posted (0x80349C88 / 0x80349D1C): sent at
+    // once it would be lost to the SQ_ITEM the player selects in this frame.
+    if ((row >= 0 && row <= 7) || row == 9)
+        post_effect(engine, "PLAYER", std::nullopt, ram.index, row == 6 ? "x_250curehit00" : "x_250healhit00",
+                    row == 6 ? "SQ_CUREEFONLY" : "SQ_HEALEFONLY");
     return close ? -1 : 1'000'000'000;
 }
 

@@ -1643,6 +1643,15 @@ struct FightResult {
     std::int32_t attribute = -1; // 0 fire .. 3 dark; -1 common
     std::int32_t flag{};         // largest variance step
 };
+
+// The posted SETEFFECT of the panel, GAMERAM and item code (80349C88,
+// 80371CFC, 80373B40, 803771A4, 803AAA6C, ...): model and sequence with
+// delay 1.0, no offset, kept after the sequence (0) and locked to the model
+// (1), sent through 803061BC with 1 frame, so it arrives on the next frame,
+// after a sequence change of this frame has cleared the subcommands (803108A0).
+void post_effect(Engine& engine, std::string category, std::optional<std::string> name, int index, std::string model,
+                 std::string sequence);
+
 namespace fight {
 // One draw from the system generator (vtable +60, 8021EB40), for every
 // random number of the game (see SystemRandom).

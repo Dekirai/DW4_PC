@@ -39,6 +39,18 @@ SystemRandom& rng() {
 }
 } // namespace
 
+void post_effect(Engine& engine, std::string category, std::optional<std::string> name, int index, std::string model,
+                 std::string sequence) {
+    Packet effect;
+    effect.strings.push_back(std::move(model));
+    effect.strings.push_back(std::move(sequence));
+    effect.floats.push_back(1.0f);          // flt_804567AC / flt_80459744 / flt_8045C3E8
+    effect.vectors.push_back(Vec3f{});      // flt_804F8AE0
+    effect.bools = {0, 1};
+    engine.messenger().post(engine.time() + kFrameNs, std::move(category), std::move(name), index, "SETEFFECT",
+                            std::move(effect));
+}
+
 namespace fight {
 std::uint32_t random() { return rng()(); }
 SystemRandom& generator() { return rng(); }
