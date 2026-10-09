@@ -73,10 +73,11 @@ float advance(MotionState& state, float delta) {
     if (!state.active) return 0;
     if (state.end_time != 0) {
         const float remaining = state.end_time - delta;
-        // 8030A324 stops below zero. Its real-time frame delta (59.94 Hz video
-        // against 60 Hz units) passes zero; whole frames would land on it and
-        // make the end time read as "none", so zero stops as well.
-        if (remaining <= 0) {
+        // 8030A324..8030A34C: fcmpo against 0 and bge stores the rest, so
+        // only a rest below zero stops; an exactly reached 0 (or NaN) is
+        // stored and reads as "no end" from then on. The KEIKATIMER frames
+        // (0.9909 / 1.0066 on the NTSC clock) rarely land on it.
+        if (remaining < 0) {
             stop(state);
             if (!state.active) return 0;
         } else state.end_time = remaining;
