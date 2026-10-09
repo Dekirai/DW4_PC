@@ -40,6 +40,20 @@ int update_rank(std::string_view kind) {
         if (kind == kOrder[i]) return i;
     return 3; // an unknown kind as an object
 }
+
+// The named RAM timer "AITIMER" of the AIM map (0x80308868 / 0x803085B4)
+// and the AIH homing (0x80308BAC / 0x80308BC0): 8031DE44 makes it on first
+// use and restarts it with end = (int64)(1e9f * frames / 60f) (800A4130); the
+// check 8031E238 counts a missing timer as expired, otherwise
+// end < ((world >> 18) * scale << 18) + bias (8031E36C, signed 64-bit).
+using ModelRam = ModelCtrlManager::ModelRam;
+void start_ai_timer(ModelRam& ram, std::int64_t world, std::int64_t end) {
+    if (!ram.ai_timer) ram.ai_timer.emplace();
+    timer_start(*ram.ai_timer, world, end);
+}
+bool ai_timer_expired(const ModelRam& ram, std::int64_t world) {
+    return !ram.ai_timer || timer_expired(*ram.ai_timer, world);
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -435,7 +449,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 ram.ai_world_target = target;
                 if (ram.seq != seq) return;
             }
-            ram.ai_timer_end = -1;
+            ram.ai_timer.reset(); // 0x8030BC94: 8031E8BC removes the AITIMER
         } else if (type == "beModelCtrlLUACALL") {
             // 8030B8A4: BHit, WHit and FHit keep the name for after this
             // model's hitbox hits something, it meets a wall or the floor
@@ -506,7 +520,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
-        ram.ai_timer_end = -1;
+        // The named RAM timers (AITIMER, KEIKATIMER) are not part of the
+        // info work: they stay over a GENERATE and only REMOVE drops them.
         ram.ai_request.clear();
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
@@ -616,6 +631,9 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.seq_name.clear();
             ram.wait_name.reset();
             ram.ride.reset();
+            // 0x8030DC88: 8031EA54 drops every named timer of the RAM.
+            ram.ai_timer.reset();
+            ram.attack_delay.reset();
         }
         return true;
     }
@@ -972,11 +990,15 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             } else if (Packet pick; (pick.ints.push_back(ram.index), engine.messenger().count("DROPITEM", std::nullopt, -1)) &&
                        (engine.messenger().send(engine, "DROPITEM", std::nullopt, -1, "ACTION1", pick), !pick.bools.empty())) {
                 return; // 8034CEB0: DROPITEM ACTION1 took an item instead of attacking
-            } else if (engine.time() >= ram.attack_ready) {
-                // ATDELAY: the next attack waits the player's ATTACKDELAY frames.
+            } else if (!ram.attack_delay || timer_expired(*ram.attack_delay, engine.time())) {
+                // The named RAM timer "ATDELAY" (8031E238 at 0x8034CEF8, missing
+                // = expired): the next attack waits the player's ATTACKDELAY
+                // frames, restarted by 8031DE44 (0x8034D080) with the integer
+                // end (int64)frames * 1000000000 / 60 (__div2i 800A3AF8).
                 int delay = 30;
                 if (auto* sys = engine.get<GameSystem>()) delay = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats.attack_delay;
-                ram.attack_ready = engine.time() + frames_to_time(float(delay));
+                if (!ram.attack_delay) ram.attack_delay.emplace();
+                timer_start(*ram.attack_delay, engine.time(), std::int64_t(delay) * 1000000000 / 60);
                 ram.combo_phase = 0;
                 if (spiral) ram.spin.fill(0);
                 select_sequence(engine, ram, spiral ? "SQ_ATCK2" : "SQ_ATCK1");
@@ -1343,7 +1365,9 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                 apply_control(engine, ram);
             }
         } else {
-            if (ram.ai_maps) ram.ai_timer_end = -1;
+            // 0x8030CD00: with an AI work (+0x50, made for AIM or AIH data,
+            // 8030DAE8..8030DB4C) 8031E8BC removes the AITIMER.
+            if (ram.ai_maps || ram.homing) ram.ai_timer.reset();
             if (ram.is_player) ram.key_input = false;
         }
         // 8030CD18: the status update of players and enemies (vtable +C0).
@@ -1696,23 +1720,26 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     const Homing& h = *ram.homing;
     if (!ram.node) return;
     bool live = true, tick = false;
+    // The waits run on the same named AITIMER as the AIM map (8031DE44 at
+    // 0x80308BAC / 0x80308C04, 8031E238 at 0x80308BC0 / 0x80308C18): a timer
+    // started this frame is not expired yet, even for 0 frames.
     switch (ram.homing_state) {
     case 0:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.delay);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.delay));
         ram.homing_state = 1;
         [[fallthrough]];
     case 1:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
         break;
     case 2:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.interval);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.interval));
         ram.homing_state = 3;
         [[fallthrough]];
     case 3:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
@@ -1793,7 +1820,9 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
         return;
     }
     std::string request = ram.ai_request;
-    if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
+    // 0x803085B4: 8031E238 on the named AITIMER (missing = expired; the end
+    // against the 2^18 ns quantised clock with a strict '<').
+    if (ai_timer_expired(ram, engine.time())) {
         const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
         const auto& m = ram.node->matrix;
         // 80308654: [11] WPOS steers to the map's world target, otherwise the
@@ -1831,7 +1860,8 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
                 if (entry && roll < entry.i32(5)) { pick = entry; break; }
             ram.desired[1] = std::atan2(goal.x - m(3, 0), goal.z - m(3, 2)) + pick.f32(3);
             request = std::string(pick.str(2));
-            ram.ai_timer_end = engine.time() + frames_to_time(pick.f32(4));
+            // 0x80308868: 8031DE44 restarts it with (int64)(1e9f * frames / 60f).
+            start_ai_timer(ram, engine.time(), frames_to_time(pick.f32(4)));
         }
     }
     ram.key_input = request == "SQ_WALK";
