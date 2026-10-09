@@ -865,6 +865,7 @@ private:
         float maximum = 100, target{}, shown{};
         std::int64_t low_time{}, high_time{};
         bool continuous = true, dirty = true;
+        bool integer{}; // OneData [14] (+0x3E): the shown value is truncated every step
         std::string model_name;
         int model_index{};
     };
