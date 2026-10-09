@@ -139,14 +139,23 @@ void WaterPlainManager::update(Engine& engine) {
                 const Vec3f p{m(3, 0), m(3, 1), m(3, 2)};
                 if (inside(w, p)) push(w, p, 1.0f);
             }
-        // beWaterMove: drops at their times within the period.
+        // beWaterMove: drops at their times within the period. 80317A0C..
+        // 80317A88: the raw world time since the start (+8) is kept (+10); once
+        // it is not below the period the start becomes now and the kept time
+        // drops by one period, so the frame of the wrap still sees its
+        // overshoot (the next frame counts from the new start); then at most
+        // one drop whose time the kept time reached (80317AA0..80317AE0).
         if (!w.drops.empty() && w.period > 0) {
-            const std::int64_t elapsed = engine.time() - w.move_start;
-            if (elapsed >= w.period || w.move_start == 0) {
+            std::int64_t now = engine.time() - w.move_start;
+            if (w.move_start == 0) {
                 w.move_start = engine.time();
                 w.move_index = 0;
+                now = 0;
+            } else if (now >= w.period) {
+                w.move_start = engine.time();
+                w.move_index = 0;
+                now -= w.period;
             }
-            const std::int64_t now = engine.time() - w.move_start;
             if (w.move_index < w.drops.size() && now >= w.drops[w.move_index].time) {
                 for (const auto& point : w.drops[w.move_index].points) {
                     const Vec3f p = point + w.origin;

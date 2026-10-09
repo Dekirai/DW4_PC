@@ -488,13 +488,18 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
             p.y += kShakeY[digit] * shake.amplitude;
             set_translation(node->matrix, p);
         }
+        // 0x802F3474: when "SHAKEONE" ran out (8031E238 on the 2^18 ns
+        // quantised clock, strict '<'; missing counts as run out) the next
+        // digit comes (0 after the last) and the timer restarts with the step
+        // frames (0x802F34C8); 0x802F34D4: "SHAKEALL" running out ends it.
         const std::int64_t now = engine.time();
-        if (now >= shake.step_end) {
+        if (!shake.one || timer_expired(*shake.one, now)) {
             ++shake.index;
             if (shake.index >= shake.pattern.size()) shake.index = 0;
-            shake.step_end = now + std::int64_t(1.0e9f * shake.step / 60.0f);
+            if (!shake.one) shake.one.emplace();
+            timer_start(*shake.one, now, std::int64_t(1.0e9f * shake.step / 60.0f));
         }
-        if (now >= shake.all_end) {
+        if (timer_expired(shake.all, now)) {
             set_translation(eye->matrix, shake.eye);
             set_translation(target->matrix, shake.target);
             ram.shake.reset();
@@ -574,8 +579,10 @@ bool CameraManager::command(Engine& engine, Ram& base, std::string_view command,
         shake.amplitude = packet.real(0);
         shake.step = packet.real(1);
         shake.total = packet.real(2);
-        shake.all_end = engine.time() + std::int64_t(1.0e9f * shake.total / 60.0f);
-        shake.step_end = engine.time(); // SHAKEONE cleared: the first update steps
+        // 0x802F3DF4: 8031DE44 (re)starts "SHAKEALL" with (int64)(1e9f *
+        // total / 60f); 0x802F3E00 removes "SHAKEONE", so the first update steps.
+        timer_start(shake.all, engine.time(), std::int64_t(1.0e9f * shake.total / 60.0f));
+        shake.one.reset();
         ram.shake = std::move(shake);
         return true;
     }

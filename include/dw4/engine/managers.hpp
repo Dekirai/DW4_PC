@@ -165,7 +165,11 @@ private:
         std::size_t index{};
         bool fresh = true;
         Vec3f eye{}, target{};
-        std::int64_t step_end{}, all_end{};
+        // The camera RAM's named timers: "SHAKEONE" steps the pattern (SHAKE
+        // removes it, so the first update steps), "SHAKEALL" ends the shake
+        // (802F3474 / 802F34D4 check, 802F34C8 / 802F3DF4 start).
+        std::optional<NodeTimer> one;
+        NodeTimer all;
     };
     struct CameraRam : Ram {
         std::optional<BoxData> box;
@@ -937,7 +941,10 @@ private:
         std::string enemy_name;    // work +1C
         int enemy_record{};        // work +20
         int enemy_max_hp{};        // work +24
-        std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
+        // The RAM's named timers (data list +0x28): "BOOT_TIMER" of a timed
+        // start, "GENE_TIMER" between timed fills (8031DE44 start, 8031E238
+        // check, 8031E8BC remove). No command drops them.
+        std::optional<NodeTimer> boot_timer, gene_timer;
         int clears{};              // waves cleared so far (test bot)
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
@@ -1118,6 +1125,13 @@ public:
         std::optional<Ride> ride;
         std::array<float, 3> applied{}, desired{};
         float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
+        // Info work +8C: the X (pitch) turn rate; only the AIH homing sets it
+        // (0x80308D30). Info work +0x54: the Y of the placement offset an
+        // effect-form GENERATE stored (0x8030D5E0); the homing aims that high
+        // above the target. Both start at 0 with the fresh info work of every
+        // GENERATE (the KIND +0x98 hooks).
+        float turn_rate_x{};
+        float aim_height{};
         bool is_player{};
         bool control_enabled = true; // ONCTRL / OFCTRL
         bool key_input{};
@@ -1212,8 +1226,9 @@ public:
             bool down_list{}, up_list{};   // +264 / +268 linked (803AE5F8 / 803AE87C)
         };
         std::optional<Status> status;
-        // Named model timers (8031DE44 / 8031E238 / 8031E8BC): time left in ns.
-        std::map<std::string, std::int64_t, std::less<>> named_timers;
+        // The status work's named RAM timers (POISON, SLEEP, STUN, BIND,
+        // ATKDOWN, ...; 8031DE44 / 8031E238 / 8031E8BC) on the world clock.
+        std::map<std::string, NodeTimer, std::less<>> named_timers;
     };
 
     const ModelRam* player(int index) const;
@@ -1373,7 +1388,11 @@ private:
     struct PanelRam : Ram {
         bool running{}, reopen{}, cursor_shown{}, decided{};
         int state{}, fire{}, counter{}, kind{};
-        std::int64_t fire_end{}, emergency_ng{};
+        // The panel RAM's named timers "FIRE" (the wait after a pick,
+        // 0x8034A4E0 / 0x8034A988 check, 0x8034A604 / 0x8034A66C start) and
+        // "EMGHEAL" (the CURSOR_NG pause of Y, 0x8034B408 / 0x8034B45C);
+        // missing counts as run out.
+        std::optional<NodeTimer> fire_timer, emgheal_timer;
         std::string label;
         std::array<List, 3> lists;
         bool no_gate_disk{}, no_healing{}, no_para_up{}, no_cureling{};
