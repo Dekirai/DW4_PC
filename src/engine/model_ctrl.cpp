@@ -934,8 +934,13 @@ const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
 void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
     const float sx = pad.left.x, sy = pad.left.y;
-    const float magnitude = std::sqrt(sx * sx + sy * sy);
-    ram.key_input = ram.control_enabled && magnitude > 0.25f;
+    // 8034C4C8 bl 80312138 (the player's bePadData), 8034C4D4 lwz r25,0x24:
+    // walking (+70) and the heading need the held mask of the left stick's
+    // directions; without one 8034C6C4 clears +70 and keeps the heading. The
+    // mask (80311AA4..80311BBC, pad.cpp directions) is empty below the
+    // activation radius _enaLen 0.4 and covers every angle above it, so a
+    // stick at 0.3 neither steps nor turns. There is no other magnitude test.
+    ram.key_input = ram.control_enabled && pad.left_directions.held != 0;
     if (ram.key_input) {
         // 8034C67C..8034C6B8: desired heading from the inverse camera matrix and stick.
         FrameCamera camera;
