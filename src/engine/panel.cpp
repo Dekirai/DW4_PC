@@ -304,7 +304,16 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
             return 0;
         }
         ram.label = db->text("pcTech", row, "LABEL");
-        sys->change_mp(engine, ram.index, -cost);
+        // 80349584..8034961C: the MP drops at once; the HUD meter (whole
+        // percent, 100 * MP / MMP) and number are posted with 1 frame.
+        if (!engine.cheats().infinite_mp) {
+            player.mp -= cost;
+            Packet percent, value;
+            percent.floats.push_back(float(100 * player.mp / std::max(player.max_mp, 1)));
+            value.ints.push_back(player.mp);
+            engine.messenger().post(engine.time() + kFrameNs, "METERCTRL", "mpmt", ram.index, "SETPERCENT", std::move(percent));
+            engine.messenger().post(engine.time() + kFrameNs, "NUMBERCTRL", "mpnm", ram.index, "SETVALUE", std::move(value));
+        }
         return std::int64_t(db->number("pcTech", row, "DELAY").value_or(0)) * 1'000'000'000 / 60;
     }
     auto& count = player.disk_count(row);
@@ -329,19 +338,20 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
     // 803B1328: the raise disk, P2PKOUKAMAGIC kind -50.
     if (row == 7) fight::support_magic(engine, ram.index, ram.index, -50);
     if (row == 8) {
+        // 803B1390: 802EBCFC("Player", index) sets GAMERAM GETCOMMON
+        // GATESTAGENAME / GATESTAGENO before gatedisc.lua; 1 closes the panel.
+        sys->gate_stage_name = "Player";
+        sys->gate_stage_no = ram.index;
         engine.run_script("gatedisc.lua");
         close = true;
     }
     --count;
-    if (row != 8) {
-        Packet effect;
-        effect.strings.emplace_back(row == 6 ? "x_250curehit00" : "x_250healhit00");
-        effect.strings.emplace_back(row == 6 ? "SQ_CUREEFONLY" : "SQ_HEALEFONLY");
-        effect.floats.push_back(0.0f);
-        effect.vectors.push_back({0.0f, 0.0f, 0.0f});
-        effect.bools = {0, 1};
-        engine.messenger().send(engine, "PLAYER", std::nullopt, ram.index, "SETEFFECT", effect);
-    }
+    // 80349BC4..80349D1C: records 0..5, 7 and 9 heal, 6 cures, 8 and the rest
+    // show nothing. The effect is posted (0x80349C88 / 0x80349D1C): sent at
+    // once it would be lost to the SQ_ITEM the player selects in this frame.
+    if ((row >= 0 && row <= 7) || row == 9)
+        post_effect(engine, "PLAYER", std::nullopt, ram.index, row == 6 ? "x_250curehit00" : "x_250healhit00",
+                    row == 6 ? "SQ_CUREEFONLY" : "SQ_HEALEFONLY");
     return close ? -1 : 1'000'000'000;
 }
 
@@ -438,14 +448,15 @@ void PanelManager::update(Engine& engine) {
         auto& shown = list;
         display(engine, ram, shown);
         if (previous_count != shown.count) {
-            // 80348C64: base model with the sequence for the line count.
+            // 80348C64: base model with the sequence for the line count. The
+            // new line mode moves the cursor at once, the rows only with the
+            // next frame's display (8034A9A4 shows once, before this).
             shown.line_mode = shown.count == 3 ? 1 : shown.count > 3 ? 0 : 2;
             const char* sequence = kBaseSequences[shown.kind][shown.line_mode];
             if (ram.reopen) model(engine, ram, "i_wzslbase00", "GENERATE", true, sequence);
             else model(engine, ram, "i_wzslbase00", sequence, false, nullptr);
             if (!(shown.fire_request && ram.fire == 1)) play_sound(engine, "WINDOW_OPEN");
             ram.reopen = false;
-            display(engine, ram, shown);
         }
         const bool cursor = !(ram.state == 1 && ram.fire == 1) && shown.count > 0;
         if (cursor) {

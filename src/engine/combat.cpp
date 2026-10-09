@@ -39,6 +39,18 @@ SystemRandom& rng() {
 }
 } // namespace
 
+void post_effect(Engine& engine, std::string category, std::optional<std::string> name, int index, std::string model,
+                 std::string sequence) {
+    Packet effect;
+    effect.strings.push_back(std::move(model));
+    effect.strings.push_back(std::move(sequence));
+    effect.floats.push_back(1.0f);          // flt_804567AC / flt_80459744 / flt_8045C3E8
+    effect.vectors.push_back(Vec3f{});      // flt_804F8AE0
+    effect.bools = {0, 1};
+    engine.messenger().post(engine.time() + kFrameNs, std::move(category), std::move(name), index, "SETEFFECT",
+                            std::move(effect));
+}
+
 namespace fight {
 std::uint32_t random() { return rng()(); }
 SystemRandom& generator() { return rng(); }
@@ -594,16 +606,10 @@ int support_magic(Engine& engine, int target, int shooter, int kind) {
         engine.messenger().send(engine, "PLAYER", sys->players[std::size_t(std::clamp(player, 0, 3))].digimon, player, command,
                                 packet);
     };
-    // The hit effect on the other players (SETEFFECT one frame later, locked).
+    // The hit effect on the other players, posted (803771A4 heal all,
+    // 8037751C cure all, 803779A0 / 80377C78 / 80377F24 buffs).
     auto effect = [&](int player, const char* model, const char* sequence) {
-        Packet packet;
-        packet.strings.emplace_back(std::string(model));
-        packet.strings.emplace_back(std::string(sequence));
-        packet.floats.push_back(1.0f);
-        packet.vectors.push_back(Vec3f{});
-        packet.bools.push_back(0);
-        packet.bools.push_back(1);
-        send(player, "SETEFFECT", packet);
+        post_effect(engine, "PLAYER", sys->players[std::size_t(std::clamp(player, 0, 3))].digimon, player, model, sequence);
     };
     // Buffs reach the players around and the caster (without its effect).
     auto buff = [&](const char* command, std::initializer_list<int> values) {
@@ -725,15 +731,8 @@ void skill_up(Engine& engine, int shooter, int kind, int /*hit*/, int critical) 
     engine.log("player " + std::to_string(slot) + " skill " + std::to_string(skill_type) + " -> " + std::to_string(skill + 1));
     sys->recalc_player(engine, slot);
     sys->store_species(slot);
-    // The skill up panel over the player (i_getitempnl01 SQ_TECUP).
-    Packet effect;
-    effect.strings.emplace_back(std::string("i_getitempnl01"));
-    effect.strings.emplace_back(std::string("SQ_TECUP"));
-    effect.floats.push_back(1.0f);
-    effect.vectors.push_back(Vec3f{});
-    effect.bools.push_back(0);
-    effect.bools.push_back(1);
-    engine.messenger().send(engine, "MODELCTRL", player.digimon, slot, "SETEFFECT", effect);
+    // The skill up panel over the player (i_getitempnl01 SQ_TECUP), posted (80373B40).
+    post_effect(engine, "MODELCTRL", player.digimon, slot, "i_getitempnl01", "SQ_TECUP");
 }
 } // namespace fight
 
@@ -1070,13 +1069,12 @@ bool GameSystem::apply_level_ups(Engine& engine, int slot) {
             model->hp = player.hp;
         }
     engine.log("player " + std::to_string(slot) + " reached level " + std::to_string(stats.level));
+    // 80373DD4..80373F78: the level up panel over the player (locked to it)
+    // and the HUD values, all posted with 1 frame.
+    post_effect(engine, "MODELCTRL", name, slot, "i_getitempnl01", "SQ_LVUP");
     auto send = [&](const char* category, const char* target, const char* command, Packet p) {
-        engine.messenger().send(engine, category, target, slot, command, p);
+        engine.messenger().post(engine.time() + kFrameNs, category, std::string(target), slot, command, std::move(p));
     };
-    Packet effect;
-    effect.strings.emplace_back("i_getitempnl01");
-    effect.strings.emplace_back("SQ_LVUP");
-    send("MODELCTRL", name.c_str(), "SETEFFECT", effect);
     Packet level, full, hp, mp;
     level.ints.push_back(stats.level);
     full.floats.push_back(100.0f);
@@ -1240,16 +1238,11 @@ bool GameSystem::command(Engine& engine, Ram&, std::string_view command, Packet&
         } else {
             change_mp(engine, slot, amount);
         }
-        if (applied && effect && (command == "ADDHP" || packet.ints.size() == 3)) {
-            Packet heal;
-            heal.strings.emplace_back(std::string("x_250healhit00"));
-            heal.strings.emplace_back(std::string("SQ_HEALEFONLY"));
-            heal.floats.push_back(1.0f);
-            heal.vectors.push_back(Vec3f{});
-            heal.bools.push_back(0);
-            heal.bools.push_back(1);
-            engine.messenger().send(engine, "PLAYER", players[std::size_t(std::clamp(slot, 0, 3))].digimon, slot, "SETEFFECT", heal);
-        }
+        // The heal effect is posted (0x80371CFC / 0x80371E04): sent at once it
+        // would be lost to a sequence the player selects in the same frame.
+        if (applied && effect && (command == "ADDHP" || packet.ints.size() == 3))
+            post_effect(engine, "PLAYER", players[std::size_t(std::clamp(slot, 0, 3))].digimon, slot, "x_250healhit00",
+                        "SQ_HEALEFONLY");
         return true;
     }
     if (command == "RECALCPLAYER") {
