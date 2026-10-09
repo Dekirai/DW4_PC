@@ -26,7 +26,7 @@ using socket_handle = int;
 namespace dw4::game {
 namespace {
 
-constexpr std::uint32_t kProtocol = 10; // 10: managers wait for the active stage, mat RAM init pass; 9: GENERATE starts with empty sequence labels (respawn SQ_ENTR dual section); 8: once-played clips hold at duration - 1/30, bake from the last traversal, PLAYERgetPos, box camera timer; 7: MOTIONSET restarts, MOVEEX rotation, per-player base flags; 6: chained effects shoot for their root model, frame camera first; 5: HUD attack-delay ring; 4: first-info order; 3: NTSC clock, generator
+constexpr std::uint32_t kProtocol = 11; // 11: new-game UNIQUE from the world clock (was std::random_device); 10: managers wait for the active stage, mat RAM init pass; 9: GENERATE starts with empty sequence labels (respawn SQ_ENTR dual section); 8: once-played clips hold at duration - 1/30, bake from the last traversal, PLAYERgetPos, box camera timer; 7: MOTIONSET restarts, MOVEEX rotation, per-player base flags; 6: chained effects shoot for their root model, frame camera first; 5: HUD attack-delay ring; 4: first-info order; 3: NTSC clock, generator
 constexpr const char* kGame = "GDJEB2";
 enum : std::uint8_t { kHello = 1, kWelcome, kStart, kInput, kFingerprint, kDesync, kLeave, kReject };
 
