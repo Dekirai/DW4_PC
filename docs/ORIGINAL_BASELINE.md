@@ -18,7 +18,7 @@ comes first; quality-of-life changes and optional enhancements follow it.
 | Progression and inventory | Levels, items, weapons, skills, shops, quests | EXP and levels, skill growth, item drops, quick panels and the status window, the lobby shops, bank, appraiser, X data keeper, Digi-Lab digivolution, card keeper and quest gates |
 | Audio | Music, sound effects, streaming | ADX music and ambience streams and the sound effects play |
 | Persistence | Save/load and slot ownership | Memory card saves in the save room as GCI files in a portable card folder (the layout of Dolphin's GCI folders), loaded at the character select; save states as a PC option |
-| Complete playthrough | Reference runs through the whole game | Every stage exit is checked by an automated survey with an exploring bot (189 of 195 reached; the rest need bot skills), all boss stages are completed in automated runs; one uninterrupted run from a new game to the ending is not recorded yet |
+| Complete playthrough | Reference runs through the whole game | Every stage exit is checked by an automated survey with an exploring bot (all 195 reached in one run), all boss stages are completed in automated runs; one uninterrupted run from a new game to the ending is not recorded yet |
 
 ## Evidence discipline
 
