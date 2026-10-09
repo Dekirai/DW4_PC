@@ -122,10 +122,11 @@ void TextCtlManager::load_fonts(Engine& engine) {
                 // x.5 px is the 7/12 : 5/12 mix of neighbouring texels, an x.0
                 // line keeps a 1/12 ghost, and patching the IG filter tables
                 // (0x80414A44 / 0x80414A5C LINEAR -> NEAR) leaves the text as it
-                // is, so the GX filter does not come from the attribute. Likely
-                // cause: the GX texture object is rebuilt by GXInitTexObj
-                // (LINEAR default, 0x800FEDE4) and gets GXInitTexObjLOD
-                // (0x800FEE50) only while the filter flag 0x800 is set.
+                // is, so the GX filter does not come from the attribute. The
+                // font image is palette-indexed (C8 with an igClut): the bind
+                // loop 800FCA9C rebuilds its texture object with GXInitTexObjCI
+                // (802563C4 at 0x800FCC34 / 0x800FCD4C), which calls GXInitTexObj
+                // 80256178 with its LINEAR defaults and no GXInitTexObjLOD.
                 font->binding->sampler.mag_filter = 1;
                 font->binding->sampler.min_filter = 1;
                 font->binding->sampler.wrap_s = 0;

@@ -601,6 +601,9 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // GENERATE (8034B928 / 8030D260 do not touch them); REMOVE and
         // SQ_ERAS2 drop them (8031EA54).
         ram.ai_request.clear();
+        // _svLODHighRange (+0xA4) lives in the info work, made anew by every
+        // GENERATE with -1 (0x8041ED64).
+        ram.lod_high_saved = -1.0f;
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
         ram.homing_state = ram.homing_steps = 0;
