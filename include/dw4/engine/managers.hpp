@@ -1159,6 +1159,10 @@ public:
         int owner_index = -1;
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
+        // The RAM's named timer "KEIKATIMER": made by the first MOVE / MOVEEX /
+        // MOVERL (8030A6BC) or MUTEKI (8030C1F0); its cached frame delta
+        // (8031E4C4) steps the channels, the turn and MUTEKI.
+        std::optional<dw4::MotionTimer> keika;
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)
         std::optional<NodeTimer> attack_delay; // player: the named RAM timer "ATDELAY"
         int combo_phase{};           // player work +128

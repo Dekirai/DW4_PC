@@ -54,6 +54,23 @@ void start_ai_timer(ModelRam& ram, std::int64_t world, std::int64_t end) {
 bool ai_timer_expired(const ModelRam& ram, std::int64_t world) {
     return !ram.ai_timer || timer_expired(*ram.ai_timer, world);
 }
+
+// The named RAM timer "KEIKATIMER": the shared move handler 8030A6BC
+// (0x8030A6F8..0x8030A718, MOVE / MOVEEX / MOVERL) and MUTEKI 8030C1F0 make
+// it when missing (8031E138, then 8031DE44 with end 0: the first query at
+// that world time gives one frame).
+void ensure_keika(ModelRam& ram, std::int64_t world) {
+    if (ram.keika) return;
+    ram.keika.emplace();
+    dw4::start_motion_timer(*ram.keika, static_cast<std::uint64_t>(world), 0);
+}
+// 8031E4C4: the frames since the last query, (q(now) - previous) / 16666667
+// capped at 3, 0 when the clock did not move, cached per world time. The
+// original always has the timer here; making it is the port's fallback.
+float keika_frames(ModelRam& ram, std::int64_t world) {
+    ensure_keika(ram, world);
+    return dw4::motion_timer_frames(*ram.keika, static_cast<std::uint64_t>(world));
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -361,7 +378,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
             // recorder under its animated route: boats, trains, rails);
             // anything else (ACTOR) keeps the model and bone names. The
-            // shared move handler first ends a running follow (8030A71C).
+            // shared move handler 8030A6BC first makes a missing KEIKATIMER,
+            // then ends a running follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
@@ -376,8 +395,10 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
-            // 8030A71C (the handler of MOVE, MOVEEX and MOVERL): a new move
-            // ends a MOVERL follow.
+            // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
+            // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
+            // MOVERL follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
@@ -414,7 +435,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
         } else if (type == "beModelCtrlMUTEKI") {
             // 8030C25C: OFFWALL / ONWALL / OFFFLOOR / ONFLOOR switch the wall
             // and floor checks; otherwise the invulnerable frames ("ON" -1:
-            // for the rest of the sequence; "OFF" ends it).
+            // for the rest of the sequence; "OFF" ends it). 8030C1F0 first
+            // makes a missing KEIKATIMER (0x8030C224..0x8030C244).
+            ensure_keika(ram, engine.time());
             if (name == "OFFWALL") ram.wall_check = false;
             else if (name == "ONWALL") ram.wall_check = true;
             else if (name == "OFFFLOOR") ram.floor_check = false;
@@ -634,6 +657,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             // 0x8030DC88: 8031EA54 drops every named timer of the RAM.
             ram.ai_timer.reset();
             ram.attack_delay.reset();
+            ram.keika.reset();
         }
         return true;
     }
@@ -1076,16 +1100,18 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                       int(s[3].active), s[3].speed, ram.applied[1], ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
     }
-    // The channels advance first (8031E4C4 KEIKATIMER step): the rotation
-    // channel of MOVEEX R?xxx (channel 3) turns the wanted yaw by its step in
-    // degrees (0x8030A4A8-0x8030A4F4: +84 += pi/180 * step, the yaw rate +90 =
-    // 1.25 * |that|) before the model turns, the translation channels move it
-    // after the turn.
+    // The channels advance first by the KEIKATIMER frames (0x8030A498
+    // 8031E4C4, only with an allocated list; 8030A2D8 steps each channel by
+    // speed * min(frames, 3)): the rotation channel of MOVEEX R?xxx (channel
+    // 3) turns the wanted yaw by its step in degrees (0x8030A4A8-0x8030A4F4:
+    // +84 += pi/180 * step, the yaw rate +90 = 1.25 * |that|) before the
+    // model turns, the translation channels move it after the turn.
     dw4::MotionStep step;
     if (ram.channels.allocated()) {
         const bool rotating = ram.channels.states()[3].active;
+        const float frames = keika_frames(ram, engine.time());
         try {
-            step = ram.channels.advance(1.0f);
+            step = ram.channels.advance(frames);
         } catch (const std::exception& error) {
             engine.note(std::string("model motion: ") + error.what());
             return false;
@@ -1096,14 +1122,36 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
         }
     }
-    // Turning (8030C85C): shortest arc at the stored rate per frame.
+    // Turning (8030C85C, not forced): an axis whose applied angle (+98)
+    // differs from the wanted one (+80) and whose rate (+8C) is not 0 steps by
+    // rate * KEIKATIMER frames (0x8030C8E0). Both angles are reduced to
+    // [0, tau) with the stored tau (804268DC) by repeated float add/subtract;
+    // the shorter arc wins (equal: the negative one) and a remaining distance
+    // up to the step snaps to the reduced target, which is stored reduced.
     for (std::size_t axis = 0; axis < 3; ++axis) {
         if (ram.applied[axis] == ram.desired[axis]) continue;
         const float rate = axis == 1 ? ram.turn_rate_y : 0.0f;
-        if (rate == 0) continue;
-        const float diff = wrap_angle(ram.desired[axis] - ram.applied[axis]);
-        if (std::abs(diff) <= rate) ram.applied[axis] = ram.desired[axis];
-        else ram.applied[axis] += diff > 0 ? rate : -rate;
+        if (rate == 0.0f) continue;
+        const float delta = rate * keika_frames(ram, engine.time());
+        constexpr float tau = 6.2831854820251465f;
+        auto reduce = [&](float angle) {
+            // (Port guard: angles the float loop could not reduce would hang it.)
+            if (!(std::abs(angle) < 1.0e6f)) angle = std::isfinite(angle) ? std::fmod(angle, tau) : 0.0f;
+            while (angle < 0.0f) angle = angle + tau;
+            while (angle >= tau) angle = angle - tau;
+            return angle;
+        };
+        const float current = reduce(ram.applied[axis]), target = reduce(ram.desired[axis]);
+        float positive, negative;
+        if (current > target) {
+            negative = current - target;
+            positive = (target + tau) - current;
+        } else {
+            positive = target - current;
+            negative = current - (target - tau);
+        }
+        if (positive >= negative) ram.applied[axis] = negative <= delta ? target : current - delta;
+        else ram.applied[axis] = positive <= delta ? target : current + delta;
     }
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
@@ -1347,7 +1395,6 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             continue;
         }
         if (ram.frozen) continue;
-        if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         // 8030CCDC: input, AI and the control transitions run only while the
         // sequence has a CTRL mode; otherwise a running AITIMER is dropped.
         if (ram.ctrl_mode != 0) {
@@ -1393,6 +1440,13 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         // 8030CFEC: the wait runs after the motion and before the walls and
         // floors, so a jump's apex goes straight into its fall.
         if (ram.generated && ram.wait_name) check_wait(engine, ram);
+        // 8030C334 (0x8030CFFC, after the wait, before the subcommands): the
+        // invulnerable frames count down by the KEIKATIMER frames, not below 0.
+        if (ram.muteki > 0.0f) {
+            float left = ram.muteki - keika_frames(ram, engine.time());
+            if (left < 0.0f) left = 0.0f;
+            ram.muteki = left;
+        }
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
         // 8030D028: walls and floors.
