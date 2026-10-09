@@ -313,6 +313,7 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
         ram.ai_timer.reset();
         ram.attack_delay.reset();
         ram.keika.reset();
+        ram.named_timers.clear();
         return;
     }
     const Sequence* found = nullptr;
@@ -713,6 +714,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.ai_timer.reset();
             ram.attack_delay.reset();
             ram.keika.reset();
+            ram.named_timers.clear();
         }
         return true;
     }

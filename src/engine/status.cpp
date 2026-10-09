@@ -34,12 +34,16 @@ constexpr std::int64_t kPoisonTick = 2000000000; // a poison tick every 2 s
 
 std::int64_t frames_ns(int frames) { return std::int64_t{1000000000} * frames / 60; }
 
-// Named model timers (8031DE44 start, 8031E238 expired - also when missing,
-// 8031E8BC remove).
-void start_timer(ModelRam& ram, std::string_view name, std::int64_t ns) { ram.named_timers[std::string(name)] = ns; }
-bool timer_done(const ModelRam& ram, std::string_view name) {
+// Named model timers on the world clock (8031DE44 start, 8031E238 run out:
+// also when missing, otherwise end < the 2^18 ns quantised clock since the
+// start; 8031E8BC remove). They run on even while the update does not
+// (frozen, no control).
+void start_timer(ModelRam& ram, std::int64_t world, std::string_view name, std::int64_t ns) {
+    timer_start(ram.named_timers[std::string(name)], world, ns);
+}
+bool timer_done(const ModelRam& ram, std::int64_t world, std::string_view name) {
     const auto found = ram.named_timers.find(name);
-    return found == ram.named_timers.end() || found->second < 0;
+    return found == ram.named_timers.end() || timer_expired(found->second, world);
 }
 void remove_timer(ModelRam& ram, std::string_view name) {
     if (const auto found = ram.named_timers.find(name); found != ram.named_timers.end()) ram.named_timers.erase(found);
@@ -255,8 +259,7 @@ int ModelCtrlManager::status_icon(Engine& engine, ModelRam& ram, int slot, int i
 // on (ONCTRL); the icons follow in either case. At 0 HP every icon goes and
 // all timers stop.
 void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
-    // Named timers run on world time (8031DE44): each frame takes one field.
-    for (auto& [name, left] : ram.named_timers) left -= engine.frame_delta();
+    const std::int64_t now = engine.time();
     if (!ram.status) return;
     auto& st = *ram.status;
     auto play = [&](const char* sequence) {
@@ -278,11 +281,11 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     // keeps 1 HP.
     if (on && st.timer[0]) {
         if (st.start[0]) {
-            start_timer(ram, "POISON", kPoisonTick);
+            start_timer(ram, now, "POISON", kPoisonTick);
             --st.timer[0];
             st.start[0] = false;
         }
-        if (timer_done(ram, "POISON")) {
+        if (timer_done(ram, now, "POISON")) {
             if (!(engine.cheats().god && ram.is_player)) ram.hp = std::max(ram.hp - st.poison_damage, 0);
             if (ram.is_player) {
                 if (sys) sys->players[std::size_t(slot_index)].hp = ram.hp;
@@ -294,7 +297,7 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
             }
             if (ram.hp > 0) {
                 if (--st.timer[0] > 0) {
-                    start_timer(ram, "POISON", kPoisonTick);
+                    start_timer(ram, now, "POISON", kPoisonTick);
                 } else {
                     remove_timer(ram, "POISON");
                     st.timer[0] = 0;
@@ -313,11 +316,11 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     // Sleep: SQ_SLEP for the time, then SQ_WAIT.
     if (on && st.timer[8]) {
         if (st.start[8]) {
-            start_timer(ram, "SLEEP", frames_ns(st.timer[8]));
+            start_timer(ram, now, "SLEEP", frames_ns(st.timer[8]));
             if (ram.seq_name != "SQ_SLEP") play("SQ_SLEP");
             st.start[8] = false;
         }
-        if (timer_done(ram, "SLEEP")) {
+        if (timer_done(ram, now, "SLEEP")) {
             play("SQ_WAIT");
             remove_timer(ram, "SLEEP");
             st.timer[8] = 0;
@@ -326,10 +329,10 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     // Stun counts only while SQ_STUN plays.
     if (on && st.timer[9] && ram.seq_name == "SQ_STUN") {
         if (st.start[9]) {
-            start_timer(ram, "STUN", frames_ns(st.timer[9]));
+            start_timer(ram, now, "STUN", frames_ns(st.timer[9]));
             st.start[9] = false;
         }
-        if (timer_done(ram, "STUN")) {
+        if (timer_done(ram, now, "STUN")) {
             st.timer[9] = 0;
             remove_timer(ram, "STUN");
             play("SQ_WAIT");
@@ -338,10 +341,10 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     // Bind: outside a damage reaction every move channel but Y stops.
     if (on && st.timer[3]) {
         if (st.start[3]) {
-            start_timer(ram, "BIND", frames_ns(st.timer[3]));
+            start_timer(ram, now, "BIND", frames_ns(st.timer[3]));
             st.start[3] = false;
         }
-        if (timer_done(ram, "BIND")) {
+        if (timer_done(ram, now, "BIND")) {
             remove_timer(ram, "BIND");
             st.timer[3] = 0;
             play("SQ_WAIT");
@@ -363,10 +366,10 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     auto timed = [&](int slot, const char* timer, auto reset) {
         if (!on || !st.timer[std::size_t(slot)]) return;
         if (st.start[std::size_t(slot)]) {
-            start_timer(ram, timer, frames_ns(st.timer[std::size_t(slot)]));
+            start_timer(ram, now, timer, frames_ns(st.timer[std::size_t(slot)]));
             st.start[std::size_t(slot)] = false;
         }
-        if (!timer_done(ram, timer)) return;
+        if (!timer_done(ram, now, timer)) return;
         remove_timer(ram, timer);
         st.timer[std::size_t(slot)] = 0;
         reset();
@@ -392,13 +395,13 @@ void ModelCtrlManager::update_status(Engine& engine, ModelRam& ram) {
     if (on && st.timer[7]) {
         if (st.start[7]) {
             set_down(engine, ram, 6, 0);
-            start_timer(ram, "METAL", 0);
+            start_timer(ram, now, "METAL", 0);
             st.start[7] = false;
         }
-        if (timer_done(ram, "METAL")) {
+        if (timer_done(ram, now, "METAL")) {
             set_down(engine, ram, 6, down_value(engine, ram, 6) + 4);
             const int delay = sys ? sys->players[std::size_t(slot_index)].stats.attack_delay : 0;
-            start_timer(ram, "METAL", std::int64_t{120000000000} * delay / 60);
+            start_timer(ram, now, "METAL", std::int64_t{120000000000} * delay / 60);
             apply_status_values(engine, ram);
         }
     }

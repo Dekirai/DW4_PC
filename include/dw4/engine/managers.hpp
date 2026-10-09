@@ -1224,8 +1224,9 @@ public:
             bool down_list{}, up_list{};   // +264 / +268 linked (803AE5F8 / 803AE87C)
         };
         std::optional<Status> status;
-        // Named model timers (8031DE44 / 8031E238 / 8031E8BC): time left in ns.
-        std::map<std::string, std::int64_t, std::less<>> named_timers;
+        // The status work's named RAM timers (POISON, SLEEP, STUN, BIND,
+        // ATKDOWN, ...; 8031DE44 / 8031E238 / 8031E8BC) on the world clock.
+        std::map<std::string, NodeTimer, std::less<>> named_timers;
     };
 
     const ModelRam* player(int index) const;
