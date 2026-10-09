@@ -224,7 +224,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 `frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
-enemies, picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
+enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
+volleys), picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
 campaign` plays the story from the boot logos: a new game, then the story objectives in order, see
 `src/game/campaign.cpp`), `--screenshot FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`,
 `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
