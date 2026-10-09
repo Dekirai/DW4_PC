@@ -687,7 +687,11 @@ bool CampaignBot::walk_to(engine::Engine& engine, const engine::ModelCtrlManager
     if (flat(me, goal) <= close) return true;
     auto* hitland = engine.get<engine::HitLandManager>();
     auto* mats = engine.get<engine::MatCtrlManager>();
-    if (hitland && (flat(goal, route_goal_) > 8.0f || frame - route_frame_ > 60 || route_next_ >= route_.size())) {
+    // (A walk map costs up to a third of a second on a large stage: sized to
+    // the distance, and rebuilt at most every 15 frames for a moving goal or
+    // a route walked to its end, else every second.)
+    const int since = frame - route_frame_;
+    if (hitland && ((since >= 15 && (flat(goal, route_goal_) > 8.0f || route_next_ >= route_.size())) || since > 60)) {
         const WithoutLimitCircle without_limit(*hitland);
         // Other stage change mats would open their prompts: kept away from.
         std::vector<AvoidBox> avoid;
@@ -701,7 +705,8 @@ bool CampaignBot::walk_to(engine::Engine& engine, const engine::ModelCtrlManager
                 if (me.x >= box.min.x - 4 && me.x <= box.max.x + 4 && me.z >= box.min.z - 4 && me.z <= box.max.z + 4) continue;
                 avoid.push_back({box.min.x - 4, box.min.z - 4, box.max.x + 4, box.max.z + 4, box.min.y - 5, box.max.y + 5});
             }
-        const WalkMap map(hitland->world(), me, 700.0f, hitland->delivery_flags(player.info_name, player.index), avoid,
+        const float range = std::clamp(flat(me, goal) * 1.5f + 80.0f, 150.0f, 700.0f);
+        const WalkMap map(hitland->world(), me, range, hitland->delivery_flags(player.info_name, player.index), avoid,
                           hitland->delivery_width(player.info_name, player.index));
         route_ = map.route_to(goal, std::max(close, 2.0f));
         route_next_ = 0;
@@ -956,15 +961,32 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     }
     // Outside the lobby, live enemies near the player are fought first (a
     // gimmick guarded by cannons cannot be reached while they knock the
-    // player back).
+    // player back). One that loses no HP in ten seconds of fighting (a
+    // poison plant, stag0302 g_poison01z03, or one out of reach) is left
+    // alone for a minute.
     if (!lobby(stage))
         if (auto* models = engine.get<engine::ModelCtrlManager>()) {
             const engine::ModelCtrlManager::ModelRam* foe = nullptr;
-            for (const auto& e : models->rams())
-                if (e->generated && e->node && e->category == "ENEMY" && e->hp > 0 && engine.has_script("hit_" + e->info_name + ".lua") &&
-                    flat(position_of(*e), me) < 45.0f && std::abs(position_of(*e).y - me.y) < 20.0f &&
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->category != "ENEMY" || e->hp <= 0 || !engine.has_script("hit_" + e->info_name + ".lua"))
+                    continue;
+                if (const auto it = foe_left_.find(e.get()); it != foe_left_.end() && frame < it->second) continue;
+                if (flat(position_of(*e), me) < 45.0f && std::abs(position_of(*e).y - me.y) < 20.0f &&
                     (!foe || flat(position_of(*e), me) < flat(position_of(*foe), me)))
                     foe = e.get();
+            }
+            if (foe != foe_) {
+                foe_ = foe;
+                foe_since_ = frame;
+                foe_hp_ = foe ? foe->hp : 0;
+            } else if (foe && foe->hp < foe_hp_) {
+                foe_since_ = frame;
+                foe_hp_ = foe->hp;
+            } else if (foe && frame - foe_since_ > 600) {
+                foe_left_[foe] = frame + 3600;
+                foe_ = nullptr;
+                foe = nullptr;
+            }
             if (foe) {
                 const auto at = position_of(*foe);
                 if (walk_to(engine, *player, at, 7.0f, frame, out)) {

@@ -69,6 +69,9 @@ private:
     int key_skip_until_ = -1;    // a key item out of reach is left to the ExploreBot until
     int lab_target_ = -1;        // the form the open Digi-Lab is asked for (evolve:<n>)
     bool lab_leaving_ = false;   // Exit was chosen in the lab menu
+    const void* foe_ = nullptr;  // the enemy fought outside the ExploreBot
+    int foe_since_{}, foe_hp_{}; // since when without losing HP, its HP then
+    std::map<const void*, int> foe_left_; // enemies left alone until
 };
 
 } // namespace dw4::game
