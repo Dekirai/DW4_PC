@@ -71,6 +71,45 @@ float keika_frames(ModelRam& ram, std::int64_t world) {
     ensure_keika(ram, world);
     return dw4::motion_timer_frames(*ram.keika, static_cast<std::uint64_t>(world));
 }
+
+// The turn of 8030C85C, not forced: an axis whose applied angle (+98)
+// differs from the wanted one (+80) and whose rate (+8C: only the AIH
+// homing sets the X rate; +90: the Y rate; +94 is never written) is not 0
+// steps by rate * KEIKATIMER frames (0x8030C8E0). Both angles are reduced to
+// [0, tau) with the stored tau (804268DC) by repeated float add/subtract;
+// the shorter arc wins (equal: the negative one) and a remaining distance up
+// to the step snaps to the reduced target, which is stored reduced. True
+// when an applied angle changed (0x8030C9C8..0x8030CA0C: then the basis is
+// rebuilt around the position).
+bool turn_step(ModelRam& ram, std::int64_t world) {
+    const auto before = ram.applied;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (ram.applied[axis] == ram.desired[axis]) continue;
+        const float rate = axis == 0 ? ram.turn_rate_x : axis == 1 ? ram.turn_rate_y : 0.0f;
+        if (rate == 0.0f) continue;
+        const float delta = rate * keika_frames(ram, world);
+        constexpr float tau = 6.2831854820251465f;
+        auto reduce = [&](float angle) {
+            // (Port guard: angles the float loop could not reduce would hang it.)
+            if (!(std::abs(angle) < 1.0e6f)) angle = std::isfinite(angle) ? std::fmod(angle, tau) : 0.0f;
+            while (angle < 0.0f) angle = angle + tau;
+            while (angle >= tau) angle = angle - tau;
+            return angle;
+        };
+        const float current = reduce(ram.applied[axis]), target = reduce(ram.desired[axis]);
+        float positive, negative;
+        if (current > target) {
+            negative = current - target;
+            positive = (target + tau) - current;
+        } else {
+            positive = target - current;
+            negative = current - (target - tau);
+        }
+        if (positive >= negative) ram.applied[axis] = negative <= delta ? target : current - delta;
+        else ram.applied[axis] = positive <= delta ? target : current + delta;
+    }
+    return ram.applied != before;
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -550,6 +589,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // weapon's labels come with the posted PLAYERARMS GENERATE.
         ram.control_enabled = true;
         ram.frozen = false;
+        ram.turn_rate_x = 0.0f;
+        ram.aim_height = 0.0f;
         ram.labels.clear();
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
@@ -617,6 +658,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.owner_name = std::string(packet.string(2));
             ram.owner_index = packet.ints[1];
             ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+            ram.aim_height = ram.attach_offset.y; // 0x8030D5E0: info work +0x54
             ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
             ram.attach_lock = packet.boolean(0);
             place_attached(ram);
@@ -862,15 +904,6 @@ const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
         if (ram->is_player && ram->generated && ram->index == index) return ram.get();
     return nullptr;
 }
-
-namespace {
-float wrap_angle(float a) {
-    constexpr float tau = 6.28318530718f;
-    while (a > 3.14159265f) a -= tau;
-    while (a < -3.14159265f) a += tau;
-    return a;
-}
-} // namespace
 
 void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
@@ -1135,37 +1168,9 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
         }
     }
-    // Turning (8030C85C, not forced): an axis whose applied angle (+98)
-    // differs from the wanted one (+80) and whose rate (+8C) is not 0 steps by
-    // rate * KEIKATIMER frames (0x8030C8E0). Both angles are reduced to
-    // [0, tau) with the stored tau (804268DC) by repeated float add/subtract;
-    // the shorter arc wins (equal: the negative one) and a remaining distance
-    // up to the step snaps to the reduced target, which is stored reduced.
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-        if (ram.applied[axis] == ram.desired[axis]) continue;
-        const float rate = axis == 1 ? ram.turn_rate_y : 0.0f;
-        if (rate == 0.0f) continue;
-        const float delta = rate * keika_frames(ram, engine.time());
-        constexpr float tau = 6.2831854820251465f;
-        auto reduce = [&](float angle) {
-            // (Port guard: angles the float loop could not reduce would hang it.)
-            if (!(std::abs(angle) < 1.0e6f)) angle = std::isfinite(angle) ? std::fmod(angle, tau) : 0.0f;
-            while (angle < 0.0f) angle = angle + tau;
-            while (angle >= tau) angle = angle - tau;
-            return angle;
-        };
-        const float current = reduce(ram.applied[axis]), target = reduce(ram.desired[axis]);
-        float positive, negative;
-        if (current > target) {
-            negative = current - target;
-            positive = (target + tau) - current;
-        } else {
-            positive = target - current;
-            negative = current - (target - tau);
-        }
-        if (positive >= negative) ram.applied[axis] = negative <= delta ? target : current - delta;
-        else ram.applied[axis] = positive <= delta ? target : current + delta;
-    }
+    // Turning (8030C85C at 0x8030A50C, not forced; turn_step): every axis
+    // with a rate steps toward its wanted angle by rate * KEIKATIMER frames.
+    turn_step(ram, engine.time());
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
     bool moved = false;
@@ -1842,25 +1847,51 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     }
     if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace && tick)
         engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " tick " +
-                   (target ? target->info_name + " d2 " + std::to_string(best) : std::string("no target")));
+                   (target ? target->info_name + " d2 " + std::to_string(best) : std::string("no target")) + " aim height " +
+                   std::to_string(ram.aim_height));
     if (!target || best > h.range2) return;
     const auto& o = target->node->matrix;
-    auto turn = [](float from, float to, float rate) {
-        const float diff = wrap_angle(to - from);
-        return std::abs(diff) <= rate ? to : from + (diff > 0 ? rate : -rate);
-    };
+    // 0x80308D28: following the height sets the X rate (+8C) to the AIH
+    // pitch rate and the wanted pitch (+80) toward the target's height plus
+    // the bullet's own placement height (info work +0x54, the Y of the
+    // effect offset 8030D260 stored): -atan2 (double 800A2C74, frsp) of that
+    // height difference over the distance sqrt(d2).
     if (live && h.pitch) {
-        const float pitch = -std::atan2(o(3, 1) - m(3, 1), std::sqrt(best));
-        ram.applied[0] = ram.desired[0] = turn(ram.applied[0], pitch, h.pitch_rate);
+        ram.turn_rate_x = h.pitch_rate;
+        const float dy = (o(3, 1) + ram.aim_height) - m(3, 1);
+        const float distance = std::sqrt(best);
+        ram.desired[0] = -static_cast<float>(std::atan2(static_cast<double>(dy), static_cast<double>(distance)));
     }
+    // 0x80308E40: a steering step sets the Y rate (+90) to the AIH yaw rate
+    // and the wanted yaw (+84) toward the target.
     if (tick && h.yaw) {
-        // 8030C85C turns one step; the heading then stays where it got to.
-        const float yaw = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2));
-        ram.applied[1] = ram.desired[1] = turn(ram.applied[1], yaw, h.yaw_rate);
-        if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace)
-            engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
-                       " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
+        ram.turn_rate_y = h.yaw_rate;
+        ram.desired[1] = static_cast<float>(
+            std::atan2(static_cast<double>(o(3, 0) - m(3, 0)), static_cast<double>(o(3, 2) - m(3, 2))));
     }
+    // 0x80308E70: the turn 8030C85C (not forced) steps every axis by its rate
+    // times the KEIKATIMER frames and rebuilds the basis around the position
+    // when an angle moved; then the wanted yaw takes the applied one
+    // (0x80308E74), so the heading stays where this step got to. The wanted
+    // pitch stays: the frame's motion turn (0x8030A50C) steps it again.
+    if (turn_step(ram, engine.time())) {
+        std::array<float, 16> matrix{};
+        std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+        const Vec3f position{matrix[12], matrix[13], matrix[14]};
+        try {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+            std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+        } catch (const std::exception& error) {
+            engine.note(std::string("homing turn: ") + error.what());
+        }
+    }
+    ram.desired[1] = ram.applied[1];
+    if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace && tick && h.yaw)
+        engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
+                   " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
 }
 
 // 8030CDD0: ACTION <model> GETBONEMATRIX <bone> times MODELCTRL <model>

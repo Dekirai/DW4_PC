@@ -1120,6 +1120,13 @@ public:
         std::optional<Ride> ride;
         std::array<float, 3> applied{}, desired{};
         float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
+        // Info work +8C: the X (pitch) turn rate; only the AIH homing sets it
+        // (0x80308D30). Info work +0x54: the Y of the placement offset an
+        // effect-form GENERATE stored (0x8030D5E0); the homing aims that high
+        // above the target. Both start at 0 with the fresh info work of every
+        // GENERATE (the KIND +0x98 hooks).
+        float turn_rate_x{};
+        float aim_height{};
         bool is_player{};
         bool control_enabled = true; // ONCTRL / OFCTRL
         bool key_input{};
