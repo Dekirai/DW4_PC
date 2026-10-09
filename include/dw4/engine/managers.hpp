@@ -1258,10 +1258,16 @@ private:
         ModelRam* ram{};
     };
     std::vector<UpdateEntry> update_order_; // rams_ in class order (update)
-    std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
-    std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
-    std::map<const void*, std::unique_ptr<Homing>> homings_;
-    std::map<const void*, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
+    // Per-info data the RAMs point into, keyed by (document, info reference).
+    // The key once was document ^ reference: two infos of different documents
+    // could share it (e.g. i_fadewn01 and j_startback in stagis10, ~3 % of
+    // runs, depending on heap addresses), and the second add_info freed the
+    // first info's data under its RAMs (use-after-free, missing sequences).
+    using InfoKey = std::pair<const void*, std::uint32_t>;
+    std::map<InfoKey, std::unique_ptr<std::vector<Sequence>>> sequences_;
+    std::map<InfoKey, std::unique_ptr<HitBody>> hit_bodies_;
+    std::map<InfoKey, std::unique_ptr<Homing>> homings_;
+    std::map<InfoKey, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
     std::array<bool, 4> item_labels_{}; // ITNAMEFONT font00..03 in use
 };
 
@@ -1447,7 +1453,8 @@ private:
     bool execute(Engine& engine, ActionRam& ram, const Command& command);
     void apply_visuals(ActionRam& ram);
     std::vector<std::unique_ptr<ActionRam>> rams_;
-    std::map<const void*, std::unique_ptr<std::vector<Action>>> actions_;
+    // Keyed by (document, info reference), see ModelCtrlManager::sequences_.
+    std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<std::vector<Action>>> actions_;
     std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<AnimationDatabase>> databases_;
     float random_wait_min_{}; // 80535A60: minimum of the random WAITCHECKs
     std::map<const Node*, ActionRam*> actor_owner_;
