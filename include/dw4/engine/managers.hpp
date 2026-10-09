@@ -678,7 +678,7 @@ private:
         Node* node{};
         float max_width{};
         float spacing{};
-        int align{};              // 0 left, 1 center, 2 right
+        int align{};              // beFontInfoData [9], enum 804D2048: 0 left, 1 right, 2 center
         std::string style;
         std::vector<ObjectView>* strings{};
     };
@@ -865,6 +865,7 @@ private:
         float maximum = 100, target{}, shown{};
         std::int64_t low_time{}, high_time{};
         bool continuous = true, dirty = true;
+        bool integer{}; // OneData [14] (+0x3E): the shown value is truncated every step
         std::string model_name;
         int model_index{};
     };

@@ -141,6 +141,7 @@ void MeterCtrlManager::add_info(Engine& engine, const ObjectView& info) {
             ram->low_time = one.i64(9);
             ram->high_time = one.i64(10);
             ram->continuous = one.ref(3) ? one.ref(3).boolean(8) : true;
+            ram->integer = one.boolean(14);
         }
         engine.messenger().add_row("METERCTRL", ram->info_name, ram->index, ram.get());
         rams_.push_back(std::move(ram));
@@ -214,7 +215,17 @@ void MeterCtrlManager::update(Engine& engine) {
             ram.dirty = true;
             const float difference = ram.target - ram.shown;
             const float move = std::min(std::abs(difference), step);
-            ram.shown = std::clamp(ram.shown + (difference > 0 ? move : -move), 0.0f, ram.maximum);
+            float next = std::clamp(ram.shown + (difference > 0 ? move : -move), 0.0f, ram.maximum);
+            // 80307358-803073BC: integer meters (OneData +0x3E, the HP meters) truncate the
+            // shown value (fctiwz); a nonzero value that truncates to 0 shows as 1. With
+            // maximum 100 the meter falls by 2 and rises by 1 per step and rests at
+            // trunc(target), staying dirty while target != shown.
+            if (ram.integer) {
+                const bool nonzero = next != 0.0f;
+                next = std::trunc(next);
+                if (next == 0.0f && nonzero) next = 1.0f;
+            }
+            ram.shown = next;
         }
         if (!ram.dirty || !ram.node) continue;
         ram.dirty = false;
