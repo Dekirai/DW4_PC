@@ -2561,6 +2561,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             } else if (auto* hitland = engine.get<engine::HitLandManager>(); hitland && models && flat(takeoff, me) < 8.0f)
                 for (const auto& e : models->rams()) {
                     if (!e->generated || !e->node || e->is_player || e->category == "ENEMY") continue;
+                    // (Enemy bullets, kind 7 or 8 boxes, are no platforms.)
+                    bool enemy_fire = false;
+                    for (const auto& h : e->hitboxes) enemy_fire = enemy_fire || h.kind / 10000 == 7 || h.kind / 10000 == 8;
+                    if (enemy_fire) continue;
                     const auto at = position_of(*e);
                     if (flat(at, landing) > 30.0f || std::abs(at.y - landing.y) > 20.0f) continue;
                     const auto last = model_last_.find(e.get());
