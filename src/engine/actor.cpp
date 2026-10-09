@@ -1,5 +1,6 @@
 #include "dw4/engine/actor.hpp"
 
+#include "dw4/animation_math.hpp"
 #include "dw4/skinning.hpp"
 
 #include <algorithm>
@@ -13,12 +14,31 @@ Mat4 to_mat4(const SkinMatrix& m) {
     for (std::size_t i = 0; i < 16; ++i) r.m[i] = static_cast<float>(m[i]);
     return r;
 }
-Mat4 lerp_matrix(const Mat4& a, const Mat4& b, float t) {
-    Mat4 r;
-    for (std::size_t i = 0; i < 16; ++i) r.m[i] = a.m[i] + (b.m[i] - a.m[i]) * t;
+} // namespace
+
+BoneTrack blend_bone_track(const BoneTrack& acc, const BoneTrack& state, float weight) {
+    BoneTrack r;
+    // loc_8012BE90(acc, acc, state +0x14, weight) at 0x801D10D8.
+    r.rotation = original_interpolate_rotation(acc.rotation, state.rotation, weight);
+    // 0x801D10DC-0x801D111C: f2 = 1.0 - w (fsubs), then per axis
+    // fmadds acc, f2, (w * t) (fmuls).
+    const float rest = 1.0f - weight;
+    r.translation.x = std::fma(acc.translation.x, rest, weight * state.translation.x);
+    r.translation.y = std::fma(acc.translation.y, rest, weight * state.translation.y);
+    r.translation.z = std::fma(acc.translation.z, rest, weight * state.translation.z);
     return r;
 }
-} // namespace
+
+Mat4 bone_track_matrix(const BoneTrack& track) {
+    return to_mat4(original_bone_transform(track.rotation, Vec3{track.translation.x, track.translation.y, track.translation.z}));
+}
+
+BoneTrack matrix_bone_track(const Mat4& local) {
+    BoneTrack r;
+    r.rotation = original_matrix_rotation(local.m);
+    r.translation = {local.m[12], local.m[13], local.m[14]};
+    return r;
+}
 
 AnimationDatabase::AnimationDatabase(const ObjectView& database) : object_(database) {
     const auto skeletons = database.list(5);
@@ -148,8 +168,10 @@ float motion_source_time(const Clip& clip, std::int64_t local, bool loop) {
 }
 
 namespace {
-bool sample_locals(AnimationDatabase& database, const std::string& name, std::int64_t start, std::int64_t time,
-                   std::vector<Mat4>& locals) {
+// The clip's sampled tracks per bone at node time `time`. A bone the clip
+// does not bind keeps the identity track and stays unbound (identity local).
+bool sample_tracks(AnimationDatabase& database, const std::string& name, std::int64_t start, std::int64_t time,
+                   std::vector<BoneTrack>& tracks, std::vector<char>& bound) {
     const Clip* clip = database.clip(name);
     const auto& skel = database.skeleton();
     if (!clip) return false;
@@ -160,18 +182,26 @@ bool sample_locals(AnimationDatabase& database, const std::string& name, std::in
     } catch (const std::exception&) {
         return false;
     }
-    locals.assign(skel.names.size(), Mat4{});
+    tracks.assign(skel.names.size(), BoneTrack{});
+    bound.assign(skel.names.size(), 0);
     for (std::size_t t = 0; t < samples.size() && t < clip->track_bone.size(); ++t) {
         const int bone = clip->track_bone[t];
-        if (bone < 0 || std::size_t(bone) >= locals.size()) continue;
-        Vec3 translation = samples[t].translation;
-        if (std::size_t(bone) < clip->use_sample_translation.size() && !clip->use_sample_translation[std::size_t(bone)]) {
-            const auto& c = skel.constant_translation[std::size_t(bone)];
-            translation = {c.x, c.y, c.z};
-        }
-        locals[std::size_t(bone)] = to_mat4(original_bone_transform(samples[t].rotation, translation));
+        if (bone < 0 || std::size_t(bone) >= tracks.size()) continue;
+        auto& track = tracks[std::size_t(bone)];
+        track.rotation = samples[t].rotation;
+        const Vec3& s = samples[t].translation;
+        track.translation = {s.x, s.y, s.z};
+        if (std::size_t(bone) < clip->use_sample_translation.size() && !clip->use_sample_translation[std::size_t(bone)])
+            track.translation = skel.constant_translation[std::size_t(bone)];
+        bound[std::size_t(bone)] = 1;
     }
     return true;
+}
+
+void publish_tracks(const std::vector<BoneTrack>& tracks, const std::vector<char>& bound, std::vector<Mat4>& locals) {
+    locals.assign(tracks.size(), Mat4{});
+    for (std::size_t b = 0; b < tracks.size(); ++b)
+        if (bound[b]) locals[b] = bone_track_matrix(tracks[b]);
 }
 } // namespace
 
@@ -197,16 +227,45 @@ void MotionState::update(std::int64_t time) {
 }
 
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals) {
-    if (motion.clip.empty() || !sample_locals(database, motion.clip, motion.start, time, locals)) return false;
-    if (motion.fading(time)) {
-        std::vector<Mat4> sampled;
-        const std::vector<Mat4>* previous = &motion.previous_pose;
-        if (motion.previous_pose.empty())
-            previous = sample_locals(database, motion.previous_clip, motion.previous_start, time, sampled) ? &sampled : nullptr;
-        if (previous) {
-            const float t = std::clamp(motion.weight(time), 0.0f, 1.0f);
-            for (std::size_t i = 0; i < locals.size() && i < previous->size(); ++i) locals[i] = lerp_matrix((*previous)[i], locals[i], t);
+    std::vector<BoneTrack> tracks;
+    std::vector<char> bound;
+    if (motion.clip.empty() || !sample_tracks(database, motion.clip, motion.start, time, tracks, bound)) return false;
+    if (!motion.fading(time)) {
+        // 801D0C14 with one state (0x801D0D38-0x801D0E44): the sampled
+        // quaternion through 8012BCDC, the translation into 12..14.
+        publish_tracks(tracks, bound, locals);
+        return true;
+    }
+    // 801D0C14 with several states (0x801D0E68-0x801D1170): per bone the base
+    // state's quaternion and translation (the fade source: the previous clip,
+    // still playing, or the fixed snapshot rebuilt from its cached matrices),
+    // then the incoming state blended over it by its weight, then 8012BCDC.
+    // The matrices themselves are never mixed.
+    std::vector<BoneTrack> from;
+    std::vector<char> from_bound;
+    try {
+        if (!motion.previous_pose.empty()) {
+            from.resize(motion.previous_pose.size());
+            from_bound.assign(motion.previous_pose.size(), 1);
+            for (std::size_t b = 0; b < from.size(); ++b) from[b] = matrix_bone_track(motion.previous_pose[b]);
+        } else if (!sample_tracks(database, motion.previous_clip, motion.previous_start, time, from, from_bound)) {
+            publish_tracks(tracks, bound, locals);
+            return true;
         }
+        const float w = std::clamp(motion.weight(time), 0.0f, 1.0f);
+        locals.assign(tracks.size(), Mat4{});
+        for (std::size_t b = 0; b < tracks.size(); ++b) {
+            if (b >= from.size()) {
+                if (bound[b]) locals[b] = bone_track_matrix(tracks[b]);
+                continue;
+            }
+            // A bone neither state binds keeps the identity local; a bone
+            // only one of them binds blends with the other's identity track.
+            if (bound[b] || from_bound[b]) locals[b] = bone_track_matrix(blend_bone_track(from[b], tracks[b], w));
+        }
+    } catch (const std::exception&) {
+        // Unusable math (a non-finite snapshot): show the incoming state.
+        publish_tracks(tracks, bound, locals);
     }
     return true;
 }
