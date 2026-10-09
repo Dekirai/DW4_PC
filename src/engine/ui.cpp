@@ -117,8 +117,17 @@ void TextCtlManager::load_fonts(Engine& engine) {
             font->binding->texture = bind.ref(4);
             if (font->binding->texture) {
                 font->binding->image = font->binding->texture.ref(12);
-                font->binding->sampler.mag_filter = font->binding->texture.i32(5, 1);
-                font->binding->sampler.min_filter = font->binding->texture.i32(6, 1);
+                // The glyphs sample bilinearly although the font's igTextureAttr
+                // says NEAREST (mag/min 0). Measured in Dolphin: a line centred on
+                // x.5 px is the 7/12 : 5/12 mix of neighbouring texels, an x.0
+                // line keeps a 1/12 ghost, and patching the IG filter tables
+                // (0x80414A44 / 0x80414A5C LINEAR -> NEAR) leaves the text as it
+                // is, so the GX filter does not come from the attribute. Likely
+                // cause: the GX texture object is rebuilt by GXInitTexObj
+                // (LINEAR default, 0x800FEDE4) and gets GXInitTexObjLOD
+                // (0x800FEE50) only while the filter flag 0x800 is set.
+                font->binding->sampler.mag_filter = 1;
+                font->binding->sampler.min_filter = 1;
                 font->binding->sampler.wrap_s = 0;
                 font->binding->sampler.wrap_t = 0;
             }
