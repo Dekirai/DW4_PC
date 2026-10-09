@@ -596,6 +596,19 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                               Output& out) {
     auto* selects = engine.get<engine::SelectCtrlManager>();
     if (!selects) return false;
+    // The form an evolve step wants, kept while the lab program runs (the
+    // step moves on as soon as the form changes, the lab's closing menus
+    // still need their answers).
+    if (step.action.rfind("evolve:", 0) == 0) {
+        lab_target_ = std::atoi(step.action.c_str() + 7);
+    } else if (lab_target_ >= 0) {
+        engine::Packet running;
+        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
+        if (running.bools.empty() || !running.bools[0]) {
+            lab_target_ = -1;
+            lab_leaving_ = false;
+        }
+    }
     for (const auto& menu : selects->open_selects()) {
         if (menu.index != 0 && menu.index != 4) continue;
         if (!menu.taking_input) return true; // opening or closing: hands off
@@ -621,18 +634,25 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             else cancel = true;
         } else if (menu.name == "i_zzstchgwn") {
             cancel = !on_step_mat;
-        } else if (step.action.rfind("evolve:", 0) == 0) {
+        } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
             // lab menu Digivolve / Equip / Exit (3 lines), the forms reached
             // (i_stcursor01: shinka row 3 first, then ascending), the two
             // confirmations (i_stmesscr, 0 = yes); once the form is the
-            // wanted one, no / Exit.
-            const int target = std::atoi(step.action.c_str() + 7);
+            // wanted one: no equipping, Exit, and yes to "leave the lab?"
+            // (ShopSelect02 mode 1268 after Exit; any other answer returns
+            // to the lab menu).
+            const int target = lab_target_;
             auto* sys = engine.get<engine::GameSystem>();
             const bool done = sys && sys->players[0].stats.species == target;
             if (menu.name == "i_messcr") {
-                want = done ? menu.items - 1 : 0;
+                if (menu.items >= 3) {
+                    want = done ? menu.items - 1 : 0;
+                    lab_leaving_ = done;
+                } else {
+                    want = done && !lab_leaving_ ? menu.items - 1 : 0;
+                }
             } else if (menu.name == "i_stcursor01" && sys) {
                 std::vector<int> forms;
                 for (const auto& [species, reached] : sys->players[0].base_isuse)
@@ -877,9 +897,11 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             // A shot about to arrive is guarded against; otherwise close
             // enemies first (their touch hurts too), then the targets, else
             // the guard while something is aimed at the ride. (A sign of the
-            // train comes first: it passes once, and a fight would knock the
-            // player off the edge it is struck from.)
-            if (foe && (ride.strike <= 0.0f || !best)) best = foe;
+            // train comes first once it is near, `strike` * 4: it passes
+            // once, and a fight would knock the player off the edge it is
+            // struck from; before that the enemies boarding the train, whose
+            // blows and stuns would do the same while it passes.)
+            if (foe && (ride.strike <= 0.0f || !best || flat(nearest_hit_point(*best, me), me) > ride.strike * 4.0f)) best = foe;
             if (!best && !threat) break;
             const bool swing_now = best && best != foe && ride.strike > 0.0f && flat(nearest_hit_point(*best, me), me) <= ride.strike;
             if (best && (!incoming || swing_now)) {

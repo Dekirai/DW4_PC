@@ -67,6 +67,8 @@ private:
     int stuck_since_ = -1;       // the step was found impossible since (traces)
     int key_since_ = -1;         // walking to a key item since
     int key_skip_until_ = -1;    // a key item out of reach is left to the ExploreBot until
+    int lab_target_ = -1;        // the form the open Digi-Lab is asked for (evolve:<n>)
+    bool lab_leaving_ = false;   // Exit was chosen in the lab menu
 };
 
 } // namespace dw4::game
