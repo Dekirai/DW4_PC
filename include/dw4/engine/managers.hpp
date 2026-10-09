@@ -1350,7 +1350,8 @@ public:
 private:
     struct List {
         int kind{};                        // 0 techniques, 1 disks, 2 status
-        int cursor{}, scroll{}, line_mode{}, count{};
+        // _lineMode defaults to 2 (beNDMWPanelObject meta, 80337F40).
+        int cursor{}, scroll{}, line_mode{2}, count{};
         bool fire_request{};               // emergency heal: fire the preselected line
         std::vector<int> rows, colors;
     };

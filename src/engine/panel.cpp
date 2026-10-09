@@ -435,14 +435,15 @@ void PanelManager::update(Engine& engine) {
         auto& shown = list;
         display(engine, ram, shown);
         if (previous_count != shown.count) {
-            // 80348C64: base model with the sequence for the line count.
+            // 80348C64: base model with the sequence for the line count. The
+            // new line mode moves the cursor at once, the rows only with the
+            // next frame's display (8034A9A4 shows once, before this).
             shown.line_mode = shown.count == 3 ? 1 : shown.count > 3 ? 0 : 2;
             const char* sequence = kBaseSequences[shown.kind][shown.line_mode];
             if (ram.reopen) model(engine, ram, "i_wzslbase00", "GENERATE", true, sequence);
             else model(engine, ram, "i_wzslbase00", sequence, false, nullptr);
             if (!(shown.fire_request && ram.fire == 1)) play_sound(engine, "WINDOW_OPEN");
             ram.reopen = false;
-            display(engine, ram, shown);
         }
         const bool cursor = !(ram.state == 1 && ram.fire == 1) && shown.count > 0;
         if (cursor) {
