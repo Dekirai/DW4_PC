@@ -1101,6 +1101,12 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         break;
     }
     case NodeKind::transform_recorder:
+        // igTransformRecorder traversal 801DE9C0 (table 0x80415194): _m
+        // (+0x20, vtable +0x94) = modelview stack top * the traversal's
+        // inverse view (+0xA4), i.e. the world matrix; _mvm (+0x60, vtable
+        // +0x98) = the modelview matrix itself. One matrix each, no double
+        // buffer: MOVERL JOINT (8030CD94) reads _m through the field meta
+        // 805646FC (offset 0x20, registered by 801ABF70).
         n->recorded = model;
         break;
     case NodeKind::reset_node:

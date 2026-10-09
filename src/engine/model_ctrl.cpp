@@ -1465,7 +1465,9 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         if (ram.follow_trace) {
-            // 8030CD94: the recorder's last world matrix.
+            // 8030CD94: the recorder's last world matrix (_m, +0x20: the TRC
+            // data +0x10 plus the offset of the field meta 805646FC), as the
+            // last traversal left it.
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
             if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0 && ram.node)
                 engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace at (" +
