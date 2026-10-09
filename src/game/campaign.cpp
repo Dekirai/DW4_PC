@@ -18,8 +18,9 @@ namespace {
 // them: atoms F<n> (story flag n set), K<n> (key item n in the common flag
 // folder), P<n> (the story phase is at least n, see phase()), D<model>#<n>
 // (that model of the running stage is used up: HP 0, e.g. a console that
-// took its one hit); '!' negates an atom, '&' binds tighter than '|'; no
-// parentheses. Empty = always.
+// took its one hit), E<n> (the stage holding the exit was entered at player
+// point n, see Exit::entry); '!' negates an atom, '&' binds tighter than '|';
+// no parentheses. Empty = always.
 
 // The story phase the lobby scripts branch on (stagML11 start.lua and
 // mate00.lua, stagML02 matf00/matf02/first.lua): flags 1..6 are set and
@@ -44,7 +45,9 @@ int phase(engine::Engine& engine) {
     return 1;
 }
 
-bool atom(engine::Engine& engine, std::string_view text) {
+// `entry`: the player point the stage holding the condition was (or will be)
+// entered at, -1 unknown (E atoms are false then).
+bool atom(engine::Engine& engine, std::string_view text, int entry) {
     bool negate = false;
     while (!text.empty() && text.front() == '!') {
         negate = !negate;
@@ -71,11 +74,13 @@ bool atom(engine::Engine& engine, std::string_view text) {
         }
     } else if (text.front() == 'P') {
         value = phase(engine) >= n;
+    } else if (text.front() == 'E') {
+        value = entry >= 0 && entry == n;
     }
     return value != negate;
 }
 
-bool holds(engine::Engine& engine, std::string_view condition) {
+bool holds(engine::Engine& engine, std::string_view condition, int entry = -1) {
     if (condition.empty()) return true;
     for (std::size_t start = 0;;) {
         const auto bar = condition.find('|', start);
@@ -83,7 +88,7 @@ bool holds(engine::Engine& engine, std::string_view condition) {
         bool all = true;
         for (std::size_t at = 0; all;) {
             const auto amp = alternative.find('&', at);
-            all = atom(engine, alternative.substr(at, amp == std::string_view::npos ? std::string_view::npos : amp - at));
+            all = atom(engine, alternative.substr(at, amp == std::string_view::npos ? std::string_view::npos : amp - at), entry);
             if (amp == std::string_view::npos) break;
             at = amp + 1;
         }
@@ -108,9 +113,10 @@ struct Objective {
     const char* done;
     const char* stage;
     const char* action;
-    // "<stage>:<mat>": the objective's stage counts only when entered by
-    // that exit (a part of the stage reached only from that side).
-    const char* via = "";
+    // >= 0: the objective's stage counts only when entered at that player
+    // point (a part of the stage reached only from that side; the exits
+    // leading there name their point, Exit::entry).
+    int entry = -1;
 };
 constexpr Objective kObjectives[] = {
     // Phase 1. The Digi-Elf sends the new member to the Commander Room;
@@ -147,10 +153,11 @@ constexpr Objective kObjectives[] = {
     {"lobby console 0 (stagML12)", "F329|P4", "stagml12", "strike:g_evenconsz05#0"},
     {"junk console (stagML13)", "F321|P4", "stagml13", "strike:g_junkconsz05#0"},
     // (Consoles 1-3 lie behind the hiding box: the side reached from the
-    // stagML13 gate mate00, open once the junk console is off.)
-    {"lobby console 2 (stagML12)", "F331|P4", "stagml12", "strike:g_evenconsz05#2", "stagml13:mate00"},
-    {"lobby console 3 (stagML12)", "F332|P4", "stagml12", "strike:g_evenconsz05#3", "stagml13:mate00"},
-    {"lobby console 1 (stagML12)", "F324|P4", "stagml12", "strike:g_evenconsz05#1", "stagml13:mate00"},
+    // stagML13 gate mate00 (player point 5), open once the junk console is
+    // off.)
+    {"lobby console 2 (stagML12)", "F331|P4", "stagml12", "strike:g_evenconsz05#2", 5},
+    {"lobby console 3 (stagML12)", "F332|P4", "stagml12", "strike:g_evenconsz05#3", 5},
+    {"lobby console 1 (stagML12)", "F324|P4", "stagml12", "strike:g_evenconsz05#1", 5},
     {"Seraphimon restores the lobby", "P4", "stagml02", "wait"},
     // Phase 4. Area 2: key items 4 (dng204b2) and 5 (dng205b3) open the way
     // from stag0202 to stag0204 (stag0202 start.lua), the energy plug in
@@ -158,7 +165,10 @@ constexpr Objective kObjectives[] = {
     // dng206 tower with Belphemon (all 36 plugs broken, brk_g_eneplugz02.lua).
     {"key item 4 (dng204b2 boss)", "K4|P5", "dng204b2", "explore:matz02"},
     {"key item 5 (dng205b3 boss)", "K5|P5", "dng205b3", "explore:matz02"},
-    {"energy plugs (stag0205)", "F49|P5", "stag0205", "strike:g_eneplugz02#*"},
+    // (The plugs lie by the train's arrival, player point 0; the gate field
+    // side, point 1, is a plateau walled in by kind 0x802 walls, which stop
+    // the player: no way down.)
+    {"energy plugs (stag0205)", "F49|P5", "stag0205", "strike:g_eneplugz02#*", 0},
     {"Belphemon (stagBS02)", "F68|P5", "stagbs02", "explore:matz01"},
     // After Belphemon: Ophanimon (flag 334), Seraphimon (82), Leomon in
     // stagML12 (335), then Seraphimon's briefing on matf02 (phase 5).
@@ -191,11 +201,15 @@ constexpr Objective kObjectives[] = {
 // The stage exits the story uses (the exit survey's list without the
 // quest dungeons and the stag0401 quest entrances) and the game state each
 // needs to be usable. "transporter" marks the lobby gate's area list.
+// `entry` is the target's player point the exit leads to (funcStageChange's
+// second argument, SETGENERATEPOS), given where an objective or an exit
+// depends on the side a stage was entered from; -1 = not needed.
 struct Exit {
     const char* stage;
     const char* mat;
     const char* target;
     const char* when;
+    int entry = -1;
 };
 constexpr Exit kExits[] = {
     // Lobby (walked to; gate prompts answered).
@@ -207,7 +221,7 @@ constexpr Exit kExits[] = {
     {"stagml02", "mate00", "stagml11", ""},
     {"stagml12", "matz00", "stagml11", ""},     {"stagml12", "matz01", "stagml13", ""},
     {"stagml13", "matz00", "stagml11", ""},     {"stagml13", "matz01", "stagml12", ""},
-    {"stagml13", "mate00", "stagml12", "F321"},
+    {"stagml13", "mate00", "stagml12", "F321", 5},
     // Training field (stag0001 matz00.lua: both answers lead to stag0101).
     {"stag0001", "matz00", "stag0101", ""},
     // Area 1.
@@ -230,13 +244,21 @@ constexpr Exit kExits[] = {
     {"staggf02", "matz00", "staggf01", ""},     {"staggf02", "matz01", "staggf03", ""},
     {"staggf02", "matz02", "staggf04", ""},
     {"staggf03", "matz00", "staggf02", ""},     {"staggf03", "math00", "stagml02", "!F20"},
-    {"staggf04", "matz00", "stag0205", ""},     {"staggf04", "matz01", "staggf02", ""},
+    {"staggf04", "matz00", "stag0205", "", 1}, {"staggf04", "matz01", "staggf02", ""},
     // Area 2.
     {"stag0201", "matz00", "stag0202", ""},     {"stag0201", "matz01", "dng204b1", ""},
     {"stag0202", "matz00", "stag0201", ""},     {"stag0202", "matz01", "dng205b1", ""},
     {"stag0202", "matz02", "stag0204", "K4&K5"},
     {"stag0204", "matz00", "stag0202", ""},     {"stag0204", "matz01", "dng206f1", "F49"},
-    {"stag0205", "mate00", "stag0201", ""},     {"stag0205", "matz00", "staggf04", ""},
+    // stag0205: the train's arrival (point 0) with the plugs and the
+    // teleporter (mate00) and the gate field plateau (point 1) are not joined.
+    {"stag0205", "mate00", "stag0201", "E0"},   {"stag0205", "matz00", "staggf04", "E1"},
+    // The train (stag0201 matz02, its prompt's first answer) and its track
+    // ends (stag0203 matz00-03 back to stag0201, matz04 to stag0205).
+    {"stag0201", "matz02", "stag0203", ""},
+    {"stag0203", "matz00", "stag0201", ""},     {"stag0203", "matz01", "stag0201", ""},
+    {"stag0203", "matz02", "stag0201", ""},     {"stag0203", "matz03", "stag0201", ""},
+    {"stag0203", "matz04", "stag0205", "", 0},
     {"dng204b1", "matz01", "stag0201", ""},     {"dng204b1", "matz02", "dng204b2", ""},
     {"dng204b2", "matz01", "dng204b1", ""},     {"dng204b2", "matz02", "stagml11", ""},
     {"dng205b1", "matz01", "stag0202", ""},     {"dng205b1", "matz02", "dng205b2", ""},
@@ -323,16 +345,76 @@ constexpr StageSetting kStageSettings[] = {
 // towers and the two shelves must all break before the boat reaches the
 // bomb, stag0103 hit_g_facttowerz06.lua / hit_g_shelfz06.lua: flags 481-489,
 // else matf00 blows it up and sends the player back to stag0102). Each model
-// prefix listed is attacked whenever one with HP is within `range`, enemies
-// within `fight`; shots within `guard` are guarded against.
+// prefix listed (or "<model>#<n>", that RAM only) is attacked whenever one with
+// HP that is not switched or powered off is within `range`, enemies within
+// `fight`; shots within `guard` are guarded against.
+// The stag0203 train runs straight at every junction unless the junction's
+// target is struck while the train is on its mat (stag0203 mate00..mate10:
+// g_IFLG00 = track, g_IFLG01 = 1 straight / 2 turn, applied when the train
+// leaves the mat). The way to matz04 (stag0205, where the energy plugs are):
+// track 1 turns at mate00 (g_turnright#0) to 4, straight at mate03 to 5,
+// turns at mate04 (g_turnright#4) to 9, at mate08 (g_turnleft#2) to 20, and
+// the gate signs of mate09/mate10 (g_gatesign#0/#1, else they turn back to
+// track 10) lead on to 21 and 22. The signs stand beside the track and the
+// stage's weapon w_sp0203 is a slash (every sequence label "slash") whose
+// box reaches 14-18 ahead of the player, while the sign boxes begin 30 from
+// the track (the train's edge is 16 from it): the player moves to the edge
+// nearest the sign early and swings once its hit box is within `strike`.
+// A sign of `avoid` that is not wanted (the other way at a junction) within
+// reach holds the swing back, also at enemies.
 struct RideTargets {
     const char* stage;
     const char* prefixes; // '|'-separated model name prefixes
     float range, fight, guard;
+    float strike = 0.0f;    // > 0: A only with the target's hit box this close
+    const char* avoid = ""; // '|'-separated prefixes of models not to hit
 };
 constexpr RideTargets kRideTargets[] = {
     {"stag0103", "g_facttowerz06|g_shelfz06", 70.0f, 20.0f, 40.0f},
+    {"stag0203", "g_turnright#0|g_turnright#4|g_turnleft#2|g_gatesign#0|g_gatesign#1", 220.0f, 20.0f, 0.0f, 16.0f,
+     "g_turn|g_gatesign"},
 };
+
+// Whether a model is named by a '|'-separated list ("<model>#<n>" names that
+// RAM, otherwise a name prefix); the list starts and ends with '|'.
+bool listed_in(const std::string& list, const engine::ModelCtrlManager::ModelRam& ram) {
+    const std::string exact = ram.info_name + "#" + std::to_string(ram.index);
+    for (std::size_t at = 1; at < list.size();) {
+        const auto bar = list.find('|', at);
+        if (bar == std::string::npos) break;
+        const std::string token = list.substr(at, bar - at);
+        if (!token.empty() && (token.find('#') != std::string::npos ? token == exact : ram.info_name.rfind(token, 0) == 0)) return true;
+        at = bar + 1;
+    }
+    return false;
+}
+
+// The point of a model's hit boxes (world X/Z, from the local boxes and the
+// node matrix) nearest to `p`; the model's origin without boxes.
+engine::Vec3f nearest_hit_point(const engine::ModelCtrlManager::ModelRam& ram, const engine::Vec3f& p) {
+    const auto& m = ram.node->matrix;
+    engine::Vec3f best{m(3, 0), m(3, 1), m(3, 2)};
+    if (!ram.hit || ram.hit->boxes.empty()) return best;
+    float best_d = 1e30f;
+    for (const auto& [lo, hi] : ram.hit->boxes) {
+        float x0 = 1e30f, x1 = -1e30f, z0 = 1e30f, z1 = -1e30f;
+        for (int corner = 0; corner < 4; ++corner) {
+            const float x = corner & 1 ? hi.x : lo.x, z = corner & 2 ? hi.z : lo.z, y = (lo.y + hi.y) * 0.5f;
+            const float wx = x * m(0, 0) + y * m(1, 0) + z * m(2, 0) + m(3, 0), wz = x * m(0, 2) + y * m(1, 2) + z * m(2, 2) + m(3, 2);
+            x0 = std::min(x0, wx);
+            x1 = std::max(x1, wx);
+            z0 = std::min(z0, wz);
+            z1 = std::max(z1, wz);
+        }
+        const engine::Vec3f q{std::clamp(p.x, x0, x1), m(3, 1), std::clamp(p.z, z0, z1)};
+        const float d = std::hypot(q.x - p.x, q.z - p.z);
+        if (d < best_d) {
+            best_d = d;
+            best = q;
+        }
+    }
+    return best;
+}
 
 std::string lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -398,57 +480,57 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         }
     if (!objective) return std::nullopt;
     const std::string here = lower(engine.stage_name());
-    // An objective with an entrance: done on arrival by it, else the way
-    // leads to the stage of that exit and through it.
-    std::string target = objective->stage;
-    const std::string via = objective->via;
-    if (via.empty() || (came_from_ == via.substr(0, via.find(':')) && came_by_.find(via.substr(via.find(':') + 1)) != std::string::npos)) {
-        if (here == objective->stage) return Step{here, objective->action, -1, objective->name};
-    } else {
-        target = via.substr(0, via.find(':'));
-        if (here == target)
-            return Step{here, std::string(lobby(here) ? "mat:" : "explore:") + via.substr(via.find(':') + 1), -1, objective->name};
-    }
+    if (here == objective->stage && (objective->entry < 0 || objective->entry == entry_))
+        return Step{here, objective->action, -1, objective->name};
     // The cheapest way over the usable exits from here to the objective's
-    // stage: a stage change costs 1, one into the lobby less (a cleared
-    // dungeon is left by its return gate rather than walked back through).
+    // stage (entered at its point, if it names one): a stage change costs 1,
+    // one into the lobby less (a cleared dungeon is left by its return gate
+    // rather than walked back through). A place is a stage and the point it
+    // was entered at (-1 where no exit names one).
     const auto areas = transporter_areas(engine);
-    auto usable = [&](const Exit& exit) {
+    auto usable = [&](const Exit& exit, int entry) {
         if (std::string_view(exit.when) == "transporter")
             return std::find(areas.begin(), areas.end(), exit.target) != areas.end();
-        return holds(engine, exit.when);
+        return holds(engine, exit.when, entry);
     };
-    std::map<std::string, std::string> parent;
-    std::map<std::string, float> cost{{here, 0.0f}};
-    std::set<std::string> done;
-    parent[here] = "";
+    using Place = std::pair<std::string, int>;
+    const Place start{here, entry_};
+    std::map<Place, Place> parent;
+    std::map<Place, float> cost{{start, 0.0f}};
+    std::set<Place> done;
+    std::optional<Place> found;
     for (;;) {
-        std::string at;
+        std::optional<Place> at;
         float best = 1e30f;
-        for (const auto& [stage, c] : cost)
-            if (!done.count(stage) && c < best) {
+        for (const auto& [place, c] : cost)
+            if (!done.count(place) && c < best) {
                 best = c;
-                at = stage;
+                at = place;
             }
-        if (at.empty() || at == target) break;
-        done.insert(at);
+        if (!at) break;
+        if (at->first == objective->stage && (objective->entry < 0 || objective->entry == at->second)) {
+            found = at;
+            break;
+        }
+        done.insert(*at);
         for (const auto& exit : kExits) {
-            if (at != exit.stage || !usable(exit)) continue;
-            const float next = best + (std::string_view(exit.target) == "stagml11" ? 0.6f : 1.0f);
-            if (const auto it = cost.find(exit.target); it == cost.end() || next < it->second) {
-                cost[exit.target] = next;
-                parent[exit.target] = at;
+            if (at->first != exit.stage || !usable(exit, at->second)) continue;
+            const Place next{exit.target, exit.entry};
+            const float c = best + (std::string_view(exit.target) == "stagml11" ? 0.6f : 1.0f);
+            if (const auto it = cost.find(next); it == cost.end() || c < it->second) {
+                cost[next] = c;
+                parent[next] = *at;
             }
         }
     }
-    if (!parent.count(target)) return std::nullopt;
-    std::string next = target;
-    while (parent[next] != here) next = parent[next];
+    if (!found || *found == start) return std::nullopt;
+    Place next = *found;
+    while (parent.at(next) != start) next = parent.at(next);
     // Every mat of this stage leading there is a goal.
     Step step{here, "", -1, objective->name};
     std::string mats;
     for (const auto& exit : kExits)
-        if (here == exit.stage && next == exit.target && usable(exit)) {
+        if (here == exit.stage && next.first == exit.target && next.second == exit.entry && usable(exit, entry_)) {
             if (!mats.empty()) mats += '|';
             mats += exit.mat;
             if (std::string_view(exit.when) == "transporter")
@@ -548,6 +630,10 @@ bool CampaignBot::walk_to(engine::Engine& engine, const engine::ModelCtrlManager
         route_next_ = 0;
         route_goal_ = goal;
         route_frame_ = frame;
+        if (std::getenv("DW4_TRACE_CAMPAIGN") && std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2")
+            std::printf("[%d] campaign route (%.0f,%.0f,%.0f) -> (%.0f,%.0f,%.0f): %zu points, ends (%.0f,%.0f,%.0f)\n", frame, me.x, me.y,
+                        me.z, goal.x, goal.y, goal.z, route_.size(), route_.empty() ? me.x : route_.back().point.x,
+                        route_.empty() ? me.y : route_.back().point.y, route_.empty() ? me.z : route_.back().point.z);
     }
     while (route_next_ < route_.size() && flat(route_[route_next_].point, me) < 4.0f) ++route_next_;
     engine::Vec3f aim = goal;
@@ -578,9 +664,12 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     Output out;
     const std::string stage = lower(engine.stage_name());
     if (stage != stage_) {
-        came_from_ = stage_;
-        came_by_ = last_action_;
         stage_ = stage;
+        // The player point this stage was entered at (PLAYERPOINT
+        // GETGENERATEPOS, what first.lua's PLAYERgetPos reads).
+        engine::Packet packet;
+        engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
+        entry_ = packet.ints.empty() ? -1 : packet.ints[0];
         stage_frame_ = frame;
         route_.clear();
         route_frame_ = -100000;
@@ -599,9 +688,28 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
         }
     }
     if (stage.rfind("stagis", 0) == 0 || !player || !player->node) return boot(engine, frame);
+    // The character on arriving in a stage (level, techniques' elements,
+    // the attack's element: what element-locked walls need).
+    if (frame == stage_frame_ + 104 && trace())
+        if (auto* sys = engine.get<engine::GameSystem>()) {
+            const auto& slot = sys->players[0];
+            std::string techs;
+            if (auto* db = engine.get<engine::DatabaseManager>())
+                for (const int row : slot.wazalist) techs += " " + db->text("pcTech", row, "ZOKUSEI");
+            std::printf("[%d] campaign player %s level %d hp %d bits %d attack element %d techniques:%s\n", frame, slot.digimon.c_str(),
+                        slot.stats.level, slot.max_hp, slot.bits, slot.stats.attack_zokusei, techs.c_str());
+            if (auto* db = engine.get<engine::DatabaseManager>(); db && std::getenv("DW4_TRACE_CAMPAIGN") &&
+                                                                  std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2")
+                for (int n = 1; n <= 6; ++n) {
+                    const std::string tech = "TECH" + std::to_string(n);
+                    const int base = db->number("shinka", slot.stats.species, tech).value_or(-1);
+                    std::printf("      %s %s level %d element %s\n", tech.c_str(), db->text("pcTech", base, "NAME").c_str(),
+                                db->number("shinka", slot.stats.species, tech + "_LEVEL").value_or(-1),
+                                db->text("pcTech", base, "ZOKUSEI").c_str());
+                }
+        }
     const auto step = next_step(engine);
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
-    if (step) last_action_ = step->action;
     if (key != traced_) {
         std::printf("[%d] campaign: %s\n", frame, key.c_str());
         traced_ = key;
@@ -665,15 +773,15 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             auto* models = engine.get<engine::ModelCtrlManager>();
             if (!models) break;
             const std::string prefixes = std::string("|") + ride.prefixes + "|";
+            const std::string avoid = std::string("|") + ride.avoid + "|";
             const engine::ModelCtrlManager::ModelRam* best = nullptr;
+            bool hold = false; // an unwanted target within reach
             for (const auto& e : models->rams()) {
                 if (!e->generated || !e->node || e->hp <= 0) continue;
-                bool listed = false;
-                for (std::size_t at = 1; at < prefixes.size() && !listed;) {
-                    const auto bar = prefixes.find('|', at);
-                    listed = e->info_name.rfind(prefixes.substr(at, bar - at), 0) == 0;
-                    at = bar + 1;
-                }
+                if (e->seq_name == "SQ_SWON" || e->seq_name == "SQ_SWOF" || e->seq_name == "SQ_POWEROF") continue;
+                const bool listed = listed_in(prefixes, *e);
+                if (!listed && ride.strike > 0.0f && listed_in(avoid, *e) && flat(nearest_hit_point(*e, me), me) <= ride.strike + 6.0f)
+                    hold = true;
                 if (listed && flat(position_of(*e), me) < ride.range && (!best || flat(position_of(*e), me) < flat(position_of(*best), me)))
                     best = e.get();
             }
@@ -695,15 +803,22 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             }
             // A shot about to arrive is guarded against; otherwise close
             // enemies first (their touch hurts too), then the targets, else
-            // the guard while something is aimed at the ride.
-            if (foe) best = foe;
+            // the guard while something is aimed at the ride. (A sign of the
+            // train comes first: it passes once, and a fight would knock the
+            // player off the edge it is struck from.)
+            if (foe && (ride.strike <= 0.0f || !best)) best = foe;
             if (!best && !threat) break;
-            if (best && !incoming) {
+            const bool swing_now = best && best != foe && ride.strike > 0.0f && flat(nearest_hit_point(*best, me), me) <= ride.strike;
+            if (best && (!incoming || swing_now)) {
+                // Toward the nearest point of its hit box (on a ride: to the
+                // ride's edge facing it), swinging once it is within reach.
+                const auto at = ride.strike > 0.0f && best != foe ? nearest_hit_point(*best, me) : position_of(*best);
                 out.walk = true;
-                out.x = position_of(*best).x;
-                out.z = position_of(*best).z;
+                out.x = at.x;
+                out.z = at.z;
                 out.reach = 4.0f;
-                if (frame % 12 < 3) out.buttons |= pad_button::a;
+                if (frame % 12 < 3 && !hold && (ride.strike <= 0.0f || best == foe || flat(at, me) <= ride.strike))
+                    out.buttons |= pad_button::a;
             } else {
                 // (B is read on its press: pulsed so the guard is taken again.)
                 if (frame % 8 < 4) out.buttons |= pad_button::b;
@@ -723,7 +838,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             if (d.jump_attack) {
                 if (frame % 40 < 3) out.buttons |= pad_button::x;
                 else if (frame % 40 >= 10 && frame % 40 < 13) out.buttons |= pad_button::a;
-            } else if (frame % 20 < 3) {
+            } else if (frame % (d.fast_attack ? 10 : 20) < 3) {
                 out.buttons |= pad_button::a;
             }
         }

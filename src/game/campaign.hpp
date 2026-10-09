@@ -50,8 +50,7 @@ private:
     const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near) const;
 
     std::string stage_;
-    std::string came_from_, came_by_; // the stage before this one and the step taken there (its exit mats)
-    std::string last_action_;    // the step's action this frame
+    int entry_ = -1;             // the player point the current stage was entered at
     int stage_frame_{};          // the frame the current stage was requested
     std::string traced_;         // the last traced step
     int traced_at_{};            // the frame it began
