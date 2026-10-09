@@ -521,7 +521,8 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels);
         const auto& s = binding->sampler;
-        auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : v == 2 ? GL_MIRRORED_REPEAT : GL_REPEAT; };
+        // GX wraps (texture_sampler): 0 CLAMP, 1 REPEAT.
+        auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : GL_REPEAT; };
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap(s.wrap_s));
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap(s.wrap_t));
         // IG_GFX_TEXTURE_FILTER: 0 NEAREST, 1 LINEAR, 2 NEAREST_MIPMAP_NEAREST,

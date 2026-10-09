@@ -578,6 +578,48 @@ void Node::reset_lod() {
     lod_lower = lod_upper = 0.0f;
 }
 
+TextureSampler texture_sampler(const ObjectView& texture) {
+    TextureSampler s;
+    if (!texture) return s;
+    // igTextureAttr::apply (0x800C3684..0x800C36B4) pushes _wrapS/_wrapT
+    // (800FF6F4), _minFilter (800FF634) and _magFilter (800FF67C) into the
+    // visual context's texture record; 800FE744 turns the IG wraps into GX
+    // ones through 80490984 = {CLAMP, REPEAT, CLAMP, REPEAT}: GX never mirrors.
+    const auto wrap = [](std::int32_t v) { return v >= 0 && v < 4 ? int(v & 1) : 1; };
+    s.wrap_s = wrap(texture.i32(7, 1));
+    s.wrap_t = wrap(texture.i32(8, 1));
+    const auto image = texture.ref(12);
+    // Palette images: the format table 804906A4 (+12) marks the IG formats
+    // 1, 4 and 6 (GX C8 with the built-in TLUTs 804F887C) and the indexed
+    // 0x10000 / 0x10001 / 0x10002 with their igClut (GX C8 / C4 / C14X2;
+    // the game's indexed8 images are 0x10000). For them 800FE744 skips
+    // GXInitTexObj (0x800FED84) and zeroes the TLUT stamp +152 (0x800FED94),
+    // so the bind loop 800FCA9C rebuilds the object right after it with
+    // GXInitTexObjCI (802563C4 at 0x800FCC34 / 0x800FCD4C; the stamp never
+    // matches the generation, which starts at 1, 0x800FC6F8). That is
+    // GXInitTexObj 80256178 with its defaults: mag
+    // LINEAR (0x802561DC), min LINEAR (0x8025628C) or, mipmapped,
+    // LIN_MIP_NEAR (0xA0, 0x80256204). The GXInitTexObjLOD of 800FE744
+    // (0x800FEE50) ran before and is lost, so the attribute filters never
+    // reach a palette texture; the wraps do.
+    const auto format = image ? image.u32(11) : 0u;
+    const bool palette = format == 1 || format == 4 || format == 6 || format == 0x10000 || format == 0x10001 || format == 0x10002;
+    if (palette) {
+        // Mipmapped: record +60 = _imageCount - 1 (0x800FE15C) or, with
+        // _mipmapMode 1, the generated levels log2(min(w, h)) (0x800FE288).
+        const auto w = image.u32(2), h = image.u32(3);
+        const bool mipmapped = texture.i32(15, 1) > 1 || (texture.i32(10) == 1 && std::min(w, h) >= 2);
+        s.mag_filter = 1;
+        s.min_filter = mipmapped ? 4 : 1; // LINEAR_MIPMAP_NEAREST : LINEAR
+    } else {
+        // GXInitTexObjLOD (0x800FEE50) with the attribute filters, min
+        // through 80414A40, mag through 80414A58.
+        s.mag_filter = texture.i32(5, 1);
+        s.min_filter = texture.i32(6, 1);
+    }
+    return s;
+}
+
 const Attribute* SceneCache::attribute(const ObjectView& view) {
     if (!view) return nullptr;
     const Key key{view.document(), view.reference()};
@@ -593,10 +635,7 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
         a->texture = view.ref(4);
         if (a->texture) {
             a->image = a->texture.ref(12);
-            a->sampler.mag_filter = a->texture.i32(5, 1);
-            a->sampler.min_filter = a->texture.i32(6, 1);
-            a->sampler.wrap_s = a->texture.i32(7, 1);
-            a->sampler.wrap_t = a->texture.i32(8, 1);
+            a->sampler = texture_sampler(a->texture);
         }
     } else if (type == "igTextureStateAttr") {
         a->kind = AttrKind::texture_state;

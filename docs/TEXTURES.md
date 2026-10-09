@@ -116,6 +116,29 @@ equivalence to the game's final GX rendering. Palette precision, BC1 rounding,
 filtering, alpha tests, and texture color-space behavior still need comparison
 against a captured original rendering.
 
+## Sampling (filters and wraps)
+
+`engine::texture_sampler` reproduces the GX texture object the original builds
+for an `igTextureAttr` (DOL addresses in `src/engine/scene_graph.cpp`):
+
+- Wraps come from `_wrapS` / `_wrapT` through the GX table `0x80490984`
+  (0 and 2 clamp, 1 and 3 repeat; GX never mirrors here).
+- Palette images (indexed8 and the other C4/C8/C14X2 formats) ignore the
+  attribute's `_magFilter` / `_minFilter`: the bind loop `800FCA9C` rebuilds
+  their texture object with `GXInitTexObjCI`, whose `GXInitTexObj` defaults
+  are LINEAR (LINEAR_MIPMAP_NEAREST with mip levels), after the
+  `GXInitTexObjLOD` that carried the attribute filters.
+- Other images (BC1) take the attribute filters through `GXInitTexObjLOD`.
+
+In the USA corpus every `igTextureAttr` has repeat wraps, `_mipmapMode` 0 and
+one image. All 3,652 BC1 attributes say LINEAR; of the indexed8 ones 21,336
+say LINEAR and 918 (95 `ndmw.afs` members: `font00.png`, the 32 × 32 effect
+sprites of the stage files such as `y_014eblst01b.png`, `BREAK00.png`,
+`y_onpu.png`, `y_fire01a.png`, `y_ice01.png` and many unnamed ones) say
+NEAREST, which the original never applies. So every game texture samples
+bilinearly. Dolphin comparisons of fire blasts (dng101b2) and disk sparkles
+(dng101b1) match the bilinear sprites.
+
 ## Reproduce the checks
 
 Build the project, then run synthetic tests with no original data:

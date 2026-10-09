@@ -1522,10 +1522,7 @@ void TextureCtrlManager::bind_all(Engine& engine) {
         bind->unit = 0;
         bind->texture = texture;
         bind->image = texture.ref(12);
-        bind->sampler.mag_filter = texture.i32(5, 1);
-        bind->sampler.min_filter = texture.i32(6, 1);
-        bind->sampler.wrap_s = texture.i32(7, 1);
-        bind->sampler.wrap_t = texture.i32(8, 1);
+        bind->sampler = texture_sampler(texture);
         bind->object = texture;
         auto& attrs = set->attributes;
         attrs.erase(std::remove_if(attrs.begin(), attrs.end(), [](const Attribute* a) { return a->kind == AttrKind::texture_bind; }),
