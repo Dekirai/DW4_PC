@@ -1159,8 +1159,12 @@ public:
         int owner_index = -1;
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
+        // The RAM's named timer "KEIKATIMER": made by the first MOVE / MOVEEX /
+        // MOVERL (8030A6BC) or MUTEKI (8030C1F0); its cached frame delta
+        // (8031E4C4) steps the channels, the turn and MUTEKI.
+        std::optional<dw4::MotionTimer> keika;
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)
-        std::int64_t attack_ready{}; // player ATDELAY timer end
+        std::optional<NodeTimer> attack_delay; // player: the named RAM timer "ATDELAY"
         int combo_phase{};           // player work +128
         bool combo_released{};       // player work +12C
         bool panel_open{};           // player work +124: an NDMWPANEL panel is up
@@ -1178,7 +1182,10 @@ public:
         // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
         const std::vector<ObjectView>* ai_maps{};
         int ai_map{};
-        std::int64_t ai_timer_end = -1; // AITIMER
+        // The RAM's named timer "AITIMER" (data list +0x28; 8031DE44 start,
+        // 8031E238 check, 8031E8BC remove), shared by the AIM map and the AIH
+        // homing. Absent counts as expired.
+        std::optional<NodeTimer> ai_timer;
         std::string ai_request;         // AI work +58
         Vec3f ai_world_target{};        // AI work +10: a WPOS map's target
         const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)

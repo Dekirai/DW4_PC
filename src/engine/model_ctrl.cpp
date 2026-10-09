@@ -40,6 +40,37 @@ int update_rank(std::string_view kind) {
         if (kind == kOrder[i]) return i;
     return 3; // an unknown kind as an object
 }
+
+// The named RAM timer "AITIMER" of the AIM map (0x80308868 / 0x803085B4)
+// and the AIH homing (0x80308BAC / 0x80308BC0): 8031DE44 makes it on first
+// use and restarts it with end = (int64)(1e9f * frames / 60f) (800A4130); the
+// check 8031E238 counts a missing timer as expired, otherwise
+// end < ((world >> 18) * scale << 18) + bias (8031E36C, signed 64-bit).
+using ModelRam = ModelCtrlManager::ModelRam;
+void start_ai_timer(ModelRam& ram, std::int64_t world, std::int64_t end) {
+    if (!ram.ai_timer) ram.ai_timer.emplace();
+    timer_start(*ram.ai_timer, world, end);
+}
+bool ai_timer_expired(const ModelRam& ram, std::int64_t world) {
+    return !ram.ai_timer || timer_expired(*ram.ai_timer, world);
+}
+
+// The named RAM timer "KEIKATIMER": the shared move handler 8030A6BC
+// (0x8030A6F8..0x8030A718, MOVE / MOVEEX / MOVERL) and MUTEKI 8030C1F0 make
+// it when missing (8031E138, then 8031DE44 with end 0: the first query at
+// that world time gives one frame).
+void ensure_keika(ModelRam& ram, std::int64_t world) {
+    if (ram.keika) return;
+    ram.keika.emplace();
+    dw4::start_motion_timer(*ram.keika, static_cast<std::uint64_t>(world), 0);
+}
+// 8031E4C4: the frames since the last query, (q(now) - previous) / 16666667
+// capped at 3, 0 when the clock did not move, cached per world time. The
+// original always has the timer here; making it is the port's fallback.
+float keika_frames(ModelRam& ram, std::int64_t world) {
+    ensure_keika(ram, world);
+    return dw4::motion_timer_frames(*ram.keika, static_cast<std::uint64_t>(world));
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -347,7 +378,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
             // recorder under its animated route: boats, trains, rails);
             // anything else (ACTOR) keeps the model and bone names. The
-            // shared move handler first ends a running follow (8030A71C).
+            // shared move handler 8030A6BC first makes a missing KEIKATIMER,
+            // then ends a running follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
@@ -362,8 +395,10 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
-            // 8030A71C (the handler of MOVE, MOVEEX and MOVERL): a new move
-            // ends a MOVERL follow.
+            // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
+            // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
+            // MOVERL follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
@@ -400,7 +435,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
         } else if (type == "beModelCtrlMUTEKI") {
             // 8030C25C: OFFWALL / ONWALL / OFFFLOOR / ONFLOOR switch the wall
             // and floor checks; otherwise the invulnerable frames ("ON" -1:
-            // for the rest of the sequence; "OFF" ends it).
+            // for the rest of the sequence; "OFF" ends it). 8030C1F0 first
+            // makes a missing KEIKATIMER (0x8030C224..0x8030C244).
+            ensure_keika(ram, engine.time());
             if (name == "OFFWALL") ram.wall_check = false;
             else if (name == "ONWALL") ram.wall_check = true;
             else if (name == "OFFFLOOR") ram.floor_check = false;
@@ -435,7 +472,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 ram.ai_world_target = target;
                 if (ram.seq != seq) return;
             }
-            ram.ai_timer_end = -1;
+            ram.ai_timer.reset(); // 0x8030BC94: 8031E8BC removes the AITIMER
         } else if (type == "beModelCtrlLUACALL") {
             // 8030B8A4: BHit, WHit and FHit keep the name for after this
             // model's hitbox hits something, it meets a wall or the floor
@@ -506,7 +543,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
-        ram.ai_timer_end = -1;
+        // The named RAM timers (AITIMER, ATDELAY, KEIKATIMER) live in the
+        // RAM's data list (+0x28), not in the info work: they stay over a
+        // GENERATE (8034B928 / 8030D260 do not touch them) and only REMOVE
+        // drops them.
         ram.ai_request.clear();
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
@@ -616,6 +656,10 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.seq_name.clear();
             ram.wait_name.reset();
             ram.ride.reset();
+            // 0x8030DC88: 8031EA54 drops every named timer of the RAM.
+            ram.ai_timer.reset();
+            ram.attack_delay.reset();
+            ram.keika.reset();
         }
         return true;
     }
@@ -972,11 +1016,15 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             } else if (Packet pick; (pick.ints.push_back(ram.index), engine.messenger().count("DROPITEM", std::nullopt, -1)) &&
                        (engine.messenger().send(engine, "DROPITEM", std::nullopt, -1, "ACTION1", pick), !pick.bools.empty())) {
                 return; // 8034CEB0: DROPITEM ACTION1 took an item instead of attacking
-            } else if (engine.time() >= ram.attack_ready) {
-                // ATDELAY: the next attack waits the player's ATTACKDELAY frames.
+            } else if (!ram.attack_delay || timer_expired(*ram.attack_delay, engine.time())) {
+                // The named RAM timer "ATDELAY" (8031E238 at 0x8034CEF8, missing
+                // = expired): the next attack waits the player's ATTACKDELAY
+                // frames, restarted by 8031DE44 (0x8034D080) with the integer
+                // end (int64)frames * 1000000000 / 60 (__div2i 800A3AF8).
                 int delay = 30;
                 if (auto* sys = engine.get<GameSystem>()) delay = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats.attack_delay;
-                ram.attack_ready = engine.time() + frames_to_time(float(delay));
+                if (!ram.attack_delay) ram.attack_delay.emplace();
+                timer_start(*ram.attack_delay, engine.time(), std::int64_t(delay) * 1000000000 / 60);
                 ram.combo_phase = 0;
                 if (spiral) ram.spin.fill(0);
                 select_sequence(engine, ram, spiral ? "SQ_ATCK2" : "SQ_ATCK1");
@@ -1054,16 +1102,18 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                       int(s[3].active), s[3].speed, ram.applied[1], ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
     }
-    // The channels advance first (8031E4C4 KEIKATIMER step): the rotation
-    // channel of MOVEEX R?xxx (channel 3) turns the wanted yaw by its step in
-    // degrees (0x8030A4A8-0x8030A4F4: +84 += pi/180 * step, the yaw rate +90 =
-    // 1.25 * |that|) before the model turns, the translation channels move it
-    // after the turn.
+    // The channels advance first by the KEIKATIMER frames (0x8030A498
+    // 8031E4C4, only with an allocated list; 8030A2D8 steps each channel by
+    // speed * min(frames, 3)): the rotation channel of MOVEEX R?xxx (channel
+    // 3) turns the wanted yaw by its step in degrees (0x8030A4A8-0x8030A4F4:
+    // +84 += pi/180 * step, the yaw rate +90 = 1.25 * |that|) before the
+    // model turns, the translation channels move it after the turn.
     dw4::MotionStep step;
     if (ram.channels.allocated()) {
         const bool rotating = ram.channels.states()[3].active;
+        const float frames = keika_frames(ram, engine.time());
         try {
-            step = ram.channels.advance(1.0f);
+            step = ram.channels.advance(frames);
         } catch (const std::exception& error) {
             engine.note(std::string("model motion: ") + error.what());
             return false;
@@ -1074,14 +1124,36 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
         }
     }
-    // Turning (8030C85C): shortest arc at the stored rate per frame.
+    // Turning (8030C85C, not forced): an axis whose applied angle (+98)
+    // differs from the wanted one (+80) and whose rate (+8C) is not 0 steps by
+    // rate * KEIKATIMER frames (0x8030C8E0). Both angles are reduced to
+    // [0, tau) with the stored tau (804268DC) by repeated float add/subtract;
+    // the shorter arc wins (equal: the negative one) and a remaining distance
+    // up to the step snaps to the reduced target, which is stored reduced.
     for (std::size_t axis = 0; axis < 3; ++axis) {
         if (ram.applied[axis] == ram.desired[axis]) continue;
         const float rate = axis == 1 ? ram.turn_rate_y : 0.0f;
-        if (rate == 0) continue;
-        const float diff = wrap_angle(ram.desired[axis] - ram.applied[axis]);
-        if (std::abs(diff) <= rate) ram.applied[axis] = ram.desired[axis];
-        else ram.applied[axis] += diff > 0 ? rate : -rate;
+        if (rate == 0.0f) continue;
+        const float delta = rate * keika_frames(ram, engine.time());
+        constexpr float tau = 6.2831854820251465f;
+        auto reduce = [&](float angle) {
+            // (Port guard: angles the float loop could not reduce would hang it.)
+            if (!(std::abs(angle) < 1.0e6f)) angle = std::isfinite(angle) ? std::fmod(angle, tau) : 0.0f;
+            while (angle < 0.0f) angle = angle + tau;
+            while (angle >= tau) angle = angle - tau;
+            return angle;
+        };
+        const float current = reduce(ram.applied[axis]), target = reduce(ram.desired[axis]);
+        float positive, negative;
+        if (current > target) {
+            negative = current - target;
+            positive = (target + tau) - current;
+        } else {
+            positive = target - current;
+            negative = current - (target - tau);
+        }
+        if (positive >= negative) ram.applied[axis] = negative <= delta ? target : current - delta;
+        else ram.applied[axis] = positive <= delta ? target : current + delta;
     }
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
@@ -1325,7 +1397,6 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             continue;
         }
         if (ram.frozen) continue;
-        if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         // 8030CCDC: input, AI and the control transitions run only while the
         // sequence has a CTRL mode; otherwise a running AITIMER is dropped.
         if (ram.ctrl_mode != 0) {
@@ -1343,7 +1414,9 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                 apply_control(engine, ram);
             }
         } else {
-            if (ram.ai_maps) ram.ai_timer_end = -1;
+            // 0x8030CD00: with an AI work (+0x50, made for AIM or AIH data,
+            // 8030DAE8..8030DB4C) 8031E8BC removes the AITIMER.
+            if (ram.ai_maps || ram.homing) ram.ai_timer.reset();
             if (ram.is_player) ram.key_input = false;
         }
         // 8030CD18: the status update of players and enemies (vtable +C0).
@@ -1369,6 +1442,13 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         // 8030CFEC: the wait runs after the motion and before the walls and
         // floors, so a jump's apex goes straight into its fall.
         if (ram.generated && ram.wait_name) check_wait(engine, ram);
+        // 8030C334 (0x8030CFFC, after the wait, before the subcommands): the
+        // invulnerable frames count down by the KEIKATIMER frames, not below 0.
+        if (ram.muteki > 0.0f) {
+            float left = ram.muteki - keika_frames(ram, engine.time());
+            if (left < 0.0f) left = 0.0f;
+            ram.muteki = left;
+        }
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
         // 8030D028: walls and floors.
@@ -1462,6 +1542,10 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     packet.ints = {box.kind, owned ? ram.owner_index : ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
+    // 0x803101F0: sub_80306D68 adds the firing model's own node matrix (for
+    // a fireball the bullet effect itself, not its owner); a hit target turns
+    // towards its translation.
+    packet.matrices.push_back(m);
     packet.strings.emplace_back(owned ? ram.owner_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
@@ -1696,23 +1780,26 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     const Homing& h = *ram.homing;
     if (!ram.node) return;
     bool live = true, tick = false;
+    // The waits run on the same named AITIMER as the AIM map (8031DE44 at
+    // 0x80308BAC / 0x80308C04, 8031E238 at 0x80308BC0 / 0x80308C18): a timer
+    // started this frame is not expired yet, even for 0 frames.
     switch (ram.homing_state) {
     case 0:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.delay);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.delay));
         ram.homing_state = 1;
         [[fallthrough]];
     case 1:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
         break;
     case 2:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.interval);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.interval));
         ram.homing_state = 3;
         [[fallthrough]];
     case 3:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
@@ -1793,7 +1880,9 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
         return;
     }
     std::string request = ram.ai_request;
-    if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
+    // 0x803085B4: 8031E238 on the named AITIMER (missing = expired; the end
+    // against the 2^18 ns quantised clock with a strict '<').
+    if (ai_timer_expired(ram, engine.time())) {
         const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
         const auto& m = ram.node->matrix;
         // 80308654: [11] WPOS steers to the map's world target, otherwise the
@@ -1831,7 +1920,8 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
                 if (entry && roll < entry.i32(5)) { pick = entry; break; }
             ram.desired[1] = std::atan2(goal.x - m(3, 0), goal.z - m(3, 2)) + pick.f32(3);
             request = std::string(pick.str(2));
-            ram.ai_timer_end = engine.time() + frames_to_time(pick.f32(4));
+            // 0x80308868: 8031DE44 restarts it with (int64)(1e9f * frames / 60f).
+            start_ai_timer(ram, engine.time(), frames_to_time(pick.f32(4)));
         }
     }
     ram.key_input = request == "SQ_WALK";
@@ -1906,26 +1996,39 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     context.shooter = packet.integer(1, -1);
     context.shooter_name = std::string(packet.string(0));
     context.bullet_box = box;
+    // 0x8030E718..0x8030E76C, before the hit script: the translation of the
+    // packet's matrix #0 (the firing hitbox model's own matrix, 0x803101F0)
+    // and the own node's. The shooter name / index only feed GETRECNO and
+    // the script (FIGHTCALC).
+    const bool has_source = !packet.matrices.empty();
+    const float source_x = has_source ? packet.matrices[0](3, 0) : 0.0f, source_z = has_source ? packet.matrices[0](3, 2) : 0.0f;
+    const float own_x = m(3, 0), own_z = m(3, 2);
     engine.push_model_context(std::move(context));
     engine.run_script("hit_" + ram.info_name + ".lua");
     const auto done = engine.pop_model_context();
-    if (done.turn && done.shooter >= 0) {
-        // 8030E81C: face the captured source position.
-        if (const auto* source = find(done.shooter_name, done.shooter); source && source->node) {
-            const auto& sm = source->node->matrix;
-            const float heading = std::atan2(sm(3, 0) - m(3, 0), sm(3, 2) - m(3, 2));
-            ram.applied[1] = ram.desired[1] = heading;
-            std::array<float, 16> matrix{};
-            std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
-            const Vec3f position{matrix[12], matrix[13], matrix[14]};
-            try {
-                dw4::original_model_turn_basis(matrix, ram.applied);
-                matrix[12] = position.x;
-                matrix[13] = position.y;
-                matrix[14] = position.z;
-                std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
-            } catch (const std::exception&) {}
+    if (done.turn && has_source) {
+        // 8030E810..8030E854: with the script's turn flag (byte_80535944) the
+        // wanted yaw +84 = atan2(dx, dz) (double 800A2C74, then frsp), then
+        // the forced 8030C85C: every applied angle takes the wanted one at
+        // once and the basis is rebuilt around the position.
+        const float heading = static_cast<float>(std::atan2(static_cast<double>(source_x - own_x), static_cast<double>(source_z - own_z)));
+        if (trace) {
+            char line[160];
+            std::snprintf(line, sizeof line, "  turn to (%.3f,%.3f) from (%.3f,%.3f) heading %.4f", source_x, source_z, own_x, own_z, heading);
+            engine.log(line);
         }
+        ram.desired[1] = heading;
+        ram.applied = ram.desired;
+        std::array<float, 16> matrix{};
+        std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+        const Vec3f position{matrix[12], matrix[13], matrix[14]};
+        try {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+            std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+        } catch (const std::exception&) {}
     }
     if (packet.bools.empty()) packet.bools.push_back(1);
     return true;

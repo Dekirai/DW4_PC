@@ -26,7 +26,7 @@ using socket_handle = int;
 namespace dw4::game {
 namespace {
 
-constexpr std::uint32_t kProtocol = 11; // 11: posted panel/GAMERAM effects and HUD values, quick panel line mode 2; MOTIONSET cross-fades blend the track quaternions (bone matrices during fades); 10: managers wait for the active stage, mat RAM init pass; 9: GENERATE starts with empty sequence labels (respawn SQ_ENTR dual section); 8: once-played clips hold at duration - 1/30, bake from the last traversal, PLAYERgetPos, box camera timer; 7: MOTIONSET restarts, MOVEEX rotation, per-player base flags; 6: chained effects shoot for their root model, frame camera first; 5: HUD attack-delay ring; 4: first-info order; 3: NTSC clock, generator
+constexpr std::uint32_t kProtocol = 11; // 11: posted panel/GAMERAM effects and HUD values, quick panel line mode 2; MOTIONSET cross-fades blend the track quaternions (bone matrices during fades); named RAM timers AITIMER / ATDELAY / KEIKATIMER (channel, turn and MUTEKI steps), CHKBULLET turns to the bullet matrix; 10: managers wait for the active stage, mat RAM init pass; 9: GENERATE starts with empty sequence labels (respawn SQ_ENTR dual section); 8: once-played clips hold at duration - 1/30, bake from the last traversal, PLAYERgetPos, box camera timer; 7: MOTIONSET restarts, MOVEEX rotation, per-player base flags; 6: chained effects shoot for their root model, frame camera first; 5: HUD attack-delay ring; 4: first-info order; 3: NTSC clock, generator
 constexpr const char* kGame = "GDJEB2";
 enum : std::uint8_t { kHello = 1, kWelcome, kStart, kInput, kFingerprint, kDesync, kLeave, kReject };
 
