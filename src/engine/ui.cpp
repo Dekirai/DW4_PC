@@ -117,20 +117,12 @@ void TextCtlManager::load_fonts(Engine& engine) {
             font->binding->texture = bind.ref(4);
             if (font->binding->texture) {
                 font->binding->image = font->binding->texture.ref(12);
-                // The glyphs sample bilinearly although the font's igTextureAttr
-                // says NEAREST (mag/min 0). Measured in Dolphin: a line centred on
-                // x.5 px is the 7/12 : 5/12 mix of neighbouring texels, an x.0
-                // line keeps a 1/12 ghost, and patching the IG filter tables
-                // (0x80414A44 / 0x80414A5C LINEAR -> NEAR) leaves the text as it
-                // is, so the GX filter does not come from the attribute. The
-                // font image is palette-indexed (C8 with an igClut): the bind
-                // loop 800FCA9C rebuilds its texture object with GXInitTexObjCI
-                // (802563C4 at 0x800FCC34 / 0x800FCD4C), which calls GXInitTexObj
-                // 80256178 with its LINEAR defaults and no GXInitTexObjLOD.
-                font->binding->sampler.mag_filter = 1;
-                font->binding->sampler.min_filter = 1;
-                font->binding->sampler.wrap_s = 0;
-                font->binding->sampler.wrap_t = 0;
+                // font00.png is palette-indexed, so the glyphs sample bilinearly
+                // although its igTextureAttr says NEAREST (see texture_sampler;
+                // measured in Dolphin: a line centred on x.5 px is the 7/12 :
+                // 5/12 mix of neighbouring texels, an x.0 line keeps a 1/12
+                // ghost). The wraps stay the attribute's REPEAT.
+                font->binding->sampler = texture_sampler(font->binding->texture);
             }
         }
         if (const auto metrics = image.ref(7)) {

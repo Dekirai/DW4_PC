@@ -58,9 +58,15 @@ enum class AttrKind : std::uint8_t {
     vertex_blend_state, normalize_normals, geometry, texcoord_source
 };
 
+// The GX texture object state: IG_GFX_TEXTURE_FILTER values (0 NEAREST,
+// 1 LINEAR, 2..5 the mipmap modes) and GX wraps (0 CLAMP, 1 REPEAT).
 struct TextureSampler {
     int mag_filter = 1, min_filter = 1, wrap_s = 1, wrap_t = 1;
 };
+
+// What the original's texture object samples with for an igTextureAttr
+// (igTextureAttr::apply, 800FE744 and the bind loop 800FCA9C).
+TextureSampler texture_sampler(const ObjectView& texture);
 
 struct Attribute {
     AttrKind kind = AttrKind::unknown;
