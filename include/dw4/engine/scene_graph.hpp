@@ -162,8 +162,19 @@ struct Node {
     std::optional<Mat4> runtime_matrix;
     // Billboard axis mode etc.
     std::int32_t billboard_mode{};
-    // igLod child ranges.
+    // igLod: _rangeList ([8], SQUARED eye-space distances), _center ([13])
+    // and _hysteresisList ([14]); the selection cache _lastRange (+0x24, here
+    // the child index or -1), _lastIndex (+0x28), _lastLower / _lastUpper
+    // (+0x2C / +0x30), with the defaults of the registration 801BB474.
     std::vector<float> lod_ranges;
+    std::vector<float> lod_hysteresis;
+    Vec3f lod_center{};
+    std::int32_t lod_child = -1, lod_index = -1;
+    float lod_lower{}, lod_upper{};
+    // 801F799C: the child for this squared distance (nullptr: none).
+    Node* select_lod(float distance_squared);
+    // 801F7CB8 (vtable +0x7C): forget the cached selection.
+    void reset_lod();
     // igActor appearance skin graph roots and actor transform.
     std::vector<Node*> appearance_roots;
     Mat4 actor_matrix{};

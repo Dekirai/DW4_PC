@@ -718,7 +718,28 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (command == "OFCTRL") close_panel(); // 0x8030E0F8
         return true;
     }
-    if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
+    if (command == "SETLODHIGH" || command == "RESETLODHIGH") {
+        // 0x8030E1D4 SETLODHIGH: when the "ONE" node's first child is an
+        // igLod with three children (Kage/High/Low), range[2] goes to the
+        // ctrl work (+0xA4, only while that holds -1) and becomes 1e8
+        // (0x804DEBAC, if the list has more than two entries): High up to
+        // 10000 units. 0x8030E29C RESETLODHIGH puts the kept value back and
+        // stores -1. Both reset the selection cache (vtable +0x7C, 801F7CB8).
+        // No shipped script or data sends either command.
+        Node* lod = ram.generated && ram.node && !ram.node->children.empty() ? ram.node->children[0] : nullptr;
+        if (!lod || lod->kind != NodeKind::lod) return true;
+        if (command == "SETLODHIGH") {
+            if (ram.lod_high_saved != -1.0f || lod->children.size() != 3) return true;
+            ram.lod_high_saved = lod->lod_ranges.size() > 2 ? lod->lod_ranges[2] : 0.0f;
+            if (lod->lod_ranges.size() > 2) lod->lod_ranges[2] = 1.0e8f;
+        } else {
+            if (ram.lod_high_saved == -1.0f) return true;
+            if (lod->lod_ranges.size() > 2) lod->lod_ranges[2] = ram.lod_high_saved;
+            ram.lod_high_saved = -1.0f;
+        }
+        lod->reset_lod();
+        return true;
+    }
     if (command == "ONFREEZE" || command == "OFFREEZE") {
         ram.frozen = command == "ONFREEZE" && ram.generated;
         if (command == "ONFREEZE") close_panel(); // 0x8030E168
