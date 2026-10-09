@@ -19,8 +19,10 @@ namespace {
 // folder), P<n> (the story phase is at least n, see phase()), D<model>#<n>
 // (that model of the running stage is used up: HP 0, e.g. a console that
 // took its one hit), E<n> (the stage holding the exit was entered at player
-// point n, see Exit::entry); '!' negates an atom, '&' binds tighter than '|';
-// no parentheses. Empty = always.
+// point n, see Exit::entry), S<n> (player 1 has reached form n, shinka row:
+// BASE_ISUSE), C<n> (player 1 is form n now), L<n> (player 1 is level n or
+// more); '!' negates an atom, '&' binds tighter than '|'; no parentheses.
+// Empty = always.
 
 // The story phase the lobby scripts branch on (stagML11 start.lua and
 // mate00.lua, stagML02 matf00/matf02/first.lua): flags 1..6 are set and
@@ -76,6 +78,16 @@ bool atom(engine::Engine& engine, std::string_view text, int entry) {
         value = phase(engine) >= n;
     } else if (text.front() == 'E') {
         value = entry >= 0 && entry == n;
+    } else if (text.front() == 'S' || text.front() == 'C' || text.front() == 'L') {
+        if (auto* sys = engine.get<engine::GameSystem>()) {
+            const auto& slot = sys->players[0];
+            if (text.front() == 'S') {
+                const auto it = slot.base_isuse.find(n);
+                value = it != slot.base_isuse.end() && it->second;
+            } else {
+                value = text.front() == 'C' ? slot.stats.species == n : slot.stats.level >= n;
+            }
+        }
     }
     return value != negate;
 }
@@ -107,6 +119,8 @@ bool holds(engine::Engine& engine, std::string_view condition, int entry = -1) {
 //   talk:<model>#<n> walk up to a model and press A (talks; in the lobby
 //   strike:<model>#<n> A also checks consoles, elsewhere it attacks)
 //   step:<model>#<n> stand on a model (floor switches)
+//   evolve:<n>       digivolve player 1 to form n at the Digi-Lab (the
+//                    stagML12 Digi-Elf n_digilff#1, bML01004.lua)
 //   wait             let the stage scripts run (demos on arrival)
 struct Objective {
     const char* name;
@@ -182,6 +196,16 @@ constexpr Objective kObjectives[] = {
     // (flag 333) clears the way to stag0303/0304 and the dng310 fortress
     // with Lucemon.
     {"key item 6 (dng307b2 boss)", "K6|P6", "dng307b2", "explore:matz02"},
+    // The cell walls of dng308b1-b3 and dng309b2/b3 (hit_g_dcellwall.lua)
+    // break only to a fire attack, the scrap walls of dng412b1-b4
+    // (hit_g_dscrap.lua) only to thunder: a power pocket chip of that element
+    // (in a weapon of rank 1 or more, rare drops) or a technique. The partner
+    // is Veemon (Petty Bolt, thunder); from level 16 the Digi-Elf n_digilff#1
+    // in stagML12 adds a second rookie form (stagML12 n_digilff_01.lua ->
+    // sin_digi.lua: Veemon -> Guilmon, shinka row 2, Petty Fire), and the
+    // Digi-Lab behind her (bML01004.lua, LABO) digivolves between the two.
+    {"Guilmon form from the Digi-Elf (level 16)", "S2|K7&K8|P6|!L16", "stagml12", "talk:n_digilff#1"},
+    {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2", "stagml12", "evolve:2"},
     {"key item 7 (dng308b3 boss)", "K7|P6", "dng308b3", "explore:matz02"},
     {"lever (stag0301)", "F56|P6", "stag0301", "strike:g_lever01z03#0"},
     {"console (stag0302)", "F57|P6", "stag0302", "strike:g_consolez03#0"},
@@ -192,6 +216,7 @@ constexpr Objective kObjectives[] = {
     // Phase 6. Area 4: key items 9 (dng411b3) and 10 (dng412b4) let the
     // starship in stag0401 (mate00) fly to stag0403; stag0404 leads to the
     // last three boss stages and the staff roll (stagBS06 matz01).
+    {"digivolve back to Veemon (thunder for the scrap walls)", "C1|K10|P7|!S1", "stagml12", "evolve:1"},
     {"key item 9 (dng411b3 boss)", "K9|P7", "dng411b3", "explore:matz02"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
@@ -436,17 +461,29 @@ bool trace() {
 
 // The new game from the title (relative to the frame the title stage was
 // requested; from the scripted new-game flow): START opens Game Start /
-// Option, A goes through the card check, the name keyboard (eight 'a'),
-// "assign this name", the difficulty and the partner (Dorumon), START logs
-// in.
+// Option, A goes through the card check to the partner selection (the fourth
+// A shows "Select a Digimon" with Dorumon, LOADINTF2 state 4: RIGHT steps
+// Dorumon -> Agumon -> Veemon -> Guilmon), the name keyboard (eight 'a'),
+// "assign this name" and the difficulty, START logs in. The partner is
+// Veemon (kPartnerSteps RIGHT presses; see the element walls of areas 3 and
+// 4 in kObjectives).
+constexpr int kPartnerSteps = 2;
 struct TitlePress {
     int at;
     std::uint32_t button;
 };
 std::vector<TitlePress> title_presses() {
     std::vector<TitlePress> presses{{647, pad_button::start}};
-    for (int k = 0; k < 34; ++k) presses.push_back({1047 + 90 * k, pad_button::a});
-    presses.push_back({3947, pad_button::start});
+    // (Each RIGHT waits for the face window's change before the next.)
+    constexpr int kStepGap = 60;
+    const int shift = (kPartnerSteps + 1) * kStepGap;
+    for (int k = 0; k < 34; ++k) {
+        if (k == 4)
+            for (int step = 0; step < kPartnerSteps; ++step)
+                presses.push_back({1047 + 90 * 3 + kStepGap * (step + 1), pad_button::right});
+        presses.push_back({1047 + 90 * k + (k >= 4 ? shift : 0), pad_button::a});
+    }
+    presses.push_back({3947 + shift, pad_button::start});
     return presses;
 }
 
@@ -584,6 +621,26 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             else cancel = true;
         } else if (menu.name == "i_zzstchgwn") {
             cancel = !on_step_mat;
+        } else if (step.action.rfind("evolve:", 0) == 0) {
+            // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
+            // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
+            // lab menu Digivolve / Equip / Exit (3 lines), the forms reached
+            // (i_stcursor01: shinka row 3 first, then ascending), the two
+            // confirmations (i_stmesscr, 0 = yes); once the form is the
+            // wanted one, no / Exit.
+            const int target = std::atoi(step.action.c_str() + 7);
+            auto* sys = engine.get<engine::GameSystem>();
+            const bool done = sys && sys->players[0].stats.species == target;
+            if (menu.name == "i_messcr") {
+                want = done ? menu.items - 1 : 0;
+            } else if (menu.name == "i_stcursor01" && sys) {
+                std::vector<int> forms;
+                for (const auto& [species, reached] : sys->players[0].base_isuse)
+                    if (reached && species >= 0 && species < 16) forms.push_back(species);
+                std::stable_partition(forms.begin(), forms.end(), [](int f) { return f == 3; });
+                const auto at = std::find(forms.begin(), forms.end(), target);
+                want = at == forms.end() ? 0 : int(at - forms.begin());
+            }
         }
         if (cancel && !menu.cancel) cancel = false; // NOCANCEL: take the first entry
         if (frame - menu_pressed_ < 14) return true;
@@ -712,6 +769,17 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                                 db->number("shinka", slot.stats.species, tech + "_LEVEL").value_or(-1),
                                 db->text("pcTech", base, "ZOKUSEI").c_str());
                 }
+            // (and the device folder: what could be equipped for an element)
+            if (auto* db = engine.get<engine::DatabaseManager>(); db && std::getenv("DW4_TRACE_CAMPAIGN") &&
+                                                                  std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2") {
+                static const char* tables[4] = {"weapon", "armor1", "armor2", "abChip"};
+                for (std::size_t i = 0; i < slot.devices.size(); ++i) {
+                    const auto& d = slot.devices[i];
+                    const char* table = tables[std::clamp(d.type, 0, 3)];
+                    std::printf("      device %zu %s #%d %s rank %d%s%s\n", i, table, d.record, db->text(table, d.record, "NAME").c_str(), d.rank,
+                                d.type == 3 ? (" element " + db->text("abChip", d.record, "ZOKUSEI")).c_str() : "", d.flag ? " equipped" : "");
+                }
+            }
         }
     const auto step = next_step(engine);
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
@@ -903,8 +971,8 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                     if (!goal || flat(centre, me) < flat(*goal, me)) goal = centre;
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
-    } else if (kind == "talk" || kind == "strike") {
-        if (const auto* model = find_model(engine, what, me)) {
+    } else if (kind == "talk" || kind == "strike" || kind == "evolve") {
+        if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me)) {
             // The player's hit or talk check has to meet the model's hit box,
             // which may lie well in front of the model (a console in a wall
             // niche): walked up to its middle, then A facing the model.
