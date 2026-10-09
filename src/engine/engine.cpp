@@ -420,6 +420,7 @@ std::uint64_t Engine::fingerprint() {
             mix_value(p.bits);
             mix_value(p.stats.level);
             mix_value(p.stats.exp);
+            mix_value(p.unique); // a new game's UNIQUE once came from std::random_device
         }
     if (auto* models = get<ModelCtrlManager>())
         for (const auto& ram : models->rams()) {

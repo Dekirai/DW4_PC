@@ -112,9 +112,13 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         }
         break;
     }
-    auto* seq_ptr = sequences.get();
-    const void* info_key = reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()));
-    sequences_[info_key] = std::move(sequences);
+    // The full (document, reference) pair: an XOR of both collided across
+    // documents and freed live data. An entry that already exists (the same
+    // info again) is kept, since RAMs may point into it.
+    const InfoKey info_key{static_cast<const void*>(info.document()), info.reference()};
+    auto& seq_slot = sequences_[info_key];
+    if (!seq_slot) seq_slot = std::move(sequences);
+    auto* seq_ptr = seq_slot.get();
     // 803083CC: the first HIT record selects the bullet/talk categories.
     HitBody* hit = nullptr;
     for (const auto& data : info.list(5)) {
@@ -125,8 +129,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         body->player_talk = data.boolean(7);
         for (const auto& box : data.list(6))
             if (box) body->boxes.emplace_back(box.vec3(2).value_or(Vec3f{}), box.vec3(3).value_or(Vec3f{}));
-        hit = body.get();
-        hit_bodies_[info_key] = std::move(body);
+        auto& slot = hit_bodies_[info_key];
+        if (!slot) slot = std::move(body);
+        hit = slot.get();
         break;
     }
     // "AIH" data: the homing AI of bullets.
@@ -142,8 +147,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         h->pitch_rate = data.f32(9);
         h->yaw_rate = data.f32(10);
         h->steps = data.i32(11);
-        homing = h.get();
-        homings_[info_key] = std::move(h);
+        auto& slot = homings_[info_key];
+        if (!slot) slot = std::move(h);
+        homing = slot.get();
         break;
     }
     // "AIM" data (beModelCtrlInfoDataAIM [4]): the AI maps selected by AIMAP.
@@ -152,8 +158,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         if (!data || data.str(2) != "AIM") continue;
         auto maps = std::make_unique<std::vector<ObjectView>>();
         for (const auto& map : data.list(4)) if (map) maps->push_back(map);
-        ai_maps = maps.get();
-        ai_maps_[info_key] = std::move(maps);
+        auto& slot = ai_maps_[info_key];
+        if (!slot) slot = std::move(maps);
+        ai_maps = slot.get();
         break;
     }
     const std::string category = category_for_kind(info.str(7));
@@ -2206,9 +2213,11 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
         }
         actions->push_back(std::move(action));
     }
-    auto* action_ptr = actions.get();
-    actions_[reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()))] =
-        std::move(actions);
+    // (document, reference) as in ModelCtrlManager::add_info; never replace
+    // an entry RAMs may already point into.
+    auto& action_slot = actions_[{static_cast<const void*>(info.document()), info.reference()}];
+    if (!action_slot) action_slot = std::move(actions);
+    auto* action_ptr = action_slot.get();
     Node* switch_node = engine.scenes().node(info.ref(7));
     AnimationDatabase* database = nullptr;
     if (const auto db = info.ref(8)) {
