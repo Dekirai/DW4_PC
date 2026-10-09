@@ -738,6 +738,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto last_present = std::chrono::steady_clock::now();
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
+        // DW4_TRACE_FINGERPRINT=N prints the state fingerprint every N frames:
+        // two runs of the same script must print the same lines (determinism).
+        const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
         const auto card_root = engine.card_root();
@@ -1273,6 +1276,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         const auto at = std::size_t(frame - state_test - 1);
                         if (at < state_fingerprints.size() && state_fingerprints[at] != engine.fingerprint()) state_mismatch = frame;
                     }
+                }
+                if (trace_fingerprint > 0 && frame % trace_fingerprint == 0) {
+                    // With the system generator's state (not in the netplay
+                    // fingerprint): a draw more or less shows up here first.
+                    std::ostringstream random;
+                    random << dw4::engine::fight::generator();
+                    std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
+                                std::hash<std::string>{}(random.str()));
                 }
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
