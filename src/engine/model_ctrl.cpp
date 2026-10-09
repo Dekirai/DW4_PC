@@ -1540,6 +1540,10 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     packet.ints = {box.kind, owned ? ram.owner_index : ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
+    // 0x803101F0: sub_80306D68 adds the firing model's own node matrix (for
+    // a fireball the bullet effect itself, not its owner); a hit target turns
+    // towards its translation.
+    packet.matrices.push_back(m);
     packet.strings.emplace_back(owned ? ram.owner_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
@@ -1990,26 +1994,39 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     context.shooter = packet.integer(1, -1);
     context.shooter_name = std::string(packet.string(0));
     context.bullet_box = box;
+    // 0x8030E718..0x8030E76C, before the hit script: the translation of the
+    // packet's matrix #0 (the firing hitbox model's own matrix, 0x803101F0)
+    // and the own node's. The shooter name / index only feed GETRECNO and
+    // the script (FIGHTCALC).
+    const bool has_source = !packet.matrices.empty();
+    const float source_x = has_source ? packet.matrices[0](3, 0) : 0.0f, source_z = has_source ? packet.matrices[0](3, 2) : 0.0f;
+    const float own_x = m(3, 0), own_z = m(3, 2);
     engine.push_model_context(std::move(context));
     engine.run_script("hit_" + ram.info_name + ".lua");
     const auto done = engine.pop_model_context();
-    if (done.turn && done.shooter >= 0) {
-        // 8030E81C: face the captured source position.
-        if (const auto* source = find(done.shooter_name, done.shooter); source && source->node) {
-            const auto& sm = source->node->matrix;
-            const float heading = std::atan2(sm(3, 0) - m(3, 0), sm(3, 2) - m(3, 2));
-            ram.applied[1] = ram.desired[1] = heading;
-            std::array<float, 16> matrix{};
-            std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
-            const Vec3f position{matrix[12], matrix[13], matrix[14]};
-            try {
-                dw4::original_model_turn_basis(matrix, ram.applied);
-                matrix[12] = position.x;
-                matrix[13] = position.y;
-                matrix[14] = position.z;
-                std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
-            } catch (const std::exception&) {}
+    if (done.turn && has_source) {
+        // 8030E810..8030E854: with the script's turn flag (byte_80535944) the
+        // wanted yaw +84 = atan2(dx, dz) (double 800A2C74, then frsp), then
+        // the forced 8030C85C: every applied angle takes the wanted one at
+        // once and the basis is rebuilt around the position.
+        const float heading = static_cast<float>(std::atan2(static_cast<double>(source_x - own_x), static_cast<double>(source_z - own_z)));
+        if (trace) {
+            char line[160];
+            std::snprintf(line, sizeof line, "  turn to (%.3f,%.3f) from (%.3f,%.3f) heading %.4f", source_x, source_z, own_x, own_z, heading);
+            engine.log(line);
         }
+        ram.desired[1] = heading;
+        ram.applied = ram.desired;
+        std::array<float, 16> matrix{};
+        std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+        const Vec3f position{matrix[12], matrix[13], matrix[14]};
+        try {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+            std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+        } catch (const std::exception&) {}
     }
     if (packet.bools.empty()) packet.bools.push_back(1);
     return true;
