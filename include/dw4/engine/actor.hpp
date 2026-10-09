@@ -109,9 +109,9 @@ BoneTrack blend_bone_track(const BoneTrack& acc, const BoneTrack& state, float w
 // The combiner's local matrix of a bone: rotation from the quaternion
 // (8012BCDC at 0x801D0E18/0x801D1158), translation into elements 12..14.
 Mat4 bone_track_matrix(const BoneTrack& track);
-// The track a fixed state rebuilds from a cached local matrix (the snapshot of
-// loc_801D2840): quaternion through 8012B8A8, translation from elements 12..14
-// (the matrix source samplers 801D11C8/801D1290).
+// The track of the fixed state loc_801D2840 builds from a cached local matrix
+// (combiner +0x40): quaternion through 8012B8A8 into state +0x14, elements
+// 12..14 into state +0x24 (0x801D2A3C-0x801D2AC4).
 BoneTrack matrix_bone_track(const Mat4& local);
 
 // Bone locals of the combined motion at node time `time`. A fade blends the
