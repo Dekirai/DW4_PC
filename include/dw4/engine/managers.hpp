@@ -936,7 +936,10 @@ private:
         std::string enemy_name;    // work +1C
         int enemy_record{};        // work +20
         int enemy_max_hp{};        // work +24
-        std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
+        // The RAM's named timers (data list +0x28): "BOOT_TIMER" of a timed
+        // start, "GENE_TIMER" between timed fills (8031DE44 start, 8031E238
+        // check, 8031E8BC remove). No command drops them.
+        std::optional<NodeTimer> boot_timer, gene_timer;
         int clears{};              // waves cleared so far (test bot)
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
