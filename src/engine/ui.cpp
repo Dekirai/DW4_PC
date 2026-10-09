@@ -272,12 +272,14 @@ void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string
         x += g.advance;
     }
     finish_line();
-    // Alignment within the line's max width.
-    if (target.align != 0 && target.max_width > 0) {
+    // 802FBC7C / 802FC2D0: beFontInfoData [9] (enum 804D2048: LEFT 0, RIGHT 1,
+    // CENTER 2) moves each line by (max width - line width) * 0.5 when centred
+    // or the whole rest when right-aligned, unrounded and whatever the max width.
+    if (target.align == 1 || target.align == 2) {
         for (std::size_t l = 0; l < line_ranges.size(); ++l) {
             const auto begin = line_ranges[l].first;
             const auto end = l + 1 < line_ranges.size() ? line_ranges[l + 1].first : geometry->positions.size();
-            const float shift = target.align == 1 ? (target.max_width - line_ranges[l].second) * 0.5f
+            const float shift = target.align == 2 ? (target.max_width - line_ranges[l].second) * 0.5f
                                                   : target.max_width - line_ranges[l].second;
             for (auto v = begin; v < end; ++v) geometry->positions[v].x += shift;
         }
@@ -343,8 +345,9 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
     }
     if (command == "REPLACEUNKNOWN") return true; // missing glyphs already fall back
     if (command == "ALIGN") {
+        // 802FAF38: the mode string through the alignment enum (804D2048) into [9].
         const auto mode = packet.string(2);
-        const int align = mode == "CENTER" ? 1 : mode == "RIGHT" ? 2 : 0;
+        const int align = mode == "CENTER" ? 2 : mode == "RIGHT" ? 1 : 0;
         for (auto& line : lines_) if (matches(line)) line.align = align;
         return true;
     }

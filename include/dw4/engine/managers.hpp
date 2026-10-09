@@ -678,7 +678,7 @@ private:
         Node* node{};
         float max_width{};
         float spacing{};
-        int align{};              // 0 left, 1 center, 2 right
+        int align{};              // beFontInfoData [9], enum 804D2048: 0 left, 1 right, 2 center
         std::string style;
         std::vector<ObjectView>* strings{};
     };
