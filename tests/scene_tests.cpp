@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -266,8 +267,50 @@ void test_motion_blend_tracks() {
     check(identity.rotation == std::array<float, 4>{0, 0, 0, 1}, "An identity local is the identity quaternion");
 }
 
+// igLod selection (801F799C): squared distances against the ranges, the
+// cached band and the hysteresis widening.
+void test_lod_selection() {
+    Node kids[3];
+    Node lod;
+    lod.kind = NodeKind::lod;
+    lod.children = {&kids[0], &kids[1], &kids[2]};
+    lod.lod_ranges = {0.0f, 0.0f, 10000.0f}; // the players' Kage / High / Low
+    check(lod.select_lod(50.0f * 50.0f) == &kids[1], "High within 100 units (squared range 10000)");
+    check(lod.select_lod(99.0f * 99.0f) == &kids[1], "High just inside 100 units");
+    check(lod.select_lod(150.0f * 150.0f) == &kids[2], "Low beyond 100 units, not beyond 10000");
+    check(lod.lod_upper == std::numeric_limits<float>::max(), "The last band ends at FLT_MAX");
+    check(lod.select_lod(1.0f) == &kids[1], "Back down to High; Kage's empty band [0, 0) never shows");
+    check(lod.select_lod(0.0f) == &kids[1], "Zero distance is High as well");
+    lod.lod_ranges[2] = 1.0e8f; // SETLODHIGH
+    lod.reset_lod();
+    check(lod.lod_index == -1 && lod.lod_child == -1 && lod.lod_lower == 0.0f && lod.lod_upper == 0.0f, "801F7CB8 reset");
+    check(lod.select_lod(5000.0f * 5000.0f) == &kids[1], "SETLODHIGH: High up to 10000 units");
+    check(lod.select_lod(20000.0f * 20000.0f) == &kids[2], "Low beyond 10000 units");
+
+    Node two[2];
+    Node h;
+    h.kind = NodeKind::lod;
+    h.children = {&two[0], &two[1]};
+    h.lod_ranges = {0.0f, 100.0f};
+    h.lod_hysteresis = {0.0f, 2.0f};
+    check(h.select_lod(50.0f) == &two[0] && h.lod_upper == 144.0f, "Upper bound (sqrt(100) + 2)^2");
+    check(h.select_lod(120.0f) == &two[0], "Inside the widened band the child stays");
+    check(h.select_lod(150.0f) == &two[1] && h.lod_lower == 64.0f, "Lower bound (sqrt(100) - 2)^2");
+    check(h.select_lod(80.0f) == &two[1], "Above the lowered bound the far child stays");
+    check(h.select_lod(60.0f) == &two[0], "Below it the search runs down");
+
+    Node one;
+    one.kind = NodeKind::lod;
+    one.children = {&two[0]};
+    one.lod_ranges = {10.0f, 20.0f};
+    check(one.select_lod(5.0f) == &two[0], "The first search assumes range[0] is reached (from _lastIndex + 2)");
+    check(one.select_lod(25.0f) == nullptr, "An index past the children selects nothing");
+    check(one.select_lod(5.0f) == nullptr && one.lod_index == -1 && one.lod_upper == 10.0f, "Below range[0] going down: no child");
+}
+
 int main() {
     try {
+        test_lod_selection();
         test_start_and_advance();
         test_long_step();
         test_loop_and_lock();
