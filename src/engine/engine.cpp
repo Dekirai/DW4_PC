@@ -332,6 +332,9 @@ void Engine::begin_stage_load() {
     lua_infos_.clear();
     common_queue_.clear();
     lua_.reset();
+    // Compiled chunks are keyed by their document's address: a new document
+    // may reuse a freed one's.
+    lua_programs_.clear();
     stage_name_ = next;
     stage_folder_ = next;
     loading_node_ = nullptr;

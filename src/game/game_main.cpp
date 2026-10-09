@@ -704,6 +704,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
         std::string rendered_stage;
+        std::uint64_t rendered_serial{};
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
         std::string movie_stage; // stage the decoder's movie played in
@@ -1299,9 +1300,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
             }
             if (steps > 0) interpolator.advance();
-            if (rendered_stage != engine.stage_name()) {
+            // (Every stage load, also of the same stage: the texture cache is
+            // keyed by document addresses, which a new load may reuse.)
+            const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            if (rendered_stage != engine.stage_name() || rendered_serial != serial) {
                 renderer.clear_cache();
                 rendered_stage = engine.stage_name();
+                rendered_serial = serial;
                 interpolator.reset();
             }
             engine.render(items, camera, clear, &shadow);

@@ -270,6 +270,10 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     if (name == "SQ_ERAS2") {
         Packet packet;
         engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "NDSP", packet);
+        // 0x8030E934: 8031EA54 drops every named timer of the RAM, as REMOVE.
+        ram.ai_timer.reset();
+        ram.attack_delay.reset();
+        ram.keika.reset();
         return;
     }
     const Sequence* found = nullptr;
@@ -552,8 +556,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.capsule_age = 0;
         // The named RAM timers (AITIMER, ATDELAY, KEIKATIMER) live in the
         // RAM's data list (+0x28), not in the info work: they stay over a
-        // GENERATE (8034B928 / 8030D260 do not touch them) and only REMOVE
-        // drops them.
+        // GENERATE (8034B928 / 8030D260 do not touch them); REMOVE and
+        // SQ_ERAS2 drop them (8031EA54).
         ram.ai_request.clear();
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
