@@ -150,13 +150,8 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
         {"i_getitempnl01", "SQ_FIREUP2"}, {"i_getitempnl01", "SQ_ICEUP"},    {"i_getitempnl01", "SQ_ICEUP2"},
         {"i_getitempnl01", "SQ_THUNDUP"}, {"i_getitempnl01", "SQ_THUNDUP2"}, {"i_getitempnl01", "SQ_DARKUP"},
         {"i_getitempnl01", "SQ_DARKUP2"}};
-    Packet effect;
-    effect.strings.emplace_back(panels[record - 1][0]);
-    effect.strings.emplace_back(panels[record - 1][1]);
-    effect.floats.push_back(1.0f);
-    effect.vectors.push_back({0.0f, 0.0f, 0.0f});
-    effect.bools = {0, 1};
-    engine.messenger().send(engine, "PLAYER", std::nullopt, nearest, "SETEFFECT", effect);
+    // Posted with 1 frame (0x803AAA6C).
+    post_effect(engine, "PLAYER", std::nullopt, nearest, panels[record - 1][0], panels[record - 1][1]);
 }
 
 // 803AB864..803ABDB0: one of four ITNAMEFONT lines (font00..03) carries the
