@@ -1169,6 +1169,7 @@ public:
         bool combo_released{};       // player work +12C
         bool panel_open{};           // player work +124: an NDMWPANEL panel is up
         bool frozen{};               // ONFREEZE: control, AI and motion paused
+        float lod_high_saved = -1.0f; // ctrl work +A4 _svLODHighRange: igLod range[2] kept by SETLODHIGH (-1: none)
         bool previous_live{};        // enemy AI: generated last frame
         std::string lua_bhit;        // LUACALL BHit script prefix (ctrl work +30)
         std::string lua_whit, lua_fhit; // LUACALL WHit / FHit prefixes (+34 / +38)
