@@ -2470,6 +2470,38 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         fire_wait_since_ = -1;
     }
     if (frame >= fire_go_until_) fire_leap_to_post_ = false;
+    // A jump up onto the floor of a turret's post steers on to the post as
+    // well (as a crossing's jump does): turrets that open fire once a player
+    // on their floor comes within range (stag0302's cannon pair on its
+    // terrace, about 50 units; their shots follow the player) hit the player
+    // as it lands, and a hit at the rim throws it back down the step. With
+    // the stick held on the post the jump carries the player some 14 units
+    // onto that floor instead of to the rim, where the next hits only push
+    // it back a little. Only for a post ahead (within 45 degrees of the
+    // jump, at most 40 units on) over open floor at the post's height.
+    bool leap_to_post = false;
+    auto jump_onto_post_floor = [&](const engine::Vec3f& takeoff, const engine::Vec3f& landing) {
+        if (!perching || target->info_name.rfind("g_", 0) != 0 || landing.y < takeoff.y + 5.0f || std::abs(landing.y - perch_->y) > 2.0f)
+            return false;
+        const float length = flat(landing, *perch_);
+        if (length < 5.0f || length > 40.0f) return false;
+        const float jump_dir = std::atan2(landing.x - takeoff.x, landing.z - takeoff.z);
+        const float post_dir = std::atan2(perch_->x - takeoff.x, perch_->z - takeoff.z);
+        if (std::abs(std::remainder(post_dir - jump_dir, 6.2831853f)) > 0.7853982f) return false;
+        auto* hitland = engine.get<engine::HitLandManager>();
+        if (!hitland) return false;
+        const auto flags = hitland->delivery_flags(player.info_name, player.index);
+        const float width = hitland->delivery_width(player.info_name, player.index);
+        const engine::Vec3f dir{(perch_->x - landing.x) / length, 0.0f, (perch_->z - landing.z) / length};
+        for (float t = 0.0f; t <= length; t += 2.5f) {
+            const engine::Vec3f p{landing.x + dir.x * t, perch_->y + 5.0f, landing.z + dir.z * t};
+            const auto land = hitland->world().check_land(p, 1.0f, 400.0f, 1.0f);
+            if (!land.found || std::abs(land.position.y - perch_->y) > 1.5f) return false;
+            const engine::Vec3f middle{p.x + dir.x * 1.25f, perch_->y, p.z + dir.z * 1.25f};
+            if (t + 2.5f <= length && hitland->world().check_wall(middle, dir, width, 4.0f, flags, false).hit) return false;
+        }
+        return true;
+    };
     if (hold_fire) {
         // To the last point out of the fire, then stand.
         decision.x = flat(*fire_entry, me) > 1.5f ? fire_entry->x : me.x;
@@ -2554,13 +2586,14 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 decision.jump = true;
                 leap_ = landing;
                 leap_frame_ = frame;
+                leap_to_post = jump_onto_post_floor(takeoff, landing);
             }
         }
     } else {
         decision.x = aim.x;
         decision.z = aim.z;
     }
-    if (decision.jump && fire_leap_to_post_ && perch_ && leap_) {
+    if (decision.jump && (fire_leap_to_post_ || leap_to_post) && perch_ && leap_) {
         leap_ = *perch_;
         decision.x = perch_->x;
         decision.z = perch_->z;
