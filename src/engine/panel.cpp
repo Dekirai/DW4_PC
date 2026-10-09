@@ -329,6 +329,10 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
     // 803B1328: the raise disk, P2PKOUKAMAGIC kind -50.
     if (row == 7) fight::support_magic(engine, ram.index, ram.index, -50);
     if (row == 8) {
+        // 803B1390: 802EBCFC("Player", index) sets GAMERAM GETCOMMON
+        // GATESTAGENAME / GATESTAGENO before gatedisc.lua; 1 closes the panel.
+        sys->gate_stage_name = "Player";
+        sys->gate_stage_no = ram.index;
         engine.run_script("gatedisc.lua");
         close = true;
     }
