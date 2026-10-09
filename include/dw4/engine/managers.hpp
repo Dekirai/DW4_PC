@@ -165,7 +165,11 @@ private:
         std::size_t index{};
         bool fresh = true;
         Vec3f eye{}, target{};
-        std::int64_t step_end{}, all_end{};
+        // The camera RAM's named timers: "SHAKEONE" steps the pattern (SHAKE
+        // removes it, so the first update steps), "SHAKEALL" ends the shake
+        // (802F3474 / 802F34D4 check, 802F34C8 / 802F3DF4 start).
+        std::optional<NodeTimer> one;
+        NodeTimer all;
     };
     struct CameraRam : Ram {
         std::optional<BoxData> box;
