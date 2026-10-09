@@ -304,7 +304,16 @@ std::int64_t PanelManager::select(Engine& engine, PanelRam& ram, List& list) {
             return 0;
         }
         ram.label = db->text("pcTech", row, "LABEL");
-        sys->change_mp(engine, ram.index, -cost);
+        // 80349584..8034961C: the MP drops at once; the HUD meter (whole
+        // percent, 100 * MP / MMP) and number are posted with 1 frame.
+        if (!engine.cheats().infinite_mp) {
+            player.mp -= cost;
+            Packet percent, value;
+            percent.floats.push_back(float(100 * player.mp / std::max(player.max_mp, 1)));
+            value.ints.push_back(player.mp);
+            engine.messenger().post(engine.time() + kFrameNs, "METERCTRL", "mpmt", ram.index, "SETPERCENT", std::move(percent));
+            engine.messenger().post(engine.time() + kFrameNs, "NUMBERCTRL", "mpnm", ram.index, "SETVALUE", std::move(value));
+        }
         return std::int64_t(db->number("pcTech", row, "DELAY").value_or(0)) * 1'000'000'000 / 60;
     }
     auto& count = player.disk_count(row);
