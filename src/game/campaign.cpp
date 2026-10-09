@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <set>
 
 namespace dw4::game {
@@ -45,6 +46,15 @@ int phase(engine::Engine& engine) {
     for (int p = 6; p >= 2; --p)
         if (on(p)) return p;
     return 1;
+}
+
+// A hash of the story flags that are set (a maze place swept under one
+// state is worth a new visit once a button or a wave changed it).
+std::size_t flags_hash(engine::Engine& engine) {
+    std::size_t h = 1469598103934665603ull;
+    for (const auto& [flag, value] : engine.flags())
+        if (value) h = (h ^ std::size_t(flag)) * 1099511628211ull;
+    return h;
 }
 
 // `entry`: the player point the stage holding the condition was (or will be)
@@ -308,21 +318,24 @@ constexpr Exit kExits[] = {
     {"dng309b2", "matz01", "dng309b1", ""},     {"dng309b2", "matz02", "dng309b3", ""},
     {"dng309b3", "matz01", "dng309b2", ""},     {"dng309b3", "matz02", "dng309b4", ""},
     {"dng309b4", "matz01", "dng309b3", ""},     {"dng309b4", "matz02", "stagml11", ""},
+    // The dng310 maze (Lucemon's fortress): three floors of small regions
+    // joined by doors that open to buttons and cleared waves; every link
+    // names the player point it leads to (funcStageChange), see kMazes.
     {"dng310f1", "matz01", "stag0304", ""},
-    {"dng310f1", "matz02", "dng310f2", ""},     {"dng310f1", "matz03", "dng310f2", ""},
-    {"dng310f1", "matz04", "dng310f2", ""},     {"dng310f1", "matz05", "dng310f2", ""},
-    {"dng310f1", "matz06", "dng310f2", ""},     {"dng310f1", "matz07", "dng310f2", ""},
-    {"dng310f1", "matz08", "dng310f2", ""},
-    {"dng310f2", "matz01", "dng310f1", ""},     {"dng310f2", "matz02", "dng310f1", ""},
-    {"dng310f2", "matz04", "dng310f1", ""},     {"dng310f2", "matz05", "dng310f1", ""},
-    {"dng310f2", "matz07", "dng310f1", ""},     {"dng310f2", "matz08", "dng310f1", ""},
-    {"dng310f2", "matz09", "dng310f1", ""},
-    {"dng310f2", "matz03", "dng310f3", ""},     {"dng310f2", "matz06", "dng310f3", ""},
-    {"dng310f2", "matz10", "dng310f3", ""},     {"dng310f2", "matz11", "dng310f3", ""},
-    {"dng310f2", "matz12", "dng310f3", ""},
-    {"dng310f3", "matz01", "dng310f2", ""},     {"dng310f3", "matz02", "dng310f2", ""},
-    {"dng310f3", "matz03", "dng310f2", ""},     {"dng310f3", "matz04", "dng310f2", ""},
-    {"dng310f3", "matz05", "dng310f2", ""},     {"dng310f3", "matz06", "stagbs03", ""},
+    {"dng310f1", "matz02", "dng310f2", "", 7},  {"dng310f1", "matz03", "dng310f2", "", 8},
+    {"dng310f1", "matz04", "dng310f2", "", 4},  {"dng310f1", "matz05", "dng310f2", "", 0},
+    {"dng310f1", "matz06", "dng310f2", "", 1},  {"dng310f1", "matz07", "dng310f2", "", 3},
+    {"dng310f1", "matz08", "dng310f2", "", 6},
+    {"dng310f2", "matz01", "dng310f1", "", 4},  {"dng310f2", "matz02", "dng310f1", "", 5},
+    {"dng310f2", "matz04", "dng310f1", "", 6},  {"dng310f2", "matz05", "dng310f1", "", 3},
+    {"dng310f2", "matz07", "dng310f1", "", 7},  {"dng310f2", "matz08", "dng310f1", "", 1},
+    {"dng310f2", "matz09", "dng310f1", "", 2},
+    {"dng310f2", "matz03", "dng310f3", "", 4},  {"dng310f2", "matz06", "dng310f3", "", 3},
+    {"dng310f2", "matz10", "dng310f3", "", 0},  {"dng310f2", "matz11", "dng310f3", "", 2},
+    {"dng310f2", "matz12", "dng310f3", "", 1},
+    {"dng310f3", "matz01", "dng310f2", "", 9},  {"dng310f3", "matz02", "dng310f2", "", 11},
+    {"dng310f3", "matz03", "dng310f2", "", 10}, {"dng310f3", "matz04", "dng310f2", "", 5},
+    {"dng310f3", "matz05", "dng310f2", "", 2},  {"dng310f3", "matz06", "stagbs03", ""},
     {"stagbs03", "matz01", "stagml11", ""},
     // Area 4 (stag0401 mate00 = the starship, stag0401 mate00.lua: key
     // items 9 and 10).
@@ -339,6 +352,16 @@ constexpr Exit kExits[] = {
     {"stagbs04", "matz01", "stagbs05", ""},     {"stagbs05", "matz01", "stagbs06", ""},
     {"stagbs06", "matz01", "stagis20", ""},
 };
+
+// Maze floors: their regions open with doors (buttons, cleared waves) that
+// often lie in other regions or on other floors (dng310f3 matz06 needs the
+// boss gate, flags 158/159 from the waves of the centre, and a way in
+// through barrier 0 or 1, whose wall buttons stand on the far side of each
+// other). The way there is not planned: once the ExploreBot has nothing left
+// to explore and the goal is out of reach, another exit it can reach is
+// taken, the one into the place (floor, player point) visited least, so the
+// floors are swept like a player would until the doors line up.
+constexpr const char* kMazes[] = {"dng310f1", "dng310f2", "dng310f3"};
 
 // The lobby gate's area list (stagML11 mate00.lua) by phase: none while it
 // is off (phases 1 and 3), the training field until flag 503.
@@ -525,9 +548,12 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // rather than walked back through). A place is a stage and the point it
     // was entered at (-1 where no exit names one).
     const auto areas = transporter_areas(engine);
+    // (A maze place swept with the flags as they are now leads nowhere new.)
+    const auto flags_now = flags_hash(engine);
     auto usable = [&](const Exit& exit, int entry) {
         if (std::string_view(exit.when) == "transporter")
             return std::find(areas.begin(), areas.end(), exit.target) != areas.end();
+        if (const auto it = swept_.find({exit.target, exit.entry}); it != swept_.end() && it->second == flags_now) return false;
         return holds(engine, exit.when, entry);
     };
     using Place = std::pair<std::string, int>;
@@ -567,7 +593,8 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     Step step{here, "", -1, objective->name};
     std::string mats;
     for (const auto& exit : kExits)
-        if (here == exit.stage && next.first == exit.target && next.second == exit.entry && usable(exit, entry_)) {
+        if (here == exit.stage && next.first == exit.target && usable(exit, entry_) &&
+            (next.second == exit.entry || std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return here == m; }))) {
             if (!mats.empty()) mats += '|';
             mats += exit.mat;
             if (std::string_view(exit.when) == "transporter")
@@ -742,12 +769,104 @@ bool CampaignBot::walk_to(engine::Engine& engine, const engine::ModelCtrlManager
     return false;
 }
 
+// In a maze floor: after 15 seconds with nothing left to explore and the goal
+// out of reach (or seven minutes in the place: waves that come back keep
+// the ExploreBot busy), the reachable exit into the least visited place
+// becomes the goal (see kMazes); a goal reached again starts over.
+void CampaignBot::maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame) {
+    if (maze_since_ < 0) maze_since_ = frame;
+    if (!explorer_.exhausted()) exhausted_since_ = -1;
+    else if (exhausted_since_ < 0) exhausted_since_ = frame;
+    if ((exhausted_since_ < 0 || frame - exhausted_since_ < 900) && frame - maze_since_ < 25000) return;
+    exhausted_since_ = -1;
+    maze_since_ = frame;
+    swept_[{stage_, entry_}] = flags_hash(engine);
+    auto* hitland = engine.get<engine::HitLandManager>();
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    if (!hitland || !mats) return;
+    const auto me = position_of(player);
+    const WithoutLimitCircle without_limit(*hitland);
+    const WalkMap map(hitland->world(), me, 1400.0f, hitland->delivery_flags(player.info_name, player.index), {},
+                      hitland->delivery_width(player.info_name, player.index));
+    auto reachable = [&](const std::string& mat) {
+        for (const auto& box : mats->mat_boxes())
+            if (box.name == mat && map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z)) return true;
+        return false;
+    };
+    const Exit* best = nullptr;
+    int fewest = 1 << 30;
+    for (const auto& exit : kExits) {
+        if (stage_ != exit.stage || ("|" + goal + "|").find(std::string("|") + exit.mat + "|") != std::string::npos) continue;
+        if (!holds(engine, exit.when, entry_) || !reachable(exit.mat)) continue;
+        const auto it = place_visits_.find({exit.target, exit.entry});
+        const int visits = it == place_visits_.end() ? 0 : it->second;
+        if (visits < fewest) {
+            fewest = visits;
+            best = &exit;
+        }
+    }
+    maze_goal_ = best ? best->mat : "";
+    std::printf("[%d] campaign: maze %s point %d swept, on to %s\n", frame, stage_.c_str(), entry_,
+                best ? (std::string(best->mat) + " -> " + best->target + " point " + std::to_string(best->entry)).c_str() : "nothing reachable");
+}
+
+// DW4_CAMPAIGN_REACH=wall,wall,... (research, changes the stage): what the
+// player reaches from where the stage put them: the mats and the g_d*
+// gimmicks (buttons, doors) within a walk map, first as the stage stands,
+// then with each listed HITLANDMODEL wall switched off in turn (a door a
+// button opens). Prints one line each; maps the dng310 maze's regions.
+void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int entry) {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!hitland || !mats || !models) return;
+    const auto me = position_of(player);
+    const auto line = [&](const std::string& what) {
+        const WithoutLimitCircle without_limit(*hitland);
+        const WalkMap map(hitland->world(), me, 1400.0f, hitland->delivery_flags(player.info_name, player.index), {},
+                          hitland->delivery_width(player.info_name, player.index));
+        std::string text;
+        for (const auto& box : mats->mat_boxes())
+            if (box.name.rfind("matz", 0) == 0 || box.name.rfind("mate", 0) == 0 || box.name.rfind("matf", 0) == 0)
+                if (map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z)) text += " " + box.name;
+        text += " |";
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->info_name.rfind("g_d", 0) == 0 &&
+                (e->info_name.find("button") != std::string::npos || e->info_name.find("door") != std::string::npos))
+                if (map.nearest(position_of(*e), 14.0f)) text += " " + e->info_name + "#" + std::to_string(e->index);
+        std::printf("REACH %s e%d %s:%s\n", engine.stage_name().c_str(), entry, what.c_str(), text.c_str());
+    };
+    line("as is");
+    // Items separated by ';' switch their ','-separated walls off on top of
+    // the ones before (a chain of doors); a lone wall is tried alone first.
+    const std::string list = std::getenv("DW4_CAMPAIGN_REACH");
+    std::string off;
+    for (std::size_t at = 0; at <= list.size();) {
+        const auto semi = std::min(list.find(';', at), list.size());
+        const std::string item = list.substr(at, semi - at);
+        for (std::size_t w = 0; w <= item.size();) {
+            const auto comma = std::min(item.find(',', w), item.size());
+            const std::string wall = item.substr(w, comma - w);
+            if (!wall.empty() && hitland->child_hit(wall)) {
+                hitland->set_child_hit(wall, false);
+                off += (off.empty() ? "" : "+") + wall;
+            }
+            w = comma + 1;
+        }
+        if (!item.empty()) line("without " + off);
+        at = semi + 1;
+    }
+}
+
 CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
     Output out;
     const std::string stage = lower(engine.stage_name());
     if (stage != stage_) {
         stage_ = stage;
         entry_ = -1;
+        maze_goal_.clear();
+        exhausted_since_ = -1;
+        maze_since_ = -1;
         stage_frame_ = frame;
         route_.clear();
         route_frame_ = -100000;
@@ -772,9 +891,13 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
         // stage changes); an exit's SETGENERATEPOS later is for the next.
         engine::Packet packet;
         engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
-        if (!packet.ints.empty()) entry_ = packet.ints[0];
+        if (!packet.ints.empty()) {
+            entry_ = packet.ints[0];
+            ++place_visits_[{stage, entry_}];
+        }
     }
     if (stage.rfind("stagis", 0) == 0 || !player || !player->node) return boot(engine, frame);
+    if (frame == stage_frame_ + 110 && std::getenv("DW4_CAMPAIGN_REACH")) reach_report(engine, *player, entry_);
     // The character on arriving in a stage (level, techniques' elements,
     // the attack's element: what element-locked walls need).
     if (frame == stage_frame_ + 104 && trace())
@@ -806,7 +929,12 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 }
             }
         }
-    const auto step = next_step(engine);
+    auto step = next_step(engine);
+    if (!step && !swept_.empty()) {
+        // Every way led through swept maze places: sweep them again.
+        swept_.clear();
+        step = next_step(engine);
+    }
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
     if (key != traced_) {
         std::printf("[%d] campaign: %s\n", frame, key.c_str());
@@ -817,6 +945,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
         std::printf("[%d] campaign: still %s for %d frames at (%.0f,%.0f,%.0f)\n", frame, key.c_str(), frame - traced_at_,
                     player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2));
     }
+    if (frame % 10000 == 0) std::fflush(stdout); // (a long run's log shows where it is)
     const auto me = position_of(*player);
     const bool controllable = player->control_enabled && player->seq_name.rfind("SQ_DEMO", 0) != 0;
     // DW4_TRACE_CAMPAIGN=2: the models around the player every 300 frames.
@@ -929,7 +1058,10 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     // Fields and dungeons: the ExploreBot plays them (it answers its own
     // prompts and text windows).
     if (step->action.rfind("explore:", 0) == 0) {
-        const auto d = explorer_.update(engine, *player, step->action.substr(8), frame);
+        const bool maze = std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return stage == m; });
+        const std::string goal = maze && !maze_goal_.empty() ? maze_goal_ : step->action.substr(8);
+        const auto d = explorer_.update(engine, *player, goal, frame);
+        if (maze) maze_turn(engine, *player, step->action.substr(8), frame);
         out.walk = controllable;
         out.x = d.x;
         out.z = d.z;

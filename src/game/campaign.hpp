@@ -48,6 +48,8 @@ private:
     bool walk_to(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& goal, float close,
                  int frame, Output& out);
     const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near) const;
+    // A maze floor swept (ExploreBot exhausted): on to another exit.
+    void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
 
     std::string stage_;
     int entry_ = -1;             // the player point the current stage was entered at
@@ -72,6 +74,11 @@ private:
     const void* foe_ = nullptr;  // the enemy fought outside the ExploreBot
     int foe_since_{}, foe_hp_{}; // since when without losing HP, its HP then
     std::map<const void*, int> foe_left_; // enemies left alone until
+    std::map<std::pair<std::string, int>, int> place_visits_; // arrivals per (stage, player point)
+    std::string maze_goal_;      // the exit a swept maze floor is left by
+    std::map<std::pair<std::string, int>, std::size_t> swept_; // maze places swept, with the flags then
+    int exhausted_since_ = -1;   // the ExploreBot has had nothing left to explore since
+    int maze_since_ = -1;        // in this maze place (or since its last turn) since
 };
 
 } // namespace dw4::game
