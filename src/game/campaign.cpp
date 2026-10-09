@@ -665,11 +665,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     const std::string stage = lower(engine.stage_name());
     if (stage != stage_) {
         stage_ = stage;
-        // The player point this stage was entered at (PLAYERPOINT
-        // GETGENERATEPOS, what first.lua's PLAYERgetPos reads).
-        engine::Packet packet;
-        engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
-        entry_ = packet.ints.empty() ? -1 : packet.ints[0];
+        entry_ = -1;
         stage_frame_ = frame;
         route_.clear();
         route_frame_ = -100000;
@@ -686,6 +682,15 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             else unsetenv(setting.name);
 #endif
         }
+    }
+    if (entry_ < 0) {
+        // The player point this stage was entered at (PLAYERPOINT
+        // GETGENERATEPOS, what first.lua's PLAYERgetPos reads), asked once
+        // the stage's PLAYERPOINT row answers (not yet on the frame the
+        // stage changes); an exit's SETGENERATEPOS later is for the next.
+        engine::Packet packet;
+        engine.messenger().send(engine, "PLAYERPOINT", std::nullopt, -1, "GETGENERATEPOS", packet);
+        if (!packet.ints.empty()) entry_ = packet.ints[0];
     }
     if (stage.rfind("stagis", 0) == 0 || !player || !player->node) return boot(engine, frame);
     // The character on arriving in a stage (level, techniques' elements,
