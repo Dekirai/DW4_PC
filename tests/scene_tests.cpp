@@ -1,4 +1,5 @@
 #include "dw4/engine/math.hpp"
+#include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
@@ -216,6 +217,55 @@ void test_field_time() {
     check(field_time(3) == 50050000 && field_time(3000) == 50050000000, "Three fields");
 }
 
+// MOTIONSET cross-fade (801D0C14, several states): the quaternions blend
+// through 8012BE90 and the translations linearly; the local matrices are
+// never mixed element by element, which would shrink a turning bone.
+void test_motion_blend_tracks() {
+    const float h = std::sqrt(0.5f);
+    BoneTrack rest;                       // identity, at the origin
+    BoneTrack turned;
+    turned.rotation = {0, h, 0, h};       // 90 degrees about Y
+    turned.translation = {4, 0, -2};
+    const BoneTrack half = blend_bone_track(rest, turned, 0.5f);
+    const Mat4 m = bone_track_matrix(half);
+    for (int row = 0; row < 3; ++row) {
+        const float length = std::sqrt(m(row, 0) * m(row, 0) + m(row, 1) * m(row, 1) + m(row, 2) * m(row, 2));
+        check(std::abs(length - 1.0f) < 0.01f, "A half-way blend keeps the bone's axes unit length");
+    }
+    // An element-wise lerp of the two matrices would give cos = 0.5 here.
+    check(std::abs(m(0, 0) - std::cos(0.785398163f)) < 0.01f && std::abs(m(1, 1) - 1.0f) < 1e-6f,
+          "Half of a 90 degree turn is 45 degrees");
+    check(m(3, 0) == 2.0f && m(3, 1) == 0.0f && m(3, 2) == -1.0f, "The translation mixes linearly");
+
+    // The shorter way: the negated quaternion is the same turn.
+    BoneTrack negated = turned;
+    for (auto& c : negated.rotation) c = -c;
+    const BoneTrack other = blend_bone_track(rest, negated, 0.5f);
+    for (std::size_t i = 0; i < 4; ++i)
+        check(std::abs(std::abs(other.rotation[i]) - std::abs(half.rotation[i])) < 1e-6f, "8012BE90 takes the shorter way");
+
+    // Close rotations (1 - dot <= 0.08) take the unnormalized linear branch;
+    // the translation is acc * (1 - w) + w * t, fused.
+    BoneTrack near_turn;
+    near_turn.rotation = {0, 0.2f, 0, std::sqrt(1.0f - 0.04f)};
+    near_turn.translation = {3, 2, -1};
+    BoneTrack start;
+    start.translation = {1, 2, 3};
+    const BoneTrack q = blend_bone_track(start, near_turn, 0.25f);
+    check(q.rotation[0] == 0 && q.rotation[1] == 0.25f * 0.2f && q.rotation[2] == 0 &&
+              q.rotation[3] == std::fma(0.75f, 1.0f, 0.25f * near_turn.rotation[3]),
+          "Close rotations blend linearly without normalizing");
+    check(q.translation.x == 1.5f && q.translation.y == 2.0f && q.translation.z == 2.0f, "Translation blend at a quarter");
+
+    // A fixed snapshot rebuilds its track from the cached local (8012B8A8).
+    const BoneTrack back = matrix_bone_track(bone_track_matrix(turned));
+    for (std::size_t i = 0; i < 4; ++i)
+        check(std::abs(back.rotation[i] - turned.rotation[i]) < 1e-6f, "The snapshot keeps the rotation");
+    check(back.translation.x == 4.0f && back.translation.y == 0.0f && back.translation.z == -2.0f, "The snapshot keeps the translation");
+    const BoneTrack identity = matrix_bone_track(Mat4{});
+    check(identity.rotation == std::array<float, 4>{0, 0, 0, 1}, "An identity local is the identity quaternion");
+}
+
 int main() {
     try {
         test_start_and_advance();
@@ -228,6 +278,7 @@ int main() {
         test_horizontal_perspective();
         test_system_random();
         test_field_time();
+        test_motion_blend_tracks();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

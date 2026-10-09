@@ -95,7 +95,27 @@ struct MotionState {
     void update(std::int64_t time);
 };
 
-// Bone locals of the combined motion at node time `time`.
+// One bone's local transform as a combiner state holds it (801D0C14): the
+// track quaternion XYZW (state +0x14) and the translation (state +0x24).
+struct BoneTrack {
+    std::array<float, 4> rotation{0, 0, 0, 1};
+    Vec3f translation{};
+};
+// 801D0C14, path with several states: every further state (status != 2)
+// turns the accumulated rotation toward its own through 8012BE90 by its weight
+// (state +0x20) and mixes the translation as acc * (1 - w) + w * t, fused
+// (0x801D10C0-0x801D111C). Nothing is normalized.
+BoneTrack blend_bone_track(const BoneTrack& acc, const BoneTrack& state, float weight);
+// The combiner's local matrix of a bone: rotation from the quaternion
+// (8012BCDC at 0x801D0E18/0x801D1158), translation into elements 12..14.
+Mat4 bone_track_matrix(const BoneTrack& track);
+// The track a fixed state rebuilds from a cached local matrix (the snapshot of
+// loc_801D2840): quaternion through 8012B8A8, translation from elements 12..14
+// (the matrix source samplers 801D11C8/801D1290).
+BoneTrack matrix_bone_track(const Mat4& local);
+
+// Bone locals of the combined motion at node time `time`. A fade blends the
+// tracks' quaternions (801D0C14), not the matrices.
 bool motion_locals(AnimationDatabase& database, const MotionState& motion, std::int64_t time, std::vector<Mat4>& locals);
 // Evaluate pose from clips at node time `time`; `locals` gets the combined
 // bone locals (empty when the motion has no clip to sample).
