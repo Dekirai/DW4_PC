@@ -141,6 +141,9 @@ struct Objective {
     // point (a part of the stage reached only from that side; the exits
     // leading there name their point, Exit::entry).
     int entry = -1;
+    // On a maze floor (kMazeRegions): the stage counts when the region
+    // entered reaches this region over the open links.
+    const char* region = nullptr;
 };
 constexpr Objective kObjectives[] = {
     // Phase 1. The Digi-Elf sends the new member to the Commander Room;
@@ -221,6 +224,35 @@ constexpr Objective kObjectives[] = {
     {"console (stag0302)", "F57|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
+    // The dng310 fortress (kMazeRegions): Lucemon's gate (dng310f3 matz06)
+    // opens once both waves of the centre are cleared (gene10.lua /
+    // gene11.lua: flags 158 and 159, g_bossgate). The centre lies between
+    // the barriers of the heal room; each barrier is switched off by the
+    // wall button on the far side of the other (hit_g_dwbutton1.lua: #0 in
+    // the east part, flag 186, opens the west barrier; #1 the east one). So
+    // the east part of the heal room is reached first (behind the doors of
+    // button 0, reached from player point 4 only, and button 1, and the
+    // wave of matg04), wall button 0 struck, then the way in from the west
+    // (the wave of matg07, buttons 3 and 2). The buttons and waves on the
+    // way to those floor parts lie on dng310f1 and dng310f2, in this order.
+    // "explore:none": the ExploreBot plays all of the reached floor (no mat
+    // has that name) until the objective's flag is set.
+    {"dng310f1 wave 1 (flag 100)", "F100|F69|P6", "dng310f1", "explore:none", -1, "start"},
+    {"dng310f1 wave 3 (flag 102)", "F102|F69|P6", "dng310f1", "explore:none", -1, "hall"},
+    {"dng310f2 button 3 (flag 147)", "F147|F69|P6", "dng310f2", "explore:none", -1, "e4"},
+    {"dng310f3 button 2 (flag 182)", "F182|F69|P6", "dng310f3", "explore:none", -1, "b2"},
+    {"dng310f2 button 0 (flag 144)", "F144|F69|P6", "dng310f2", "explore:none", -1, "e7"},
+    {"dng310f2 button 1 (flag 145)", "F145|F69|P6", "dng310f2", "explore:none", -1, "e2"},
+    {"dng310f3 button 0 (flag 180)", "F180|F69|P6", "dng310f3", "explore:none", -1, "b0"},
+    {"dng310f1 wave 4 (flag 103)", "F103|F69|P6", "dng310f1", "explore:none", -1, "gene04"},
+    {"dng310f2 button 2 (flag 146)", "F146|F69|P6", "dng310f2", "explore:none", -1, "e0"},
+    {"dng310f2 waves 3 and 4 (flags 133, 134)", "F133&F134|F69|P6", "dng310f2", "explore:none", -1, "south"},
+    {"dng310f3 wave 4 (flag 152)", "F152|F69|P6", "dng310f3", "explore:none", -1, "east"},
+    {"dng310f3 button 1 (flag 181)", "F181|F69|P6", "dng310f3", "explore:none", -1, "x160"},
+    {"dng310f3 wall button 0 (flag 186)", "F186|F69|P6", "dng310f3", "explore:none", -1, "eastheal"},
+    {"dng310f3 wave 7 (flag 155)", "F155|F69|P6", "dng310f3", "explore:none", -1, "west"},
+    {"dng310f3 button 3 (flag 183)", "F183|F69|P6", "dng310f3", "explore:none", -1, "x280"},
+    {"dng310f3 centre waves (flags 158, 159)", "F158&F159|F69|P6", "dng310f3", "explore:none", -1, "centre"},
     {"Lucemon (stagBS03)", "F69|P6", "stagbs03", "explore:matz01"},
     {"report to Ophanimon (phase 6)", "P6", "stagml02", "mat:matf00"},
     // Phase 6. Area 4: key items 9 (dng411b3) and 10 (dng412b4) let the
@@ -308,7 +340,7 @@ constexpr Exit kExits[] = {
     {"stag0302", "matf00", "stag0301", ""},     {"stag0302", "matz00", "dng308b1", ""},
     {"stag0302", "matz01", "stag0303", "F333"},
     {"stag0303", "matg00", "stag0304", ""},     {"stag0303", "matz00", "stag0302", ""},
-    {"stag0304", "mate00", "stag0303", ""},     {"stag0304", "matz00", "dng310f1", ""},
+    {"stag0304", "mate00", "stag0303", ""},     {"stag0304", "matz00", "dng310f1", "", 0},
     {"dng307b1", "matz01", "stag0301", ""},     {"dng307b1", "matz02", "dng307b2", ""},
     {"dng307b2", "matz01", "dng307b1", ""},     {"dng307b2", "matz02", "stagml11", ""},
     {"dng308b1", "matz01", "stag0302", ""},     {"dng308b1", "matz02", "dng308b2", ""},
@@ -321,7 +353,7 @@ constexpr Exit kExits[] = {
     // The dng310 maze (Lucemon's fortress): three floors of small regions
     // joined by doors that open to buttons and cleared waves; every link
     // names the player point it leads to (funcStageChange), see kMazes.
-    {"dng310f1", "matz01", "stag0304", ""},
+    {"dng310f1", "matz01", "stag0304", "", 2},
     {"dng310f1", "matz02", "dng310f2", "", 7},  {"dng310f1", "matz03", "dng310f2", "", 8},
     {"dng310f1", "matz04", "dng310f2", "", 4},  {"dng310f1", "matz05", "dng310f2", "", 0},
     {"dng310f1", "matz06", "dng310f2", "", 1},  {"dng310f1", "matz07", "dng310f2", "", 3},
@@ -335,7 +367,7 @@ constexpr Exit kExits[] = {
     {"dng310f2", "matz12", "dng310f3", "", 1},
     {"dng310f3", "matz01", "dng310f2", "", 9},  {"dng310f3", "matz02", "dng310f2", "", 11},
     {"dng310f3", "matz03", "dng310f2", "", 10}, {"dng310f3", "matz04", "dng310f2", "", 5},
-    {"dng310f3", "matz05", "dng310f2", "", 2},  {"dng310f3", "matz06", "stagbs03", ""},
+    {"dng310f3", "matz05", "dng310f2", "", 2},  {"dng310f3", "matz06", "stagbs03", "F158&F159"},
     {"stagbs03", "matz01", "stagml11", ""},
     // Area 4 (stag0401 mate00 = the starship, stag0401 mate00.lua: key
     // items 9 and 10).
@@ -357,11 +389,137 @@ constexpr Exit kExits[] = {
 // often lie in other regions or on other floors (dng310f3 matz06 needs the
 // boss gate, flags 158/159 from the waves of the centre, and a way in
 // through barrier 0 or 1, whose wall buttons stand on the far side of each
-// other). The way there is not planned: once the ExploreBot has nothing left
-// to explore and the goal is out of reach, another exit it can reach is
-// taken, the one into the place (floor, player point) visited least, so the
-// floors are swept like a player would until the doors line up.
+// other). The way is planned over the floors' regions (kMazeRegions); as a
+// fallback, once the ExploreBot has nothing left to explore and the goal of
+// a travel step is out of reach, another exit it can reach is taken, the one
+// into the place (floor, player point) visited least, so the floors are
+// swept like a player would until the doors line up.
 constexpr const char* kMazes[] = {"dng310f1", "dng310f2", "dng310f3"};
+
+// The regions of the maze floors with the switchable walls closed (from the
+// campaign driver's research report, DW4_CAMPAIGN_REGIONS: each region the
+// floor reached on foot), the player points arriving in each and the exit
+// mats in it, and the doors and barriers joining them with the flag that
+// opens each (the hit_g_dbutton1.lua / hit_g_dwbutton1.lua button flags and
+// the gene*.lua wave flags; start.lua opens them again from the flags).
+// Dead-end rooms are left out. An exit of a maze floor is usable from a
+// place (floor, player point) when its mat's region is reached from the
+// point's region over the links whose condition holds.
+struct MazeRegion {
+    const char* stage;
+    const char* name;
+    const char* points; // '|'-separated player points arriving here
+    const char* mats;   // '|'-separated exit mats in it
+};
+constexpr MazeRegion kMazeRegions[] = {
+    {"dng310f1", "start", "0", "matz01"},     {"dng310f1", "hall", "1|2", "matz02|matz03"},
+    {"dng310f1", "west", "3", "matz04"},      {"dng310f1", "gene04", "5", "matz06"},
+    {"dng310f1", "gene05", "6", "matz07"},    {"dng310f1", "east", "7", "matz08"},
+    {"dng310f1", "south", "4", "matz05"},
+    {"dng310f2", "e0", "0", "matz01"},        {"dng310f2", "e1", "1", "matz02"},
+    {"dng310f2", "e2", "2|3", "matz03|matz04"}, {"dng310f2", "e4", "4", "matz05"},
+    {"dng310f2", "e5", "5", "matz06"},        {"dng310f2", "e6", "6|9", "matz07|matz10"},
+    {"dng310f2", "e7", "7", "matz08"},        {"dng310f2", "e8", "8", "matz09"},
+    {"dng310f2", "strip", "", ""},            {"dng310f2", "south", "", ""},
+    {"dng310f2", "north", "10|11", "matz11|matz12"},
+    {"dng310f3", "east", "0|1", "matz01|matz02"}, {"dng310f3", "west", "2", "matz03"},
+    {"dng310f3", "b2", "3", "matz04"},        {"dng310f3", "b0", "4", "matz05"},
+    {"dng310f3", "b4", "", ""},               {"dng310f3", "x160", "", ""},
+    {"dng310f3", "x200", "", ""},             {"dng310f3", "eastheal", "", ""},
+    {"dng310f3", "centre", "", "matz06"},     {"dng310f3", "westheal", "", ""},
+    {"dng310f3", "x240", "", ""},             {"dng310f3", "x280", "", ""},
+};
+struct MazeLink {
+    const char* stage;
+    const char* a;
+    const char* b;
+    const char* when;
+    bool oneway = false; // only from a to b (a ledge walked off)
+};
+constexpr MazeLink kMazeLinks[] = {
+    // dng310f1: the doors of the waves of matg01 (doorwall01/02), matg03
+    // (doorwall04), matg04 (doorwall05) and matg05 (doorwall06).
+    {"dng310f1", "start", "hall", "F100"},
+    {"dng310f1", "hall", "west", "F102"},
+    {"dng310f1", "hall", "gene04", "F103"},
+    {"dng310f1", "hall", "gene05", "F104"},
+    // dng310f2: button 3 (barrierwall05, doorwall01 to the matz06 room),
+    // button 2 (barrierwall06, doorwall02 to the south), the waves of matg03
+    // (doorwall03 to the north) and matg04 (doorwall04/05), matg06
+    // (doorwall06); the barriers of the room of buttons 0 (barrierwall03)
+    // and 1 (barrierwall02); the ledge from the matt05 corridor (safewall0
+    // is off while the players stand on matt05, matt05.lua).
+    {"dng310f2", "e4", "strip", "F147"},
+    {"dng310f2", "strip", "e5", "F147"},
+    {"dng310f2", "e0", "strip", "F146"},
+    {"dng310f2", "strip", "south", "F146"},
+    {"dng310f2", "south", "north", "F133"},
+    {"dng310f2", "south", "e8", "F134"},
+    {"dng310f2", "south", "e6", "F134"},
+    {"dng310f2", "e8", "e6", "F136"},
+    {"dng310f2", "e1", "e2", "F144"},
+    {"dng310f2", "e7", "e0", "F145"},
+    {"dng310f2", "e7", "e1", "", true},
+    // dng310f3: the wave of matg04 (doorwall06), buttons 0 (doorwall01),
+    // 1 (doorwall02), 2 (doorwall03), 3 (doorwall04), 5 (doorwall05), the
+    // wave of matg07 (doorwall07), the heal room barriers (barrierwall01 by
+    // wall button 1, barrierwall02 by wall button 0), barrier 3 (start.lua
+    // keeps barrierwall03 off only with flag 183) and the ledge from the
+    // east part of the heal room down to button 0 (safewall1, matt06.lua).
+    {"dng310f3", "east", "x160", "F152"},
+    {"dng310f3", "x160", "x200", "F180"},
+    {"dng310f3", "x200", "eastheal", "F181"},
+    {"dng310f3", "eastheal", "centre", "F187"},
+    {"dng310f3", "westheal", "centre", "F186"},
+    {"dng310f3", "westheal", "x240", "F183"},
+    {"dng310f3", "x240", "x280", "F182"},
+    {"dng310f3", "x280", "west", "F155"},
+    {"dng310f3", "b2", "b4", "F185"},
+    {"dng310f3", "b4", "west", "F183"},
+    {"dng310f3", "eastheal", "b0", "", true},
+};
+
+bool in_list(std::string_view list, std::string_view item) {
+    for (std::size_t at = 0; at <= list.size();) {
+        const auto bar = std::min(list.find('|', at), list.size());
+        if (list.substr(at, bar - at) == item) return true;
+        at = bar + 1;
+    }
+    return false;
+}
+
+bool maze_floor(std::string_view stage) {
+    return std::any_of(std::begin(kMazeRegions), std::end(kMazeRegions), [&](const MazeRegion& r) { return stage == r.stage; });
+}
+
+// The region a player point arrives in (nullptr: unknown).
+const char* point_region(std::string_view stage, int point) {
+    if (point < 0) return nullptr;
+    for (const auto& r : kMazeRegions)
+        if (stage == r.stage && in_list(r.points, std::to_string(point))) return r.name;
+    return nullptr;
+}
+
+const char* mat_region(std::string_view stage, std::string_view mat) {
+    for (const auto& r : kMazeRegions)
+        if (stage == r.stage && in_list(r.mats, mat)) return r.name;
+    return nullptr;
+}
+
+// The regions reached from `from` over the links open now.
+std::set<std::string> maze_reach(engine::Engine& engine, std::string_view stage, const char* from) {
+    std::set<std::string> reached{from};
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const auto& link : kMazeLinks) {
+            if (stage != link.stage || !holds(engine, link.when)) continue;
+            const bool a = reached.count(link.a) > 0, b = reached.count(link.b) > 0;
+            if (a && !b) grew = reached.insert(link.b).second || grew;
+            else if (b && !a && !link.oneway) grew = reached.insert(link.a).second || grew;
+        }
+    }
+    return reached;
+}
 
 // The lobby gate's area list (stagML11 mate00.lua) by phase: none while it
 // is off (phases 1 and 3), the training field until flag 503.
@@ -421,6 +579,33 @@ constexpr RideTargets kRideTargets[] = {
     {"stag0103", "g_facttowerz06|g_shelfz06", 70.0f, 20.0f, 40.0f},
     {"stag0203", "g_turnright#0|g_turnright#4|g_turnleft#2|g_gatesign#0|g_gatesign#1", 220.0f, 20.0f, 0.0f, 16.0f,
      "g_turn|g_gatesign"},
+};
+
+// Boss fights the ExploreBot's way of fighting (walk at the nearest enemy,
+// swing) does not win: the boss opens short windows in which a part of it
+// can take a hit, and its attacks knock the player down for most of such a
+// window (SQ_LDMG, then SQ_STUN). In these stages the driver fights: the
+// listed models (`strike`, prefixes or "<model>#<n>", see listed_in) are
+// struck while they can take a hit (alive, no MUTEKI, their hit body within
+// the player's reach in height); meanwhile the player keeps `keep` from the
+// boss (`follow`), and the guard (B, SQ_GUARD: the stages' hit_p_*.lua take
+// no damage then) is held while an enemy attack box (kind / 10000 7 or 8)
+// is about to meet the player. Once the boss is down the ExploreBot takes
+// the player to the return gate.
+struct BossFight {
+    const char* stage;
+    const char* strike;
+    const char* follow;
+    float keep;
+};
+constexpr BossFight kBossFights[] = {
+    // stagBS03: Lucemon (f_luce) takes damage only on the ground
+    // (hit_f_luce.lua: g_Ground, set by gr2_f_luce.lua "GROUND" in its
+    // SQ_SWITCH3), which the shield ball f_luce2 starts when it breaks (its
+    // SQ_EXIT calls cha_f_luce2.lua). The shield can be hit only while it is
+    // soft: after a landing sof_f_luce.lua "ON" switches it to its SOFT
+    // label, which leaves out the MUTEKI of the NORM one.
+    {"stagbs03", "f_luce2|f_luce", "f_luce", 22.0f},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -531,6 +716,34 @@ const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine
     return best;
 }
 
+// The maze region the player is in: of the regions whose exit mats a walk
+// map from the player reaches, the one that reaches the most (a region a
+// ledge leads down to reaches less than the one above it); empty when no
+// exit mat is reached.
+std::string locate_region(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& stage) {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    if (!hitland || !mats) return {};
+    const WithoutLimitCircle without_limit(*hitland);
+    const WalkMap map(hitland->world(), position_of(player), 1400.0f, hitland->delivery_flags(player.info_name, player.index), {},
+                      hitland->delivery_width(player.info_name, player.index));
+    std::string best;
+    std::size_t most = 0;
+    for (const auto& region : kMazeRegions) {
+        if (stage != region.stage || !*region.mats) continue;
+        bool reached = false;
+        for (const auto& box : mats->mat_boxes())
+            if (in_list(region.mats, box.name) && map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z)) reached = true;
+        if (!reached) continue;
+        const auto reach = maze_reach(engine, stage, region.name).size();
+        if (reach > most) {
+            most = reach;
+            best = region.name;
+        }
+    }
+    return best;
+}
+
 std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) const {
     const Objective* objective = nullptr;
     for (const auto& o : kObjectives)
@@ -540,8 +753,24 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         }
     if (!objective) return std::nullopt;
     const std::string here = lower(engine.stage_name());
-    if (here == objective->stage && (objective->entry < 0 || objective->entry == entry_))
-        return Step{here, objective->action, -1, objective->name};
+    // The maze region of a place: from the point it was entered at, for the
+    // place the player is in the region found by walking (region_now_: a
+    // ledge walked off leaves the region entered).
+    const auto place_region = [&](std::string_view stage, int entry) -> const char* {
+        if (stage == here && entry == entry_ && !region_now_.empty()) return region_now_.c_str();
+        return point_region(stage, entry);
+    };
+    // Whether a place (stage, the player point it was entered at) is where
+    // the objective is done.
+    const auto at_objective = [&](const std::string& stage, int entry) {
+        if (stage != objective->stage) return false;
+        if (objective->region && maze_floor(stage)) {
+            const char* from = place_region(stage, entry);
+            return from && maze_reach(engine, stage, from).count(objective->region) > 0;
+        }
+        return objective->entry < 0 || objective->entry == entry;
+    };
+    if (at_objective(here, entry_)) return Step{here, objective->action, -1, objective->name};
     // The cheapest way over the usable exits from here to the objective's
     // stage (entered at its point, if it names one): a stage change costs 1,
     // one into the lobby less (a cleared dungeon is left by its return gate
@@ -554,6 +783,13 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
         if (std::string_view(exit.when) == "transporter")
             return std::find(areas.begin(), areas.end(), exit.target) != areas.end();
         if (const auto it = swept_.find({exit.target, exit.entry}); it != swept_.end() && it->second == flags_now) return false;
+        // On a maze floor the exit's region has to be reached from the
+        // region the floor was entered in.
+        if (maze_floor(exit.stage)) {
+            const char* from = place_region(exit.stage, entry);
+            const char* to = mat_region(exit.stage, exit.mat);
+            if (from && to && !maze_reach(engine, exit.stage, from).count(to)) return false;
+        }
         return holds(engine, exit.when, entry);
     };
     using Place = std::pair<std::string, int>;
@@ -571,7 +807,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
                 at = place;
             }
         if (!at) break;
-        if (at->first == objective->stage && (objective->entry < 0 || objective->entry == at->second)) {
+        if (at_objective(at->first, at->second)) {
             found = at;
             break;
         }
@@ -594,7 +830,8 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     std::string mats;
     for (const auto& exit : kExits)
         if (here == exit.stage && next.first == exit.target && usable(exit, entry_) &&
-            (next.second == exit.entry || std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return here == m; }))) {
+            (next.second == exit.entry || (std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return here == m; }) &&
+                                           !maze_floor(here)))) {
             if (!mats.empty()) mats += '|';
             mats += exit.mat;
             if (std::string_view(exit.when) == "transporter")
@@ -810,52 +1047,314 @@ void CampaignBot::maze_turn(engine::Engine& engine, const engine::ModelCtrlManag
                 best ? (std::string(best->mat) + " -> " + best->target + " point " + std::to_string(best->entry)).c_str() : "nothing reachable");
 }
 
-// DW4_CAMPAIGN_REACH=wall,wall,... (research, changes the stage): what the
-// player reaches from where the stage put them: the mats and the g_d*
-// gimmicks (buttons, doors) within a walk map, first as the stage stands,
-// then with each listed HITLANDMODEL wall switched off in turn (a door a
-// button opens). Prints one line each; maps the dng310 maze's regions.
+// DW4_CAMPAIGN_REACH=items (research, changes the stage): what the player
+// reaches from where the stage put them: the mats and the g_d* gimmicks
+// (buttons, doors, cells) within a walk map, first as the stage stands, then
+// for each item: ';'-separated items of ','-separated HITLANDMODEL walls
+// switched off on top of the ones before (a chain of doors). Further:
+//   DW4_CAMPAIGN_REACH_CLOSE=walls   switched on first (doors open at start)
+//   DW4_CAMPAIGN_REACH_EACH=1        each item alone (switched back after)
+//   DW4_CAMPAIGN_REACH_FROM=x,y,z|.. from these points, not the player's
+// Prints one line each; maps the dng310 maze's regions.
 void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int entry) {
     auto* hitland = engine.get<engine::HitLandManager>();
     auto* mats = engine.get<engine::MatCtrlManager>();
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!hitland || !mats || !models) return;
-    const auto me = position_of(player);
-    const auto line = [&](const std::string& what) {
+    const auto env = [](const char* name) { const char* v = std::getenv(name); return std::string(v ? v : ""); };
+    const auto split = [](const std::string& text, char by) {
+        std::vector<std::string> parts;
+        for (std::size_t at = 0; at <= text.size();) {
+            const auto end = std::min(text.find(by, at), text.size());
+            if (end > at) parts.push_back(text.substr(at, end - at));
+            at = end + 1;
+        }
+        return parts;
+    };
+    std::vector<engine::Vec3f> starts;
+    for (const auto& point : split(env("DW4_CAMPAIGN_REACH_FROM"), '|')) {
+        engine::Vec3f p{};
+        if (std::sscanf(point.c_str(), "%f,%f,%f", &p.x, &p.y, &p.z) == 3) starts.push_back(p);
+    }
+    if (starts.empty()) starts.push_back(position_of(player));
+    for (const auto& wall : split(env("DW4_CAMPAIGN_REACH_CLOSE"), ','))
+        hitland->set_child_hit(wall, true);
+    const auto line = [&](const engine::Vec3f& me, const std::string& what) {
         const WithoutLimitCircle without_limit(*hitland);
         const WalkMap map(hitland->world(), me, 1400.0f, hitland->delivery_flags(player.info_name, player.index), {},
                           hitland->delivery_width(player.info_name, player.index));
         std::string text;
         for (const auto& box : mats->mat_boxes())
-            if (box.name.rfind("matz", 0) == 0 || box.name.rfind("mate", 0) == 0 || box.name.rfind("matf", 0) == 0)
-                if (map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z)) text += " " + box.name;
+            if (map.reached_inside(box.min.x, box.min.z, box.max.x, box.max.z)) text += " " + box.name;
         text += " |";
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->info_name.rfind("g_d", 0) == 0 &&
-                (e->info_name.find("button") != std::string::npos || e->info_name.find("door") != std::string::npos))
+                (e->info_name.find("button") != std::string::npos || e->info_name.find("door") != std::string::npos ||
+                 e->info_name.find("cell") != std::string::npos || e->info_name.find("gate") != std::string::npos))
                 if (map.nearest(position_of(*e), 14.0f)) text += " " + e->info_name + "#" + std::to_string(e->index);
-        std::printf("REACH %s e%d %s:%s\n", engine.stage_name().c_str(), entry, what.c_str(), text.c_str());
+        std::printf("REACH %s e%d from (%.0f,%.0f,%.0f) %s:%s\n", engine.stage_name().c_str(), entry, me.x, me.y, me.z, what.c_str(),
+                    text.c_str());
     };
-    line("as is");
-    // Items separated by ';' switch their ','-separated walls off on top of
-    // the ones before (a chain of doors); a lone wall is tried alone first.
-    const std::string list = std::getenv("DW4_CAMPAIGN_REACH");
-    std::string off;
-    for (std::size_t at = 0; at <= list.size();) {
-        const auto semi = std::min(list.find(';', at), list.size());
-        const std::string item = list.substr(at, semi - at);
-        for (std::size_t w = 0; w <= item.size();) {
-            const auto comma = std::min(item.find(',', w), item.size());
-            const std::string wall = item.substr(w, comma - w);
-            if (!wall.empty() && hitland->child_hit(wall)) {
-                hitland->set_child_hit(wall, false);
-                off += (off.empty() ? "" : "+") + wall;
-            }
-            w = comma + 1;
-        }
-        if (!item.empty()) line("without " + off);
-        at = semi + 1;
+    // (once per stage: every mat's box and the g_d* gimmicks' places)
+    static std::string listed;
+    if (listed != engine.stage_name()) {
+        listed = engine.stage_name();
+        for (const auto& box : mats->mat_boxes())
+            std::printf("REACHMAT %s %s (%.0f..%.0f, %.0f..%.0f, y %.0f..%.0f)\n", engine.stage_name().c_str(), box.name.c_str(), box.min.x,
+                        box.max.x, box.min.z, box.max.z, box.min.y, box.max.y);
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->info_name.rfind("g_d", 0) == 0)
+                std::printf("REACHMODEL %s %s#%d (%.0f,%.0f,%.0f) %s\n", engine.stage_name().c_str(), e->info_name.c_str(), e->index,
+                            position_of(*e).x, position_of(*e).y, position_of(*e).z, e->seq_name.c_str());
     }
+    const bool each = !env("DW4_CAMPAIGN_REACH_EACH").empty();
+    for (const auto& me : starts) {
+        line(me, "as is");
+        std::vector<std::string> off;
+        for (const auto& item : split(env("DW4_CAMPAIGN_REACH"), ';')) {
+            std::vector<std::string> now;
+            for (const auto& wall : split(item, ','))
+                if (hitland->child_hit(wall).value_or(false)) {
+                    hitland->set_child_hit(wall, false);
+                    now.push_back(wall);
+                    off.push_back(wall);
+                }
+            std::string names;
+            for (const auto& wall : each ? now : off) names += (names.empty() ? "" : "+") + wall;
+            if (!now.empty()) line(me, "without " + names);
+            if (each)
+                for (const auto& wall : now) hitland->set_child_hit(wall, true);
+        }
+        for (const auto& wall : each ? std::vector<std::string>{} : off) hitland->set_child_hit(wall, true);
+    }
+}
+
+// One frame of a boss fight (see kBossFights); false once the boss is down
+// (or not there yet).
+bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
+                             const std::string& follow, float keep, int frame, Output& out) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!models) return false;
+    const auto me = position_of(player);
+    const auto* boss = find_model(engine, follow + "#0", me);
+    if (!boss || boss->hp <= 0) return false;
+    const bool tracing = std::getenv("DW4_TRACE_CAMPAIGN") && std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2";
+    const std::string targets = "|" + strike + "|";
+    // The player's body (the stages' p_* hit body: 5 wide, 17 high).
+    const float body_half = 2.5f, body_height = 17.0f;
+    // An enemy attack box that has started (or starts within a few frames)
+    // and meets the player's body grown by a small margin (boxes move).
+    std::string threat;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        const auto& m = e->node->matrix;
+        for (const auto& box : e->hitboxes) {
+            const int group = box.kind / 10000;
+            if ((group != 7 && group != 8) || box.elapsed + 4.0f < box.delay) continue;
+            const engine::Vec3f o = box.offset;
+            const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
+            const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
+            const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
+            constexpr float margin = 2.5f;
+            if (std::abs(me.x - cx) < box.size.x * 0.5f + body_half + margin && std::abs(me.z - cz) < box.size.z * 0.5f + body_half + margin &&
+                me.y + body_height + 1.0f > cy - box.size.y * 0.5f && me.y - 1.0f < cy + box.size.y * 0.5f)
+                threat = e->info_name + " " + std::to_string(box.kind);
+        }
+    }
+    // The listed model in focus: the nearest one that can take a hit (alive,
+    // no MUTEKI) and is not out of reach in the air; `in_reach`: its hit body
+    // meets the height of the player's swing (the attack boxes reach from
+    // the feet 8 up).
+    const engine::ModelCtrlManager::ModelRam* focus = nullptr;
+    engine::Vec3f at{};
+    float best = 1e30f;
+    bool in_reach = false;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->hp <= 0 || e->muteki != 0.0f || !e->hit || e->hit->boxes.empty() || !listed_in(targets, *e))
+            continue;
+        const auto& m = e->node->matrix;
+        float y0 = 1e30f, y1 = -1e30f;
+        for (const auto& [lo, hi] : e->hit->boxes) {
+            // (80307EAC: the matrix moves the box centre only.)
+            const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+            const float cy = c.x * m(0, 1) + c.y * m(1, 1) + c.z * m(2, 1) + m(3, 1);
+            y0 = std::min(y0, cy - (hi.y - lo.y) * 0.5f);
+            y1 = std::max(y1, cy + (hi.y - lo.y) * 0.5f);
+        }
+        if (tracing && frame % 10 == 0)
+            std::printf("[%d] campaign boss part %s#%d %s body y %.0f..%.0f at (%.0f,%.0f)\n", frame, e->info_name.c_str(), e->index,
+                        e->seq_name.c_str(), y0, y1, m(3, 0), m(3, 2));
+        if (y0 > me.y + 40.0f) continue;
+        const auto p = nearest_hit_point(*e, me);
+        if (flat(p, me) < best) {
+            best = flat(p, me);
+            focus = e.get();
+            at = p;
+            in_reach = y0 < me.y + 8.0f && y1 > me.y;
+        }
+    }
+    if (tracing && frame % 30 == 0)
+        std::printf("[%d] campaign boss %s#%d hp %d %s, focus %s, threat %s, at (%.0f,%.0f,%.0f)\n", frame, boss->info_name.c_str(), boss->index,
+                    boss->hp, boss->seq_name.c_str(),
+                    focus ? (focus->info_name + " d " + std::to_string(int(best)) + (in_reach ? " in reach" : "")).c_str() : "-",
+                    threat.empty() ? "-" : threat.c_str(), me.x, me.y, me.z);
+    if (!threat.empty()) {
+        // (B is read on its press: pulsed so the guard is taken again.)
+        if (frame % 8 < 4) out.buttons |= pad_button::b;
+        return true;
+    }
+    if (focus) {
+        // The swing's boxes reach up to ~20 ahead: struck from 2.5..6.5 off
+        // its hit body, outside the reach of a contact box around it.
+        if (best > 6.5f) {
+            walk_to(engine, player, at, 5.0f, frame, out);
+        } else if (best < 2.5f) {
+            const auto c = position_of(*focus);
+            const float d = std::max(0.01f, flat(c, me));
+            out.walk = true;
+            out.x = me.x + (me.x - c.x) / d * 6.0f;
+            out.z = me.z + (me.z - c.z) / d * 6.0f;
+            out.reach = 1.0f;
+        } else if (frame % 12 < 3) {
+            out.buttons |= pad_button::a;
+        }
+        return true;
+    }
+    // Nothing to strike: near the boss, on the player's side of it.
+    const auto b = position_of(*boss);
+    const float d = flat(b, me);
+    if (std::abs(d - keep) > 6.0f) {
+        const float k = d > 0.01f ? keep / d : 0.0f;
+        const engine::Vec3f spot{b.x + (me.x - b.x) * k, me.y, b.z + (me.z - b.z) * k};
+        walk_to(engine, player, spot, 4.0f, frame, out);
+    }
+    return true;
+}
+
+// DW4_CAMPAIGN_REGIONS=walls (research, changes the stage): the regions of
+// a stage with the listed HITLANDMODEL walls closed (doors, barriers) and
+// what each wall joins when it alone is open. The floor is the union of the
+// walk maps from the player, every mat and every g_d* gimmick with all the
+// walls open; regions are labelled by flooding from unlabelled floor in
+// rising height (a ledge walked off leads down, never up, so a lower region
+// is labelled before one that drops into it). Prints REGION lines (seed,
+// mats, gimmicks), REGIONDROP (reached one way with the walls closed),
+// REGIONLINK lines (a wall opened) and REGIONCELL x z id for a map.
+void region_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    auto* mats = engine.get<engine::MatCtrlManager>();
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!hitland || !mats || !models) return;
+    std::vector<std::string> walls;
+    {
+        const std::string list = std::getenv("DW4_CAMPAIGN_REGIONS");
+        for (std::size_t at = 0; at <= list.size();) {
+            const auto end = std::min(list.find(',', at), list.size());
+            if (end > at) walls.push_back(list.substr(at, end - at));
+            at = end + 1;
+        }
+    }
+    const WithoutLimitCircle without_limit(*hitland);
+    const auto flags = hitland->delivery_flags(player.info_name, player.index);
+    const auto width = hitland->delivery_width(player.info_name, player.index);
+    const auto map_from = [&](const engine::Vec3f& p) { return WalkMap(hitland->world(), p, 1400.0f, flags, {}, width); };
+    const auto key = [](const engine::Vec3f& p) { return std::make_pair(int(std::lround(p.x)), int(std::lround(p.z))); };
+    // The floor, all walls open.
+    std::vector<engine::Vec3f> seeds{position_of(player)};
+    for (const auto& box : mats->mat_boxes())
+        seeds.push_back({(box.min.x + box.max.x) * 0.5f, box.min.y + 2.0f, (box.min.z + box.max.z) * 0.5f});
+    for (const auto& e : models->rams())
+        if (e->generated && e->node && e->info_name.rfind("g_d", 0) == 0) seeds.push_back(position_of(*e) + engine::Vec3f{0, 2, 0});
+    for (const auto& wall : walls) hitland->set_child_hit(wall, false);
+    std::map<std::pair<int, int>, engine::Vec3f> floor;
+    for (const auto& seed : seeds) {
+        bool known = false;
+        for (const auto& [k, q] : floor)
+            if (std::abs(q.x - seed.x) < 4.0f && std::abs(q.z - seed.z) < 4.0f && std::abs(q.y - seed.y) < 6.0f) known = true;
+        if (known) continue;
+        for (const auto& q : map_from(seed).samples()) floor.emplace(key(q), q);
+    }
+    for (const auto& wall : walls) hitland->set_child_hit(wall, true);
+    // Regions, flooded in rising height.
+    std::vector<engine::Vec3f> order;
+    for (const auto& [k, q] : floor) order.push_back(q);
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.y < b.y; });
+    std::map<std::pair<int, int>, int> label;
+    std::vector<engine::Vec3f> region_seed;
+    std::vector<std::set<int>> drops;
+    for (const auto& q : order) {
+        if (label.count(key(q))) continue;
+        const int id = int(region_seed.size());
+        region_seed.push_back(q);
+        drops.emplace_back();
+        const auto map = map_from(q);
+        for (const auto& r : map.samples()) {
+            const auto it = label.find(key(r));
+            if (it == label.end()) {
+                if (floor.count(key(r))) label[key(r)] = id;
+            } else if (it->second != id) {
+                drops[std::size_t(id)].insert(it->second);
+            }
+        }
+    }
+    const auto region_of = [&](const engine::Vec3f& p, float tolerance) {
+        int found = -1;
+        float best = tolerance;
+        for (const auto& [k, id] : label) {
+            const auto& q = floor.at(k);
+            const float d = std::hypot(q.x - p.x, q.z - p.z);
+            if (d < best && std::abs(q.y - p.y) < 30.0f) {
+                best = d;
+                found = id;
+            }
+        }
+        return found;
+    };
+    const std::string stage = engine.stage_name();
+    for (std::size_t id = 0; id < region_seed.size(); ++id) {
+        std::string text;
+        int cells = 0;
+        for (const auto& [k, l] : label) cells += l == int(id);
+        if (cells < 3) continue;
+        for (const auto& box : mats->mat_boxes()) {
+            bool inside = false;
+            for (const auto& [k, l] : label)
+                if (l == int(id)) {
+                    const auto& q = floor.at(k);
+                    if (q.x >= box.min.x && q.x <= box.max.x && q.z >= box.min.z && q.z <= box.max.z && q.y >= box.min.y - 2 && q.y <= box.max.y)
+                        inside = true;
+                }
+            if (inside) text += " " + box.name;
+        }
+        text += " |";
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->info_name.rfind("g_d", 0) == 0 &&
+                (e->info_name.find("button") != std::string::npos || e->info_name.find("door") != std::string::npos ||
+                 e->info_name.find("cell") != std::string::npos || e->info_name.find("gate") != std::string::npos ||
+                 e->info_name.find("barrierw2") != std::string::npos))
+                if (region_of(position_of(*e), 12.0f) == int(id)) text += " " + e->info_name + "#" + std::to_string(e->index);
+        std::string down;
+        for (const int d : drops[id]) down += " R" + std::to_string(d);
+        std::printf("REGION %s R%zu seed (%.0f,%.0f,%.0f) cells %d:%s%s\n", stage.c_str(), id, region_seed[id].x, region_seed[id].y,
+                    region_seed[id].z, cells, text.c_str(), down.empty() ? "" : (" drops to" + down).c_str());
+    }
+    // Each wall alone open: the regions each region's seed reaches then.
+    for (const auto& wall : walls) {
+        hitland->set_child_hit(wall, false);
+        for (std::size_t id = 0; id < region_seed.size(); ++id) {
+            std::set<int> reached;
+            for (const auto& r : map_from(region_seed[id]).samples())
+                if (const auto it = label.find(key(r)); it != label.end() && it->second != int(id) && !drops[id].count(it->second))
+                    reached.insert(it->second);
+            if (reached.empty()) continue;
+            std::string to;
+            for (const int r : reached) to += " R" + std::to_string(r);
+            std::printf("REGIONLINK %s R%zu --%s-->%s\n", stage.c_str(), id, wall.c_str(), to.c_str());
+        }
+        hitland->set_child_hit(wall, true);
+    }
+    for (const auto& [k, id] : label) std::printf("REGIONCELL %d %d %d %.0f\n", k.first, k.second, id, floor.at(k).y);
+    std::fflush(stdout);
 }
 
 CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
@@ -865,6 +1364,8 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
         stage_ = stage;
         entry_ = -1;
         maze_goal_.clear();
+        region_now_.clear();
+        region_check_ = frame;
         exhausted_since_ = -1;
         maze_since_ = -1;
         stage_frame_ = frame;
@@ -898,6 +1399,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     }
     if (stage.rfind("stagis", 0) == 0 || !player || !player->node) return boot(engine, frame);
     if (frame == stage_frame_ + 110 && std::getenv("DW4_CAMPAIGN_REACH")) reach_report(engine, *player, entry_);
+    if (frame == stage_frame_ + 110 && std::getenv("DW4_CAMPAIGN_REGIONS")) region_report(engine, *player);
     // The character on arriving in a stage (level, techniques' elements,
     // the attack's element: what element-locked walls need).
     if (frame == stage_frame_ + 104 && trace())
@@ -929,6 +1431,13 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 }
             }
         }
+    // On a maze floor: the region the player is in, every ten seconds.
+    if (maze_floor(stage) && player->control_enabled && frame - region_check_ >= 600) {
+        region_check_ = frame;
+        const auto now = locate_region(engine, *player, stage);
+        if (now != region_now_ && trace()) std::printf("[%d] campaign: in region %s of %s\n", frame, now.c_str(), stage.c_str());
+        region_now_ = now;
+    }
     auto step = next_step(engine);
     if (!step && !swept_.empty()) {
         // Every way led through swept maze places: sweep them again.
@@ -1055,13 +1564,20 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             last_ = me;
             return out;
         }
+    // Boss fights (kBossFights).
+    if (controllable && step->action.rfind("explore:", 0) == 0)
+        for (const auto& fight : kBossFights)
+            if (stage == fight.stage && boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, frame, out)) {
+                last_ = me;
+                return out;
+            }
     // Fields and dungeons: the ExploreBot plays them (it answers its own
     // prompts and text windows).
     if (step->action.rfind("explore:", 0) == 0) {
         const bool maze = std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return stage == m; });
         const std::string goal = maze && !maze_goal_.empty() ? maze_goal_ : step->action.substr(8);
         const auto d = explorer_.update(engine, *player, goal, frame);
-        if (maze) maze_turn(engine, *player, step->action.substr(8), frame);
+        if (maze && step->action != "explore:none") maze_turn(engine, *player, step->action.substr(8), frame);
         out.walk = controllable;
         out.x = d.x;
         out.z = d.z;

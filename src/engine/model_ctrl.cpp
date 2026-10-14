@@ -388,6 +388,20 @@ void ModelCtrlManager::player_sequence_hook(Engine& engine, ModelRam& ram) {
 }
 
 void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
+    // DW4_DUMP_SEQ=<model> (research): every sequence of that model with its
+    // commands' types and first string fields, once.
+    if (static const char* dump = std::getenv("DW4_DUMP_SEQ"); dump && ram.info_name == dump && ram.sequences) {
+        static std::vector<std::string> dumped;
+        if (std::find(dumped.begin(), dumped.end(), ram.info_name) == dumped.end()) {
+            dumped.push_back(ram.info_name);
+            for (const auto& sequence : *ram.sequences) {
+                engine.log("dumpseq " + ram.info_name + " " + sequence.name);
+                for (const auto& c : sequence.commands)
+                    engine.log("dumpseq     " + std::string(c.type()) + " " + std::string(c.str(2)) + " | " + std::string(c.str(3)) + " | " +
+                               std::string(c.str(4)));
+            }
+        }
+    }
     for (int guard = 0; guard < 4096 && ram.seq; ++guard) {
         if (ram.cursor >= ram.seq->commands.size()) return;
         const auto& command = ram.seq->commands[ram.cursor];

@@ -48,6 +48,9 @@ private:
     bool walk_to(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& goal, float close,
                  int frame, Output& out);
     const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near) const;
+    // One frame of a boss fight (kBossFights); false when the boss is down.
+    bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
+                    const std::string& follow, float keep, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
 
@@ -79,6 +82,8 @@ private:
     std::map<std::pair<std::string, int>, std::size_t> swept_; // maze places swept, with the flags then
     int exhausted_since_ = -1;   // the ExploreBot has had nothing left to explore since
     int maze_since_ = -1;        // in this maze place (or since its last turn) since
+    std::string region_now_;     // the maze region the player was last found in (kMazeRegions)
+    int region_check_{};         // when it was looked for
 };
 
 } // namespace dw4::game
