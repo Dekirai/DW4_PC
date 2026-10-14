@@ -701,9 +701,9 @@ std::vector<TitlePress> title_presses() {
 } // namespace
 
 // "<model>#<n>" names one RAM, "<model>#*" the nearest of that model that
-// still has HP.
-const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine& engine, const std::string& spec,
-                                                                  const engine::Vec3f& near) const {
+// still has HP (and is not left alone for now, target_skip_ until `frame`).
+const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near,
+                                                                  int frame) const {
     const auto hash = spec.find('#');
     const std::string name = spec.substr(0, hash);
     const bool any = hash != std::string::npos && spec.compare(hash + 1, std::string::npos, "*") == 0;
@@ -714,6 +714,7 @@ const engine::ModelCtrlManager::ModelRam* CampaignBot::find_model(engine::Engine
     for (const auto& ram : models->rams()) {
         if (!ram->generated || !ram->node || ram->info_name != name) continue;
         if (!any && ram->index == index) return ram.get();
+        if (const auto it = target_skip_.find(ram.get()); any && it != target_skip_.end() && frame < it->second) continue;
         if (any && ram->hp > 0 && (!best || flat(position_of(*ram), near) < flat(position_of(*best), near))) best = ram.get();
     }
     return best;
@@ -1626,8 +1627,11 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                     foe = e.get();
             }
             if (foe != foe_) {
+                // (The nearest of two out of reach flips as the player moves
+                // between them, stag0205's block of plugs: a switch during a
+                // fight keeps its time without a hit.)
+                if (!foe_ || !foe || frame - foe_seen_ > 30) foe_since_ = frame;
                 foe_ = foe;
-                foe_since_ = frame;
                 foe_hp_ = foe ? foe->hp : 0;
             } else if (foe && foe->hp < foe_hp_) {
                 foe_since_ = frame;
@@ -1637,6 +1641,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 foe_ = nullptr;
                 foe = nullptr;
             }
+            if (foe) foe_seen_ = frame;
             if (foe) {
                 const auto at = position_of(*foe);
                 if (walk_to(engine, *player, at, 7.0f, frame, out)) {
@@ -1666,7 +1671,17 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
     } else if (kind == "talk" || kind == "strike" || kind == "evolve") {
-        if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me)) {
+        if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me, frame)) {
+            // Ten seconds of walking without reaching one of several ("#*"; a
+            // plug inside the block of the others, stag0205: the walk ends
+            // short of it, and the nearest flips between two such): the one
+            // walked to is left alone for a minute, the nearest other taken.
+            if (target_ == nullptr || frame - target_since_ > 1200) target_since_ = frame; // (a new step)
+            target_ = model;
+            if (what.ends_with("#*") && frame - target_since_ > 600) {
+                target_skip_[model] = frame + 3600;
+                target_since_ = frame;
+            }
             // The player's hit or talk check has to meet the model's hit box,
             // which may lie well in front of the model (a console in a wall
             // niche): walked up to its middle, then A facing the model.
@@ -1681,6 +1696,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
                 close = std::min(hi.x - lo.x, hi.z - lo.z) * 0.5f + 7.0f; // the check reaches ~8 ahead
             }
             if (walk_to(engine, *player, at, close, frame, out)) {
+                target_since_ = frame; // (reached: striking it is no stall)
                 // Face it (the stick toward it), then A.
                 out.walk = true;
                 out.x = origin.x;

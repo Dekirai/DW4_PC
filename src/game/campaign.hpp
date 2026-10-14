@@ -47,7 +47,8 @@ private:
     // second); true once within `close`.
     bool walk_to(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::Vec3f& goal, float close,
                  int frame, Output& out);
-    const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near) const;
+    const engine::ModelCtrlManager::ModelRam* find_model(engine::Engine& engine, const std::string& spec, const engine::Vec3f& near,
+                                                         int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                     const std::string& follow, float keep, int frame, Output& out);
@@ -76,7 +77,11 @@ private:
     bool lab_leaving_ = false;   // Exit was chosen in the lab menu
     const void* foe_ = nullptr;  // the enemy fought outside the ExploreBot
     int foe_since_{}, foe_hp_{}; // since when without losing HP, its HP then
+    int foe_seen_ = -1000;       // the last frame a foe was fought
     std::map<const void*, int> foe_left_; // enemies left alone until
+    const void* target_ = nullptr; // the model a talk/strike step walks to
+    int target_since_{};          // since when (not reached)
+    std::map<const void*, int> target_skip_; // "#*" targets not reached, left alone until
     std::map<std::pair<std::string, int>, int> place_visits_; // arrivals per (stage, player point)
     std::string maze_goal_;      // the exit a swept maze floor is left by
     std::map<std::pair<std::string, int>, std::size_t> swept_; // maze places swept, with the flags then

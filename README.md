@@ -229,8 +229,8 @@ enemies (hovering ones from a ledge its swing reaches them from, turrets in the 
 volleys), picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
 campaign` plays the story from the boot logos: a new game, then the story objectives in order up to
 the staff roll, see `src/game/campaign.cpp`; the dng310 fortress is planned over its floors' regions
-and the flags that open their doors, the Lucemon fight by a boss routine), `--screenshot FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`,
-`--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
+and the flags that open their doors, the Lucemon fight by a boss routine), `--screenshot FILE.bmp`,
+`--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
 every stage start, `<frame>_<stage>.dw4state`).
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
