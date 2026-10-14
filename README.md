@@ -221,7 +221,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
 `--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
-`frame BUTTON [duration [player]]`, `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
+`frame BUTTON [duration [player]]` (BUTTON A, B, X, Y, Z, L, R, START, UP, DOWN, LEFT, RIGHT or `STICK:x,y`
+with raw stick values -128..127, several joined by `+`), `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
 enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
@@ -244,6 +245,11 @@ once the n-th stage has loaded,
 `DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
 campaign driver's menu answers; `DW4_TRACE_SCRIPT=1` (or a
 script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes.
+`DW4_TRACE_FINGERPRINT=N` prints the state fingerprint (and a hash of the random generator) every N
+frames: two runs of the same input script must print the same lines, so the first differing line
+is the first frame where a run diverged. `DW4_FIXED_RANDOM=<hex>` makes every draw of the game's random
+generator return that constant (the Dolphin side: AR `0421EB40 3C60hhhh`, `0421EB44 6063llll`,
+`0421EB48 4E800020`), for frame-exact comparisons of fights.
 
 ### Controls
 

@@ -40,6 +40,76 @@ int update_rank(std::string_view kind) {
         if (kind == kOrder[i]) return i;
     return 3; // an unknown kind as an object
 }
+
+// The named RAM timer "AITIMER" of the AIM map (0x80308868 / 0x803085B4)
+// and the AIH homing (0x80308BAC / 0x80308BC0): 8031DE44 makes it on first
+// use and restarts it with end = (int64)(1e9f * frames / 60f) (800A4130); the
+// check 8031E238 counts a missing timer as expired, otherwise
+// end < ((world >> 18) * scale << 18) + bias (8031E36C, signed 64-bit).
+using ModelRam = ModelCtrlManager::ModelRam;
+void start_ai_timer(ModelRam& ram, std::int64_t world, std::int64_t end) {
+    if (!ram.ai_timer) ram.ai_timer.emplace();
+    timer_start(*ram.ai_timer, world, end);
+}
+bool ai_timer_expired(const ModelRam& ram, std::int64_t world) {
+    return !ram.ai_timer || timer_expired(*ram.ai_timer, world);
+}
+
+// The named RAM timer "KEIKATIMER": the shared move handler 8030A6BC
+// (0x8030A6F8..0x8030A718, MOVE / MOVEEX / MOVERL) and MUTEKI 8030C1F0 make
+// it when missing (8031E138, then 8031DE44 with end 0: the first query at
+// that world time gives one frame).
+void ensure_keika(ModelRam& ram, std::int64_t world) {
+    if (ram.keika) return;
+    ram.keika.emplace();
+    dw4::start_motion_timer(*ram.keika, static_cast<std::uint64_t>(world), 0);
+}
+// 8031E4C4: the frames since the last query, (q(now) - previous) / 16666667
+// capped at 3, 0 when the clock did not move, cached per world time. The
+// original always has the timer here; making it is the port's fallback.
+float keika_frames(ModelRam& ram, std::int64_t world) {
+    ensure_keika(ram, world);
+    return dw4::motion_timer_frames(*ram.keika, static_cast<std::uint64_t>(world));
+}
+
+// The turn of 8030C85C, not forced: an axis whose applied angle (+98)
+// differs from the wanted one (+80) and whose rate (+8C: only the AIH
+// homing sets the X rate; +90: the Y rate; +94 is never written) is not 0
+// steps by rate * KEIKATIMER frames (0x8030C8E0). Both angles are reduced to
+// [0, tau) with the stored tau (804268DC) by repeated float add/subtract;
+// the shorter arc wins (equal: the negative one) and a remaining distance up
+// to the step snaps to the reduced target, which is stored reduced. True
+// when an applied angle changed (0x8030C9C8..0x8030CA0C: then the basis is
+// rebuilt around the position).
+bool turn_step(ModelRam& ram, std::int64_t world) {
+    const auto before = ram.applied;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (ram.applied[axis] == ram.desired[axis]) continue;
+        const float rate = axis == 0 ? ram.turn_rate_x : axis == 1 ? ram.turn_rate_y : 0.0f;
+        if (rate == 0.0f) continue;
+        const float delta = rate * keika_frames(ram, world);
+        constexpr float tau = 6.2831854820251465f;
+        auto reduce = [&](float angle) {
+            // (Port guard: angles the float loop could not reduce would hang it.)
+            if (!(std::abs(angle) < 1.0e6f)) angle = std::isfinite(angle) ? std::fmod(angle, tau) : 0.0f;
+            while (angle < 0.0f) angle = angle + tau;
+            while (angle >= tau) angle = angle - tau;
+            return angle;
+        };
+        const float current = reduce(ram.applied[axis]), target = reduce(ram.desired[axis]);
+        float positive, negative;
+        if (current > target) {
+            negative = current - target;
+            positive = (target + tau) - current;
+        } else {
+            positive = target - current;
+            negative = current - (target - tau);
+        }
+        if (positive >= negative) ram.applied[axis] = negative <= delta ? target : current - delta;
+        else ram.applied[axis] = positive <= delta ? target : current + delta;
+    }
+    return ram.applied != before;
+}
 } // namespace
 
 // Translation + X/Y/Z rotation in degrees (801298F0 order), row-vector layout.
@@ -81,9 +151,13 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         }
         break;
     }
-    auto* seq_ptr = sequences.get();
-    const void* info_key = reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()));
-    sequences_[info_key] = std::move(sequences);
+    // The full (document, reference) pair: an XOR of both collided across
+    // documents and freed live data. An entry that already exists (the same
+    // info again) is kept, since RAMs may point into it.
+    const InfoKey info_key{static_cast<const void*>(info.document()), info.reference()};
+    auto& seq_slot = sequences_[info_key];
+    if (!seq_slot) seq_slot = std::move(sequences);
+    auto* seq_ptr = seq_slot.get();
     // 803083CC: the first HIT record selects the bullet/talk categories.
     HitBody* hit = nullptr;
     for (const auto& data : info.list(5)) {
@@ -94,8 +168,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         body->player_talk = data.boolean(7);
         for (const auto& box : data.list(6))
             if (box) body->boxes.emplace_back(box.vec3(2).value_or(Vec3f{}), box.vec3(3).value_or(Vec3f{}));
-        hit = body.get();
-        hit_bodies_[info_key] = std::move(body);
+        auto& slot = hit_bodies_[info_key];
+        if (!slot) slot = std::move(body);
+        hit = slot.get();
         break;
     }
     // "AIH" data: the homing AI of bullets.
@@ -111,8 +186,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         h->pitch_rate = data.f32(9);
         h->yaw_rate = data.f32(10);
         h->steps = data.i32(11);
-        homing = h.get();
-        homings_[info_key] = std::move(h);
+        auto& slot = homings_[info_key];
+        if (!slot) slot = std::move(h);
+        homing = slot.get();
         break;
     }
     // "AIM" data (beModelCtrlInfoDataAIM [4]): the AI maps selected by AIMAP.
@@ -121,8 +197,9 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         if (!data || data.str(2) != "AIM") continue;
         auto maps = std::make_unique<std::vector<ObjectView>>();
         for (const auto& map : data.list(4)) if (map) maps->push_back(map);
-        ai_maps = maps.get();
-        ai_maps_[info_key] = std::move(maps);
+        auto& slot = ai_maps_[info_key];
+        if (!slot) slot = std::move(maps);
+        ai_maps = slot.get();
         break;
     }
     const std::string category = category_for_kind(info.str(7));
@@ -232,6 +309,11 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     if (name == "SQ_ERAS2") {
         Packet packet;
         engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, "NDSP", packet);
+        // 0x8030E934: 8031EA54 drops every named timer of the RAM, as REMOVE.
+        ram.ai_timer.reset();
+        ram.attack_delay.reset();
+        ram.keika.reset();
+        ram.named_timers.clear();
         return;
     }
     const Sequence* found = nullptr;
@@ -347,7 +429,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
             // recorder under its animated route: boats, trains, rails);
             // anything else (ACTOR) keeps the model and bone names. The
-            // shared move handler first ends a running follow (8030A71C).
+            // shared move handler 8030A6BC first makes a missing KEIKATIMER,
+            // then ends a running follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
@@ -362,8 +446,10 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
             ++ram.cursor;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
-            // 8030A71C (the handler of MOVE, MOVEEX and MOVERL): a new move
-            // ends a MOVERL follow.
+            // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
+            // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
+            // MOVERL follow (8030A71C).
+            ensure_keika(ram, engine.time());
             end_follow(ram);
             try {
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
@@ -400,7 +486,9 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
         } else if (type == "beModelCtrlMUTEKI") {
             // 8030C25C: OFFWALL / ONWALL / OFFFLOOR / ONFLOOR switch the wall
             // and floor checks; otherwise the invulnerable frames ("ON" -1:
-            // for the rest of the sequence; "OFF" ends it).
+            // for the rest of the sequence; "OFF" ends it). 8030C1F0 first
+            // makes a missing KEIKATIMER (0x8030C224..0x8030C244).
+            ensure_keika(ram, engine.time());
             if (name == "OFFWALL") ram.wall_check = false;
             else if (name == "ONWALL") ram.wall_check = true;
             else if (name == "OFFFLOOR") ram.floor_check = false;
@@ -435,7 +523,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 ram.ai_world_target = target;
                 if (ram.seq != seq) return;
             }
-            ram.ai_timer_end = -1;
+            ram.ai_timer.reset(); // 0x8030BC94: 8031E8BC removes the AITIMER
         } else if (type == "beModelCtrlLUACALL") {
             // 8030B8A4: BHit, WHit and FHit keep the name for after this
             // model's hitbox hits something, it meets a wall or the floor
@@ -502,12 +590,20 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // weapon's labels come with the posted PLAYERARMS GENERATE.
         ram.control_enabled = true;
         ram.frozen = false;
+        ram.turn_rate_x = 0.0f;
+        ram.aim_height = 0.0f;
         ram.labels.clear();
         ram.ride.reset();
         ram.capsule_on = ram.capsule_ended = false;
         ram.capsule_age = 0;
-        ram.ai_timer_end = -1;
+        // The named RAM timers (AITIMER, ATDELAY, KEIKATIMER) live in the
+        // RAM's data list (+0x28), not in the info work: they stay over a
+        // GENERATE (8034B928 / 8030D260 do not touch them); REMOVE and
+        // SQ_ERAS2 drop them (8031EA54).
         ram.ai_request.clear();
+        // _svLODHighRange (+0xA4) lives in the info work, made anew by every
+        // GENERATE with -1 (0x8041ED64).
+        ram.lod_high_saved = -1.0f;
         ram.ai_map = 0; // 8030DB3C: a new beModelCtrlInfoAI (_mapNo 0, no world target)
         ram.ai_world_target = {};
         ram.homing_state = ram.homing_steps = 0;
@@ -554,18 +650,27 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.attach_lock = false;
         ram.owner_name.clear();
         ram.owner_index = -1;
-        // Effect form (8030D260, sent by 80310340): ints source RAM, owner
-        // RAM; strings source name, sequence, owner name; offset and rotation
-        // relative to the source, position lock. The source places the
-        // effect (GETMATRIX of string0/int0, 8030D4A8..8030D4BC) and the lock
-        // follows it (+0xAC, 8030D4C0..8030D530); the owner goes to work
-        // +0xDC/+0xE0 (8030D468..8030D4A4) for the bullets (8030FEEC).
-        if (ram.node && packet.strings.size() >= 3 && packet.ints.size() >= 2) {
+        // Effect form (8030D260, sent by 80310340 and by scripts): ints source
+        // RAM, owner RAM; strings source name, sequence, owner name; offset
+        // and rotation relative to the source, position lock. Only the
+        // effect and bullet kinds run it (their GENERATE hooks 8034B730 /
+        // 8034B928 / 8034C134 call 8030D260), and it applies as soon as the
+        // packet has two strings (0x8030D368 / 0x8030D378): Lucemon's
+        // x_035frunn01a "f_luce/I<0>/V<25,10,25>/V<0,0,0>/SQ_BOM" sits
+        // around f_luce. The source places the effect (GETMATRIX of
+        // string0/int0, 8030D4A8..8030D4BC) and the lock follows it (+0xAC,
+        // 8030D4C0..8030D530); string2/int1 name the owner for the bullets
+        // (work +0xDC/+0xE0, 8030D468..8030D4A4, read by 8030FEEC). A
+        // missing owner string reads as none; the original reads int1 past
+        // the list's end, the port takes -1 (no owner).
+        const bool effect_kind = ram.category == "EFFECT" || ram.category == "PBULLET" || ram.category == "EBULLET";
+        if (ram.node && effect_kind && packet.strings.size() >= 2) {
             ram.attach_name = std::string(packet.string(0));
-            ram.attach_index = packet.ints[0];
-            ram.owner_name = std::string(packet.string(2));
-            ram.owner_index = packet.ints[1];
+            ram.attach_index = packet.ints.empty() ? 0 : packet.ints[0];
+            ram.owner_name = packet.strings.size() > 2 ? std::string(packet.string(2)) : std::string();
+            ram.owner_index = packet.ints.size() > 1 ? packet.ints[1] : -1;
             ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
+            ram.aim_height = ram.attach_offset.y; // 0x8030D5E0: info work +0x54
             ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
             ram.attach_lock = packet.boolean(0);
             place_attached(ram);
@@ -616,6 +721,11 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.seq_name.clear();
             ram.wait_name.reset();
             ram.ride.reset();
+            // 0x8030DC88: 8031EA54 drops every named timer of the RAM.
+            ram.ai_timer.reset();
+            ram.attack_delay.reset();
+            ram.keika.reset();
+            ram.named_timers.clear();
         }
         return true;
     }
@@ -663,7 +773,28 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         if (command == "OFCTRL") close_panel(); // 0x8030E0F8
         return true;
     }
-    if (command == "SETLODHIGH" || command == "RESETLODHIGH") return true;
+    if (command == "SETLODHIGH" || command == "RESETLODHIGH") {
+        // 0x8030E1D4 SETLODHIGH: when the "ONE" node's first child is an
+        // igLod with three children (Kage/High/Low), range[2] goes to the
+        // ctrl work (+0xA4, only while that holds -1) and becomes 1e8
+        // (0x804DEBAC, if the list has more than two entries): High up to
+        // 10000 units. 0x8030E29C RESETLODHIGH puts the kept value back and
+        // stores -1. Both reset the selection cache (vtable +0x7C, 801F7CB8).
+        // No shipped script or data sends either command.
+        Node* lod = ram.generated && ram.node && !ram.node->children.empty() ? ram.node->children[0] : nullptr;
+        if (!lod || lod->kind != NodeKind::lod) return true;
+        if (command == "SETLODHIGH") {
+            if (ram.lod_high_saved != -1.0f || lod->children.size() != 3) return true;
+            ram.lod_high_saved = lod->lod_ranges.size() > 2 ? lod->lod_ranges[2] : 0.0f;
+            if (lod->lod_ranges.size() > 2) lod->lod_ranges[2] = 1.0e8f;
+        } else {
+            if (ram.lod_high_saved == -1.0f) return true;
+            if (lod->lod_ranges.size() > 2) lod->lod_ranges[2] = ram.lod_high_saved;
+            ram.lod_high_saved = -1.0f;
+        }
+        lod->reset_lod();
+        return true;
+    }
     if (command == "ONFREEZE" || command == "OFFREEZE") {
         ram.frozen = command == "ONFREEZE" && ram.generated;
         if (command == "ONFREEZE") close_panel(); // 0x8030E168
@@ -808,20 +939,16 @@ const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
     return nullptr;
 }
 
-namespace {
-float wrap_angle(float a) {
-    constexpr float tau = 6.28318530718f;
-    while (a > 3.14159265f) a -= tau;
-    while (a < -3.14159265f) a += tau;
-    return a;
-}
-} // namespace
-
 void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
     const float sx = pad.left.x, sy = pad.left.y;
-    const float magnitude = std::sqrt(sx * sx + sy * sy);
-    ram.key_input = ram.control_enabled && magnitude > 0.25f;
+    // 8034C4C8 bl 80312138 (the player's bePadData), 8034C4D4 lwz r25,0x24:
+    // walking (+70) and the heading need the held mask of the left stick's
+    // directions; without one 8034C6C4 clears +70 and keeps the heading. The
+    // mask (80311AA4..80311BBC, pad.cpp directions) is empty below the
+    // activation radius _enaLen 0.4 and covers every angle above it, so a
+    // stick at 0.3 neither steps nor turns. There is no other magnitude test.
+    ram.key_input = ram.control_enabled && pad.left_directions.held != 0;
     if (ram.key_input) {
         // 8034C67C..8034C6B8: desired heading from the inverse camera matrix and stick.
         FrameCamera camera;
@@ -972,11 +1099,15 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
             } else if (Packet pick; (pick.ints.push_back(ram.index), engine.messenger().count("DROPITEM", std::nullopt, -1)) &&
                        (engine.messenger().send(engine, "DROPITEM", std::nullopt, -1, "ACTION1", pick), !pick.bools.empty())) {
                 return; // 8034CEB0: DROPITEM ACTION1 took an item instead of attacking
-            } else if (engine.time() >= ram.attack_ready) {
-                // ATDELAY: the next attack waits the player's ATTACKDELAY frames.
+            } else if (!ram.attack_delay || timer_expired(*ram.attack_delay, engine.time())) {
+                // The named RAM timer "ATDELAY" (8031E238 at 0x8034CEF8, missing
+                // = expired): the next attack waits the player's ATTACKDELAY
+                // frames, restarted by 8031DE44 (0x8034D080) with the integer
+                // end (int64)frames * 1000000000 / 60 (__div2i 800A3AF8).
                 int delay = 30;
                 if (auto* sys = engine.get<GameSystem>()) delay = sys->players[std::size_t(std::clamp(ram.index, 0, 3))].stats.attack_delay;
-                ram.attack_ready = engine.time() + frames_to_time(float(delay));
+                if (!ram.attack_delay) ram.attack_delay.emplace();
+                timer_start(*ram.attack_delay, engine.time(), std::int64_t(delay) * 1000000000 / 60);
                 ram.combo_phase = 0;
                 if (spiral) ram.spin.fill(0);
                 select_sequence(engine, ram, spiral ? "SQ_ATCK2" : "SQ_ATCK1");
@@ -1054,16 +1185,18 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
                       int(s[3].active), s[3].speed, ram.applied[1], ram.wait_name ? ram.wait_name->c_str() : "-");
         engine.log(line);
     }
-    // The channels advance first (8031E4C4 KEIKATIMER step): the rotation
-    // channel of MOVEEX R?xxx (channel 3) turns the wanted yaw by its step in
-    // degrees (0x8030A4A8-0x8030A4F4: +84 += pi/180 * step, the yaw rate +90 =
-    // 1.25 * |that|) before the model turns, the translation channels move it
-    // after the turn.
+    // The channels advance first by the KEIKATIMER frames (0x8030A498
+    // 8031E4C4, only with an allocated list; 8030A2D8 steps each channel by
+    // speed * min(frames, 3)): the rotation channel of MOVEEX R?xxx (channel
+    // 3) turns the wanted yaw by its step in degrees (0x8030A4A8-0x8030A4F4:
+    // +84 += pi/180 * step, the yaw rate +90 = 1.25 * |that|) before the
+    // model turns, the translation channels move it after the turn.
     dw4::MotionStep step;
     if (ram.channels.allocated()) {
         const bool rotating = ram.channels.states()[3].active;
+        const float frames = keika_frames(ram, engine.time());
         try {
-            step = ram.channels.advance(1.0f);
+            step = ram.channels.advance(frames);
         } catch (const std::exception& error) {
             engine.note(std::string("model motion: ") + error.what());
             return false;
@@ -1074,15 +1207,9 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
             ram.turn_rate_y = 1.25f * (turn < 0.0f ? -turn : turn);
         }
     }
-    // Turning (8030C85C): shortest arc at the stored rate per frame.
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-        if (ram.applied[axis] == ram.desired[axis]) continue;
-        const float rate = axis == 1 ? ram.turn_rate_y : 0.0f;
-        if (rate == 0) continue;
-        const float diff = wrap_angle(ram.desired[axis] - ram.applied[axis]);
-        if (std::abs(diff) <= rate) ram.applied[axis] = ram.desired[axis];
-        else ram.applied[axis] += diff > 0 ? rate : -rate;
-    }
+    // Turning (8030C85C at 0x8030A50C, not forced; turn_step): every axis
+    // with a rate steps toward its wanted angle by rate * KEIKATIMER frames.
+    turn_step(ram, engine.time());
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
     bool moved = false;
@@ -1325,7 +1452,6 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             continue;
         }
         if (ram.frozen) continue;
-        if (ram.muteki > 0) ram.muteki = std::max(0.0f, ram.muteki - 1.0f);
         // 8030CCDC: input, AI and the control transitions run only while the
         // sequence has a CTRL mode; otherwise a running AITIMER is dropped.
         if (ram.ctrl_mode != 0) {
@@ -1343,14 +1469,18 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                 apply_control(engine, ram);
             }
         } else {
-            if (ram.ai_maps) ram.ai_timer_end = -1;
+            // 0x8030CD00: with an AI work (+0x50, made for AIM or AIH data,
+            // 8030DAE8..8030DB4C) 8031E8BC removes the AITIMER.
+            if (ram.ai_maps || ram.homing) ram.ai_timer.reset();
             if (ram.is_player) ram.key_input = false;
         }
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         if (ram.follow_trace) {
-            // 8030CD94: the recorder's last world matrix.
+            // 8030CD94: the recorder's last world matrix (_m, +0x20: the TRC
+            // data +0x10 plus the offset of the field meta 805646FC), as the
+            // last traversal left it.
             if (ram.node && ram.follow_trace->recorded) ram.node->matrix = *ram.follow_trace->recorded;
             if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0 && ram.node)
                 engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace at (" +
@@ -1369,6 +1499,13 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         // 8030CFEC: the wait runs after the motion and before the walls and
         // floors, so a jump's apex goes straight into its fall.
         if (ram.generated && ram.wait_name) check_wait(engine, ram);
+        // 8030C334 (0x8030CFFC, after the wait, before the subcommands): the
+        // invulnerable frames count down by the KEIKATIMER frames, not below 0.
+        if (ram.muteki > 0.0f) {
+            float left = ram.muteki - keika_frames(ram, engine.time());
+            if (left < 0.0f) left = 0.0f;
+            ram.muteki = left;
+        }
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
         // 8030D028: walls and floors.
@@ -1462,6 +1599,10 @@ void ModelCtrlManager::fire_hitbox(Engine& engine, ModelRam& ram, const ModelRam
     packet.ints = {box.kind, owned ? ram.owner_index : ram.index};
     packet.vectors = {Vec3f{center.x - half.x, center.y - half.y, center.z - half.z},
                       Vec3f{center.x + half.x, center.y + half.y, center.z + half.z}};
+    // 0x803101F0: sub_80306D68 adds the firing model's own node matrix (for
+    // a fireball the bullet effect itself, not its owner); a hit target turns
+    // towards its translation.
+    packet.matrices.push_back(m);
     packet.strings.emplace_back(owned ? ram.owner_name : ram.info_name);
     engine.messenger().send(engine, categories[mode], std::nullopt, -1, "CHKBULLET", packet);
     // A delivered result (even false) runs the source's BHit script.
@@ -1696,23 +1837,26 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     const Homing& h = *ram.homing;
     if (!ram.node) return;
     bool live = true, tick = false;
+    // The waits run on the same named AITIMER as the AIM map (8031DE44 at
+    // 0x80308BAC / 0x80308C04, 8031E238 at 0x80308BC0 / 0x80308C18): a timer
+    // started this frame is not expired yet, even for 0 frames.
     switch (ram.homing_state) {
     case 0:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.delay);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.delay));
         ram.homing_state = 1;
         [[fallthrough]];
     case 1:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
         break;
     case 2:
-        ram.ai_timer_end = engine.time() + frames_to_time(h.interval);
+        start_ai_timer(ram, engine.time(), frames_to_time(h.interval));
         ram.homing_state = 3;
         [[fallthrough]];
     case 3:
-        if (engine.time() >= ram.ai_timer_end) {
+        if (ai_timer_expired(ram, engine.time())) {
             ram.homing_state = 2;
             tick = true;
         }
@@ -1744,25 +1888,51 @@ void ModelCtrlManager::update_homing(Engine& engine, ModelRam& ram) {
     }
     if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace && tick)
         engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " tick " +
-                   (target ? target->info_name + " d2 " + std::to_string(best) : std::string("no target")));
+                   (target ? target->info_name + " d2 " + std::to_string(best) : std::string("no target")) + " aim height " +
+                   std::to_string(ram.aim_height));
     if (!target || best > h.range2) return;
     const auto& o = target->node->matrix;
-    auto turn = [](float from, float to, float rate) {
-        const float diff = wrap_angle(to - from);
-        return std::abs(diff) <= rate ? to : from + (diff > 0 ? rate : -rate);
-    };
+    // 0x80308D28: following the height sets the X rate (+8C) to the AIH
+    // pitch rate and the wanted pitch (+80) toward the target's height plus
+    // the bullet's own placement height (info work +0x54, the Y of the
+    // effect offset 8030D260 stored): -atan2 (double 800A2C74, frsp) of that
+    // height difference over the distance sqrt(d2).
     if (live && h.pitch) {
-        const float pitch = -std::atan2(o(3, 1) - m(3, 1), std::sqrt(best));
-        ram.applied[0] = ram.desired[0] = turn(ram.applied[0], pitch, h.pitch_rate);
+        ram.turn_rate_x = h.pitch_rate;
+        const float dy = (o(3, 1) + ram.aim_height) - m(3, 1);
+        const float distance = std::sqrt(best);
+        ram.desired[0] = -static_cast<float>(std::atan2(static_cast<double>(dy), static_cast<double>(distance)));
     }
+    // 0x80308E40: a steering step sets the Y rate (+90) to the AIH yaw rate
+    // and the wanted yaw (+84) toward the target.
     if (tick && h.yaw) {
-        // 8030C85C turns one step; the heading then stays where it got to.
-        const float yaw = std::atan2(o(3, 0) - m(3, 0), o(3, 2) - m(3, 2));
-        ram.applied[1] = ram.desired[1] = turn(ram.applied[1], yaw, h.yaw_rate);
-        if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace)
-            engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
-                       " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
+        ram.turn_rate_y = h.yaw_rate;
+        ram.desired[1] = static_cast<float>(
+            std::atan2(static_cast<double>(o(3, 0) - m(3, 0)), static_cast<double>(o(3, 2) - m(3, 2))));
     }
+    // 0x80308E70: the turn 8030C85C (not forced) steps every axis by its rate
+    // times the KEIKATIMER frames and rebuilds the basis around the position
+    // when an angle moved; then the wanted yaw takes the applied one
+    // (0x80308E74), so the heading stays where this step got to. The wanted
+    // pitch stays: the frame's motion turn (0x8030A50C) steps it again.
+    if (turn_step(ram, engine.time())) {
+        std::array<float, 16> matrix{};
+        std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+        const Vec3f position{matrix[12], matrix[13], matrix[14]};
+        try {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+            std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+        } catch (const std::exception& error) {
+            engine.note(std::string("homing turn: ") + error.what());
+        }
+    }
+    ram.desired[1] = ram.applied[1];
+    if (static const bool trace = std::getenv("DW4_TRACE_HOMING") != nullptr; trace && tick && h.yaw)
+        engine.log("homing " + ram.info_name + "#" + std::to_string(ram.index) + " steers to " + target->info_name +
+                   " heading " + std::to_string(ram.applied[1]) + " step " + std::to_string(ram.homing_steps));
 }
 
 // 8030CDD0: ACTION <model> GETBONEMATRIX <bone> times MODELCTRL <model>
@@ -1793,25 +1963,57 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
         return;
     }
     std::string request = ram.ai_request;
-    if (ram.ai_timer_end < 0 || engine.time() >= ram.ai_timer_end) {
+    // 0x803085B4: 8031E238 on the named AITIMER (missing = expired; the end
+    // against the 2^18 ns quantised clock with a strict '<').
+    if (ai_timer_expired(ram, engine.time())) {
         const auto& map = (*ram.ai_maps)[std::size_t(std::clamp(ram.ai_map, 0, int(ram.ai_maps->size()) - 1))];
         const auto& m = ram.node->matrix;
-        // 80308654: [11] WPOS steers to the map's world target, otherwise the
-        // nearest player.
+        // 80308654: [11] WPOS steers to the map's world target, otherwise a
+        // player (803086D8 bl 8031C67C with 'PLAYER' and [11]).
         Vec3f goal{};
         float best = 1e30f;
-        if (map.str(11) == "WPOS") {
+        const std::string_view mode = map.str(11);
+        if (mode == "WPOS") {
             goal = ram.ai_world_target;
             const float dx = goal.x - m(3, 0), dy = goal.y - m(3, 1), dz = goal.z - m(3, 2);
             best = dx * dx + dy * dy + dz * dz;
         } else {
+            // 803085D4 makes a null [11] 'NEAR'; 8031C67C r29 = ([11] == 'NEAR')
+            // and 8031C454 picks with 8031BF74 (NEAR: the smallest squared
+            // distance, strict '<', the first of equals) or 8031C02C (any
+            // other string: the smallest deviation of the direction to the
+            // player from the own heading). The disc's AIM maps all hold NEAR
+            // or WPOS (948 / 71 in ndmw.afs, every difficulty), so the angle
+            // mode only serves modded data (an empty string counts as null).
+            const bool nearest = mode.empty() || mode == "NEAR";
+            float heading = 0.0f, best_angle = 0.0f;
+            if (!nearest) {
+                // 8031C874: 8012D434 turns +Z (804F8B10, set to (0,0,1) at
+                // 8012F798) by the copied model matrix (the zero products
+                // keep its signed zeros); double atan2(x, z).
+                const float x = 1.0f * m(2, 0) + (0.0f * m(0, 0) + 0.0f * m(1, 0));
+                const float z = 1.0f * m(2, 2) + (0.0f * m(0, 2) + 0.0f * m(1, 2));
+                heading = static_cast<float>(std::atan2(static_cast<double>(x), static_cast<double>(z)));
+            }
             const ModelRam* target = nullptr;
             for (const auto& other : rams_) {
                 if (!other->is_player || !other->generated || !other->node) continue;
                 const auto& o = other->node->matrix;
-                const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
-                const float d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 < best) { best = d2; target = other.get(); }
+                if (nearest) {
+                    const float dx = o(3, 0) - m(3, 0), dy = o(3, 1) - m(3, 1), dz = o(3, 2) - m(3, 2);
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < best) { best = d2; target = other.get(); }
+                    continue;
+                }
+                // 8031C0D0..8031C13C: |atan2(dx, dz) - heading| (fneg unless
+                // >= 0), minus 2pi (804529EC) while above 2pi - not wrapped to
+                // [-pi, pi]; the first player or a strictly smaller deviation.
+                float deviation = static_cast<float>(std::atan2(static_cast<double>(o(3, 0) - m(3, 0)),
+                                                                static_cast<double>(o(3, 2) - m(3, 2)))) - heading;
+                if (!(deviation >= 0.0f)) deviation = -deviation;
+                constexpr float two_pi = 0x1.921fb6p+2f; // 0x40C90FDB
+                while (deviation > two_pi) deviation -= two_pi;
+                if (!target || best_angle > deviation) { best_angle = deviation; target = other.get(); }
             }
             if (!target) {
                 // 803086DC: no player, nothing written: no request.
@@ -1820,6 +2022,11 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
             }
             const auto& o = target->node->matrix;
             goal = {o(3, 0), o(3, 1), o(3, 2)};
+            if (!nearest) {
+                // 8031C158..8031C190: the chosen player's squared distance.
+                const float dx = m(3, 0) - o(3, 0), dy = m(3, 1) - o(3, 1), dz = m(3, 2) - o(3, 2);
+                best = dz * dz + (dx * dx + dy * dy);
+            }
         }
         ram.turn_rate_y = map.f32(6);
         const std::uint16_t band = best < map.f32(3) ? 7 : best < map.f32(4) ? 8 : best < map.f32(5) ? 9 : 10;
@@ -1831,7 +2038,8 @@ void ModelCtrlManager::update_ai_map(Engine& engine, ModelRam& ram) {
                 if (entry && roll < entry.i32(5)) { pick = entry; break; }
             ram.desired[1] = std::atan2(goal.x - m(3, 0), goal.z - m(3, 2)) + pick.f32(3);
             request = std::string(pick.str(2));
-            ram.ai_timer_end = engine.time() + frames_to_time(pick.f32(4));
+            // 0x80308868: 8031DE44 restarts it with (int64)(1e9f * frames / 60f).
+            start_ai_timer(ram, engine.time(), frames_to_time(pick.f32(4)));
         }
     }
     ram.key_input = request == "SQ_WALK";
@@ -1906,26 +2114,39 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
     context.shooter = packet.integer(1, -1);
     context.shooter_name = std::string(packet.string(0));
     context.bullet_box = box;
+    // 0x8030E718..0x8030E76C, before the hit script: the translation of the
+    // packet's matrix #0 (the firing hitbox model's own matrix, 0x803101F0)
+    // and the own node's. The shooter name / index only feed GETRECNO and
+    // the script (FIGHTCALC).
+    const bool has_source = !packet.matrices.empty();
+    const float source_x = has_source ? packet.matrices[0](3, 0) : 0.0f, source_z = has_source ? packet.matrices[0](3, 2) : 0.0f;
+    const float own_x = m(3, 0), own_z = m(3, 2);
     engine.push_model_context(std::move(context));
     engine.run_script("hit_" + ram.info_name + ".lua");
     const auto done = engine.pop_model_context();
-    if (done.turn && done.shooter >= 0) {
-        // 8030E81C: face the captured source position.
-        if (const auto* source = find(done.shooter_name, done.shooter); source && source->node) {
-            const auto& sm = source->node->matrix;
-            const float heading = std::atan2(sm(3, 0) - m(3, 0), sm(3, 2) - m(3, 2));
-            ram.applied[1] = ram.desired[1] = heading;
-            std::array<float, 16> matrix{};
-            std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
-            const Vec3f position{matrix[12], matrix[13], matrix[14]};
-            try {
-                dw4::original_model_turn_basis(matrix, ram.applied);
-                matrix[12] = position.x;
-                matrix[13] = position.y;
-                matrix[14] = position.z;
-                std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
-            } catch (const std::exception&) {}
+    if (done.turn && has_source) {
+        // 8030E810..8030E854: with the script's turn flag (byte_80535944) the
+        // wanted yaw +84 = atan2(dx, dz) (double 800A2C74, then frsp), then
+        // the forced 8030C85C: every applied angle takes the wanted one at
+        // once and the basis is rebuilt around the position.
+        const float heading = static_cast<float>(std::atan2(static_cast<double>(source_x - own_x), static_cast<double>(source_z - own_z)));
+        if (trace) {
+            char line[160];
+            std::snprintf(line, sizeof line, "  turn to (%.3f,%.3f) from (%.3f,%.3f) heading %.4f", source_x, source_z, own_x, own_z, heading);
+            engine.log(line);
         }
+        ram.desired[1] = heading;
+        ram.applied = ram.desired;
+        std::array<float, 16> matrix{};
+        std::copy(ram.node->matrix.m.begin(), ram.node->matrix.m.end(), matrix.begin());
+        const Vec3f position{matrix[12], matrix[13], matrix[14]};
+        try {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+            std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+        } catch (const std::exception&) {}
     }
     if (packet.bools.empty()) packet.bools.push_back(1);
     return true;
@@ -2103,9 +2324,11 @@ void ActionManager::add_info(Engine& engine, const ObjectView& info) {
         }
         actions->push_back(std::move(action));
     }
-    auto* action_ptr = actions.get();
-    actions_[reinterpret_cast<const void*>(std::uintptr_t(info.reference()) ^ reinterpret_cast<std::uintptr_t>(info.document()))] =
-        std::move(actions);
+    // (document, reference) as in ModelCtrlManager::add_info; never replace
+    // an entry RAMs may already point into.
+    auto& action_slot = actions_[{static_cast<const void*>(info.document()), info.reference()}];
+    if (!action_slot) action_slot = std::move(actions);
+    auto* action_ptr = action_slot.get();
     Node* switch_node = engine.scenes().node(info.ref(7));
     AnimationDatabase* database = nullptr;
     if (const auto db = info.ref(8)) {

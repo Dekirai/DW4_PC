@@ -58,9 +58,15 @@ enum class AttrKind : std::uint8_t {
     vertex_blend_state, normalize_normals, geometry, texcoord_source
 };
 
+// The GX texture object state: IG_GFX_TEXTURE_FILTER values (0 NEAREST,
+// 1 LINEAR, 2..5 the mipmap modes) and GX wraps (0 CLAMP, 1 REPEAT).
 struct TextureSampler {
     int mag_filter = 1, min_filter = 1, wrap_s = 1, wrap_t = 1;
 };
+
+// What the original's texture object samples with for an igTextureAttr
+// (igTextureAttr::apply, 800FE744 and the bind loop 800FCA9C).
+TextureSampler texture_sampler(const ObjectView& texture);
 
 struct Attribute {
     AttrKind kind = AttrKind::unknown;
@@ -83,7 +89,7 @@ struct Attribute {
 enum class NodeKind : std::uint8_t {
     unknown, group, attr_set, switch_node, transform, geometry, actor, billboard, blend_matrix_select,
     light_set, light_state_set, camera, model_node, lod, shadow_shader, bone_select, copy_model, particle_timer,
-    transform_recorder, node_anim
+    transform_recorder, node_anim, reset_node
 };
 
 // beNodeAnim (fields 802C48A4, clock 80311230): the children run on its own
@@ -162,8 +168,19 @@ struct Node {
     std::optional<Mat4> runtime_matrix;
     // Billboard axis mode etc.
     std::int32_t billboard_mode{};
-    // igLod child ranges.
+    // igLod: _rangeList ([8], SQUARED eye-space distances), _center ([13])
+    // and _hysteresisList ([14]); the selection cache _lastRange (+0x24, here
+    // the child index or -1), _lastIndex (+0x28), _lastLower / _lastUpper
+    // (+0x2C / +0x30), with the defaults of the registration 801BB474.
     std::vector<float> lod_ranges;
+    std::vector<float> lod_hysteresis;
+    Vec3f lod_center{};
+    std::int32_t lod_child = -1, lod_index = -1;
+    float lod_lower{}, lod_upper{};
+    // 801F799C: the child for this squared distance (nullptr: none).
+    Node* select_lod(float distance_squared);
+    // 801F7CB8 (vtable +0x7C): forget the cached selection.
+    void reset_lod();
     // igActor appearance skin graph roots and actor transform.
     std::vector<Node*> appearance_roots;
     Mat4 actor_matrix{};
@@ -187,6 +204,10 @@ struct Node {
     std::vector<std::shared_ptr<GeometryData>> particle_geometry;
     // igTransformRecorder: the world matrix it was last drawn with (TRC data).
     std::optional<Mat4> recorded;
+    // beResetNode (802C0B64, fields 802C0C00): _isResetTime (+0x20) runs the
+    // children on the traversal's base time, _isResetRotAndScale (+0x21)
+    // keeps only the accumulated translation (traversal 80312C28).
+    bool reset_time{}, reset_rot_scale{};
     std::optional<NodeAnim> anim;
 
     bool child_enabled(std::size_t index) const;

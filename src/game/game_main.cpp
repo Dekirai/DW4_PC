@@ -83,7 +83,8 @@ void write_bmp(const std::string& path, int width, int height, const std::vector
 }
 
 // Scripted input for automated runs: lines "frame button [duration [player]]"
-// (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R; player 1-4, default 1) and "frame GOTO x z [duration]",
+// (button: A,B,X,Y,START,UP,DOWN,LEFT,RIGHT,Z,L,R or STICK:x,y with raw stick
+// values, several joined by '+'; player 1-4, default 1) and "frame GOTO x z [duration]",
 // which steers player 1's stick toward world (x, z) relative to the camera, and
 // "frame SEEK duration [target]", which walks to the nearest pickup or live
 // enemy and presses A next to it (target: a model prefix first, mat:<name> a
@@ -124,27 +125,48 @@ struct ScriptedInput {
             }
             int player = 1;
             fields >> duration >> player;
-            std::uint32_t bit = 0;
-            namespace b = dw4::pad_button;
-            if (name == "A") bit = b::a;
-            else if (name == "B") bit = b::b;
-            else if (name == "X") bit = b::x;
-            else if (name == "Y") bit = b::y;
-            else if (name == "START") bit = b::start;
-            else if (name == "UP") bit = b::up;
-            else if (name == "DOWN") bit = b::down;
-            else if (name == "LEFT") bit = b::left;
-            else if (name == "RIGHT") bit = b::right;
-            else if (name == "Z") bit = b::z;
-            else if (name == "L") bit = b::l;
-            else if (name == "R") bit = b::r;
-            presses.push_back({frame, bit, duration, std::clamp(player - 1, 0, 3)});
+            // The button may join several with '+'; STICK:x,y holds the main
+            // stick at the raw device values x,y (-128..127, y up, as
+            // work/dref's dtm.py records them), which the SDK clamp turns into
+            // the stick the game reads (gamecube_stick). It replaces the
+            // direction buttons' full deflection.
+            Press press{frame, 0, duration, std::clamp(player - 1, 0, 3)};
+            for (std::size_t begin = 0; begin <= name.size();) {
+                const std::size_t end = std::min(name.find('+', begin), name.size());
+                const std::string part = name.substr(begin, end - begin);
+                begin = end + 1;
+                namespace b = dw4::pad_button;
+                int x = 0, y = 0;
+                if (part.rfind("STICK:", 0) == 0 && std::sscanf(part.c_str() + 6, "%d,%d", &x, &y) == 2)
+                    press.stick = dw4::gamecube_stick(std::int8_t(std::clamp(x, -128, 127)),
+                                                      std::int8_t(std::clamp(y, -128, 127)));
+                else if (part == "A") press.bit |= b::a;
+                else if (part == "B") press.bit |= b::b;
+                else if (part == "X") press.bit |= b::x;
+                else if (part == "Y") press.bit |= b::y;
+                else if (part == "START") press.bit |= b::start;
+                else if (part == "UP") press.bit |= b::up;
+                else if (part == "DOWN") press.bit |= b::down;
+                else if (part == "LEFT") press.bit |= b::left;
+                else if (part == "RIGHT") press.bit |= b::right;
+                else if (part == "Z") press.bit |= b::z;
+                else if (part == "L") press.bit |= b::l;
+                else if (part == "R") press.bit |= b::r;
+            }
+            presses.push_back(press);
         }
     }
     struct Send { int frame; std::string category, command, argument; int row = -1; };
     std::vector<Send> sends;
-    struct Press { int frame; std::uint32_t bit; int duration; int slot; };
+    struct Press { int frame; std::uint32_t bit; int duration; int slot; std::optional<dw4::PadStick> stick; };
     std::vector<Press> presses;
+    // The STICK of the last press holding one at this frame on the slot.
+    std::optional<dw4::PadStick> stick(int frame, int slot = 0) const {
+        std::optional<dw4::PadStick> result;
+        for (const auto& p : presses)
+            if (p.stick && p.slot == slot && frame >= p.frame && frame < p.frame + p.duration) result = p.stick;
+        return result;
+    }
     // SEEK may name a model prefix to go for first (e.g. g_b01cpole).
     struct Goto { int frame; float x, z; int duration; bool seek = false; std::string target; };
     std::vector<Goto> gotos;
@@ -707,6 +729,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
         dw4::engine::Vec4f clear{};
         std::array<dw4::engine::PadSample, 4> pads{};
         std::string rendered_stage;
+        std::uint64_t rendered_serial{};
         std::unique_ptr<dw4::game::MovieDecoder> movie_decoder;
         std::uint32_t movie_serial = 0;
         std::string movie_stage; // stage the decoder's movie played in
@@ -741,6 +764,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto last_present = std::chrono::steady_clock::now();
         int frame = 0;
         const int trace_player = std::getenv("DW4_TRACE_PLAYER") ? std::atoi(std::getenv("DW4_TRACE_PLAYER")) : 0;
+        // DW4_TRACE_FINGERPRINT=N prints the state fingerprint every N frames:
+        // two runs of the same script must print the same lines (determinism).
+        const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
         const auto card_root = engine.card_root();
@@ -1259,6 +1285,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 pads[0].connected = true;
                 pads[0].buttons = input;
                 pads[0].left = scale({stick_x, stick_y});
+                if (const auto stick = scripted.stick(frame)) pads[0].left = *stick;
                 pads[0].right = scale(slot_right[0]);
                 for (std::size_t i = 1; i < 4; ++i) {
                     pads[i].connected = i < gamepads.size() || scripted.uses_slot(int(i));
@@ -1272,6 +1299,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     }
                     pads[i].buttons = buttons;
                     pads[i].left = scale(left);
+                    if (const auto stick = scripted.stick(frame, int(i))) pads[i].left = *stick;
                     pads[i].right = scale(slot_right[i]);
                 }
                 if (net.active()) {
@@ -1307,6 +1335,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (at < state_fingerprints.size() && state_fingerprints[at] != engine.fingerprint()) state_mismatch = frame;
                     }
                 }
+                if (trace_fingerprint > 0 && frame % trace_fingerprint == 0) {
+                    // With the system generator's state (not in the netplay
+                    // fingerprint): a draw more or less shows up here first.
+                    std::ostringstream random;
+                    random << dw4::engine::fight::generator();
+                    std::printf("[%d] fingerprint %016llx random %016zx\n", frame, static_cast<unsigned long long>(engine.fingerprint()),
+                                std::hash<std::string>{}(random.str()));
+                }
                 // DW4_TRACE_PLAYER=N prints player 1's sequence and position every N frames.
                 if (trace_player > 0 && frame % trace_player == 0)
                     if (auto* models = engine.get<dw4::engine::ModelCtrlManager>())
@@ -1321,9 +1357,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         }
             }
             if (steps > 0) interpolator.advance();
-            if (rendered_stage != engine.stage_name()) {
+            // (Every stage load, also of the same stage: the texture cache is
+            // keyed by document addresses, which a new load may reuse.)
+            const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
+            if (rendered_stage != engine.stage_name() || rendered_serial != serial) {
                 renderer.clear_cache();
                 rendered_stage = engine.stage_name();
+                rendered_serial = serial;
                 interpolator.reset();
             }
             engine.render(items, camera, clear, &shadow);

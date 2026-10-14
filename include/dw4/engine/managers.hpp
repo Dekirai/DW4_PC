@@ -165,7 +165,11 @@ private:
         std::size_t index{};
         bool fresh = true;
         Vec3f eye{}, target{};
-        std::int64_t step_end{}, all_end{};
+        // The camera RAM's named timers: "SHAKEONE" steps the pattern (SHAKE
+        // removes it, so the first update steps), "SHAKEALL" ends the shake
+        // (802F3474 / 802F34D4 check, 802F34C8 / 802F3DF4 start).
+        std::optional<NodeTimer> one;
+        NodeTimer all;
     };
     struct CameraRam : Ram {
         std::optional<BoxData> box;
@@ -678,7 +682,7 @@ private:
         Node* node{};
         float max_width{};
         float spacing{};
-        int align{};              // 0 left, 1 center, 2 right
+        int align{};              // beFontInfoData [9], enum 804D2048: 0 left, 1 right, 2 center
         std::string style;
         std::vector<ObjectView>* strings{};
     };
@@ -873,6 +877,7 @@ private:
         float maximum = 100, target{}, shown{};
         std::int64_t low_time{}, high_time{};
         bool continuous = true, dirty = true;
+        bool integer{}; // OneData [14] (+0x3E): the shown value is truncated every step
         std::string model_name;
         int model_index{};
     };
@@ -944,7 +949,10 @@ private:
         std::string enemy_name;    // work +1C
         int enemy_record{};        // work +20
         int enemy_max_hp{};        // work +24
-        std::int64_t timer_end = -1; // BOOT_TIMER / GENE_TIMER
+        // The RAM's named timers (data list +0x28): "BOOT_TIMER" of a timed
+        // start, "GENE_TIMER" between timed fills (8031DE44 start, 8031E238
+        // check, 8031E8BC remove). No command drops them.
+        std::optional<NodeTimer> boot_timer, gene_timer;
         int clears{};              // waves cleared so far (test bot)
     };
     int spawn(Engine& engine, GeneRam& ram, int count);
@@ -1125,6 +1133,13 @@ public:
         std::optional<Ride> ride;
         std::array<float, 3> applied{}, desired{};
         float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
+        // Info work +8C: the X (pitch) turn rate; only the AIH homing sets it
+        // (0x80308D30). Info work +0x54: the Y of the placement offset an
+        // effect-form GENERATE stored (0x8030D5E0); the homing aims that high
+        // above the target. Both start at 0 with the fresh info work of every
+        // GENERATE (the KIND +0x98 hooks).
+        float turn_rate_x{};
+        float aim_height{};
         bool is_player{};
         bool control_enabled = true; // ONCTRL / OFCTRL
         bool key_input{};
@@ -1167,12 +1182,17 @@ public:
         int owner_index = -1;
         std::uint32_t hitbox_generation{}; // bumped when the queue is cleared
         float muteki{};              // MUTEKI invulnerability frames
+        // The RAM's named timer "KEIKATIMER": made by the first MOVE / MOVEEX /
+        // MOVERL (8030A6BC) or MUTEKI (8030C1F0); its cached frame delta
+        // (8031E4C4) steps the channels, the turn and MUTEKI.
+        std::optional<dw4::MotionTimer> keika;
         std::int32_t record = -1;    // GENERATE record number (enemy DATABASE row)
-        std::int64_t attack_ready{}; // player ATDELAY timer end
+        std::optional<NodeTimer> attack_delay; // player: the named RAM timer "ATDELAY"
         int combo_phase{};           // player work +128
         bool combo_released{};       // player work +12C
         bool panel_open{};           // player work +124: an NDMWPANEL panel is up
         bool frozen{};               // ONFREEZE: control, AI and motion paused
+        float lod_high_saved = -1.0f; // ctrl work +A4 _svLODHighRange: igLod range[2] kept by SETLODHIGH (-1: none)
         bool previous_live{};        // enemy AI: generated last frame
         std::string lua_bhit;        // LUACALL BHit script prefix (ctrl work +30)
         std::string lua_whit, lua_fhit; // LUACALL WHit / FHit prefixes (+34 / +38)
@@ -1186,7 +1206,10 @@ public:
         // AIM map AI (803084B8): maps from the info's "AIM" data, AI work +50.
         const std::vector<ObjectView>* ai_maps{};
         int ai_map{};
-        std::int64_t ai_timer_end = -1; // AITIMER
+        // The RAM's named timer "AITIMER" (data list +0x28; 8031DE44 start,
+        // 8031E238 check, 8031E8BC remove), shared by the AIM map and the AIH
+        // homing. Absent counts as expired.
+        std::optional<NodeTimer> ai_timer;
         std::string ai_request;         // AI work +58
         Vec3f ai_world_target{};        // AI work +10: a WPOS map's target
         const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)
@@ -1211,8 +1234,9 @@ public:
             bool down_list{}, up_list{};   // +264 / +268 linked (803AE5F8 / 803AE87C)
         };
         std::optional<Status> status;
-        // Named model timers (8031DE44 / 8031E238 / 8031E8BC): time left in ns.
-        std::map<std::string, std::int64_t, std::less<>> named_timers;
+        // The status work's named RAM timers (POISON, SLEEP, STUN, BIND,
+        // ATKDOWN, ...; 8031DE44 / 8031E238 / 8031E8BC) on the world clock.
+        std::map<std::string, NodeTimer, std::less<>> named_timers;
     };
 
     const ModelRam* player(int index) const;
@@ -1266,10 +1290,16 @@ private:
         ModelRam* ram{};
     };
     std::vector<UpdateEntry> update_order_; // rams_ in class order (update)
-    std::map<const void*, std::unique_ptr<std::vector<Sequence>>> sequences_;
-    std::map<const void*, std::unique_ptr<HitBody>> hit_bodies_;
-    std::map<const void*, std::unique_ptr<Homing>> homings_;
-    std::map<const void*, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
+    // Per-info data the RAMs point into, keyed by (document, info reference).
+    // The key once was document ^ reference: two infos of different documents
+    // could share it (e.g. i_fadewn01 and j_startback in stagis10, ~3 % of
+    // runs, depending on heap addresses), and the second add_info freed the
+    // first info's data under its RAMs (use-after-free, missing sequences).
+    using InfoKey = std::pair<const void*, std::uint32_t>;
+    std::map<InfoKey, std::unique_ptr<std::vector<Sequence>>> sequences_;
+    std::map<InfoKey, std::unique_ptr<HitBody>> hit_bodies_;
+    std::map<InfoKey, std::unique_ptr<Homing>> homings_;
+    std::map<InfoKey, std::unique_ptr<std::vector<ObjectView>>> ai_maps_;
     std::array<bool, 4> item_labels_{}; // ITNAMEFONT font00..03 in use
 };
 
@@ -1358,14 +1388,19 @@ public:
 private:
     struct List {
         int kind{};                        // 0 techniques, 1 disks, 2 status
-        int cursor{}, scroll{}, line_mode{}, count{};
+        // _lineMode defaults to 2 (beNDMWPanelObject meta, 80337F40).
+        int cursor{}, scroll{}, line_mode{2}, count{};
         bool fire_request{};               // emergency heal: fire the preselected line
         std::vector<int> rows, colors;
     };
     struct PanelRam : Ram {
         bool running{}, reopen{}, cursor_shown{}, decided{};
         int state{}, fire{}, counter{}, kind{};
-        std::int64_t fire_end{}, emergency_ng{};
+        // The panel RAM's named timers "FIRE" (the wait after a pick,
+        // 0x8034A4E0 / 0x8034A988 check, 0x8034A604 / 0x8034A66C start) and
+        // "EMGHEAL" (the CURSOR_NG pause of Y, 0x8034B408 / 0x8034B45C);
+        // missing counts as run out.
+        std::optional<NodeTimer> fire_timer, emgheal_timer;
         std::string label;
         std::array<List, 3> lists;
         bool no_gate_disk{}, no_healing{}, no_para_up{}, no_cureling{};
@@ -1455,7 +1490,8 @@ private:
     bool execute(Engine& engine, ActionRam& ram, const Command& command);
     void apply_visuals(ActionRam& ram);
     std::vector<std::unique_ptr<ActionRam>> rams_;
-    std::map<const void*, std::unique_ptr<std::vector<Action>>> actions_;
+    // Keyed by (document, info reference), see ModelCtrlManager::sequences_.
+    std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<std::vector<Action>>> actions_;
     std::map<std::pair<const void*, std::uint32_t>, std::unique_ptr<AnimationDatabase>> databases_;
     float random_wait_min_{}; // 80535A60: minimum of the random WAITCHECKs
     std::map<const Node*, ActionRam*> actor_owner_;
@@ -1651,6 +1687,16 @@ struct FightResult {
     std::int32_t attribute = -1; // 0 fire .. 3 dark; -1 common
     std::int32_t flag{};         // largest variance step
 };
+
+// The posted SETEFFECT of the panel, GAMERAM and item code (80349C88,
+// 80371CFC, 80373B40, 803771A4, 803AAA6C, ...): model and sequence with
+// delay 1.0, no offset, not tied to a sequence (0: dropped once started) and
+// locked to the model (1), sent through 803061BC with 1 frame, so it arrives
+// on the next frame, after a sequence change of this frame has cleared the
+// subcommands (803108A0).
+void post_effect(Engine& engine, std::string category, std::optional<std::string> name, int index, std::string model,
+                 std::string sequence);
+
 namespace fight {
 // One draw from the system generator (vtable +60, 8021EB40), for every
 // random number of the game (see SystemRandom).

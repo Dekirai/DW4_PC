@@ -254,8 +254,16 @@ void GeneraterManager::update(Engine& engine) {
             bool go = false;
             if (start_mode.starts_with('d')) go = true;
             else if (start_mode.starts_with('t')) {
-                if (ram.timer_end < 0) ram.timer_end = engine.time() + frames_to_time(ram.data.f32(10));
-                else if (engine.time() >= ram.timer_end) { go = true; ram.timer_end = -1; }
+                // "time" (802FD21C): the first pass makes the named timer
+                // "BOOT_TIMER" (8031E138 / 8031DE44, end (int64)(1e9f *
+                // _startData / 60f)); later passes check it on the 2^18 ns
+                // quantised clock with a strict '<' (8031E238) and remove it
+                // once it ran out (8031E8BC).
+                if (!ram.boot_timer) timer_start(ram.boot_timer.emplace(), engine.time(), frames_to_time(ram.data.f32(10)));
+                else if (timer_expired(*ram.boot_timer, engine.time())) {
+                    go = true;
+                    ram.boot_timer.reset();
+                }
             } else if (start_mode.starts_with('r')) {
                 // "radar" (802FD288): the nearest live player's squared distance to
                 // the base position is at most _startData.
@@ -277,7 +285,11 @@ void GeneraterManager::update(Engine& engine) {
             ram.remaining = total - spawn(engine, ram, max_count);
             ram.state = 2;
             if (ram.remaining <= 0) ram.state = 3;
-            else if (fill_mode.starts_with('t')) ram.timer_end = engine.time() + frames_to_time(ram.data.f32(12));
+            else if (fill_mode.starts_with('t')) {
+                // 0x802FD380: 8031DE44 (re)starts "GENE_TIMER" with _fillData frames.
+                if (!ram.gene_timer) ram.gene_timer.emplace();
+                timer_start(*ram.gene_timer, engine.time(), frames_to_time(ram.data.f32(12)));
+            }
             break;
         }
         case 2:
@@ -289,9 +301,16 @@ void GeneraterManager::update(Engine& engine) {
                 if (int(ram.enemies.size()) == max_count) break;
                 ram.remaining -= spawn(engine, ram, 1);
             } else if (fill_mode.starts_with('t')) {
-                if (engine.time() < ram.timer_end) break;
+                // 0x802FD484: one enemy each time "GENE_TIMER" runs out (a
+                // missing timer counts as run out); the last one removes it
+                // (0x802FD4E0), otherwise it restarts (0x802FD510).
+                if (ram.gene_timer && !timer_expired(*ram.gene_timer, engine.time())) break;
                 ram.remaining -= spawn(engine, ram, 1);
-                ram.timer_end = engine.time() + frames_to_time(ram.data.f32(12));
+                if (ram.remaining <= 0) ram.gene_timer.reset();
+                else {
+                    if (!ram.gene_timer) ram.gene_timer.emplace();
+                    timer_start(*ram.gene_timer, engine.time(), frames_to_time(ram.data.f32(12)));
+                }
             }
             if (ram.remaining <= 0) ram.state = 3;
             break;

@@ -52,8 +52,16 @@ struct GlRenderer::Impl {
     int u_light_ambient{};
     int u_fog{}, u_fog_color{}, u_fog_range{}, u_skinned{}, u_palette{}, u_tex_matrix{};
     int u_shadow_matrix{}, u_shadow_tex{}, u_shadow_pass{};
-    int u_texgen{};
+    int u_texgen{}, u_pixel_center{};
     PFNGLUNIFORM2FPROC Uniform2f{};
+    // GX samples a pixel at 7/12 of its width and height instead of GL's 1/2
+    // (unless antialiasing); Dolphin's VertexShaderManager compensates with
+    // pixel_center_correction = 7/12 - 1/2, moving every vertex 1/12 of a
+    // render pixel left and up. Clip-space offset for the current viewport.
+    void pixel_center(int width, int height) {
+        constexpr float kCorrection = 7.0f / 12.0f - 0.5f;
+        if (width > 0 && height > 0) Uniform2f(u_pixel_center, -kCorrection * 2.0f / float(width), kCorrection * 2.0f / float(height));
+    }
 };
 
 namespace {
@@ -78,6 +86,7 @@ uniform int u_light_count;
 uniform vec3 u_light_ambient;
 uniform vec4 u_diffuse;
 uniform mat4 u_shadow_matrix;
+uniform vec2 u_pixel_center;
 out vec4 v_color;
 out vec2 v_uv;
 out float v_depth;
@@ -98,6 +107,8 @@ void main() {
     vec4 eye = u_view * world;
     v_depth = -eye.z;
     gl_Position = u_proj * eye;
+    // GX pixel centre at 7/12 (see Impl::pixel_center): GL y points up.
+    gl_Position.xy += gl_Position.w * u_pixel_center;
     vec4 base = u_use_vcol != 0 ? a_color : u_color;
     if (u_lighting != 0) {
         // GX channel as Alchemy sets it up (800F6DC0): the material colour
@@ -257,7 +268,7 @@ GlRenderer::GlRenderer() : gl_(std::make_unique<Impl>()) {
     U(model) U(view) U(proj) U(color) U(modulate) U(use_vcol) U(use_tex) U(alpha_func) U(alpha_ref)
     U(lighting) U(light_dir) U(light_col) U(light_count) U(diffuse) U(tex) U(light_ambient)
     U(fog) U(fog_color) U(fog_range) U(skinned) U(palette) U(tex_matrix)
-    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen)
+    U(shadow_matrix) U(shadow_tex) U(shadow_pass) U(texgen) U(pixel_center)
 #undef U
     gl.Uniform2f = reinterpret_cast<PFNGLUNIFORM2FPROC>(SDL_GL_GetProcAddress("glUniform2f"));
     glGenTextures(1, &white_texture_);
@@ -510,7 +521,8 @@ const GlRenderer::Texture* GlRenderer::texture(const engine::Attribute* binding)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, levels);
         const auto& s = binding->sampler;
-        auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : v == 2 ? GL_MIRRORED_REPEAT : GL_REPEAT; };
+        // GX wraps (texture_sampler): 0 CLAMP, 1 REPEAT.
+        auto wrap = [](int v) { return v == 0 ? GL_CLAMP_TO_EDGE : GL_REPEAT; };
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap(s.wrap_s));
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap(s.wrap_t));
         // IG_GFX_TEXTURE_FILTER: 0 NEAREST, 1 LINEAR, 2 NEAREST_MIPMAP_NEAREST,
@@ -568,6 +580,7 @@ void GlRenderer::render_shadow_map() {
     glDisable(GL_CULL_FACE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     gl.UseProgram(program_);
+    gl.pixel_center(shadow_width_ - 2 * border, shadow_height_ - 2 * border);
     gl.Uniform1i(gl.u_shadow_pass, 1);
     gl.Uniform1i(gl.u_lighting, 0);
     gl.Uniform1i(gl.u_fog, 0);
@@ -721,6 +734,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         // ones (Engine::render puts the blended items last).
         if (!receivers_drawn && s.blend_enabled) {
             glViewport(wide.x, wide.y, wide.width, wide.height);
+            gl.pixel_center(wide.width, wide.height);
             glScissor(wide.x, wide.y, wide.width, wide.height);
             render_shadow_receivers(camera);
             receivers_drawn = true;
@@ -732,6 +746,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
         const auto proj = !flat && !s.viewport ? widened(authored) : authored;
         if (on_wide) {
             glViewport(wide.x, wide.y, wide.width, wide.height);
+            gl.pixel_center(wide.width, wide.height);
             glScissor(wide.x, wide.y, wide.width, wide.height);
         } else if (s.viewport) {
             const auto& v = *s.viewport;
@@ -739,9 +754,11 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
             const int y = screen.y + int(std::lround((480 - v[1] - v[3]) * sy));
             const int w = int(std::lround(v[2] * sx)), h = int(std::lround(v[3] * sy));
             glViewport(x, y, w, h);
+            gl.pixel_center(w, h);
             glScissor(x, y, w, h);
         } else {
             glViewport(screen.x, screen.y, screen.width, screen.height);
+            gl.pixel_center(screen.width, screen.height);
             glScissor(screen.x, screen.y, screen.width, screen.height);
         }
         // 2D layers (orthographic, e.g. the FONT camera with near 10) place
@@ -840,6 +857,7 @@ void GlRenderer::render(const std::vector<engine::DrawItem>& items, const engine
     gl.BindVertexArray(0);
     if (!receivers_drawn) {
         glViewport(wide.x, wide.y, wide.width, wide.height);
+        gl.pixel_center(wide.width, wide.height);
         glScissor(wide.x, wide.y, wide.width, wide.height);
         render_shadow_receivers(camera);
     }

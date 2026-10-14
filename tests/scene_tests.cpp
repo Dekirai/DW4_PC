@@ -1,10 +1,12 @@
 #include "dw4/engine/math.hpp"
+#include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -216,8 +218,99 @@ void test_field_time() {
     check(field_time(3) == 50050000 && field_time(3000) == 50050000000, "Three fields");
 }
 
+// MOTIONSET cross-fade (801D0C14, several states): the quaternions blend
+// through 8012BE90 and the translations linearly; the local matrices are
+// never mixed element by element, which would shrink a turning bone.
+void test_motion_blend_tracks() {
+    const float h = std::sqrt(0.5f);
+    BoneTrack rest;                       // identity, at the origin
+    BoneTrack turned;
+    turned.rotation = {0, h, 0, h};       // 90 degrees about Y
+    turned.translation = {4, 0, -2};
+    const BoneTrack half = blend_bone_track(rest, turned, 0.5f);
+    const Mat4 m = bone_track_matrix(half);
+    for (int row = 0; row < 3; ++row) {
+        const float length = std::sqrt(m(row, 0) * m(row, 0) + m(row, 1) * m(row, 1) + m(row, 2) * m(row, 2));
+        check(std::abs(length - 1.0f) < 0.01f, "A half-way blend keeps the bone's axes unit length");
+    }
+    // An element-wise lerp of the two matrices would give cos = 0.5 here.
+    check(std::abs(m(0, 0) - std::cos(0.785398163f)) < 0.01f && std::abs(m(1, 1) - 1.0f) < 1e-6f,
+          "Half of a 90 degree turn is 45 degrees");
+    check(m(3, 0) == 2.0f && m(3, 1) == 0.0f && m(3, 2) == -1.0f, "The translation mixes linearly");
+
+    // The shorter way: the negated quaternion is the same turn.
+    BoneTrack negated = turned;
+    for (auto& c : negated.rotation) c = -c;
+    const BoneTrack other = blend_bone_track(rest, negated, 0.5f);
+    for (std::size_t i = 0; i < 4; ++i)
+        check(std::abs(std::abs(other.rotation[i]) - std::abs(half.rotation[i])) < 1e-6f, "8012BE90 takes the shorter way");
+
+    // Close rotations (1 - dot <= 0.08) take the unnormalized linear branch;
+    // the translation is acc * (1 - w) + w * t, fused.
+    BoneTrack near_turn;
+    near_turn.rotation = {0, 0.2f, 0, std::sqrt(1.0f - 0.04f)};
+    near_turn.translation = {3, 2, -1};
+    BoneTrack start;
+    start.translation = {1, 2, 3};
+    const BoneTrack q = blend_bone_track(start, near_turn, 0.25f);
+    check(q.rotation[0] == 0 && q.rotation[1] == 0.25f * 0.2f && q.rotation[2] == 0 &&
+              q.rotation[3] == std::fma(0.75f, 1.0f, 0.25f * near_turn.rotation[3]),
+          "Close rotations blend linearly without normalizing");
+    check(q.translation.x == 1.5f && q.translation.y == 2.0f && q.translation.z == 2.0f, "Translation blend at a quarter");
+
+    // A fixed snapshot rebuilds its track from the cached local (8012B8A8).
+    const BoneTrack back = matrix_bone_track(bone_track_matrix(turned));
+    for (std::size_t i = 0; i < 4; ++i)
+        check(std::abs(back.rotation[i] - turned.rotation[i]) < 1e-6f, "The snapshot keeps the rotation");
+    check(back.translation.x == 4.0f && back.translation.y == 0.0f && back.translation.z == -2.0f, "The snapshot keeps the translation");
+    const BoneTrack identity = matrix_bone_track(Mat4{});
+    check(identity.rotation == std::array<float, 4>{0, 0, 0, 1}, "An identity local is the identity quaternion");
+}
+
+// igLod selection (801F799C): squared distances against the ranges, the
+// cached band and the hysteresis widening.
+void test_lod_selection() {
+    Node kids[3];
+    Node lod;
+    lod.kind = NodeKind::lod;
+    lod.children = {&kids[0], &kids[1], &kids[2]};
+    lod.lod_ranges = {0.0f, 0.0f, 10000.0f}; // the players' Kage / High / Low
+    check(lod.select_lod(50.0f * 50.0f) == &kids[1], "High within 100 units (squared range 10000)");
+    check(lod.select_lod(99.0f * 99.0f) == &kids[1], "High just inside 100 units");
+    check(lod.select_lod(150.0f * 150.0f) == &kids[2], "Low beyond 100 units, not beyond 10000");
+    check(lod.lod_upper == std::numeric_limits<float>::max(), "The last band ends at FLT_MAX");
+    check(lod.select_lod(1.0f) == &kids[1], "Back down to High; Kage's empty band [0, 0) never shows");
+    check(lod.select_lod(0.0f) == &kids[1], "Zero distance is High as well");
+    lod.lod_ranges[2] = 1.0e8f; // SETLODHIGH
+    lod.reset_lod();
+    check(lod.lod_index == -1 && lod.lod_child == -1 && lod.lod_lower == 0.0f && lod.lod_upper == 0.0f, "801F7CB8 reset");
+    check(lod.select_lod(5000.0f * 5000.0f) == &kids[1], "SETLODHIGH: High up to 10000 units");
+    check(lod.select_lod(20000.0f * 20000.0f) == &kids[2], "Low beyond 10000 units");
+
+    Node two[2];
+    Node h;
+    h.kind = NodeKind::lod;
+    h.children = {&two[0], &two[1]};
+    h.lod_ranges = {0.0f, 100.0f};
+    h.lod_hysteresis = {0.0f, 2.0f};
+    check(h.select_lod(50.0f) == &two[0] && h.lod_upper == 144.0f, "Upper bound (sqrt(100) + 2)^2");
+    check(h.select_lod(120.0f) == &two[0], "Inside the widened band the child stays");
+    check(h.select_lod(150.0f) == &two[1] && h.lod_lower == 64.0f, "Lower bound (sqrt(100) - 2)^2");
+    check(h.select_lod(80.0f) == &two[1], "Above the lowered bound the far child stays");
+    check(h.select_lod(60.0f) == &two[0], "Below it the search runs down");
+
+    Node one;
+    one.kind = NodeKind::lod;
+    one.children = {&two[0]};
+    one.lod_ranges = {10.0f, 20.0f};
+    check(one.select_lod(5.0f) == &two[0], "The first search assumes range[0] is reached (from _lastIndex + 2)");
+    check(one.select_lod(25.0f) == nullptr, "An index past the children selects nothing");
+    check(one.select_lod(5.0f) == nullptr && one.lod_index == -1 && one.lod_upper == 10.0f, "Below range[0] going down: no child");
+}
+
 int main() {
     try {
+        test_lod_selection();
         test_start_and_advance();
         test_long_step();
         test_loop_and_lock();
@@ -228,6 +321,7 @@ int main() {
         test_horizontal_perspective();
         test_system_random();
         test_field_time();
+        test_motion_blend_tracks();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

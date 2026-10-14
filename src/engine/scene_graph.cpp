@@ -523,6 +523,103 @@ void Node::set_all_children(bool enabled) {
     for (std::size_t i = 0; i < children.size(); ++i) set_child_enabled(i, enabled);
 }
 
+Node* Node::select_lod(float d2) {
+    const auto current = [this]() -> Node* {
+        return lod_child >= 0 && std::size_t(lod_child) < children.size() ? children[std::size_t(lod_child)] : nullptr;
+    };
+    // 0x801F79B4..0x801F79D4: inside [_lastLower, _lastUpper) the cached
+    // child stays (fcmpo: a NaN distance falls through to the search).
+    if (d2 >= lod_lower && d2 < lod_upper) return current();
+    const auto count = static_cast<std::int32_t>(lod_ranges.size());
+    const auto range = [&](std::int32_t i) { return i >= 0 && i < count ? lod_ranges[std::size_t(i)] : 0.0f; };
+    std::int32_t index{}, next{};
+    if (d2 >= lod_lower) {
+        // 0x801F7A34: upward from _lastIndex + 2 while the range is reached.
+        next = lod_index + 2;
+        while (next < count && d2 >= lod_ranges[std::size_t(next)]) ++next;
+        index = next - 1;
+    } else {
+        // 0x801F7A04: downward from _lastIndex while the range is above.
+        index = lod_index;
+        while (index >= 0 && d2 < lod_ranges[std::size_t(index)]) --index;
+        next = index + 1;
+    }
+    lod_index = index;
+    if (index < 0) {
+        lod_lower = 0.0f; // 0x801F7B10 (r2-0x7580 = 0.0)
+        lod_child = -1;
+    } else {
+        lod_lower = range(index);
+        lod_child = index < static_cast<std::int32_t>(children.size()) ? index : -1; // 0x801F7A84
+    }
+    // 0x801F7B48: FLT_MAX (0x8055DE2C) past the last range.
+    lod_upper = next >= count ? std::numeric_limits<float>::max() : range(next);
+    // 0x801F7B68..0x801F7C98: the hysteresis h widens the band to
+    // ((sqrt(lower) - h)^2, (sqrt(upper) + h)^2).
+    const auto hysteresis = static_cast<std::int32_t>(lod_hysteresis.size());
+    if (hysteresis) {
+        if (index >= 0 && index < hysteresis) {
+            const float r = lod_lower > 0.0f ? std::sqrt(lod_lower) : lod_lower;
+            const float h = lod_hysteresis[std::size_t(index)];
+            lod_lower = lod_lower + (h * h - 2.0f * h * r);
+        }
+        if (next < hysteresis) {
+            const float r = lod_upper > 0.0f ? std::sqrt(lod_upper) : lod_upper;
+            const float h = lod_hysteresis[std::size_t(next)];
+            lod_upper = lod_upper + (h * h + 2.0f * h * r);
+        }
+    }
+    return current();
+}
+
+void Node::reset_lod() {
+    lod_child = -1;
+    lod_index = -1;
+    lod_lower = lod_upper = 0.0f;
+}
+
+TextureSampler texture_sampler(const ObjectView& texture) {
+    TextureSampler s;
+    if (!texture) return s;
+    // igTextureAttr::apply (0x800C3684..0x800C36B4) pushes _wrapS/_wrapT
+    // (800FF6F4), _minFilter (800FF634) and _magFilter (800FF67C) into the
+    // visual context's texture record; 800FE744 turns the IG wraps into GX
+    // ones through 80490984 = {CLAMP, REPEAT, CLAMP, REPEAT}: GX never mirrors.
+    const auto wrap = [](std::int32_t v) { return v >= 0 && v < 4 ? int(v & 1) : 1; };
+    s.wrap_s = wrap(texture.i32(7, 1));
+    s.wrap_t = wrap(texture.i32(8, 1));
+    const auto image = texture.ref(12);
+    // Palette images: the format table 804906A4 (+12) marks the IG formats
+    // 1, 4 and 6 (GX C8 with the built-in TLUTs 804F887C) and the indexed
+    // 0x10000 / 0x10001 / 0x10002 with their igClut (GX C8 / C4 / C14X2;
+    // the game's indexed8 images are 0x10000). For them 800FE744 skips
+    // GXInitTexObj (0x800FED84) and zeroes the TLUT stamp +152 (0x800FED94),
+    // so the bind loop 800FCA9C rebuilds the object right after it with
+    // GXInitTexObjCI (802563C4 at 0x800FCC34 / 0x800FCD4C; the stamp never
+    // matches the generation, which starts at 1, 0x800FC6F8). That is
+    // GXInitTexObj 80256178 with its defaults: mag
+    // LINEAR (0x802561DC), min LINEAR (0x8025628C) or, mipmapped,
+    // LIN_MIP_NEAR (0xA0, 0x80256204). The GXInitTexObjLOD of 800FE744
+    // (0x800FEE50) ran before and is lost, so the attribute filters never
+    // reach a palette texture; the wraps do.
+    const auto format = image ? image.u32(11) : 0u;
+    const bool palette = format == 1 || format == 4 || format == 6 || format == 0x10000 || format == 0x10001 || format == 0x10002;
+    if (palette) {
+        // Mipmapped: record +60 = _imageCount - 1 (0x800FE15C) or, with
+        // _mipmapMode 1, the generated levels log2(min(w, h)) (0x800FE288).
+        const auto w = image.u32(2), h = image.u32(3);
+        const bool mipmapped = texture.i32(15, 1) > 1 || (texture.i32(10) == 1 && std::min(w, h) >= 2);
+        s.mag_filter = 1;
+        s.min_filter = mipmapped ? 4 : 1; // LINEAR_MIPMAP_NEAREST : LINEAR
+    } else {
+        // GXInitTexObjLOD (0x800FEE50) with the attribute filters, min
+        // through 80414A40, mag through 80414A58.
+        s.mag_filter = texture.i32(5, 1);
+        s.min_filter = texture.i32(6, 1);
+    }
+    return s;
+}
+
 const Attribute* SceneCache::attribute(const ObjectView& view) {
     if (!view) return nullptr;
     const Key key{view.document(), view.reference()};
@@ -538,10 +635,7 @@ const Attribute* SceneCache::attribute(const ObjectView& view) {
         a->texture = view.ref(4);
         if (a->texture) {
             a->image = a->texture.ref(12);
-            a->sampler.mag_filter = a->texture.i32(5, 1);
-            a->sampler.min_filter = a->texture.i32(6, 1);
-            a->sampler.wrap_s = a->texture.i32(7, 1);
-            a->sampler.wrap_t = a->texture.i32(8, 1);
+            a->sampler = texture_sampler(a->texture);
         }
     } else if (type == "igTextureStateAttr") {
         a->kind = AttrKind::texture_state;
@@ -812,11 +906,16 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
     } else if (view.is_a("igLod")) {
         n->kind = NodeKind::lod;
         children_from(7);
-        if (const auto list = view.ref(8)) {
-            const auto data = list.memory(4);
-            const auto count = list.u32(2);
-            for (std::uint32_t i = 0; i < count && (i + 1) * 4 <= data.size(); ++i) n->lod_ranges.push_back(read_f32le(data, i * 4));
-        }
+        const auto floats = [&](std::uint16_t slot, std::vector<float>& out) {
+            if (const auto list = view.ref(slot)) {
+                const auto data = list.memory(4);
+                const auto count = list.u32(2);
+                for (std::uint32_t i = 0; i < count && (i + 1) * 4 <= data.size(); ++i) out.push_back(read_f32le(data, i * 4));
+            }
+        };
+        floats(8, n->lod_ranges);
+        floats(14, n->lod_hysteresis); // no shipped igLod has one (players: [0, 0, 10000] / [0, 0])
+        n->lod_center = view.vec3(13).value_or(Vec3f{});
     } else if (view.is_a("igAttrSet")) {
         n->kind = NodeKind::attr_set;
         attributes_from(8, n->attributes);
@@ -834,6 +933,15 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
         n->kind = NodeKind::light_state_set;
         children_from(7);
         attributes_from(8, n->attributes);
+    } else if (type == "beResetNode") {
+        // 802C0B64: an igGroup (parent meta 801BF938, 36 bytes) with the
+        // flags _isResetTime ([8], +0x20) and _isResetRotAndScale ([9],
+        // +0x21) of the field table 804CFFC4. Only stagBS04 has them
+        // (f_devl1e, f_devl1f2, f_devl1f3; all [8] 0, [9] 1).
+        n->kind = NodeKind::reset_node;
+        children_from(7);
+        n->reset_time = view.boolean(8);
+        n->reset_rot_scale = view.boolean(9);
     } else if (view.is_a("igGroup")) {
         n->kind = NodeKind::group;
         children_from(7);
@@ -1032,7 +1140,34 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         break;
     }
     case NodeKind::transform_recorder:
+        // igTransformRecorder traversal 801DE9C0 (table 0x80415194): _m
+        // (+0x20, vtable +0x94) = modelview stack top * the traversal's
+        // inverse view (+0xA4), i.e. the world matrix; _mvm (+0x60, vtable
+        // +0x98) = the modelview matrix itself. One matrix each, no double
+        // buffer: MOVERL JOINT (8030CD94) reads _m through the field meta
+        // 805646FC (offset 0x20, registered by 801ABF70).
         n->recorded = model;
+        break;
+    case NodeKind::reset_node:
+        // beResetNode traversal 80312C28 (registered by 80313004 on the
+        // traversal 805656E4). The matrix stack holds modelview matrices:
+        // with _isResetRotAndScale it copies the traversal's view matrix
+        // (+0x64; the recorders' _m uses its inverse at +0xA4, 801DE9C0),
+        // puts the stack top's translation into it (80128DAC / 80128D90)
+        // and pushes that for the children, popped after them (8020B274).
+        // In world space: the parent's rotation and scale are dropped and
+        // only its world position stays, so the subtree is aligned to the
+        // world axes (Daemon's SQ_ATCKON1 spiral under f_devl1e stays fixed
+        // while the pivot turns). _isResetTime pushes the base of the
+        // traversal's time stack (+0xF0) as the children's time.
+        if (n->reset_rot_scale) {
+            Mat4 placed;
+            placed(3, 0) = model(3, 0);
+            placed(3, 1) = model(3, 1);
+            placed(3, 2) = model(3, 2);
+            model = placed;
+        }
+        if (n->reset_time) time = ctx.time;
         break;
     case NodeKind::copy_model: {
         // The source instance's placement and its actor's pose.
@@ -1074,14 +1209,16 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         break;
     }
     case NodeKind::lod: {
+        // igLod traversal 801DE598 (table 0x80415194, registered by
+        // 801DB310): _center through the modelview matrix (8012D498), and
+        // the SQUARED eye distance z*z + (x*x + y*y) picks the one child
+        // (801F799C); the ranges are squared distances. The players'
+        // [0, 0, 10000] show Kage (child 0) never, High (1) up to 100 units
+        // and Low (2) beyond; the shadow proxies draw Kage directly.
         apply_overrides(*n, state);
-        const Vec3f origin{model(3, 0), model(3, 1), model(3, 2)};
-        const float distance = length(origin - ctx.camera_position);
-        for (std::size_t i = 0; i < n->children.size(); ++i) {
-            const float low = i < n->lod_ranges.size() ? n->lod_ranges[i] : 0.0f;
-            const float high = i + 1 < n->lod_ranges.size() ? n->lod_ranges[i + 1] : 3.0e38f;
-            if (distance >= low && distance < high) visit(n->children[i], ctx, model, state, time, scope, depth + 1);
-        }
+        const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(ctx.camera.view));
+        if (Node* child = n->select_lod(eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y)))
+            visit(child, ctx, model, state, time, scope, depth + 1);
         return;
     }
     case NodeKind::geometry: {

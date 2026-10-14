@@ -193,6 +193,17 @@ void conversions() {
         check(gamecube_stick(16, -16, c_stick) == PadStick{1.0f / 74.0f, -1.0f / 74.0f},
             "SDK component deadzone was not subtracted before scaling");
     }
+    // The walk test (8034C4D4) is the held direction mask. Measured in Dolphin
+    // (dng101b1): raw x 34/40/44 (0.257/0.338/0.392) neither walk nor turn,
+    // 45 (0.405) walks.
+    for (const int x : {34, 40, 44})
+        check(direction(gamecube_stick(static_cast<std::int8_t>(x), 0)) == 0 &&
+                  direction(gamecube_stick(static_cast<std::int8_t>(-x), 0)) == 0,
+            "A stick below the activation radius set a direction (the player would walk)");
+    check(direction(gamecube_stick(45, 0)) == 2 && direction(gamecube_stick(-45, 0)) == 8,
+        "A stick just above the activation radius set no direction");
+    check(direction(gamecube_stick(32, 32)) == 0 && direction(gamecube_stick(36, 36)) == 3,
+        "The diagonal activation radius changed");
 }
 
 void invalid_inputs() {

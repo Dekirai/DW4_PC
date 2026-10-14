@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <random>
 
 namespace dw4::engine {
 using namespace menu;
@@ -745,7 +744,12 @@ void LoadIntf2Manager::update_ctrl(Engine& engine, PanelRam& ram, SaveCommon& co
                             target.digimon = kPartners[std::size_t(ram.digimon)];
                             target.name = ram.names.name();
                             target.joined = true;
-                            target.unique = std::random_device{}();
+                            // UNIQUE (8035EEF0): the low word of the world
+                            // clock, beSystem +0x50 (manager +0x0C read by
+                            // sub_80360DF4), the QWORD 8028AF84 advances every
+                            // frame; the same value for every player created
+                            // in that frame.
+                            target.unique = std::uint32_t(engine.time());
                             // GAMESTART's player creation (8036EB0C) runs
                             // BASE2CURRENT first: the host's fresh BASE_FLAG
                             // (flag 960 set, 8036CE1C) becomes the common FLAG.
