@@ -107,7 +107,20 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     }
     // Capture the matching recipients first; handlers may register or send.
     std::vector<Ram*> recipients;
-    for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    if (index == -2) {
+        // 80305A28 (0x80305D44..0x80305DE4): index -2 sends to the first row
+        // of the name whose RAM is not in use (its byte +20, the active flag
+        // a model's GENERATE sets and REMOVE clears), and to that row only
+        // (Lucemon's bombs: stagBS03 gr1_f_luce.lua, MODELCTRL x_035frunn01a
+        // -2 GENERATE).
+        for (const auto& row : rows_)
+            if (row.category == category && (!name || !row.name || *row.name == *name) && row.recipient && !row.recipient->active) {
+                recipients.push_back(row.recipient);
+                break;
+            }
+    } else {
+        for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    }
     if (recipients.empty()) {
         engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
                     (name ? " (" + std::string(*name) + ")" : std::string()));
