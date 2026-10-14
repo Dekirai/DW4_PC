@@ -226,8 +226,12 @@ with raw stick values -128..127, several joined by `+`), `frame GOTO x z [durati
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
 enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
-volleys), picks up items, steps on the other mats and explores until the way is open), `--screenshot
-FILE.bmp`, `--screenshot-frames N,M`, `--flag N=V`.
+volleys), picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
+campaign` plays the story from the boot logos: a new game, then the story objectives in order up to
+the staff roll, see `src/game/campaign.cpp`; the dng310 fortress is planned over its floors' regions
+and the flags that open their doors, the Lucemon fight by a boss routine), `--screenshot FILE.bmp`,
+`--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
+every stage start, `<frame>_<stage>.dw4state`).
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
@@ -238,9 +242,14 @@ test run's first stage at player point group n (as when arriving from another ex
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,
-`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT` and `DW4_TRACE_EXPLORE`
-log menu cursors, text, player state, hits and the exploring bot's targets; `DW4_TRACE_SCRIPT=1` (or a
-script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes.
+`DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
+`DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
+campaign driver's menu answers; `DW4_TRACE_SCRIPT=1` (or a
+script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes
+(`DW4_DUMP_SEQ=<model>` lists all its sequences with their commands). Campaign research reports
+(they change the stage): `DW4_CAMPAIGN_REGIONS=wall,...` prints a stage's regions with those
+HITLANDMODEL walls closed and what each wall joins, `DW4_CAMPAIGN_REACH=...` what is reached from
+the player (or `DW4_CAMPAIGN_REACH_FROM` points) as walls are switched off.
 `DW4_TRACE_FINGERPRINT=N` prints the state fingerprint (and a hash of the random generator) every N
 frames: two runs of the same input script must print the same lines, so the first differing line
 is the first frame where a run diverged. `DW4_FIXED_RANDOM=<hex>` makes every draw of the game's random

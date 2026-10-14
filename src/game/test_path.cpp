@@ -1502,6 +1502,13 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             // Hits reach a model through its hit script; without one (a
             // boss's head or decoration) it cannot be hurt.
             if (pass == 0 && !engine.has_script("hit_" + e->info_name + ".lua")) continue;
+            // A full folder leaves the item lying (pick_item: 36 devices, 9 of
+            // a disk): not walked to.
+            if (pass == 1 && e->item_table != 1 && e->item_table != 2)
+                if (auto* sys = engine.get<engine::GameSystem>()) {
+                    auto& slot = sys->players[std::size_t(std::clamp(player.index, 0, 3))];
+                    if (e->item_table == 0 ? slot.disk_count(e->item_record) >= 9 : slot.devices.size() >= 36) continue;
+                }
             if (left_alone(e.get()) || unkillable_.count(e.get())) continue;
             const auto at = position_of(*e);
             const bool structure = e->info_name.rfind("g_", 0) == 0;

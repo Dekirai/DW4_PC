@@ -728,6 +728,14 @@ public:
     void clear_stage(Engine& engine) override;
     bool command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) override;
     void update(Engine& engine) override;
+    // The running cursor menus (read only, for test drivers): the cursor
+    // moves and A/B are read only while `taking_input` (state 1, sub 0).
+    struct OpenSelect {
+        std::string name;
+        int index{}, cursor{}, items{};
+        bool vertical{}, cancel{}, taking_input{};
+    };
+    std::vector<OpenSelect> open_selects() const;
 
 private:
     struct SelectRam : Ram {

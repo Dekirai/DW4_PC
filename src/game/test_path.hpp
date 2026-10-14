@@ -162,6 +162,9 @@ public:
         bool press_r{};     // press R now (the technique panel)
     };
     Decision update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
+    // Nothing left to explore and the goal out of reach: waiting at the
+    // nearest point (the campaign driver then tries another exit of a maze).
+    bool exhausted() const { return closest_; }
 
 private:
     enum class Gimmick { none, strike, talk, step, tech };
