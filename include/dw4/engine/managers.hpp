@@ -488,12 +488,18 @@ private:
         std::int64_t period{}, move_start{};                  // [37] beWaterMove
         std::size_t move_index{};
         std::vector<Drop> drops;
+        int state{};                     // [6] 0 first update, 1 active, 2 out of view
+        std::int64_t last_update{};      // [36] world time of the last update
         GeometryData* geometry{};
         bool searched{};
     };
     bool inside(const Water& w, const Vec3f& p) const;
     void push(Water& w, const Vec3f& p, float strength);
     void step(Water& w);
+    bool visible(Engine& engine, const Water& w) const;
+    void flatten(Water& w);
+    void restart_move(Engine& engine, Water& w);
+    void surface_update(Engine& engine, Water& w);
     std::vector<Water> waters_;
 };
 

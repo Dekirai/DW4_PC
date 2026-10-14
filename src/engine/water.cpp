@@ -119,9 +119,67 @@ void WaterPlainManager::push(Water& w, const Vec3f& p, float strength) {
     if (vertex >= 0 && std::size_t(vertex) < current.size()) current[std::size_t(vertex)] = amount * strength;
 }
 
+// 80317044: the surface's box (the rectangle, 1 unit above and below the
+// origin) against the camera the frame is steered with. The view matrix
+// (camera +0x2C..) times the projection (+0x6C, a glFrustum layout from
+// 80129BD4) takes the 8 corners to clip space (801E898C); 801E8BF0 rejects
+// the box (2) when every corner has w < 0 or one plane has no corner with
+// -w < c < w (sign bits of -w - c and c - w), and otherwise reports inside
+// (1) or partly inside (3 / 5), which both count as visible.
+bool WaterPlainManager::visible(Engine& engine, const Water& w) const {
+    FrameCamera camera;
+    if (auto* cameras = engine.get<CameraManager>()) cameras->frame_camera(engine, camera);
+    else return true;
+    const Mat4 m = camera.view * camera.projection;
+    // 80317EEC..80317F28: corner a = origin + [28] x/z, y - 1; b = origin + [27] x/z, y + 1.
+    const Vec3f a{w.origin.x + w.min.x, w.origin.y - 1.0f, w.origin.z + w.min.z};
+    const Vec3f b{w.origin.x + w.max.x, w.origin.y + 1.0f, w.origin.z + w.max.z};
+    const Vec3f e{b.x - a.x, b.y - a.y, b.z - a.z};
+    float base[4], dx[4], dy[4], dz[4];
+    for (int c = 0; c < 4; ++c) {
+        base[c] = a.z * m(2, c) + (a.x * m(0, c) + a.y * m(1, c)) + m(3, c);
+        dx[c] = e.x * m(0, c);
+        dy[c] = e.y * m(1, c);
+        dz[c] = e.z * m(2, c);
+    }
+    unsigned any = 0, all = 0x3f;
+    bool all_behind = true;
+    for (int corner = 0; corner < 8; ++corner) {
+        float v[4];
+        for (int c = 0; c < 4; ++c)
+            v[c] = base[c] + ((corner & 1) ? dx[c] : 0.0f) + ((corner & 2) ? dy[c] : 0.0f) + ((corner & 4) ? dz[c] : 0.0f);
+        all_behind = all_behind && std::signbit(v[3]);
+        unsigned mask = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            if (std::signbit(-v[3] - v[axis])) mask |= 1u << (axis * 2);
+            if (std::signbit(v[axis] - v[3])) mask |= 2u << (axis * 2);
+        }
+        any |= mask;
+        all &= mask;
+    }
+    return !all_behind && any == 0x3f;
+}
+
+// 80317CC0: both height buffers take the boundary value ([35]) and every
+// vertex of the surface its height 0 (80452548); the normals stay.
+void WaterPlainManager::flatten(Water& w) {
+    for (auto& buffer : w.buffers) std::fill(buffer.begin(), buffer.end(), w.boundary);
+    if (w.geometry) {
+        for (auto& p : w.geometry->positions) p.y = 0.0f;
+        w.geometry->serial = GeometrySerial{};
+    }
+}
+
+// 80317F84..80317FA4 / 8031808C..803180AC: (re)activation restarts the
+// beWaterMove cycle: start (+8) = world time, kept time (+10) = 0, index
+// (+20) = 0.
+void WaterPlainManager::restart_move(Engine& engine, Water& w) {
+    w.move_start = engine.time();
+    w.move_index = 0;
+}
+
 void WaterPlainManager::update(Engine& engine) {
     if (waters_.empty()) return;
-    auto* models = engine.get<ModelCtrlManager>();
     for (auto& w : waters_) {
         if (!w.geometry && !w.searched) {
             w.geometry = find_geometry(engine, engine.global_root(), w.vertices, 0);
@@ -131,46 +189,87 @@ void WaterPlainManager::update(Engine& engine) {
                            std::to_string(w.origin.z) + ") grid " + std::to_string(w.width) + "x" + std::to_string(w.height) +
                            (w.geometry ? " mesh " + std::to_string(w.geometry->positions.size()) : std::string(" without mesh")));
         }
-        // 803178CC: players and enemies standing in the water press it down.
-        if (models)
+        // 80317EA8 (record vtable 804DFC40 +0x64), state [6] (+0x18):
+        // 0 first update: flatten, remember the time ([36] +0xA8), then
+        //   active (1) with a restarted cycle if the box is in view, else 2;
+        // 1 active: once at least 16666665 ns passed since the remembered
+        //   time (0x80317FF0..0x80318014) the time is taken and the surface
+        //   updates (803178CC) while the box stays in view; out of view it
+        //   is flattened and becomes 2;
+        // 2 out of view: the box back in view restarts the cycle and makes
+        //   it active; the first update follows a frame later.
+        const std::int64_t now = engine.time();
+        const int before = w.state;
+        if (w.state == 0) {
+            flatten(w);
+            w.last_update = now;
+            if (visible(engine, w)) {
+                restart_move(engine, w);
+                w.state = 1;
+            } else w.state = 2;
+        } else if (w.state == 1) {
+            if (now - w.last_update >= 16666665) {
+                w.last_update = now;
+                if (visible(engine, w)) surface_update(engine, w);
+                else {
+                    flatten(w);
+                    w.state = 2;
+                }
+            }
+        } else if (visible(engine, w)) {
+            restart_move(engine, w);
+            w.state = 1;
+        }
+        if (static const bool trace = std::getenv("DW4_TRACE_WATER") != nullptr; trace) {
+            if (w.state != before)
+                engine.log("water (" + std::to_string(w.origin.x) + ", " + std::to_string(w.origin.z) + ") state " +
+                           std::to_string(before) + " -> " + std::to_string(w.state));
+            if (engine.frame() % 120 == 0) {
+                float peak = 0.0f;
+                for (float v : w.buffers[w.current]) peak = std::max(peak, std::abs(v));
+                engine.log("water (" + std::to_string(w.origin.x) + ", " + std::to_string(w.origin.z) + ") state " +
+                           std::to_string(w.state) + " peak " + std::to_string(peak));
+            }
+        }
+    }
+}
+
+// 803178CC: one update of an active surface.
+void WaterPlainManager::surface_update(Engine& engine, Water& w) {
+    // Players and enemies standing in the water press it down: first every
+    // PLAYER, then every ENEMY matrix (0x80317934..0x803179F0, GETMATRIX of
+    // each category); a later press of the same grid point replaces it.
+    if (auto* models = engine.get<ModelCtrlManager>())
+        for (int pass = 0; pass < 2; ++pass)
             for (const auto& ram : models->rams()) {
-                if (!ram->generated || !ram->node || !(ram->is_player || ram->category == "ENEMY")) continue;
+                if (!ram->generated || !ram->node || (pass == 0 ? !ram->is_player : ram->category != "ENEMY")) continue;
                 const auto& m = ram->node->matrix;
                 const Vec3f p{m(3, 0), m(3, 1), m(3, 2)};
                 if (inside(w, p)) push(w, p, 1.0f);
             }
-        // beWaterMove: drops at their times within the period. 80317A0C..
-        // 80317A88: the raw world time since the start (+8) is kept (+10); once
-        // it is not below the period the start becomes now and the kept time
-        // drops by one period, so the frame of the wrap still sees its
-        // overshoot (the next frame counts from the new start); then at most
-        // one drop whose time the kept time reached (80317AA0..80317AE0).
-        if (!w.drops.empty() && w.period > 0) {
-            std::int64_t now = engine.time() - w.move_start;
-            if (w.move_start == 0) {
-                w.move_start = engine.time();
-                w.move_index = 0;
-                now = 0;
-            } else if (now >= w.period) {
-                w.move_start = engine.time();
-                w.move_index = 0;
-                now -= w.period;
-            }
-            if (w.move_index < w.drops.size() && now >= w.drops[w.move_index].time) {
-                for (const auto& point : w.drops[w.move_index].points) {
-                    const Vec3f p = point + w.origin;
-                    if (inside(w, p)) push(w, p, w.drops[w.move_index].strength);
-                }
-                ++w.move_index;
-            }
+    // beWaterMove: drops at their times within the period. 80317A0C..
+    // 80317A88: the raw world time since the start (+8) is kept (+10); once
+    // it is not below the period the start becomes now and the kept time
+    // drops by one period, so the frame of the wrap still sees its
+    // overshoot (the next frame counts from the new start); then at most
+    // one drop whose time the kept time reached (80317AA0..80317AE0). The
+    // start comes from the activation (restart_move).
+    if (!w.drops.empty() && w.period > 0) {
+        std::int64_t kept = engine.time() - w.move_start;
+        if (kept >= w.period) {
+            w.move_start = engine.time();
+            w.move_index = 0;
+            kept -= w.period;
         }
-        step(w);
-        if (static const bool trace = std::getenv("DW4_TRACE_WATER") != nullptr; trace && engine.frame() % 120 == 0) {
-            float peak = 0.0f;
-            for (float v : w.buffers[w.current]) peak = std::max(peak, std::abs(v));
-            engine.log("water (" + std::to_string(w.origin.x) + ", " + std::to_string(w.origin.z) + ") peak " + std::to_string(peak));
+        if (w.move_index < w.drops.size() && kept >= w.drops[w.move_index].time) {
+            for (const auto& point : w.drops[w.move_index].points) {
+                const Vec3f p = point + w.origin;
+                if (inside(w, p)) push(w, p, w.drops[w.move_index].strength);
+            }
+            ++w.move_index;
         }
     }
+    step(w);
 }
 
 // 8031716C: one step of the wave equation over the inner grid points; the
