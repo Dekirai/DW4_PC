@@ -828,13 +828,12 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     if (!found || *found == start) return std::nullopt;
     Place next = *found;
     while (parent.at(next) != start) next = parent.at(next);
-    // Every mat of this stage leading there is a goal.
+    // Every usable mat of this stage leading there (to that player point)
+    // is a goal.
     Step step{here, "", -1, objective->name};
     std::string mats;
     for (const auto& exit : kExits)
-        if (here == exit.stage && next.first == exit.target && usable(exit, entry_) &&
-            (next.second == exit.entry || (std::any_of(std::begin(kMazes), std::end(kMazes), [&](const char* m) { return here == m; }) &&
-                                           !maze_floor(here)))) {
+        if (here == exit.stage && next.first == exit.target && usable(exit, entry_) && next.second == exit.entry) {
             if (!mats.empty()) mats += '|';
             mats += exit.mat;
             if (std::string_view(exit.when) == "transporter")
