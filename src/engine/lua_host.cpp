@@ -130,14 +130,15 @@ bool Engine::run_script(std::string_view name) {
 
 std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     const auto& name = call.name;
-    // Lua 4's string library takes numbers as strings (luaL_check_lstr ->
-    // lua_tostring): stagML11 mate00.lua runs strfind over its area list,
-    // whose player points are numbers.
+    // Lua 4's string library takes numbers as strings: str_find / str_gsub
+    // (0x80280594) read their arguments through luaL_check_lstr 0x80274120
+    // -> lua_tostring 0x80273120, which converts a number with luaV_tostring
+    // 0x80282818 (sprintf "%.16g" on the double, 0x805612F0), as the VM's
+    // own concatenation does (describe). stagML11 mate00.lua runs strfind
+    // over its area list, whose player points are numbers.
     const auto text_of = [](const Lua4Value& value) {
         if (value.type() != Lua4Type::Number) return std::string(value.as_string());
-        char n[64];
-        std::snprintf(n, sizeof(n), "%.14g", value.as_number());
-        return std::string(n);
+        return value.describe();
     };
     if (name == "gsub") {
         if (call.arguments.size() < 3) return {};
@@ -206,11 +207,7 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
             } else if (std::strchr("eEfgG", conversion)) {
                 std::snprintf(buffer, sizeof(buffer), (spec + conversion).c_str(), to_number(value));
             } else if (conversion == 's' || conversion == 'q') {
-                std::string text = value.type() == Lua4Type::Number ? [&] {
-                    char n[64];
-                    std::snprintf(n, sizeof(n), "%.14g", value.as_number());
-                    return std::string(n);
-                }() : std::string(value.as_string());
+                std::string text = value.type() == Lua4Type::Number ? value.describe() : std::string(value.as_string());
                 if (conversion == 'q') text = "\"" + text + "\"";
                 std::snprintf(buffer, sizeof(buffer), (spec + 's').c_str(), text.c_str());
             } else {
