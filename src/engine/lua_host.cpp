@@ -130,11 +130,20 @@ bool Engine::run_script(std::string_view name) {
 
 std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     const auto& name = call.name;
+    // Lua 4's string library takes numbers as strings (luaL_check_lstr ->
+    // lua_tostring): stagML11 mate00.lua runs strfind over its area list,
+    // whose player points are numbers.
+    const auto text_of = [](const Lua4Value& value) {
+        if (value.type() != Lua4Type::Number) return std::string(value.as_string());
+        char n[64];
+        std::snprintf(n, sizeof(n), "%.14g", value.as_number());
+        return std::string(n);
+    };
     if (name == "gsub") {
         if (call.arguments.size() < 3) return {};
-        std::string value(call.arguments[0].as_string());
-        const std::string pattern(call.arguments[1].as_string());
-        const std::string replacement(call.arguments[2].as_string());
+        std::string value = text_of(call.arguments[0]);
+        const std::string pattern = text_of(call.arguments[1]);
+        const std::string replacement = text_of(call.arguments[2]);
         std::size_t count = 0, at = 0;
         while (!pattern.empty() && (at = value.find(pattern, at)) != std::string::npos) {
             value.replace(at, pattern.size(), replacement);
@@ -147,8 +156,8 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
         // Lua 4 strfind(s, pattern [, init [, plain]]): the scripts only search
         // literal text, so patterns are matched literally (magic characters noted).
         if (call.arguments.size() < 2) return {Lua4Value{}};
-        const std::string value(call.arguments[0].as_string());
-        const std::string pattern(call.arguments[1].as_string());
+        const std::string value = text_of(call.arguments[0]);
+        const std::string pattern = text_of(call.arguments[1]);
         if (pattern.find_first_of("^$()%.[]*+-?") != std::string::npos) note("strfind pattern " + pattern);
         long long init = call.arguments.size() > 2 && call.arguments[2].type() == Lua4Type::Number
                              ? static_cast<long long>(call.arguments[2].as_number()) : 1;
