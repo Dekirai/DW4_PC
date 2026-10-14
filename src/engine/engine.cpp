@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 namespace dw4::engine {
@@ -108,19 +109,23 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     // Capture the matching recipients first; handlers may register or send.
     std::vector<Ram*> recipients;
     if (index == -2) {
-        // 80305A28 (0x80305D44..0x80305DE4): index -2 sends to the first row
-        // of the name whose RAM is not in use (its byte +20, the active flag
-        // a model's GENERATE sets and REMOVE clears), and to that row only
-        // (Lucemon's bombs: stagBS03 gr1_f_luce.lua, MODELCTRL x_035frunn01a
-        // -2 GENERATE).
-        for (const auto& row : rows_)
-            if (row.category == category && (!name || !row.name || *row.name == *name) && row.recipient && !row.recipient->active) {
+        // 80305A28 (0x80305D3C..0x80305DE4): index -2 goes to the first RAM
+        // of the target whose in-use flag (RAM +0x14, the record's [5]) is
+        // clear, and to that one only; with every RAM in use nothing
+        // happens. Scripts GENERATE into a free RAM that way (Lucemon's
+        // x_035frunn01a grids, Infermon's split).
+        bool any = false;
+        for (const auto& row : rows_) {
+            if (row.category != category || (name && row.name && *row.name != *name)) continue;
+            any = true;
+            if (row.recipient && !row.recipient->active) {
                 recipients.push_back(row.recipient);
                 break;
             }
-    } else {
+        }
+        if (any && recipients.empty()) return 0;
+    } else
         for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
-    }
     if (recipients.empty()) {
         engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
                     (name ? " (" + std::string(*name) + ")" : std::string()));
@@ -643,6 +648,31 @@ void Engine::process_stage_loader() {
     }
 }
 
+namespace {
+// Test tool: DW4_CLOCK_FILE=<path> with lines "<frame> <world ns>" sets the
+// world clock to that value in the step that reaches the frame (other frames
+// keep adding one field). With the times a Dolphin run logged (an AR hook on
+// the world clock update, 0x8040F490 bl 8028AF84, calling OSReport) the port
+// sees the original's sampled clock, jitter and phase included: the named RAM
+// timers quantise it to 2^18 ns (AITIMER 8031E238, KEIKATIMER 8031E4C4), so
+// AI decisions and the channel, turn and MUTEKI steps follow its phase.
+const std::map<std::uint64_t, std::int64_t>& clock_file() {
+    static const std::map<std::uint64_t, std::int64_t> table = [] {
+        std::map<std::uint64_t, std::int64_t> out;
+        if (const char* path = std::getenv("DW4_CLOCK_FILE")) {
+            if (std::FILE* f = std::fopen(path, "r")) {
+                unsigned long long frame = 0;
+                long long world = 0;
+                while (std::fscanf(f, "%llu %lld", &frame, &world) == 2) out[frame] = world;
+                std::fclose(f);
+            }
+        }
+        return out;
+    }();
+    return table;
+}
+} // namespace
+
 void Engine::step(const std::array<PadSample, 4>& samples) {
     auto input = samples;
     // STAGECTL PADINPUT DISABLE: the game sees released controls.
@@ -654,6 +684,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // One NTSC field of world time (8028AF84), see field_time.
     time_ += field_time(frame_ + 1) - field_time(frame_);
     ++frame_;
+    if (const auto& clock = clock_file(); !clock.empty())
+        if (const auto it = clock.find(frame_); it != clock.end()) time_ = it->second;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     // The current camera viewer (802F4268, a scheduled module ahead of the

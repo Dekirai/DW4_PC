@@ -604,7 +604,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // weapon's labels come with the posted PLAYERARMS GENERATE.
         ram.control_enabled = true;
         ram.frozen = false;
+        // _directionLimiter (+0x8C X, +0x90 Y, +0x94 Z rate) is field 30 of
+        // the info work without a default in 802C6D18, so every fresh work
+        // (802C6340 base, 8033B040 enemy, 803387A0 capsule, ...) starts at
+        // (0, 0, 0); only the player hook writes (0, 7, 0) right after
+        // making its work (8034D77C..8034D790: 80456F68 = 0, 8045700C = 7).
+        // A rotating channel (1.25 * step) or an AIM map rate left from the
+        // last life does not survive the GENERATE.
         ram.turn_rate_x = 0.0f;
+        ram.turn_rate_y = ram.is_player ? 7.0f : 0.0f;
         ram.aim_height = 0.0f;
         ram.labels.clear();
         ram.ride.reset();
@@ -669,15 +677,24 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // and rotation relative to the source, position lock. Only the
         // effect and bullet kinds run it (their GENERATE hooks 8034B730 /
         // 8034B928 / 8034C134 call 8030D260), and it applies as soon as the
-        // packet has two strings (0x8030D368 / 0x8030D378): Lucemon's
-        // x_035frunn01a "f_luce/I<0>/V<25,10,25>/V<0,0,0>/SQ_BOM" sits
-        // around f_luce. The source places the effect (GETMATRIX of
-        // string0/int0, 8030D4A8..8030D4BC) and the lock follows it (+0xAC,
-        // 8030D4C0..8030D530); string2/int1 name the owner for the bullets
-        // (work +0xDC/+0xE0, 8030D468..8030D4A4, read by 8030FEEC). A
-        // missing owner string reads as none; the original reads int1 past
-        // the list's end, the port takes -1 (no owner).
+        // packet has two strings (0x8030D368 / 0x8030D378). The source places
+        // the effect (GETMATRIX of string0/int0, 8030D4A8..8030D4BC) and the
+        // lock follows it (+0xAC, 8030D4C0..8030D530); string2/int1 name the
+        // owner for the bullets (work +0xDC/+0xE0, 8030D468..8030D4A4, read
+        // by 8030FEEC). A missing owner string reads as none; the original
+        // reads int1 past the list's end, the port takes -1 (no owner).
         const bool effect_kind = ram.category == "EFFECT" || ram.category == "PBULLET" || ram.category == "EBULLET";
+        // The object hook 8034BEA8 instead takes string0 / int0 of a packet
+        // with ints as the owner (+0xDC/+0xE0, 0x8034BFF8..0x8034C09C) and
+        // leaves the placement to 8030D610 (world coordinates): Lucemon's
+        // x_035frunn01a grid "f_luce/I<0>/V<-25,10,25>/V<0,0,0>/SQ_BOM"
+        // (KIND_OBJECT, sent to a free RAM with index -2) stands at
+        // (-25, 10, 25) and hits for f_luce; Apocalymon's f_bit
+        // "f_apocaly/I<0>/V<0,30,0>/V<0,90,0>/SQ_ENTR" belongs to f_apocaly.
+        if (ram.info.str(7) == "KIND_OBJECT" && !packet.ints.empty() && !packet.strings.empty()) {
+            ram.owner_name = std::string(packet.string(0));
+            ram.owner_index = packet.ints[0];
+        }
         if (ram.node && effect_kind && packet.strings.size() >= 2) {
             ram.attach_name = std::string(packet.string(0));
             ram.attach_index = packet.ints.empty() ? 0 : packet.ints[0];
