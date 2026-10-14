@@ -1,0 +1,295 @@
+#include "dw4/disc_timing.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace dw4 {
+namespace {
+// Dolphin DVDMath.cpp: GameCube discs have the Wii data density; the radius
+// follows the spiral's area.
+constexpr std::uint64_t kWiiLayerSize = 0x118240000ull;
+constexpr double kInnerRadius = 0.024;
+constexpr double kWiiOuterRadius = 0.058;
+constexpr double kGcOuterRadius = 0.038;
+constexpr double kTrackPitch = 0.00000074;
+constexpr double kGcInnerSpeed = 1024 * 1024 * 2.1;   // bytes/s
+constexpr double kGcOuterSpeed = 1024 * 1024 * 3.325; // bytes/s
+constexpr double kGcRotationsPerSecond = 28.5;
+constexpr double kShortSeekMaxDistance = 0.001;
+constexpr double kShortSeekConstant = 0.035;
+constexpr double kShortSeekVelocityInverse = 50;
+constexpr double kLongSeekConstant = 0.075;
+constexpr double kLongSeekVelocityInverse = 4.5;
+// Dolphin DVDInterface.cpp
+constexpr std::uint64_t kEccBlock = 16 * 0x800;
+constexpr std::uint64_t kStreamingBuffer = 1024 * 1024;
+constexpr std::uint64_t kBackwardSeekLimit = 2 * kEccBlock;
+constexpr std::int64_t kBufferTransferRate = 32 * 1024 * 1024;
+constexpr std::int64_t kReadCommandLatencyUs = 600;
+
+double position(std::uint64_t offset) {
+    offset %= kWiiLayerSize * 2;
+    if (offset > kWiiLayerSize) offset = kWiiLayerSize * 2 - offset;
+    return std::sqrt(double(offset) / double(kWiiLayerSize) * (kWiiOuterRadius * kWiiOuterRadius - kInnerRadius * kInnerRadius) +
+                     kInnerRadius * kInnerRadius);
+}
+
+// DW4's CRI setup.
+constexpr std::uint32_t kSector = 2048;
+// ADXT_Create (8029B820) input ring: (work - 24768 * channels - 292) / 2048
+// sectors of the work size 802A878C computes for the handle (8031C99C:
+// slots 0-1 stereo at 48 kHz, 2-5 mono at 24 kHz).
+constexpr std::array<std::uint32_t, CriStreams::kSlots> kRingSectors{53, 53, 13, 13, 13, 13};
+constexpr std::uint32_t kStartLimit = 25;          // 804CD3A8: sectors read before the header is parsed
+constexpr std::uint32_t kMaxRequest = 512;         // ADXSTM +0x2C
+constexpr std::uint32_t kOutputSamples = 0x2000;   // output SJ per channel (8029B820: +0x30)
+constexpr std::uint32_t kAramSamples = 4096;       // RNARES ring per channel (802A8590)
+constexpr std::uint32_t kAramStep = 2048;          // played samples are given back in halves (802A72F0)
+// The DSP starts with the next AX frame (5 ms): half a frame on average
+// after the renderer is switched on, which the captures confirm.
+constexpr std::int64_t kDspDelay = CriStreams::kFieldTicks * 15 / 100;
+// A command of the game update runs 0.02 field after the servers of its field.
+constexpr std::int64_t kGamePhase = CriStreams::kFieldTicks * 2 / 100;
+
+// 8029C1E0: samples per channel the decoder may produce per server call:
+// three fields of a looping stream, half that for one-shots, rounded to a
+// multiple of 64 above.
+std::uint32_t decode_unit(const CriStreams::File& file) {
+    std::uint32_t unit = 3 * (file.sample_rate / 60);
+    if (!file.loop) unit /= 2;
+    return 64 * ((unit + 64) / 64);
+}
+} // namespace
+
+double DiscDrive::seek_time(std::uint64_t from, std::uint64_t to) {
+    const double distance = std::fabs(position(from) - position(to));
+    if (distance < kShortSeekMaxDistance) return distance * kShortSeekVelocityInverse + kShortSeekConstant;
+    return distance * kLongSeekVelocityInverse + kLongSeekConstant;
+}
+
+double DiscDrive::raw_read_time(std::uint64_t offset, std::uint64_t length) {
+    const double radius = position(offset + length / 2);
+    const double speed = (radius - kInnerRadius) / (kGcOuterRadius - kInnerRadius) * (kGcOuterSpeed - kGcInnerSpeed) + kGcInnerSpeed;
+    return double(length) / speed;
+}
+
+double DiscDrive::rotational_latency(std::uint64_t offset, double time_seconds) {
+    const double target = std::fmod(position(offset) / kTrackPitch, 1.0);
+    const double start = std::fmod(time_seconds * kGcRotationsPerSecond, 1.0);
+    return std::fmod(target + 1.0 - start, 1.0) / kGcRotationsPerSecond;
+}
+
+// ScheduleReads: per ECC block either a transfer out of the read-ahead buffer,
+// a streaming read right behind the head, or a seek (head travel plus the
+// rotation to the block). Afterwards the drive keeps reading ahead.
+std::int64_t DiscDrive::read(std::uint64_t offset, std::uint64_t length, std::int64_t now) {
+    std::uint64_t dvd = offset - offset % kEccBlock;
+    const std::uint64_t first_block = dvd;
+    std::uint64_t buffer_start = 0, buffer_end = 0, head = 0;
+    if (buffer_start_time != buffer_end_time) {
+        buffer_start = buffer_end_offset > kStreamingBuffer ? buffer_end_offset - kStreamingBuffer : 0;
+        if (now >= buffer_end_time) {
+            buffer_end = buffer_end_offset;
+        } else {
+            const std::uint64_t part = std::uint64_t(now - buffer_start_time) * (buffer_end_offset - buffer_start_offset) /
+                                       std::uint64_t(buffer_end_time - buffer_start_time);
+            buffer_end = buffer_start_offset + (part - part % kEccBlock);
+        }
+        head = buffer_end;
+        // Reading before the buffer drops it (the head stays).
+        if (dvd < buffer_start) buffer_start = buffer_end = 0;
+    }
+    std::int64_t ticks = kReadCommandLatencyUs * (kTicksPerSecond / 1000000);
+    bool seek = false;
+    std::uint64_t left = length;
+    do {
+        const std::uint64_t chunk = std::min((offset + kEccBlock) / kEccBlock * kEccBlock - offset, left);
+        if (dvd >= buffer_start && dvd < buffer_end) {
+            ticks += std::int64_t(chunk) * kTicksPerSecond / kBufferTransferRate;
+        } else {
+            if (dvd != head) {
+                seek = true;
+                ticks += std::int64_t(double(kTicksPerSecond) * seek_time(head, dvd));
+                double latency = 0.5 / kGcRotationsPerSecond;
+                if (rotation == Rotation::dolphin) {
+                    // Dolphin divides integer ticks: whole seconds.
+                    const std::int64_t seconds = (now + clock_offset + ticks) / kTicksPerSecond;
+                    latency = rotational_latency(dvd, double(seconds));
+                }
+                ticks = std::int64_t(double(ticks) + double(kTicksPerSecond) * latency);
+            } else {
+                ticks += std::int64_t(double(kTicksPerSecond) * raw_read_time(dvd, kEccBlock));
+            }
+            head = dvd + kEccBlock;
+        }
+        offset += chunk;
+        left -= chunk;
+        dvd += kEccBlock;
+    } while (left > 0);
+    const std::uint64_t last_block = dvd;
+    if (!(last_block - buffer_start <= kBackwardSeekLimit && buffer_start != buffer_end)) {
+        buffer_start_offset = last_block >= buffer_end ? last_block : buffer_end;
+        buffer_end_offset = last_block + kStreamingBuffer - kBackwardSeekLimit;
+        if (seek) buffer_end_offset = std::max(buffer_end_offset, first_block + kStreamingBuffer);
+        buffer_start_time = now + ticks;
+        buffer_end_time = buffer_start_time + std::int64_t(double(kTicksPerSecond) *
+                                                           raw_read_time(buffer_start_offset, buffer_end_offset - buffer_start_offset));
+    }
+    return ticks;
+}
+
+void CriStreams::start(int slot, const File& file) {
+    if (!valid(slot)) return;
+    auto& h = handles[std::size_t(slot)];
+    const bool busy = h.busy, paused = h.paused;
+    // ADXT_StartAfs stops the handle first (8029AF34): with a read on the
+    // drive the ADXSTM stop waits for it (80299A30).
+    h = Handle{};
+    h.busy = busy;
+    h.stopping = busy;
+    h.paused = paused;
+    h.file = file;
+    h.active = true;
+    h.state = 1;
+    h.limit = kStartLimit;
+}
+
+void CriStreams::stop(int slot) {
+    if (!valid(slot)) return;
+    auto& h = handles[std::size_t(slot)];
+    const bool busy = h.busy, paused = h.paused;
+    h = Handle{};
+    h.busy = busy;
+    h.stopping = busy;
+    h.paused = paused;
+}
+
+void CriStreams::pause(int slot, bool paused, std::int64_t now) {
+    if (!valid(slot)) return;
+    auto& h = handles[std::size_t(slot)];
+    if (h.paused == paused) return;
+    h.paused = paused;
+    if (!h.active || h.state != 3) return;
+    // The game update runs after this field's servers, i.e. one field
+    // before the driver tick that follows it.
+    const std::int64_t at = now - kFieldTicks + kGamePhase;
+    if (paused) {
+        h.played_before = played(h, at);
+        h.dsp_start = -1;
+    } else {
+        h.dsp_start = at + kDspDelay;
+    }
+}
+
+double CriStreams::played(const Handle& h, std::int64_t now) const {
+    if (h.dsp_start < 0) return h.played_before;
+    return h.played_before + std::max<double>(0.0, double(now - h.dsp_start) * double(h.file.sample_rate) / double(DiscDrive::kTicksPerSecond));
+}
+
+void CriStreams::tick(std::int64_t now) {
+    // ADXT server (8029A60C). The decoder server first (80290018 -> 80290520):
+    // each decoding handle decodes up to its unit into the output SJ.
+    for (auto& h : handles) {
+        if (!h.active || !h.decoding) continue;
+        const std::uint32_t frame_bytes = 18 * h.file.channels;
+        const std::uint64_t frames = (h.written - h.consumed) / frame_bytes;
+        std::uint64_t n = std::min<std::uint64_t>({decode_unit(h.file), kOutputSamples - h.sj, frames * 32});
+        if (!h.file.loop) {
+            // a one-shot ends with its last (whole) ADX frame
+            const std::uint64_t left = h.file.samples > h.decoded ? h.file.samples - h.decoded : 0;
+            n = std::min<std::uint64_t>(n, (left + 31) / 32 * 32);
+        }
+        n -= n % 32;
+        h.decoded += n;
+        h.sj += std::uint32_t(n);
+        h.consumed += n / 32 * frame_bytes;
+    }
+    // ADXT_ExecHndl (8029BED8) per handle.
+    for (auto& h : handles) {
+        if (!h.active) continue;
+        if (!h.bound) {
+            // decinfo (8029C1E0): the stream is bound (8029B2D0) once its
+            // ADXSTM stopped; the reader opens the file in the next file server.
+            if (!h.busy && !h.stopping) h.bound = true;
+            continue;
+        }
+        if (h.state == 1 && h.first_block) {
+            // Header parse: the reader may go on to the loop end (8029963C),
+            // the decoder starts.
+            h.consumed += h.file.header_bytes;
+            h.limit = h.file.loop ? h.file.loop_end_sector : 0x7FFFFFFFu;
+            h.decoding = true;
+            h.state = 2;
+        } else if (h.state == 2) {
+            // PLAYING (8029C03C) once the ARAM ring holds two units or is full,
+            // or a one-shot is decoded to its end (a sound shorter than that).
+            const std::uint64_t aram = h.moved - h.reclaimed;
+            const bool decoded_all = !h.file.loop && h.decoded >= h.file.samples;
+            if (aram >= 2ull * decode_unit(h.file) || kAramSamples - aram <= 32 || decoded_all) {
+                h.state = 3;
+                if (!h.paused) h.dsp_start = now + kDspDelay;
+            }
+        }
+    }
+    // Renderer server (802A6DF8): the DSP's progress comes back in halves,
+    // then the ring is refilled from the output SJ (also before playback).
+    for (auto& h : handles) {
+        if (!h.active || h.state < 2) continue;
+        const double p = played(h, now);
+        while (p - double(h.reclaimed) >= double(kAramStep)) h.reclaimed += kAramStep;
+        const std::uint64_t room = kAramSamples - (h.moved - h.reclaimed);
+        std::uint64_t m = std::min<std::uint64_t>(room, h.sj);
+        m -= m % 16;
+        h.moved += m;
+        h.sj -= std::uint32_t(m);
+    }
+    // File server (80296904): the gcCi poll, then two passes over the readers
+    // (80298FC8 twice, 80299248 each).
+    if (inflight.slot >= 0 && now >= inflight.done) {
+        handles[std::size_t(inflight.slot)].done = true;
+        inflight.slot = -1;
+    }
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int slot = 0; slot < kSlots; ++slot) {
+            auto& h = handles[std::size_t(slot)];
+            if (h.busy) {
+                // A finished read is only booked in this call.
+                if (!h.done) continue;
+                h.busy = h.done = false;
+                if (h.stopping) continue; // the previous file's data
+                h.pos += h.request;
+                h.written += std::uint64_t(h.request) * kSector;
+                const std::uint32_t ring = kRingSectors[std::size_t(slot)] * kSector;
+                h.write_pos = std::uint32_t((h.write_pos + std::uint64_t(h.request) * kSector) % ring);
+                h.first_block = true;
+                // 8029C8E4 (set as the reader's end callback at the header
+                // parse): at the loop end the reader seeks back to the loop start.
+                if (h.file.loop && h.decoding && h.pos == h.limit) h.pos = h.file.loop_start_sector;
+                continue;
+            }
+            if (h.stopping) {
+                h.stopping = false; // the stop takes effect
+                continue;
+            }
+            if (!h.active || !h.bound) continue;
+            const std::uint64_t ring = std::uint64_t(kRingSectors[std::size_t(slot)]) * kSector;
+            // 8029B2D0: ask while the ring holds less than 85 %.
+            const std::uint64_t threshold = std::uint64_t(kRingSectors[std::size_t(slot)] * 85 / 100) * kSector;
+            const std::uint64_t used = h.written - h.consumed;
+            if (used >= threshold || inflight.slot >= 0) continue;
+            const std::uint64_t contiguous = std::min<std::uint64_t>(ring - used, ring - h.write_pos);
+            std::int64_t n = std::int64_t(contiguous / kSector);
+            n = std::min<std::int64_t>(n, std::int64_t(h.limit) - std::int64_t(h.pos));
+            n = std::min<std::int64_t>(n, std::int64_t(h.file.sectors) - std::int64_t(h.pos));
+            n = std::min<std::int64_t>(n, kMaxRequest);
+            if (n <= 0) continue;
+            const std::int64_t duration = drive.read(h.file.disc_offset + std::uint64_t(h.pos) * kSector, std::uint64_t(n) * kSector, now);
+            h.busy = true;
+            h.request = std::uint32_t(n);
+            inflight.slot = slot;
+            inflight.done = now + duration;
+        }
+    }
+}
+
+} // namespace dw4
