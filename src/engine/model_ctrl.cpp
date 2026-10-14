@@ -590,7 +590,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // weapon's labels come with the posted PLAYERARMS GENERATE.
         ram.control_enabled = true;
         ram.frozen = false;
+        // _directionLimiter (+0x8C X, +0x90 Y, +0x94 Z rate) is field 30 of
+        // the info work without a default in 802C6D18, so every fresh work
+        // (802C6340 base, 8033B040 enemy, 803387A0 capsule, ...) starts at
+        // (0, 0, 0); only the player hook writes (0, 7, 0) right after
+        // making its work (8034D77C..8034D790: 80456F68 = 0, 8045700C = 7).
+        // A rotating channel (1.25 * step) or an AIM map rate left from the
+        // last life does not survive the GENERATE.
         ram.turn_rate_x = 0.0f;
+        ram.turn_rate_y = ram.is_player ? 7.0f : 0.0f;
         ram.aim_height = 0.0f;
         ram.labels.clear();
         ram.ride.reset();
