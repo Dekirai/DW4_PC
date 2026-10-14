@@ -137,6 +137,25 @@ the host decodes the video with pl_mpeg and draws the picture for the time
 since start over the screen. The movie ends after its last picture or on A or
 START from player 1 (8031EC10), then runs its end script.
 
+When a stream is ready matters to the scripts: demos wait with
+`DMchkSD SOUND ISALLREADY` / `ISREADY`, which test ADXT status 3 (PLAYING,
+802F6FB0), and the original only gets there after the stream's first block
+came off the disc. `dw4::CriStreams` (include/dw4/disc_timing.hpp, in the
+core) models that on the engine clock, once per field from the sound driver
+tick (also during loads): the six beCri ADXT handles (two stereo 48 kHz for
+BGM and ambience with a 53-sector input ring, four mono with 13 sectors),
+their ADXSTM readers (one DVD read at a time through gcCi, the lowest handle
+first, 25 sectors before the header is parsed, refills below 85 %), the
+decoder (+72 samples per call), the ARAM renderer (4096 samples, played
+halves given back) and `dw4::DiscDrive`, Dolphin's GameCube drive timing
+(radius-dependent read speed, seek by head travel, rotational latency as the
+mean half turn, 1 MiB read-ahead). The disc offsets come from the disc
+image's FST or the extraction's sys/fst.bin. tests/disc_tests.cpp replays
+three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
+replaced BGM fades over the original's table (8031D5D0) and stops once the
+fade reaches -21 dB with the stage's base volume (beSoundInfo [9]).
+`DW4_TRACE_SOUND=1` logs every simulated read, PLAYING and fade stop.
+
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)
 and DEGISTATECTRL (`StatusWindow`) are separate classes.

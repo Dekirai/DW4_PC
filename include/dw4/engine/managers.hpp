@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/adx.hpp"
+#include "dw4/disc_timing.hpp"
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/random.hpp"
@@ -328,9 +329,11 @@ private:
         std::uint64_t frames_read{};     // source frames decoded so far
         std::unique_ptr<adx::Decoder> decoder;
         float gain = 1.0f;
-        int fade_left{}; // frames of a running fade-out (10, 8031D5D0)
+        int volume{};    // the sound's volume, 0.1 dB (beSoundData [8])
+        int fade{};      // fade-out of a replaced stream: 0 none, else the next step (8031D5D0)
+        float fade_level = 1.0f; // its gain
         bool paused{};   // PLAYatPAUSE: buffered, waiting for PAUSEOFF (8031D294)
-        int ready_in{};  // frames until the stream reports ready (buffer fill)
+        bool ready{};    // the channel's ADXT handle is PLAYING (cri_)
         float ramp_from = 1.0f, ramp_to = 1.0f; // VOLUMECTL2 gain ramp
         int ramp_frames{}, ramp_left{};
         double phase = 1.0;
@@ -368,6 +371,10 @@ private:
     void play_cue(Engine& engine, const std::string& sound, const std::string& owner);
     void stop_effects(const std::string& name, const std::string& owner);
     bool open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data);
+    // The channel's CRI handle (slot = channel) and the simulated disc reads
+    // that decide when a stream is ready (disc_timing.hpp).
+    CriStreams::File stream_file(Engine& engine, unsigned archive, unsigned entry, const adx::Header& header) const;
+    void trace_cri(Engine& engine, int inflight_before, std::int64_t done_before, const std::array<bool, CriStreams::kSlots>& playing_before);
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
     void end_movie(Engine& engine);
     void mix_stream(Stream& stream, float* mix, std::size_t frames);
@@ -381,6 +388,7 @@ private:
     std::vector<std::string> files_;
     static constexpr std::size_t kSeStreams = 2;
     std::array<Stream, 2 + kSeStreams> streams_; // BGM, ambience, SE streams
+    CriStreams cri_;
     std::vector<std::shared_ptr<SeBank>> banks_;
     bool common_loaded_{};
     std::vector<SeTrack> tracks_;
@@ -400,6 +408,7 @@ private:
     std::uint32_t random_ = 0x12345678u;
     std::string current_bgm_;       // +0x24
     int se_volume_{};               // SNDFVOLUME: SNDF master 1..127, 0 unset (+56)
+    int base_volume_{};             // beSoundInfo [9] _baseVolume, 0.1 dB (+52)
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};

@@ -62,11 +62,18 @@ public:
     const std::vector<std::filesystem::path>& overrides() const noexcept { return overrides_; }
     // The override file for a logical path, if a mod has one.
     std::optional<std::filesystem::path> override_for(std::string_view logical_path) const;
+    // Where an archive lies on the game disc (its FST offset): from the disc
+    // image, or from the extraction's sys/boot.bin + sys/fst.bin. The stream
+    // reads' simulated disc timing needs it.
+    std::optional<std::uint64_t> archive_disc_offset(std::size_t archive) const {
+        return archive < disc_offsets_.size() ? disc_offsets_[archive] : std::nullopt;
+    }
 
 private:
     std::vector<std::filesystem::path> overrides_;
     ResourceCatalog catalog_;
     std::vector<assets::AfsArchive> archives_;
+    std::vector<std::optional<std::uint64_t>> disc_offsets_;
 };
 
 } // namespace dw4

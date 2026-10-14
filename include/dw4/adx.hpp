@@ -20,6 +20,7 @@ struct Header {
     std::int16_t coef1{}, coef2{}; // predictor from the high-pass cutoff
     bool loop{};
     std::uint32_t loop_begin{}, loop_end{}; // samples
+    std::uint32_t loop_begin_byte{}, loop_end_byte{}; // file offsets of the loop points (the stream reader seeks by them)
 };
 
 // Validates and reads a header; throws std::runtime_error on bad data.
