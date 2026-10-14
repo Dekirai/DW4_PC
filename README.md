@@ -245,7 +245,10 @@ script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence cha
 frames: two runs of the same input script must print the same lines, so the first differing line
 is the first frame where a run diverged. `DW4_FIXED_RANDOM=<hex>` makes every draw of the game's random
 generator return that constant (the Dolphin side: AR `0421EB40 3C60hhhh`, `0421EB44 6063llll`,
-`0421EB48 4E800020`), for frame-exact comparisons of fights.
+`0421EB48 4E800020`), for frame-exact comparisons of fights. `DW4_CLOCK_FILE=<path>` with lines
+`<frame> <world ns>` sets the world clock to that value in the step that reaches the frame (the
+other frames keep adding one field), so a port run can replay the clock a Dolphin run logged,
+jitter included.
 
 ### Controls
 

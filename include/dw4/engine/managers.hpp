@@ -488,12 +488,18 @@ private:
         std::int64_t period{}, move_start{};                  // [37] beWaterMove
         std::size_t move_index{};
         std::vector<Drop> drops;
+        int state{};                     // [6] 0 first update, 1 active, 2 out of view
+        std::int64_t last_update{};      // [36] world time of the last update
         GeometryData* geometry{};
         bool searched{};
     };
     bool inside(const Water& w, const Vec3f& p) const;
     void push(Water& w, const Vec3f& p, float strength);
     void step(Water& w);
+    bool visible(Engine& engine, const Water& w) const;
+    void flatten(Water& w);
+    void restart_move(Engine& engine, Water& w);
+    void surface_update(Engine& engine, Water& w);
     std::vector<Water> waters_;
 };
 
@@ -1129,7 +1135,9 @@ public:
         };
         std::optional<Ride> ride;
         std::array<float, 3> applied{}, desired{};
-        float turn_rate_y = 7.0f; // 80456F68/8045700C player rates (radians/frame)
+        // Info work +0x90: the Y turn rate (radians/frame). GENERATE sets it
+        // to 7 for players (8034D78C) and 0 for every other kind (fresh work).
+        float turn_rate_y = 7.0f;
         // Info work +8C: the X (pitch) turn rate; only the AIH homing sets it
         // (0x80308D30). Info work +0x54: the Y of the placement offset an
         // effect-form GENERATE stored (0x8030D5E0); the homing aims that high

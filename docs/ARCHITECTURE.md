@@ -178,7 +178,9 @@ equation on their grid: players and enemies in the height bands and the
 beWaterMove drops set grid points down, each frame computes
 1.84 h + 0.04 (neighbours) - previous times the point's damping (0.99), clamped,
 and writes the heights and neighbour normals into the surface mesh
-(`DW4_TRACE_WATER=1`).
+(`DW4_TRACE_WATER=1`). A surface only runs while its box is in the camera's
+view: out of view it is flattened, and when it comes back (as on its first
+update) the drop cycle starts again from that moment.
 
 Projected shadows follow the stage's igProjectiveShadowShader (`ShadowManager`,
 beShadow01): beShadow01Info entries name casters (model switches, or
