@@ -1,6 +1,7 @@
 #include "dw4/engine/math.hpp"
 #include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
+#include "dw4/engine/managers.hpp"
 #include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
@@ -308,6 +309,34 @@ void test_lod_selection() {
     check(one.select_lod(5.0f) == nullptr && one.lod_index == -1 && one.lod_upper == 10.0f, "Below range[0] going down: no child");
 }
 
+void test_text_layout() {
+    // NORMAL metrics of bectext.igb: digits advance past their right edge,
+    // '!' has an x offset.
+    FontImage font;
+    font.line_height = 0.28f;
+    font.glyphs[u'1'] = Glyph{0.16f, 0.0f, 0.0f, 0.15f, 0.27f};
+    font.glyphs[u'!'] = Glyph{0.07f, 0.02f, 0.0f, 0.05f, 0.27f};
+    // Quad k holds positions 4k..4k+3: (x0,y1) (x1,y1) (x1,y0) (x0,y0).
+    auto right = layout_text(font, u"11", 1, 1.0f);
+    check(right.positions.size() == 8 && close(right.positions[5].x, 1.0f),
+          "RIGHT ends at the last glyph's right edge (802FBF98 v5.x), not the pen");
+    auto center = layout_text(font, u"11", 2, 1.0f);
+    check(close(center.positions[0].x, 1.0f - center.positions[5].x), "CENTER leaves equal gaps around the ink");
+    auto two = layout_text(font, u"11\n1", 1, 1.0f);
+    check(close(two.positions[5].x, 0.99f), "A broken line measures to the next quad's v0.x (the pen)");
+    check(close(two.positions[8].x, 0.85f) && close(two.positions[9].x, 1.0f) && close(two.positions[11].y, -0.28f),
+          "The last line measures to its right edge, one font height lower");
+    auto lead = layout_text(font, u"\n\r\n1", 0, 1.0f);
+    check(lead.positions.size() == 4 && close(lead.positions[3].y, 0.0f) && close(lead.positions[0].x, 0.0f),
+          "Line breaks before the first character are dropped (0x802FC008)");
+    auto left = layout_text(font, u"1\n!1", 0, 1.0f);
+    check(close(left.positions[4].x, 0.0f) && close(left.positions[5].x, 0.05f) && close(left.positions[8].x, 0.05f),
+          "A later line moves its first quad's v0.x to 0, x offset included");
+    auto trailing = layout_text(font, u"11\n", 1, 1.0f);
+    check(trailing.positions.size() == 8 && close(trailing.positions[5].x, 0.99f),
+          "A line before a final break measures to the pen");
+}
+
 int main() {
     try {
         test_lod_selection();
@@ -322,6 +351,7 @@ int main() {
         test_system_random();
         test_field_time();
         test_motion_blend_tracks();
+        test_text_layout();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

@@ -1,6 +1,7 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -237,59 +238,90 @@ void TextCtlManager::set_text(Engine& engine, Line& target, const std::u16string
     if (font_it == fonts_.end()) font_it = fonts_.find("NORMAL");
     if (font_it == fonts_.end()) return;
     const FontImage& font = *font_it->second;
-    const float line_height = font.line_height > 0 ? font.line_height : 0.28f;
-    auto geometry = std::make_shared<GeometryData>();
-    float x = 0, y = 0;
-    std::vector<std::pair<std::size_t, float>> line_ranges; // first vertex, width
-    std::size_t line_start = 0;
-    auto finish_line = [&]() { line_ranges.emplace_back(line_start, x); line_start = geometry->positions.size(); };
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        const char16_t c = value[i];
-        if (c == u'\r') continue;
-        if (c == u'\n') {
-            finish_line();
-            x = 0;
-            y -= line_height;
-            continue;
-        }
-        auto found = font.glyphs.find(std::uint32_t(c));
-        if (found == font.glyphs.end()) {
-            x += 0.06f;
-            continue;
-        }
-        const Glyph& g = found->second;
-        if (g.width > 0 && g.height > 0) {
-            // 80116A1C: the glyph stands on the pen (bottom y + y_offset, top
-            // one height above); the pen starts at the font's +16 (0).
-            const float x0 = x + g.x_offset, x1 = x0 + g.width;
-            const float y0 = y + g.y_offset, y1 = y0 + g.height;
-            const auto base = std::uint32_t(geometry->positions.size());
-            geometry->positions.push_back({x0, y1, 0});
-            geometry->positions.push_back({x1, y1, 0});
-            geometry->positions.push_back({x1, y0, 0});
-            geometry->positions.push_back({x0, y0, 0});
-            geometry->texcoords.insert(geometry->texcoords.end(), {g.u0, g.v1, g.u1, g.v1, g.u1, g.v0, g.u0, g.v0});
-            geometry->indices.insert(geometry->indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
-        }
-        x += g.advance;
-    }
-    finish_line();
-    // 802FBC7C / 802FC2D0: beFontInfoData [9] (enum 804D2048: LEFT 0, RIGHT 1,
-    // CENTER 2) moves each line by (max width - line width) * 0.5 when centred
-    // or the whole rest when right-aligned, unrounded and whatever the max width.
-    if (target.align == 1 || target.align == 2) {
-        for (std::size_t l = 0; l < line_ranges.size(); ++l) {
-            const auto begin = line_ranges[l].first;
-            const auto end = l + 1 < line_ranges.size() ? line_ranges[l + 1].first : geometry->positions.size();
-            const float shift = target.align == 2 ? (target.max_width - line_ranges[l].second) * 0.5f
-                                                  : target.max_width - line_ranges[l].second;
-            for (auto v = begin; v < end; ++v) geometry->positions[v].x += shift;
-        }
-    }
-    geometry->valid = !geometry->indices.empty();
+    auto geometry = std::make_shared<GeometryData>(layout_text(font, value, target.align, target.max_width));
     geometry_node->runtime_geometry = geometry;
     geometry_node->runtime_texture = font.binding.get();
     geometry_.push_back(std::move(geometry));
+}
+
+GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width) {
+    const float line_height = font.line_height > 0 ? font.line_height : 0.28f;
+    GeometryData geometry;
+    // 80116960 fills the quads on one pen that runs through the whole string
+    // (no font has '\r' or '\n', so nothing steps back); 802FBF98 (called at
+    // 802FBC78 for every alignment) then moves each line onto its own row.
+    float pen = 0;          // 80116960: the pen starts at the font's +16 (0)
+    float shift = 0;        // 802FBF98 f31: x move of the current line
+    float row = 0;          // 802FBF98 f30: y move of the current line
+    bool laid_out = false;  // 802FBF98 r29 != 0
+    int breaks = 0;         // line breaks still waiting for the next quad's v0.x
+    float last_right = 0;   // v5.x of the last quad, already moved
+    std::vector<std::pair<std::size_t, float>> lines; // end vertex, width (lists +0x30 / +0x34)
+    // 0x802FC010-0x802FC0CC: at a line break the line's width is
+    // vertex[r29].x - |f31| and the next line moves by f31 = -vertex[r29].x,
+    // vertex[r29] being the not yet moved v0 of the next quad (the pen of the
+    // line end plus that glyph's x offset). Its first glyph lands on x 0.
+    auto break_lines = [&](float next_x0) {
+        for (; breaks > 0; --breaks) {
+            lines.emplace_back(geometry.positions.size(), next_x0 - std::fabs(shift));
+            shift = -next_x0;
+        }
+    };
+    for (const char16_t c : text) {
+        if (c == u'\r') continue; // 0x802FBFF4
+        if (c == u'\n') {
+            if (!laid_out) continue; // 0x802FC008: breaks before the first character are dropped
+            ++breaks;
+            row -= line_height; // 0x802FC0D0: the font's +12
+            continue;
+        }
+        laid_out = true;
+        auto found = font.glyphs.find(std::uint32_t(c));
+        if (found == font.glyphs.end()) {
+            // Port fallback: 80116960 leaves the character out, but 802FBF98
+            // still counts 6 vertices for it (0x802FC100) and so moves the
+            // following quads' slots; scripts swap such characters out first
+            // with REPLACEUNKNOWN (0x802FB428).
+            pen += 0.06f;
+            continue;
+        }
+        const Glyph& g = found->second;
+        // 80116A1C: x0 = pen + x offset, x1 = x0 + width (no width test), the
+        // glyph stands on the pen (bottom y + y offset, top one height above).
+        const float x0 = pen + g.x_offset, x1 = x0 + g.width;
+        break_lines(x0);
+        last_right = x1 + shift;
+        if (g.width > 0 && g.height > 0) {
+            const float y0 = g.y_offset + row, y1 = (g.y_offset + g.height) + row;
+            const auto base = std::uint32_t(geometry.positions.size());
+            geometry.positions.push_back({x0 + shift, y1, 0});
+            geometry.positions.push_back({x1 + shift, y1, 0});
+            geometry.positions.push_back({x1 + shift, y0, 0});
+            geometry.positions.push_back({x0 + shift, y0, 0});
+            geometry.texcoords.insert(geometry.texcoords.end(), {g.u0, g.v1, g.u1, g.v1, g.u1, g.v0, g.u0, g.v0});
+            geometry.indices.insert(geometry.indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+        }
+        pen += g.advance; // 0x801169E8
+    }
+    // A string that ends in a line break reads the stale vertex after the last
+    // quad in the original; the port measures that line to its pen instead.
+    break_lines(pen);
+    // 0x802FC29C-0x802FC2A8: the last line's width is the moved v5.x of its
+    // last quad, the right edge of the glyph and not the pen after it.
+    lines.emplace_back(geometry.positions.size(), last_right);
+    // 802FBC7C / 802FC2D0: beFontInfoData [9] (enum 804D2048: LEFT 0, RIGHT 1,
+    // CENTER 2) moves each line by (max width - line width) * 0.5 when centred
+    // or the whole rest when right-aligned, unrounded and whatever the max width.
+    if (align == 1 || align == 2) {
+        std::size_t begin = 0;
+        for (const auto& [end, width] : lines) {
+            const float move = align == 2 ? (max_width - width) * 0.5f : max_width - width;
+            for (auto v = begin; v < end; ++v) geometry.positions[v].x += move;
+            begin = end;
+        }
+    }
+    geometry.valid = !geometry.indices.empty();
+    return geometry;
 }
 
 bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command, Packet& packet) {
@@ -354,14 +386,27 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
         return true;
     }
     if (command == "COLOR" || command == "DEFAULTCOLOR" || command == "CANCELCOLOR") {
+        // 0x802FB2F0-0x802FB3E8: DEFAULTCOLOR 0.9 (0x80425768), CANCELCOLOR
+        // 0.5 (0x8042576C), COLOR the packet vector. Every igColorAttr in a
+        // matching line node's own attribute list gets that rgb through its
+        // setColor (vtable +0x80), its alpha kept. The colour replaces the
+        // IGB's (the font lines carry 0.9, alpha 0.8), it does not multiply
+        // it: DEFAULTCOLOR leaves a line as it was loaded.
         Vec3f rgb{0.9f, 0.9f, 0.9f};
         if (command == "CANCELCOLOR") rgb = {0.5f, 0.5f, 0.5f};
         else if (command == "COLOR") {
             if (packet.vectors.empty()) return true;
             rgb = packet.vectors[0];
         }
-        for (auto& line : lines_)
-            if (matches(line) && line.node) line.node->color_override = Vec4f{rgb.x, rgb.y, rgb.z, 1.0f};
+        for (auto& line : lines_) {
+            if (!matches(line) || !line.node) continue;
+            for (const Attribute* attribute : line.node->attributes) {
+                if (attribute->kind != AttrKind::color) continue;
+                Attribute* color = engine.scenes().edit_attribute(attribute->object);
+                if (!color) continue;
+                color->color = Vec4f{rgb.x, rgb.y, rgb.z, color->color.w};
+            }
+        }
         return true;
     }
     if (command == "SETPOSITION") {
