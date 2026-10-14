@@ -262,7 +262,10 @@ constexpr Objective kObjectives[] = {
     {"key item 9 (dng411b3 boss)", "K9|P7", "dng411b3", "explore:matz02"},
     {"key item 10 (dng412b4 boss)", "K10|P7", "dng412b4", "explore:matz02"},
     {"Daemon (stagBS06)", "F86|F70", "stagbs06", "explore:matz01"},
-    {"staff roll", "", "stagis20", "wait"},
+    // The return gate of stagBS06 leads to the staff roll (stagIS20
+    // first.lua: j_endroll, then stagML11), whose start.lua turns flag 70
+    // (hit_f_devl3.lua, Daemon down) into 86, the cleared game.
+    {"staff roll and the cleared game (flag 86)", "F86", "stagis20", "wait"},
 };
 
 // The stage exits the story uses (the exit survey's list without the
