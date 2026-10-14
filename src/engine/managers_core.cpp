@@ -1560,6 +1560,11 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     }
     if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot >= CriStreams::kSlots))
         throw std::runtime_error("save state holds an invalid stream read");
+    // (A decoding handle divides by its channel count, 18 bytes per frame.)
+    if (a.reading())
+        for (const auto& h : cri.handles)
+            if (h.active && (h.file.channels < 1 || h.file.channels > 8 || h.state > 3))
+                throw std::runtime_error("save state holds an invalid stream handle");
     if (a.reading()) opaque = state;
 }
 
