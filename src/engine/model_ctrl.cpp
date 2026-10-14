@@ -650,17 +650,25 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.attach_lock = false;
         ram.owner_name.clear();
         ram.owner_index = -1;
-        // Effect form (8030D260, sent by 80310340): ints source RAM, owner
-        // RAM; strings source name, sequence, owner name; offset and rotation
-        // relative to the source, position lock. The source places the
-        // effect (GETMATRIX of string0/int0, 8030D4A8..8030D4BC) and the lock
-        // follows it (+0xAC, 8030D4C0..8030D530); the owner goes to work
-        // +0xDC/+0xE0 (8030D468..8030D4A4) for the bullets (8030FEEC).
-        if (ram.node && packet.strings.size() >= 3 && packet.ints.size() >= 2) {
+        // Effect form (8030D260, sent by 80310340 and by scripts): ints source
+        // RAM, owner RAM; strings source name, sequence, owner name; offset
+        // and rotation relative to the source, position lock. Only the
+        // effect and bullet kinds run it (their GENERATE hooks 8034B730 /
+        // 8034B928 / 8034C134 call 8030D260), and it applies as soon as the
+        // packet has two strings (0x8030D368 / 0x8030D378): Lucemon's
+        // x_035frunn01a "f_luce/I<0>/V<25,10,25>/V<0,0,0>/SQ_BOM" sits
+        // around f_luce. The source places the effect (GETMATRIX of
+        // string0/int0, 8030D4A8..8030D4BC) and the lock follows it (+0xAC,
+        // 8030D4C0..8030D530); string2/int1 name the owner for the bullets
+        // (work +0xDC/+0xE0, 8030D468..8030D4A4, read by 8030FEEC). A
+        // missing owner string reads as none; the original reads int1 past
+        // the list's end, the port takes -1 (no owner).
+        const bool effect_kind = ram.category == "EFFECT" || ram.category == "PBULLET" || ram.category == "EBULLET";
+        if (ram.node && effect_kind && packet.strings.size() >= 2) {
             ram.attach_name = std::string(packet.string(0));
-            ram.attach_index = packet.ints[0];
-            ram.owner_name = std::string(packet.string(2));
-            ram.owner_index = packet.ints[1];
+            ram.attach_index = packet.ints.empty() ? 0 : packet.ints[0];
+            ram.owner_name = packet.strings.size() > 2 ? std::string(packet.string(2)) : std::string();
+            ram.owner_index = packet.ints.size() > 1 ? packet.ints[1] : -1;
             ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
             ram.aim_height = ram.attach_offset.y; // 0x8030D5E0: info work +0x54
             ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
