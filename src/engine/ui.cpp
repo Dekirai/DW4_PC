@@ -386,14 +386,27 @@ bool TextCtlManager::command(Engine& engine, Ram& ram, std::string_view command,
         return true;
     }
     if (command == "COLOR" || command == "DEFAULTCOLOR" || command == "CANCELCOLOR") {
+        // 0x802FB2F0-0x802FB3E8: DEFAULTCOLOR 0.9 (0x80425768), CANCELCOLOR
+        // 0.5 (0x8042576C), COLOR the packet vector. Every igColorAttr in a
+        // matching line node's own attribute list gets that rgb through its
+        // setColor (vtable +0x80), its alpha kept. The colour replaces the
+        // IGB's (the font lines carry 0.9, alpha 0.8), it does not multiply
+        // it: DEFAULTCOLOR leaves a line as it was loaded.
         Vec3f rgb{0.9f, 0.9f, 0.9f};
         if (command == "CANCELCOLOR") rgb = {0.5f, 0.5f, 0.5f};
         else if (command == "COLOR") {
             if (packet.vectors.empty()) return true;
             rgb = packet.vectors[0];
         }
-        for (auto& line : lines_)
-            if (matches(line) && line.node) line.node->color_override = Vec4f{rgb.x, rgb.y, rgb.z, 1.0f};
+        for (auto& line : lines_) {
+            if (!matches(line) || !line.node) continue;
+            for (const Attribute* attribute : line.node->attributes) {
+                if (attribute->kind != AttrKind::color) continue;
+                Attribute* color = engine.scenes().edit_attribute(attribute->object);
+                if (!color) continue;
+                color->color = Vec4f{rgb.x, rgb.y, rgb.z, color->color.w};
+            }
+        }
         return true;
     }
     if (command == "SETPOSITION") {
