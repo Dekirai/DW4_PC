@@ -660,6 +660,11 @@ struct FontImage {
     std::map<std::uint32_t, Glyph> glyphs;
 };
 
+// The glyph quads of one text line node: 80116960 fills them on one pen,
+// 802FBF98 breaks the lines and measures them, 802FC2D0 aligns them
+// (align 1 RIGHT, 2 CENTER) inside max_width.
+GeometryData layout_text(const FontImage& font, std::u16string_view text, int align, float max_width);
+
 // TEXTCTL (beFontInfo, commands 802FA900): text lines built from pack unicode
 // strings. Every beFontInfoData entry is one line: layer name [2], line node
 // [4] (named fontNNN), category [5] in the FONT layer switch, line index [6]
