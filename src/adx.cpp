@@ -51,6 +51,10 @@ Header read_header(std::span<const std::uint8_t> data) {
         h.loop_begin = be32(data, base + 4);
         h.loop_end = std::min(be32(data, base + 0x0c), h.samples);
         if (h.loop_begin >= h.loop_end) h.loop = false;
+        const std::uint32_t frame = h.block_size * h.channels;
+        h.loop_begin_byte = be32(data, base + 8);
+        h.loop_end_byte = base + 0x14 <= copyright ? be32(data, base + 0x10)
+                                                   : h.data_offset + (h.loop_end + 31) / 32 * frame;
     }
     return h;
 }

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -179,11 +180,29 @@ MountedResources MountedResources::open(const std::filesystem::path& root) {
             if (opened.entries().size() != archive.declared_entries)
                 fail("archive entry count differs from catalog: " + archive.filename);
             result.archives_.push_back(std::move(opened));
+            result.disc_offsets_.push_back(file->offset);
         }
         return result;
     }
     const auto data = std::filesystem::is_directory(root / "files") ? root / "files" : root;
     result.catalog_ = read_resource_catalog(read_igb_document(data / "ndmw.igb"));
+    // Dolphin's "Extract Entire Disc" keeps the disc header and FST in sys/.
+    std::optional<DiscImage> layout;
+    try {
+        const auto sys = data == root ? root.parent_path() / "sys" : root / "sys";
+        const auto read_file = [](const std::filesystem::path& path) {
+            std::ifstream in(path, std::ios::binary);
+            return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), {});
+        };
+        if (std::filesystem::is_regular_file(sys / "boot.bin") && std::filesystem::is_regular_file(sys / "fst.bin")) {
+            const auto header = read_file(sys / "boot.bin");
+            const auto fst = read_file(sys / "fst.bin");
+            if (header.size() >= 0x440 && fst.size() <= 16u * 1024u * 1024u)
+                layout = DiscImage::parse(header, fst, 1459978240ull); // a GameCube disc
+        }
+    } catch (const std::exception&) {
+        layout.reset();
+    }
     for (const auto& archive : result.catalog_.archives) {
         // Only validated archive basenames become host paths. Logical resource
         // paths are identifiers and are never opened on the host filesystem.
@@ -191,6 +210,8 @@ MountedResources MountedResources::open(const std::filesystem::path& root) {
         if (opened.entries().size() != archive.declared_entries)
             fail("archive entry count differs from catalog: " + archive.filename);
         result.archives_.push_back(std::move(opened));
+        const auto* file = layout ? layout->find(archive.filename) : nullptr;
+        result.disc_offsets_.push_back(file ? std::optional<std::uint64_t>(file->offset) : std::nullopt);
     }
     return result;
 }

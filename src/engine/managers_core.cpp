@@ -838,6 +838,9 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
             sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8), std::uint32_t(data.i32(6))};
     files_.clear();
     for (const auto& file : info.list(7)) files_.emplace_back(file ? std::string(file.str(2)) : std::string());
+    // [9] _baseVolume (0.1 dB, -30 in the stages) goes to the Cri object's
+    // +0x34 (80314B0C): the base of every stream volume and fade (802F5828).
+    base_volume_ = info.i16(9);
 }
 void SoundManager::clear_stage(Engine&) {
     // The streams keep playing into the next stage (its scripts stop or
@@ -916,6 +919,9 @@ void SoundManager::add_bank(Engine& engine, const ObjectView& data, bool common)
 }
 
 namespace {
+// Engine time (ns) as the CRI model's CPU ticks (486 MHz).
+std::int64_t cri_ticks(std::int64_t ns) { return ns / 1000 * 486 + ns % 1000 * 486 / 1000; }
+
 // 0.1 dB volume (ADXT_SetOutVol) as a gain factor.
 float volume_gain(int volume) { return std::pow(10.0f, float(std::min(volume, 0)) / 200.0f); }
 
@@ -969,13 +975,19 @@ bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
                 target = &streams_[channel];
                 break;
             }
-        if (open_stream(engine, *target, name, data)) target->paused = paused;
+        if (open_stream(engine, *target, name, data)) {
+            target->paused = paused;
+            cri_.pause(int(target - streams_.data()), paused, cri_ticks(engine.time()));
+        }
         return true;
     }
     auto& stream = streams_[std::size_t(data.type - 1)];
-    if (data.type == 1 && current_bgm_ == name && stream.decoder && stream.fade_left == 0) return true;
+    if (data.type == 1 && current_bgm_ == name && stream.decoder && stream.fade == 0) return true;
     if (stream.decoder) {
-        if (stream.fade_left == 0) stream.fade_left = 10;
+        if (stream.fade == 0) {
+            stream.fade = 1;
+            stream.fade_level = 1.0f;
+        }
         Packet again;
         again.strings.emplace_back(name);
         engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, paused ? "PLAYatPAUSE" : "PLAY",
@@ -984,6 +996,9 @@ bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
     }
     if (!open_stream(engine, stream, name, data)) return true;
     stream.paused = paused;
+    // 802F5828: the handle is paused before ADXT_StartAfs and released again
+    // unless the sound starts at pause.
+    cri_.pause(data.type - 1, paused, cri_ticks(engine.time()));
     if (data.type == 1) current_bgm_ = name;
     return true;
 }
@@ -1009,14 +1024,53 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     }
     stream.name = name;
     stream.gain = volume_gain(data.volume);
-    stream.fade_left = 0;
+    stream.volume = data.volume;
+    stream.fade = 0;
+    stream.fade_level = 1.0f;
     stream.paused = false;
-    stream.ready_in = 10; // the ADX stream buffers before it reports ready
+    // ADXT_StartAfs on the channel's handle: the stream is ready once its
+    // first block came off the (simulated) disc and was decoded.
+    stream.ready = false;
+    cri_.start(int(&stream - streams_.data()), stream_file(engine, archive, entry, stream.decoder->header()));
     stream.ramp_frames = stream.ramp_left = 0;
     stream.ramp_from = stream.ramp_to = 1.0f;
     stream.phase = 1.0;
     stream.previous = stream.next = {};
     return true;
+}
+
+// The ADX file as the CRI stream reader sees it: where it lies on the disc
+// ("[archive.entry]": the AFS entry inside the archive file), its size in
+// sectors, header and loop sectors.
+CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, unsigned entry, const adx::Header& header) const {
+    CriStreams::File file;
+    const auto& resources = engine.resources();
+    std::uint64_t base = 0;
+    if (const auto offset = resources.archive_disc_offset(archive)) {
+        base = *offset;
+    } else if (archive < resources.catalog().archives.size()) {
+        // Without the disc's FST (a bare files/ folder): the GDJEB2 layout.
+        std::string name = resources.catalog().archives[archive].filename;
+        for (auto& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (name == "ndmw.afs") base = 0x2dbfb298;
+        else if (name == "area.afs") base = 0x0f420298;
+    }
+    std::uint32_t size = 0;
+    if (archive < resources.archives().size() && entry < resources.archives()[archive].entries().size()) {
+        const auto& e = resources.archives()[archive].entries()[entry];
+        base += e.offset;
+        size = e.size;
+    }
+    file.disc_offset = base;
+    file.sectors = (size + 2047) / 2048;
+    file.header_bytes = header.data_offset;
+    file.channels = header.channels;
+    file.sample_rate = header.sample_rate;
+    file.samples = header.samples;
+    file.loop = header.loop;
+    file.loop_start_sector = header.loop_begin_byte / 2048;
+    file.loop_end_sector = (header.loop_end_byte + 2047) / 2048;
+    return file;
 }
 
 // A sound-effect request (8031CCFC SEQ_SET/SEQ_PLAY): the bank holding the
@@ -1126,8 +1180,11 @@ SoundManager::Stream* SoundManager::stream_named(std::string_view name) {
 void SoundManager::stop(int channel) {
     auto& stream = streams_[std::size_t(channel)];
     stream.decoder.reset();
-    stream.fade_left = 0;
+    stream.fade = 0;
+    stream.fade_level = 1.0f;
     stream.name.clear();
+    stream.ready = false;
+    cri_.stop(channel); // ADXT_Stop: a read on the drive still finishes
     if (channel == 0) current_bgm_.clear();
 }
 
@@ -1150,12 +1207,12 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
 // One stream resampled into the mix.
 void SoundManager::mix_stream(Stream& stream, float* mix, std::size_t frames) {
     {
-        if (!stream.decoder || stream.paused || stream.ready_in > 0) return;
+        if (!stream.decoder || stream.paused || !stream.ready) return;
         const auto& header = stream.decoder->header();
         float ramp = stream.ramp_to;
         if (stream.ramp_left > 0 && stream.ramp_frames > 0)
             ramp = stream.ramp_to + (stream.ramp_from - stream.ramp_to) * float(stream.ramp_left) / float(stream.ramp_frames);
-        const float gain = stream.gain * ramp * (stream.fade_left > 0 ? float(stream.fade_left) / 10.0f : 1.0f);
+        const float gain = stream.gain * ramp * (stream.fade > 0 ? stream.fade_level : 1.0f);
         const std::uint32_t channels = header.channels;
         // 802A7F34: a stereo stream's channels sit hard left and right (pan
         // 0 / 127, full level on their side), a mono stream in the centre.
@@ -1219,7 +1276,8 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
             movie_stream_.decoder = std::make_unique<adx::Decoder>(std::move(streams.audio));
             movie_stream_.name = name;
             movie_stream_.gain = 1.0f;
-            movie_stream_.fade_left = movie_stream_.ready_in = movie_stream_.ramp_frames = movie_stream_.ramp_left = 0;
+            movie_stream_.fade = movie_stream_.ramp_frames = movie_stream_.ramp_left = 0;
+            movie_stream_.ready = true;
             movie_stream_.paused = false;
             movie_stream_.ramp_from = movie_stream_.ramp_to = 1.0f;
             movie_stream_.phase = 1.0;
@@ -1263,7 +1321,10 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         if (command == "PLAYatPAUSE") return play(engine, packet, true);
         if (command == "PAUSEOFF") {
             // 802F61F8: the channel playing that sound leaves its pause.
-            if (auto* stream = stream_named(packet.string(0))) stream->paused = false;
+            if (auto* stream = stream_named(packet.string(0))) {
+                stream->paused = false;
+                cri_.pause(int(stream - streams_.data()), false, cri_ticks(engine.time()));
+            }
             return true;
         }
         if (command == "VOLUMECTL2") {
@@ -1306,21 +1367,22 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
             return true;
         }
     }
-    // A started stream reports ready once its buffer is filled; scripts wait
-    // for ISALLREADY to drop after PLAYatPAUSE and to return.
+    // A started stream reports ready when its ADXT handle is PLAYING (802F6FB0,
+    // status 3 of 802A8C18), paused or not; scripts wait for ISALLREADY after
+    // PLAYatPAUSE, then PAUSEOFF the sounds.
     if (command == "ISREADY") {
         const auto* stream = stream_named(packet.string(0));
-        packet.bools.push_back(!stream || stream->ready_in == 0 ? 1 : 0);
+        packet.bools.push_back(!stream || stream->ready ? 1 : 0);
         return true;
     }
     if (command == "ISBGMREADY" || command == "ISENVREADY") {
         const auto& stream = streams_[command == "ISBGMREADY" ? 0 : 1];
-        packet.bools.push_back(!stream.decoder || stream.ready_in == 0 ? 1 : 0);
+        packet.bools.push_back(!stream.decoder || stream.ready ? 1 : 0);
         return true;
     }
     if (command == "ISALLREADY") {
         bool ready = true;
-        for (const auto& stream : streams_) ready = ready && (!stream.decoder || stream.ready_in == 0);
+        for (const auto& stream : streams_) ready = ready && (!stream.decoder || stream.ready);
         packet.bools.push_back(ready ? 1 : 0);
         return true;
     }
@@ -1338,12 +1400,14 @@ struct StreamState {
     std::string name, file;
     std::uint64_t frames_read{};
     float gain = 1.0f;
-    int fade_left{}, ready_in{}, ramp_frames{}, ramp_left{};
-    bool paused{};
+    int fade{}, volume{}, ramp_frames{}, ramp_left{};
+    float fade_level = 1.0f;
+    bool paused{}, ready{};
     float ramp_from = 1.0f, ramp_to = 1.0f;
 };
 struct SoundState {
     std::vector<StreamState> streams;
+    CriStreams cri;
     std::string current_bgm;
     int se_volume{};
     std::uint32_t random{};
@@ -1360,8 +1424,10 @@ std::shared_ptr<const void> SoundManager::persistent() const {
             s.frames_read = stream.frames_read;
         }
         s.gain = stream.gain;
-        s.fade_left = stream.fade_left;
-        s.ready_in = stream.ready_in;
+        s.fade = stream.fade;
+        s.fade_level = stream.fade_level;
+        s.volume = stream.volume;
+        s.ready = stream.ready;
         s.ramp_frames = stream.ramp_frames;
         s.ramp_left = stream.ramp_left;
         s.paused = stream.paused;
@@ -1372,6 +1438,7 @@ std::shared_ptr<const void> SoundManager::persistent() const {
     state->current_bgm = current_bgm_;
     state->se_volume = se_volume_;
     state->random = random_;
+    state->cri = cri_;
     return state;
 }
 
@@ -1407,8 +1474,10 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
             }
         }
         stream.gain = s.gain;
-        stream.fade_left = s.fade_left;
-        stream.ready_in = s.ready_in;
+        stream.fade = s.fade;
+        stream.fade_level = s.fade_level;
+        stream.volume = s.volume;
+        stream.ready = s.ready;
         stream.ramp_frames = s.ramp_frames;
         stream.ramp_left = s.ramp_left;
         stream.paused = s.paused;
@@ -1418,6 +1487,7 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
     current_bgm_ = state.current_bgm;
     se_volume_ = state.se_volume;
     random_ = state.random;
+    cri_ = state.cri;
 }
 
 void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const void>& opaque) {
@@ -1436,8 +1506,10 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(s.file);
         a.io(s.frames_read);
         a.io(s.gain);
-        a.io(s.fade_left);
-        a.io(s.ready_in);
+        a.io(s.fade);
+        a.io(s.fade_level);
+        a.io(s.volume);
+        a.io(s.ready);
         a.io(s.ramp_frames);
         a.io(s.ramp_left);
         a.io(s.paused);
@@ -1447,23 +1519,122 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
     a.io(state->current_bgm);
     a.io(state->se_volume);
     a.io(state->random);
+    auto& cri = state->cri;
+    a.io(cri.drive.buffer_start_offset);
+    a.io(cri.drive.buffer_end_offset);
+    a.io(cri.drive.buffer_start_time);
+    a.io(cri.drive.buffer_end_time);
+    a.io(cri.inflight.slot);
+    a.io(cri.inflight.done);
+    for (auto& h : cri.handles) {
+        a.io(h.file.disc_offset);
+        a.io(h.file.sectors);
+        a.io(h.file.header_bytes);
+        a.io(h.file.channels);
+        a.io(h.file.sample_rate);
+        a.io(h.file.samples);
+        a.io(h.file.loop);
+        a.io(h.file.loop_start_sector);
+        a.io(h.file.loop_end_sector);
+        a.io(h.active);
+        a.io(h.bound);
+        a.io(h.stopping);
+        a.io(h.busy);
+        a.io(h.done);
+        a.io(h.paused);
+        a.io(h.first_block);
+        a.io(h.decoding);
+        a.io(h.state);
+        a.io(h.limit);
+        a.io(h.pos);
+        a.io(h.request);
+        a.io(h.write_pos);
+        a.io(h.written);
+        a.io(h.consumed);
+        a.io(h.decoded);
+        a.io(h.sj);
+        a.io(h.moved);
+        a.io(h.reclaimed);
+        a.io(h.dsp_start);
+        a.io(h.played_before);
+    }
+    if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot >= CriStreams::kSlots))
+        throw std::runtime_error("save state holds an invalid stream read");
     if (a.reading()) opaque = state;
 }
 
 // The driver side (beCri, a module outside the managers' gate): it keeps
 // running during stage loads.
 void SoundManager::update_driver(Engine& engine) {
-    for (auto& stream : streams_) {
-        if (stream.ready_in > 0) --stream.ready_in;
+    // One field of the CRI servers: the stream reads on the simulated drive,
+    // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
+    // frame's game update, as the original's servers follow the previous one.
+    static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    const int inflight_before = cri_.inflight.slot;
+    const std::int64_t done_before = cri_.inflight.done;
+    std::array<bool, CriStreams::kSlots> playing_before{};
+    for (int slot = 0; slot < CriStreams::kSlots; ++slot) playing_before[std::size_t(slot)] = cri_.playing(slot);
+    cri_.tick(cri_ticks(engine.time()));
+    if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
+    for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
+        auto& stream = streams_[channel];
+        stream.ready = stream.decoder && cri_.playing(int(channel));
         if (stream.ramp_left > 0 && !stream.paused) --stream.ramp_left;
     }
-    for (std::size_t channel = 0; channel < streams_.size(); ++channel)
-        if (streams_[channel].fade_left > 0 && --streams_[channel].fade_left == 0) stop(int(channel));
+    // The fade-out of a replaced stream (8031D5D0, stepped by 802F53B8 /
+    // 8031DCB0 once per field): 59 steps of the fade table 804E05C8 over 10
+    // fields, the volume (int)(210 * level) - 210 + the sound's volume in
+    // 0.1 dB + the Cri base volume +0x34 (beSoundInfo [9]); the stream stops
+    // once that is -21 dB or less, or the table reaches 0.
+    static constexpr float kFadeTable[60] = {
+        0.959999979f, 0.930000007f, 0.899999976f, 0.870000005f, 0.829999983f, 0.810000002f, 0.779999971f, 0.75f,
+        0.720000029f, 0.689999998f, 0.660000026f, 0.639999986f, 0.610000014f, 0.579999983f, 0.560000002f, 0.529999971f,
+        0.50999999f, 0.49000001f, 0.460000008f, 0.439999998f, 0.419999987f, 0.400000006f, 0.379999995f, 0.360000014f,
+        0.330000013f, 0.319999993f, 0.300000012f, 0.280000001f, 0.25999999f, 0.25f, 0.230000004f, 0.209999993f,
+        0.200000003f, 0.180000007f, 0.170000002f, 0.150000006f, 0.140000001f, 0.129999995f, 0.119999997f, 0.109999999f,
+        0.100000001f, 0.0799999982f, 0.0799999982f, 0.0700000003f, 0.0599999987f, 0.0500000007f, 0.0399999991f, 0.0299999993f,
+        0.0299999993f, 0.0199999996f, 0.0199999996f, 0.00999999978f, 0.00999999978f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
+        auto& stream = streams_[channel];
+        if (stream.fade <= 0) continue;
+        float position = 0.0f;
+        for (int step = 0; step < stream.fade; ++step) position += 59.0f / 10.0f;
+        const int index = int(position);
+        const float level = index < 60 ? kFadeTable[index] : 0.0f;
+        const int volume = int(std::fabs(-210.0f * level)) - 210 + stream.volume + base_volume_;
+        if (volume <= -210 || level == 0.0f) {
+            if (trace)
+                engine.log("stream fade-out of " + stream.name + " (volume " + std::to_string(stream.volume) + ") stops after " +
+                           std::to_string(stream.fade) + " fields, frame " + std::to_string(engine.frame()));
+            stop(int(channel));
+            continue;
+        }
+        stream.fade_level = std::pow(10.0f, float(volume - stream.volume - base_volume_) / 200.0f);
+        ++stream.fade;
+    }
     for (auto& track : tracks_) {
         track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
         run_track(track);
     }
     std::erase_if(tracks_, [](const SeTrack& track) { return track.sequence.finished(); });
+}
+
+void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t done_before,
+                             const std::array<bool, CriStreams::kSlots>& playing_before) {
+    if (cri_.inflight.slot >= 0 && (inflight_before < 0 || cri_.inflight.done != done_before)) {
+        const auto& h = cri_.handles[std::size_t(cri_.inflight.slot)];
+        const std::int64_t now = cri_ticks(engine.time());
+        char line[160];
+        std::snprintf(line, sizeof line, "stream read slot %d: %u sectors at disc 0x%llx, %.2f fields, frame %llu",
+                      cri_.inflight.slot, h.request, static_cast<unsigned long long>(h.file.disc_offset + std::uint64_t(h.pos) * 2048),
+                      double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()));
+        engine.log(line);
+    }
+    for (int slot = 0; slot < CriStreams::kSlots; ++slot)
+        if (cri_.playing(slot) && !playing_before[std::size_t(slot)])
+            engine.log("stream PLAYING slot " + std::to_string(slot) +
+                       (slot < int(streams_.size()) ? " " + streams_[std::size_t(slot)].name : std::string()) +
+                       " frame " + std::to_string(engine.frame()));
 }
 
 void SoundManager::update(Engine& engine) {
