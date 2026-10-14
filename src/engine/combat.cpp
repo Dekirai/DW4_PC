@@ -52,7 +52,16 @@ void post_effect(Engine& engine, std::string category, std::optional<std::string
 }
 
 namespace fight {
-std::uint32_t random() { return rng()(); }
+// 8021EB40 (beSystem vtable +0x60, the only caller of genrand 8021B338).
+// Test tool: DW4_FIXED_RANDOM=<hex> makes every draw return that constant
+// without advancing the generator, like the Dolphin AR patch on 8021EB40
+// (lis r3 / ori r3 / blr), so a fight runs the same in both whatever the
+// clocks do.
+std::uint32_t random() {
+    static const char* const fixed_text = std::getenv("DW4_FIXED_RANDOM");
+    static const std::uint32_t fixed = fixed_text ? std::uint32_t(std::strtoul(fixed_text, nullptr, 16)) : 0u;
+    return fixed_text ? fixed : rng()();
+}
 SystemRandom& generator() { return rng(); }
 
 namespace {

@@ -243,7 +243,9 @@ log menu cursors, text, player state, hits and the exploring bot's targets; `DW4
 script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes.
 `DW4_TRACE_FINGERPRINT=N` prints the state fingerprint (and a hash of the random generator) every N
 frames: two runs of the same input script must print the same lines, so the first differing line
-is the first frame where a run diverged.
+is the first frame where a run diverged. `DW4_FIXED_RANDOM=<hex>` makes every draw of the game's random
+generator return that constant (the Dolphin side: AR `0421EB40 3C60hhhh`, `0421EB44 6063llll`,
+`0421EB48 4E800020`), for frame-exact comparisons of fights.
 
 ### Controls
 
