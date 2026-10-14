@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <sstream>
 
 namespace dw4::engine {
@@ -630,6 +631,31 @@ void Engine::process_stage_loader() {
     }
 }
 
+namespace {
+// Test tool: DW4_CLOCK_FILE=<path> with lines "<frame> <world ns>" sets the
+// world clock to that value in the step that reaches the frame (other frames
+// keep adding one field). With the times a Dolphin run logged (an AR hook on
+// the world clock update, 0x8040F490 bl 8028AF84, calling OSReport) the port
+// sees the original's sampled clock, jitter and phase included: the named RAM
+// timers quantise it to 2^18 ns (AITIMER 8031E238, KEIKATIMER 8031E4C4), so
+// AI decisions and the channel, turn and MUTEKI steps follow its phase.
+const std::map<std::uint64_t, std::int64_t>& clock_file() {
+    static const std::map<std::uint64_t, std::int64_t> table = [] {
+        std::map<std::uint64_t, std::int64_t> out;
+        if (const char* path = std::getenv("DW4_CLOCK_FILE")) {
+            if (std::FILE* f = std::fopen(path, "r")) {
+                unsigned long long frame = 0;
+                long long world = 0;
+                while (std::fscanf(f, "%llu %lld", &frame, &world) == 2) out[frame] = world;
+                std::fclose(f);
+            }
+        }
+        return out;
+    }();
+    return table;
+}
+} // namespace
+
 void Engine::step(const std::array<PadSample, 4>& samples) {
     auto input = samples;
     // STAGECTL PADINPUT DISABLE: the game sees released controls.
@@ -641,6 +667,8 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // One NTSC field of world time (8028AF84), see field_time.
     time_ += field_time(frame_ + 1) - field_time(frame_);
     ++frame_;
+    if (const auto& clock = clock_file(); !clock.empty())
+        if (const auto it = clock.find(frame_); it != clock.end()) time_ = it->second;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     // The current camera viewer (802F4268, a scheduled module ahead of the
