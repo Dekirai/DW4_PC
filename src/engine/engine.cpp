@@ -108,7 +108,24 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
     }
     // Capture the matching recipients first; handlers may register or send.
     std::vector<Ram*> recipients;
-    for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    if (index == -2) {
+        // 80305A28 (0x80305D3C..0x80305DE4): index -2 goes to the first RAM
+        // of the target whose in-use flag (RAM +0x14, the record's [5]) is
+        // clear, and to that one only; with every RAM in use nothing
+        // happens. Scripts GENERATE into a free RAM that way (Lucemon's
+        // x_035frunn01a grids, Infermon's split).
+        bool any = false;
+        for (const auto& row : rows_) {
+            if (row.category != category || (name && row.name && *row.name != *name)) continue;
+            any = true;
+            if (row.recipient && !row.recipient->active) {
+                recipients.push_back(row.recipient);
+                break;
+            }
+        }
+        if (any && recipients.empty()) return 0;
+    } else
+        for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
     if (recipients.empty()) {
         engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
                     (name ? " (" + std::string(*name) + ")" : std::string()));
