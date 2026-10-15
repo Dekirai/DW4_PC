@@ -386,6 +386,7 @@ void Engine::begin_stage_load() {
 void Engine::restore(const StageSnapshot& snapshot) {
     time_ = snapshot.time;
     frame_ = snapshot.frame;
+    world_delta_ = frame_delta(); // the field that step added (no stage is active in it)
     flags_ = snapshot.flags;
     counters_ = snapshot.counters;
     pad_input_enabled_ = snapshot.pad_input_enabled;
@@ -711,10 +712,14 @@ void Engine::step(const std::array<PadSample, 4>& samples) {
     // The frame clock advances first so updates and the following render
     // observe the same time (joint clamps and fades end exactly on a key).
     // One NTSC field of world time (8028AF84), see field_time.
+    const auto before = time_;
     time_ += field_time(frame_ + 1) - field_time(frame_);
     ++frame_;
     if (const auto& clock = clock_file(); !clock.empty())
         if (const auto it = clock.find(frame_); it != clock.end()) time_ = it->second;
+    // 80316258 keeps the world time of its last update (+0x18) and stores the
+    // difference as the frame step (+0x28) each frame (system_step).
+    world_delta_ = time_ - before;
     if (!pending_stage_.empty()) begin_stage_load();
     process_stage_loader();
     // The current camera viewer (802F4268, a scheduled module ahead of the

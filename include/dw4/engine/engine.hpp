@@ -282,6 +282,13 @@ public:
     std::uint64_t frame() const { return frame_; }
     // World time added by the last step (one NTSC field).
     std::int64_t frame_delta() const { return field_time(frame_) - field_time(frame_ ? frame_ - 1 : 0); }
+    // beSystem's frame step (80316258, 0x80316320..0x8031635C): the world
+    // time the last step really added (after a DW4_CLOCK_FILE replay, unlike
+    // frame_delta) as a float of frames, (float)delta / 16666667.0f
+    // (flt_804271BC), unquantised. The model subcommands count their delays
+    // with it (80310754) and the player's Slam double-tap timer runs down by
+    // it (8034C78C).
+    float system_step() const { return float(world_delta_) / 16666667.0f; }
 
     Messenger& messenger() { return messenger_; }
     DemoManager& demo() { return demo_; }
@@ -411,6 +418,7 @@ private:
     Node* loading_node_{}; // the loading screen's beLoadingNode
     std::int64_t time_{};
     std::uint64_t frame_{};
+    std::int64_t world_delta_ = 16683333; // world time added by the last step (system_step)
     bool pad_input_enabled_{};
     std::map<std::int32_t, std::uint8_t> flags_;
     std::map<std::int32_t, std::int32_t> counters_;

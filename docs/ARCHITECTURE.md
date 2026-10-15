@@ -76,6 +76,14 @@ for example a hit script (8030B6EC). A sequence's LUACALL runs
 and FHit keep the name for when the model's hitbox hits something or it meets
 a wall or the floor (bullets erase themselves; the wall and floor checks use
 the HITLANDDELIVER responses). `DW4_TRACE_LUACALL=1` logs the calls.
+The command loop (`ModelCtrlManager::run_commands`, 8030C3AC) keeps the list
+and index it loaded at entry: a sequence a LUACALL or AIMAP script (or an
+ACTION start) selects in the middle runs nested, then the old list goes on
+and its index becomes the new sequence's cursor; only JUMP skips that store
+(Lucemon's SQ_SWITCH7 inherits index 4 from SQ_CHACK1).
+`DW4_TRACE_SEQINT=1` logs these hand-overs. Delayed model subcommands
+(SETEFFECT, HITBOX) count the system frame step (world time delta /
+16666667, `Engine::system_step`, 80310754), not 1.0 per frame.
 Unimplemented methods are reported in the F1 notes and answer 0 so the
 original scripts keep running.
 

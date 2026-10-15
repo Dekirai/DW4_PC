@@ -1194,6 +1194,7 @@ public:
         const Sequence* seq{};
         std::size_t cursor{};
         bool label_passed{};
+        std::uint32_t sequence_serial{}; // counts sequence starts (port: run_commands trace)
         std::optional<std::string> wait_name;
         std::int32_t hp = 100, max_hp = 100;
         Mat4 base_matrix{};
