@@ -1051,6 +1051,54 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
     return {};
 }
 
+// Device sales (not in god mode): the disk shop buys devices too (Buy / Sell
+// / Exit -> Sell -> Devices, beNDMWShopCtrlDeviceSell 803A01F0: the folder,
+// 12 a page, at KAITORI + 25 * value (+ 250 .. 12000 by rank for weapons and
+// boards, 803A0CDC's price); equipped devices cannot be sold). Of each kind
+// the strongest unequipped device is kept (weapons per SKILL row by TSUYOSA +
+// value, boards and accessories by their MAMORI / TSUYOSA + value and MAXHP);
+// the rest goes, chips too (the driver plays no chips): bits for disks, and
+// room in the folder, which takes no drop when it holds 36. The shop is
+// visited for it once the folder holds kSellFrom devices.
+constexpr int kSellFrom = 24;
+
+int CampaignBot::next_sale(engine::Engine& engine) const {
+    auto* sys = engine.get<engine::GameSystem>();
+    auto* db = engine.get<engine::DatabaseManager>();
+    if (!sys || !db || engine.cheats().god || !db->has_column("weapon", "KAITORI")) return -1;
+    const auto& p = sys->players[0];
+    static const char* const tables[4] = {"weapon", "armor1", "armor2", "abChip"};
+    static const int sell_rank[6] = {0, 250, 750, 3000, 6000, 12000};
+    const auto cell = [&](const engine::ItemDevice& d, const char* column) {
+        return db->number(tables[std::clamp(d.type, 0, 3)], d.record, column).value_or(0);
+    };
+    const auto placeholder = [](const engine::ItemDevice& d) {
+        return (d.type == 0 && d.record == 276) || (d.type == 1 && d.record == 31) || (d.type == 2 && d.record == 44);
+    };
+    std::map<std::pair<int, int>, std::pair<int, int>> kept; // (type, SKILL row) -> (strength, device)
+    for (std::size_t i = 0; i < p.devices.size(); ++i) {
+        const auto& d = p.devices[i];
+        if (d.flag || placeholder(d) || d.type == 3) continue;
+        int strength = 0;
+        if (d.type == 0) strength = cell(d, "TSUYOSA") + d.value;
+        else if (d.type == 1) strength = cell(d, "MAMORI") + d.value + cell(d, "MAXHP") / 4;
+        else strength = cell(d, "TSUYOSA") + cell(d, "MAMORI") + d.value + cell(d, "MAXHP") / 4;
+        const std::pair<int, int> key{d.type, d.type == 0 ? cell(d, "SKILL") : 0};
+        if (const auto it = kept.find(key); it == kept.end() || strength > it->second.first) kept[key] = {strength, int(i)};
+    }
+    for (std::size_t i = 0; i < p.devices.size(); ++i) {
+        const auto& d = p.devices[i];
+        if (d.flag || placeholder(d)) continue;
+        int price = cell(d, "KAITORI") + 25 * d.value;
+        if (d.type <= 1) price += sell_rank[std::clamp(d.rank, 0, 5)];
+        if (price < 1) continue;
+        const auto it = kept.find({d.type, d.type == 0 ? cell(d, "SKILL") : 0});
+        if (it != kept.end() && it->second.second == int(i)) continue;
+        return int(i);
+    }
+    return -1;
+}
+
 bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& stage,
                        const std::string& goal, int frame, CampaignBot::Output& out) {
     const auto me = position_of(player);
@@ -1398,7 +1446,9 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && hurt) objective = &kHealErrand;
     else if (!engine.cheats().one_hit && lobby(here) && !holds(engine, "F1|F409") && next_equip(engine).device >= 0)
         objective = &kEquipErrand;
-    else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && next_purchase(engine).record >= 0) objective = &kShopErrand;
+    else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") &&
+             (next_purchase(engine).record >= 0 || (slot && int(slot->devices.size()) >= kSellFrom && next_sale(engine) >= 0)))
+        objective = &kShopErrand;
     // Training (no god mode): below the objective's gate level the player
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
@@ -1546,24 +1596,37 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) equip_open_ = false;
     }
-    // The device list's page, counted from its opening (DeviceList, 12
-    // devices a page: RIGHT / LEFT turn it while the cursor rests, and the
-    // turn sends the cursor to the top, FO2TOP, which takes no input while
-    // its SQ_FO2TOP plays: that marks a turn taken).
+    // A device list's page, counted from its opening (the lab's DeviceList
+    // and the shop's DeviceSell, 12 devices a page: RIGHT / LEFT turn it
+    // while the cursor rests, and the turn sends the cursor to the top,
+    // FO2TOP, which takes no input while its SQ_FO2TOP plays: that marks a
+    // turn taken).
     const engine::ModelCtrlManager::ModelRam* device_list = nullptr;
     if (equip_open_)
         if (auto* models = engine.get<engine::ModelCtrlManager>())
             if (const auto* folder = models->find("i_stfolder", 0); folder && folder->generated) device_list = folder;
-    if (device_list && !equip_folder_) equip_page_ = 0, equip_turn_ = 0;
+    if (device_list && !equip_folder_) list_page_ = 0, list_turn_ = 0;
     equip_folder_ = device_list != nullptr;
-    if (equip_turn_ != 0 && frame - equip_turn_at_ > 40) equip_turn_ = 0; // (not taken: pressed again)
+    if (list_turn_ != 0 && frame - list_turn_at_ > 40) list_turn_ = 0; // (not taken: pressed again)
+    // The page of a device list's folder index: true while a turn toward it
+    // is pressed or awaited (RIGHT / LEFT once the cursor rests).
+    const auto turn_to = [&](int index) {
+        if (index / 12 == list_page_) return false;
+        if (list_turn_ != 0 || frame - menu_pressed_ < 14) return true;
+        list_turn_ = index / 12 > list_page_ ? 1 : -1;
+        list_turn_at_ = frame;
+        out.buttons |= list_turn_ > 0 ? pad_button::right : pad_button::left;
+        menu_pressed_ = frame;
+        if (trace()) std::printf("[%d] campaign menu device list page %d -> %s\n", frame, list_page_, list_turn_ > 0 ? "RIGHT" : "LEFT");
+        return true;
+    };
     for (const auto& menu : selects->open_selects()) {
         if (menu.index != 0 && menu.index != 4) continue;
         if (!menu.taking_input) {
-            // (A page turn of the device list taken, see above.)
-            if (device_list && equip_turn_ != 0 && menu.name == "i_stcursor01") {
-                equip_page_ += equip_turn_;
-                equip_turn_ = 0;
+            // (A page turn of a device list taken, see above.)
+            if (list_turn_ != 0 && menu.name == "i_stcursor01") {
+                list_page_ += list_turn_;
+                list_turn_ = 0;
             }
             return true; // opening or closing: hands off
         }
@@ -1601,10 +1664,27 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // purchase is due, else Exit), the list of conItem 0..9
             // (i_stcursor01: the record, else back with B), the count
             // (i_stcursor05: line c buys 9 - held - c, 80397ABC) and yes to
-            // the price (i_stmesscr, 2 lines).
+            // the price (i_stmesscr, 2 lines). Sales (next_sale) first: Sell,
+            // Devices of Devices / Disks (i_stmesscr, 2 lines; backed out of
+            // when nothing is left to sell), the device's page and line in
+            // the sale list (i_stcursor01) and yes (i_stmesscr, 2 lines).
             const auto buy = next_purchase(engine);
-            if (menu.name == "i_stmesscr" && menu.items >= 3) want = buy.record >= 0 ? 0 : menu.items - 1;
-            else if (menu.name == "i_stcursor01") {
+            const int sale = next_sale(engine);
+            if (menu.name == "i_stmesscr" && menu.items >= 3) want = sale >= 0 ? 1 : buy.record >= 0 ? 0 : menu.items - 1;
+            else if (shop_selling_ && menu.name == "i_stmesscr") {
+                if (!sale_confirm_ && sale < 0) cancel = true;
+            } else if (shop_selling_ && menu.name == "i_stcursor01") {
+                if (sale_at_ >= 0) {
+                    // (A sale of the last device of the last page, on its
+                    // first line, turns the list back a page, 803A01F0.)
+                    auto* sys = engine.get<engine::GameSystem>();
+                    if (sys && sale_at_ >= int(sys->players[0].devices.size()) && sale_at_ % 12 == 0 && list_page_ > 0) --list_page_;
+                    sale_at_ = -1;
+                }
+                if (sale < 0) cancel = true;
+                else if (turn_to(sale)) return true;
+                else want = sale % 12;
+            } else if (menu.name == "i_stcursor01") {
                 if (buy.record >= 0) want = buy.record;
                 else cancel = true;
             } else if (menu.name == "i_stcursor05" && buy.record >= 0) {
@@ -1629,14 +1709,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             } else if (menu.name == "i_stcursor01" && device_list) {
                 if (!mine) {
                     cancel = true;
-                } else if (pick.device / 12 != equip_page_) {
-                    // A page turn (RIGHT / LEFT, the cursor resting).
-                    if (equip_turn_ != 0 || frame - menu_pressed_ < 14) return true;
-                    equip_turn_ = pick.device / 12 > equip_page_ ? 1 : -1;
-                    equip_turn_at_ = frame;
-                    out.buttons |= equip_turn_ > 0 ? pad_button::right : pad_button::left;
-                    menu_pressed_ = frame;
-                    if (trace()) std::printf("[%d] campaign menu device list page %d -> %s\n", frame, equip_page_, equip_turn_ > 0 ? "RIGHT" : "LEFT");
+                } else if (turn_to(pick.device)) {
                     return true;
                 } else {
                     want = pick.device % 12;
@@ -1645,8 +1718,6 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 if (mine) want = 0;
                 else cancel = true;
             }
-            // (The kind chosen, for the slot windows that follow.)
-            if (menu.name == "i_stcursor02" && !cancel && menu.cursor == want && frame - menu_pressed_ >= 14) equip_kind_ = want;
         } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
@@ -1677,6 +1748,37 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         }
         if (cancel && !menu.cancel) cancel = false; // NOCANCEL: take the first entry
         if (frame - menu_pressed_ < 14) return true;
+        if (!cancel && menu.cursor == want) {
+            // What an A here starts: the lab's slot kind chosen (for the slot
+            // windows that follow); in the disk shop Sell or not, the sale
+            // list opening (Devices) or a device sold (yes), a device picked.
+            if (equip_open_ && menu.name == "i_stcursor02") equip_kind_ = want;
+            if (shop_open_ && !equip_open_ && !heal_open_) {
+                if (menu.name == "i_stmesscr" && menu.items >= 3) {
+                    shop_selling_ = want == 1;
+                    sale_confirm_ = false;
+                } else if (shop_selling_ && menu.name == "i_stmesscr") {
+                    if (sale_confirm_) {
+                        if (auto* sys = engine.get<engine::GameSystem>(); sys && trace() && sale_target_ >= 0 &&
+                                                                          sale_target_ < int(sys->players[0].devices.size()))
+                            if (auto* db = engine.get<engine::DatabaseManager>())
+                                std::printf("[%d] campaign: sells %s (device %d)\n", frame,
+                                            db->text(engine::device_table(sys->players[0].devices[std::size_t(sale_target_)]),
+                                                     sys->players[0].devices[std::size_t(sale_target_)].record, "NAME")
+                                                .c_str(),
+                                            sale_target_);
+                        sale_at_ = sale_target_;
+                        sale_confirm_ = false;
+                    } else {
+                        list_page_ = 0;
+                        list_turn_ = 0;
+                    }
+                } else if (shop_selling_ && menu.name == "i_stcursor01") {
+                    sale_confirm_ = true;
+                    sale_target_ = 12 * list_page_ + want;
+                }
+            }
+        }
         if (cancel) {
             out.buttons |= pad_button::b;
         } else if (menu.cursor != want) {
@@ -2704,9 +2806,9 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                     const auto& d = slot.devices[i];
                     const char* table = tables[std::clamp(d.type, 0, 3)];
                     const auto cell = [&](const char* c) { return db->number(table, d.record, c).value_or(0); };
-                    std::printf("      device %zu %s #%d %s rank %d value %d STR %d DEF %d MHP %d SOUBI %x SKILL %d/%d LV %d%s%s\n", i, table,
-                                d.record, db->text(table, d.record, "NAME").c_str(), d.rank, d.value, cell("TSUYOSA"), cell("MAMORI"), cell("MAXHP"),
-                                unsigned(cell("SOUBI")), cell("SKILL"), cell("SKILLPOINT"), cell("LVPOINT"),
+                    std::printf("      device %zu %s #%d %s rank %d value %d STR %d DEF %d MHP %d SOUBI %x SKILL %d/%d LV %d DELAY %d KAITORI %d%s%s\n",
+                                i, table, d.record, db->text(table, d.record, "NAME").c_str(), d.rank, d.value, cell("TSUYOSA"), cell("MAMORI"),
+                                cell("MAXHP"), unsigned(cell("SOUBI")), cell("SKILL"), cell("SKILLPOINT"), cell("LVPOINT"), cell("DELAY"), cell("KAITORI"),
                                 d.type == 3 ? (" element " + db->text("abChip", d.record, "ZOKUSEI")).c_str() : "", d.flag ? " equipped" : "");
                 }
             }
@@ -2791,10 +2893,19 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             std::printf("[%d] campaign at (%.0f,%.0f,%.0f) %s ctrl=%d\n", frame, me.x, me.y, me.z, player->seq_name.c_str(), controllable);
             for (const auto& e : models->rams())
                 if (e->generated && e->node && !e->is_player && flat(position_of(*e), me) < 150.0f && e->info_name.rfind("i_", 0) != 0)
-                    std::printf("      %s#%d %s %s hp=%d ctrl=%d mode=%d (%.0f,%.0f,%.0f)%s%s%s\n", e->info_name.c_str(), e->index,
+                {
+                    std::string record;
+                    if (auto* db = engine.get<engine::DatabaseManager>(); db && e->category == "ENEMY" && e->record >= 0)
+                        record = " record " + std::to_string(e->record) + " LV " + std::to_string(db->number("enemy", e->record, "LEVEL").value_or(-1)) +
+                                 " STR " + std::to_string(db->number("enemy", e->record, "TSUYOSA").value_or(-1)) + " DEF " +
+                                 std::to_string(db->number("enemy", e->record, "MAMORI").value_or(-1)) + " HPMAX " +
+                                 std::to_string(db->number("enemy", e->record, "HPMAX").value_or(-1)) + " EXP " +
+                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1));
+                    std::printf("      %s#%d %s %s hp=%d ctrl=%d mode=%d (%.0f,%.0f,%.0f)%s%s%s%s\n", e->info_name.c_str(), e->index,
                                 e->category.c_str(), e->seq_name.c_str(), e->hp, e->control_enabled, e->ctrl_mode, position_of(*e).x,
                                 position_of(*e).y, position_of(*e).z, e->hit && e->hit->player_bullet ? " bullet" : "",
-                                e->hit && e->hit->player_talk ? " talk" : "", e->ai_maps && !e->ai_maps->empty() ? " aim" : "");
+                                e->hit && e->hit->player_talk ? " talk" : "", e->ai_maps && !e->ai_maps->empty() ? " aim" : "", record.c_str());
+                }
             for (const auto& e : models->rams())
                 if (e->generated && e->node && e->hit && !e->is_player && flat(position_of(*e), me) < 60.0f)
                     for (const auto& [lo, hi] : e->hit->boxes)
