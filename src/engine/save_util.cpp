@@ -1,31 +1,42 @@
 // SAVEUTILITY (beSaveUtil): the memory card front end of docs/SAVES.md on
-// GCI folders. Requests finish on the next update with the beSv*Api codes.
+// GCI folders. The requests run as the beSv*Api state machines on the
+// simulated card (card_timing.hpp) and end with the beSv*Api codes.
 #include "dw4/engine/managers.hpp"
 #include "dw4/save_data.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <charconv>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <system_error>
 
 namespace dw4::engine {
 namespace {
-enum Result : int { kBusy = 1, kDone = 2, kError = 3, kNoFile = 4, kBroken = 8, kNoSpace = 9, kNoEntry = 10, kNoCard = 12 };
 // Request order of the command table (804CF848 from REQUEST_FILEMAKE).
-enum Request : int { kFileMake, kFileFind, kFormat, kUseCheck, kReadMedia, kWriteMedia, kGetFreeSize };
 constexpr std::string_view kRequests[] = {"REQUEST_FILEMAKE", "REQUEST_FILEFIND", "REQUEST_FORMAT", "REQUEST_USE_CHECK",
                                           "REQUEST_READ_MEDIA", "REQUEST_WRITE_MEDIA", "REQUEST_GETFREESIZE"};
-constexpr std::uint32_t kFreeBytes = 59 * 8192; // an empty 251-block card
 constexpr const char* kGciName = "B2-GDJE-NDMWSaveData.gci";
 
 std::filesystem::path card_folder(const Engine& engine, int slot) {
     return engine.card_root() / (slot == 0 ? "Card A" : "Card B");
 }
+// The engine clock in CPU ticks (486 MHz).
+std::int64_t card_ticks(std::int64_t ns) { return ns / 1000 * 486 + ns % 1000 * 486 / 1000; }
+
 bool inserted(const Engine& engine, int slot) {
+    if (slot < 0 || slot > 1) return false;
+    switch (engine.card_setting(slot).mode) {
+    case CardSetting::Mode::none: return false;
+    case CardSetting::Mode::inserted:
+    case CardSetting::Mode::unformatted: return true;
+    case CardSetting::Mode::automatic: break;
+    }
     if (slot == 0) return true;
     std::error_code error;
-    return slot == 1 && std::filesystem::is_directory(card_folder(engine, slot), error);
+    return std::filesystem::is_directory(card_folder(engine, slot), error);
 }
 std::optional<std::vector<std::uint8_t>> read_gci(const Engine& engine, int slot) {
     std::ifstream in(card_folder(engine, slot) / kGciName, std::ios::binary);
@@ -33,6 +44,16 @@ std::optional<std::vector<std::uint8_t>> read_gci(const Engine& engine, int slot
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
     if (bytes.size() < save::kGciEntrySize + save::kFileSize) return std::nullopt;
     return bytes;
+}
+// The first data copy whose checksum and version word hold (80321670 case 4).
+std::optional<std::size_t> valid_copy(std::span<const std::uint8_t> gci, int version) {
+    const auto file = gci.subspan(save::kGciEntrySize);
+    for (const auto offset : save::kCopyOffsets) {
+        const auto copy = file.subspan(offset, save::kCopySize);
+        const std::uint32_t stored = std::uint32_t(copy[0]) << 24 | copy[1] << 16 | copy[2] << 8 | copy[3];
+        if (copy[7] == version && stored == save::checksum(copy)) return offset;
+    }
+    return std::nullopt;
 }
 bool write_gci(const Engine& engine, int slot, std::span<const std::uint8_t> file) {
     std::error_code error;
@@ -73,6 +94,31 @@ void append_tpl(std::vector<std::uint8_t>& out, std::span<const std::uint8_t> tp
 }
 } // namespace
 
+std::optional<CardSetting> parse_card_setting(std::string_view text) {
+    CardSetting setting;
+    while (!text.empty()) {
+        const auto comma = text.find(',');
+        auto word = text.substr(0, comma);
+        text = comma == std::string_view::npos ? std::string_view() : text.substr(comma + 1);
+        while (!word.empty() && std::isspace(static_cast<unsigned char>(word.front()))) word.remove_prefix(1);
+        while (!word.empty() && std::isspace(static_cast<unsigned char>(word.back()))) word.remove_suffix(1);
+        std::string lower(word);
+        for (auto& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (lower.empty()) continue;
+        if (lower == "auto") setting.mode = CardSetting::Mode::automatic;
+        else if (lower == "none") setting.mode = CardSetting::Mode::none;
+        else if (lower == "inserted") setting.mode = CardSetting::Mode::inserted;
+        else if (lower == "unformatted") setting.mode = CardSetting::Mode::unformatted;
+        else {
+            std::uint32_t blocks = 0;
+            const auto [end, error] = std::from_chars(lower.data(), lower.data() + lower.size(), blocks);
+            if (error != std::errc() || end != lower.data() + lower.size() || blocks == 0 || blocks > 2043) return std::nullopt;
+            setting.blocks = blocks;
+        }
+    }
+    return setting;
+}
+
 void SaveUtilManager::add_info(Engine& engine, const ObjectView& info) {
     for (const auto& record : info.list(6)) {
         auto ram = std::make_unique<UtilRam>();
@@ -95,30 +141,72 @@ void SaveUtilManager::add_info(Engine& engine, const ObjectView& info) {
     }
 }
 
-void SaveUtilManager::clear_stage(Engine&) { rams_.clear(); }
+void SaveUtilManager::clear_stage(Engine&) {
+    rams_.clear();
+    request_.reset();
+}
 
-bool SaveUtilManager::command(Engine&, Ram& base, std::string_view command, Packet& packet) {
+// The slot's card: what Engine::card_setting puts there and the directory
+// of its GCI folder (Dolphin's GCI folder card: every *.gci is a file, the
+// GCI header +0x38 its block count, +0x2C the banner offset).
+CardSlot SaveUtilManager::card_slot(Engine& engine, int slot, int version) const {
+    CardSlot card;
+    card.present = inserted(engine, slot);
+    if (!card.present) return card;
+    const auto& setting = engine.card_setting(slot);
+    card.formatted = setting.mode != CardSetting::Mode::unformatted || formatted_[std::size_t(slot)];
+    std::uint32_t used = 0, files = 0;
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(card_folder(engine, slot), error), end; !error && it != end; it.increment(error)) {
+        if (!it->is_regular_file(error)) continue;
+        auto extension = it->path().extension().string();
+        for (auto& c : extension) c = char(std::tolower(static_cast<unsigned char>(c)));
+        if (extension != ".gci") continue;
+        std::ifstream in(it->path(), std::ios::binary);
+        std::array<std::uint8_t, save::kGciEntrySize> head{};
+        if (!in.read(reinterpret_cast<char*>(head.data()), std::streamsize(head.size()))) continue;
+        used += std::uint32_t(head[0x38] << 8 | head[0x39]);
+        ++files;
+    }
+    card.free_blocks = setting.blocks > used ? setting.blocks - used : 0;
+    card.free_files = files < card::kMaxFiles ? card::kMaxFiles - files : 0;
+    if (const auto gci = read_gci(engine, slot)) {
+        card.file = true;
+        card.image_offset = std::uint32_t(gci->at(0x2C)) << 24 | gci->at(0x2D) << 16 | gci->at(0x2E) << 8 | gci->at(0x2F);
+        card.data_valid = valid_copy(*gci, version).has_value();
+    }
+    return card;
+}
+
+bool SaveUtilManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
     auto& ram = static_cast<UtilRam&>(base);
     auto& d = ram.deliver;
     if (command == "GENERATE") {
-        ram.generated = true;
-        ram.ending = false;
+        ram.state = 1;
+        ram.sub = ram.step = 0;
         ram.version = packet.integer(0, 4);
         return true;
     }
     if (command == "REMOVE") {
-        ram.ending = true;
+        ram.state = 1;
+        ram.sub = 2;
+        ram.step = 0;
         return true;
     }
     for (int request = 0; request < int(std::size(kRequests)); ++request) {
         if (command != kRequests[request]) continue;
-        if (!d.done) return true; // 80323364: one request at a time
-        d.slot = packet.integer(0, 0);
-        if (!packet.objects.empty()) d.data = static_cast<std::vector<std::uint8_t>*>(packet.objects[0]);
+        // 80323364: one request at a time; it starts at once (+0x5C).
+        if (request_) return true;
+        d.slot = packet.integer(0, -1);
+        if (!packet.objects.empty() && (request == CardRequest::kFileMake || request == CardRequest::kReadMedia ||
+                                        request == CardRequest::kWriteMedia))
+            d.data = static_cast<std::vector<std::uint8_t>*>(packet.objects[0]);
+        request_ = std::make_unique<CardRequest>(CardRequest::Kind(request), d.slot);
+        for (int slot = 0; slot < 2; ++slot) cards_[std::size_t(slot)] = card_slot(engine, slot, ram.version);
         d.operation = request;
-        d.result = kBusy;
         d.done = false;
-        ram.pending = request;
+        ram.state = ram.sub = ram.step = 1;
+        request_frame_ = engine.frame();
         return true;
     }
     if (command == "GETDELIVER") { packet.objects.push_back(&d); return true; }
@@ -127,7 +215,7 @@ bool SaveUtilManager::command(Engine&, Ram& base, std::string_view command, Pack
     if (command == "ISRDY") { packet.bools.push_back(ram.ready ? 1 : 0); return true; }
     if (command == "CHECKMEM") {
         packet.ints.push_back(std::int32_t(d.free_bytes));
-        packet.ints.push_back(std::int32_t(d.need_bytes));
+        packet.ints.push_back(std::int32_t(d.free_files));
         packet.bools.push_back(d.enough_space ? 1 : 0);
         packet.bools.push_back(d.free_entry ? 1 : 0);
         return true;
@@ -136,18 +224,15 @@ bool SaveUtilManager::command(Engine&, Ram& base, std::string_view command, Pack
     return false; // ISUSESAVEPOINT answers nothing
 }
 
-// The request of this frame (the beSv*Api state machines end in one step:
-// the card mounts at once and the files are local).
-void SaveUtilManager::run(Engine& engine, UtilRam& ram) {
+// +0x64 of the finished request into the deliver record, with the file work
+// on the GCI folder.
+void SaveUtilManager::finish(Engine& engine, UtilRam& ram) {
     auto& d = ram.deliver;
-    const int request = std::exchange(ram.pending, -1);
-    d.done = true;
-    if (!inserted(engine, d.slot)) {
-        d.result = kNoCard;
-        return;
-    }
-    const auto gci = read_gci(engine, d.slot);
+    const auto& request = *request_;
+    const int slot = request.slot();
+    int result = request.result();
     auto store = [&](const std::vector<std::uint8_t>* data) {
+        const auto gci = read_gci(engine, slot);
         std::vector<std::uint8_t> file(save::kFileSize, 0);
         const auto header = gci ? std::span<const std::uint8_t>(*gci).subspan(save::kGciEntrySize, save::kHeaderSize)
                                 : std::span<const std::uint8_t>(header_);
@@ -158,66 +243,98 @@ void SaveUtilManager::run(Engine& engine, UtilRam& ram) {
         const auto sum = save::checksum(copy);
         for (int i = 0; i < 4; ++i) copy[std::size_t(i)] = std::uint8_t(sum >> (24 - 8 * i));
         for (const auto offset : save::kCopyOffsets) std::copy(copy.begin(), copy.end(), file.begin() + std::ptrdiff_t(offset));
-        return write_gci(engine, d.slot, file) ? kDone : kError;
+        return write_gci(engine, slot, file);
     };
-    switch (request) {
-    case kFileFind: d.result = gci ? kDone : kNoFile; break;
-    case kUseCheck:
-    case kFormat: d.result = kDone; break;
-    case kFileMake:
-    case kWriteMedia: d.result = store(d.data); break;
-    case kReadMedia: {
-        if (!gci) {
-            d.result = kNoFile;
-            break;
-        }
-        // The first copy whose checksum and version word hold (80321670).
-        d.result = kBroken;
-        const auto file = std::span<const std::uint8_t>(*gci).subspan(save::kGciEntrySize);
-        for (const auto offset : save::kCopyOffsets) {
-            const auto copy = file.subspan(offset, save::kCopySize);
-            const std::uint32_t stored = std::uint32_t(copy[0]) << 24 | copy[1] << 16 | copy[2] << 8 | copy[3];
-            if (copy[7] != ram.version || stored != save::checksum(copy)) continue;
-            if (d.data) d.data->assign(copy.begin() + 8, copy.end());
-            d.result = kDone;
-            break;
+    switch (request.kind()) {
+    case CardRequest::kFileMake:
+    case CardRequest::kWriteMedia:
+        if (result == CardRequest::kDone && !store(d.data)) result = CardRequest::kError;
+        break;
+    case CardRequest::kReadMedia:
+        if (result == CardRequest::kDone) {
+            const auto gci = read_gci(engine, slot);
+            const auto offset = gci ? valid_copy(*gci, ram.version) : std::nullopt;
+            if (!offset) result = CardRequest::kBadData;
+            else if (d.data) {
+                const auto copy = std::span<const std::uint8_t>(*gci).subspan(save::kGciEntrySize + *offset, save::kCopySize);
+                d.data->assign(copy.begin() + 8, copy.end());
+            }
         }
         break;
-    }
-    case kGetFreeSize:
+    case CardRequest::kGetFreeSize: {
         // 80322424: room for the file and a free directory entry.
-        d.free_bytes = kFreeBytes;
-        d.need_bytes = std::uint32_t(save::kFileSize);
-        d.enough_space = d.need_bytes <= d.free_bytes;
-        d.free_entry = true;
-        d.result = d.enough_space ? kDone : kNoSpace;
+        const std::uint32_t need = CardRequest::kFileBytes;
+        if (result == CardRequest::kDone)
+            result = request.free_files() == 0 ? CardRequest::kNoEntry : need <= request.free_bytes() ? CardRequest::kDone : CardRequest::kNoSpace;
+        d.enough_space = need <= request.free_bytes();
+        d.free_entry = request.free_files() > 0;
+        d.free_bytes = request.free_bytes();
+        d.free_files = request.free_files();
         break;
-    default: d.result = kError; break;
     }
+    case CardRequest::kFormat:
+        // The emulated card is formatted from now on; the folder's files stay.
+        if (result == CardRequest::kDone && slot >= 0 && slot < 2) formatted_[std::size_t(slot)] = true;
+        break;
+    default:
+        break;
+    }
+    d.result = result;
+    d.done = true;
+    if (std::getenv("DW4_TRACE_SAVE"))
+        engine.log("saveutil " + std::string(kRequests[request.kind()]) + " slot " + std::to_string(slot) + " -> " +
+                   std::to_string(result) + " after " + std::to_string(engine.frame() - request_frame_) + " frames (frame " +
+                   std::to_string(engine.frame()) + ")");
 }
 
 void SaveUtilManager::update(Engine& engine) {
+    const std::int64_t now = card_ticks(engine.time());
     for (auto& owned : rams_) {
         auto& ram = *owned;
-        // beSvStartApi / beSvEndApi: the utility is ready a frame after
-        // GENERATE and gone a frame after REMOVE.
-        if (ram.ending) {
-            ram.ready = ram.generated = ram.ending = false;
+        auto& d = ram.deliver;
+        if (ram.state == 2) {
+            // The utility is gone: no slots, not ready.
+            for (auto& s : d.slots) s = {};
+            ram.ready = false;
+            ram.state = 3;
             continue;
         }
-        if (ram.generated && !ram.ready) {
-            ram.ready = true;
+        if (ram.state != 1) continue;
+        if (ram.sub == 0 || ram.sub == 2) {
+            // beSvStartApi (CARDInit, the copies' version word) / beSvEndApi:
+            // created in one update, done in the next.
+            if (ram.step == 0) {
+                if (ram.sub == 0)
+                    for (auto& s : d.slots) s = {};
+                ram.step = 1;
+            } else if (ram.sub == 0) {
+                ram.ready = true;
+                ram.sub = 1;
+                ram.step = 0;
+            } else {
+                ram.state = 2;
+                ram.sub = ram.step = 0;
+            }
             continue;
         }
-        // The slots as McUtilCtrl reads them through GETDELIVER every frame.
-        for (int slot = 0; slot < int(ram.deliver.slots.size()); ++slot) {
-            auto& s = ram.deliver.slots[std::size_t(slot)];
-            s.state = inserted(engine, slot) ? 1 : 0;
-            s.free_bytes = kFreeBytes;
-            s.need_bytes = std::uint32_t(save::kFileSize);
-            s.enough = s.need_bytes <= s.free_bytes;
+        if (ram.sub != 1) continue;
+        // beSvConnectCheck (803225FC / 80322688): CARDProbeEx on both slots.
+        for (int slot = 0; slot < int(d.slots.size()); ++slot) d.slots[std::size_t(slot)].state = inserted(engine, slot) ? 1 : 0;
+        if (ram.step != 1) continue;
+        if (!request_) {
+            ram.step = 0;
+            continue;
         }
-        if (ram.pending >= 0) run(engine, ram);
+        const int slot = std::clamp(request_->slot(), 0, 1);
+        auto card = cards_[std::size_t(slot)];
+        if (request_->slot() != slot) card.present = false; // no such channel: the CARD calls fail
+        const bool done = request_->update(channels_[std::size_t(slot)], card, now);
+        cards_[std::size_t(slot)] = card;
+        if (done) {
+            finish(engine, ram);
+            request_.reset();
+            ram.step = 0;
+        }
     }
 }
 

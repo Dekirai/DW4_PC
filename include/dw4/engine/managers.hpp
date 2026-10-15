@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dw4/adx.hpp"
+#include "dw4/card_timing.hpp"
 #include "dw4/disc_timing.hpp"
 #include "dw4/engine/collision.hpp"
 #include "dw4/engine/engine.hpp"
@@ -255,12 +256,15 @@ public:
 private:
     // CTRL data of 803B18BC: state / sub / step / substep ([4]..[7]), the
     // card slot being checked (+44), the per-slot error flags (+72 / +76),
-    // whether a slot can hold the save (+56) and the card worker (+40).
+    // whether a slot can hold the save (+56), check again from slot A (+48),
+    // the answer of the question (+60), the slot and kind of the reported
+    // problem (+64 / +68) and the card worker (+40).
     struct LogoRam : Ram {
         int state{}, sub{}, step{}, substep{};
         int slot{};
         std::array<std::uint32_t, 2> flags{};
-        bool usable{};
+        bool usable{}, restart{};
+        int choice{}, problem_slot = -1, problem = 2;
         std::shared_ptr<CardIo> io;
     };
     std::vector<std::unique_ptr<LogoRam>> rams_;
@@ -1021,12 +1025,18 @@ private:
     std::optional<bool> pending_run_; // MATsetRun for the running mat (80302DA8)
 };
 
-// SAVEUTILITY (beSaveUtil, commands 80323D20): the memory card front end.
-// One request runs at a time and fills the deliver record (beSvDeliver);
-// results follow the beSv*Api codes: 2 done, 3 error, 4 no file, 8 both
-// data copies broken, 9 not enough space, 10 no free file entry, 12 no card.
-// The cards are GCI folders (Engine::card_root()/Card A|B); card A is
-// always inserted, card B when its folder exists.
+// SAVEUTILITY (beSaveUtil, commands 80323D20, update 80323538): the memory
+// card front end. GENERATE starts it (beSvStartApi: ready in the second
+// update), REMOVE ends it (beSvEndApi: not ready from the third update).
+// One request runs at a time (manager +32) as a beSv*Api object stepped
+// once per update (CardRequest, card_timing.hpp: mount, file work and the
+// card's access times); its finish fills the deliver record (beSvDeliver)
+// with the beSv*Api codes: 2 done, 3 error, 4 no file, 5 I/O error, 7
+// broken or unformatted card, 8 both data copies broken, 9 not enough
+// space, 10 no free file entry, 11 wrong device, 12 no card. While ready,
+// beSvConnectCheck probes both slots every update (deliver slot states).
+// The cards are GCI folders (Engine::card_root()/Card A|B) with what
+// Engine::card_setting puts in the slots.
 class SaveUtilManager final : public Manager {
 public:
     SaveUtilManager() : Manager("beSaveUtil") {}
@@ -1038,14 +1048,17 @@ public:
 
     // beSvDeliver: request, result and the free space check.
     struct Deliver {
-        int slot{};
-        std::vector<std::uint8_t>* data{}; // game data after the copy header (40952 bytes)
-        int result = 1;
-        int operation{};
-        std::uint32_t free_bytes{}, need_bytes{};
-        bool enough_space{}, free_entry{}, done = true;
+        int slot{};                        // +16
+        std::vector<std::uint8_t>* data{}; // +8: game data after the copy header (40952 bytes)
+        int result = 1;                    // +24
+        int operation{};                   // +28
+        std::uint32_t free_bytes{};        // +32: GETFREESIZE bytes free
+        std::uint32_t free_files{};        // +36: ... directory entries free
+        bool enough_space{}, free_entry{}; // +42 / +43
+        bool done = true;                  // +44
         // Per card slot (lists [3], [15], [12], [14]): card state (1 usable,
-        // 0 none), free and needed bytes, room for the file.
+        // -1 wrong device, 0 none); beSvConnectCheck never fills the free and
+        // needed bytes or the room flag (0).
         struct Slot {
             int state{};
             std::uint32_t free_bytes{}, need_bytes{};
@@ -1057,14 +1070,21 @@ public:
 
 private:
     struct UtilRam : Ram {
-        bool generated{}, ready{}, ending{};
+        int state{}, sub{}, step{}; // +24 / +28 / +32 (80323538)
+        bool ready{};               // +44: ISRDY
         int version = 4;
-        int pending = -1; // request waiting for the next update
         Deliver deliver;
     };
-    void run(Engine& engine, UtilRam& ram);
+    // The slot as a request starting now sees it.
+    CardSlot card_slot(Engine& engine, int slot, int version) const;
+    void finish(Engine& engine, UtilRam& ram);
     std::vector<std::uint8_t> header_; // 8 KB file header from beSvPlatDataGC
     std::vector<std::unique_ptr<UtilRam>> rams_;
+    std::unique_ptr<CardRequest> request_;  // +32: the request in flight
+    std::array<CardSlot, 2> cards_{};       // the slots it works on
+    std::array<CardChannel, 2> channels_{}; // the CARD library's control blocks
+    std::array<bool, 2> formatted_{};       // an unformatted card a FORMAT fixed
+    std::uint64_t request_frame_{};         // DW4_TRACE_SAVE
 };
 
 // Accepts info types whose runtime is not reconstructed yet, reporting them once.

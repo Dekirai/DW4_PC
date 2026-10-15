@@ -627,9 +627,13 @@ void LoadCtrl2Manager::update(Engine& engine) {
 // Memory Card. Do not touch the Memory Card or POWER Button." (text 92200)
 // once SQ_OPEN has finished and probes slot A, then B (USE_CHECK, FILEFIND,
 // GETFREESIZE through 80367AE4; the worker steps every frame, 80367B18)
-// until a slot can hold the save; sub 100 removes the worker (80367A18 /
+// until a slot can hold the save; a broken or unformatted card (USE_CHECK
+// 7) asks to format it in sub 50; sub 100 removes the worker (80367A18 /
 // 80367A60), closes the window, clears the text (803B35C4) and waits until
-// i_messwn has stopped. State 2 runs logo.lua once.
+// i_messwn has stopped. State 1 (no slot can hold the save) reports the
+// worst problem and asks whether to go on without saving: yes shows the
+// logos (state 2), no checks the cards again (state 0). State 2 runs
+// logo.lua once.
 // ---------------------------------------------------------------------------
 void LogoManager::update(Engine& engine) {
     for (auto& owned : rams_) {
@@ -640,27 +644,167 @@ void LogoManager::update(Engine& engine) {
             ram.sub = ram.step = ram.substep = 0;
             continue;
         }
-        if (ram.state == 1) {
-            // 803B18BC state 1 reports card problems (texts 92000 / 92204..)
-            // and waits for a key. The card folders always give slot A a
-            // usable card, so it is not reached; go on to the logos.
-            engine.note("LOGO card error state");
-            ram.state = 2;
-            continue;
-        }
-        if (ram.state != 0) continue;
+        if (ram.state > 2) continue;
+        auto set_state = [&](int state) { ram.state = state; ram.sub = ram.step = ram.substep = 0; };
         auto set_sub = [&](int sub) { ram.sub = sub; ram.step = ram.substep = 0; };
         auto set_step = [&](int step) { ram.step = step; ram.substep = 0; };
         auto messwn = [&](std::string_view command) { send(engine, "MODELCTRL", "i_messwn", 0, command); };
+        auto opening = [&] { return query(engine, "MODELCTRL", "i_messwn", 0, "ISSEQNAME", "SQ_OPEN"); };
+        auto running = [&] { return query(engine, "MODELCTRL", "i_messwn", 0, "ISRUN"); };
         // 803B3560: the call number for TXTgetCallNo, then txt_Tar.lua.
         auto show_text = [&](int call) {
             if (auto* sys = engine.get<GameSystem>()) sys->text_call = call;
             engine.run_script("txt_Tar.lua");
         };
+        // 92204 / 92205: "Slot A" / "Slot B" ahead of a slot's problem.
+        auto slot_text = [&](int slot) {
+            if (slot == 0) show_text(92204);
+            else if (slot == 1) show_text(92205);
+        };
         // 803B35C4: clear the three talk lines.
         auto clear_text = [&] {
             for (const char* font : {"font00", "font01", "font02"}) menu::text_command(engine, "SWITCH", {"TALKFONT01", font, "CLR"});
         };
+        // SELECTCTRL i_messky (a key) and i_messcr (two answers, ints count
+        // and first line, NOCANCEL).
+        auto select = [&](const char* cursor, int items, int first, bool no_cancel) {
+            Packet packet;
+            if (items) packet.ints.push_back(items);
+            if (items && first >= 0) packet.ints.push_back(first);
+            if (no_cancel) packet.strings.emplace_back("NOCANCEL");
+            engine.messenger().send(engine, "SELECTCTRL", std::string(cursor), 0, "GENERATE", packet);
+        };
+        auto select_end = [&](const char* cursor) { return query(engine, "SELECTCTRL", std::string(cursor), 0, "ISEND"); };
+        auto select_remove = [&](const char* cursor) { send(engine, "SELECTCTRL", std::string(cursor), 0, "REMOVE"); };
+        auto selection = [&](const char* cursor) {
+            Packet packet;
+            engine.messenger().send(engine, "SELECTCTRL", std::string(cursor), 0, "GETSELECT", packet);
+            return packet.integer(0, 0);
+        };
+        if (ram.state == 1) {
+            switch (ram.sub) {
+            case 0:
+            case 6:
+                messwn("GENERATE");
+                messwn("SQ_OPEN");
+                set_sub(ram.sub + 1);
+                break;
+            case 1: {
+                if (opening()) break;
+                // The problem to report: slot A's worst flag (8 no room, 0x40
+                // no file entry, 0x20 wrong device, 4 an error, 0x10 broken),
+                // else slot B's (+64 its slot, +68 the flag, 2 none).
+                auto worst = [](std::uint32_t f) { return f & 8 ? 8 : f & 0x40 ? 64 : f & 0x20 ? 32 : f & 4 ? 4 : f & 0x10 ? 16 : 2; };
+                ram.problem_slot = -1;
+                ram.problem = worst(ram.flags[0]);
+                if (ram.problem != 2) {
+                    ram.problem_slot = 0;
+                } else if ((ram.problem = worst(ram.flags[1])) != 2) {
+                    ram.problem_slot = 1;
+                }
+                if (ram.problem == 32 || ram.problem == 64 || ram.problem == 8 || ram.problem == 4) {
+                    slot_text(ram.problem_slot);
+                    show_text(ram.problem == 32 ? 92209 : ram.problem == 64 ? 92211 : ram.problem == 8 ? 92010 : 92020);
+                } else if (((ram.flags[0] | ram.flags[1]) & 0x10) != 0) {
+                    show_text(92206); // a broken card that was not formatted
+                    ram.problem = 1;
+                } else {
+                    show_text(92000); // Memory Card not found.
+                }
+                set_sub(2);
+                break;
+            }
+            case 2:
+                if (ram.step == 0) {
+                    select("i_messky", 0, -1, false);
+                    set_step(1);
+                } else if (select_end("i_messky")) {
+                    clear_text();
+                    set_sub(3);
+                }
+                break;
+            case 3:
+                // Yes, continue without saving. / No, use (insert) another Memory Card.
+                if (ram.step == 0) {
+                    select("i_messcr", 2, -1, true);
+                    show_text(ram.problem == 1 ? 92207 : ram.problem == 4 ? 92021 : ram.problem == 8 ? 92011 : 92001);
+                    set_step(1);
+                } else if (ram.step == 1) {
+                    if (select_end("i_messcr")) set_step(2);
+                } else {
+                    ram.choice = selection("i_messcr");
+                    set_sub(4);
+                }
+                break;
+            case 4:
+            case 9:
+                if (ram.step == 0) {
+                    messwn("SQ_CLOSE");
+                    clear_text();
+                    set_step(1);
+                } else if (!running()) {
+                    if (ram.sub == 4) set_sub(5);
+                    else set_state(0); // check the cards again
+                }
+                break;
+            case 5:
+                set_sub(ram.choice != 0 ? 6 : 10);
+                break;
+            case 7:
+                if (!opening()) {
+                    show_text(92100);
+                    set_sub(8);
+                }
+                break;
+            case 8:
+                if (ram.step == 0) {
+                    select("i_messky", 0, -1, true);
+                    set_step(1);
+                } else if (select_end("i_messky")) {
+                    set_sub(9);
+                }
+                break;
+            case 10:
+                // Without room on the card: "To manage the contents of your
+                // Memory Card, use the Memory Card Screen." first.
+                switch (ram.step) {
+                case 0:
+                    if (ram.problem == 8 || ram.problem == 64) {
+                        messwn("GENERATE");
+                        messwn("SQ_OPEN");
+                        set_step(1);
+                    } else {
+                        set_state(2);
+                    }
+                    break;
+                case 1:
+                    if (!opening()) {
+                        show_text(92210);
+                        set_step(2);
+                    }
+                    break;
+                case 2:
+                    select("i_messky", 0, -1, false);
+                    set_step(3);
+                    break;
+                case 3:
+                    if (select_end("i_messky")) set_step(4);
+                    break;
+                case 4:
+                    messwn("SQ_CLOSE");
+                    clear_text();
+                    set_step(5);
+                    break;
+                default:
+                    if (!running()) set_state(2);
+                    break;
+                }
+                break;
+            default:
+                break;
+            }
+            continue;
+        }
         if (ram.sub == 0) {
             if (ram.step == 0) {
                 ram.io = std::make_shared<CardIo>();
@@ -680,11 +824,11 @@ void LogoManager::update(Engine& engine) {
                 if (ram.substep == 0) {
                     ram.flags = {};
                     ram.slot = 0;
-                    ram.usable = false;
+                    ram.usable = ram.restart = false;
                     messwn("GENERATE");
                     messwn("SQ_OPEN");
                     ram.substep = 1;
-                } else if (!query(engine, "MODELCTRL", "i_messwn", 0, "ISSEQNAME", "SQ_OPEN")) {
+                } else if (!opening()) {
                     show_text(92200);
                     set_step(1);
                 }
@@ -696,15 +840,11 @@ void LogoManager::update(Engine& engine) {
                 } else if (io.done) {
                     auto& flags = ram.flags[std::size_t(ram.slot)];
                     if (io.result == 7) {
+                        // Broken or unformatted: slot A (or B after a clean A)
+                        // offers to format it.
                         flags |= 0x10;
-                        // No card: slot A (or B after a clean A) asks for one
-                        // (sub 50, not reached with the card folders).
-                        if (ram.slot != 1 || (ram.flags[0] & 0x7C) == 0) {
-                            engine.note("LOGO no card prompt");
-                            set_sub(100);
-                        } else {
-                            set_step(3);
-                        }
+                        if (ram.slot != 1 || (ram.flags[0] & 0x7C) == 0) set_sub(50);
+                        else set_step(3);
                     } else if (io.result == 2) {
                         set_step(2);
                     } else {
@@ -746,6 +886,122 @@ void LogoManager::update(Engine& engine) {
             }
             continue;
         }
+        if (ram.sub == 50) {
+            // "The Memory Card in Slot A is corrupted and needs to be
+            // formatted." (92030), then the question (92031, cursor on no).
+            auto& io = *ram.io;
+            io.update(engine);
+            const bool card_in = io.slots[std::size_t(ram.slot)].inserted;
+            switch (ram.step) {
+            case 0:
+                if (ram.substep == 0) {
+                    messwn("SQ_CLOSE");
+                    clear_text();
+                    ram.substep = 1;
+                } else if (ram.substep == 1) {
+                    if (!running()) ram.substep = 2;
+                } else if (ram.substep == 2) {
+                    messwn("GENERATE");
+                    messwn("SQ_OPEN");
+                    ram.substep = 3;
+                } else if (!opening()) {
+                    slot_text(ram.slot);
+                    show_text(92030);
+                    set_step(1);
+                }
+                break;
+            case 1:
+                if (ram.substep == 0) {
+                    select("i_messky", 0, -1, false);
+                    ram.substep = 1;
+                } else if (ram.substep == 1) {
+                    if (!card_in) {
+                        select_remove("i_messky"); // the card left: check again
+                        ram.substep = 2;
+                    } else if (select_end("i_messky")) {
+                        clear_text();
+                        set_step(2);
+                    }
+                } else if (select_end("i_messky")) {
+                    clear_text();
+                    ram.restart = true;
+                    set_step(6);
+                }
+                break;
+            case 2:
+                if (ram.substep == 0) {
+                    select("i_messcr", 2, 1, true);
+                    show_text(92031);
+                    ram.substep = 1;
+                } else if (ram.substep == 1) {
+                    if (!card_in) {
+                        select_remove("i_messcr");
+                        ram.substep = 100;
+                    } else if (select_end("i_messcr")) {
+                        ram.choice = selection("i_messcr");
+                        clear_text();
+                        ram.substep = 2;
+                    }
+                } else if (ram.substep == 2) {
+                    if (ram.choice != 0) {
+                        set_step(6);
+                    } else {
+                        show_text(92201); // Formatting...
+                        set_step(3);
+                    }
+                } else if (select_end("i_messcr")) {
+                    ram.restart = true;
+                    set_step(6);
+                }
+                break;
+            case 3:
+                if (ram.substep == 0) {
+                    io.start(CardIo::kFormat, ram.slot);
+                    ram.substep = 1;
+                } else if (io.done) {
+                    if (io.result == 2) {
+                        ram.usable = true;
+                        set_step(5);
+                    } else {
+                        set_step(4);
+                    }
+                }
+                break;
+            case 4:
+            case 5:
+                // 92203 formatting failed / 92202 formatted.
+                if (ram.substep == 0) {
+                    show_text(ram.step == 4 ? 92203 : 92202);
+                    select("i_messky", 0, -1, false);
+                    ram.substep = 1;
+                } else if (select_end("i_messky")) {
+                    set_step(6);
+                }
+                break;
+            default:
+                if (ram.substep == 0) {
+                    clear_text();
+                    messwn("SQ_CLOSE");
+                    ram.substep = 1;
+                } else if (ram.substep == 1) {
+                    if (running()) break;
+                    if (ram.restart) set_sub(1);
+                    else if (ram.usable) set_sub(100);
+                    else ram.substep = 2;
+                } else if (ram.substep == 2) {
+                    messwn("GENERATE");
+                    messwn("SQ_OPEN");
+                    ram.substep = 3;
+                } else if (!opening()) {
+                    // Not formatted: on with the next slot.
+                    set_sub(1);
+                    set_step(3);
+                    show_text(92200);
+                }
+                break;
+            }
+            continue;
+        }
         if (ram.sub == 100) {
             if (ram.step == 0) {
                 ram.io->remove(engine);
@@ -759,9 +1015,8 @@ void LogoManager::update(Engine& engine) {
                 messwn("SQ_CLOSE");
                 clear_text();
                 ram.substep = 1;
-            } else if (!query(engine, "MODELCTRL", "i_messwn", 0, "ISRUN")) {
-                ram.state = ram.usable ? 2 : 1;
-                ram.sub = ram.step = ram.substep = 0;
+            } else if (!running()) {
+                set_state(ram.usable ? 2 : 1);
             }
         }
     }

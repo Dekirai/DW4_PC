@@ -65,6 +65,9 @@ struct Settings {
     // [data]
     std::filesystem::path data;
     std::filesystem::path cards; // memory card root (Card A / Card B), empty: saves/GC/USA
+    // What the slots hold (engine::parse_card_setting: "none", "unformatted",
+    // a block count ...), empty: a 2043-block card in A, B when its folder exists.
+    std::string card_a, card_b;
 
     std::filesystem::path file; // where the settings are read from and saved to
 

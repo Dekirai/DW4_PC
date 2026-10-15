@@ -185,6 +185,26 @@ struct ModelScriptContext {
     std::int32_t damage{}, attribute = -1, damage_flag{};
 };
 
+// What is in a memory card slot (Engine::card_setting). The card is the
+// slot's GCI folder (<card root>/Card A|B) as Dolphin's GCI folder cards:
+// its free blocks are the card's blocks minus the block counts of the *.gci
+// files in the folder (GCI header +0x38), its free files 127 minus their
+// number.
+struct CardSetting {
+    enum class Mode : std::uint8_t {
+        automatic,   // slot A holds a card, slot B when its folder exists
+        none,        // an empty slot (CARDProbeEx: no card)
+        inserted,    // a card, also without a folder
+        unformatted, // a card without a file system (CARDMount: broken)
+    };
+    Mode mode = Mode::automatic;
+    std::uint32_t blocks = 2043; // user blocks (59, 123, 251, 507, 1019 or Dolphin's 2043)
+};
+// "auto", "none", "inserted", "unformatted" and/or a block count, comma
+// separated ("unformatted,251"); DW4_CARD_A / DW4_CARD_B, settings.ini
+// [data] card_a / card_b. Nothing for an unknown word.
+std::optional<CardSetting> parse_card_setting(std::string_view text);
+
 // Optional PC cheats (F1 menu); all off is the original game.
 struct Cheats {
     bool god{};         // players lose no HP (also DW4_GOD for test runs)
@@ -272,6 +292,9 @@ public:
     // Memory card folders (Dolphin's GCI layout: <root>/Card A, <root>/Card B).
     void set_card_root(std::filesystem::path root) { card_root_ = std::move(root); }
     const std::filesystem::path& card_root() const { return card_root_; }
+    // What the slots hold (0 = A, 1 = B).
+    void set_card_setting(int slot, const CardSetting& setting) { card_settings_[std::size_t(slot & 1)] = setting; }
+    const CardSetting& card_setting(int slot) const { return card_settings_[std::size_t(slot & 1)]; }
     const std::array<PadState, 4>& pads() const { return pads_.states(); }
 
     // Script execution (beLua::call 80301FA4): first matching name per info.
@@ -344,6 +367,7 @@ private:
 
     MountedResources resources_;
     std::filesystem::path card_root_ = "saves/GC/USA";
+    std::array<CardSetting, 2> card_settings_{};
     Messenger messenger_;
     DemoManager demo_;
     SceneCache scenes_;
