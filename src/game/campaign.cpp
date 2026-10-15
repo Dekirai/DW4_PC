@@ -847,7 +847,7 @@ constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Da
 // defeat would lose the bits and part of the EXP), or while training with
 // kGateTripBits bits or more and supplies to buy (the shop is in the lobby).
 constexpr int kGateDisk = 8;
-constexpr int kGateTripBelow = 30;
+constexpr int kGateTripBelow = 40;
 constexpr int kGateTripBits = 400;
 
 // Training (no god mode): an objective in a combat stage is taken on only
@@ -1954,7 +1954,8 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
 // Disks used from the L panel (heals, the Raise Disk) and the upkeep of
 // panels the driver opened, laid over the frame's output (see kHealBelow).
 // A disk use: L opens the disk panel (GENERATEITEM, needs the player's
-// control), UP to its top (the cursor is remembered between openings), DOWN
+// control), UP to its top (the cursor is remembered between openings; one
+// press per row but the first), DOWN
 // to the disk's line, A (the panel uses the disk itself, 80349B0C, even while
 // a hit holds the player), L closes it. Each press is one frame (an edge),
 // the other buttons are held back meanwhile; the stick still walks.
@@ -2001,7 +2002,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     }
     if (disk_use_ >= 0) {
         const int t = frame - disk_use_at_;
-        const int downs_at = 4 + 2 * 10, a_at = downs_at + 2 * disk_line_ + 2;
+        const int downs_at = 4 + 2 * disk_ups_, a_at = downs_at + 2 * disk_line_ + 2;
         if (t >= 3 && t < a_at && !player.panel_open) {
             // A hit closed the panel (the damage sequences REMOVE it,
             // 8034E1A4): tried again as soon as the player can.
@@ -2075,7 +2076,18 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                 }
                 return;
             }
-            if (player.muteki != 0.0f || player.seq_name == "SQ_GUARDR") {
+            // (Only over floor at the player's height: on a ledge the way
+            // back may be a drop.)
+            const auto floor_at = [&](float k) {
+                auto* hitland = engine.get<engine::HitLandManager>();
+                if (!hitland) return false;
+                const auto me = position_of(player);
+                const float d = std::max(0.01f, flat(*away, me));
+                const engine::Vec3f q{me.x + (away->x - me.x) / d * k, me.y + 5.0f, me.z + (away->z - me.z) / d * k};
+                const auto land = hitland->world().check_land(q, 1.0f, 400.0f, 1.0f);
+                return land.found && std::abs(land.position.y - me.y) < 3.0f;
+            };
+            if ((player.muteki != 0.0f || player.seq_name == "SQ_GUARDR") && floor_at(3.0f) && floor_at(7.0f)) {
                 out.walk = true;
                 out.x = away->x;
                 out.z = away->z;
@@ -2338,11 +2350,17 @@ void CampaignBot::start_disk(const engine::GameSystem::PlayerSlot& slot, int rec
     disk_quick_ = false;
     disk_held_ = disks_held(slot, record);
     disk_line_ = 0;
+    bool found = false;
+    int rows = 0;
     for (std::size_t i = 0; i + 2 < slot.disks.size(); ++i) {
         if (slot.disks[i].count <= 0) continue;
-        if (slot.disks[i].record == record) break;
-        ++disk_line_;
+        ++rows;
+        if (slot.disks[i].record == record) found = true;
+        if (!found) ++disk_line_;
     }
+    // (The cursor stays within the rows: one UP per row but the first takes
+    // it to the top from anywhere.)
+    disk_ups_ = std::max(rows - 1, 0);
 }
 
 // The bit capsule of a defeat in this stage, with a Raise Disk held: walked

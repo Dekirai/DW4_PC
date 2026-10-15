@@ -116,6 +116,7 @@ private:
     int disk_use_ = -1;          // the disk being used from the L panel (conItem record), -1 none
     int disk_use_at_{};          // its use began (L)
     int disk_line_{};            // its line in the panel
+    int disk_ups_{};             // UP presses that reach the panel's top
     bool disk_quick_{};          // used with Y (the emergency heal) instead
     int disk_held_{};            // its count when the use began
     int raise_tries_{};          // Raise Disk uses tried in this stage
