@@ -203,6 +203,17 @@ for the scene, and each lit vertex gets the lights' ambient times the material
 ambient plus their diffuse, over the material or vertex colour (GX channel).
 LIGHTCTRL SETCOLOR (beLightCtrl, 803248AC) recolours a light set per room.
 
+An igBillboard (traversal 801DD62C, matrix 801D5ADC, basis 801D53EC) replaces
+its parent's world matrix with an orthonormal basis at the parent's world
+position (plus `_center` through the parent's rotation): Y is the mode's up
+vector and Z points at the eye (the inverse view's translation), so no scale of
+the parent chain reaches the children (`engine::billboard_matrix`). `_mode` 0
+(and any value outside 1..3) keeps world Y as the up vector, an upright
+billboard that only turns about it (light pillars, `powerup`, stage props);
+1 uses `_axis` through the parent's rotation; 2 and 3 make world Y and the
+camera's Y orthogonal to the eye direction first, so the face looks straight
+at the eye (3: damage numbers, status icons, most effect sprites).
+
 Particle effects (`y_*` names) are beParticleCtrl2Info instances answering as
 MODELCTRL rows (`ParticleCtrlManager`): FIND_SPACE and GENERATE place an
 instance on a model (offset, radian rotations, optional follow), start its

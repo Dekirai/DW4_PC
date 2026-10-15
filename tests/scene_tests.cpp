@@ -195,6 +195,58 @@ void test_horizontal_perspective() {
     check(std::fabs(p(1, 1) / old(1, 1) - 10.0f / 7.0f) < 1e-4f, "10/7 vertical zoom");
     check(p(2, 2) == old(2, 2) && p(3, 2) == old(3, 2), "The depth range is unchanged");
 }
+
+bool row_is(const Mat4& m, int row, float x, float y, float z) {
+    return close(m(row, 0), x) && close(m(row, 1), y) && close(m(row, 2), z);
+}
+
+void test_billboard_matrix() {
+    // A camera at (0, 50, 100) looking at the origin: 26.6 degrees down.
+    const Mat4 view = look_at({0, 50, 100}, {0, 0, 0}, {0, 1, 0});
+    Mat4 inverse_view;
+    check(invert(view, inverse_view), "The test view inverts");
+    // i_pcdmgnum: dmgnmtrans scales its digits (1, 2, 1) for 10 frames, under
+    // a mode 3 igBillboard. 801D53EC keeps no scale of the parent chain.
+    Mat4 world = scaling(1, 2, 1);
+    const Mat4 m3 = billboard_matrix(3, {0, 0, 1}, {}, world, inverse_view);
+    check(row_is(m3, 0, 1, 0, 0), "Mode 3 at the screen centre: X is the camera's X");
+    check(row_is(m3, 1, inverse_view(1, 0), inverse_view(1, 1), inverse_view(1, 2)),
+          "Mode 3 at the screen centre: Y is the camera's Y, unscaled");
+    check(row_is(m3, 2, 0, 0.4472136f, 0.8944272f), "Mode 3: Z points at the eye");
+    check(m3(3, 0) == 0 && m3(3, 1) == 0 && m3(3, 2) == 0 && m3(3, 3) == 1, "The position stays");
+    // Off the screen centre mode 3 faces the eye, not the picture plane.
+    world = translation(60, 0, 0);
+    const Mat4 off = billboard_matrix(3, {0, 0, 1}, {}, world, inverse_view);
+    const float d = std::sqrt(60.0f * 60.0f + 50.0f * 50.0f + 100.0f * 100.0f);
+    check(row_is(off, 2, -60.0f / d, 50.0f / d, 100.0f / d), "Mode 3 off centre: Z = normalized(eye - position)");
+    check(close(off(1, 0) * off(2, 0) + off(1, 1) * off(2, 1) + off(1, 2) * off(2, 2), 0), "Y is orthogonal to Z");
+    check(close(off(3, 0), 60), "The world translation is kept");
+    // Mode 0: an upright billboard turning about world Y only.
+    const Mat4 m0 = billboard_matrix(0, {0, 0, 1}, {}, scaling(3, 3, 3), inverse_view);
+    check(row_is(m0, 1, 0, 1, 0) && row_is(m0, 2, 0, 0, 1) && row_is(m0, 0, 1, 0, 0),
+          "Mode 0 stays upright and drops the scale");
+    check(row_is(billboard_matrix(7, {0, 0, 1}, {}, Mat4{}, inverse_view), 1, 0, 1, 0), "Other modes act like mode 0");
+    // Mode 1: _axis through the parent's rotation is the up vector.
+    const Mat4 turned = quaternion_matrix(0.7071068f, 0, 0, 0.7071068f); // 90 degrees about X
+    const Mat4 m1 = billboard_matrix(1, {0, 0, 1}, {}, turned, inverse_view);
+    const Vec3f axis{turned(2, 0), turned(2, 1), turned(2, 2)};
+    check(row_is(m1, 1, axis.x, axis.y, axis.z), "Mode 1: Y is the rotated axis");
+    // Mode 2: world Y made orthogonal to the eye direction; Z is the eye direction.
+    const Mat4 m2 = billboard_matrix(2, {0, 0, 1}, {}, translation(60, 0, 0), inverse_view);
+    check(row_is(m2, 2, -60.0f / d, 50.0f / d, 100.0f / d), "Mode 2: Z = normalized(eye - position)");
+    check(m2(1, 1) > 0.8f, "Mode 2: Y leans towards world Y");
+    // The centre goes through the world rotation into the position.
+    const Mat4 centred = billboard_matrix(3, {0, 0, 1}, {0, 0, 5}, turned * translation(1, 2, 3), inverse_view);
+    check(close(centred(3, 0), 1 + 5 * axis.x) && close(centred(3, 1), 2 + 5 * axis.y) && close(centred(3, 2), 3 + 5 * axis.z),
+          "The centre through the world rotation is added to the position");
+    // Up parallel to the eye direction: the world X fallback of 801D53EC.
+    const Mat4 above = look_at({0, 100, 0}, {0, 0, 0}, {0, 0, -1});
+    Mat4 inverse_above;
+    check(invert(above, inverse_above), "The top view inverts");
+    const Mat4 top = billboard_matrix(0, {0, 0, 1}, {}, Mat4{}, inverse_above);
+    check(row_is(top, 0, 1, 0, 0) && row_is(top, 1, 0, 1, 0) && row_is(top, 2, 0, 0, 1),
+          "Up along the eye direction falls back to world X");
+}
 } // namespace
 
 // The system generator: genrand 8021B338 after sgenrand 8021B2A0 with the
@@ -379,6 +431,7 @@ int main() {
         test_sequence_interpolation_methods();
         test_compressed_sequence();
         test_horizontal_perspective();
+        test_billboard_matrix();
         test_system_random();
         test_field_time();
         test_motion_blend_tracks();

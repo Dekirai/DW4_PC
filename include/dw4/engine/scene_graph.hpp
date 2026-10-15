@@ -166,8 +166,11 @@ struct Node {
     bool hidden{};
     // Extra runtime transform post-multiplied onto the node's own matrix.
     std::optional<Mat4> runtime_matrix;
-    // Billboard axis mode etc.
+    // igBillboard: _mode (+0x20, [8]), _axis (+0x24, [9]) and _center
+    // (+0x30, [10]); see billboard_matrix.
     std::int32_t billboard_mode{};
+    Vec3f billboard_axis{0, 0, 1};
+    Vec3f billboard_center{};
     // igLod: _rangeList ([8], SQUARED eye-space distances), _center ([13])
     // and _hysteresisList ([14]); the selection cache _lastRange (+0x24, here
     // the child index or -1), _lastIndex (+0x28), _lastLower / _lastUpper
@@ -340,6 +343,17 @@ struct TraversalContext {
     std::function<const ActorPose*(const Node& actor)> actor_pose;
     Vec3f camera_position{};
 };
+
+// igBillboard (801D5ADC + 801D53EC): the world matrix that replaces the
+// parent's world matrix for the billboard's children. It is an orthonormal
+// basis (no scale or shear of the parent chain survives) at the parent's
+// world position plus center * rotation, with Y the mode's up vector and Z
+// towards the eye: mode 0 (and any value outside 1..3) world Y and mode 1
+// the axis through the parent's rotation, both kept as they are, so the face
+// only turns about them; mode 2 world Y and mode 3 camera Y, each made
+// orthogonal to the eye direction first, so the face looks straight at the eye.
+Mat4 billboard_matrix(std::int32_t mode, const Vec3f& axis, const Vec3f& center, const Mat4& world,
+                      const Mat4& inverse_view);
 
 void traverse(Node* root, TraversalContext& context);
 void traverse(Node* root, TraversalContext& context, const Mat4& model, const RenderState& state, std::int64_t time);
