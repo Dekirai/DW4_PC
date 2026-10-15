@@ -166,12 +166,14 @@ three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
 replaced BGM fades over the original's table (8031D5D0) and stops once the
 fade reaches -21 dB with the stage's base volume (beSoundInfo [9]). The stage
 loader's own reads share the drive (a CRI file stream after the ADXT readers,
-64-sector requests): the port loads a stage's files at once but simulates the
-original's last read, the final chunk of the last queued file, just before
-loader state 4 ends (three fields after its booking, then states 20 and 21),
-so the old BGM's next refill seeks back from it and may still be on the drive
-at first.lua as in the original; the earlier loader reads and the original's
-load time are not simulated. `DW4_TRACE_SOUND=1` logs every simulated read,
+64-sector requests): the port loads a stage's files at once, so its load
+ends with the loading screen's minimum time, but it simulates the original's
+last read there, the final chunk of the last queued file, requested 14 fields
+before that end (about 19 before first.lua, as in the captures) and ending
+loader state 4 no earlier than three fields after its booking; the old BGM's
+next refill seeks back from it and may still be on the drive at first.lua as
+in the original. The earlier loader reads and the original's load time are not
+simulated. `DW4_TRACE_SOUND=1` logs every simulated read,
 PLAYING, stream start, fade stop and ISREADY / ISALLREADY change.
 
 Each manager documents the addresses it follows in its header comment. Shared

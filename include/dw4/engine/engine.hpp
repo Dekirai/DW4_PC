@@ -376,8 +376,9 @@ private:
     std::string stage_folder_;
     std::string pending_stage_;
     int loader_state_ = -1;
-    std::string loader_last_file_; // the last file of state 4's queue, read on the simulated drive
-    int loader_wait_{};            // fields until state 4 ends after that read
+    std::string loader_last_file_; // the last file of state 4's queue: its final chunk is read on the simulated drive
+    bool loader_read_{};           // that read was requested
+    std::int64_t loader_booked_{-1}; // the frame that first saw it booked
     bool stage_active_{}; // beSystem +0x2C, see stage_active()
     bool soft_reset_allowed_{}; // stage data +63, set after first.lua outside the title stages
     Cheats cheats_;
