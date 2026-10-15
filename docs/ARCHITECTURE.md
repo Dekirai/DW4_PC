@@ -119,10 +119,21 @@ and name CRI ADX files decoded by `dw4::adx` in the core. Sound effects carry
 a request id 0xA9GGNN00 into a CRI Sound Factory bank (`dw4::sfp`): the common
 allse.sfp (_common/sbiallse.igb) or a stage bank from beStaticInfo. The bank's
 request table leads to a short sequence (803C49F4, millisecond delta times)
-whose notes play drum-program splits, each a DSP ADPCM sample. Effects without
-a request id are ADX files on two SE stream channels. beSeInfo holds each
-model's SE set: the sounds an ACTION2 action plays after a frame delay; a
-looping sound (type 4) stops at the model's next action. Levels follow the
+whose notes play drum-program splits, each a DSP ADPCM sample, at SEQ volume
+127 under the SNDF master volume (beSoundInfo [10], 75, set once, 802F7244).
+Effects without a request id are ADX files on four SE stream channels, each
+start taking a free one or else the oldest of lower or equal priority
+(beSoundData [9], 802F56B0). The PLAY handler (80314FC8) ignores a sound effect
+started less than 50 ms of world time before (803151B0), so two windows
+opening in the same frame sound once. The sound entries keep the Cri's
+serials (play ids), names and fades: a stream plays at its volume plus the
+stage's base volume (beSoundInfo [9], -30, ADXT_SetOutVol), VOLUMECTL2 and a
+replaced BGM's fade-out step through the original's fade tables (8031D5D0 /
+8031DCB0, `dw4::CriFade`) only while the stream runs unpaused, and an entry
+that stopped or played out is freed at once (802F53B8). beSeInfo holds each
+model's SE set: the sounds an ACTION2 action plays after a frame delay (through
+the PLAY handler, 803105DC); a looping sound (type 4) stops at the model's next
+action. Levels follow the
 AX mixer (MIXInitChannel 80259334): the left side is attenuated by the pan
 table at the pan and the right side by the table at 127 - pan, so effect
 voices (split pan through the 8045D130 curve; every shipped split is centred)
@@ -153,8 +164,15 @@ mean half turn, 1 MiB read-ahead). The disc offsets come from the disc
 image's FST or the extraction's sys/fst.bin. tests/disc_tests.cpp replays
 three captured stage starts (stagBS01, stagBS02, dngQ1B1e) read for read. A
 replaced BGM fades over the original's table (8031D5D0) and stops once the
-fade reaches -21 dB with the stage's base volume (beSoundInfo [9]).
-`DW4_TRACE_SOUND=1` logs every simulated read, PLAYING and fade stop.
+fade reaches -21 dB with the stage's base volume (beSoundInfo [9]). The stage
+loader's own reads share the drive (a CRI file stream after the ADXT readers,
+64-sector requests): the port loads a stage's files at once but simulates the
+original's last read, the final chunk of the last queued file, just before
+loader state 4 ends (three fields after its booking, then states 20 and 21),
+so the old BGM's next refill seeks back from it and may still be on the drive
+at first.lua as in the original; the earlier loader reads and the original's
+load time are not simulated. `DW4_TRACE_SOUND=1` logs every simulated read,
+PLAYING, stream start, fade stop and ISREADY / ISALLREADY change.
 
 Each manager documents the addresses it follows in its header comment. Shared
 helpers such as COMMDLCTRL (`CommonModelControl`), MESWIN (`MessageWindow`)

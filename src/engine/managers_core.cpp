@@ -1001,6 +1001,8 @@ std::uint64_t SoundManager::play(Engine& engine, const std::string& name, const 
         if (data.type == 1 && !current_bgm_.empty() && current_bgm_ == name) return 0;
         const auto id = start_bgm_env(engine, name, data);
         if (!id) {
+            if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+                engine.log("PLAY " + name + " again in 11 frames (channel busy), frame " + std::to_string(engine.frame()));
             Packet again;
             again.strings.emplace_back(name);
             engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, "PLAY", std::move(again));
@@ -1119,13 +1121,17 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
     return true;
 }
 
-// The stage loader's read of a file (Engine::process_stage_loader): its
-// sectors on the disc go through the loader's stream (CriStreams::load).
+// The stage loader's last request of a file (Engine::process_stage_loader):
+// its final chunk of up to 64 sectors (the loader reads 64 at a time) goes
+// through the loader's stream (CriStreams::load). Only that read decides
+// where the head is and when the drive is free again as the load ends.
 void SoundManager::load_file(Engine& engine, const std::string& logical_path) {
     const auto* record = engine.resources().catalog().find(logical_path);
     if (!record || !record->location) return;
     const auto [offset, size] = disc_extent(engine, record->location->archive_index, record->location->entry_index);
-    cri_.load(offset, (size + 2047) / 2048);
+    const std::uint32_t sectors = (size + 2047) / 2048;
+    const std::uint32_t last = sectors % 64 ? sectors % 64 : std::min<std::uint32_t>(sectors, 64);
+    cri_.load(offset + std::uint64_t(sectors - last) * 2048, last);
 }
 
 // Where an AFS entry lies on the disc ("[archive.entry]": the entry inside

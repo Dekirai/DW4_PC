@@ -318,9 +318,9 @@ public:
     // A Cri sound entry's volume fade (disc_timing.hpp).
     using Fade = CriFade;
 
-    // The stage loader's file reads on the simulated drive (the loader's own
-    // CRI file stream, CriStreams::Loader): `logical_path` is read in chunks
-    // after the stream handles' reads; loading() holds until it is booked.
+    // The stage loader's last read on the simulated drive (the loader's own
+    // CRI file stream, CriStreams::Loader, after the stream handles' reads):
+    // the final chunk of `logical_path`; loading() holds until it is booked.
     void load_file(Engine& engine, const std::string& logical_path);
     bool loading() const { return cri_.loader.active; }
 

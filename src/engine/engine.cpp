@@ -592,10 +592,11 @@ void Engine::process_stage_loader() {
     case 10:
         // State 4 (802F973C) ends once the loading screen played its minimum
         // time (80311674) and the queued files are read and processed
-        // (802F9E98). The port reads them at once; the drive sees the last
-        // one, which the original reads just before the end, so the stream
-        // refills behind it seek back as the original's do (the loader's
-        // own reads and their timing before that are not simulated).
+        // (802F9E98). The port reads them at once; the drive sees the
+        // original's last read (the final chunk of the last file) just
+        // before the end, so the stream refills behind it seek back as the
+        // original's do (the loader's reads and their timing before that are
+        // not simulated).
         if (loading_node_ && !loading_node_->anim->finished()) break;
         if (auto* sound = get<SoundManager>(); sound && !loader_last_file_.empty()) {
             sound->load_file(*this, loader_last_file_);
