@@ -290,6 +290,151 @@ void test_stream_reads() {
         }
         check(playing, "A very short one-shot becomes PLAYING");
         check(!cri.reading(), "Its single read is done");
+        // ... then ends decoding (status 4) and plays out (status 5).
+        int status = 3;
+        for (int k = 61; k <= 200 && status != 5; ++k) {
+            cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+            status = cri.status(2);
+        }
+        check(status == 5, "A one-shot plays out (ADXT status 5)");
+    }
+}
+
+// The stage loader's reads (r15 captures with the loader states, fix_r15sound
+// runs d_bs02 / d_bs03 / d_bs01): the last queued file (LH_pack) is read right
+// after the old BGM's refill, and the refill after it seeks back; the drive
+// model reproduces both durations with Dolphin's rotation.
+void test_loader_reads() {
+    using R = dw4::DiscDrive::Rotation;
+    struct Read {
+        double issue, done;          // seconds (TB) of the read and its interrupt
+        std::uint64_t offset, length;
+    };
+    struct Case {
+        const char* name;
+        Read before, loader, refill;
+    };
+    const Case cases[] = {
+        {"stagBS02", {76.218064, 76.308324, 0x39710298, 18432}, {76.318190, 76.420706, 0x52afda98, 22528},
+         {76.568418, 76.670791, 0x39714a98, 18432}},
+        {"stagBS03", {76.568418, 76.669083, 0x39714a98, 18432}, {76.685140, 76.809237, 0x52e6d298, 34816},
+         {76.902084, 77.007638, 0x39719298, 18432}},
+        {"stagBS01", {78.570419, 78.677078, 0x3972f298, 16384}, {78.687133, 78.810628, 0x52766298, 28672},
+         {78.870716, 78.981720, 0x39733298, 16384}},
+    };
+    auto ticks = [](double seconds) { return std::int64_t(seconds * 486000000.0); };
+    // The drive after a seek read (DVDInterface: it reads ahead 1 MiB).
+    auto after = [&](dw4::DiscDrive& drive, const Read& r) {
+        const std::uint64_t ecc = 0x8000, first = r.offset - r.offset % ecc;
+        const std::uint64_t last = (r.offset + r.length + ecc - 1) / ecc * ecc;
+        drive.buffer_start_offset = last;
+        drive.buffer_end_offset = std::max(last + 0x100000 - 2 * ecc, first + 0x100000);
+        drive.buffer_start_time = ticks(r.done);
+        drive.buffer_end_time = ticks(r.done) + std::int64_t(486000000.0 * dw4::DiscDrive::raw_read_time(last, drive.buffer_end_offset - last));
+    };
+    for (const auto& c : cases) {
+        dw4::DiscDrive drive;
+        drive.rotation = R::dolphin;
+        after(drive, c.before);
+        const auto loader = drive.read(c.loader.offset, c.loader.length, ticks(c.loader.issue));
+        if (std::llabs(loader - (ticks(c.loader.done) - ticks(c.loader.issue))) >= 24300)
+            std::cerr << "  " << c.name << " loader read " << loader << " ticks\n";
+        check(std::llabs(loader - (ticks(c.loader.done) - ticks(c.loader.issue))) < 24300, "The loader's last read takes Dolphin's time");
+        after(drive, c.loader);
+        const auto refill = drive.read(c.refill.offset, c.refill.length, ticks(c.refill.issue));
+        if (std::llabs(refill - (ticks(c.refill.done) - ticks(c.refill.issue))) >= 24300)
+            std::cerr << "  " << c.name << " refill " << refill << " ticks\n";
+        check(std::llabs(refill - (ticks(c.refill.done) - ticks(c.refill.issue))) < 24300, "The BGM refill after it seeks back in Dolphin's time");
+    }
+
+    // A file is read in requests of at most 64 sectors; the next request
+    // follows one field after a booking.
+    {
+        dw4::CriStreams cri;
+        cri.load(kNdmw + 300000ull * 2048, 173);
+        std::vector<std::pair<int, std::uint32_t>> issued;
+        for (int k = 1; k <= 40 && (cri.loader.active || cri.loader.busy); ++k) {
+            const int before = cri.inflight.slot;
+            cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+            if (cri.inflight.slot == dw4::CriStreams::kLoaderSlot && before != dw4::CriStreams::kLoaderSlot)
+                issued.push_back({k, cri.loader.request});
+            if (cri.loader.booked) issued.push_back({k, 0});
+        }
+        // 1: a seek read (several fields), then reads out of the drive's
+        // read-ahead buffer, each requested in the field after its booking.
+        bool ok = issued.size() == 6 && issued[0].second == 64 && issued[2].second == 64 && issued[4].second == 45;
+        for (std::size_t i = 1; ok && i + 1 < issued.size(); i += 2)
+            ok = issued[i].second == 0 && issued[i + 1].first == issued[i].first + 1;
+        if (!ok)
+            for (const auto& [k, n] : issued) std::cerr << "  loader tick " << k << ": " << (n ? "read " : "booked ") << n << '\n';
+        check(ok, "The loader reads 64 + 64 + 45 sectors, one field after each booking");
+        check(!cri.loader.active && !cri.loader.busy, "The loader's file is read");
+    }
+    // The stream readers come first: the loader waits for a stream's read and
+    // starts in the field that books it.
+    {
+        dw4::CriStreams cri;
+        cri.start(0, adx(95786, 2689, 2048, 2, 48000, 4892980, 1, 2686));
+        cri.tick(dw4::CriStreams::kFieldTicks);      // binds the stream
+        cri.tick(2 * dw4::CriStreams::kFieldTicks);  // its first read
+        check(cri.inflight.slot == 0, "The stream reads first");
+        cri.load(kNdmw + 302597ull * 2048, 11);
+        int loader_tick = 0, stream_booked = 0;
+        for (int k = 3; k <= 40 && !loader_tick; ++k) {
+            const bool stream_busy = cri.handles[0].busy;
+            cri.tick(std::int64_t(k) * dw4::CriStreams::kFieldTicks);
+            if (stream_busy && !cri.handles[0].busy && !stream_booked) stream_booked = k;
+            if (cri.inflight.slot == dw4::CriStreams::kLoaderSlot) loader_tick = k;
+        }
+        check(stream_booked != 0 && loader_tick == stream_booked, "The loader starts in the field the stream's read is booked");
+    }
+}
+
+// The fade of a Cri sound entry (8031D5D0 / 8031DCB0).
+void test_fades() {
+    // A replaced BGM (1.0 -> 0.0 in 10 frames) of volume -10 under the base
+    // volume -30: 59 table steps over 10 fields; the driver (802F53B8) stops
+    // it once the volume is -210 or less, after 6 fields (ST_CHARA in the
+    // r14 captures).
+    {
+        dw4::CriFade fade;
+        fade.start(1.0f, 0.0f, 10.0f);
+        check(fade.running && fade.position == 0.0f && std::fabs(fade.increment - 5.9f) < 1e-6f, "A fade-out runs over the whole table");
+        const int want[] = {-80, -116, -148, -175, -198, -219};
+        bool same = true;
+        for (const int v : want) same = same && fade.step(-10, -30) == v;
+        check(same, "The fade-out's volumes follow the table 804E05C8");
+        int steps = 6, v = 0;
+        while (fade.running && steps < 20) {
+            v = fade.step(-10, -30);
+            ++steps;
+        }
+        check(steps == 9 && v == -999, "A fade to silence ends with -999 once the table reaches 0");
+    }
+    // A fade-in (cmQUAKE 0.0 -> 1.0 in 150 frames): the up table from its
+    // first entry; it ends at full volume.
+    {
+        dw4::CriFade fade;
+        fade.start(0.0f, 1.0f, 150.0f);
+        check(fade.position == 0.0f && std::fabs(fade.increment - 59.0f / 150.0f) < 1e-6f, "A fade-in runs over the up table");
+        int v = 0, steps = 0;
+        while (fade.running && steps < 200) {
+            v = fade.step(-40, -30);
+            ++steps;
+        }
+        check(v == -70 && !fade.running && steps < 150, "The fade-in ends at the sound's volume");
+    }
+    // A partial fade (VOLUMECTL2 1.0 -> 0.5): it ends on the first level at
+    // or below the target, the volume then stays.
+    {
+        dw4::CriFade fade;
+        fade.start(1.0f, 0.5f, 30.0f);
+        int v = 0, steps = 0;
+        while (fade.running && steps < 100) {
+            v = fade.step(0, -30);
+            ++steps;
+        }
+        check(!fade.running && v == int(std::fabs(-210.0f * 0.49000001f)) - 240, "A partial fade ends at the target's level");
     }
 }
 } // namespace
@@ -299,6 +444,8 @@ int main() {
         test_parse();
         test_rejects();
         test_stream_reads();
+        test_loader_reads();
+        test_fades();
     } catch (const std::exception& error) {
         std::cerr << "disc tests failed: " << error.what() << '\n';
         return 1;

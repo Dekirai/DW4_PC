@@ -358,6 +358,8 @@ void Engine::begin_stage_load() {
     loading_node_ = nullptr;
     soft_reset_allowed_ = false;
     loader_state_ = 0;
+    loader_last_file_.clear();
+    loader_wait_ = 0;
     // What survives into this stage, for save states.
     StageSnapshot snapshot;
     snapshot.stage = next;
@@ -583,16 +585,46 @@ void Engine::process_stage_loader() {
         auto queue = std::move(common_queue_);
         common_queue_.clear();
         for (const auto& path : queue) load_file(path, false, deferred_infos_);
+        loader_last_file_ = queue.empty() ? std::string() : queue.back();
         loader_state_ = 10;
         break;
     }
     case 10:
-        // State 4: the loading screen plays at least its minimum time
-        // (80311674), then holds its lock time (80311660).
-        if (loading_node_) {
-            if (!loading_node_->anim->finished()) break;
-            loading_node_->anim->fixed = loading_node_->anim->lock;
+        // State 4 (802F973C) ends once the loading screen played its minimum
+        // time (80311674) and the queued files are read and processed
+        // (802F9E98). The port reads them at once; the drive sees the last
+        // one, which the original reads just before the end, so the stream
+        // refills behind it seek back as the original's do (the loader's
+        // own reads and their timing before that are not simulated).
+        if (loading_node_ && !loading_node_->anim->finished()) break;
+        if (auto* sound = get<SoundManager>(); sound && !loader_last_file_.empty()) {
+            sound->load_file(*this, loader_last_file_);
+            loader_state_ = 11;
+            break;
         }
+        loader_wait_ = 0;
+        loader_state_ = 12;
+        [[fallthrough]];
+    case 12:
+        // The last file's processing: state 4 ends three fields after its
+        // read was booked (every capture); the loading screen then holds its
+        // lock time (80311660) and states 20 and 21 follow (802F9894 /
+        // 802F98A0), one field each.
+        if (loader_wait_ > 0 && --loader_wait_ > 0) break;
+        if (loading_node_) loading_node_->anim->fixed = loading_node_->anim->lock;
+        loader_state_ = 20;
+        break;
+    case 11:
+        // The read is booked by a driver tick (after the game update); the
+        // original's loader sees a booking one field after the port would.
+        if (auto* sound = get<SoundManager>(); sound && sound->loading()) break;
+        loader_wait_ = 2;
+        loader_state_ = 12;
+        break;
+    case 20:
+        loader_state_ = 21;
+        break;
+    case 21:
         loader_state_ = 5;
         break;
     case 5: {

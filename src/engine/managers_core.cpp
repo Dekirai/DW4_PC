@@ -835,12 +835,15 @@ void SoundManager::add_info(Engine& engine, const ObjectView& info) {
     // The stage's sounds ([5] beSoundData) and the files they index ([7]).
     for (const auto& data : info.list(5))
         if (data)
-            sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8), std::uint32_t(data.i32(6))};
+            sounds_[std::string(data.str(2))] = {data.i16(4), data.i16(5), data.i16(8), std::uint32_t(data.i32(6)), data.i16(9)};
     files_.clear();
     for (const auto& file : info.list(7)) files_.emplace_back(file ? std::string(file.str(2)) : std::string());
-    // [9] _baseVolume (0.1 dB, -30 in the stages) goes to the Cri object's
-    // +0x34 (80314B0C): the base of every stream volume and fade (802F5828).
+    // The SOUND RAM init (80314AC8): [9] _baseVolume (0.1 dB, -30 in every
+    // stage) goes to the Cri's +0x34 (80314B0C), the base of every stream
+    // volume and fade (802F5828); [10] _sndfVolume (75) to the SNDF master
+    // volume, set once (80314B18 -> 802F7244).
     base_volume_ = info.i16(9);
+    set_sndf_volume(info.i16(10));
 }
 void SoundManager::clear_stage(Engine&) {
     // The streams keep playing into the next stage (its scripts stop or
@@ -848,6 +851,10 @@ void SoundManager::clear_stage(Engine&) {
     rams_.clear();
     sounds_.clear();
     files_.clear();
+    // The stage's SOUND RAM goes: its repeat guard list (+0x28) and its
+    // current BGM (+0x24); the Cri's entries play on.
+    se_recent_.clear();
+    current_bgm_.clear();
     movie_.reset();
     movie_stream_.decoder.reset();
     // The stage's banks go; one-shot effects finish, loops end.
@@ -862,7 +869,10 @@ void SoundManager::clear_stage(Engine&) {
 void SoundManager::action_started(Engine& engine, const std::string& model, int index, std::string_view action) {
     const std::string owner = model + "#" + std::to_string(index);
     if (const auto loop = owner_loops_.find(owner); loop != owner_loops_.end()) {
-        stop_effects(loop->second, owner);
+        // The model's looping sound stops by its play id (SOUND STOP, 802F6038).
+        stop_effects(loop->second.sound, owner);
+        for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+            if (loop->second.id && streams_[channel].serial == loop->second.id) stop(int(channel));
         owner_loops_.erase(loop);
     }
     std::erase_if(cues_, [&](const PendingCue& cue) { return cue.owner == owner; });
@@ -875,16 +885,12 @@ void SoundManager::action_started(Engine& engine, const std::string& model, int 
     }
 }
 
+// 803105DC: a model's sound goes through SOUND PLAY (the repeat guard
+// included); the play id of a looping sound (type 4) is kept for its stop.
 void SoundManager::play_cue(Engine& engine, const std::string& sound, const std::string& owner) {
-    const auto found = sounds_.find(sound);
-    if (found == sounds_.end() || found->second.request == 0xffffffffu) {
-        Packet packet;
-        packet.strings.emplace_back(sound);
-        play(engine, packet);
-        return;
-    }
-    if (found->second.type == 4) owner_loops_[owner] = sound;
-    play_request(engine, sound, found->second, owner);
+    const auto id = play(engine, sound, owner);
+    if (!id) return;
+    if (const auto found = sounds_.find(sound); found != sounds_.end() && found->second.type == 4) owner_loops_[owner] = {sound, id};
 }
 
 void SoundManager::stop_effects(const std::string& name, const std::string& owner) {
@@ -922,8 +928,14 @@ namespace {
 // Engine time (ns) as the CRI model's CPU ticks (486 MHz).
 std::int64_t cri_ticks(std::int64_t ns) { return ns / 1000 * 486 + ns % 1000 * 486 / 1000; }
 
-// 0.1 dB volume (ADXT_SetOutVol) as a gain factor.
-float volume_gain(int volume) { return std::pow(10.0f, float(std::min(volume, 0)) / 200.0f); }
+// An ADX stream's output volume (ADXT_SetOutVol 8029A754: + the header's
+// AINF volume, which no DW4 ADX file has; the renderer clamps it to
+// -999..0, 802A6B8C, and the AX mixer input (MIXSetInput) is silent from
+// -90.4 dB on).
+float out_gain(int volume) {
+    volume = std::clamp(volume, -999, 0);
+    return volume <= -904 ? 0.0f : std::pow(10.0f, float(volume) / 200.0f);
+}
 
 // The AX mixer (MIXInitChannel 80259334, stereo output): the left side is
 // attenuated by the pan table at the pan, the right side by the table at
@@ -953,54 +965,131 @@ constexpr std::uint8_t kSfpPan[128] = {
     125, 125, 126, 126, 126, 126, 126, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
 } // namespace
 
-// PLAY <name> (80314FC8): a stream sound starts on its channel. A channel
-// still playing fades out first (10 frames) and the request comes back 11
-// frames later; the same BGM again is kept. PLAYatPAUSE (80314FBC) starts it
-// paused (802F5828 keeps the pause) until PAUSEOFF.
-bool SoundManager::play(Engine& engine, Packet& packet, bool paused) {
-    const std::string name(packet.string(0));
+int SoundManager::busy(int channel) const {
+    const int status = cri_.status(channel);
+    return status >= 1 && status <= 4 ? 1 : 0;
+}
+
+void SoundManager::pause_channel(Engine& engine, int channel, bool paused) {
+    cri_.pause(channel, paused, cri_ticks(engine.time()));
+}
+
+// 802F7244 (from the SOUND RAM init 80314B18 with beSoundInfo [10]
+// _sndfVolume, 75 in every stage, and from SNDFVOLUME): only while the Cri's
+// +0x38 is unset; a value outside 1..127 becomes 127.
+void SoundManager::set_sndf_volume(int volume) {
+    if (se_volume_) return;
+    se_volume_ = volume <= 0 || volume > 127 ? 127 : volume;
+}
+
+// The SOUND PLAY handler (80314FC8; PLAYatPAUSE 80314FBC sets the Cri's
+// pause flag +0x3C first, so the next sound that starts stays paused until
+// PAUSEOFF). A BGM that is the RAM's current one (+0x24) is kept; a BGM or
+// ambience whose channel still runs fades that out, and the request comes
+// back as PLAY 11 frames later (the pause flag stays set meanwhile). A sound
+// effect (type 0, 3 and above) requested again less than 49 999 998 ns of
+// world time after its last start is ignored (803151B0..803152F0: the RAM's
+// list +0x28 by the sound's index; the stage's sounds have distinct names).
+std::uint64_t SoundManager::play(Engine& engine, const std::string& name, const std::string& owner) {
     const auto found = sounds_.find(name);
     if (found == sounds_.end()) {
         engine.note("audio PLAY " + name + " (not in the stage sound list)");
-        return true;
+        return 0;
     }
-    const auto& data = found->second;
-    if (data.type != 1 && data.type != 2) {
-        if (data.request != 0xffffffffu) return play_request(engine, name, data);
-        // 802F5A80: without a request id the sound effect is an ADX file on
-        // an SE stream channel, kept paused by PLAYatPAUSE (+60).
-        Stream* target = &streams_[2];
-        for (std::size_t channel = 2; channel < streams_.size(); ++channel)
-            if (!streams_[channel].decoder || streams_[channel].name == name) {
-                target = &streams_[channel];
-                break;
-            }
-        if (open_stream(engine, *target, name, data)) {
-            target->paused = paused;
-            cri_.pause(int(target - streams_.data()), paused, cri_ticks(engine.time()));
+    const SoundData data = found->second;
+    if (data.type == 1 || data.type == 2) {
+        if (data.type == 1 && !current_bgm_.empty() && current_bgm_ == name) return 0;
+        const auto id = start_bgm_env(engine, name, data);
+        if (!id) {
+            Packet again;
+            again.strings.emplace_back(name);
+            engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, "PLAY", std::move(again));
+            return 0;
         }
-        return true;
+        if (data.type == 1) current_bgm_ = name;
+        return id;
     }
-    auto& stream = streams_[std::size_t(data.type - 1)];
-    if (data.type == 1 && current_bgm_ == name && stream.decoder && stream.fade == 0) return true;
-    if (stream.decoder) {
-        if (stream.fade == 0) {
-            stream.fade = 1;
-            stream.fade_level = 1.0f;
+    const std::int64_t now = engine.time();
+    if (const auto recent = se_recent_.find(name); recent != se_recent_.end() && now < recent->second) return 0;
+    const auto id = start_effect(engine, name, data, owner);
+    if (id) se_recent_[name] = now + 49999998; // 803152C4..803152D0: 0x2FB0000 - 0xF82
+    return id;
+}
+
+// 802F5828: the BGM channel (Cri +0x20) or the ambience channel (+0x24).
+std::uint64_t SoundManager::start_bgm_env(Engine& engine, const std::string& name, const SoundData& data) {
+    if (data.request != 0xffffffffu) return 0;
+    const int channel = data.type - 1;
+    auto& stream = streams_[std::size_t(channel)];
+    if (busy(channel) == 1) {
+        // A sound still runs: it fades out (1.0 -> 0.0 in 10 frames, the
+        // floats 8042543C / 80425438 / 80425440) unless it already fades.
+        if (!stream.fade.running) stream.fade.start(1.0f, 0.0f, 10.0f);
+        return 0;
+    }
+    return start_stream(engine, channel, name, data);
+}
+
+// 802F5A04 for a sound effect.
+std::uint64_t SoundManager::start_effect(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner) {
+    if (data.request == 0xffffffffu) {
+        // An ADX file (802F5A80) on one of the four SE stream handles.
+        const int index = choose_se_channel(data.priority);
+        if (index < 0) return 0;
+        const int channel = 2 + int(index);
+        const auto id = start_stream(engine, channel, name, data);
+        if (id) streams_[std::size_t(channel)].priority = data.priority; // entry +34
+        return id;
+    }
+    // An sfp request (802F5B64): a new play id when its sequence starts.
+    if (!play_request(engine, name, data, owner)) return 0;
+    return ++serial_;
+}
+
+// 802F56B0 with ADX entries (the first four of the Cri's SE list +0x28,
+// 802F66C8): a free entry, else the entry with the oldest serial among those
+// whose priority does not exceed the sound's (the most recent sound of all
+// is never replaced, the scan starts below the Cri's serial), stopped first.
+int SoundManager::choose_se_channel(int priority) {
+    for (std::size_t i = 0; i < kSeStreams; ++i)
+        if (streams_[2 + i].serial == 0) return int(i);
+    int best = -1;
+    std::uint64_t oldest = serial_;
+    int lowest = 0x7FFF;
+    for (std::size_t i = 0; i < kSeStreams; ++i) {
+        const auto& entry = streams_[2 + i];
+        if (entry.priority <= priority && entry.serial < oldest && entry.priority <= lowest) {
+            oldest = entry.serial;
+            lowest = entry.priority;
+            best = int(i);
         }
-        Packet again;
-        again.strings.emplace_back(name);
-        engine.messenger().post(engine.time() + kFrameNs * 11, "SOUND", std::nullopt, -1, paused ? "PLAYatPAUSE" : "PLAY",
-                                std::move(again));
-        return true;
     }
-    if (!open_stream(engine, stream, name, data)) return true;
-    stream.paused = paused;
-    // 802F5828: the handle is paused before ADXT_StartAfs and released again
-    // unless the sound starts at pause.
-    cri_.pause(data.type - 1, paused, cri_ticks(engine.time()));
-    if (data.type == 1) current_bgm_ = name;
-    return true;
+    // (Without a candidate the original returns its caller's r31, the Cri
+    // pointer, after stopping the entry that garbage index addresses; 802F5A04
+    // then plays nothing, which is all the port keeps.)
+    if (best >= 0) stop(2 + best);
+    return best;
+}
+
+// The start on the chosen entry (802F58FC.. / 802F5AD4..): the sound's volume
+// into the fade object (+12), ADXT_Pause on, ADXT_SetOutVol(volume + the Cri's
+// base volume +0x34, 8031CF94), ADXT_StartAfs; then the pause flag +0x3C is
+// used up (the sound stays paused) or the handle leaves its pause; the Cri's
+// serial (+0x18) becomes the entry's.
+std::uint64_t SoundManager::start_stream(Engine& engine, int channel, const std::string& name, const SoundData& data) {
+    auto& stream = streams_[std::size_t(channel)];
+    stream.volume = data.volume;
+    pause_channel(engine, channel, true);
+    stream.out_volume = data.volume + base_volume_;
+    if (!open_stream(engine, stream, name, data)) return 0;
+    if (pause_next_) pause_next_ = false;
+    else pause_channel(engine, channel, false);
+    stream.serial = ++serial_;
+    stream.name = name;
+    if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
+        engine.log("stream start slot " + std::to_string(channel) + " " + name + " volume " + std::to_string(stream.out_volume) +
+                   (cri_.handles[std::size_t(channel)].paused ? " (paused)" : "") + " frame " + std::to_string(engine.frame()));
+    return stream.serial;
 }
 
 bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data) {
@@ -1022,28 +1111,26 @@ bool SoundManager::open_stream(Engine& engine, Stream& stream, const std::string
         engine.note("audio stream " + file + ": " + error.what());
         return false;
     }
-    stream.name = name;
-    stream.gain = volume_gain(data.volume);
-    stream.volume = data.volume;
-    stream.fade = 0;
-    stream.fade_level = 1.0f;
-    stream.paused = false;
     // ADXT_StartAfs on the channel's handle: the stream is ready once its
     // first block came off the (simulated) disc and was decoded.
-    stream.ready = false;
     cri_.start(int(&stream - streams_.data()), stream_file(engine, archive, entry, stream.decoder->header()));
-    stream.ramp_frames = stream.ramp_left = 0;
-    stream.ramp_from = stream.ramp_to = 1.0f;
     stream.phase = 1.0;
     stream.previous = stream.next = {};
     return true;
 }
 
-// The ADX file as the CRI stream reader sees it: where it lies on the disc
-// ("[archive.entry]": the AFS entry inside the archive file), its size in
-// sectors, header and loop sectors.
-CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, unsigned entry, const adx::Header& header) const {
-    CriStreams::File file;
+// The stage loader's read of a file (Engine::process_stage_loader): its
+// sectors on the disc go through the loader's stream (CriStreams::load).
+void SoundManager::load_file(Engine& engine, const std::string& logical_path) {
+    const auto* record = engine.resources().catalog().find(logical_path);
+    if (!record || !record->location) return;
+    const auto [offset, size] = disc_extent(engine, record->location->archive_index, record->location->entry_index);
+    cri_.load(offset, (size + 2047) / 2048);
+}
+
+// Where an AFS entry lies on the disc ("[archive.entry]": the entry inside
+// the archive file) and its size in bytes.
+std::pair<std::uint64_t, std::uint32_t> SoundManager::disc_extent(Engine& engine, unsigned archive, unsigned entry) const {
     const auto& resources = engine.resources();
     std::uint64_t base = 0;
     if (const auto offset = resources.archive_disc_offset(archive)) {
@@ -1061,7 +1148,15 @@ CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, uns
         base += e.offset;
         size = e.size;
     }
-    file.disc_offset = base;
+    return {base, size};
+}
+
+// The ADX file as the CRI stream reader sees it: where it lies on the disc,
+// its size in sectors, header and loop sectors.
+CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, unsigned entry, const adx::Header& header) const {
+    CriStreams::File file;
+    const auto [offset, size] = disc_extent(engine, archive, entry);
+    file.disc_offset = offset;
     file.sectors = (size + 2047) / 2048;
     file.header_bytes = header.data_offset;
     file.channels = header.channels;
@@ -1074,7 +1169,10 @@ CriStreams::File SoundManager::stream_file(Engine& engine, unsigned archive, uns
 }
 
 // A sound-effect request (8031CCFC SEQ_SET/SEQ_PLAY): the bank holding the
-// request's group (803C5188) runs its sequence on a track.
+// request's group (803C5188) runs its sequence on a track. The SEQ volume is
+// 127 (802F5E94: SetOutVol 127; the sound's own volume [8] only goes into
+// the entry), under the SNDF master volume (802F7244, 75 in the game). Once
+// the bank is found the Cri's pause flag is used up (802F5E98), started or not.
 bool SoundManager::play_request(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner) {
     if (!common_loaded_) {
         // Loaded once at boot by the original (802F902C).
@@ -1095,11 +1193,12 @@ bool SoundManager::play_request(Engine& engine, const std::string& name, const S
     for (const auto& candidate : banks_)
         if (candidate->bank->has_group(data.request) && (!bank || candidate->name == file)) bank = candidate;
     const auto sequence = bank ? bank->bank->sequence(data.request) : std::span<const std::uint8_t>{};
+    if (bank) pause_next_ = false;
     if (sequence.empty()) {
         char id[16];
         std::snprintf(id, sizeof id, "%08X", data.request);
         engine.note("audio SE request " + std::string(id) + " " + name + " (no bank)");
-        return true;
+        return false;
     }
     // A looping effect (type 4) already sounding keeps its voice.
     if (data.type == 4)
@@ -1112,7 +1211,7 @@ bool SoundManager::play_request(Engine& engine, const std::string& name, const S
     track.sequence = sfp::Sequence(sequence);
     track.name = name;
     track.owner = owner;
-    track.gain = volume_gain(data.volume) * float(se_volume_ ? se_volume_ : 127) / 127.0f;
+    track.gain = float(se_volume_ ? se_volume_ : 127) / 127.0f;
     run_track(track);
     if (!track.sequence.finished()) tracks_.push_back(std::move(track));
     return true;
@@ -1171,27 +1270,57 @@ void SoundManager::mix_voices(float* mix, std::size_t frames) {
     std::erase_if(voices_, [](const SeVoice& voice) { return voice.position >= voice.bank->pcm[std::size_t(voice.sample)].size(); });
 }
 
-SoundManager::Stream* SoundManager::stream_named(std::string_view name) {
-    for (auto& stream : streams_)
-        if (stream.decoder && stream.name == name) return &stream;
-    return nullptr;
-}
-
+// 802F5F98: the entry stops: serial, type and name cleared, the fade object
+// reset (volume 0, levels 0.0), ADXT_SetOutVol(-999); 8031CE14 pauses the
+// handle and stops it (ADXT_Stop: a read on the drive still finishes).
 void SoundManager::stop(int channel) {
     auto& stream = streams_[std::size_t(channel)];
-    stream.decoder.reset();
-    stream.fade = 0;
-    stream.fade_level = 1.0f;
+    stream.serial = 0;
     stream.name.clear();
-    stream.ready = false;
-    cri_.stop(channel); // ADXT_Stop: a read on the drive still finishes
-    if (channel == 0) current_bgm_.clear();
+    stream.fade = Fade{};
+    stream.volume = 0;
+    stream.out_volume = -999;
+    stream.decoder.reset();
+    cri_.handles[std::size_t(channel)].paused = true;
+    cri_.stop(channel);
+}
+
+template <class F> void SoundManager::for_named(std::string_view name, F&& f) {
+    if (streams_[0].name == name) return f(0);
+    if (streams_[1].name == name) return f(1);
+    for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+        if (streams_[channel].name == name) f(int(channel));
+}
+
+// 802F6FB0: the entry of that name is PLAYING (ADXT status 3, paused or not):
+// the BGM entry, else the ambience's, else every running SE entry of that
+// name (none: ready). "ALL": every running entry (serial set) of an ADX handle.
+bool SoundManager::ready(std::string_view name) const {
+    if (name == "ALL") {
+        for (std::size_t channel = 0; channel < streams_.size(); ++channel)
+            if (streams_[channel].serial && cri_.status(int(channel)) != 3) return false;
+        return true;
+    }
+    if (streams_[0].name == name) return cri_.status(0) == 3;
+    if (streams_[1].name == name) return cri_.status(1) == 3;
+    for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+        if (!name.empty() && streams_[channel].name == name && streams_[channel].serial && cri_.status(int(channel)) != 3)
+            return false;
+    return true;
 }
 
 void SoundManager::render(std::int16_t* out, std::size_t frames) {
     std::vector<float> mix(frames * 2, 0.0f);
-    for (auto& stream : streams_) mix_stream(stream, mix.data(), frames);
-    mix_stream(movie_stream_, mix.data(), frames);
+    for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
+        // The DSP plays a handle's ARAM ring from PLAYING until it played out
+        // (status 3 and 4), not while the handle is paused.
+        const auto& h = cri_.handles[channel];
+        const int status = cri_.status(int(channel));
+        if (streams_[channel].serial && (status == 3 || status == 4) && !h.paused)
+            mix_stream(streams_[channel], out_gain(streams_[channel].out_volume), mix.data(), frames);
+    }
+    // The movie's sound has no base volume.
+    mix_stream(movie_stream_, 1.0f, mix.data(), frames);
     mix_voices(mix.data(), frames);
     // Peaks where effects meet the music bend towards full scale instead of
     // clipping.
@@ -1204,51 +1333,46 @@ void SoundManager::render(std::int16_t* out, std::size_t frames) {
     }
 }
 
-// One stream resampled into the mix.
-void SoundManager::mix_stream(Stream& stream, float* mix, std::size_t frames) {
-    {
-        if (!stream.decoder || stream.paused || !stream.ready) return;
-        const auto& header = stream.decoder->header();
-        float ramp = stream.ramp_to;
-        if (stream.ramp_left > 0 && stream.ramp_frames > 0)
-            ramp = stream.ramp_to + (stream.ramp_from - stream.ramp_to) * float(stream.ramp_left) / float(stream.ramp_frames);
-        const float gain = stream.gain * ramp * (stream.fade > 0 ? stream.fade_level : 1.0f);
-        const std::uint32_t channels = header.channels;
-        // 802A7F34: a stereo stream's channels sit hard left and right (pan
-        // 0 / 127, full level on their side), a mono stream in the centre.
-        const auto [centre_left, centre_right] = mix_pan(64);
-        std::int16_t source[16];
-        auto fetch = [&](std::array<float, 2>& frame) {
-            if (stream.decoder->read(source, 1) == 0) return false;
-            ++stream.frames_read;
-            if (channels > 1) {
-                frame[0] = float(source[0]);
-                frame[1] = float(source[1]);
-            } else {
-                frame[0] = float(source[0]) * centre_left;
-                frame[1] = float(source[0]) * centre_right;
-            }
-            return true;
-        };
-        const double step = double(header.sample_rate) / double(kOutputRate);
-        bool ended = false;
-        for (std::size_t i = 0; i < frames && !ended; ++i) {
-            while (stream.phase >= 1.0) {
-                stream.previous = stream.next;
-                if (!fetch(stream.next)) {
-                    ended = true;
-                    break;
-                }
-                stream.phase -= 1.0;
-            }
-            if (ended) break;
-            const float t = float(stream.phase);
-            mix[i * 2] += (stream.previous[0] + (stream.next[0] - stream.previous[0]) * t) * gain;
-            mix[i * 2 + 1] += (stream.previous[1] + (stream.next[1] - stream.previous[1]) * t) * gain;
-            stream.phase += step;
+// One stream resampled into the mix (audio only: the game never reads the
+// decoder; a one-shot that runs out just falls silent).
+void SoundManager::mix_stream(Stream& stream, float gain, float* mix, std::size_t frames) {
+    if (!stream.decoder) return;
+    const auto& header = stream.decoder->header();
+    const std::uint32_t channels = header.channels;
+    // 802A7F34: a stereo stream's channels sit hard left and right (pan
+    // 0 / 127, full level on their side), a mono stream in the centre.
+    const auto [centre_left, centre_right] = mix_pan(64);
+    std::int16_t source[16];
+    auto fetch = [&](std::array<float, 2>& frame) {
+        if (stream.decoder->read(source, 1) == 0) return false;
+        ++stream.frames_read;
+        if (channels > 1) {
+            frame[0] = float(source[0]);
+            frame[1] = float(source[1]);
+        } else {
+            frame[0] = float(source[0]) * centre_left;
+            frame[1] = float(source[0]) * centre_right;
         }
-        if (ended) stream.decoder.reset();
+        return true;
+    };
+    const double step = double(header.sample_rate) / double(kOutputRate);
+    bool ended = false;
+    for (std::size_t i = 0; i < frames && !ended; ++i) {
+        while (stream.phase >= 1.0) {
+            stream.previous = stream.next;
+            if (!fetch(stream.next)) {
+                ended = true;
+                break;
+            }
+            stream.phase -= 1.0;
+        }
+        if (ended) break;
+        const float t = float(stream.phase);
+        mix[i * 2] += (stream.previous[0] + (stream.next[0] - stream.previous[0]) * t) * gain;
+        mix[i * 2 + 1] += (stream.previous[1] + (stream.next[1] - stream.previous[1]) * t) * gain;
+        stream.phase += step;
     }
+    if (ended) stream.decoder.reset();
 }
 
 // 8031EDFC: MOVIE PLAY finds the movie's beMovieInfoData and starts the
@@ -1275,11 +1399,6 @@ void SoundManager::play_movie(Engine& engine, const Ram& ram, const std::string&
         if (!streams.audio.empty()) {
             movie_stream_.decoder = std::make_unique<adx::Decoder>(std::move(streams.audio));
             movie_stream_.name = name;
-            movie_stream_.gain = 1.0f;
-            movie_stream_.fade = movie_stream_.ramp_frames = movie_stream_.ramp_left = 0;
-            movie_stream_.ready = true;
-            movie_stream_.paused = false;
-            movie_stream_.ramp_from = movie_stream_.ramp_to = 1.0f;
             movie_stream_.phase = 1.0;
             movie_stream_.previous = movie_stream_.next = {};
         }
@@ -1317,73 +1436,73 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
         return false;
     }
     if (t == "beSoundInfo") {
-        if (command == "PLAY") return play(engine, packet);
-        if (command == "PLAYatPAUSE") return play(engine, packet, true);
+        if (command == "PLAY" || command == "PLAYatPAUSE") {
+            if (command == "PLAYatPAUSE") pause_next_ = true; // 80314FBC: Cri +0x3C
+            play(engine, std::string(packet.string(0)));
+            return true;
+        }
         if (command == "PAUSEOFF") {
-            // 802F61F8: the channel playing that sound leaves its pause.
-            if (auto* stream = stream_named(packet.string(0))) {
-                stream->paused = false;
-                cri_.pause(int(stream - streams_.data()), false, cri_ticks(engine.time()));
-            }
+            // 802F61F8: the entry of that name leaves its pause.
+            for_named(packet.string(0), [&](int channel) { pause_channel(engine, channel, false); });
             return true;
         }
         if (command == "VOLUMECTL2") {
-            // name/F<from>/F<to>/F<frames>: a gain ramp on that sound.
-            if (auto* stream = stream_named(packet.string(0))) {
-                stream->ramp_from = packet.real(0, 1.0f);
-                stream->ramp_to = packet.real(1, 1.0f);
-                stream->ramp_frames = stream->ramp_left = std::max(0, int(packet.real(2, 0.0f)));
-            }
+            // name/F<from>/F<to>/F<frames> (80315500, at least three floats):
+            // 802F6334 starts a fade of the entry of that name (8031D5D0).
+            if (packet.floats.size() >= 3)
+                for_named(packet.string(0), [&](int channel) {
+                    streams_[std::size_t(channel)].fade.start(packet.real(0, 1.0f), packet.real(1, 1.0f), packet.real(2, 0.0f));
+                });
             return true;
         }
-        if (command == "BGMSTOP") { stop(0); return true; }
+        // 802F60FC: BGMSTOP (1) also clears the RAM's current BGM (+0x24);
+        // SESTOP (4) stops every sound effect entry, whatever it names.
+        if (command == "BGMSTOP") {
+            stop(0);
+            current_bgm_.clear();
+            return true;
+        }
         if (command == "ENVSTOP") { stop(1); return true; }
+        if (command == "SESTOP") {
+            for (std::size_t channel = 2; channel < streams_.size(); ++channel) stop(int(channel));
+            stop_effects({}, {});
+            owner_loops_.clear();
+            return true;
+        }
         if (command == "STOP") {
-            for (std::size_t channel = 0; channel < streams_.size(); ++channel) stop(int(channel));
-            tracks_.clear();
-            voices_.clear();
+            // 80314F80: the entries holding that play id (802F6038).
+            if (!packet.longs.empty()) {
+                const auto id = std::uint64_t(packet.longs[0]);
+                if (id && (streams_[0].serial == id || streams_[1].serial == id)) stop(streams_[0].serial == id ? 0 : 1);
+                else if (id)
+                    for (std::size_t channel = 2; channel < streams_.size(); ++channel)
+                        if (streams_[channel].serial == id) stop(int(channel));
+            }
             return true;
         }
         if (command == "SNDFVOLUME") {
-            // 802F7244: the Sound Factory master volume, set once (803C2734).
             if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace)
                 engine.log("SNDFVOLUME " + std::to_string(packet.integer(0, 0)));
-            if (!se_volume_) {
-                const int volume = packet.integer(0, 0);
-                se_volume_ = volume <= 0 || volume > 127 ? 127 : volume;
-            }
-            return true;
-        }
-        if (command == "SESTOP") {
-            // All sound effects, or those of one sound.
-            const std::string name = packet.strings.empty() ? std::string() : std::string(packet.string(0));
-            stop_effects(name, {});
-            if (name.empty()) {
-                cues_.clear();
-                owner_loops_.clear();
-            }
-            for (std::size_t channel = 2; channel < streams_.size(); ++channel)
-                if (name.empty() || streams_[channel].name == name) stop(int(channel));
+            set_sndf_volume(packet.integer(0, 0));
             return true;
         }
     }
-    // A started stream reports ready when its ADXT handle is PLAYING (802F6FB0,
-    // status 3 of 802A8C18), paused or not; scripts wait for ISALLREADY after
-    // PLAYatPAUSE, then PAUSEOFF the sounds.
-    if (command == "ISREADY") {
-        const auto* stream = stream_named(packet.string(0));
-        packet.bools.push_back(!stream || stream->ready ? 1 : 0);
+    // 803156B8: ISREADY <name> and ISALLREADY (no name: "ALL"); ISBGMREADY /
+    // ISENVREADY ask for the name the BGM / ambience entry holds.
+    if (command == "ISREADY" || command == "ISALLREADY") {
+        const std::string_view name = packet.strings.empty() ? std::string_view("ALL") : packet.string(0);
+        const bool result = ready(name);
+        if (static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr; trace) {
+            static std::string last;
+            const std::string line = std::string(command) + " " + std::string(name) + " -> " + (result ? "1" : "0");
+            if (line != last) engine.log(line + " frame " + std::to_string(engine.frame()));
+            last = line;
+        }
+        packet.bools.push_back(result ? 1 : 0);
         return true;
     }
     if (command == "ISBGMREADY" || command == "ISENVREADY") {
-        const auto& stream = streams_[command == "ISBGMREADY" ? 0 : 1];
-        packet.bools.push_back(!stream.decoder || stream.ready ? 1 : 0);
-        return true;
-    }
-    if (command == "ISALLREADY") {
-        bool ready = true;
-        for (const auto& stream : streams_) ready = ready && (!stream.decoder || stream.ready);
-        packet.bools.push_back(ready ? 1 : 0);
+        packet.bools.push_back(ready(streams_[command == "ISBGMREADY" ? 0 : 1].name) ? 1 : 0);
         return true;
     }
     if (command.starts_with("IS")) {
@@ -1394,22 +1513,21 @@ bool SoundManager::command(Engine& engine, Ram& ram, std::string_view command, P
     return true;
 }
 namespace {
-// The stream state a save state keeps (simulation-visible fields and the
+// The stream entries a save state keeps (everything the game sees, and the
 // decoding position, so the music goes on where it was).
 struct StreamState {
     std::string name, file;
-    std::uint64_t frames_read{};
-    float gain = 1.0f;
-    int fade{}, volume{}, ramp_frames{}, ramp_left{};
-    float fade_level = 1.0f;
-    bool paused{}, ready{};
-    float ramp_from = 1.0f, ramp_to = 1.0f;
+    std::uint64_t frames_read{}, serial{};
+    int priority{}, volume{}, out_volume{-999};
+    SoundManager::Fade fade;
 };
 struct SoundState {
     std::vector<StreamState> streams;
     CriStreams cri;
     std::string current_bgm;
-    int se_volume{};
+    std::uint64_t serial{};
+    bool pause_next{};
+    int se_volume{}, base_volume{};
     std::uint32_t random{};
 };
 } // namespace
@@ -1418,25 +1536,23 @@ std::shared_ptr<const void> SoundManager::persistent() const {
     auto state = std::make_shared<SoundState>();
     for (const auto& stream : streams_) {
         StreamState s;
-        if (stream.decoder) {
-            s.name = stream.name;
+        s.name = stream.name;
+        if (stream.serial) {
             s.file = stream.file;
             s.frames_read = stream.frames_read;
         }
-        s.gain = stream.gain;
-        s.fade = stream.fade;
-        s.fade_level = stream.fade_level;
+        s.serial = stream.serial;
+        s.priority = stream.priority;
         s.volume = stream.volume;
-        s.ready = stream.ready;
-        s.ramp_frames = stream.ramp_frames;
-        s.ramp_left = stream.ramp_left;
-        s.paused = stream.paused;
-        s.ramp_from = stream.ramp_from;
-        s.ramp_to = stream.ramp_to;
+        s.out_volume = stream.out_volume;
+        s.fade = stream.fade;
         state->streams.push_back(std::move(s));
     }
     state->current_bgm = current_bgm_;
+    state->serial = serial_;
+    state->pause_next = pause_next_;
     state->se_volume = se_volume_;
+    state->base_volume = base_volume_;
     state->random = random_;
     state->cri = cri_;
     return state;
@@ -1465,7 +1581,6 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
                         if (got == 0) break;
                         left -= got;
                     }
-                    stream.name = s.name;
                     stream.file = s.file;
                     stream.frames_read = s.frames_read - left;
                 }
@@ -1473,19 +1588,18 @@ void SoundManager::restore(Engine& engine, const std::shared_ptr<const void>& op
                 stream.decoder.reset();
             }
         }
-        stream.gain = s.gain;
-        stream.fade = s.fade;
-        stream.fade_level = s.fade_level;
+        stream.name = s.name;
+        stream.serial = s.serial;
+        stream.priority = s.priority;
         stream.volume = s.volume;
-        stream.ready = s.ready;
-        stream.ramp_frames = s.ramp_frames;
-        stream.ramp_left = s.ramp_left;
-        stream.paused = s.paused;
-        stream.ramp_from = s.ramp_from;
-        stream.ramp_to = s.ramp_to;
+        stream.out_volume = s.out_volume;
+        stream.fade = s.fade;
     }
     current_bgm_ = state.current_bgm;
+    serial_ = state.serial;
+    pause_next_ = state.pause_next;
     se_volume_ = state.se_volume;
+    base_volume_ = state.base_volume;
     random_ = state.random;
     cri_ = state.cri;
 }
@@ -1505,19 +1619,21 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(s.name);
         a.io(s.file);
         a.io(s.frames_read);
-        a.io(s.gain);
-        a.io(s.fade);
-        a.io(s.fade_level);
+        a.io(s.serial);
+        a.io(s.priority);
         a.io(s.volume);
-        a.io(s.ready);
-        a.io(s.ramp_frames);
-        a.io(s.ramp_left);
-        a.io(s.paused);
-        a.io(s.ramp_from);
-        a.io(s.ramp_to);
+        a.io(s.out_volume);
+        a.io(s.fade.running);
+        a.io(s.fade.from);
+        a.io(s.fade.to);
+        a.io(s.fade.position);
+        a.io(s.fade.increment);
     }
     a.io(state->current_bgm);
+    a.io(state->serial);
+    a.io(state->pause_next);
     a.io(state->se_volume);
+    a.io(state->base_volume);
     a.io(state->random);
     auto& cri = state->cri;
     a.io(cri.drive.buffer_start_offset);
@@ -1558,13 +1674,23 @@ void SoundManager::serialize_persistent(StateArchive& a, std::shared_ptr<const v
         a.io(h.dsp_start);
         a.io(h.played_before);
     }
-    if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot >= CriStreams::kSlots))
+    a.io(cri.loader.active);
+    a.io(cri.loader.busy);
+    a.io(cri.loader.done);
+    a.io(cri.loader.booked);
+    a.io(cri.loader.disc_offset);
+    a.io(cri.loader.sectors);
+    a.io(cri.loader.pos);
+    a.io(cri.loader.request);
+    if (a.reading() && (cri.inflight.slot < -1 || cri.inflight.slot > CriStreams::kLoaderSlot))
         throw std::runtime_error("save state holds an invalid stream read");
     // (A decoding handle divides by its channel count, 18 bytes per frame.)
     if (a.reading())
         for (const auto& h : cri.handles)
-            if (h.active && (h.file.channels < 1 || h.file.channels > 8 || h.state > 3))
+            if (h.active && (h.file.channels < 1 || h.file.channels > 8 || h.state > 5))
                 throw std::runtime_error("save state holds an invalid stream handle");
+    if (a.reading() && (cri.loader.pos > cri.loader.sectors || cri.loader.request > 64))
+        throw std::runtime_error("save state holds an invalid loader read");
     if (a.reading()) opaque = state;
 }
 
@@ -1581,41 +1707,29 @@ void SoundManager::update_driver(Engine& engine) {
     for (int slot = 0; slot < CriStreams::kSlots; ++slot) playing_before[std::size_t(slot)] = cri_.playing(slot);
     cri_.tick(cri_ticks(engine.time()));
     if (trace) trace_cri(engine, inflight_before, done_before, playing_before);
+    // 802F53B8 over every entry holding a sound (serial set): a running one
+    // (8031D0F0 == 1) steps its fade while the handle is not paused (8031D33C)
+    // and sets the output volume; a fade to 0.0 stops the entry once the
+    // volume is -21 dB or less. An entry that stopped or played out (status 0
+    // or 5) stops at once.
     for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
         auto& stream = streams_[channel];
-        stream.ready = stream.decoder && cri_.playing(int(channel));
-        if (stream.ramp_left > 0 && !stream.paused) --stream.ramp_left;
-    }
-    // The fade-out of a replaced stream (8031D5D0, stepped by 802F53B8 /
-    // 8031DCB0 once per field): 59 steps of the fade table 804E05C8 over 10
-    // fields, the volume (int)(210 * level) - 210 + the sound's volume in
-    // 0.1 dB + the Cri base volume +0x34 (beSoundInfo [9]); the stream stops
-    // once that is -21 dB or less, or the table reaches 0.
-    static constexpr float kFadeTable[60] = {
-        0.959999979f, 0.930000007f, 0.899999976f, 0.870000005f, 0.829999983f, 0.810000002f, 0.779999971f, 0.75f,
-        0.720000029f, 0.689999998f, 0.660000026f, 0.639999986f, 0.610000014f, 0.579999983f, 0.560000002f, 0.529999971f,
-        0.50999999f, 0.49000001f, 0.460000008f, 0.439999998f, 0.419999987f, 0.400000006f, 0.379999995f, 0.360000014f,
-        0.330000013f, 0.319999993f, 0.300000012f, 0.280000001f, 0.25999999f, 0.25f, 0.230000004f, 0.209999993f,
-        0.200000003f, 0.180000007f, 0.170000002f, 0.150000006f, 0.140000001f, 0.129999995f, 0.119999997f, 0.109999999f,
-        0.100000001f, 0.0799999982f, 0.0799999982f, 0.0700000003f, 0.0599999987f, 0.0500000007f, 0.0399999991f, 0.0299999993f,
-        0.0299999993f, 0.0199999996f, 0.0199999996f, 0.00999999978f, 0.00999999978f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    for (std::size_t channel = 0; channel < streams_.size(); ++channel) {
-        auto& stream = streams_[channel];
-        if (stream.fade <= 0) continue;
-        float position = 0.0f;
-        for (int step = 0; step < stream.fade; ++step) position += 59.0f / 10.0f;
-        const int index = int(position);
-        const float level = index < 60 ? kFadeTable[index] : 0.0f;
-        const int volume = int(std::fabs(-210.0f * level)) - 210 + stream.volume + base_volume_;
-        if (volume <= -210 || level == 0.0f) {
+        if (!stream.serial) continue;
+        if (busy(int(channel)) != 1) {
             if (trace)
-                engine.log("stream fade-out of " + stream.name + " (volume " + std::to_string(stream.volume) + ") stops after " +
-                           std::to_string(stream.fade) + " fields, frame " + std::to_string(engine.frame()));
+                engine.log("stream " + stream.name + " ended (status " + std::to_string(cri_.status(int(channel))) + "), frame " +
+                           std::to_string(engine.frame()));
             stop(int(channel));
             continue;
         }
-        stream.fade_level = std::pow(10.0f, float(volume - stream.volume - base_volume_) / 200.0f);
-        ++stream.fade;
+        if (cri_.handles[channel].paused || !stream.fade.running) continue;
+        stream.out_volume = stream.fade.step(stream.volume, base_volume_);
+        if (stream.fade.to == 0.0f && stream.out_volume <= -210) {
+            if (trace)
+                engine.log("stream fade-out of " + stream.name + " (volume " + std::to_string(stream.volume) + ") stops, frame " +
+                           std::to_string(engine.frame()));
+            stop(int(channel));
+        }
     }
     for (auto& track : tracks_) {
         track.wait_ms -= double(engine.frame_delta()) / 1e6; // OSGetTick milliseconds of one field
@@ -1627,11 +1741,15 @@ void SoundManager::update_driver(Engine& engine) {
 void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t done_before,
                              const std::array<bool, CriStreams::kSlots>& playing_before) {
     if (cri_.inflight.slot >= 0 && (inflight_before < 0 || cri_.inflight.done != done_before)) {
-        const auto& h = cri_.handles[std::size_t(cri_.inflight.slot)];
+        const bool loader = cri_.inflight.slot == CriStreams::kLoaderSlot;
+        const auto request = loader ? cri_.loader.request : cri_.handles[std::size_t(cri_.inflight.slot)].request;
+        const auto offset = loader ? cri_.loader.disc_offset + std::uint64_t(cri_.loader.pos) * 2048
+                                   : cri_.handles[std::size_t(cri_.inflight.slot)].file.disc_offset +
+                                         std::uint64_t(cri_.handles[std::size_t(cri_.inflight.slot)].pos) * 2048;
         const std::int64_t now = cri_ticks(engine.time());
         char line[160];
-        std::snprintf(line, sizeof line, "stream read slot %d: %u sectors at disc 0x%llx, %.2f fields, frame %llu",
-                      cri_.inflight.slot, h.request, static_cast<unsigned long long>(h.file.disc_offset + std::uint64_t(h.pos) * 2048),
+        std::snprintf(line, sizeof line, "stream read %s %d: %u sectors at disc 0x%llx, %.2f fields, frame %llu", loader ? "loader" : "slot",
+                      cri_.inflight.slot, request, static_cast<unsigned long long>(offset),
                       double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()));
         engine.log(line);
     }
