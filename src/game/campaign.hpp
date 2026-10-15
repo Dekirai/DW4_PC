@@ -10,9 +10,9 @@
 // their menus answered, fields and dungeons are handed to the ExploreBot
 // with the exit mat as its goal. Nothing in the game is changed: the story
 // flags are set by the game's own scripts. Without the test cheats it plays
-// for survival (campaign.cpp "Survival"): guard, touch escape and techniques
-// without DW4_ONE_HIT; heals, heal gates, the disk shop, the bit capsule and
-// training below gate levels without DW4_GOD.
+// for survival (campaign.cpp "Survival"): techniques and MP disks without
+// DW4_ONE_HIT; guards, heals, heal gates, Gate Disks, the lobby shops, the
+// bit capsule and training below gate levels without DW4_GOD.
 #include "test_path.hpp"
 
 #include <cstdint>

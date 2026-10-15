@@ -233,10 +233,11 @@ volleys), picks up items, steps on the other mats and explores until the way is 
 campaign` plays the story from the boot logos: a new game, then the story objectives in order up to
 the staff roll, see `src/game/campaign.cpp`; the dng310 fortress is planned over its floors' regions
 and the flags that open their doors, the Lucemon fight by a boss routine; without `DW4_ONE_HIT` it
-guards against enemy blows, keeps out of enemies' touch and casts its first technique while the MP
-lasts, and without `DW4_GOD` it also heals with HP disks from the L panel, uses heal gates, restocks
-at the disk shop, recovers its bit capsule with a Raise Disk after a defeat and trains in the area's
-field below an objective's gate level), `--screenshot FILE.bmp`,
+casts its first technique while the MP lasts (MP disks when it runs out), and without `DW4_GOD` it
+also guards against enemy blows and touches, heals with HP disks from the L panel, uses heal gates,
+the X-Data shop's refill and Gate Disks, restocks at the disk shop, recovers its bit capsule with a
+Raise Disk after a defeat and trains in the area's field below an objective's gate level),
+`--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
 every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
 the environment's from the loaded frame on).
@@ -258,7 +259,8 @@ script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence cha
 (`DW4_DUMP_SEQ=<model>` lists all its sequences with their commands). Campaign research reports
 (they change the stage): `DW4_CAMPAIGN_REGIONS=wall,...` prints a stage's regions with those
 HITLANDMODEL walls closed and what each wall joins, `DW4_CAMPAIGN_REACH=...` what is reached from
-the player (or `DW4_CAMPAIGN_REACH_FROM` points) as walls are switched off.
+the player (or `DW4_CAMPAIGN_REACH_FROM` points) as walls are switched off; `DW4_CAMPAIGN_STALL_DUMP=1`
+lists the enemies' control, freeze, HP and sequence once a campaign step has lasted 20000 frames.
 `DW4_TRACE_FINGERPRINT=N` prints the state fingerprint (and a hash of the random generator) every N
 frames: two runs of the same input script must print the same lines, so the first differing line
 is the first frame where a run diverged. `DW4_FIXED_RANDOM=<hex>` makes every draw of the game's random
