@@ -874,6 +874,8 @@ Node* SceneCache::node(const IgbDocument* document, std::uint32_t reference) {
     } else if (view.is_a("igBillboard")) {
         n->kind = NodeKind::billboard;
         n->billboard_mode = view.i32(8);
+        n->billboard_axis = view.vec3(9).value_or(Vec3f{0, 0, 1});
+        n->billboard_center = view.vec3(10).value_or(Vec3f{});
         children_from(7);
     } else if (view.is_a("igBlendMatrixSelect")) {
         n->kind = NodeKind::blend_matrix_select;
@@ -1047,6 +1049,94 @@ void apply_overrides(const Node& n, RenderState& s) {
 } // namespace
 
 namespace {
+// The billboard code normalizes as v * (1 / |v|): |v|^2 = z*z + (x*x + y*y),
+// its square root from frsqrte plus three Newton steps (|v|^2 * rsqrt,
+// constants 0.5 / 3.0 at r2-0x7530 / r2-0x7528), then one float division.
+// A zero vector divides by its zero length there (NaN rows); it stays zero
+// here.
+Vec3f billboard_normalize(const Vec3f& v) {
+    const float length_squared = v.z * v.z + (v.x * v.x + v.y * v.y);
+    if (!(length_squared > 0.0f)) return v;
+    const float inverse = 1.0f / std::sqrt(length_squared);
+    return {v.x * inverse, v.y * inverse, v.z * inverse};
+}
+
+// 801D53EC: "the up and the eye direction are parallel" is
+// fabs(fabs(dot) - 1) < 1e-6 (double at r2-0x7508).
+bool billboard_parallel(const Vec3f& a, const Vec3f& b) {
+    return double(std::fabs(std::fabs(a.z * b.z + (a.x * b.x + a.y * b.y)) - 1.0f)) < 1e-6;
+}
+
+// 801D53EC(out, up, look): the rows X, Y, Z of an orthonormal basis with
+// Y = normalized up; X = up x look and Z = X x up, so Z is the eye direction
+// with its part along Y removed (the raw up pointer goes into the second
+// cross product, 801D597C). With up and look parallel the basis falls back
+// to world X (Z = X x up, X = up x Z) or, when up is world X as well, to
+// world Z (X = up x Z, Z = X x up). Translation 0, w 1.
+Mat4 billboard_basis(const Vec3f& raw_up, const Vec3f& raw_look) {
+    const Vec3f up = billboard_normalize(raw_up);
+    const Vec3f look = billboard_normalize(raw_look);
+    Vec3f x, z;
+    if (!billboard_parallel(up, look)) {
+        x = billboard_normalize(cross(up, look));
+        z = billboard_normalize(cross(x, raw_up));
+    } else if (const Vec3f world_x{1, 0, 0}; !billboard_parallel(up, world_x)) {
+        z = billboard_normalize(cross(world_x, up));
+        x = billboard_normalize(cross(up, z));
+    } else {
+        x = billboard_normalize(cross(up, Vec3f{0, 0, 1}));
+        z = billboard_normalize(cross(x, up));
+    }
+    Mat4 r;
+    r(0, 0) = x.x; r(0, 1) = x.y; r(0, 2) = x.z;
+    r(1, 0) = up.x; r(1, 1) = up.y; r(1, 2) = up.z;
+    r(2, 0) = z.x; r(2, 1) = z.y; r(2, 2) = z.z;
+    return r;
+}
+
+// 8012D434: v * the upper 3x3 of m (no translation).
+Vec3f rotate_vector(const Vec3f& v, const Mat4& m) {
+    return {v.z * m(2, 0) + (v.x * m(0, 0) + v.y * m(1, 0)), v.z * m(2, 1) + (v.x * m(0, 1) + v.y * m(1, 1)),
+            v.z * m(2, 2) + (v.x * m(0, 2) + v.y * m(1, 2))};
+}
+} // namespace
+
+Mat4 billboard_matrix(std::int32_t mode, const Vec3f& axis, const Vec3f& center, const Mat4& world,
+                      const Mat4& inverse_view) {
+    // 801D5ADC(node, out, world, inverse view): the position is the world
+    // translation (80128DAC) plus _center through the world rotation
+    // (8012D434); look = the eye (inverse view row 3) - position.
+    const Vec3f c = rotate_vector(center, world);
+    const Vec3f position{world(3, 0) + c.x, world(3, 1) + c.y, world(3, 2) + c.z};
+    const Vec3f look{inverse_view(3, 0) - position.x, inverse_view(3, 1) - position.y, inverse_view(3, 2) - position.z};
+    const Vec3f world_y{0, 1, 0};
+    Vec3f up = world_y; // modes 0 and < 0 / >= 4 (801D5D80): an upright billboard
+    switch (mode) {
+    case 1: // 801D5B9C: _axis through the world rotation
+        up = rotate_vector(axis, world);
+        break;
+    case 2: // 801D5BB0: world Y made orthogonal to the eye direction,
+            // look x (Y x look) with the cross product 8012CB74 (a x b)
+        up = cross(look, cross(world_y, look));
+        break;
+    case 3: { // 801D5BE8 (skipped without an inverse view): camera Y (world Y
+              // through the inverse view) made orthogonal to the eye direction
+              // the same way, each cross product normalized
+        const Vec3f side = billboard_normalize(cross(rotate_vector(world_y, inverse_view), look));
+        up = billboard_normalize(cross(look, side));
+        break;
+    }
+    default: break;
+    }
+    // 801D53EC builds the rotation, 80128D90 then sets only the translation.
+    Mat4 r = billboard_basis(up, look);
+    r(3, 0) = position.x;
+    r(3, 1) = position.y;
+    r(3, 2) = position.z;
+    return r;
+}
+
+namespace {
 struct ActorScope {
     const ActorPose* pose{};
     Mat4 actor_model{};
@@ -1193,17 +1283,15 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         break;
     }
     case NodeKind::billboard: {
+        // igBillboard traversal 801DD62C (table 0x80415194 slot 27, registered
+        // by 801DB310): the world matrix = modelview stack top * the
+        // traversal's inverse view (+0xA4), 801D5ADC builds the billboard's
+        // world matrix from it and the children get that * view (+0x64)
+        // (80128690 at 801DD76C). Here `model` already is the world matrix.
         const Mat4 view = state.view.value_or(ctx.camera.view);
-        const Mat4 mv = model * view;
-        const float sx = length({mv(0, 0), mv(0, 1), mv(0, 2)});
-        const float sy = length({mv(1, 0), mv(1, 1), mv(1, 2)});
-        const float sz = length({mv(2, 0), mv(2, 1), mv(2, 2)});
-        Mat4 aligned = scaling(sx, sy, sz);
-        aligned(3, 0) = mv(3, 0);
-        aligned(3, 1) = mv(3, 1);
-        aligned(3, 2) = mv(3, 2);
         Mat4 inverse_view;
-        if (invert(view, inverse_view)) model = aligned * inverse_view;
+        if (invert(view, inverse_view))
+            model = billboard_matrix(n->billboard_mode, n->billboard_axis, n->billboard_center, model, inverse_view);
         break;
     }
     case NodeKind::lod: {
