@@ -2678,6 +2678,11 @@ bool CampaignBot::tech_target(engine::Engine& engine, const engine::ModelCtrlMan
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->category != "ENEMY" || e->hp <= 0 || e->muteki != 0.0f) continue;
         if (!engine.has_script("hit_" + e->info_name + ".lua")) continue;
+        // (Not at gimmicks: their hit scripts decide what a technique does,
+        // and stag0205's energy plugs take none, hit_g_eneplugz02.lua's
+        // funcTechWazaHitCheck branch; a god-mode run cast at them 70000
+        // frames. The walls a technique breaks are the ExploreBot's.)
+        if (e->info_name.rfind("g_", 0) == 0) continue;
         const auto at = position_of(*e);
         const float d = flat(at, me);
         if (d < 3.0f || d > kTechReach || std::abs(at.y - me.y) > 10.0f) continue;
