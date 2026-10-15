@@ -2,6 +2,7 @@
 #include "dw4/engine/actor.hpp"
 #include "dw4/engine/engine.hpp"
 #include "dw4/engine/managers.hpp"
+#include "dw4/engine/particles.hpp"
 #include "dw4/engine/random.hpp"
 #include "dw4/engine/scene_graph.hpp"
 
@@ -10,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 using namespace dw4::engine;
@@ -337,6 +339,23 @@ void test_text_layout() {
           "A line before a final break measures to the pen");
 }
 
+void test_particle_records() {
+    // y_messcr (the menu cursor ping): one 160-byte record, no Bec terms.
+    std::vector<std::uint8_t> one(160, 1);
+    check(particle_record(one, 0, 160).size() == 160, "A 160-byte record is complete without the 0xB4 Bec tail");
+    check(particle_record(one, 1, 160).empty(), "There is no record past the data");
+    // y_dbreak02: 15 records of 160 bytes; the last one is drawn too.
+    std::vector<std::uint8_t> fifteen(15 * 160);
+    fifteen[14 * 160] = 7;
+    const auto last = particle_record(fifteen, 14, 160);
+    check(last.size() == 160 && last[0] == 7, "The last of 15 records starts at 14 * stride");
+    const auto inner = particle_record(fifteen, 3, 160);
+    check(inner.size() == 0xB4 && inner.data() == fifteen.data() + 3 * 160,
+          "Inner records read 0xB4 bytes into the next record like the original");
+    std::vector<std::uint8_t> bec(2 * 180);
+    check(particle_record(bec, 1, 180).size() == 0xB4, "180-byte records are read whole");
+}
+
 int main() {
     try {
         test_lod_selection();
@@ -352,6 +371,7 @@ int main() {
         test_field_time();
         test_motion_blend_tracks();
         test_text_layout();
+        test_particle_records();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;
