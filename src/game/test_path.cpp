@@ -585,6 +585,11 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
 }
 // How far a model's body boxes reach out of its origin (flat, the farthest
 // box corner as body_gap places the boxes); 0 without boxes.
+// A talk box reaching further than kFarTalk is walked to and pressed by its
+// edge (consoles: staggf03 g_covercnsz05 16.8, stagml12 g_evenconsz05 15.8,
+// dngq3b2e g_d3pedstal 14.1; the levers of stag0101-0301, 10.6, and the
+// wall switches stay pressed by their origin).
+constexpr float kFarTalk = 12.0f;
 float box_reach(const engine::ModelCtrlManager::ModelRam& e) {
     if (!e.node || !e.hit || e.hit->boxes.empty()) return 0.0f;
     const auto& m = e.node->matrix;
@@ -1196,7 +1201,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     if (std::getenv("DW4_TRACE_EXPLORE")) {
         static std::set<std::pair<std::string, int>> far_talk;
         for (const auto& e : models->rams())
-            if (e->generated && e->node && e->hit && e->hit->player_talk && box_reach(*e) > 10.0f &&
+            if (e->generated && e->node && e->hit && e->hit->player_talk && box_reach(*e) > kFarTalk &&
                 far_talk.insert({e->info_name, e->index}).second)
                 std::printf("[%d] explore: the talk box of %s#%d reaches %.1f out of it\n", frame, e->info_name.c_str(), e->index, box_reach(*e));
     }
@@ -1727,7 +1732,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     // 8.5 ahead).
     const auto gimmick_tolerance = [](const engine::ModelCtrlManager::ModelRam& e, Gimmick kind) {
         if (kind == Gimmick::step) return 6.0f;
-        if (kind == Gimmick::talk) return std::max(20.0f, box_reach(e) + 10.0f);
+        if (kind == Gimmick::talk && box_reach(e) > kFarTalk) return box_reach(e) + 10.0f;
         return 20.0f;
     };
     auto pick_gimmick = [&](bool tried) {
@@ -2333,7 +2338,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     // near its origin, or, for a box reaching far out of its model (the
     // staggf03 console behind its railing), with the box 8 units off.
     const auto talk_in_reach = [&](const engine::ModelCtrlManager::ModelRam& t) {
-        return flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5) || (box_reach(t) > 10.0f && body_gap(t, me) <= 8.0f);
+        return flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5) || (box_reach(t) > kFarTalk && body_gap(t, me) <= 8.0f);
     };
     // Watchdog: a gimmick, mat, pickup or explored point that is not
     // approached (or worked) for 600 frames is given up for a while.
