@@ -303,6 +303,7 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     if (name == "SQ_ERAS") {
         ram.seq_name = "SQ_ERAS";
         ram.seq = nullptr;
+        ++ram.sequence_serial;
         ram.wait_name.reset();
         return;
     }
@@ -321,6 +322,7 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
         for (const auto& s : *ram.sequences) if (s.name == name) { found = &s; break; }
     ram.seq_name = std::string(name);
     ram.seq = found;
+    ++ram.sequence_serial;
     ram.cursor = 0;
     ram.label_passed = false;
     ram.wait_name.reset();
@@ -402,28 +404,61 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             }
         }
     }
-    for (int guard = 0; guard < 4096 && ram.seq; ++guard) {
-        if (ram.cursor >= ram.seq->commands.size()) return;
-        const auto& command = ram.seq->commands[ram.cursor];
+    // 8030C3AC loads the command list (r24 = ctrl +0x18) and the index (r30 =
+    // ctrl +0x1C) ONCE (0x8030C3D8 / 0x8030C3DC) and walks that list until the
+    // index reaches its count (0x8030C82C, 'index != count'), a handler
+    // returns 0 (only WCHECK, 8030BCFC) or a LABEL comes after the label
+    // section started (+0x20 set: stop without advancing); every other
+    // handler returns 1 and the index advances after it. At the end the index
+    // is stored into ctrl +0x1C (0x8030C844 'stw r30,0x1c(r29)'), skipped only
+    // after a JUMP (8030BCB8 returns 1 into r25, 0x8030C818).
+    //
+    // A sequence started from inside a handler (MDLsetSeq in a LUACALL script
+    // or the AIMAP WPos script, a model command an ACTION start sends back)
+    // runs nested through 8030D910 -> 0x8030EA88 on the same ctrl and stores
+    // its own index, but LUACALL (8030B8A4, single exit 0x8030BB28) and AIMAP
+    // (8030BB3C, 0x8030BC9C) return 1: the outer loop goes on with the OLD
+    // list (its ACTION, MUTEKI, WCHECK ... act on the model as usual) and its
+    // final store overwrites the NEW sequence's cursor. Lucemon's SQ_CHACK1
+    // ends with LUACALL rl2/chack1, whose script starts SQ_SWITCH7; SWITCH7
+    // inherits index 4 and runs MUTEKI OFFWALL/OFFFLOOR, ACTION ACTN02 and
+    // WCHECK a second time when its first wait ends (its rise takes 202
+    // fields, not 201).
+    const Sequence* const list = ram.seq;
+    if (!list) return;
+    std::size_t at = ram.cursor;
+    bool jumped = false;
+    bool more = true;
+    const auto serial = ram.sequence_serial;
+    // (Port guard: an inherited index past the end of a shorter list stops;
+    // the original's '!=' compare would read past the list.)
+    while (more && at < list->commands.size()) {
+        const auto& command = list->commands[at];
         const auto& type = command.type();
         const std::string name(command.str(2));
         if (type == "beModelCtrlACTION") {
             Packet packet;
             engine.messenger().send(engine, "ACTION", ram.info_name, ram.index, name, packet);
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlWCHECK") {
+            // 8030BCFC: the wait name (ctrl +0x4C), returns 0.
             ram.wait_name = name;
-            ++ram.cursor;
-            return;
+            ++at;
+            more = false;
         } else if (type == "beModelCtrlJUMP") {
             select_sequence(engine, ram, name);
-            return;
+            jumped = true;
+            break;
         } else if (type == "beModelCtrlLABEL") {
-            if (ram.label_passed) return;
-            ram.label_passed = true;
-            ++ram.cursor;
+            // Inline at 0x8030C7BC: +0x20 set -> stop here (index kept).
+            if (ram.label_passed) {
+                more = false;
+            } else {
+                ram.label_passed = true;
+                ++at;
+            }
         } else if (type == "beModelCtrlMSGBOX") {
-            ++ram.cursor;
+            ++at; // 8030BCB0: returns 1
         } else if (type == "beModelCtrlCTRL") {
             // 80308EC0: exact control names.
             if (name == "onWalk") { ram.ctrl_mode = 1; ram.ctrl_phase = 0; }
@@ -432,13 +467,13 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             else if (name == "isLive") { ram.ctrl_mode = 4; ram.ctrl_phase = 0; }
             else if (name == "onFall") ram.fall_check = true;
             else if (name == "noFall") ram.fall_check = false;
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlPDMOVE") {
             // 8030AEE0: Stop/Move parameter pairs.
             if (!ram.pdmove_set) { ram.pdmove = {0, 0, 0, 0}; ram.pdmove_set = true; }
             if (name == "Stop") { ram.pdmove[0] = command.f32(3); ram.pdmove[1] = command.f32(4); }
             else if (name == "Move") { ram.pdmove[2] = command.f32(3); ram.pdmove[3] = command.f32(4); }
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlMOVERL") {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
             // recorder under its animated route: boats, trains, rails);
@@ -458,7 +493,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                     engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace of " +
                                std::string(command.str(3)) + (ram.follow_trace ? "" : " (none)"));
             }
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
             // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
             // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
@@ -480,7 +515,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             } catch (const std::exception& error) {
                 engine.note(std::string("MODELCTRL MOVE decode: ") + error.what());
             }
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlHITBOX") {
             // Set appends one beModelCtrlSCHitBox; AllClear drops them all.
             if (name == "Set") {
@@ -496,7 +531,7 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 ram.hitboxes.clear();
                 ++ram.hitbox_generation;
             }
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlMUTEKI") {
             // 8030C25C: OFFWALL / ONWALL / OFFFLOOR / ONFLOOR switch the wall
             // and floor checks; otherwise the invulnerable frames ("ON" -1:
@@ -508,16 +543,17 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             else if (name == "OFFFLOOR") ram.floor_check = false;
             else if (name == "ONFLOOR") ram.floor_check = true;
             else ram.muteki = name == "OFF" ? 0.0f : command.f32(3);
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlLABELCTRL") {
             // The label section a later sequence starts from (like SETLABEL).
             ram.labels[std::string(command.str(3))] = name;
-            ++ram.cursor;
+            ++at;
         } else if (type == "beModelCtrlAIMAP") {
             // 8030BB3C: select the AI map by name; a WPOS map asks
             // aim_<model>.lua (call name "WPos") for its world target. The
-            // AITIMER ends so the next update picks from the new map.
-            ++ram.cursor;
+            // AITIMER ends so the next update picks from the new map. A
+            // sequence the script starts changes nothing here: the target is
+            // stored, the AITIMER removed and 1 returned (0x8030BC9C).
             if (ram.ai_maps)
                 for (std::size_t i = 0; i < ram.ai_maps->size(); ++i)
                     if ((*ram.ai_maps)[i].str(2) == name) ram.ai_map = int(i);
@@ -530,22 +566,21 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
                 context.index = ram.index;
                 context.call_name = "WPos";
                 context.world_target = &target;
-                const auto* seq = ram.seq;
                 engine.push_model_context(std::move(context));
                 engine.run_script("aim_" + ram.info_name + ".lua");
                 engine.pop_model_context();
                 ram.ai_world_target = target;
-                if (ram.seq != seq) return;
             }
             ram.ai_timer.reset(); // 0x8030BC94: 8031E8BC removes the AITIMER
+            ++at;
         } else if (type == "beModelCtrlLUACALL") {
             // 8030B8A4: BHit, WHit and FHit keep the name for after this
             // model's hitbox hits something, it meets a wall or the floor
             // (bullets erase themselves). Any other mode runs
             // "<name>_<info>.lua" now with the mode as MDLisCallName's call
-            // name (e.g. "swof", "magic", "setaid").
+            // name (e.g. "swof", "magic", "setaid"). Always returns 1
+            // (0x8030BB28), also when the script started another sequence.
             const auto mode = command.str(3);
-            ++ram.cursor;
             if (mode == "BHit") {
                 ram.lua_bhit = name;
             } else if (mode == "WHit") {
@@ -553,16 +588,24 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             } else if (mode == "FHit") {
                 ram.lua_fhit = name;
             } else {
-                const auto generation = ram.hitbox_generation;
-                const auto* seq = ram.seq;
                 run_model_script(engine, ram, name, mode);
-                if (ram.seq != seq || ram.hitbox_generation != generation) return;
             }
+            ++at;
         } else {
+            // (The original has a handler for every authored command type; an
+            // unknown one would repeat forever there. The port skips it.)
             engine.note("MODELCTRL command " + type);
-            ++ram.cursor;
+            ++at;
         }
     }
+    if (jumped) return;
+    // DW4_TRACE_SEQINT=1 logs every sequence started inside the loop whose
+    // cursor the old list's index overwrites.
+    if (static const bool trace = std::getenv("DW4_TRACE_SEQINT") != nullptr; trace && ram.sequence_serial != serial)
+        engine.log("seqint " + ram.info_name + "#" + std::to_string(ram.index) + " " + list->name + " left at " + std::to_string(at) +
+                   " -> " + ram.seq_name + " cursor " + std::to_string(ram.cursor) + " := " + std::to_string(at) +
+                   (ram.wait_name ? " wait " + *ram.wait_name : std::string()));
+    ram.cursor = at;
 }
 
 bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
@@ -1010,7 +1053,8 @@ void ModelCtrlManager::update_player(Engine& engine, ModelRam& ram) {
     const auto direction = pad.left_directions.held;
     const bool stick = direction != 0;
     if (ram.control_enabled && !engine.main_lobby() && (pad.buttons.held & dw4::pad_button::b)) {
-        if (ram.slam_timer > 0) ram.slam_timer = std::max(0.0f, ram.slam_timer - 1.0f);
+        // 0x8034C778..0x8034C7A8: down by the system frame step, not below 0.
+        if (ram.slam_timer > 0) ram.slam_timer = std::max(0.0f, ram.slam_timer - engine.system_step());
         switch (ram.slam_state) {
         case 0: if (!stick) ram.slam_state = 1; break;
         case 1:
@@ -1577,11 +1621,15 @@ void ModelCtrlManager::check_wait(Engine& engine, ModelRam& ram) {
 // MODEL_HITBOX queue: every entry advances once per frame in list order. The
 // first check happens when elapsed reaches the delay; later passes check
 // again until elapsed reaches the end, which removes the entry unchecked.
+// The hitboxes are subcommands of the ctrl's list (+0xE4, 80310DAC) like the
+// effects: 80310754 adds the system frame step (Engine::system_step, world
+// time delta / 16666667) to elapsed, not 1.0 (0x80310764..0x80310778).
 void ModelCtrlManager::update_hitboxes(Engine& engine, ModelRam& ram) {
     const auto generation = ram.hitbox_generation;
+    const float step = engine.system_step();
     for (std::size_t i = 0; i < ram.hitboxes.size();) {
         auto& box = ram.hitboxes[i];
-        box.elapsed += 1.0f;
+        box.elapsed += step;
         bool check = false;
         if (!box.started) {
             if (box.elapsed >= box.delay) {
@@ -1660,8 +1708,9 @@ void ModelCtrlManager::run_model_script(Engine& engine, ModelRam& ram, std::stri
 
 // Player controller waits (vtable +A4, 8034D214). Atck01: the attack chain
 // continues after the action only when A stayed held; Atck02: releasing A
-// returns to SQ_WAIT, otherwise continue after the action; Atck03: wait while
-// A is held.
+// selects SQ_WAIT (its start clears the wait name, 8030F418) and the action
+// check still follows; held, the wait ends with the action; Atck03: wait
+// while A is held.
 bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_view wait) {
     const auto& pad = engine.pads()[std::size_t(std::clamp(ram.index, 0, 3))];
     const bool held = ram.control_enabled && (pad.buttons.held & dw4::pad_button::a);
@@ -1683,10 +1732,12 @@ bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_vi
         return false;
     }
     if (wait == "Atck02") {
-        if (!held) {
-            select_sequence(engine, ram, "SQ_WAIT");
-            return false;
-        }
+        // 0x8034D47C..0x8034D604: A released selects SQ_WAIT (vtable +0x8C),
+        // and the action check still follows: an ended action clears the wait
+        // and runs the command loop on the sequence now current (SQ_WAIT,
+        // whose section stops at its next LABEL). (Before: no action check
+        // after the release.)
+        if (!held) select_sequence(engine, ram, "SQ_WAIT");
         return action_done();
     }
     return !held;
@@ -1694,11 +1745,17 @@ bool ModelCtrlManager::player_wait(Engine& engine, ModelRam& ram, std::string_vi
 
 // Effect subcommands (80310754 / start 80310340): after the delay, FIND_SPACE a
 // RAM of the effect model and GENERATE it on this model. Sequence-dead effects
-// stay queued so a sequence change erases them.
+// stay queued so a sequence change erases them. The delay counts the system
+// frame step, *(*(*(model +0x10) +0x10) +0x28) (0x80310764..0x80310778),
+// which beSystem's update 80316258 sets to the world time delta / 16666667
+// every frame: 1.001 per NTSC field, more or less with a jittering clock
+// (Dolphin, DW4_CLOCK_FILE), so a delay can end one frame later than a
+// +1.0 count.
 void ModelCtrlManager::update_effects(Engine& engine, ModelRam& ram) {
+    const float step = engine.system_step();
     for (std::size_t i = 0; i < ram.effects.size();) {
         auto& effect = ram.effects[i];
-        effect.elapsed += 1.0f;
+        effect.elapsed += step;
         if (effect.started || effect.elapsed < effect.delay) { ++i; continue; }
         effect.started = true;
         Packet find;
