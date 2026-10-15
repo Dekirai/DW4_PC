@@ -2757,6 +2757,20 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         train_leaving_ = false;
         train_exp_at_ = frame;
         boxes_seen_.clear();
+        // A new visit: the ExploreBot is not asked in the lobby, so back in
+        // the same field from there it kept its last visit's memory (visited
+        // ground, mats, targets left alone by model pointer, which now name
+        // other models): a fresh one, and the fights' pointer maps cleared.
+        // (Not with the one-hit cheat: the recorded runs keep their path.)
+        // A training run of the no-cheat driver wandered 160000 frames in
+        // stag0101 without taking matz02 that way (s2i).
+        if (!engine.cheats().one_hit) {
+            explorer_ = ExploreBot{};
+            foe_left_.clear();
+            target_skip_.clear();
+            foe_ = nullptr;
+            target_ = nullptr;
+        }
         // Settings the ExploreBot reads at its stage start.
         for (const auto& setting : kStageSettings) {
             const bool here = stage == setting.stage;
