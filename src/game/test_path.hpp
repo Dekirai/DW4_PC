@@ -323,6 +323,7 @@ private:
     std::map<const void*, int> approach_;        // structure -> steps targeted without getting within reach
     std::set<const void*> unkillable_;           // enemies that heal themselves or took no damage thrice: left alone for the stage
     std::set<const void*> regenerating_;         // enemies seen healing back above their lowest HP
+    std::set<const void*> vanished_;             // enemy RAMs seen free or defeated (a spawn into one is a new enemy)
     std::map<const void*, engine::Vec3f> enemy_last_; // attacked enemy -> position one step ago (moving ones are no vents)
     std::map<const void*, int> enemy_hp_;        // enemies' HP one step ago (kills count as progress)
     int kill_credits_{};                         // kills counted as progress since the last newly cleared generator
