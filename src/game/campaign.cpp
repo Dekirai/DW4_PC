@@ -815,7 +815,8 @@ std::vector<TitlePress> title_presses() {
 //   (bML01008.lua "buy?" -> diskshop.lua -> SUBWND DISK, ShopDisk 803967A8:
 //   Buy, the ten conItem rows at their HANBAI price, the count, yes) up to
 //   `keep` of each supply that fits the character's maximum HP, in the
-//   order listed, as far as the bits go.
+//   order listed, as far as the bits go; before that it sells the weaker
+//   devices there (next_sale, kSellFrom).
 // - After a defeat the bit capsule (g_000bcaps, PLAYER2 slot of the player)
 //   keeps the bits and a fifth of the level's EXP step (BKCHIPBITEXP
 //   80377F70); it comes back where it was when the stage is entered again
@@ -2295,6 +2296,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // A hit closed the panel (the damage sequences REMOVE it,
             // 8034E1A4): tried again as soon as the player can.
             if (trace()) std::printf("[%d] campaign disk use interrupted (frame %d of it)\n", frame, t);
+            if (disk_use_ == kGateDisk) gate_disk_at_ = -100000; // (its wait is for a trip made)
             disk_use_ = -1;
             if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
             return;
@@ -2313,9 +2315,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         if (t > a_at + 30) {
             // (A pick the panel did not take, the disk still held: tried again
             // soon; the Gate Disk and the Raise Disk have their own retries.)
-            if (disk_use_ != kGateDisk && disk_use_ != kRaiseDisk && disks_held(slot, disk_use_) == disk_held_) {
+            if (disk_use_ != kRaiseDisk && disks_held(slot, disk_use_) == disk_held_) {
                 if (trace()) std::printf("[%d] campaign disk %d not taken by the panel\n", frame, disk_use_);
                 if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
+                if (disk_use_ == kGateDisk) gate_disk_at_ = -100000;
             }
             disk_use_ = -1;
             panel_close_at_ = frame;
@@ -2351,6 +2354,14 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             for (const int record : {0, 1, 2, 9})
                 if (disks_held(slot, record) > 0) highest = record;
             disk_quick_ = highest == pick || slot.hp * 100 < slot.max_hp * kHealQuickBelow;
+            // (A panel walk waits for a gap between the blows: a hit closes
+            // the panel, 8034E1A4.)
+            const float walk = float(4 + 2 * disk_ups_ + 2 * disk_line_ + 2);
+            if (!disk_quick_ && blow_due(engine, player, walk, frame) <= walk) {
+                disk_use_ = -1;
+                heal_at_ = frame - kHealGap + 2;
+                return;
+            }
             if (trace())
                 std::printf("[%d] campaign heals at %d/%d HP with conItem %d (HP disks %d/%d/%d, Recovery %d)\n", frame, slot.hp, slot.max_hp,
                             pick, disks_held(slot, 0), disks_held(slot, 1), disks_held(slot, 2), disks_held(slot, 9));
@@ -2417,8 +2428,12 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         bool heals = false;
         for (const int record : {0, 1, 2, 9}) heals = heals || disks_held(slot, record) > 0;
         const bool dying = slot.hp * 100 < slot.max_hp * kGateTripBelow && !heals;
-        const bool shopping = objective_now_.rfind("train", 0) == 0 && slot.bits >= kGateTripBits && next_purchase(engine).record >= 0;
-        if (dying || shopping) {
+        // (While training: supplies to buy, or a full device folder, which
+        // takes no drop, to sell from.)
+        const bool shopping = objective_now_.rfind("train", 0) == 0 &&
+                              ((slot.bits >= kGateTripBits && next_purchase(engine).record >= 0) ||
+                               (slot.devices.size() >= 36 && next_sale(engine) >= 0));
+        if ((dying || shopping) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
             start_disk(slot, kGateDisk, frame);
