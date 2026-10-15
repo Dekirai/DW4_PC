@@ -358,6 +358,9 @@ void Engine::begin_stage_load() {
     loading_node_ = nullptr;
     soft_reset_allowed_ = false;
     loader_state_ = 0;
+    loader_last_file_.clear();
+    loader_read_ = false;
+    loader_booked_ = -1;
     // What survives into this stage, for save states.
     StageSnapshot snapshot;
     snapshot.stage = next;
@@ -583,18 +586,44 @@ void Engine::process_stage_loader() {
         auto queue = std::move(common_queue_);
         common_queue_.clear();
         for (const auto& path : queue) load_file(path, false, deferred_infos_);
+        loader_last_file_ = queue.empty() ? std::string() : queue.back();
         loader_state_ = 10;
         break;
     }
-    case 10:
-        // State 4: the loading screen plays at least its minimum time
-        // (80311674), then holds its lock time (80311660).
-        if (loading_node_) {
-            if (!loading_node_->anim->finished()) break;
-            loading_node_->anim->fixed = loading_node_->anim->lock;
+    case 10: {
+        // State 4 (802F973C) ends once the loading screen played its minimum
+        // time (80311674) and the queued files are read and processed
+        // (802F9E98); then it holds its lock time (80311660). The port reads
+        // the files at once, so its load ends with the loading screen. The
+        // drive sees the original's last read there, the final chunk of the
+        // last queued file: requested kLoaderLead fields before the end (19
+        // fields before first.lua in the captures, without their lag fields),
+        // and state 4 ends no earlier than three fields after its booking
+        // (every capture). The stream refills behind it seek back as the
+        // original's do, so one can still be on the drive at first.lua (the
+        // loader's earlier reads and the original's load time are not
+        // simulated).
+        constexpr std::int64_t kLoaderLead = 14;
+        const bool finished = !loading_node_ || loading_node_->anim->finished();
+        auto* sound = get<SoundManager>();
+        if (sound && !loader_last_file_.empty() && !loader_read_) {
+            std::int64_t left = 0;
+            if (!finished)
+                left = (loading_node_->anim->play_limit - loading_node_->anim->played) / std::max<std::int64_t>(1, frame_delta()) + 1;
+            if (left <= kLoaderLead) {
+                sound->load_file(*this, loader_last_file_);
+                loader_read_ = true;
+            }
         }
+        // The read is booked by a driver tick (after the game update); the
+        // original's loader sees a booking one field after the port would.
+        if (loader_read_ && loader_booked_ < 0 && sound && !sound->loading()) loader_booked_ = std::int64_t(frame_);
+        if (!finished) break;
+        if (loader_read_ && (loader_booked_ < 0 || std::int64_t(frame_) < loader_booked_ + 2)) break;
+        if (loading_node_) loading_node_->anim->fixed = loading_node_->anim->lock;
         loader_state_ = 5;
         break;
+    }
     case 5: {
         auto infos = std::move(deferred_infos_);
         deferred_infos_.clear();

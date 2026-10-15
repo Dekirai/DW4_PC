@@ -275,7 +275,7 @@ private:
 // stage's sound list names as "[archive.entry]"; the host's audio service
 // pulls them mixed through render(). Sound effects (types 3/4) are requests
 // into the sfp banks (the common allse.sfp and the stage's beStaticInfo
-// banks) or, without a request id, ADX files on the SE stream channels.
+// banks) or, without a request id, ADX files on the four SE stream channels.
 // A movie (MOVIE PLAY, Sofdec) plays its ADX sound on the movie channel and
 // hands its MPEG-1 video to the host, which shows it over the screen.
 class SoundManager final : public Manager {
@@ -319,27 +319,39 @@ public:
     void restore(Engine& engine, const std::shared_ptr<const void>& state);
     static void serialize_persistent(class StateArchive& archive, std::shared_ptr<const void>& state);
 
+    // A Cri sound entry's volume fade (disc_timing.hpp).
+    using Fade = CriFade;
+
+    // The stage loader's last read on the simulated drive (the loader's own
+    // CRI file stream, CriStreams::Loader, after the stream handles' reads):
+    // the final chunk of `logical_path`; loading() holds until it is booked.
+    void load_file(Engine& engine, const std::string& logical_path);
+    bool loading() const { return cri_.loader.active; }
+
 private:
     void update_driver(Engine& engine);
     // beSoundData: [4] type (1 BGM, 2 ambience, 3/4 sound effects), [5] file
-    // list index, [6] SE request id (-1: an ADX file), [8] volume in 0.1 dB.
+    // list index, [6] SE request id (-1: an ADX file), [8] volume in 0.1 dB,
+    // [9] priority of an ADX sound effect on the SE stream channels.
     struct SoundData {
         int type{}, file{}, volume{};
         std::uint32_t request{0xffffffffu};
+        int priority{};
     };
+    // One of the Cri object's ADX sound entries (802F66C8): channel 0 BGM
+    // (Cri +0x20), 1 ambience (+0x24), 2-5 the four SE stream handles (the
+    // first entries of the SE list +0x28), each on the CRI slot of its index.
     struct Stream {
-        std::string name;
+        std::string name;                // entry +8: set when a sound starts, cleared when it stops
         std::string file;                // "[archive.entry]" it was opened from
+        std::uint64_t serial{};          // entry +24: nonzero while the entry holds a sound
+        int priority{};                  // entry +34: beSoundData [9] of the sound started last
+        int volume{};                    // fade object +12: the sound's volume, 0.1 dB (beSoundData [8])
+        int out_volume{-999};            // ADXT_SetOutVol (0.1 dB): volume + base, then the fade's steps
+        Fade fade;
+        // Audio only (never consulted by the game): the decoder the host mixes.
         std::uint64_t frames_read{};     // source frames decoded so far
         std::unique_ptr<adx::Decoder> decoder;
-        float gain = 1.0f;
-        int volume{};    // the sound's volume, 0.1 dB (beSoundData [8])
-        int fade{};      // fade-out of a replaced stream: 0 none, else the next step (8031D5D0)
-        float fade_level = 1.0f; // its gain
-        bool paused{};   // PLAYatPAUSE: buffered, waiting for PAUSEOFF (8031D294)
-        bool ready{};    // the channel's ADXT handle is PLAYING (cri_)
-        float ramp_from = 1.0f, ramp_to = 1.0f; // VOLUMECTL2 gain ramp
-        int ramp_frames{}, ramp_left{};
         double phase = 1.0;
         std::array<float, 2> previous{}, next{};
     };
@@ -370,29 +382,62 @@ private:
         float left = 1.0f, right = 1.0f;
         bool loop{};
     };
-    bool play(Engine& engine, Packet& packet, bool paused = false);
+    // SOUND PLAY <name> (80314FC8): the play id (the Cri serial of the
+    // started sound, 0 if nothing started). `owner` tags the voices of a
+    // model's sound effect (its action cue).
+    std::uint64_t play(Engine& engine, const std::string& name, const std::string& owner = {});
+    // 802F5828: a BGM or ambience start on its channel (0 while the channel
+    // still runs: it fades out first).
+    std::uint64_t start_bgm_env(Engine& engine, const std::string& name, const SoundData& data);
+    // 802F5A04: a sound effect, an sfp request or an ADX file on an SE stream channel.
+    std::uint64_t start_effect(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner);
+    // The sfp request (8031CCFC SEQ_PLAY); false: nothing started.
     bool play_request(Engine& engine, const std::string& name, const SoundData& data, const std::string& owner = {});
     void play_cue(Engine& engine, const std::string& sound, const std::string& owner);
     void stop_effects(const std::string& name, const std::string& owner);
+    // 802F5828 / 802F5A04 after the entry is chosen: pause, SetOutVol,
+    // ADXT_StartAfs, the PLAYatPAUSE flag, the serial (0: not started).
+    std::uint64_t start_stream(Engine& engine, int channel, const std::string& name, const SoundData& data);
     bool open_stream(Engine& engine, Stream& stream, const std::string& name, const SoundData& data);
+    // 802F56B0 for an ADX sound effect: the first free SE stream entry, else
+    // the oldest whose priority does not exceed the sound's (stopped); -1: none.
+    int choose_se_channel(int priority);
+    // 8031D0F0: 1 while the channel's stream runs (ADXT status 1-4), 0 when
+    // it is stopped or has played out.
+    int busy(int channel) const;
+    // 802F6FB0: ISREADY of a name ("ALL": every running ADX entry).
+    bool ready(std::string_view name) const;
+    // 802F61F8 / 802F6334: the BGM entry of that name, else the ambience's,
+    // else every SE stream entry of that name.
+    template <class F> void for_named(std::string_view name, F&& f);
+    // 8031D294 (ADXT_Pause) on a channel's handle.
+    void pause_channel(Engine& engine, int channel, bool paused);
+    // 802F7244: the SNDF master volume, set once (803C2734).
+    void set_sndf_volume(int volume);
     // The channel's CRI handle (slot = channel) and the simulated disc reads
     // that decide when a stream is ready (disc_timing.hpp).
     CriStreams::File stream_file(Engine& engine, unsigned archive, unsigned entry, const adx::Header& header) const;
+    std::pair<std::uint64_t, std::uint32_t> disc_extent(Engine& engine, unsigned archive, unsigned entry) const;
     void trace_cri(Engine& engine, int inflight_before, std::int64_t done_before, const std::array<bool, CriStreams::kSlots>& playing_before);
     void play_movie(Engine& engine, const Ram& ram, const std::string& name);
     void end_movie(Engine& engine);
-    void mix_stream(Stream& stream, float* mix, std::size_t frames);
+    void mix_stream(Stream& stream, float gain, float* mix, std::size_t frames);
     void add_bank(Engine& engine, const ObjectView& data, bool common);
     void run_track(SeTrack& track);
     void mix_voices(float* mix, std::size_t frames);
-    Stream* stream_named(std::string_view name);
+    // 802F5F98: the entry stops (serial, name and fade cleared, ADXT_Stop).
     void stop(int channel);
     std::vector<std::unique_ptr<Ram>> rams_;
     std::map<std::string, SoundData, std::less<>> sounds_;
     std::vector<std::string> files_;
-    static constexpr std::size_t kSeStreams = 2;
+    static constexpr std::size_t kSeStreams = 4;  // 802F66C8: four mono ADXT handles
     std::array<Stream, 2 + kSeStreams> streams_; // BGM, ambience, SE streams
     CriStreams cri_;
+    std::uint64_t serial_{};        // Cri +0x18: serial of the last sound started
+    bool pause_next_{};             // Cri +0x3C: PLAYatPAUSE, the next sound starts paused
+    // RAM +0x28 (803151B0): a sound effect PLAY of a name started less than
+    // 49 999 998 ns (world time) ago is ignored; name -> end of that time.
+    std::map<std::string, std::int64_t, std::less<>> se_recent_;
     std::vector<std::shared_ptr<SeBank>> banks_;
     bool common_loaded_{};
     std::vector<SeTrack> tracks_;
@@ -408,11 +453,17 @@ private:
         int frames{};
     };
     std::vector<PendingCue> cues_;
-    std::map<std::string, std::string, std::less<>> owner_loops_; // "model#index" -> its looping sound
+    // "model#index" -> its looping sound and that sound's play id (803105DC
+    // keeps the id of a type 4 sound; the next action stops it).
+    struct OwnerLoop {
+        std::string sound;
+        std::uint64_t id{};
+    };
+    std::map<std::string, OwnerLoop, std::less<>> owner_loops_;
     std::uint32_t random_ = 0x12345678u;
-    std::string current_bgm_;       // +0x24
-    int se_volume_{};               // SNDFVOLUME: SNDF master 1..127, 0 unset (+56)
-    int base_volume_{};             // beSoundInfo [9] _baseVolume, 0.1 dB (+52)
+    std::string current_bgm_;       // RAM +0x24 (set by a started BGM PLAY; BGMSTOP and a new stage's RAM clear it)
+    int se_volume_{};               // Cri +0x38: SNDF master 1..127 (beSoundInfo [10] / SNDFVOLUME), 0 unset
+    int base_volume_{};             // Cri +0x34: beSoundInfo [9] _baseVolume, 0.1 dB
     std::optional<Movie> movie_;
     Stream movie_stream_;
     std::uint32_t movie_serial_{};

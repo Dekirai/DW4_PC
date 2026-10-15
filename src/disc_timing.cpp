@@ -42,6 +42,7 @@ constexpr std::uint32_t kSector = 2048;
 constexpr std::array<std::uint32_t, CriStreams::kSlots> kRingSectors{53, 53, 13, 13, 13, 13};
 constexpr std::uint32_t kStartLimit = 25;          // 804CD3A8: sectors read before the header is parsed
 constexpr std::uint32_t kMaxRequest = 512;         // ADXSTM +0x2C
+constexpr std::uint32_t kLoaderRequest = 64;       // the loader's reads (every capture: 64-sector requests)
 constexpr std::uint32_t kOutputSamples = 0x2000;   // output SJ per channel (8029B820: +0x30)
 constexpr std::uint32_t kAramSamples = 4096;       // RNARES ring per channel (802A8590)
 constexpr std::uint32_t kAramStep = 2048;          // played samples are given back in halves (802A72F0)
@@ -59,7 +60,73 @@ std::uint32_t decode_unit(const CriStreams::File& file) {
     if (!file.loop) unit /= 2;
     return 64 * ((unit + 64) / 64);
 }
+
+// The fade tables (804E05C8 down, 804E04D8 up; 60 levels each).
+constexpr float kFadeDown[60] = {
+    0.959999979f, 0.930000007f, 0.899999976f, 0.870000005f, 0.829999983f, 0.810000002f, 0.779999971f, 0.75f,
+    0.720000029f, 0.689999998f, 0.660000026f, 0.639999986f, 0.610000014f, 0.579999983f, 0.560000002f, 0.529999971f,
+    0.50999999f,  0.49000001f,  0.460000008f, 0.439999998f, 0.419999987f, 0.400000006f, 0.379999995f, 0.360000014f,
+    0.330000013f, 0.319999993f, 0.300000012f, 0.280000001f, 0.25999999f,  0.25f,        0.230000004f, 0.209999993f,
+    0.200000003f, 0.180000007f, 0.170000002f, 0.150000006f, 0.140000001f, 0.129999995f, 0.119999997f, 0.109999999f,
+    0.100000001f, 0.0799999982f, 0.0799999982f, 0.0700000003f, 0.0599999987f, 0.0500000007f, 0.0399999991f, 0.0299999993f,
+    0.0299999993f, 0.0199999996f, 0.0199999996f, 0.00999999978f, 0.00999999978f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+constexpr float kFadeUp[60] = {
+    0.0399999991f, 0.0700000003f, 0.100000001f, 0.129999995f, 0.170000002f, 0.189999998f, 0.219999999f, 0.25f,
+    0.280000001f,  0.310000002f,  0.340000004f, 0.360000014f, 0.389999986f, 0.419999987f, 0.439999998f, 0.469999999f,
+    0.49000001f,   0.50999999f,   0.540000021f, 0.560000002f, 0.579999983f, 0.600000024f, 0.620000005f, 0.639999986f,
+    0.670000017f,  0.680000007f,  0.699999988f, 0.720000029f, 0.74000001f,  0.75f,        0.769999981f, 0.790000021f,
+    0.800000012f,  0.819999993f,  0.829999983f, 0.850000024f, 0.860000014f, 0.870000005f, 0.879999995f, 0.889999986f,
+    0.899999976f,  0.920000017f,  0.920000017f, 0.930000007f, 0.939999998f, 0.949999988f, 0.959999979f, 0.970000029f,
+    0.970000029f,  0.980000019f,  0.980000019f, 0.99000001f,  0.99000001f,  1.0f,         1.0f,         1.0f,
+    1.0f,          1.0f,          1.0f,         1.0f};
+// (int)|-210 * level| (fctiwz after clearing the sign, 8031DD04..8031DD30).
+int fade_db(float level) { return int(std::fabs(-210.0f * level)); }
 } // namespace
+
+// 8031D5D0: the first index is the first table entry the start level
+// reaches, the last index the last entry the end level reaches (scanned from
+// the table's end; -1 when none does); the index advances by their distance
+// over the frames.
+void CriFade::start(float from_level, float to_level, float frames) {
+    running = true;
+    from = from_level;
+    to = to_level;
+    int first = -1, last = -1;
+    if (from >= to) {
+        for (int i = 0; i < 60 && first < 0; ++i)
+            if (from >= kFadeDown[i]) first = i;
+        for (int i = 59; i >= 0 && last < 0; --i)
+            if (to <= kFadeDown[i]) last = i;
+    } else {
+        for (int i = 0; i < 60 && first < 0; ++i)
+            if (from <= kFadeUp[i]) first = i;
+        for (int i = 59; i >= 0 && last < 0; --i)
+            if (to >= kFadeUp[i]) last = i;
+    }
+    position = float(first);
+    // (No script fades over zero frames; that would divide by zero.)
+    increment = float(last - first) / std::max(frames, 1.0f);
+}
+
+// 8031DCB0 (with 8031DC38): the index advances by the step, then the level
+// is read from the table (the down table while from >= to); the fade ends
+// once the volume reaches the target's.
+int CriFade::step(int volume, int base) {
+    position += increment;
+    // fctiwz; the original indexes without a bound (every fade ends before
+    // its index leaves the table).
+    const int index = std::clamp(int(position), 0, 59);
+    const float level = from >= to ? kFadeDown[index] : kFadeUp[index];
+    const int result = fade_db(level) + volume + base - 210;
+    const int target = fade_db(to) + volume + base - 210;
+    if (from <= to) {
+        if (result >= target) running = false;
+    } else if (result <= target) {
+        running = false;
+        if (to == 0.0f) return -999;
+    }
+    return result;
+}
 
 double DiscDrive::seek_time(std::uint64_t from, std::uint64_t to) {
     const double distance = std::fabs(position(from) - position(to));
@@ -164,12 +231,20 @@ void CriStreams::stop(int slot) {
     h.paused = paused;
 }
 
+void CriStreams::load(std::uint64_t disc_offset, std::uint32_t sectors) {
+    loader.active = sectors > 0;
+    loader.disc_offset = disc_offset;
+    loader.sectors = sectors;
+    loader.pos = 0;
+}
+
 void CriStreams::pause(int slot, bool paused, std::int64_t now) {
     if (!valid(slot)) return;
     auto& h = handles[std::size_t(slot)];
     if (h.paused == paused) return;
     h.paused = paused;
-    if (!h.active || h.state != 3) return;
+    // 8029A4E0: the renderer is switched in status 3 and 4 only.
+    if (!h.active || (h.state != 3 && h.state != 4)) return;
     // The game update runs after this field's servers, i.e. one field
     // before the driver tick that follows it.
     const std::int64_t at = now - kFieldTicks + kGamePhase;
@@ -229,14 +304,31 @@ void CriStreams::tick(std::int64_t now) {
                 h.state = 3;
                 if (!h.paused) h.dsp_start = now + kDspDelay;
             }
+        } else if (h.state == 3) {
+            // 8029BF14: a one-shot decoded to its end whose output SJ holds
+            // fewer than 64 samples switches the renderer's transfer off
+            // (8029D9C0) and ends decoding (status 4, DECEND).
+            if (!h.file.loop && h.decoded >= h.file.samples && h.sj < 64) h.state = 4;
+        } else if (h.state == 4) {
+            // 8029C0F0: once the ARAM ring holds no unplayed data (802A74C0:
+            // 4096 - free - flushed silence, i.e. moved - reclaimed) the
+            // renderer stops (8029D9A0) and the stream has ended (status 5).
+            if (h.moved <= h.reclaimed) {
+                h.state = 5;
+                h.played_before = played(h, now);
+                h.dsp_start = -1;
+            }
         }
     }
     // Renderer server (802A6DF8): the DSP's progress comes back in halves,
     // then the ring is refilled from the output SJ (also before playback).
     for (auto& h : handles) {
-        if (!h.active || h.state < 2) continue;
+        if (!h.active || h.state < 2 || h.state > 4) continue;
         const double p = played(h, now);
         while (p - double(h.reclaimed) >= double(kAramStep)) h.reclaimed += kAramStep;
+        // After DECEND the transfer is off: the ring only gets silence
+        // (802A6FF0), the DSP plays the rest out.
+        if (h.state == 4) continue;
         const std::uint64_t room = kAramSamples - (h.moved - h.reclaimed);
         std::uint64_t m = std::min<std::uint64_t>(room, h.sj);
         m -= m % 16;
@@ -246,9 +338,11 @@ void CriStreams::tick(std::int64_t now) {
     // File server (80296904): the gcCi poll, then two passes over the readers
     // (80298FC8 twice, 80299248 each).
     if (inflight.slot >= 0 && now >= inflight.done) {
-        handles[std::size_t(inflight.slot)].done = true;
+        if (inflight.slot == kLoaderSlot) loader.done = true;
+        else handles[std::size_t(inflight.slot)].done = true;
         inflight.slot = -1;
     }
+    loader.booked = false;
     for (int pass = 0; pass < 2; ++pass) {
         for (int slot = 0; slot < kSlots; ++slot) {
             auto& h = handles[std::size_t(slot)];
@@ -289,6 +383,21 @@ void CriStreams::tick(std::int64_t now) {
             inflight.slot = slot;
             inflight.done = now + duration;
         }
+        // The loader's stream comes after the ADXT readers.
+        if (loader.busy) {
+            if (!loader.done) continue;
+            loader.busy = loader.done = false;
+            loader.pos += loader.request;
+            loader.booked = true;
+            if (loader.pos >= loader.sectors) loader.active = false;
+            continue;
+        }
+        if (!loader.active || loader.booked || inflight.slot >= 0) continue;
+        const std::uint32_t n = std::min(kLoaderRequest, loader.sectors - loader.pos);
+        inflight.done = now + drive.read(loader.disc_offset + std::uint64_t(loader.pos) * kSector, std::uint64_t(n) * kSector, now);
+        inflight.slot = kLoaderSlot;
+        loader.busy = true;
+        loader.request = n;
     }
 }
 
