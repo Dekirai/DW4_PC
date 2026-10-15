@@ -236,9 +236,10 @@ and the flags that open their doors, the Lucemon fight by a boss routine; withou
 casts its first technique while the MP lasts (MP disks when it runs out) and puts the strongest
 devices found on at the Digi-Lab, and without `DW4_GOD` it
 also guards against enemy blows and touches, heals with HP disks from the L panel, uses heal gates,
-sells the weaker devices at the disk shop,
-the X-Data shop's refill and Gate Disks, restocks at the disk shop, recovers its bit capsule with a
-Raise Disk after a defeat and trains in the area's field below an objective's gate level),
+the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
+buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
+Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
+Disk escape raises that level like a defeat)),
 `--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
 every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by

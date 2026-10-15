@@ -72,6 +72,9 @@ private:
         int kind = -1, device = -1;
     };
     EquipPick next_equip(engine::Engine& engine) const;
+    double equip_value(engine::Engine& engine, const engine::ItemDevice& d) const;
+    // The stock line of a device shop (6 weapons, 7 armor) to buy, -1 none.
+    int next_gear(engine::Engine& engine, int program) const;
     // The next device to sell at the disk shop (campaign.cpp kSellFrom), -1 none.
     int next_sale(engine::Engine& engine) const;
     bool raise_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
@@ -148,6 +151,8 @@ private:
     int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
+    int last_hp_ = -1;           // player 1's HP in the last frame (survive)
+    int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
@@ -162,6 +167,12 @@ private:
     bool sale_confirm_ = false;  // a device was picked from the sale list (its yes follows)
     int sale_target_ = -1;       // that device
     int sale_at_ = -1;           // a device sold (the list's page follows the folder)
+    // Gear from the weapon and armor shops (next_gear).
+    bool gear_open_ = false;     // a device shop program of the errand may be running
+    int gear_program_ = 6;       // its program (6 weapons, 7 armor)
+    bool gear_buying_ = false;   // Buy was chosen: the stock list
+    bool gear_ran_ = false;      // its program was seen running
+    std::array<int, 2> gear_checked_{-1, -1}; // the level each shop was last looked at
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at

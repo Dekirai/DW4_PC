@@ -816,7 +816,10 @@ std::vector<TitlePress> title_presses() {
 //   Buy, the ten conItem rows at their HANBAI price, the count, yes) up to
 //   `keep` of each supply that fits the character's maximum HP, in the
 //   order listed, as far as the bits go; before that it sells the weaker
-//   devices there (next_sale, kSellFrom).
+//   devices there (next_sale, kSellFrom). With bits to spare it buys
+//   stronger devices at the weapon and armor shops (next_gear).
+// - Low HP is also HP within reach of the biggest blow taken lately
+//   (kBigHitMargin).
 // - After a defeat the bit capsule (g_000bcaps, PLAYER2 slot of the player)
 //   keeps the bits and a fifth of the level's EXP step (BKCHIPBITEXP
 //   80377F70); it comes back where it was when the stage is entered again
@@ -831,6 +834,9 @@ std::vector<TitlePress> title_presses() {
 constexpr int kHealBelow = 40; // percent of the maximum HP
 constexpr int kHealGap = 90;   // frames between two emergency heals
 constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) instead of the panel
+// Also low HP: below kBigHitMargin percent of the biggest blow taken within
+// kBigHitFor frames (survive).
+constexpr int kBigHitMargin = 130, kBigHitFor = 3600;
 // The guard (survive): no attack is started while an enemy blow lands within
 // kHoldAttackLead frames; B goes in kGuardLead frames before it.
 constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
@@ -1002,30 +1008,35 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
 constexpr int kEquipGain = 3;
 constexpr int kEquipWalk = 6000; // frames for one pick (walk to the lab, its menus)
 
-CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
+// How much stronger in a fight putting `d` on (in its slot: kind 0 the
+// weapon in use, 1 the board, 2 the accessory) makes player 1 than what it
+// wears there now: 1 the same, 0 when it cannot be put on or is not wanted.
+double CampaignBot::equip_value(engine::Engine& engine, const engine::ItemDevice& d) const {
     auto* sys = engine.get<engine::GameSystem>();
     auto* db = engine.get<engine::DatabaseManager>();
-    if (!sys || !db || !db->has_column("weapon", "TSUYOSA")) return {};
+    if (!sys || !db || !db->has_column("weapon", "TSUYOSA") || d.type < 0 || d.type > 2) return 0.0;
     const auto& p = sys->players[0];
     const auto& st = p.stats;
     static const char* const tables[3] = {"weapon", "armor1", "armor2"};
-    const auto cell = [&](const engine::ItemDevice& d, const char* column) {
-        return db->number(tables[std::clamp(d.type, 0, 2)], d.record, column).value_or(0);
+    const auto cell = [&](const engine::ItemDevice& e, const char* column) {
+        return db->number(tables[std::clamp(e.type, 0, 2)], e.record, column).value_or(0);
     };
+    // (The placeholder records of unidentified devices, DeviceList::unknown.)
+    if ((d.type == 0 && d.record == 276) || (d.type == 1 && d.record == 31) || (d.type == 2 && d.record == 44)) return 0.0;
     // A device's (TSUYOSA, MAMORI, MAXHP) in its slot.
     struct Gain {
         int str = 0, def = 0, hp = 0;
     };
-    const auto gain = [&](const engine::ItemDevice* d) {
+    const auto gain = [&](const engine::ItemDevice* e) {
         Gain g;
-        if (!d) return g;
-        if (d->type == 0) g.str = cell(*d, "TSUYOSA") + d->value;
-        else if (d->type == 1) g.def = cell(*d, "MAMORI") + d->value, g.hp = cell(*d, "MAXHP");
-        else if (d->type == 2) {
-            const auto main = db->text("armor2", d->record, "SHUSEINOURYOKU");
-            g.str = cell(*d, "TSUYOSA") + (main == "TSUYOSA" ? d->value : 0);
-            g.def = cell(*d, "MAMORI") + (main == "MAMORI" ? d->value : 0);
-            g.hp = cell(*d, "MAXHP");
+        if (!e) return g;
+        if (e->type == 0) g.str = cell(*e, "TSUYOSA") + e->value;
+        else if (e->type == 1) g.def = cell(*e, "MAMORI") + e->value, g.hp = cell(*e, "MAXHP");
+        else if (e->type == 2) {
+            const auto main = db->text("armor2", e->record, "SHUSEINOURYOKU");
+            g.str = cell(*e, "TSUYOSA") + (main == "TSUYOSA" ? e->value : 0);
+            g.def = cell(*e, "MAMORI") + (main == "MAMORI" ? e->value : 0);
+            g.hp = cell(*e, "MAXHP");
         }
         return g;
     };
@@ -1037,38 +1048,86 @@ CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
         const double hp = std::max(1, p.max_hp - off.hp + on.hp);
         return (str * 6.0 + skill * 4.0) * def * hp;
     };
+    if (d.type == 0) {
+        const int row = cell(d, "SKILL");
+        const auto soubi = std::uint32_t(cell(d, "SOUBI"));
+        if (!weapon || row != skill_row || st.species < 0 || st.species >= 32 || !(soubi & (1u << st.species)) ||
+            st.skill[std::size_t(std::clamp(row, 0, 8))] < cell(d, "SKILLPOINT"))
+            return 0.0;
+    } else if (st.level < cell(d, "LVPOINT")) {
+        return 0.0;
+    }
+    const int worn_index = d.type == 0 ? (p.power_socket.empty() ? -1 : p.power_socket[0])
+                           : d.type == 1 ? (p.main_slot.empty() ? -1 : p.main_slot[0])
+                                         : (p.sub_slot.empty() ? -1 : p.sub_slot[0]);
+    const Gain off = gain(p.device(worn_index));
+    return score(off, gain(&d)) / score(off, off);
+}
+
+CampaignBot::EquipPick CampaignBot::next_equip(engine::Engine& engine) const {
+    auto* sys = engine.get<engine::GameSystem>();
+    if (!sys) return {};
+    const auto& p = sys->players[0];
     for (int kind = 0; kind < 3; ++kind) {
-        const int worn_index = kind == 0 ? (p.power_socket.empty() ? -1 : p.power_socket[0])
-                               : kind == 1 ? (p.main_slot.empty() ? -1 : p.main_slot[0])
-                                           : (p.sub_slot.empty() ? -1 : p.sub_slot[0]);
-        const auto* worn = p.device(worn_index);
-        const Gain off = gain(worn);
-        const double now = score(off, off);
-        double best = now * (100 + kEquipGain) / 100.0;
+        double best = (100 + kEquipGain) / 100.0;
         int pick = -1;
         for (std::size_t i = 0; i < p.devices.size(); ++i) {
             const auto& d = p.devices[i];
             if (d.type != kind || d.flag || equip_failed_.count({kind, d.record})) continue;
-            // (The placeholder records of unidentified devices, DeviceList::unknown.)
-            if ((d.type == 0 && d.record == 276) || (d.type == 1 && d.record == 31) || (d.type == 2 && d.record == 44)) continue;
-            if (kind == 0) {
-                const int row = cell(d, "SKILL");
-                const auto soubi = std::uint32_t(cell(d, "SOUBI"));
-                if (!weapon || row != skill_row || st.species < 0 || st.species >= 32 || !(soubi & (1u << st.species)) ||
-                    st.skill[std::size_t(std::clamp(row, 0, 8))] < cell(d, "SKILLPOINT"))
-                    continue;
-            } else if (st.level < cell(d, "LVPOINT")) {
-                continue;
-            }
-            const double s = score(off, gain(&d));
-            if (s > best) {
-                best = s;
+            if (const double v = equip_value(engine, d); v > best) {
+                best = v;
                 pick = int(i);
             }
         }
         if (pick >= 0) return {kind, pick};
     }
     return {};
+}
+
+// Gear from the weapon and armor shops (not in god mode, like the disk shop): stagML13
+// n_digilfm#0 sells weapons (bML01009.lua -> weaponshop.lua -> SUBWND WPU,
+// program 6) and n_digilff#1 boards and accessories (bML01010.lua ->
+// armorshop.lua -> APU, 7), both while flag 1 is off. The stock is made when
+// the program starts (80351794: shopWeapon by species and level row,
+// shopArmor by level row; a stage change empties it), so each shop is looked
+// at once per level with kGearBits bits or more: Buy, the stock (12 a page,
+// beNDMWShopCtrlSales 803A2920, at HANBAI + 100 * value (+ 500 .. 24000 by
+// rank for weapons and boards)), yes. Of what the bits buy beyond
+// kGearReserve (for disks) the device that gains most over what is worn
+// (equip_value, at least kGearGain percent) is bought; the Digi-Lab then
+// puts it on.
+constexpr int kGearBits = 900, kGearReserve = 600, kGearGain = 8;
+
+int CampaignBot::next_gear(engine::Engine& engine, int program) const {
+    auto* sys = engine.get<engine::GameSystem>();
+    auto* db = engine.get<engine::DatabaseManager>();
+    auto* windows = engine.get<engine::SubWindowManager>();
+    if (!sys || !db || !windows || (program != 6 && program != 7)) return -1;
+    const auto* stock = windows->shop_stock(program);
+    const auto& p = sys->players[0];
+    if (!stock || p.devices.size() >= 36) return -1;
+    static const int buy_rank[6] = {0, 500, 1500, 6000, 12000, 24000};
+    static const char* const tables[3] = {"weapon", "armor1", "armor2"};
+    // (Measured against the best held of each kind too: a device bought is
+    // put on at the lab only later.)
+    std::array<double, 3> held{1.0, 1.0, 1.0};
+    for (const auto& d : p.devices)
+        if (d.type >= 0 && d.type <= 2 && !d.flag) held[std::size_t(d.type)] = std::max(held[std::size_t(d.type)], equip_value(engine, d));
+    int pick = -1;
+    double best = 0.0;
+    for (std::size_t i = 0; i < stock->size(); ++i) {
+        const auto& e = (*stock)[i];
+        if (!e || e->type < 0 || e->type > 2) continue; // (gaps, chips, the sold-out abChip 185)
+        int price = db->number(tables[e->type], e->record, "HANBAI").value_or(0) + 100 * e->value;
+        if (e->type <= 1) price += buy_rank[std::clamp(e->rank, 0, 5)];
+        if (price <= 0 || price > p.bits - kGearReserve) continue;
+        const double v = equip_value(engine, *e) / held[std::size_t(e->type)];
+        if (v > (100 + kGearGain) / 100.0 && v > best) {
+            best = v;
+            pick = int(i);
+        }
+    }
+    return pick;
 }
 
 // Device sales (not in god mode): the disk shop buys devices too (Buy / Sell
@@ -1469,6 +1528,14 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") &&
              (next_purchase(engine).record >= 0 || (slot && int(slot->devices.size()) >= kSellFrom && next_sale(engine) >= 0)))
         objective = &kShopErrand;
+    // Then a look at the weapon and the armor shop (next_gear) once per level.
+    static constexpr Objective kWeaponErrand{"gear from the weapon shop", "", "stagml13", "gear:n_digilfm#0"};
+    static constexpr Objective kArmorErrand{"gear from the armor shop", "", "stagml13", "gear:n_digilff#1"};
+    if (objective != &kHealErrand && objective != &kEquipErrand && objective != &kShopErrand && !engine.cheats().god &&
+        lobby(here) && !holds(engine, "F1") && slot && slot->bits >= kGearBits && slot->devices.size() < 36) {
+        if (gear_checked_[0] != slot->stats.level) objective = &kWeaponErrand;
+        else if (gear_checked_[1] != slot->stats.level) objective = &kArmorErrand;
+    }
     // Training (no god mode): below the objective's gate level the player
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
@@ -1616,6 +1683,23 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) equip_open_ = false;
     }
+    // The gear errand's shop program likewise; once it has run and closed the
+    // shop is looked at for this level (next_gear).
+    if (step.action.rfind("gear:", 0) == 0) {
+        gear_open_ = true;
+        gear_program_ = step.action.find("n_digilfm") != std::string::npos ? 6 : 7;
+    }
+    if (gear_open_) {
+        engine::Packet running;
+        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
+        if (!running.bools.empty() && running.bools[0]) {
+            gear_ran_ = true;
+        } else if (gear_ran_ || step.action.rfind("gear:", 0) != 0) {
+            if (gear_ran_)
+                if (auto* sys = engine.get<engine::GameSystem>()) gear_checked_[std::size_t(gear_program_ - 6)] = sys->players[0].stats.level;
+            gear_open_ = gear_buying_ = gear_ran_ = false;
+        }
+    }
     // A device list's page, counted from its opening (the lab's DeviceList
     // and the shop's DeviceSell, 12 devices a page: RIGHT / LEFT turn it
     // while the cursor rests, and the turn sends the cursor to the top,
@@ -1672,13 +1756,13 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             else cancel = true;
         } else if (menu.name == "i_zzstchgwn") {
             cancel = !on_step_mat;
-        } else if (heal_open_ && !equip_open_) { // (the lab first: an errand that follows waits for it)
+        } else if (heal_open_ && !equip_open_ && !gear_open_) { // (the lab or a device shop first: an errand that follows waits)
             // The X-Data shop: "use it?" yes (i_messcr, 2 lines), then Exit
             // of Stats / Chips / Exit (i_stmesscr, 3 lines); a list is backed
             // out of.
             if (menu.name == "i_stmesscr" && menu.items >= 3) want = menu.items - 1;
             else if (menu.name.rfind("i_stcursor", 0) == 0) cancel = true;
-        } else if (shop_open_ && !equip_open_) {
+        } else if (shop_open_ && !equip_open_ && !gear_open_) {
             // The disk shop (ShopDisk 803967A8): "buy?" yes (i_messcr, 2
             // lines), Buy / Sell / Exit (i_stmesscr, 3 lines: Buy while a
             // purchase is due, else Exit), the list of conItem 0..9
@@ -1738,6 +1822,22 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
                 if (mine) want = 0;
                 else cancel = true;
             }
+        } else if (gear_open_) {
+            // The weapon / armor shop (ShopDevice 803A6914, next_gear): "use
+            // the shop?" yes (i_messcr, 2 lines), Buy / Sell / Exit
+            // (i_stmesscr, 3 lines: Buy while a device is wanted), the
+            // stock's page and line (i_stcursor01), the message (A) and yes
+            // (i_stmesscr, 2 lines); the list is backed out of when nothing
+            // more is wanted.
+            const int gear = next_gear(engine, gear_program_);
+            if (menu.name == "i_stmesscr" && menu.items >= 3) want = gear >= 0 ? 0 : menu.items - 1;
+            else if (menu.name == "i_stcursor01" && gear_buying_) {
+                if (gear < 0) cancel = true;
+                else if (turn_to(gear)) return true;
+                else want = gear % 12;
+            } else if (menu.name.rfind("i_stcursor", 0) == 0) {
+                cancel = true;
+            }
         } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
@@ -1773,7 +1873,21 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             // windows that follow); in the disk shop Sell or not, the sale
             // list opening (Devices) or a device sold (yes), a device picked.
             if (equip_open_ && menu.name == "i_stcursor02") equip_kind_ = want;
-            if (shop_open_ && !equip_open_ && !heal_open_) {
+            if (gear_open_ && !equip_open_ && !heal_open_ && !shop_open_) {
+                if (menu.name == "i_stmesscr" && menu.items >= 3) {
+                    gear_buying_ = want == 0;
+                    list_page_ = 0;
+                    list_turn_ = 0;
+                } else if (gear_buying_ && menu.name == "i_stcursor01") {
+                    if (auto* windows = engine.get<engine::SubWindowManager>(); windows && trace())
+                        if (const auto* stock = windows->shop_stock(gear_program_))
+                            if (const int at = 12 * list_page_ + want; at >= 0 && at < int(stock->size()) && (*stock)[std::size_t(at)])
+                                if (auto* db = engine.get<engine::DatabaseManager>())
+                                    std::printf("[%d] campaign: buys %s (stock line %d)\n", frame,
+                                                db->text(engine::device_table(*(*stock)[std::size_t(at)]), (*stock)[std::size_t(at)]->record, "NAME").c_str(), at);
+                }
+            }
+            if (shop_open_ && !equip_open_ && !heal_open_ && !gear_open_) {
                 if (menu.name == "i_stmesscr" && menu.items >= 3) {
                     shop_selling_ = want == 1;
                     sale_confirm_ = false;
@@ -2268,6 +2382,12 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         return;
     }
     const auto& slot = sys->players[0];
+    // The biggest blow taken within kBigHitFor frames (the heals' threshold).
+    if (last_hp_ > slot.hp && slot.hp > 0) {
+        const int hit = last_hp_ - slot.hp;
+        if (hit >= big_hit_ || frame - big_hit_at_ > kBigHitFor) big_hit_ = hit, big_hit_at_ = frame;
+    }
+    last_hp_ = slot.hp;
     if (tech_at_ >= 0) {
         // A technique cast: R opens the technique panel (GENERATEWAZA), UP
         // to its top (the first technique, WAZALIST 0; once per further
@@ -2349,11 +2469,18 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // (The panel takes no cursor press, A or Y while its FIRE wait from the
     // last pick runs, kPanelFire: a walk started then picks the wrong line.)
     const bool panel_ready = frame + 3 >= panel_ready_at_;
+    // (The biggest blow taken lately, see the top: below kBigHitMargin
+    // percent of it the next one may be the last, so that is low HP too;
+    // dng101b2's Blossomon hits a level 6 Veemon of 270 HP for 70..100 and
+    // 222 when critical, and at kHealBelow percent, 108 HP, one blow ended it.)
+    const bool big_hits = frame - big_hit_at_ <= kBigHitFor;
+    const bool low_hp = slot.hp * 100 < slot.max_hp * kHealBelow ||
+                        (big_hits && slot.hp * 100 < big_hit_ * kBigHitMargin && slot.hp * 100 < slot.max_hp * 90);
     // A heal: the smallest HP disk that makes up the missing HP, else the
     // biggest one held, Recovery last.
     // (Not in god mode: a pit there can still set the HP to 1, GAMERAM ADDHP
     // absolute, and the cheat runs keep their path.)
-    if (!engine.cheats().god && slot.hp > 0 && slot.hp * 100 < slot.max_hp * kHealBelow && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
+    if (!engine.cheats().god && slot.hp > 0 && low_hp && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
         panel_ready) {
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
@@ -2446,7 +2573,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         disks_held(slot, kGateDisk) > 0) {
         bool heals = false;
         for (const int record : {0, 1, 2, 9}) heals = heals || disks_held(slot, record) > 0;
-        const bool dying = slot.hp * 100 < slot.max_hp * kGateTripBelow && !heals;
+        const bool dying = (slot.hp * 100 < slot.max_hp * kGateTripBelow || (big_hits && slot.hp * 100 < big_hit_ * kBigHitMargin)) && !heals;
         // (While training: supplies to buy, or a full device folder, which
         // takes no drop, to sell from.)
         // (Supplies worth kGateTripBits to buy: not for one disk used.)
@@ -2957,7 +3084,12 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                                  " STR " + std::to_string(db->number("enemy", e->record, "TSUYOSA").value_or(-1)) + " DEF " +
                                  std::to_string(db->number("enemy", e->record, "MAMORI").value_or(-1)) + " HPMAX " +
                                  std::to_string(db->number("enemy", e->record, "HPMAX").value_or(-1)) + " EXP " +
-                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1));
+                                 std::to_string(db->number("enemy", e->record, "EXP").value_or(-1)) + " SPI " +
+                                 std::to_string(db->number("enemy", e->record, "SEISHIN").value_or(-1)) + " RES " +
+                                 std::to_string(db->number("enemy", e->record, "RES_FIRE").value_or(-1)) + "/" +
+                                 std::to_string(db->number("enemy", e->record, "RES_ICE").value_or(-1)) + "/" +
+                                 std::to_string(db->number("enemy", e->record, "RES_THUNDER").value_or(-1)) + "/" +
+                                 std::to_string(db->number("enemy", e->record, "RES_DARK").value_or(-1));
                     std::printf("      %s#%d %s %s hp=%d ctrl=%d mode=%d (%.0f,%.0f,%.0f)%s%s%s%s\n", e->info_name.c_str(), e->index,
                                 e->category.c_str(), e->seq_name.c_str(), e->hp, e->control_enabled, e->ctrl_mode, position_of(*e).x,
                                 position_of(*e).y, position_of(*e).z, e->hit && e->hit->player_bullet ? " bullet" : "",
@@ -3114,7 +3246,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
     } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop" || kind == "heal" ||
-               kind == "equip") {
+               kind == "equip" || kind == "gear") {
         if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me, frame)) {
             // Ten seconds of walking without reaching one of several ("#*"; a
             // plug inside the block of the others, stag0205: the walk ends
