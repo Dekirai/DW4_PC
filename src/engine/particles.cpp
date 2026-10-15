@@ -25,6 +25,19 @@ std::uint8_t unit_byte(float value) { return std::uint8_t(std::clamp(value, 0.0f
 
 } // namespace
 
+std::span<const std::uint8_t> particle_record(std::span<const std::uint8_t> data, std::uint32_t index, std::uint32_t stride) {
+    // 800E09C8: record i is read at data(+0x24) + i * stride(+0x20) without
+    // any record length check. The base update reads up to +0x8C, the Bec one
+    // up to +0xB0, so with a stride below 0xB4 (139 arrays use 160: the menu
+    // cursor ping y_messcr has its only record, y_dbreak02, y_d2torch,
+    // y_atcksabtnz02 and y_031fldmg02a 4-15) the reads past the stride come
+    // from the next record as in the original; fields past the end of the
+    // data read as 0.
+    const std::size_t base = std::size_t(index) * stride;
+    if (base >= data.size()) return {};
+    return data.subspan(base, std::min<std::size_t>(0xB4, data.size() - base));
+}
+
 bool build_particles(const ObjectView& particle_attr, float time, const Mat4& model, const Mat4& view, GeometryData& out) {
     const auto array = particle_attr.ref(5);
     if (!array) return false;
@@ -56,10 +69,10 @@ bool build_particles(const ObjectView& particle_attr, float time, const Mat4& mo
     const Vec3f up{view(0, 1), view(1, 1), view(2, 1)};
     const float scale = length(Vec3f{model(0, 0), model(0, 1), model(0, 2)});
 
+    // Particles first(+0x34) .. first + count(+0x38) (loop test 800E0C74).
     for (std::uint32_t i = first; i < first + count; ++i) {
-        const std::size_t base = std::size_t(i) * stride;
-        if (base + 0xB4 > data.size()) break;
-        const auto p = data.subspan(base, 0xB4);
+        const auto p = particle_record(data, i, stride);
+        if (p.empty()) break;
         float t = time;
         if (bec) {
             const float offset = read_f32(p, 0x90);
