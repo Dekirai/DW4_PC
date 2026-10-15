@@ -1973,7 +1973,7 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
 // press per row but the first), DOWN
 // to the disk's line, A (the panel uses the disk itself, 80349B0C, even while
 // a hit holds the player), L closes it. Each press is one frame (an edge),
-// the other buttons are held back meanwhile; the stick still walks.
+// the other buttons are held back and the stick centred meanwhile.
 void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out) {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys || lobby(stage_)) {
@@ -1990,6 +1990,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         const int ups = std::clamp(int(slot.wazalist.size()) - 1, 0, 5);
         const int a_at = 4 + 2 * ups;
         out.buttons = 0;
+        out.walk = false; // (the panel takes stick directions as cursor moves)
         if (t < 1) out.buttons |= pad_button::r;
         else if (t >= 3 && t < 3 + 2 * ups && t % 2 == 1) out.buttons |= pad_button::up;
         else if (t == a_at) out.buttons |= pad_button::a;
@@ -2026,7 +2027,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
             return;
         }
+        // (The stick stays centred: the panel takes its directions as cursor
+        // moves too, 8034A210, and a walk would pick another disk.)
         out.buttons = 0;
+        out.walk = false;
         if (t < 1) out.buttons |= pad_button::l;
         else if (t >= 4 && t < downs_at && t % 2 == 0) out.buttons |= pad_button::up;
         else if (t >= downs_at && t < downs_at + 2 * disk_line_ && t % 2 == 0) out.buttons |= pad_button::down;
