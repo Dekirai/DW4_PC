@@ -614,6 +614,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // group n, as when arriving from another stage's exit.
     if (const char* entry = std::getenv("DW4_ENTRY"); entry && options.smoke_frames)
         if (auto* points = engine.get<dw4::engine::PlayerPointManager>()) points->set_point_no(std::atoi(entry));
+    // DW4_COUNTERS=n:v,... (test runs): story counters the first stage starts
+    // with (COUNTERget/COUNTERset). COUNTER 2 names the dungeon whose b1/f1
+    // start.lua last cleared the dungeon flags 100-299 (a flag preset for a
+    // dungeon survives only with it, dngq3b1e: 903); COUNTER 0 is a quest's
+    // time limit in seconds (dngq3b2e putitemyes.lua: 900).
+    if (const char* list = std::getenv("DW4_COUNTERS"); list && options.smoke_frames)
+        for (const char* at = list; *at;) {
+            const int counter = std::atoi(at);
+            while (*at && *at != ':' && *at != ',') ++at;
+            if (*at == ':') engine.counters()[counter] = std::atoi(++at);
+            while (*at && *at != ',') ++at;
+            if (*at == ',') ++at;
+        }
     engine.request_stage(first_stage);
     auto make_camera = [](dw4::engine::Vec3f eye, dw4::engine::Vec3f target) {
         dw4::engine::FrameCamera c;
@@ -1160,23 +1173,42 @@ int run(const Options& options, dw4::game::Settings& settings) {
                         if (g->seek && g->target.rfind("explore:", 0) == 0) {
                             // SEEK explore:<mat> plays through the stage towards a mat.
                             static dw4::game::ExploreBot explorer;
-                            const auto decision = explorer.update(engine, *p, g->target.substr(8), frame);
-                            tx = decision.x;
-                            tz = decision.z;
-                            reach = decision.reach;
-                            if (decision.attack) {
-                                if (decision.jump_attack) {
-                                    if (frame % 40 < 3) input |= dw4::pad_button::x;
-                                    else if (frame % 40 >= 10 && frame % 40 < 13) input |= dw4::pad_button::a;
-                                } else if (frame % (decision.fast_attack ? 10 : 20) < 3) {
-                                    input |= dw4::pad_button::a;
+                            // A ride's targets on the way to the goal come first
+                            // (the stag0103 boat, the stag0203 train: campaign.cpp
+                            // kRideTargets).
+                            std::string stage = engine.stage_name();
+                            std::transform(stage.begin(), stage.end(), stage.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                            dw4::game::CampaignBot::Output ride;
+                            if (p->control_enabled && p->seq_name.rfind("SQ_DEMO", 0) != 0 &&
+                                dw4::game::ride_targets_step(engine, *p, stage, g->target.substr(8), frame, ride)) {
+                                input |= ride.buttons;
+                                if (ride.walk) {
+                                    tx = ride.x;
+                                    tz = ride.z;
+                                    reach = ride.reach;
+                                } else {
+                                    tx = p->node->matrix(3, 0);
+                                    tz = p->node->matrix(3, 2);
                                 }
+                            } else {
+                                const auto decision = explorer.update(engine, *p, g->target.substr(8), frame);
+                                tx = decision.x;
+                                tz = decision.z;
+                                reach = decision.reach;
+                                if (decision.attack) {
+                                    if (decision.jump_attack) {
+                                        if (frame % 40 < 3) input |= dw4::pad_button::x;
+                                        else if (frame % 40 >= 10 && frame % 40 < 13) input |= dw4::pad_button::a;
+                                    } else if (frame % (decision.fast_attack ? 10 : 20) < 3) {
+                                        input |= dw4::pad_button::a;
+                                    }
+                                }
+                                if ((decision.confirm && frame % 30 < 3) || (decision.pick_up && frame % 20 < 3) || decision.press_a)
+                                    input |= dw4::pad_button::a;
+                                if (decision.press_b) input |= dw4::pad_button::b;
+                                if (decision.jump) input |= dw4::pad_button::x;
+                                if (decision.press_r) input |= dw4::pad_button::r;
                             }
-                            if ((decision.confirm && frame % 30 < 3) || (decision.pick_up && frame % 20 < 3) || decision.press_a)
-                                input |= dw4::pad_button::a;
-                            if (decision.press_b) input |= dw4::pad_button::b;
-                            if (decision.jump) input |= dw4::pad_button::x;
-                            if (decision.press_r) input |= dw4::pad_button::r;
                         } else if (g->seek && g->target.rfind("mat:", 0) == 0) {
                             if (auto* mats = engine.get<dw4::engine::MatCtrlManager>())
                                 if (const auto centre = mats->mat_centre(g->target.substr(4))) {

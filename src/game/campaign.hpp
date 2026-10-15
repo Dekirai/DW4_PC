@@ -91,4 +91,13 @@ private:
     int region_check_{};         // when it was looked for
 };
 
+// One step of a ride's targets (campaign.cpp kRideTargets: the stag0103
+// boat's factory towers, the stag0203 train's junction signs) on the way to
+// `goal` (the exit mats, '|'-separated; empty: any): the player faces and
+// strikes them, fights enemies boarding the ride and guards against shots.
+// False when nothing on the ride needs the player (the ExploreBot plays on).
+// Used by the campaign and by SEEK explore:<mat> (the exit survey).
+bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& stage,
+                       const std::string& goal, int frame, CampaignBot::Output& out);
+
 } // namespace dw4::game
