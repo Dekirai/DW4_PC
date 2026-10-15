@@ -28,12 +28,20 @@ std::uint64_t scaled_clock(std::int64_t world, float scale) {
     return static_cast<std::uint64_t>(integer) << 18;
 }
 
+// 8031DE44 (re)starts a named timer: bias (+0x18/+0x1C), end (+0x20/+0x24),
+// the remembered world time (+0x28/+0x2C) and one cached frame (+0x38,
+// flt_80452BE8). The last time sample of 8031E4C4 (+0x30/+0x34) is never
+// written: a new timer has 0 there (and so has a new NodeTimer), a restarted
+// one keeps the sample of its last frame query. Only the ACTION 'FADE' timer
+// is both restarted while it exists (FADESET 802F0800) and queried for
+// frames (802F057C); CAMHOKAN (802F3264) and KEIKATIMER (8030A6FC, 8030C228)
+// are only made when 8031E138 finds them missing, every other timer is only
+// checked for expiry (8031E238).
 void timer_start(NodeTimer& timer, std::int64_t world, std::int64_t end) {
     timer.bias = static_cast<std::int64_t>(std::uint64_t{0} - scaled_clock(world, timer.scale));
     timer.end = end;
     timer.saved_world = world;
     timer.cached_frames = 1;
-    timer.previous = 0;
 }
 
 std::int64_t timer_time(const NodeTimer& timer, std::int64_t world) {

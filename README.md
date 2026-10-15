@@ -240,14 +240,15 @@ player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and
 `DW4_BITS=n`, `DW4_XDATA=n`, `DW4_LEVEL=n` and `DW4_FORMS=species,...` fill a new player's folders, level and forms,
 `DW4_FLAG_FOLDER=item,...` gives key items (story progress items such as boss IDs), `DW4_DIFFICULTY=n` sets the
-difficulty (0-2), `DW4_ENTRY=n` starts a
+difficulty (0-2) before the first stage loads, `DW4_CARD_RECORD=FILE.gci:N` makes player 1 the character of
+save box N (as the character select loads it), `DW4_ENTRY=n` starts a
 test run's first stage at player point group n (as when arriving from another exit),
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
 once the n-th stage has loaded,
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
 `DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
-campaign driver's menu answers; `DW4_TRACE_SCRIPT=1` (or a
+campaign driver's menu answers, `DW4_TRACE_STATS` every player status calculation; `DW4_TRACE_SCRIPT=1` (or a
 script name) logs script runs and `DW4_TRACE_SEQ=<model>` a model's sequence changes
 (`DW4_DUMP_SEQ=<model>` lists all its sequences with their commands). Campaign research reports
 (they change the stage): `DW4_CAMPAIGN_REGIONS=wall,...` prints a stage's regions with those
