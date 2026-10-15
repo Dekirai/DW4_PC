@@ -799,8 +799,7 @@ void GameSystem::create_player(Engine& engine, int slot) {
             if (*at == ',') ++at;
         }
     }
-    // DW4_DIFFICULTY=n: the difficulty a test run plays (0 easy, 1 hard, 2 very hard).
-    if (const char* level = std::getenv("DW4_DIFFICULTY")) difficulty = std::clamp(std::atoi(level), 0, 2);
+    // (DW4_DIFFICULTY is set before the first stage loads, game_main.cpp.)
     // DW4_FLAG_FOLDER=item,...: key items (FLAG folder) a test run owns.
     if (const char* items = std::getenv("DW4_FLAG_FOLDER")) {
         for (const char* at = items; *at;) {
@@ -837,6 +836,17 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     auto& stats = player.stats;
     auto* db = engine.get<DatabaseManager>();
     if (!db) return;
+    // A card record's form is still open (apply_record): BASE2CURRENT of the
+    // "shinka" row of its model name (803657D8), the record's level kept.
+    // Without the table yet (a direct stage start before usa_pack.igb) the
+    // record's HP, MP and level stay untouched until a later call.
+    if (stats.species < 0) {
+        if (db->rows("shinka") == 0) return;
+        const int record_level = stats.level;
+        load_species(engine, slot, std::max(0, db->find_row("shinka", "MODEL_NAME", player.digimon)));
+        stats.species = std::max(stats.species, 0); // a row past the 16 BASE_* forms: form 0
+        stats.level = record_level;
+    }
     const int row = stats.species;
     const int level = stats.level;
     auto cell = [&](std::string_view table, int r, std::string_view column) { return db->number(table, r, column).value_or(0); };
@@ -981,6 +991,19 @@ void GameSystem::recalc_player(Engine& engine, int slot) {
     for (std::size_t i = 0; i < player.power_socket.size() && i < 3; ++i)
         if (const auto* d = player.device(player.power_socket[i])) player.weapons[i] = db->text("weapon", d->record, "MODEL");
     stats.weapon_model = player.weapons[0];
+    // DW4_TRACE_STATS: every status calculation (compare a direct start with
+    // a character select load).
+    if (static const bool trace = std::getenv("DW4_TRACE_STATS") != nullptr; trace) {
+        std::string line = "player " + std::to_string(slot) + " stats " + player.digimon + " form " + std::to_string(row) + " level " +
+                           std::to_string(level) + " hp " + std::to_string(player.hp) + "/" + std::to_string(player.max_hp) + " mp " +
+                           std::to_string(player.mp) + "/" + std::to_string(player.max_mp);
+        for (const int v : {stats.tsuyosa, stats.mamori, stats.kashikosa, stats.seishin, stats.subayasa, stats.resist[0], stats.resist[1],
+                            stats.resist[2], stats.resist[3], stats.exp, stats.next_exp, stats.attack_delay, stats.chimeiritsu,
+                            stats.kaihiritsu})
+            line += " " + std::to_string(v);
+        for (const auto& weapon : player.weapons) line += " " + (weapon.empty() ? std::string("-") : weapon);
+        engine.log(line);
+    }
 }
 
 void GameSystem::store_bit_chip(int slot) {

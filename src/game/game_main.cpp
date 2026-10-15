@@ -527,6 +527,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
     if (const char* count = std::getenv("DW4_PLAYERS"))
         if (auto* sys = engine.get<dw4::engine::GameSystem>())
             for (int i = 0; i < std::clamp(std::atoi(count), 0, 4); ++i) sys->players[std::size_t(i)].joined = true;
+    // DW4_DIFFICULTY=n: the difficulty a test run plays (0 normal, 1 hard, 2
+    // very hard). The character select writes GAMERAM DIFFICULTY before the
+    // first stage (80368050 at 0x803687D4, then TITLE2 GAMESTART), so the first
+    // stage's boot.lua (generatorN/H/V.igb), start.lua (GBOX-E/H/V), NPC
+    // scripts and drop lists (802FCC44) all see it; a test character from
+    // DW4_CARD_RECORD too. A title run's own choice replaces it at GAMESTART.
+    if (const char* level = std::getenv("DW4_DIFFICULTY"))
+        if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->difficulty = std::clamp(std::atoi(level), 0, 2);
     if (options.stage_given)
         if (auto* sys = engine.get<dw4::engine::GameSystem>()) sys->direct_start = true;
     // Skip intro: boot straight to the title (stagIS10) instead of the

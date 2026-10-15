@@ -2482,6 +2482,9 @@ bool ActionManager::execute(Engine& engine, ActionRam& ram, const Command& c) {
         ram.fade_limit = c.second;
         ram.fade_add = c.first != 0 ? c.second / c.first : c.second;
         ram.fade_state = incoming ? 1 : 2;
+        // 802F0800 ends with 8031DE44(ram, 'FADE', 0, 0): a fade still running
+        // (an OUT 10 frames into an IN 12, the erase effect x_099eerde01a)
+        // keeps that timer and its last sample, see timer_start.
         timer_start(ram.timers["FADE"], engine.time());
         return true;
     }
@@ -2748,19 +2751,26 @@ void ActionManager::update(Engine& engine) {
                 ram.joint_ended = true;
             }
         }
-        // Fade.
+        // Fade (802F057C). IN adds frames * step (fmadds at 0x802F0608) with no
+        // clamp, OUT subtracts it and only clamps below at 0 (0x802F0788); the
+        // value (+0x40) keeps that, so a FADESET that restarts the running
+        // 'FADE' timer (its old sample stays, timer_start) can step back first
+        // and go above 1 (an OUT after a running IN stays full until the value
+        // is below 1 again). Only the colour saturates at 1 (GX colour), kept
+        // in [0, 1] here. The end checks: IN at value >= limit (0x802F0634),
+        // OUT at value <= 0 (0x802F07C0); both delete the timer (8031E8BC).
         if (ram.fade_state == 1 || ram.fade_state == 2) {
             auto found = ram.timers.find("FADE");
             if (found != ram.timers.end()) {
                 const float frames = timer_frames(found->second, now);
                 if (frames != 0 && ram.color) {
                     Vec4f color = *ram.color;
-                    if (ram.fade_state == 1) color.w = std::fma(frames, ram.fade_add, ram.fade_value);
-                    else color.w = std::max(std::fma(-frames, ram.fade_add, ram.fade_value), 0.0f);
-                    color.w = std::clamp(color.w, 0.0f, 1.0f);
+                    const float value = ram.fade_state == 1 ? std::fma(frames, ram.fade_add, ram.fade_value)
+                                                            : std::max(std::fma(-frames, ram.fade_add, ram.fade_value), 0.0f);
+                    color.w = std::clamp(value, 0.0f, 1.0f);
                     ram.color = color;
-                    ram.fade_value = color.w;
-                    const bool finished = ram.fade_state == 1 ? !(color.w < ram.fade_limit) : !(color.w > 0);
+                    ram.fade_value = value;
+                    const bool finished = ram.fade_state == 1 ? !(value < ram.fade_limit) : !(value > 0);
                     if (finished) {
                         if (ram.fade_state == 1) {
                             if (!ram.texture) { ram.color.reset(); ram.lighting.reset(); }
