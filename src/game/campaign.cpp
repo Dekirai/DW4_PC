@@ -844,6 +844,11 @@ constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
 // it back from an enemy that attacks without pause (stag0101 goburi packs,
 // the dng102b3 boss e_mammos): kAggressFor frames without guarding.
 constexpr int kAggressAfter = 600, kAggressFor = 240;
+// (Only once the guard took back kAggressHeld presses of A in that time: no
+// attack for long because no enemy was near is no reason; dng102b3's
+// e_mammos came up right after such a walk and its blows, unguarded for 240
+// frames, ended a level 9 Veemon of 390 HP.)
+constexpr int kAggressHeld = 8;
 // Techniques (survive, not with the one-hit cheat): the first one is cast at
 // an enemy within kTechReach in front whenever the MP covers it, at most every
 // kTechGap frames (its DELAY is 75).
@@ -2528,8 +2533,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // (The guards: not in god mode, where the HP does not matter and a boss
     // that attacks without pause would never be struck, nor in an aggressive
     // window, see kAggressAfter.)
-    if (player.seq_name.rfind("SQ_ATCK", 0) == 0 || player.seq_name == "SQ_WAZA") last_attack_ = frame;
-    if (frame >= aggressive_until_ && frame - last_attack_ > kAggressAfter && frame - guard_held_ < 60) {
+    if (player.seq_name.rfind("SQ_ATCK", 0) == 0 || player.seq_name == "SQ_WAZA") last_attack_ = frame, held_presses_ = 0;
+    if (frame >= aggressive_until_ && frame - last_attack_ > kAggressAfter && frame - guard_held_ < 60 &&
+        held_presses_ >= kAggressHeld) {
+        held_presses_ = 0;
         aggressive_until_ = frame + kAggressFor;
         last_attack_ = frame;
         if (trace()) std::printf("[%d] campaign: no attack for %d frames, %d frames without guarding\n", frame, kAggressAfter, kAggressFor);
@@ -2539,6 +2546,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         float gap = 0.0f;
         if (const auto away = touch_escape(engine, player, gap)) {
             if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !player.panel_open) {
+                if (out.buttons & pad_button::a) ++held_presses_;
                 out.buttons = frame % 4 < 2 ? pad_button::b : 0;
                 guard_held_ = frame;
                 if (trace() && frame - touch_traced_ >= 600) {
@@ -2631,6 +2639,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             return;
         }
         if (guarding && due <= kHoldAttackLead) {
+            if (out.buttons & pad_button::a) ++held_presses_;
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
         }

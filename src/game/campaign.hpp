@@ -148,6 +148,7 @@ private:
     int gate_disk_at_ = -100000; // the last Gate Disk use
     int last_attack_ = 0;        // the last frame player 1 attacked (SQ_ATCK*, SQ_WAZA)
     int aggressive_until_ = -1;  // no guards until
+    int held_presses_ = 0;       // presses of A the guard took back since the last attack
     int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
