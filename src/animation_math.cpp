@@ -197,4 +197,56 @@ std::array<float,4> original_matrix_rotation(const AnimationMatrix& m) {
     finite_quaternion(result);
     return result;
 }
+
+std::array<float,4> original_quaternion_nlerp(const std::array<float,4>& a, const std::array<float,4>& b, float t) {
+    // 0x8012C15C..0x8012C190: y product, then x, z, w fused onto it.
+    float dot=matrix_product(a[1],b[1]);
+    dot=matrix_fused_sum(a[0],b[0],dot);
+    dot=matrix_fused_sum(a[2],b[2],dot);
+    dot=matrix_fused_sum(a[3],b[3],dot);
+    auto end=b;
+    // fcmpo dot, 0.0 / bge: only a dot below 0 multiplies b by -1.0.
+    if (dot<0) for (auto& component : end) component=matrix_product(-1.0f,component);
+    // 0x8012C1B0..0x8012C1E8: (1 - t) * a fused onto t * b.
+    const float rest=matrix_difference(1.0f,t);
+    std::array<float,4> result{};
+    for (std::size_t i=0;i<result.size();++i) result[i]=matrix_fused_sum(rest,a[i],matrix_product(t,end[i]));
+    // 0x8012C1F8..0x8012C2AC: ((x*x + y*y) + z*z) + w*w, the positive one
+    // square-rooted (frsqrte + three double Newton steps round to the float
+    // square root), then each component times 1 / length.
+    float length=matrix_sum(matrix_product(result[0],result[0]),matrix_product(result[1],result[1]));
+    length=matrix_sum(matrix_product(result[2],result[2]),length);
+    length=matrix_sum(matrix_product(result[3],result[3]),length);
+    if (length>0) length=std::sqrt(length);
+    const float inverse=1.0f/length;
+    for (auto& component : result) component=matrix_product(component,inverse);
+    return result;
+}
+
+void original_normalized_rotation_matrix(const std::array<float,4>& q, AnimationMatrix& m) {
+    // 0x801299F4..0x80129A84: y*y, then x, z, w fused onto it; 1 / length
+    // scales each component.
+    float length=matrix_product(q[1],q[1]);
+    length=matrix_fused_sum(q[0],q[0],length);
+    length=matrix_fused_sum(q[2],q[2],length);
+    length=matrix_fused_sum(q[3],q[3],length);
+    if (length>0) length=std::sqrt(length);
+    const float inverse=1.0f/length;
+    const float x=matrix_product(q[0],inverse), y=matrix_product(q[1],inverse);
+    const float z=matrix_product(q[2],inverse), w=matrix_product(q[3],inverse);
+    // 0x80129A88..0x80129B14: plain products and sums, 1 - 2 * s fused
+    // (fnmsubs), 2 * d (fmuls).
+    const float yy=matrix_product(y,y), zz=matrix_product(z,z), xx=matrix_product(x,x);
+    const float xy=matrix_product(x,y), zw=matrix_product(z,w), zx=matrix_product(z,x);
+    const float yw=matrix_product(y,w), yz=matrix_product(y,z), xw=matrix_product(x,w);
+    m[0]=matrix_fused_sum(-2.0f,matrix_sum(yy,zz),1.0f);
+    m[1]=matrix_product(2.0f,matrix_difference(xy,zw));
+    m[2]=matrix_product(2.0f,matrix_sum(zx,yw));
+    m[4]=matrix_product(2.0f,matrix_sum(xy,zw));
+    m[5]=matrix_fused_sum(-2.0f,matrix_sum(zz,xx),1.0f);
+    m[6]=matrix_product(2.0f,matrix_difference(yz,xw));
+    m[8]=matrix_product(2.0f,matrix_difference(zx,yw));
+    m[9]=matrix_product(2.0f,matrix_sum(yz,xw));
+    m[10]=matrix_fused_sum(-2.0f,matrix_sum(yy,xx),1.0f);
+}
 } // namespace dw4

@@ -34,5 +34,15 @@ void original_rotation_matrix(const std::array<float, 4>& rotation, AnimationMat
 // 8012B8A8: inverse conversion used by interrupted-transition snapshots.
 // Preserves branch/tie order and nonunit output; does not orthonormalize.
 std::array<float, 4> original_matrix_rotation(const AnimationMatrix& matrix);
+// 8012C15C: normalized linear blend (1 - t) * a + t * b on the shorter arc
+// (b negated when the fused XYZW dot product is below 0), divided by its
+// length; no spherical weights. Keeps the guest operation order and fused
+// multiply/adds. Like the guest it does not check its input: a zero-length
+// blend divides by zero.
+std::array<float, 4> original_quaternion_nlerp(const std::array<float, 4>& a, const std::array<float, 4>& b, float t);
+// 801299D8: normalizes the quaternion, then writes only the nine rotation
+// entries of an existing flat matrix (same layout and signs as 8012BCDC);
+// the other seven entries, the translation among them, stay. No input checks.
+void original_normalized_rotation_matrix(const std::array<float, 4>& rotation, AnimationMatrix& matrix);
 
 } // namespace dw4

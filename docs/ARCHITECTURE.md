@@ -85,7 +85,7 @@ original scripts keep running.
 | --- | --- | --- |
 | `GameSystem` | beSystem / GAMERAM script services | players, difficulty, modes, flags, counters, text call number |
 | `SceneManager`, `LayerManager`, `BkColorManager` | igSceneInfo, LAYERCTL, BKCOLOR | layer ORDER/SWITCH/REMOVE, clear colour |
-| `CameraManager` | beCameraCtrl | one current viewer (8040F870), set by a demo camera info (802F3568, its end pose held until the box camera replaces it) or by the box camera on a box change (802F2BC0: pivot at the players' centre, per-box rotation and distance transforms blended over 120 steps, SHAKE); igCamera horizontal field of view on the 640x448 viewer (802F414C, 801DB6E4) |
+| `CameraManager` | beCameraCtrl | one current viewer (8040F870), set by a demo camera info (802F3568, its end pose held until the box camera replaces it) or by the box camera on a box change (802F2BC0: pivot at the players' centre, per-box rotation and distance transforms blended over 120 steps: translation 8012D3F4, rotation the normalized linear quaternion blend 8012C15C written by 801299D8, SHAKE); igCamera horizontal field of view on the 640x448 viewer (802F414C, 801DB6E4) |
 | `StageCtlManager` | beNDMWStageCtl | NEXTSTAGE, PADINPUT |
 | `LogoManager`, `SoundManager` | beNDMWLogo, sound/SE/movie | music, ambience, sound effects and the opening movie play |
 | `ModelCtrlManager` | beModelCtrl (8030D910, 8030C3AC) | sequences, waits, motion, player control and attack chains (8034C3C8, 8034D214), HIT bodies, HITBOX queue, MUTEKI, CHKBULLET (8030E56C), SETLABEL sections, AIM / AIH AI (a provisional chase fallback without AI maps), rides and floor effects |
