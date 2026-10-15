@@ -1720,6 +1720,33 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             return;
         }
     }
+    // A wave stopped by leaving its mat after all of it spawned and with
+    // none of it left (the last enemy fought down off the mat: dng412b3's
+    // GENE-23 e_mecha4 down the platform's south ramp) clears only once a
+    // player stands on that mat again (its script STARTs it, 802FD5C4; a
+    // stopped generator finishes nothing, 802FD194), and its door with it:
+    // back onto the mat, for up to 6000 frames per wave.
+    if (auto* generators = engine.get<engine::GeneraterManager>())
+        for (const auto& status : generators->status()) {
+            if (!status.stopped || !status.filled || status.done || status.alive > 0 || status.clears >= 2) continue;
+            auto& left = rejoin_left_.try_emplace(status.name, 6000).first->second;
+            left -= rejoin_gen_ == status.name ? std::min(45, frame - rejoin_since_) : 0;
+            if (left <= 0) continue;
+            for (const auto& box : boxes) {
+                if (!gen_mats_[status.name].count(box.name)) continue;
+                if (const auto skip = mat_skip_.find(box.name); skip != mat_skip_.end() && frame < skip->second) continue;
+                const std::string script = box.name + ".lua";
+                if (!engine.script_mentions(script, "START") || !engine.script_mentions(script, status.name)) continue;
+                const auto inside = map.reached_inside(box.min.x + 1.0f, box.min.z + 1.0f, box.max.x - 1.0f, box.max.z - 1.0f);
+                if (!inside || inside->y < box.min.y - 5.0f || inside->y > box.max.y + 5.0f) continue;
+                rejoin_gen_ = status.name;
+                rejoin_since_ = frame;
+                go(*inside, nullptr, "rejoin the stopped wave " + status.name + " on " + box.name);
+                target_mat_ = box.name;
+                return;
+            }
+        }
+    rejoin_gen_.clear();
     // Gimmicks with a hit script: floor switches (an AIM map, no bullet
     // boxes: stood on while their AI is live), wall switches (a talk box:
     // A facing them) and things that take hits (boxes, breakable walls:
@@ -2099,6 +2126,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         clears_seen_.clear();
         hold_left_.clear();
         hold_mat_.clear();
+        rejoin_gen_.clear();
+        rejoin_since_ = -1;
+        rejoin_left_.clear();
         switched_.clear();
         health_.clear();
         lowest_hp_.clear();

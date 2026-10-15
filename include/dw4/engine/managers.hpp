@@ -982,16 +982,23 @@ public:
         return out;
     }
     // Each generator's state and how often its waves were cleared (a
-    // restarted generator clears again; test bot).
+    // restarted generator clears again; test bot). `stopped`: a running wave
+    // held by STOP/STOPREVERS (work +9), which update (802FD194) neither
+    // fills nor finishes; `filled`: all of it spawned (state 3); `alive`:
+    // its enemies still generated.
     struct Status {
         std::string name;
         bool started{}, done{};
         int clears{};
+        bool stopped{}, filled{};
+        int alive{};
     };
     std::vector<Status> status() const {
         std::vector<Status> out;
         for (const auto& ram : rams_)
-            if (ram->data) out.push_back({std::string(ram->data.str(2)), ram->started, ram->done, ram->clears});
+            if (ram->data)
+                out.push_back({std::string(ram->data.str(2)), ram->started, ram->done, ram->clears, ram->work && ram->system_freeze,
+                               ram->work && ram->state == 3, int(ram->enemies.size())});
         return out;
     }
     // Started "radar" generators still waiting for a player within reach of
