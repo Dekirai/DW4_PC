@@ -1724,7 +1724,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     // none of it left (the last enemy fought down off the mat: dng412b3's
     // GENE-23 e_mecha4 down the platform's south ramp) clears only once a
     // player stands on that mat again (its script STARTs it, 802FD5C4; a
-    // stopped generator finishes nothing, 802FD194), and its door with it:
+    // stopped generator finishes nothing, 802FD174..802FD194), and its door with it:
     // back onto the mat, for up to 6000 frames per wave.
     if (auto* generators = engine.get<engine::GeneraterManager>())
         for (const auto& status : generators->status()) {

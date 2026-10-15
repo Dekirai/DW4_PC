@@ -983,7 +983,7 @@ public:
     }
     // Each generator's state and how often its waves were cleared (a
     // restarted generator clears again; test bot). `stopped`: a running wave
-    // held by STOP/STOPREVERS (work +9), which update (802FD194) neither
+    // held by STOP/STOPREVERS (work +9), which update (802FD174..802FD194) neither
     // fills nor finishes; `filled`: all of it spawned (state 3); `alive`:
     // its enemies still generated.
     struct Status {
