@@ -920,6 +920,15 @@ int run(const Options& options, dw4::game::Settings& settings) {
             state_slots[0] = read_state_file(options.load_state);
             if (!state_slots[0]) throw std::runtime_error("unreadable state file " + options.load_state.string());
             load_state(0);
+            // DW4_CHEATS_FROM_ENV=1 (test runs): the test cheats from the
+            // environment (DW4_GOD, DW4_ONE_HIT, DW4_INFINITE_MP) instead of
+            // the state's, from the loaded frame on (a cheat run resumed
+            // without them).
+            if (std::getenv("DW4_CHEATS_FROM_ENV")) {
+                engine.cheats().god = std::getenv("DW4_GOD") != nullptr;
+                engine.cheats().one_hit = std::getenv("DW4_ONE_HIT") != nullptr;
+                engine.cheats().infinite_mp = std::getenv("DW4_INFINITE_MP") != nullptr;
+            }
         }
         // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
         // (DIR/<frame>_<stage>.dw4state), for resuming long scripted runs.

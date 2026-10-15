@@ -54,6 +54,21 @@ private:
                     const std::string& follow, float keep, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
+    // Survival without god mode (campaign.cpp kSupplies): the next disk shop
+    // purchase, the bit capsule recovered with a Raise Disk, the emergency
+    // heal and panel upkeep laid over the frame's output.
+    struct Purchase {
+        int record = -1, count = 0, held = 0;
+    };
+    Purchase next_purchase(engine::Engine& engine) const;
+    bool raise_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
+    bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    float blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame);
+    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player);
+    bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
+    void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
 
     std::string stage_;
     int entry_ = -1;             // the player point the current stage was entered at
@@ -89,6 +104,40 @@ private:
     int maze_since_ = -1;        // in this maze place (or since its last turn) since
     std::string region_now_;     // the maze region the player was last found in (kMazeRegions)
     int region_check_{};         // when it was looked for
+    // Survival without god mode.
+    std::map<int, int> prices_;  // conItem record -> HANBAI price (read where the table is loaded)
+    bool shop_open_ = false;     // a shop errand's program (SUBWND DISK) may be running
+    int heal_at_ = -100000;      // the last emergency heal (Y)
+    int panel_close_at_ = -100000; // the last R that closes a panel left open
+    int disk_use_ = -1;          // the disk being used from the L panel (conItem record), -1 none
+    int disk_use_at_{};          // its use began (L)
+    int disk_line_{};            // its line in the panel
+    bool disk_quick_{};          // used with Y (the emergency heal) instead
+    int disk_held_{};            // its count when the use began
+    int raise_tries_{};          // Raise Disk uses tried in this stage
+    int raise_walk_since_ = -1;  // walking to the bit capsule since
+    bool alive_ = false;         // player 1 was alive in the last game frame
+    int deaths_{};               // defeats so far
+    int guard_traced_ = -100000; // the last traced guard
+    std::string guard_what_;     // the box guarded against (traces)
+    struct BoxSeen {
+        int frame = -1, prev_frame = -1;
+        engine::Vec3f at{}, prev{};
+    };
+    std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
+    int tech_at_ = -1;           // a technique cast began (R), -1 none
+    int jump_at_ = -100000;      // the last jump out of a touch
+    int touch_traced_ = -100000; // the last traced one
+    int tech_end_ = -100000;     // the last cast's end
+    // Training (campaign.cpp kTraining).
+    std::string objective_now_;  // the objective worked on (defeats raise its gate)
+    std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat at it came at
+    int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
+    bool train_leaving_ = false; // the training field is spent: leaving it
+    int gate_since_ = -1;        // walking to a heal gate since, -1 none
+    std::string gate_mat_;       // its mat
+    engine::Vec3f gate_at_{};    // where it is
+    std::set<std::string> gate_tried_; // "<stage> <mat>" heal gates given up
 };
 
 // One step of a ride's targets (campaign.cpp kRideTargets: the stag0103
