@@ -1,10 +1,12 @@
 #include "dw4/engine/managers.hpp"
+#include "dw4/animation_math.hpp"
 #include "dw4/engine/save_menu.hpp"
 #include "dw4/engine/state_archive.hpp"
 #include "dw4/igb_document.hpp"
 #include "dw4/sfd.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -316,47 +318,22 @@ void set_translation(Mat4& m, const Vec3f& v) {
 }
 Vec3f translation_of(const Mat4& m) { return {m(3, 0), m(3, 1), m(3, 2)}; }
 
-// 8012B8A8: the rotation part of a matrix as a quaternion (x, y, z, w).
-Vec4f matrix_quaternion(const Mat4& m) {
-    const float trace = m(0, 0) + m(1, 1) + m(2, 2);
-    Vec4f q;
-    if (trace > 0.0f) {
-        const float s = std::sqrt(trace + 1.0f) * 2.0f;
-        q = {(m(1, 2) - m(2, 1)) / s, (m(2, 0) - m(0, 2)) / s, (m(0, 1) - m(1, 0)) / s, 0.25f * s};
-    } else if (m(0, 0) > m(1, 1) && m(0, 0) > m(2, 2)) {
-        const float s = std::sqrt(1.0f + m(0, 0) - m(1, 1) - m(2, 2)) * 2.0f;
-        q = {0.25f * s, (m(0, 1) + m(1, 0)) / s, (m(2, 0) + m(0, 2)) / s, (m(1, 2) - m(2, 1)) / s};
-    } else if (m(1, 1) > m(2, 2)) {
-        const float s = std::sqrt(1.0f + m(1, 1) - m(0, 0) - m(2, 2)) * 2.0f;
-        q = {(m(0, 1) + m(1, 0)) / s, 0.25f * s, (m(1, 2) + m(2, 1)) / s, (m(2, 0) - m(0, 2)) / s};
-    } else {
-        const float s = std::sqrt(1.0f + m(2, 2) - m(0, 0) - m(1, 1)) * 2.0f;
-        q = {(m(2, 0) + m(0, 2)) / s, (m(1, 2) + m(2, 1)) / s, 0.25f * s, (m(0, 1) - m(1, 0)) / s};
+// 0x802F317C..0x802F3250, once for the eye and once for the target: the
+// live transform's translation is 8012D3F4 (t * (goal - saved) + saved, one
+// fused multiply/add per axis) and its rotation the 8012B8A8 quaternions of
+// the saved and the goal matrix blended by 8012C15C (a normalized linear
+// blend, not a spherical one) and written back by 801299D8 (normalized,
+// nine rotation entries; the translation stays).
+void blend_transform(Mat4& live, const Mat4& saved, const Mat4& goal, float t) {
+    const Vec3f a = translation_of(saved), b = translation_of(goal);
+    set_translation(live, {std::fma(t, b.x - a.x, a.x), std::fma(t, b.y - a.y, a.y), std::fma(t, b.z - a.z, a.z)});
+    try {
+        const auto q = dw4::original_quaternion_nlerp(dw4::original_matrix_rotation(saved.m),
+                                                      dw4::original_matrix_rotation(goal.m), t);
+        dw4::original_normalized_rotation_matrix(q, live.m);
+    } catch (const dw4::AnimationMathError&) {
+        // A non-finite box transform keeps the live rotation.
     }
-    return q;
-}
-
-// 8012C15C: spherical interpolation along the shorter arc.
-Vec4f quaternion_slerp(Vec4f a, Vec4f b, float t) {
-    float cosine = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-    if (cosine < 0.0f) {
-        b = {-b.x, -b.y, -b.z, -b.w};
-        cosine = -cosine;
-    }
-    float wa = 1.0f - t, wb = t;
-    if (cosine < 0.9999f) {
-        const float angle = std::acos(cosine), sine = std::sin(angle);
-        wa = std::sin((1.0f - t) * angle) / sine;
-        wb = std::sin(t * angle) / sine;
-    }
-    return {a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb, a.w * wa + b.w * wb};
-}
-
-// 801299D8: the rotation of a quaternion, keeping the translation.
-void set_rotation(Mat4& m, const Vec4f& q) {
-    const Vec3f keep = translation_of(m);
-    m = quaternion_matrix(q.x, q.y, q.z, q.w);
-    set_translation(m, keep);
 }
 
 // SHK direction tables (804DD8D8 / 804DD8FC), indexed by pattern digit.
@@ -462,17 +439,25 @@ void CameraManager::update_box(Engine& engine, CameraRam& ram) {
             ram.hokan.reset(); // 0x802F316C: 8031E8BC removes CAMHOKAN
         } else {
             const float t = blend_ / 120.0f;
-            auto blend = [&](Node* live, const Mat4& saved, const Mat4& goal) {
-                const Vec3f a = translation_of(saved), b = translation_of(goal);
-                set_translation(live->matrix, a + (b - a) * t);
-                set_rotation(live->matrix, quaternion_slerp(matrix_quaternion(saved), matrix_quaternion(goal), t));
-            };
-            blend(eye, saved_eye_, box.eyes[k]->matrix);
-            blend(target, saved_target_, box.targets[k]->matrix);
+            blend_transform(eye->matrix, saved_eye_, box.eyes[k]->matrix, t);
+            blend_transform(target->matrix, saved_target_, box.targets[k]->matrix, t);
             if (!ram.hokan) timer_start(ram.hokan.emplace(), engine.time());
             const float frames = timer_frames(*ram.hokan, engine.time());
             blend_ = centre_moved_ ? blend_ + frames : std::fma(1.5f, frames, blend_); // fadds / fmadds
         }
+    }
+    // DW4_TRACE_CAMERA: blend, boxes, moved flag, the players' centre and
+    // the live transforms after the blend (the state at 0x802F32C8), float
+    // bits, for the Dolphin box camera log (work/dref/fix_r16camera).
+    if (static const bool trace = std::getenv("DW4_TRACE_CAMERA") != nullptr; trace) {
+        auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+        std::printf("[%llu] camera %08x %d %d %d", static_cast<unsigned long long>(engine.frame()), bits(blend_), box_,
+                    previous_box_, centre_moved_ ? 1 : 0);
+        for (float v : {centre.x, centre.y, centre.z}) std::printf(" %08x", bits(v));
+        for (const Node* node : {eye, target})
+            for (int row = 0; row < 4; ++row)
+                for (int column = 0; column < 3; ++column) std::printf(" %08x", bits(node->matrix(row, column)));
+        std::printf("\n");
     }
     // 802F3370: the shake offsets both live transforms by the pattern's
     // direction; SHAKEONE steps the pattern, SHAKEALL ends it.

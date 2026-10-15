@@ -13,8 +13,10 @@ namespace {
 
 constexpr std::uint32_t kNullRef = 0xffffffffu;
 
-// 8012D3F4: a + t * (b - a) per component.
-Vec3f lerp(const Vec3f& a, const Vec3f& b, float t) { return {t * (b.x - a.x) + a.x, t * (b.y - a.y) + a.y, t * (b.z - a.z) + a.z}; }
+// 8012D3F4: t * (b - a) + a per component, one fused multiply/add (fmadds).
+Vec3f lerp(const Vec3f& a, const Vec3f& b, float t) {
+    return {std::fma(t, b.x - a.x, a.x), std::fma(t, b.y - a.y, a.y), std::fma(t, b.z - a.z, a.z)};
+}
 
 // 8012D59C: cubic Bezier from p0 to p1 with control points c0, c1, built from
 // six 8012D3F4 steps (de Casteljau).
@@ -23,16 +25,12 @@ Vec3f bezier(const Vec3f& p0, const Vec3f& c0, const Vec3f& c1, const Vec3f& p1,
     return lerp(lerp(a, b, t), lerp(b, c, t), t);
 }
 
-// 8012C15C: linear blend on the shorter arc (b negated when the dot product
-// is below 0), then normalized; no spherical weights.
-Vec4f nlerp(const Vec4f& a, Vec4f b, float t) {
-    if (a.w * b.w + (a.z * b.z + (a.x * b.x + a.y * b.y)) < 0.0f) b = {-b.x, -b.y, -b.z, -b.w};
-    const float s = 1.0f - t;
-    const Vec4f r{s * a.x + t * b.x, s * a.y + t * b.y, s * a.z + t * b.z, s * a.w + t * b.w};
-    float length = r.w * r.w + (r.z * r.z + (r.x * r.x + r.y * r.y));
-    if (length > 0.0f) length = std::sqrt(length);
-    const float inverse = 1.0f / length;
-    return {r.x * inverse, r.y * inverse, r.z * inverse, r.w * inverse};
+// 8012C15C (dw4::original_quaternion_nlerp): linear blend on the shorter arc
+// (b negated when the dot product is below 0), then normalized; no
+// spherical weights.
+Vec4f nlerp(const Vec4f& a, const Vec4f& b, float t) {
+    const auto r = original_quaternion_nlerp({a.x, a.y, a.z, a.w}, {b.x, b.y, b.z, b.w}, t);
+    return {r[0], r[1], r[2], r[3]};
 }
 
 // 8012BE90 (dw4::original_interpolate_rotation): polynomial slerp, nothing

@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
 
 namespace {
 using Quaternion = std::array<float,4>;
@@ -270,9 +271,69 @@ void matrix_products() {
     }
 }
 
+// 8012C15C / 801299D8, used by the box camera blend 802F2BC0.
+void quaternion_nlerp() {
+    using dw4::original_quaternion_nlerp;
+    const Quaternion identity{0,0,0,1}, half_turn{0,0,1,0};
+    auto near=[](const Quaternion& a, const Quaternion& b) {
+        for (std::size_t i=0;i<4;++i) if (std::abs(a[i]-b[i])>2e-7f) return false;
+        return true;
+    };
+    // (0, 0, .25, .75) / |.|: linear weights, not sin(22.5 deg) / cos(22.5 deg).
+    check(near(original_quaternion_nlerp(identity,half_turn,.25f),{0,0,.316227764f,.948683298f}),
+        "8012C15C blends linearly and normalizes");
+    check(near(original_quaternion_nlerp(identity,half_turn,.5f),{0,0,.707106769f,.707106769f}),"8012C15C midpoint");
+    check(original_quaternion_nlerp(identity,{0,0,0,-1},.5f)==identity,"8012C15C takes the shorter arc");
+    check(original_quaternion_nlerp({0,0,0,2},{0,0,0,2},.5f)==identity,"8012C15C normalizes nonunit input");
+    dw4::AnimationMatrix matrix{}; matrix[3]=7; matrix[7]=8; matrix[11]=9; matrix[12]=10; matrix[13]=11; matrix[14]=12; matrix[15]=1;
+    dw4::original_normalized_rotation_matrix({0,0,0,2},matrix);
+    const dw4::AnimationMatrix expected{1,0,0,7, 0,1,0,8, 0,0,1,9, 10,11,12,1};
+    check(matrix==expected,"801299D8 normalizes and keeps the seven other entries");
+}
+
+// The box camera blend 0x802F317C..0x802F3250 against Dolphin's log of the
+// live transforms after the blend (r16camera, stagml12 frame 4653: blend
+// 31.0259742 of box 19 -> 11): 8012D3F4 translation, 8012B8A8 quaternions,
+// 8012C15C, 801299D8, every word as on the console.
+void camera_blend() {
+    using Words = std::array<std::uint32_t,12>; // rows 0-2 (3 each), translation
+    auto matrix=[](const Words& w) {
+        dw4::AnimationMatrix m{}; m[15]=1;
+        for (std::size_t r=0;r<4;++r) for (std::size_t c=0;c<3;++c) m[r*4+c]=std::bit_cast<float>(w[r*3+c]);
+        return m;
+    };
+    auto blend=[&](const Words& saved_words, const Words& goal_words, float t) {
+        const auto saved=matrix(saved_words), goal=matrix(goal_words);
+        auto live=saved;
+        for (std::size_t i=12;i<15;++i) live[i]=std::fma(t,goal[i]-saved[i],saved[i]);
+        const auto q=dw4::original_quaternion_nlerp(dw4::original_matrix_rotation(saved),dw4::original_matrix_rotation(goal),t);
+        dw4::original_normalized_rotation_matrix(q,live);
+        return live;
+    };
+    const float t=std::bit_cast<float>(0x41f0279cu)/120.0f;
+    const Words target_saved{0x3f708fb2,0x00000000,0xbeaf1d44,0xbe140355,0x3f6803ca,0xbecb54ca,
+                             0x3e9eb51c,0x3ed8616c,0x3f5a05c8,0x00000000,0x40a00000,0x00000000};
+    const Words target_goal{0x3f248dbb,0x24800000,0xbf441b7d,0xbf20a44a,0x3f12d5e8,0xbf06cb60,
+                            0x3ee0f714,0x3f51b3f3,0x3ebcc4a7,0x00000000,0x00000000,0x00000000};
+    const Words target_logged{0x3f634225,0x3cd32e40,0xbeeb56b7,0xbe87f3b6,0x3f582356,0xbeee5305,
+                              0x3ec08cdb,0x3f09074a,0x3f419fc7,0x00000000,0x406ff2cc,0x00000000};
+    const Words eye_saved{0x3f800000,0x00000000,0x00000000,0x00000000,0x3f7fffe9,0x3ada73fa,
+                          0x00000000,0xbada73fa,0x3f7fffe9,0x00000000,0xa8daefa8,0x42700000};
+    const Words eye_goal{0x3f800000,0x00000000,0x00000000,0x00000000,0x3f7ffff9,0x3a6e5008,
+                         0x00000000,0xba6e5008,0x3f7ffff9,0x00000000,0xa8dabe0a,0x42dc0000};
+    const Words eye_logged{0x3f800000,0x80000000,0x00000000,0x00000000,0x3f7fffee,0x3ac19ce4,
+                           0x80000000,0xbac19ce4,0x3f7fffee,0x00000000,0xa8dae33e,0x42910420};
+    for (const auto& [saved,goal,logged,reason] : {std::tuple{target_saved,target_goal,target_logged,"Box camera target blend matches Dolphin"},
+                                                   std::tuple{eye_saved,eye_goal,eye_logged,"Box camera eye blend matches Dolphin"}}) {
+        const auto live=blend(saved,goal,t);
+        for (std::size_t r=0;r<4;++r) for (std::size_t c=0;c<3;++c)
+            check(std::bit_cast<std::uint32_t>(live[r*4+c])==logged[r*3+c],reason);
+    }
+}
+
 int main() {
     try {
-        matrices(); rotation_matrix_ni(); matrix_products(); skin_points();
+        matrices(); rotation_matrix_ni(); matrix_products(); skin_points(); quaternion_nlerp(); camera_blend();
         // These small synthetic values were independently evaluated through a
         // bounded scalar interpreter of guest 0x8012be90. They are not game data.
         const Quaternion identity{0,0,0,1}, half_turn{0,0,1,0};
