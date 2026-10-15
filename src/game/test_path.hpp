@@ -303,7 +303,7 @@ private:
     std::string rejoin_gen_;                     // the stopped wave whose mat is walked back to
     int rejoin_since_ = -1;                      // the last plan that did
     std::map<std::string, int> rejoin_left_;     // generator -> frames its mat may still be walked back to
-    std::map<std::string, int> mat_skip_;      // given-up mat -> frame until which it is skipped
+    std::map<std::string, int> mat_skip_;        // given-up mat -> frame until which it is skipped
     std::set<std::string> mats_ever_;            // mats ever stood on in this stage (forget keeps them)
     std::map<std::string, int> mat_done_at_;     // mat -> frame it was stood on
     int world_change_ = -1;                      // the last switch turned on or generator first cleared
