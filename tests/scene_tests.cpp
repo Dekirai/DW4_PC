@@ -311,6 +311,18 @@ void test_lod_selection() {
     check(one.select_lod(5.0f) == nullptr && one.lod_index == -1 && one.lod_upper == 10.0f, "Below range[0] going down: no child");
 }
 
+// DW4_CARD_A / DW4_CARD_B and settings.ini [data] card_a / card_b.
+void test_card_setting() {
+    using Mode = dw4::engine::CardSetting::Mode;
+    const auto none = dw4::engine::parse_card_setting("none");
+    check(none && none->mode == Mode::none && none->blocks == 2043, "An empty slot");
+    const auto small = dw4::engine::parse_card_setting(" Unformatted , 251 ");
+    check(small && small->mode == Mode::unformatted && small->blocks == 251, "An unformatted 251-block card");
+    const auto sized = dw4::engine::parse_card_setting("59");
+    check(sized && sized->mode == Mode::automatic && sized->blocks == 59, "A block count alone keeps the slot's default");
+    check(!dw4::engine::parse_card_setting("full") && !dw4::engine::parse_card_setting("4096"), "Unknown settings are refused");
+}
+
 void test_text_layout() {
     // NORMAL metrics of bectext.igb: digits advance past their right edge,
     // '!' has an x offset.
@@ -372,6 +384,7 @@ int main() {
         test_motion_blend_tracks();
         test_text_layout();
         test_particle_records();
+        test_card_setting();
     } catch (const std::exception& error) {
         std::cerr << "scene tests failed: " << error.what() << '\n';
         return 1;

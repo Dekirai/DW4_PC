@@ -475,6 +475,19 @@ int run(const Options& options, dw4::game::Settings& settings) {
     else if (const char* dir = std::getenv("DW4_CARD_DIR")) engine.set_card_root(dir);
     else if (!options.smoke_frames && !settings.cards.empty()) engine.set_card_root(settings.cards);
     else if (const char* base = SDL_GetBasePath()) engine.set_card_root(std::filesystem::path(base) / "saves" / "GC" / "USA");
+    // What the slots hold: DW4_CARD_A / DW4_CARD_B, else settings.ini [data]
+    // card_a / card_b (not in test runs): "none" (an empty slot),
+    // "unformatted", "inserted" and / or the card's blocks ("251"; default
+    // 2043 like Dolphin's GCI folder cards).
+    for (int slot = 0; slot < 2; ++slot) {
+        const char* variable = slot == 0 ? "DW4_CARD_A" : "DW4_CARD_B";
+        std::string text;
+        if (const char* value = std::getenv(variable)) text = value;
+        else if (!options.smoke_frames) text = slot == 0 ? settings.card_a : settings.card_b;
+        if (text.empty()) continue;
+        if (const auto setting = dw4::engine::parse_card_setting(text)) engine.set_card_setting(slot, *setting);
+        else std::cerr << variable << ": unknown memory card setting '" << text << "'\n";
+    }
     for (const auto& [flag, value] : options.flags) engine.flags()[flag] = static_cast<std::uint8_t>(value);
     // Content mods: mods/<id> next to the program (else in the working
     // folder); test runs only with DW4_MODS=<mods folder>.
@@ -593,6 +606,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
         else if (net.local_slot() == 1) own_card_name = "Card B";
         own_card_folder = real_cards / "Card A";
         engine.set_card_root(session_cards);
+        // The shared copies in the usual slots on every machine.
+        for (int slot = 0; slot < 2; ++slot) engine.set_card_setting(slot, {});
         std::cout << "online: started as player " << net.local_slot() + 1 << " of " << started.players << ", delay " << started.delay << '\n';
     }
     // DW4_ENTRY=n (test runs): the first stage starts at its player point

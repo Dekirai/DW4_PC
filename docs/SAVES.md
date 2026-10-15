@@ -47,6 +47,56 @@ Message ids are `(player << 16) | 0x5xx` (e.g. 0x502, 0x50B, 0x50D, 0x50E,
 0x510, 0x51C, 0x51D, 0x51F, 0x527, 0x529, 0x530) and `0x1xxx..0x3xxx` for the
 card states.
 
+## Memory card states and access time
+
+SAVEUTILITY's update (80323538) runs one beSv*Api object per request
+(`src/card_timing.cpp`, `src/engine/save_util.cpp`). Every request mounts the
+card (8031FC40 / 8031FCF0, one step per frame: CARDProbeEx, CARDMountAsync,
+CARDGetResultCode until the mount is done, CARDCheck), works on the file and
+unmounts (8031FF98). The asynchronous CARD calls end after the EXI transfers
+Dolphin times (EXI_DeviceMemoryCard.cpp): reads 926 cycles a byte in 512-byte
+segments, page programs 4937 cycles a byte for 128 bytes plus 5000 cycles,
+erases 5000 cycles; a sector write (erase + 64 pages) is 5.03 fields, the mount
+(five 8 KiB system blocks) 4.68 fields. Requests end in these updates
+(Dolphin captures match frame for frame: boot check window, Call Digimon,
+save room, full and missing cards):
+
+| request | updates | |
+| --- | --- | --- |
+| USE_CHECK | 9 | mount |
+| FILEFIND | 11 / 12 | mount, CARDOpen; a missing file ends mounted |
+| GETFREESIZE | 12 | mount, CARDFreeBlocks |
+| READ_MEDIA | 29 | mount, CARDOpen, CARDGetStatus, both 40 KiB copies |
+| WRITE_MEDIA | 92 | mount, both copies (6 sectors each), header (2 sectors), CARDSetStatus |
+| FILEMAKE | 103 | mount, CARDCreate (2 sectors), copies, header, CARDSetStatus |
+| FORMAT | 37 | mount, CARDFormat (5 sectors) |
+| no card | 4 / 5 | three CARDProbeEx failures: 12 |
+
+WRITE_MEDIA and FILEMAKE end inside the menus' 3 s minimum (SaveDataTime /
+MakeDataTime). Their synchronous CARDSetStatus blocks the original's game loop
+for about 5 fields (Dolphin repeats the picture for 6 fields); the windows run
+on the world clock, so the following events keep their time and the port does
+not stall. beSvStartApi / beSvEndApi take two updates: ISRDY turns true in the
+second update after GENERATE and false in the third after REMOVE.
+
+The card in a slot (Engine::card_setting, `DW4_CARD_A` / `DW4_CARD_B` or
+settings.ini `[data] card_a` / `card_b`): `none` (CARDProbeEx: no card, 12),
+`unformatted` (the mount and CARDCheck report it broken, 7, until a FORMAT),
+`inserted`, and the card's blocks (default 2043, Dolphin's GCI folder card).
+Free blocks are the card's blocks minus the GCI header block counts (+0x38)
+of the `*.gci` files in the slot's folder, free files 127 minus their number,
+so a folder holding a 2043-block GCI is a full card (GETFREESIZE 9).
+
+The logo (803B18BC) checks slot A, then B. A broken card asks to format it
+(sub 50: texts 92204/92205 + 92030, question 92031 with the cursor on no,
+FORMAT, 92202 / 92203). When no slot can hold the save, state 1 reports the
+worst problem of slot A, else B (flags 8 no room: 92010 / 92011, 0x40 no
+file entry: 92211, 0x20 wrong device: 92209, 4 error: 92020 / 92021, 0x10
+broken: 92206 / 92207, none: 92000 "Memory Card not found." / 92001) and asks
+"Yes, continue without saving. / No, use another Memory Card."; yes shows
+the logos (after 92210 "To manage the contents of your Memory Card, use the
+Memory Card Screen." when the card was full), no checks again (92100).
+
 ## GameCube file
 
 beSaveUtilInfo (`stagis12/separate/*_pack.igb`) holds beSvPlatDataGC: file

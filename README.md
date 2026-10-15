@@ -148,7 +148,10 @@ picture blends between the last two updates) and `msaa` (2/4/8 samples, applied 
 `exp_rate`, `damage_dealt`, `damage_taken` (percent, 100 = original) and
 `drop_seed` (item drop randomizer, 0 = off; key items stay), `[data] cards` (the
 memory card folder with `Card A` / `Card B`, default `saves/GC/USA` next to the
-program; Dolphin's `GC/USA` folder works too) and
+program; Dolphin's `GC/USA` folder works too), `[data] card_a` / `card_b` (what
+the slots hold: `none` for an empty slot, `unformatted`, and / or the card's
+blocks such as `251`; default a 2043-block card in slot A and one in slot B when
+its folder exists, also `DW4_CARD_A` / `DW4_CARD_B`) and
 `[keyboard]` with up to three key names per button (`a=Return, Space, K`) and
 `[gamepad]` with up to three SDL controller inputs per button (`l=lefttrigger,
 leftshoulder`).

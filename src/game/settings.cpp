@@ -174,6 +174,8 @@ Settings Settings::load() {
     }
     settings.data = ini.get_or("data", "path", "");
     settings.cards = ini.get_or("data", "cards", "");
+    settings.card_a = ini.get_or("data", "card_a", "");
+    settings.card_b = ini.get_or("data", "card_b", "");
     return settings;
 }
 
