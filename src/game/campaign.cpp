@@ -791,9 +791,16 @@ std::vector<TitlePress> title_presses() {
 }
 
 // ---------------------------------------------------------------------------
-// Survival (runs without the god mode test cheat)
+// Survival (runs without the test cheats)
 // ---------------------------------------------------------------------------
-// The driver keeps the character alive like a player would:
+// Without DW4_ONE_HIT the driver casts its first technique at enemies in
+// front while the MP covers it (MP disks when it runs out, kTechReach).
+// Without DW4_GOD it keeps the character alive like a player would (all of
+// it is off with the cheats, so the recorded cheat run keeps its path):
+// - It guards (B) just before an enemy attack box lands and starts no attack
+//   while one is under way (kHoldAttackLead), guards an enemy's touch
+//   (kTouchGuard), and after kAggressAfter frames without an attack fights
+//   for a while without guarding.
 // - Below kHealBelow percent of its maximum HP it uses an HP disk from the
 //   L panel (survive): the smallest that makes up the missing HP, else the
 //   biggest held, Recovery last; every kHealGap frames at most. (Y, the quick
@@ -813,6 +820,10 @@ std::vector<TitlePress> title_presses() {
 //   backup chips from all around") used within 30 units of it (803B1328 ->
 //   P2PKOUKAMAGIC -50 -> PLAYER2 RAISE, 59 % of the EXP) brings them back:
 //   the driver walks to the capsule and uses the disk from the L panel.
+// - With nothing left to heal with it walks to a heal gate of the stage or
+//   uses a Gate Disk (kGateDisk); in the lobby the X-Data shop refills HP and
+//   MP (kLobbyHealBelow); below an objective's gate level it trains in the
+//   area's field (kTraining, kGates).
 constexpr int kHealBelow = 40; // percent of the maximum HP
 constexpr int kHealGap = 90;   // frames between two emergency heals
 constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) instead of the panel
