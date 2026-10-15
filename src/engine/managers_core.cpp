@@ -2431,7 +2431,10 @@ bool GameSystem::script_call(Engine& engine, const std::string& method, std::spa
         return true;
     }
     if (method == "SYSgetPlayerDigimon") {
-        out = {Lua4Value::number(players[std::size_t(std::clamp(arg_int(0), 0, 3))].stats.species)};
+        // (A form still open after a direct start's DW4_CARD_RECORD, see
+        // apply_record, reads as the first row so a stage's boot.lua can build
+        // its file names; the game itself always has the form set.)
+        out = {Lua4Value::number(std::max(0, players[std::size_t(std::clamp(arg_int(0), 0, 3))].stats.species))};
         return true;
     }
     if (method == "TXTgetCallNo") { out = {Lua4Value::number(text_call)}; return true; }

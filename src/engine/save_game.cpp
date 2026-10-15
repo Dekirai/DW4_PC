@@ -116,13 +116,15 @@ void GameSystem::apply_record(Engine& engine, int slot, const save::Record& r, b
     p.base_skill = r.base_skill;
     p.base_upcnt = r.base_upcnt;
     // BASE2CURRENT: the current form is the "shinka" row of the record's
-    // model name; recalc_player below looks it up (species -1 = still open).
-    // The character select has the database; a direct stage start reads a
-    // DW4_CARD_RECORD while boot.lua runs, before the stage's usa_pack.igb is
-    // loaded: then the record's values stay as they are until the first
+    // model name. The character select has the database and sets it at once.
+    // A direct stage start reads a DW4_CARD_RECORD while boot.lua runs,
+    // before the stage's usa_pack.igb is loaded: then the form stays open
+    // (species -1) and the record's values stay as they are until the first
     // recalc_player with the tables (the player's GENERATE), as if the record
     // had been applied in the character select.
     p.stats.species = -1;
+    if (auto* db = engine.get<DatabaseManager>())
+        if (const int row = db->find_row("shinka", "MODEL_NAME", r.digimon); row >= 0) load_species(engine, slot, row);
     p.stats.level = r.level;
     p.hp = r.hp;
     p.max_hp = r.max_hp;
