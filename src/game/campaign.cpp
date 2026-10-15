@@ -2026,7 +2026,9 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                               player.seq_name != "SQ_JUMP" && player.seq_name != "SQ_FALL";
     // A heal: the smallest HP disk that makes up the missing HP, else the
     // biggest one held, Recovery last.
-    if (slot.hp > 0 && slot.hp * 100 < slot.max_hp * kHealBelow && frame - heal_at_ >= kHealGap && controllable && !player.panel_open) {
+    // (Not in god mode: a pit there can still set the HP to 1, GAMERAM ADDHP
+    // absolute, and the cheat runs keep their path.)
+    if (!engine.cheats().god && slot.hp > 0 && slot.hp * 100 < slot.max_hp * kHealBelow && frame - heal_at_ >= kHealGap && controllable && !player.panel_open) {
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
         for (const int record : {0, 1, 2})
