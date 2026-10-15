@@ -64,6 +64,13 @@ private:
         int record = -1, count = 0, held = 0;
     };
     Purchase next_purchase(engine::Engine& engine) const;
+    // The next device to equip at the Digi-Lab (campaign.cpp kEquipGain):
+    // kind 0 the weapon in use (POWERSOCKET 0), 1 the board (MAINSLOT), 2 the
+    // accessory (SUBSLOT); device -1 when the equipment is the best held.
+    struct EquipPick {
+        int kind = -1, device = -1;
+    };
+    EquipPick next_equip(engine::Engine& engine) const;
     bool raise_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
     bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
@@ -137,6 +144,16 @@ private:
     int aggressive_until_ = -1;  // no guards until
     int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
+    int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
+    // The equipment errand at the Digi-Lab (next_equip).
+    bool equip_open_ = false;    // its lab program may be running
+    int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
+    int equip_page_ = 0;         // the device list's page (counted from its opening)
+    int equip_turn_ = 0, equip_turn_at_ = -100000; // a page turn pressed (+1 / -1), when
+    bool equip_folder_ = false;  // the device list was open in the last frame
+    EquipPick equip_tried_{};    // the pick the errand began with
+    int equip_since_ = -1;       // the errand's step since
+    std::set<std::pair<int, int>> equip_failed_; // (kind, device record) picks the lab did not take
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat at it came at
