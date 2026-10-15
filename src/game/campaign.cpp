@@ -616,6 +616,7 @@ struct BossFight {
     const char* strike;
     const char* follow;
     float keep;
+    bool real_blows = false; // only without the one-hit cheat (it fells such a boss with a blow)
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
@@ -625,6 +626,10 @@ constexpr BossFight kBossFights[] = {
     // soft: after a landing sof_f_luce.lua "ON" switches it to its SOFT
     // label, which leaves out the MUTEKI of the NORM one.
     {"stagbs03", "f_luce2|f_luce", "f_luce", 22.0f},
+    // dng102b3: Mammothmon (e_mammos) charges and tramples (x_007erunn02a,
+    // its body box): the ExploreBot's walk-and-swing landed 4 blows in 9000
+    // frames of a no-cheat run at level 11, its guard held off by the blows.
+    {"dng102b3", "e_mammos", "e_mammos", 30.0f, true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -3159,7 +3164,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     // Boss fights (kBossFights).
     if (controllable && step->action.rfind("explore:", 0) == 0)
         for (const auto& fight : kBossFights)
-            if (stage == fight.stage && boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, frame, out)) {
+            if (stage == fight.stage && (!fight.real_blows || !engine.cheats().one_hit) &&
+                boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, frame, out)) {
                 last_ = me;
                 return out;
             }
