@@ -583,6 +583,13 @@ constexpr StageSetting kStageSettings[] = {
 // comes up ahead-left and passes on the right: a side chosen from the way
 // ahead would be the wrong one, and the car is too wide to cross in the
 // last moments while the mechas swarm the player).
+// `timing` times the targets by the ride's own clock (ride_schedule): the
+// ride runs a recorded path, so "<target>@<sequence>+<frames>" says that the
+// target comes abreast of the ridden model's origin that many frames after
+// the `clock` model (the stag0203 train r_trainz02) starts that sequence (its
+// stretch of track; measured, the same in every run). The time until a sign
+// is known long before it is in reach and also where the track turns before
+// it (gate sign 0), where the distance to it says little.
 struct RideTargets {
     const char* stage;
     const char* goal;
@@ -592,11 +599,15 @@ struct RideTargets {
     const char* avoid = "";  // '|'-separated prefixes of models not to hit
     const char* minus_x = ""; // '|'-separated targets passing on the ridden model's -X side
     const char* plus_x = "";  // ... and on its +X side
+    const char* clock = "";   // the model whose sequences time the ride
+    const char* timing = "";  // '|'-separated "<target>@<clock sequence>+<frames>"
 };
 constexpr RideTargets kRideTargets[] = {
     {"stag0103", "matz00", "g_facttowerz06|g_shelfz06", 70.0f, 20.0f, 40.0f},
     {"stag0203", "matz04", "g_turnright#0|g_turnright#4|g_turnleft#2|g_gatesign#0|g_gatesign#1", 520.0f, 20.0f, 0.0f, 16.0f,
-     "g_turn|g_gatesign", "g_turnright#0|g_turnright#4|g_gatesign#0|g_gatesign#1", "g_turnleft#2"},
+     "g_turn|g_gatesign", "g_turnright#0|g_turnright#4|g_gatesign#0|g_gatesign#1", "g_turnleft#2", "r_trainz02",
+     "g_turnright#0@SQ_RAIL00+1008|g_turnright#4@SQ_RAILDD+1321|g_turnleft#2@SQ_RAILEE+585|g_gatesign#0@SQ_RAILII+2371|"
+     "g_gatesign#1@SQ_RAILJJ+917"},
 };
 
 // Boss fights the ExploreBot's way of fighting (walk at the nearest enemy,
@@ -682,11 +693,31 @@ constexpr float kSwingHalf = 3.0f;
 // Frames from an A press to the attack's first frame (read on the press,
 // the sequence starts on the next update but one).
 constexpr int kSwingLatency = 2;
+// An attack's boxes for swing_plan: the boxes, their half extent and the
+// frames from the input to the attack's first frame.
+struct SwingShape {
+    const SwingBox* boxes;
+    std::size_t count;
+    float half;
+    int latency;
+};
+constexpr SwingShape kSlash{kTrainSwing, std::size(kTrainSwing), kSwingHalf, kSwingLatency};
+// The Slam Attack (SQ_ATCK3, kind 50000: 'PCBA', bullet_name 804DD2A0):
+// with B held, a direction tapped twice within 15 frames (the slam taps of
+// 8034C770, ModelCtrlManager::update_player). One 15x15x15 box 4 ahead of
+// the player, checked from the sequence's first frame on for 16 frames
+// while the player lunges forward (stopped by a wall it faces), measured on
+// the stag0203 train; the sequence gives control back after 41 frames. The
+// signs' hit scripts take any bullet (hit_g_gatesign.lua, hit_g_turn*.lua).
+constexpr SwingBox kSlamBoxes[] = {{0.0f, 4.0f, 0.0f, 16.0f}};
+constexpr SwingShape kSlam{kSlamBoxes, std::size(kSlamBoxes), 7.5f, 1};
 
 // When to press A for the swing to meet the target's hit boxes while the
 // ride carries the player along at `v` per frame, the player standing still
 // and facing (fx, fz) (a unit vector). A press counts the swing's live boxes
-// that overlap the target by `depth` or more, frame by frame.
+// that overlap the target by `depth` or more, frame by frame. Another attack
+// (`shape`, `latency` frames from now to its first frame, default its own)
+// is planned the same way.
 struct SwingPlan {
     int lead = -1;  // frames until the first press with three quarters of the best count, -1: none within the horizon
     int now = 0;    // the count of a press now
@@ -698,7 +729,8 @@ struct SwingPlan {
 // stag0203 g_turnleft#2, an 80x80 box, was missed by such a swing.)
 constexpr float kSwingDepth = 1.5f;
 SwingPlan swing_plan(const engine::ModelCtrlManager::ModelRam& player, const engine::ModelCtrlManager::ModelRam& target, const engine::Vec3f& v,
-                     float fx, float fz, int horizon, float depth = kSwingDepth) {
+                     float fx, float fz, int horizon, float depth = kSwingDepth, const SwingShape& shape = kSlash, int latency = -1) {
+    if (latency < 0) latency = shape.latency;
     SwingPlan plan;
     if (!player.node || !target.node || !target.hit || target.hit->boxes.empty()) return plan;
     const auto& m = target.node->matrix;
@@ -721,7 +753,7 @@ SwingPlan swing_plan(const engine::ModelCtrlManager::ModelRam& player, const eng
     const auto meets = [&](const SwingBox& s, int k) {
         const float cx = p(3, 0) + v.x * float(k) + s.side * sx + s.ahead * fx;
         const float cz = p(3, 2) + v.z * float(k) + s.side * sz + s.ahead * fz;
-        const float d = kSwingHalf - depth;
+        const float d = shape.half - depth;
         for (const auto& b : boxes)
             if (cx + d >= b.x0 && cx - d <= b.x1 && cz + d >= b.z0 && cz - d <= b.z1) return true;
         return false;
@@ -729,9 +761,9 @@ SwingPlan swing_plan(const engine::ModelCtrlManager::ModelRam& player, const eng
     std::vector<int> count(std::size_t(horizon) + 1, 0);
     plan.first = 1 << 20;
     for (int lead = 0; lead <= horizon; ++lead) {
-        for (const auto& s : kTrainSwing)
-            for (int k = lead + kSwingLatency + int(s.from); k < lead + kSwingLatency + int(s.to); ++k)
-                if (meets(s, k)) {
+        for (std::size_t i = 0; i < shape.count; ++i)
+            for (int k = lead + latency + int(shape.boxes[i].from); k < lead + latency + int(shape.boxes[i].to); ++k)
+                if (meets(shape.boxes[i], k)) {
                     ++count[std::size_t(lead)];
                     if (lead == 0) plan.first = std::min(plan.first, k);
                 }
@@ -1060,6 +1092,75 @@ float away_along(float me_along, float keep_side, const std::vector<RideFoe>& fo
     return best;
 }
 
+// The direction mask the pad makes of a stick (pad.cpp directions,
+// 80311AA4..80311BBC): eight overlapping zones, none below 0.4.
+std::uint32_t stick_mask(float x, float y) {
+    if (std::sqrt(x * x + y * y) < 0.4f) return 0;
+    const float angle = static_cast<float>(std::atan2(static_cast<double>(y), static_cast<double>(x)));
+    constexpr float quarter_pi = 0x1.921fb6p-1f, three_quarter_pi = 0x1.2d97c8p+1f, half_overlap = 0.5f * quarter_pi;
+    std::uint32_t result = 0;
+    if (angle < -three_quarter_pi + half_overlap || angle > three_quarter_pi - half_overlap) result |= pad_direction::negative_x;
+    if (angle >= -three_quarter_pi - half_overlap && angle <= -quarter_pi + half_overlap) result |= pad_direction::negative_y;
+    if (angle > -quarter_pi - half_overlap && angle < quarter_pi + half_overlap) result |= pad_direction::positive_x;
+    if (angle >= quarter_pi - half_overlap && angle <= three_quarter_pi + half_overlap) result |= pad_direction::positive_y;
+    return result;
+}
+
+// The camera's heading (the yaw of its view's inverse +Z row), which turns
+// the stick into the player's walking direction (8034C67C).
+float camera_heading(engine::Engine& engine) {
+    auto* cameras = engine.get<engine::CameraManager>();
+    if (!cameras) return 0.0f;
+    engine::FrameCamera camera;
+    cameras->frame_camera(engine, camera);
+    engine::Mat4 inverse;
+    if (!engine::invert(camera.view, inverse)) return 0.0f;
+    return std::atan2(inverse(2, 0), inverse(2, 2));
+}
+
+// The ride's next timed target (RideTargets::timing): the clock model's
+// sequence changes are followed from frame to frame (`start`: the frame the
+// current one was first seen); `abreast_in` counts the frames until the
+// target comes abreast of the ridden model's origin. A target struck already
+// (SQ_SWON) or passed more than kPassedFrames ago is skipped.
+struct Scheduled {
+    bool valid = false;
+    std::string name;
+    float abreast_in = 0.0f;
+};
+Scheduled ride_schedule(engine::ModelCtrlManager& models, const RideTargets& ride, int frame) {
+    constexpr float kPassedFrames = 40.0f;
+    Scheduled next;
+    if (!*ride.clock || !*ride.timing) return next;
+    const engine::ModelCtrlManager::ModelRam* clock = nullptr;
+    for (const auto& e : models.rams())
+        if (e->generated && e->info_name == ride.clock) clock = e.get();
+    static std::string clock_seq;
+    static int clock_start = 0, clock_seen = -100;
+    if (!clock) return next;
+    if (clock->seq_name != clock_seq || frame < clock_seen) {
+        clock_seq = clock->seq_name;
+        clock_start = frame;
+    }
+    clock_seen = frame;
+    const std::string timing = std::string(ride.timing) + "|";
+    for (std::size_t at = 0; at < timing.size();) {
+        const auto bar = timing.find('|', at);
+        const std::string entry = timing.substr(at, bar - at);
+        at = bar + 1;
+        const auto mark = entry.find('@'), plus = entry.find('+'), hash = entry.find('#');
+        if (mark == std::string::npos || plus == std::string::npos || entry.substr(mark + 1, plus - mark - 1) != clock_seq) continue;
+        const float in = float(clock_start + std::atoi(entry.c_str() + plus + 1) - frame);
+        if (in < -kPassedFrames || (next.valid && in >= next.abreast_in)) continue;
+        bool struck = false;
+        for (const auto& e : models.rams())
+            if (e->generated && hash < mark && e->info_name == entry.substr(0, hash) && e->index == std::atoi(entry.c_str() + hash + 1))
+                struck = struck || e->seq_name == "SQ_SWON";
+        if (!struck) next = {true, entry.substr(0, mark), in};
+    }
+    return next;
+}
+
 } // namespace
 
 bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& stage,
@@ -1158,11 +1259,47 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
         // (two thirds of the best press's count) goes in when the player
         // stays untouchable (MUTEKI, or no blow due) until its first meeting
         // box, or as the window's last press unless a blow is certain first.
+        // The Slam Attack (kSlam) meets a sign from the wall at once: its box
+        // is checked from the attack's first frame, which comes a frame after
+        // the second tap, so the player is open to a blow for a few frames
+        // only, against some 17 for the swing (the mechas' blows land on the
+        // player in 15-20 frames out of 27 when two or three of them stand
+        // by, which is what knocked the player down while the swing came).
+        // B has to be held already for the taps, and a B pressed with
+        // control starts the guard instead: B is pressed while the player
+        // has no control (struck, guarding, attacking: 8030CCDC runs no input
+        // then) and kept held, so the slam is ready when control comes back.
+        // From kEdgeFrom frames before the sign's first good press (by the
+        // ride's clock, ride_schedule) the player keeps to the edge on the
+        // sign's side (crossing the car later failed where the mechas stood
+        // between), and there the slam goes in when its box meets the sign
+        // within a few frames of the attack's start and no blow lands first;
+        // the swing then only where MUTEKI outlasts its first meeting box.
         constexpr int kLeadHorizon = 90;
+        constexpr float kPressLead = 17.0f; // A to the swing's far boxes (kTrainSwing)
+        constexpr float kEdgeFrom = 300.0f, kHoldFrom = 400.0f;
         const engine::ModelCtrlManager::ModelRam* sign = ride.strike > 0.0f ? best : nullptr;
+        // (Frames until the next timed target's first good press: the swing's
+        // far boxes come kPressLead frames after A, and a player toward the
+        // ridden model's front meets it earlier.)
+        const Scheduled sched = ride.strike > 0.0f ? ride_schedule(*models, ride, frame) : Scheduled{};
+        const float speed = std::max(0.5f, std::hypot(ride_v.x, ride_v.z));
+        const float press_in = sched.valid && car.valid ? sched.abreast_in - car.along(me) / speed - kPressLead : 1e9f;
         if (foe && !sign) best = foe;
         if (!best && !threat) return false;
         const bool swinging = player.seq_name.rfind("SQ_ATCK", 0) == 0;
+        // B held for the slam (see above): set while the player has no
+        // control and kept until a guard is wanted or the sign's approach
+        // ends. (While this step leaves the frames to the ExploreBot, no sign
+        // in range and no enemy within `fight`, B is let go; the first press
+        // after that, with control, takes a guard when a mecha comes within
+        // `fight` or the sign comes in range, and the guard makes the slam
+        // ready again.)
+        static bool b_hold = false;
+        const bool b_down = (engine.pads()[0].buttons.held & pad_button::b) != 0;
+        if (!(ride.strike > 0.0f && car.valid && (sign || press_in < kHoldFrom))) b_hold = false;
+        else if (player.ctrl_mode == 0) b_hold = true;
+        const bool slam_ready = b_hold && b_down && player.ctrl_mode != 0 && (player.seq_name == "SQ_WAIT" || player.seq_name == "SQ_WALK");
         // The side of the car the sign passes on: listed, else (the track
         // may turn before it) the side it lies on once less than kSideFrom
         // ahead; 0: not known yet.
@@ -1199,6 +1336,7 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
         // meets the sign earlier or later. The facing whose press now meets
         // the sign best (two thirds of its best press's count or more) while
         // the player stays untouchable until its first meeting box is taken.
+        const bool at_edge = sign && side != 0 && car.valid && car.side(me) * float(side) >= 24.0f;
         float swing_x = face_x, swing_z = face_z;
         bool swing_now = false;
         if (sign) {
@@ -1213,7 +1351,7 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                 const bool last_chance = p.last >= 0 && p.last <= 3;
                 const bool untouchable = player.muteki > float(p.first) || blow.due() > float(p.first) ||
                                          (last_chance && blow.certain > float(p.first));
-                if (meets_well && untouchable && p.now > best_now) {
+                if (meets_well && untouchable && p.now > best_now && (!(slam_ready && at_edge) || player.muteki > float(p.first))) {
                     best_now = p.now;
                     swing_x = fx;
                     swing_z = fz;
@@ -1229,7 +1367,52 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
         // kGuardLead frames or less before the blow (the guard starts a frame
         // after the press).
         constexpr float kGuardLead = 8.0f;
-        const bool guard_now = sign && !swing_now && !swinging && (incoming || blow.certain <= kGuardLead) && player.muteki <= blow.certain + 3.0f;
+        // The slam: the taps go in on the direction pad (game_main turns
+        // them into a stick in the middle of a direction zone: the same mask
+        // both times, stick_mask), the one nearest across toward the sign,
+        // and it starts `slam_wait` frames from now (the taps still to come,
+        // from the player's slam state, 8034C770). It goes in when its box
+        // meets the sign within kSlamFirst frames of its start, no blow can
+        // land before that (or MUTEKI outlasts it), and it meets no unwanted
+        // target.
+        constexpr int kSlamFirst = 3;
+        bool slam_now = false;
+        std::uint32_t slam_tap = 0;
+        int slam_wait = 0;
+        SwingPlan slam_plan;
+        if (slam_ready && at_edge && !hold) {
+            const float heading = camera_heading(engine);
+            const float want = std::atan2(car.sx * float(side), car.sz * float(side)) - heading;
+            const float r = float(std::lround(want / 0.7853982f)) * 0.7853982f;
+            const float tx = std::sin(r) > 0.5f ? 1.0f : std::sin(r) < -0.5f ? -1.0f : 0.0f;
+            const float ty = -std::cos(r) > 0.5f ? 1.0f : -std::cos(r) < -0.5f ? -1.0f : 0.0f;
+            slam_tap = (tx > 0.0f ? pad_button::right : tx < 0.0f ? pad_button::left : 0u) |
+                       (ty > 0.0f ? pad_button::up : ty < 0.0f ? pad_button::down : 0u);
+            const std::uint32_t mask = stick_mask(tx, ty);
+            const float yaw = heading + std::atan2(tx, -ty);
+            slam_wait = player.slam_state == 3 ? (player.slam_direction == mask ? 1 : 5) : player.slam_state == 2 ? 2
+                        : player.slam_state == 1                                  ? 3
+                                                                                  : 4;
+            slam_plan = swing_plan(player, *sign, ride_v, std::sin(yaw), std::cos(yaw), 0, kSwingDepth, kSlam, slam_wait);
+            bool unwanted_slam = false;
+            for (const auto& e : models->rams()) {
+                if (!e->generated || !e->node || e->hp <= 0 || listed_in(prefixes, *e) || !listed_in(avoid, *e)) continue;
+                if (e->seq_name == "SQ_SWON" || e->seq_name == "SQ_SWOF" || e->seq_name == "SQ_POWEROF") continue;
+                if (flat(nearest_hit_point(*e, me), me) > 90.0f) continue;
+                if (swing_plan(player, *e, ride_v, std::sin(yaw), std::cos(yaw), 0, -1.0f, kSlam, slam_wait).now > 0) unwanted_slam = true;
+            }
+            const bool safe = player.muteki > float(slam_plan.first) || blow.due() > float(slam_plan.first);
+            slam_now = slam_plan.now > 0 && slam_plan.first <= slam_wait + kSlamFirst && safe && !unwanted_slam;
+        }
+        const bool guard_now = sign && !slam_now && !swing_now && !swinging && (incoming || blow.certain <= kGuardLead) &&
+                               player.muteki <= blow.certain + 3.0f;
+        // Frames until the sign's first good press (by the swing's plan
+        // within its horizon, else by the ride's clock, else by distance).
+        const float until = !sign            ? 1e9f
+                            : plan.most > 0 ? float(plan.lead)
+                            : sched.valid && sched.name == sign->info_name + "#" + std::to_string(sign->index)
+                                ? std::max(0.0f, press_in)
+                                : (flat(nearest_hit_point(*sign, me), me) - 25.0f) / speed;
         float keep_along = 0.0f, keep_side = 0.0f;
         if (best && !guard_now && (!incoming || swing_now)) {
             // Toward the nearest point of its hit box (on a ride: to the
@@ -1250,8 +1433,6 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                 // wall stops the player at 29.4) and the wall holds the
                 // player in place. The car's middle line while the side is
                 // not known.
-                const float speed = std::max(0.5f, std::hypot(ride_v.x, ride_v.z));
-                const float until = plan.most > 0 ? float(plan.lead) : (flat(nearest_hit_point(*sign, me), me) - 25.0f) / speed;
                 const float edge = float(side) * kEdgeSide, me_s = car.side(me);
                 const float cross = std::abs(me_s - edge) / kWalkSpeed + kCrossSpare;
                 keep_side = edge;
@@ -1264,7 +1445,7 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                         spot = choose_spot(car.along(me), me_s, foes, side, until, spot);
                         spot_frame = frame;
                     }
-                    if (until > cross + kSpotSpare) {
+                    if (until > cross + kSpotSpare && until >= kEdgeFrom) {
                         keep_along = spot.along;
                         keep_side = spot.side;
                     }
@@ -1305,12 +1486,34 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                 press_x = (at.x - me.x) / d;
                 press_z = (at.z - me.z) / d;
             }
-            if (!hold && press && !unwanted(press_x, press_z) && !unwanted(player.node->matrix(2, 0), player.node->matrix(2, 2)))
+            if (!hold && press && !slam_now && !unwanted(press_x, press_z) && !unwanted(player.node->matrix(2, 0), player.node->matrix(2, 2)))
                 out.buttons |= pad_button::a;
+            if (slam_now) {
+                // (The taps: a direction from the middle, the middle, the
+                // same direction again, by the player's slam state.)
+                out.walk = false;
+                if (player.slam_state == 1 || player.slam_state == 3) out.buttons |= slam_tap;
+            }
         } else {
             // (B is read on its press: pulsed so the guard is taken again;
             // against a blow about to land every other frame.)
             if (guard_now ? frame % 2 == 0 : frame % 8 < 4) out.buttons |= pad_button::b;
+        }
+        // B held for the slam; a guard wanted with control lets go of it for
+        // a frame first (the guard needs a press). A walk that would end the
+        // slam's taps by chance (the second tap's direction while the tap
+        // timer runs) waits for the timer instead.
+        if (guard_now && player.ctrl_mode != 0 && b_hold) {
+            b_hold = false;
+            out.buttons &= ~pad_button::b;
+        }
+        if (b_hold) out.buttons |= pad_button::b;
+        if (b_hold && !slam_now && player.slam_state == 3 && out.walk) {
+            const float dx = out.x - me.x, dz = out.z - me.z;
+            if (dx * dx + dz * dz > out.reach) {
+                const float r = std::atan2(dx, dz) - camera_heading(engine);
+                if (stick_mask(std::sin(r), -std::cos(r)) == player.slam_direction) out.walk = false;
+            }
         }
         // DW4_TRACE_RIDE=5: the sign's hit boxes and the player's live attack
         // boxes in the world, every frame within 60 units of the sign.
@@ -1360,9 +1563,15 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                 const auto q = nearest_hit_point(*sign, me);
                 std::printf("[%d] SIGN %s#%d car (%.1f,%.1f)\n", frame, sign->info_name.c_str(), sign->index, car.along(q), car.side(q));
             }
+            // (The timed target, frames until its first good press, B held /
+            // the slam ready, and the slam's plan.)
+            if (sched.valid)
+                std::printf("[%d] plan %s press_in %.0f%s%s slam %d first %d wait %d state %d\n", frame, sched.name.c_str(), press_in,
+                            b_hold ? " hold" : "", slam_ready ? " ready" : "", slam_plan.now, slam_plan.now ? slam_plan.first : -1, slam_wait,
+                            player.slam_state);
             std::printf("[%d] ride at (%.0f,%.0f,%.0f) car (%.1f,%.1f) keep (%.1f,%.1f) %s %s: %s#%d %.1f off lead %d now %d/%d first %d blow %.0f c%.0f mu %.0f%s%s%s%s |%s\n",
                         frame, me.x, me.y, me.z, car.along(me), car.side(me), keep_along, keep_side, player.seq_name.c_str(),
-                        best && best == foe ? "foe" : guard_now ? "guard" : "target", best ? best->info_name.c_str() : "-", best ? best->index : -1,
+                        best && best == foe ? "foe" : guard_now ? "guard" : slam_now ? "slam" : "target", best ? best->info_name.c_str() : "-", best ? best->index : -1,
                         best ? flat(nearest_hit_point(*best, me), me) : 0.0f, lead, plan.now, plan.most, plan.now ? plan.first : -1,
                         std::min(blow.due(), 99.0f), std::min(blow.certain, 99.0f), player.muteki, hold ? " hold" : "", threat ? " threat" : "",
                         incoming ? " incoming" : "", out.buttons & pad_button::a ? " A" : out.buttons & pad_button::b ? " B" : "", near.c_str());
