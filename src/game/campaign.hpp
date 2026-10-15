@@ -146,6 +146,7 @@ private:
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
     int gate_disk_at_ = -100000; // the last Gate Disk use
+    int gate_refused_at_ = -1;   // the stage visit (its stage_frame_) whose panel refused the Gate Disk
     int last_attack_ = 0;        // the last frame player 1 attacked (SQ_ATCK*, SQ_WAZA)
     int aggressive_until_ = -1;  // no guards until
     int held_presses_ = 0;       // presses of A the guard took back since the last attack

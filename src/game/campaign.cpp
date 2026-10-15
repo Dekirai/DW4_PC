@@ -2467,7 +2467,13 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             if (disk_use_ != kRaiseDisk && disks_held(slot, disk_use_) == disk_held_) {
                 if (trace()) std::printf("[%d] campaign disk %d not taken by the panel\n", frame, disk_use_);
                 if (heal_at_ == disk_use_at_) heal_at_ = frame - kHealGap + 4;
-                if (disk_use_ == kGateDisk) gate_disk_at_ = -100000;
+                // (A Gate Disk the panel refused, NOGATEDISK: stagBS01's
+                // Apocalymon fight; the panel greys it, 80349684, and the
+                // pick plays CURSOR_NG: none in this stage visit.)
+                if (disk_use_ == kGateDisk) {
+                    gate_refused_at_ = stage_frame_;
+                    if (trace()) std::printf("[%d] campaign: the Gate Disk is refused in %s\n", frame, stage_.c_str());
+                }
             }
             disk_use_ = -1;
             panel_close_at_ = frame;
@@ -2583,7 +2589,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     }
     // The Gate Disk out (not in god mode): see kGateDisk.
     if (!engine.cheats().god && controllable && !player.panel_open && panel_ready && frame - gate_disk_at_ >= 3000 &&
-        disks_held(slot, kGateDisk) > 0) {
+        disks_held(slot, kGateDisk) > 0 && gate_refused_at_ != stage_frame_) {
         bool heals = false;
         for (const int record : {0, 1, 2, 9}) heals = heals || disks_held(slot, record) > 0;
         const bool dying = (slot.hp * 100 < slot.max_hp * kGateTripBelow || (big_hits && slot.hp * 100 < big_hit_ * kBigHitMargin)) && !heals;
