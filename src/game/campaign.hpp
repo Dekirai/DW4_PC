@@ -133,6 +133,9 @@ private:
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
     int gate_disk_at_ = -100000; // the last Gate Disk use
+    int last_attack_ = 0;        // the last frame player 1 attacked (SQ_ATCK*, SQ_WAZA)
+    int aggressive_until_ = -1;  // no guards until
+    int guard_held_ = -100000;   // the last frame a guard held an attack back
     int tech_end_ = -100000;     // the last cast's end
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)

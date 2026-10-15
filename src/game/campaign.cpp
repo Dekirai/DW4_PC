@@ -819,6 +819,10 @@ constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) inste
 // The guard (survive): no attack is started while an enemy blow lands within
 // kHoldAttackLead frames; B goes in kGuardLead frames before it.
 constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
+// No attack (SQ_ATCK*, SQ_WAZA) for kAggressAfter frames, the guard holding
+// it back from an enemy that attacks without pause (stag0101 goburi packs,
+// the dng102b3 boss e_mammos): kAggressFor frames without guarding.
+constexpr int kAggressAfter = 600, kAggressFor = 240;
 // Techniques (survive, not with the one-hit cheat): the first one is cast at
 // an enemy within kTechReach in front whenever the MP covers it, at most every
 // kTechGap frames (its DELAY is 75).
@@ -2065,11 +2069,22 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // (hit_p_*.lua: SQ_GUARD -> SQ_GUARDR, no damage, MOVE Back and MUTEKI 30
     // at its end), and while that MUTEKI lasts the player walks on away from
     // the enemy instead of attacking.
-    if (!engine.cheats().one_hit && player.control_enabled && player.node) {
+    // (The guards: not in god mode, where the HP does not matter and a boss
+    // that attacks without pause would never be struck, nor in an aggressive
+    // window, see kAggressAfter.)
+    if (player.seq_name.rfind("SQ_ATCK", 0) == 0 || player.seq_name == "SQ_WAZA") last_attack_ = frame;
+    if (frame >= aggressive_until_ && frame - last_attack_ > kAggressAfter && frame - guard_held_ < 60) {
+        aggressive_until_ = frame + kAggressFor;
+        last_attack_ = frame;
+        if (trace()) std::printf("[%d] campaign: no attack for %d frames, %d frames without guarding\n", frame, kAggressAfter, kAggressFor);
+    }
+    const bool guarding = !engine.cheats().god && frame >= aggressive_until_;
+    if (guarding && !engine.cheats().one_hit && player.control_enabled && player.node) {
         float gap = 0.0f;
         if (const auto away = touch_escape(engine, player, gap)) {
             if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !player.panel_open) {
                 out.buttons = frame % 4 < 2 ? pad_button::b : 0;
+                guard_held_ = frame;
                 if (trace() && frame - touch_traced_ >= 600) {
                     touch_traced_ = frame;
                     std::printf("[%d] campaign guards a touch (%s)\n", frame, guard_what_.c_str());
@@ -2145,8 +2160,11 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             survive(engine, player, frame, out);
             return;
         }
-        if (due <= kHoldAttackLead) out.buttons &= ~pad_button::a;
-        if (due <= kGuardLead && player.muteki <= due + 1.0f && controllable) {
+        if (guarding && due <= kHoldAttackLead) {
+            out.buttons &= ~pad_button::a;
+            guard_held_ = frame;
+        }
+        if (guarding && due <= kGuardLead && player.muteki <= due + 1.0f && controllable) {
             if (frame % 4 < 2) out.buttons |= pad_button::b;
             if (trace() && frame - guard_traced_ >= 600) {
                 guard_traced_ = frame;
@@ -2525,6 +2543,19 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         // A long step: the place in the log where a run stalls.
         std::printf("[%d] campaign: still %s for %d frames at (%.0f,%.0f,%.0f)\n", frame, key.c_str(), frame - traced_at_,
                     player->node->matrix(3, 0), player->node->matrix(3, 1), player->node->matrix(3, 2));
+        // DW4_CAMPAIGN_STALL_DUMP=1 (research, prints only): from 20000 frames
+        // on, the state of every model RAM (category, control, freeze, HP,
+        // sequence) and the running demo-message chains.
+        if (std::getenv("DW4_CAMPAIGN_STALL_DUMP") && frame - traced_at_ >= 20000)
+            if (auto* models = engine.get<engine::ModelCtrlManager>()) {
+                std::printf("[%d] stall dump: %zu demo chains running, player ctrl=%d frozen=%d seq %s\n", frame, engine.demo().running(),
+                            player->control_enabled, player->frozen, player->seq_name.c_str());
+                for (const auto& e : models->rams())
+                    if (e->generated && e->node && (e->category == "ENEMY" || e->category == "PLAYER2" || e->info_name.rfind("g_", 0) == 0))
+                        std::printf("      %s %s#%d ctrl=%d frozen=%d hp=%d mode=%d %s at (%.0f,%.0f,%.0f)\n", e->category.c_str(),
+                                    e->info_name.c_str(), e->index, e->control_enabled, e->frozen, e->hp, e->ctrl_mode, e->seq_name.c_str(),
+                                    position_of(*e).x, position_of(*e).y, position_of(*e).z);
+            }
     }
     if (frame % 10000 == 0) std::fflush(stdout); // (a long run's log shows where it is)
     const auto me = position_of(*player);
