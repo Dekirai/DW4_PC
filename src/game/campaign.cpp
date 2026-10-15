@@ -1697,14 +1697,49 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             }
             if (walk_to(engine, *player, at, close, frame, out)) {
                 target_since_ = frame; // (reached: striking it is no stall)
-                // Face it (the stick toward it), then A.
-                out.walk = true;
-                out.x = origin.x;
-                out.z = origin.z;
-                // (A step or two toward the model turns the player to it.)
-                const float stop = std::max(2.0f, flat(at, origin) - 2.0f);
-                out.reach = stop * stop;
-                if (frame % 20 < 3) out.buttons |= pad_button::a;
+                if (flat(at, origin) >= 2.0f) {
+                    // Face it (the stick toward it), then A.
+                    out.walk = true;
+                    out.x = origin.x;
+                    out.z = origin.z;
+                    // (A step or two toward the model turns the player to it.)
+                    const float stop = std::max(2.0f, flat(at, origin) - 2.0f);
+                    out.reach = stop * stop;
+                    if (frame % 20 < 3) out.buttons |= pad_button::a;
+                } else {
+                    // A body around the origin (the NPCs' 10-unit cube) or no
+                    // hit box: A's check lies ahead of the player (the lobby
+                    // talk box 5.5..8.5, the swings' talk boxes ~8.5), so from
+                    // the origin it passes over the body and A never meets it
+                    // (stagML12 Leomon when a walk ended in its origin). A
+                    // only while 2..7 off the origin facing it; nearer, or
+                    // turned away close by, the player backs off to 10 off it
+                    // and walks up again.
+                    const auto& pm = player->node->matrix;
+                    const float fx = pm(2, 0), fz = pm(2, 2), fl = std::hypot(fx, fz);
+                    const float d = flat(me, origin);
+                    const float toward = fl > 0.0f && d > 0.0f ? (fx * (origin.x - me.x) + fz * (origin.z - me.z)) / (fl * d) : -1.0f;
+                    if (d < 2.0f || (toward < 0.0f && d < 9.0f)) {
+                        // Away along the line from the origin (from the origin
+                        // itself: back the way the player came).
+                        const float ax = d >= 0.5f ? (me.x - origin.x) / d : fl > 0.0f ? -fx / fl : 1.0f;
+                        const float az = d >= 0.5f ? (me.z - origin.z) / d : fl > 0.0f ? -fz / fl : 0.0f;
+                        if (trace() && frame % 60 == 0)
+                            std::printf("[%d] campaign: backing off from %s#%d (%.1f off, facing %.2f)\n", frame, model->info_name.c_str(),
+                                        model->index, d, toward);
+                        walk_to(engine, *player, {origin.x + ax * 10.0f, me.y, origin.z + az * 10.0f}, 1.0f, frame, out);
+                    } else if (toward > 0.87f && d <= 7.0f) {
+                        // Facing it (within 30 degrees) at talking distance.
+                        if (frame % 20 < 3) out.buttons |= pad_button::a;
+                    } else {
+                        // Up to it; the stick toward it turns the player.
+                        out.walk = true;
+                        out.x = origin.x;
+                        out.z = origin.z;
+                        out.reach = 0.0f;
+                        if (toward > 0.87f && frame % 20 < 3) out.buttons |= pad_button::a;
+                    }
+                }
             }
         }
     } else if (kind == "step") {
