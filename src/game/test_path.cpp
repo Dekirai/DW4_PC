@@ -583,6 +583,20 @@ float body_gap(const engine::ModelCtrlManager::ModelRam& e, const engine::Vec3f&
     }
     return gap;
 }
+// How far a model's body boxes reach out of its origin (flat, the farthest
+// box corner as body_gap places the boxes); 0 without boxes.
+float box_reach(const engine::ModelCtrlManager::ModelRam& e) {
+    if (!e.node || !e.hit || e.hit->boxes.empty()) return 0.0f;
+    const auto& m = e.node->matrix;
+    float reach = 0.0f;
+    for (const auto& [lo, hi] : e.hit->boxes) {
+        const engine::Vec3f c{(lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, (lo.z + hi.z) * 0.5f};
+        const float ox = c.x * m(0, 0) + c.y * m(1, 0) + c.z * m(2, 0);
+        const float oz = c.x * m(0, 2) + c.y * m(1, 2) + c.z * m(2, 2);
+        reach = std::max(reach, std::hypot(std::abs(ox) + (hi.x - lo.x) * 0.5f, std::abs(oz) + (hi.z - lo.z) * 0.5f));
+    }
+    return reach;
+}
 // The top of a model's body boxes in world Y (80307EAC: the root matrix moves
 // the box centre, the authored half extents stay); the root's Y without boxes.
 float body_top(const engine::ModelCtrlManager::ModelRam& e) {
@@ -1177,6 +1191,15 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     if (!hitland || !models) return;
     const WithoutLimitCircle without_limit(*hitland);
     const auto me = position_of(player);
+    // DW4_TRACE_EXPLORE: talk gimmicks whose box reaches far out of the
+    // model (gimmick_tolerance, talk_in_reach), once each.
+    if (std::getenv("DW4_TRACE_EXPLORE")) {
+        static std::set<std::pair<std::string, int>> far_talk;
+        for (const auto& e : models->rams())
+            if (e->generated && e->node && e->hit && e->hit->player_talk && box_reach(*e) > 10.0f &&
+                far_talk.insert({e->info_name, e->index}).second)
+                std::printf("[%d] explore: the talk box of %s#%d reaches %.1f out of it\n", frame, e->info_name.c_str(), e->index, box_reach(*e));
+    }
     const auto flags = hitland->delivery_flags(player.info_name, player.index);
     const auto goals = goal_keys(goal);
     std::vector<AvoidBox> avoid;
@@ -1697,6 +1720,16 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
     // A facing them) and things that take hits (boxes, breakable walls:
     // attacked). Each gets a budget; switches are tried again later. Untried
     // gimmicks come before the mats, tried ones after them.
+    // How close to a gimmick's origin the walk must get: a talk box may reach
+    // far out of its model (staggf03's console g_covercnsz05 stands 17 units
+    // behind the railing at x 30, its box reaches over it to x 34): then
+    // within 10 of the box's far edge counts (the player's talk box sits
+    // 8.5 ahead).
+    const auto gimmick_tolerance = [](const engine::ModelCtrlManager::ModelRam& e, Gimmick kind) {
+        if (kind == Gimmick::step) return 6.0f;
+        if (kind == Gimmick::talk) return std::max(20.0f, box_reach(e) + 10.0f);
+        return 20.0f;
+    };
     auto pick_gimmick = [&](bool tried) {
         const engine::ModelCtrlManager::ModelRam* best = nullptr;
         Gimmick best_kind = Gimmick::none;
@@ -1767,7 +1800,8 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             if (was_tried != tried) continue;
             if (left_alone(e.get())) continue;
             const auto at = position_of(*e);
-            float cost = keep(e.get(), map.cost_to(at, kind == Gimmick::step ? 6.0f : 20.0f));
+            const float tolerance = gimmick_tolerance(*e, kind);
+            float cost = keep(e.get(), map.cost_to(at, tolerance));
             // A wall being broken (or walked to) is finished first.
             if (kind == Gimmick::strike && (struck_.count(e.get()) || e.get() == previous)) cost *= 0.3f;
             // A switch whose script also switches walls back on may lock a
@@ -1782,7 +1816,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         if (!best) return false;
         static constexpr const char* kinds[] = {"", "strike ", "press ", "step on ", "cast at "};
         go(position_of(*best), best, std::string(kinds[int(best_kind)]) + best->info_name + "#" + std::to_string(best->index));
-        route_ = map.route_to(position_of(*best), best_kind == Gimmick::step ? 6.0f : 20.0f);
+        route_ = map.route_to(position_of(*best), gimmick_tolerance(*best, best_kind));
         gimmick_ = best_kind;
         return true;
     };
@@ -1915,8 +1949,10 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                         mats_done_.count(box.name) ? "done" : "open", map.nearest(mat_centre(box, me.y), 6.0f) ? " reachable" : "");
         for (const auto& e : models->rams())
             if (e->generated && e->node && e->category != "PLAYER" && e->category != "INTERFACE")
-                std::printf("      model %s#%d %s hp %d (%.0f,%.0f,%.0f)\n", e->info_name.c_str(), e->index, e->category.c_str(), e->hp,
-                            e->node->matrix(3, 0), e->node->matrix(3, 1), e->node->matrix(3, 2));
+                std::printf("      model %s#%d %s hp %d (%.0f,%.0f,%.0f)%s%s reach %.1f gap %.1f\n", e->info_name.c_str(), e->index, e->category.c_str(),
+                            e->hp, e->node->matrix(3, 0), e->node->matrix(3, 1), e->node->matrix(3, 2),
+                            e->hit && e->hit->player_bullet ? " bullet" : "", e->hit && e->hit->player_talk ? " talk" : "", box_reach(*e),
+                            body_gap(*e, me));
     }
 }
 
@@ -2293,6 +2329,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     const engine::Vec3f enemy_at = aim;
     if (perching && !on_perch) aim = *perch_;
     if (!on_perch) perch_since_ = -1;
+    // A talk gimmick within the reach of the player's talk box (8.5 ahead):
+    // near its origin, or, for a box reaching far out of its model (the
+    // staggf03 console behind its railing), with the box 8 units off.
+    const auto talk_in_reach = [&](const engine::ModelCtrlManager::ModelRam& t) {
+        return flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5) || (box_reach(t) > 10.0f && body_gap(t, me) <= 8.0f);
+    };
     // Watchdog: a gimmick, mat, pickup or explored point that is not
     // approached (or worked) for 600 frames is given up for a while.
     const std::string watch_key = what_ == "explore" ? "explore " + std::to_string(coarse(goal_point_.x, goal_point_.z).first) + "," +
@@ -2645,9 +2687,10 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         }
     } else if (target && gimmick_ == Gimmick::talk) {
         // Wall switches sit inside the wall: keep pushing toward the origin
-        // (facing it) and press A; the attack's talk box reaches 8.5 ahead.
+        // (facing it) and press A; the attack's talk box reaches 8.5 ahead
+        // (also to a far-reaching box, the staggf03 console behind its railing).
         decision.reach = 0.25f;
-        if (flat(aim, me) <= 12.0f || (flat(aim, me) <= 15.0f && stalled_ > 5)) {
+        if (talk_in_reach(*target)) {
             decision.press_a = frame % 35 < 3;
             if (decision.press_a) spend(12);
             else watch.since = frame;
@@ -2922,7 +2965,8 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     // Stuck at a corner (walls stop the player instead of sliding it):
     // sidestep left, right or back for a moment, then take the route again.
     // Not while pushing into a wall switch on purpose.
-    if (stalled_ >= 25 && !decision.attack && !((gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) && flat(aim, me) <= 15.0f) &&
+    if (stalled_ >= 25 && !decision.attack &&
+        !((gimmick_ == Gimmick::talk || gimmick_ == Gimmick::tech) && (flat(aim, me) <= 15.0f || (target && talk_in_reach(*target)))) &&
         frame >= escape_until_) {
         escape_until_ = frame + 20;
         escape_turn_ = (escape_turn_ + 1) % 3;
