@@ -64,6 +64,7 @@ private:
         int record = -1, count = 0, held = 0;
     };
     Purchase next_purchase(engine::Engine& engine) const;
+    int planned_spend(engine::Engine& engine) const;
     // The next device to equip at the Digi-Lab (campaign.cpp kEquipGain):
     // kind 0 the weapon in use (POWERSOCKET 0), 1 the board (MAINSLOT), 2 the
     // accessory (SUBSLOT); device -1 when the equipment is the best held.
@@ -163,7 +164,8 @@ private:
     int sale_at_ = -1;           // a device sold (the list's page follows the folder)
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
-    std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat at it came at
+    std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
+    int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
     int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
     bool train_leaving_ = false; // the training field is spent: leaving it
     int gate_since_ = -1;        // walking to a heal gate since, -1 none

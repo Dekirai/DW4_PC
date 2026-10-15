@@ -855,7 +855,7 @@ struct Supply {
     int from_hp, to_hp;  // for a maximum HP in [from_hp, to_hp)
 };
 constexpr Supply kSupplies[] = {
-    {0, 6, 0, 1200},       // HP Disk S: 450 HP for 100 bits
+    {0, 9, 0, 1200},       // HP Disk S: 450 HP for 100 bits
     {1, 5, 1200, 1 << 30}, // HP Disk M: 1800 HP for 500 bits
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
@@ -868,7 +868,8 @@ constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Da
 // the lobby, stagML11; NOGATEDISK stages refuse it): used below
 // kGateTripBelow percent of the maximum HP with nothing left to heal with (a
 // defeat would lose the bits and part of the EXP), or while training with
-// kGateTripBits bits or more and supplies to buy (the shop is in the lobby).
+// supplies worth kGateTripBits bits to buy or a full device folder (the shop
+// is in the lobby). Giving up an objective that way raises its gate level.
 constexpr int kGateDisk = 8;
 constexpr int kGateTripBelow = 40;
 constexpr int kGateTripBits = 400;
@@ -963,6 +964,24 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
         if (count > 0) return {s.record, count, held};
     }
     return {};
+}
+
+// The bits all the purchases due would spend (next_purchase in turn).
+int CampaignBot::planned_spend(engine::Engine& engine) const {
+    auto* sys = engine.get<engine::GameSystem>();
+    if (!sys) return 0;
+    const auto& slot = sys->players[0];
+    int bits = slot.bits, spend = 0;
+    for (const auto& s : kSupplies) {
+        if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
+        const auto it = prices_.find(s.record);
+        if (it == prices_.end() || it->second <= 0) continue;
+        const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), bits / it->second);
+        if (count <= 0) continue;
+        bits -= count * it->second;
+        spend += count * it->second;
+    }
+    return spend;
 }
 
 // The equipment (not with the one-hit cheat): the device folder fills with
@@ -2430,15 +2449,24 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         const bool dying = slot.hp * 100 < slot.max_hp * kGateTripBelow && !heals;
         // (While training: supplies to buy, or a full device folder, which
         // takes no drop, to sell from.)
+        // (Supplies worth kGateTripBits to buy: not for one disk used.)
         const bool shopping = objective_now_.rfind("train", 0) == 0 &&
-                              ((slot.bits >= kGateTripBits && next_purchase(engine).record >= 0) ||
-                               (slot.devices.size() >= 36 && next_sale(engine) >= 0));
+                              (planned_spend(engine) >= kGateTripBits || (slot.devices.size() >= 36 && next_sale(engine) >= 0));
         if ((dying || shopping) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
             start_disk(slot, kGateDisk, frame);
             std::printf("[%d] campaign: Gate Disk back to the lobby (%s, %d/%d HP, %d bits)\n", frame, dying ? "no heal left" : "shopping",
                         slot.hp, slot.max_hp, slot.bits);
+            // An objective given up for want of heals raises its gate level
+            // like a defeat (kGates): a boss that outlasts the supplies would
+            // otherwise be walked back to again and again (s2h: dng102b3's
+            // e_mammos, four trips of ~35000 frames at level 7).
+            if (dying && objective_now_.rfind("train", 0) != 0 && !objective_now_.empty() && escape_stage_frame_ != stage_frame_) {
+                escape_stage_frame_ = stage_frame_;
+                defeat_levels_[objective_now_] = std::max(defeat_levels_[objective_now_], slot.stats.level);
+                std::printf("[%d] campaign: %s given up at level %d, trains first\n", frame, objective_now_.c_str(), slot.stats.level);
+            }
             survive(engine, player, frame, out);
             return;
         }
