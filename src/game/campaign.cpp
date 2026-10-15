@@ -823,6 +823,8 @@ constexpr float kHoldAttackLead = 24.0f, kGuardLead = 3.0f;
 // an enemy within kTechReach in front whenever the MP covers it, at most every
 // kTechGap frames (its DELAY is 75).
 constexpr float kTechReach = 22.0f;
+// The touch guard (survive): B once an enemy body box comes within this gap.
+constexpr float kTouchGuard = 0.3f;
 constexpr int kTechGap = 90;
 struct Supply {
     int record;          // conItem row (DISKFOLDER record)
@@ -834,9 +836,19 @@ constexpr Supply kSupplies[] = {
     {1, 5, 1200, 1 << 30}, // HP Disk M: 1800 HP for 500 bits
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
+    {8, 2, 0, 1 << 30},    // Gate Disk (120 bits): back to the lobby (kGateTrip)
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
+constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Data shop in the lobby
+// The Gate Disk (conItem 8, 803B1390 -> gatedisc.lua: every player back to
+// the lobby, stagML11; NOGATEDISK stages refuse it): used below
+// kGateTripBelow percent of the maximum HP with nothing left to heal with (a
+// defeat would lose the bits and part of the EXP), or while training with
+// kGateTripBits bits or more and supplies to buy (the shop is in the lobby).
+constexpr int kGateDisk = 8;
+constexpr int kGateTripBelow = 30;
+constexpr int kGateTripBits = 400;
 
 // Training (no god mode): an objective in a combat stage is taken on only
 // at its gate level: the highest of the table's level for it and one more
@@ -1262,7 +1274,14 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // (kSupplies; the shop sells from phase 2 on, flag 1 off).
     static constexpr Objective kShopErrand{"restock at the disk shop", "", "stagml13", "shop:n_digilff#0"};
     // (Not in god mode: the cheat runs need no disks.)
-    if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && next_purchase(engine).record >= 0) objective = &kShopErrand;
+    // Before that, a full heal (HP or MP short): the X-Data shop refills both
+    // when it is left (beNDMWShopCtrl10 80393B74, state 2: RECALCPLAYER, HP =
+    // MHP, MP = MMP), stagML12 n_digilfm#1 (bML01003.lua -> xdatashop.lua).
+    static constexpr Objective kHealErrand{"full heal at the X-Data shop", "", "stagml12", "heal:n_digilfm#1"};
+    const auto* slot = engine.get<engine::GameSystem>() ? &engine.get<engine::GameSystem>()->players[0] : nullptr;
+    const bool hurt = slot && (slot->hp * 100 < slot->max_hp * kLobbyHealBelow || slot->mp * 100 < slot->max_mp * kLobbyHealBelow);
+    if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && hurt) objective = &kHealErrand;
+    else if (!engine.cheats().god && lobby(here) && !holds(engine, "F1") && next_purchase(engine).record >= 0) objective = &kShopErrand;
     // Training (no god mode): below the objective's gate level the player
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
@@ -1395,6 +1414,13 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
         if (running.bools.empty() || !running.bools[0]) shop_open_ = false;
     }
+    if (step.action.rfind("heal:", 0) == 0) {
+        heal_open_ = true;
+    } else if (heal_open_) {
+        engine::Packet running;
+        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
+        if (running.bools.empty() || !running.bools[0]) heal_open_ = false;
+    }
     for (const auto& menu : selects->open_selects()) {
         if (menu.index != 0 && menu.index != 4) continue;
         if (!menu.taking_input) return true; // opening or closing: hands off
@@ -1420,6 +1446,12 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             else cancel = true;
         } else if (menu.name == "i_zzstchgwn") {
             cancel = !on_step_mat;
+        } else if (heal_open_) {
+            // The X-Data shop: "use it?" yes (i_messcr, 2 lines), then Exit
+            // of Stats / Chips / Exit (i_stmesscr, 3 lines); a list is backed
+            // out of.
+            if (menu.name == "i_stmesscr" && menu.items >= 3) want = menu.items - 1;
+            else if (menu.name.rfind("i_stcursor", 0) == 0) cancel = true;
         } else if (shop_open_) {
             // The disk shop (ShopDisk 803967A8): "buy?" yes (i_messcr, 2
             // lines), Buy / Sell / Exit (i_stmesscr, 3 lines: Buy while a
@@ -2026,26 +2058,47 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // label of SQ_SDMG gives none after its knock-back (only the elemental
     // labels end with MUTEKI 30): an enemy that keeps walking into the player
     // hits it again on the first frame of each SQ_WAIT. So once the player has
-    // control and a body box touches it (or nearly), it jumps (X) away from
-    // the enemy; airborne, it keeps steering away.
-    if (!engine.cheats().one_hit && player.control_enabled && player.node)
-        if (const auto away = touch_escape(engine, player)) {
-            out.walk = true;
-            out.x = away->x;
-            out.z = away->z;
-            out.reach = 0.25f;
-            if (controllable && frame - jump_at_ >= 20) {
-                jump_at_ = frame;
-                out.buttons = pad_button::x;
+    // control and a body box touches it, B: the guard takes the touch
+    // (hit_p_*.lua: SQ_GUARD -> SQ_GUARDR, no damage, MOVE Back and MUTEKI 30
+    // at its end), and while that MUTEKI lasts the player walks on away from
+    // the enemy instead of attacking.
+    if (!engine.cheats().one_hit && player.control_enabled && player.node) {
+        float gap = 0.0f;
+        if (const auto away = touch_escape(engine, player, gap)) {
+            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !player.panel_open) {
+                out.buttons = frame % 4 < 2 ? pad_button::b : 0;
                 if (trace() && frame - touch_traced_ >= 600) {
                     touch_traced_ = frame;
-                    std::printf("[%d] campaign jumps out of a touch (%s)\n", frame, guard_what_.c_str());
+                    std::printf("[%d] campaign guards a touch (%s)\n", frame, guard_what_.c_str());
                 }
-            } else {
-                out.buttons &= ~(pad_button::a | pad_button::b);
+                return;
             }
+            if (player.muteki != 0.0f || player.seq_name == "SQ_GUARDR") {
+                out.walk = true;
+                out.x = away->x;
+                out.z = away->z;
+                out.reach = 0.25f;
+                out.buttons &= ~(pad_button::a | pad_button::b);
+                return;
+            }
+        }
+    }
+    // The Gate Disk out (not in god mode): see kGateDisk.
+    if (!engine.cheats().god && controllable && !player.panel_open && frame - gate_disk_at_ >= 3000 && disks_held(slot, kGateDisk) > 0) {
+        bool heals = false;
+        for (const int record : {0, 1, 2, 9}) heals = heals || disks_held(slot, record) > 0;
+        const bool dying = slot.hp * 100 < slot.max_hp * kGateTripBelow && !heals;
+        const bool shopping = objective_now_.rfind("train", 0) == 0 && slot.bits >= kGateTripBits && next_purchase(engine).record >= 0;
+        if (dying || shopping) {
+            gate_disk_at_ = frame;
+            heal_at_ = frame;
+            start_disk(slot, kGateDisk, frame);
+            std::printf("[%d] campaign: Gate Disk back to the lobby (%s, %d/%d HP, %d bits)\n", frame, dying ? "no heal left" : "shopping",
+                        slot.hp, slot.max_hp, slot.bits);
+            survive(engine, player, frame, out);
             return;
         }
+    }
     // MP for the techniques (not with the one-hit cheat): below the first
     // technique's cost an MP disk is used (the smallest held), when no blow
     // is due.
@@ -2135,11 +2188,12 @@ bool CampaignBot::tech_target(engine::Engine& engine, const engine::ModelCtrlMan
 
 // A point to escape to when a live enemy's permanent body box (end 1e8)
 // touches player 1's body or comes within kTouchGap of it: 10 units away from
-// the touching box on the far side (nothing when no box touches).
-std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) {
-    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kTouchGap = 1.0f;
+// the touching box on the far side (nothing when no box touches); `gap` is
+// the space left between the box and the body (below 0: they overlap).
+std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap) {
+    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kTouchGap = 3.0f;
     auto* models = engine.get<engine::ModelCtrlManager>();
-    if (!models || !player.node || player.muteki != 0.0f) return std::nullopt;
+    if (!models || !player.node) return std::nullopt;
     const auto me = position_of(player);
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player || e->category != "ENEMY" || e->hp <= 0) continue;
@@ -2155,6 +2209,7 @@ std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, c
             if (std::abs(me.x - cx) < box.size.x * 0.5f + kBodyHalf + kTouchGap && std::abs(me.z - cz) < box.size.z * 0.5f + kBodyHalf + kTouchGap &&
                 me.y + kBodyHeight > cy - box.size.y * 0.5f && me.y < cy + box.size.y * 0.5f) {
                 const float dx = me.x - cx, dz = me.z - cz, d = std::max(0.01f, std::hypot(dx, dz));
+                gap = std::max(std::abs(dx) - box.size.x * 0.5f - kBodyHalf, std::abs(dz) - box.size.z * 0.5f - kBodyHalf);
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
                 return engine::Vec3f{me.x + dx / d * 10.0f, me.y, me.z + dz / d * 10.0f};
             }
@@ -2614,7 +2669,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                     if (!goal || flat(centre, me) < flat(*goal, me)) goal = centre;
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
-    } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop") {
+    } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop" || kind == "heal") {
         if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me, frame)) {
             // Ten seconds of walking without reaching one of several ("#*"; a
             // plug inside the block of the others, stag0205: the walk ends

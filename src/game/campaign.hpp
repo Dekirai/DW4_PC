@@ -9,7 +9,10 @@
 // it follows the stage exit graph (kExits): lobby gates are walked to and
 // their menus answered, fields and dungeons are handed to the ExploreBot
 // with the exit mat as its goal. Nothing in the game is changed: the story
-// flags are set by the game's own scripts.
+// flags are set by the game's own scripts. Without the test cheats it plays
+// for survival (campaign.cpp "Survival"): guard, touch escape and techniques
+// without DW4_ONE_HIT; heals, heal gates, the disk shop, the bit capsule and
+// training below gate levels without DW4_GOD.
 #include "test_path.hpp"
 
 #include <cstdint>
@@ -65,7 +68,7 @@ private:
     void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
     bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     float blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame);
-    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player);
+    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap);
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -107,6 +110,7 @@ private:
     // Survival without god mode.
     std::map<int, int> prices_;  // conItem record -> HANBAI price (read where the table is loaded)
     bool shop_open_ = false;     // a shop errand's program (SUBWND DISK) may be running
+    bool heal_open_ = false;     // the X-Data shop (a full heal on leaving) may be running
     int heal_at_ = -100000;      // the last emergency heal (Y)
     int panel_close_at_ = -100000; // the last R that closes a panel left open
     int disk_use_ = -1;          // the disk being used from the L panel (conItem record), -1 none
@@ -126,8 +130,8 @@ private:
     };
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
     int tech_at_ = -1;           // a technique cast began (R), -1 none
-    int jump_at_ = -100000;      // the last jump out of a touch
     int touch_traced_ = -100000; // the last traced one
+    int gate_disk_at_ = -100000; // the last Gate Disk use
     int tech_end_ = -100000;     // the last cast's end
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
