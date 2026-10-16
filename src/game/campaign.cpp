@@ -3360,6 +3360,12 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         if (hit >= big_hit_ || frame - big_hit_at_ > kBigHitFor) big_hit_ = hit, big_hit_at_ = frame;
     }
     last_hp_ = slot.hp;
+    // A stage without the quick panels (no beNDMWPanelWazaInfo in its
+    // package: the stag0203 train) takes no disk and no technique: L, R and Y
+    // open nothing there. A heal tried every few frames held the player still
+    // among the train's mechas (defeat at level 14 with 18 HP disks held).
+    const bool panel = engine.messenger().count("NDMWPANEL", std::nullopt, player.index) != 0;
+    if (!panel) tech_at_ = -1, disk_use_ = -1;
     if (tech_at_ >= 0) {
         // A technique cast: R opens the technique panel (GENERATEWAZA), UP
         // to its top (the first technique, WAZALIST 0; once per further
@@ -3461,7 +3467,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // (Not while a boss fight's dodge sees a box coming, see dodge_frame_,
     // as long as the HP takes two of the biggest recent blows.)
     const bool dodging = dodge_frame_ >= frame - 1 && slot.hp * 100 >= slot.max_hp * 25 && (!big_hits || slot.hp > 2 * big_hit_);
-    if (!engine.cheats().god && slot.hp > 0 && low_hp && !dodging && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
+    if (!engine.cheats().god && panel && slot.hp > 0 && low_hp && !dodging && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
         panel_ready) {
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
@@ -3553,7 +3559,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         }
     }
     // The Gate Disk out (not in god mode): see kGateDisk.
-    if (!engine.cheats().god && controllable && !player.panel_open && panel_ready && frame - gate_disk_at_ >= 3000 &&
+    if (!engine.cheats().god && panel && controllable && !player.panel_open && panel_ready && frame - gate_disk_at_ >= 3000 &&
         disks_held(slot, kGateDisk) > 0 && gate_refused_at_ != stage_frame_) {
         bool heals = false;
         for (const int record : {0, 1, 2, 9}) heals = heals || disks_held(slot, record) > 0;
@@ -3585,7 +3591,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // MP for the techniques (not with the one-hit cheat): below the first
     // technique's cost an MP disk is used (the smallest held), when no blow
     // is due.
-    if (!engine.cheats().one_hit && controllable && !player.panel_open && panel_ready && frame - heal_at_ >= kHealGap && !slot.wazalist.empty())
+    if (!engine.cheats().one_hit && panel && controllable && !player.panel_open && panel_ready && frame - heal_at_ >= kHealGap && !slot.wazalist.empty())
         if (auto* db = engine.get<engine::DatabaseManager>(); db && db->number("pcTech", slot.wazalist[0], "HP").value_or(0) < 0 &&
                                                                slot.mp < db->number("pcTech", slot.wazalist[0], "MP").value_or(0) &&
                                                                blow_due(engine, player, kHoldAttackLead, frame) > kHoldAttackLead)
@@ -3608,7 +3614,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     if (!engine.cheats().one_hit && !player.panel_open) {
         const float due = blow_due(engine, player, kHoldAttackLead, frame);
         // A technique at the enemy in front when the MP allows (survive).
-        if (due > kHoldAttackLead && controllable && panel_ready && frame - tech_end_ >= kTechGap && !out.ride_strike &&
+        if (due > kHoldAttackLead && panel && controllable && panel_ready && frame - tech_end_ >= kTechGap && !out.ride_strike &&
             tech_target(engine, player, slot)) {
             tech_at_ = frame;
             tech_end_ = frame + 4 + 2 * std::clamp(int(slot.wazalist.size()) - 1, 0, 5) + 14;
@@ -3854,6 +3860,7 @@ bool CampaignBot::raise_step(engine::Engine& engine, const engine::ModelCtrlMana
     if (disk_use_ == kRaiseDisk) return true; // (under way: stand)
     const auto& slot = sys->players[0];
     if (disks_held(slot, kRaiseDisk) <= 0 || raise_tries_ >= 3 || disk_use_ >= 0) return false;
+    if (!engine.messenger().count("NDMWPANEL", std::nullopt, player.index)) return false; // (no quick panels here, see survive)
     const engine::ModelCtrlManager::ModelRam* capsule = nullptr;
     for (const auto& e : models->rams())
         if (e->generated && e->node && e->category == "PLAYER2" && e->index == 0 && e->hp != 0) capsule = e.get();
