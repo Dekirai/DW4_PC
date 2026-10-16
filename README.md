@@ -239,8 +239,9 @@ also guards against enemy blows and touches, heals with HP disks from the L pane
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
 buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
-Disk escape raises that level like a defeat); with real blows it strikes the stag0103 boat's towers
-in passing, fights e_mammos off its arena's wall and dodges Apocalymon's blast pillars; a field step
+Disk escape raises that level like a defeat; after a defeat in a field it trains in the area before
+while short of HP disks); with real blows it strikes the stag0103 boat's towers in passing, fights
+e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars; a field step
 that stalls for 180000 frames leaves the field and comes back),
 `--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
