@@ -271,6 +271,34 @@ private:
     std::map<const void*, std::pair<engine::Vec3f, int>> standing_;      // enemy -> where it stands and since when
     std::map<const void*, float> bullet_speed_;                          // turret -> how far its bullets fly in a step
     std::map<const void*, std::pair<float, float>> turret_band_;         // turret -> floor heights its fire meets
+    // The same for a crossing that starts with a jump up into a turret's
+    // lane: a bullet keeps counting while its box list is empty for a step
+    // (stag0304's x_bltcannon02 re-arms its box 10 frames after the shot,
+    // which bullets_ takes for a bullet gone and then for a new shot), and a
+    // shot is a bullet not seen the step before (the volleys repeat cleanly:
+    // 3 shots 30 frames apart every 152 frames).
+    std::map<const void*, std::pair<engine::Vec3f, const void*>> steady_bullets_; // live enemy bullet -> position, turret
+    std::map<const void*, std::vector<int>> volleys_;                              // turret -> frames of its last shots
+    // Each turret's firing sequence, as seen: the sequence its shots start
+    // in, the shots' frames after that sequence's start and its longest run.
+    // A turret hit by the player leaves it (stag0304's g_cannon02: SQ_SDMG,
+    // then SQ_FIRE again with a shot at once), so the volleys' gaps alone
+    // mislead right after a hit; the phase in the sequence does not.
+    struct FirePhase {
+        std::uint32_t serial{};  // the turret's sequence start being watched
+        std::string seq;         // its sequence then
+        int start = -1;          // the frame that sequence started
+        std::string fire_seq;    // the sequence its shots start in
+        std::vector<int> offsets; // shot frames after that sequence's start
+        int length{};            // its longest run (frames until the next sequence)
+    };
+    std::map<const void*, FirePhase> phases_;
+    // Posts given up for the stage (the third time a turret's fire kept the
+    // player off): forgiven once the stage is explored to the end, since the
+    // turret's body may fill the only way on (stag0304's climb to matz00);
+    // a forgiven turret's walk to its post then counts only a quarter.
+    std::set<const void*> unreached_;
+    std::set<const void*> forgiven_;
     int fire_wait_since_ = -1;                                           // waiting for a gap in the fire since
     int fire_go_until_ = -1;                                             // crossing (or a wait that ran out): no waiting until
     bool fire_leap_to_post_{};                                           // the crossing's jump steers on to the turret's post
