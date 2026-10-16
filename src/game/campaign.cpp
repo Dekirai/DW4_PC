@@ -1310,6 +1310,11 @@ constexpr int kLobbyHealBelow = 90; // percent of HP or MP: refilled at the X-Da
 constexpr int kGateDisk = 8;
 constexpr int kGateTripBelow = 40;
 constexpr int kGateTripBits = 400;
+// ... and only once the HP disks held (records 0..2) are down to this many:
+// with the bits for it a trip came every 15000 frames of training (a Gate
+// Disk of its own, a few HP and MP disks used), some 6000 frames each, a
+// third of a no-cheat run's training time at level 14.
+constexpr int kTripHealStock = 4;
 
 // Training (no god mode): an objective in a combat stage is taken on only
 // at its gate level: the highest of the table's level for it and one more
@@ -3596,8 +3601,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         // (While training: supplies to buy, or a full device folder, which
         // takes no drop, to sell from.)
         // (Supplies worth kGateTripBits to buy: not for one disk used.)
+        const int heal_stock = disks_held(slot, 0) + disks_held(slot, 1) + disks_held(slot, 2);
         const bool shopping = objective_now_.rfind("train", 0) == 0 &&
-                              (planned_spend(engine) >= kGateTripBits || (slot.devices.size() >= 36 && next_sale(engine) >= 0));
+                              ((planned_spend(engine) >= kGateTripBits && heal_stock <= kTripHealStock) ||
+                               (slot.devices.size() >= 36 && next_sale(engine) >= 0));
         if ((dying || shopping) && blow_due(engine, player, kHoldAttackLead + 8.0f, frame) > kHoldAttackLead + 8.0f) {
             gate_disk_at_ = frame;
             heal_at_ = frame;
