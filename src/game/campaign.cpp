@@ -665,7 +665,8 @@ constexpr BossFight kBossFights[] = {
     // stagBS01: Apocalymon (f_apocaly) is invulnerable (MUTEKI) until the
     // five poles g_b01cpole (100 HP, 10 a blow that is not one of the
     // technique families 40..99, hit_g_b01cpole.lua) are down; then
-    // SQ_PHASE2 floats it (body from 30 up: a jump attack reaches it) and its
+    // SQ_PHASE2 sets it walking its dais (body from the dais floor, y 30, up:
+    // struck from the dais only, the ring round it is lower) and its
     // SQ_MAGIC (106 frames) puts blast pillars on the ground around the
     // player (x_031fblst03a1/a2, kind 70070, boxes 4..8 wide that go live
     // 24..84 frames after the cast, 12 frames each), 115..160 a blow for a
@@ -677,7 +678,9 @@ constexpr BossFight kBossFights[] = {
     // (The poles are the ExploreBot's: with `dodge` the routine gives the
     // frames back while the boss is invulnerable, and the ExploreBot broke
     // them in half the time.)
-    {"stagbs01", "f_apocaly", "f_apocaly", 25.0f, true, true, "g_b01cpole"},
+    // (Its dais: a disk of some 49 around (3, 0), cut straight at x -40;
+    // the fight keeps within 33 of its middle, off the rim.)
+    {"stagbs01", "f_apocaly", "f_apocaly", 25.0f, true, true, "g_b01cpole", 3.0f, 0.0f, 33.0f},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -2956,7 +2959,6 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     engine::Vec3f at{};
     float best = 1e30f;
     bool in_reach = false;
-    float body_bottom = 0.0f;
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->hp <= 0 || e->muteki != 0.0f || !e->hit || e->hit->boxes.empty() || !listed_in(targets, *e))
             continue;
@@ -2979,7 +2981,6 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             focus = e.get();
             at = p;
             in_reach = y0 < me.y + 8.0f && y1 > me.y;
-            body_bottom = y0;
         }
     }
     if (tracing && frame % 30 == 0)
@@ -3021,8 +3022,16 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                         const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
                         if (!land.found || std::abs(land.position.y - me.y) > 3.0f) continue;
                     }
-                    // (A spot no box meets first; not toward the boss's body.)
-                    const float d = r + (there < 1e8f ? 30.0f : 0.0f) + (flat(q, position_of(*boss)) < 12.0f ? 50.0f : 0.0f);
+                    // (A spot no box meets first; not toward the boss's body;
+                    // not by the rim of the floor, 5 further on not at its
+                    // height: a guard's push back there drops the player.)
+                    bool rim = false;
+                    if (hitland) {
+                        const engine::Vec3f q2{me.x + std::sin(a) * (r + 5.0f), me.y, me.z + std::cos(a) * (r + 5.0f)};
+                        const auto land = hitland->world().check_land({q2.x, q2.y + 5.0f, q2.z}, 1.0f, 400.0f, 1.0f);
+                        rim = !land.found || std::abs(land.position.y - me.y) > 3.0f;
+                    }
+                    const float d = r + (there < 1e8f ? 30.0f : 0.0f) + (flat(q, position_of(*boss)) < 12.0f ? 50.0f : 0.0f) + (rim ? 25.0f : 0.0f);
                     if (d < best_d) best_d = d, spot = q;
                 }
             if (best_d < 1e29f) {
@@ -3067,30 +3076,56 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     }
     if (focus) {
         // The swing's boxes reach up to ~20 ahead: struck from 2.5..6.5 off
-        // its hit body, outside the reach of a contact box around it. A body
-        // floating out of the swing's reach (8 above the feet) takes a jump
-        // attack (X, then A in the air).
-        const bool jump = !in_reach && dodge && body_bottom > me.y + 8.0f && body_bottom < me.y + 25.0f;
-        // With `dodge` the blows go in while the boss's AI waits: its AIM map
-        // picks again when its AITIMER runs out (update_ai_map, 80308654),
-        // and close by Apocalymon's second phase map (MAP01: within 20 of the
-        // player 11 of 16 picks SQ_WAIT for 30 frames, else SQ_MAGIC; 20..60
-        // also walks at the player; beyond 60 it only walks) holds still. A
-        // jump attack (X, A 10 frames later, down after some 40) starts with
-        // kJumpWindow frames or more of its wait left, so a cast picked next
-        // comes down (24 frames after the cast) after the attack; also while
-        // a hit holds it (damage, stun).
-        constexpr float kJumpWindow = 18.0f;
-        const bool held = boss->seq_name.find("DMG") != std::string::npos || boss->seq_name.find("FORM") != std::string::npos ||
-                          boss->seq_name == "SQ_STUN";
-        const bool window = !dodge || held || (boss->seq_name == "SQ_WAIT" && ai_frames_left(engine, *boss) >= kJumpWindow);
-        const bool safe = here_due > (jump ? kSwingBusy + 12.0f : kSwingBusy) && window;
-        // (A jump attack under way: X, then A in the air.)
-        if (const int t = frame - jump_at_; t >= 0 && t <= 40) {
-            if (t < 3) out.buttons |= pad_button::x;
-            else if (t >= 10 && t < 13) out.buttons |= pad_button::a;
+        // its hit body, outside the reach of a contact box around it.
+        // A boss on a floor above the player's with its body out of the
+        // swing's reach (feet to 8 up): back up onto its floor, the walk
+        // map's way up. (Apocalymon's body y 30..70 stands on the stagBS01
+        // dais at y 30, a disk of some 49 around (3, 0), the ring round it
+        // y 20 and lower; A is not taken in the air, 8034C3C8 runs only
+        // standing or walking, so no jump attack reaches it either. A level
+        // 15 run dodged and was pushed down to the ring and swung under it
+        // for 11000 frames without a hit.) With an arena the way leads to
+        // the point within arena_r of its middle nearest the player, turned
+        // round the middle away from the boss when it stands near that
+        // way (it follows the player to the rim and its body blocks the
+        // step up there); else to just beside the boss.
+        const auto b = position_of(*boss);
+        if (dodge && !in_reach && b.y > me.y + 3.0f) {
+            engine::Vec3f goal{};
+            if (arena_r > 0.0f) {
+                const float ux = me.x - arena_x, uz = me.z - arena_z, ud = std::max(0.01f, std::hypot(ux, uz));
+                const float base = std::atan2(ux / ud, uz / ud);
+                float best_clear = -1.0f;
+                for (const float turn : {0.0f, 0.6f, -0.6f, 1.2f, -1.2f}) {
+                    const engine::Vec3f g{arena_x + std::sin(base + turn) * (arena_r - 3.0f), b.y, arena_z + std::cos(base + turn) * (arena_r - 3.0f)};
+                    // (The boss's distance from the straight way there.)
+                    const float sx = g.x - me.x, sz = g.z - me.z, sl = std::max(0.01f, sx * sx + sz * sz);
+                    const float t = std::clamp(((b.x - me.x) * sx + (b.z - me.z) * sz) / sl, 0.0f, 1.0f);
+                    const float clear = std::hypot(me.x + sx * t - b.x, me.z + sz * t - b.z);
+                    if (clear >= 18.0f) {
+                        goal = g;
+                        break;
+                    }
+                    if (clear > best_clear) best_clear = clear, goal = g;
+                }
+            } else {
+                const float dx = me.x - b.x, dz = me.z - b.z, dd = std::max(0.01f, std::hypot(dx, dz));
+                const float k = std::min(dd, 4.0f);
+                goal = {b.x + dx / dd * k, b.y, b.z + dz / dd * k};
+            }
+            walk_to(engine, player, goal, 3.0f, frame, out);
+            if (tracing && frame % 30 == 0)
+                std::printf("[%d] campaign boss: up onto %s's floor (y %.0f, the player at %.0f), to (%.0f,%.0f)\n", frame, boss->info_name.c_str(), b.y,
+                            me.y, goal.x, goal.z);
             return true;
         }
+        // With `dodge` no blow starts while the boss casts (SQ_MAGIC: the
+        // pillars go live 24 frames on, within a swing); also while a hit
+        // holds it (damage, stun).
+        const bool held = boss->seq_name.find("DMG") != std::string::npos || boss->seq_name.find("FORM") != std::string::npos ||
+                          boss->seq_name == "SQ_STUN";
+        const bool window = !dodge || held || boss->seq_name != "SQ_MAGIC";
+        const bool safe = here_due > kSwingBusy && window;
         // (With `dodge` the way there must stay clear: no point of it that a
         // box meets before the player passes it and a little after.)
         bool way_clear = true;
@@ -3110,11 +3145,6 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             out.x = me.x + (me.x - c.x) / d * 6.0f;
             out.z = me.z + (me.z - c.z) / d * 6.0f;
             out.reach = 1.0f;
-        } else if (safe && jump) {
-            if (player.ctrl_mode != 0 && player.control_enabled) {
-                jump_at_ = frame;
-                out.buttons |= pad_button::x;
-            }
         } else if (safe && frame % 12 < 3) {
             out.buttons |= pad_button::a;
         }

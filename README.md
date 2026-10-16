@@ -239,10 +239,13 @@ also guards against enemy blows and touches, heals with HP disks from the L pane
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
 buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
-Disk escape raises that level like a defeat)),
+Disk escape raises that level like a defeat); with real blows it strikes the stag0103 boat's towers
+in passing, fights e_mammos off its arena's wall and dodges Apocalymon's blast pillars; a field step
+that stalls for 180000 frames leaves the field and comes back),
 `--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
-every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
+every stage start, `<frame>_<stage>.dw4state`, and the campaign driver's memory beside it, `<frame>_<stage>.mem`,
+which `--load-state` reads back; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
 the environment's from the loaded frame on).
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
