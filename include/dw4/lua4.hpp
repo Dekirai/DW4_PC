@@ -167,6 +167,12 @@ public:
     // frame referring to it is invalid after a collection.
     void collect_garbage();
     Lua4HeapStats heap_stats() const;
+    // A script error (a Lua runtime error, out of memory or a port guard)
+    // ends only its invocation, like lua_dobuffer's protected call: the
+    // VM, its globals and any parent invocation go on. Only host or API
+    // faults (callback exceptions, malformed host results, abandoned
+    // invocations) stop the VM for good; then a fresh VM is needed.
+    bool stopped() const noexcept;
     Lua4RunResult execute(const Lua4Program& program);
     // Exactly one pending root per VM. Existing execute() stays synchronous
     // and uses only the ordinary handler; this API explicitly opts into pauses.

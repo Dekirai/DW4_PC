@@ -492,7 +492,11 @@ void nested_faults_and_limits() {
             return {true,{},{}}; // Deliberately invalid completion or swallowed child fault.
         });
         auto root=vm.begin_execution(chunk);const auto result=vm.resume(root);
-        check(result.stop==Lua4RunStop::faulted && !result.completed,"Pending/abandoned/faulted child was hidden by parent host completion");
+        if(mode>=2) { // A child's script error ends only the child, like a nested lua_dobuffer.
+            check(result.completed && !vm.stopped(),"A nested script error faulted its parent or stopped the VM");
+            continue;
+        }
+        check(result.stop==Lua4RunStop::faulted && !result.completed && vm.stopped(),"Pending/abandoned child was hidden by parent host completion");
         check(vm.resume(root).instructions==result.instructions,"Nested fault replayed the parent invocation");
     }
     Lua4Limits limits;limits.max_instructions=5;limits.max_host_calls=1;
@@ -601,6 +605,80 @@ void garbage_collection() {
     check(nested.heap_stats().collections > 20, "Nested chunk did not collect");
 }
 
+// igLuaState::runBuffer (80272768) only logs a failed lua_dobuffer: the
+// error first calls _ERRORMESSAGE (lua_error -> message 802788A4), then
+// luaD_runprotected drops the chunk's frames and the lua_State goes on.
+void script_errors_keep_the_vm() {
+    Function handler; handler.parameters = 1; handler.strings = {"alert", "stage"}; // _ERRORMESSAGE(m): alert(m, stage)
+    handler.code = {u(Getglobal), u(Getlocal), u(Getglobal, 1), ab(Call, 1, 0), End};
+    Function define; define.strings = {"_ERRORMESSAGE"}; define.children = {handler};
+    define.code = {ab(Closure, 0, 0), u(Setglobal), End};
+    Function failing; failing.strings = {"stage", "missing"}; // stage = 7; missing(); stage = 9
+    failing.code = {s(Pushint, 7), u(Setglobal), u(Getglobal, 1), ab(Call, 0, 0), s(Pushint, 9), u(Setglobal), End};
+    Function reads; reads.strings = {"stage"}; reads.code = {u(Getglobal), Return, End};
+    std::vector<std::string> alerts;
+    auto alert = [&](const Lua4HostCall& call) {
+        check(call.name == "alert" && call.arguments.size() == 2, "_ERRORMESSAGE fixture call changed");
+        alerts.push_back(std::string(call.arguments[0].as_string()) + "|" + call.arguments[1].describe());
+    };
+    Lua4Vm vm; vm.set_global("alert", Lua4Value::host_function("alert"));
+    vm.set_host_handler([&](const Lua4HostCall& call) { alert(call); return std::vector<Lua4Value>{}; });
+    check(vm.execute(program(define)).completed, "_ERRORMESSAGE definition failed");
+    const auto failed = vm.execute(program(failing));
+    stopped(failed, "cannot call nil");
+    check(failed.stop == Lua4RunStop::faulted && failed.site.pc == 3 && !vm.stopped(), "A script error stopped the VM");
+    check(alerts.size() == 1 && alerts[0] == "cannot call nil|7", "_ERRORMESSAGE did not get the error text on top of the failing chunk");
+    numeric_result(vm.execute(program(reads)), {7}); // Globals stay as written, no rollback, no later writes.
+    check(alerts.size() == 1, "A completed chunk called _ERRORMESSAGE");
+
+    // A nested chunk's error ends only that chunk (its own protected lua_call);
+    // the host callback and the parent go on with their frame values.
+    Function parent; parent.strings = {"v", "host"};
+    parent.code = {u(Createtable), u(Pushstring), s(Pushint, 7), u(Setmap, 1), u(Getglobal, 1), ab(Call, 1, 0),
+        u(Getlocal), u(Getdotted), u(Return, 1), End};
+    Function bad; bad.strings = {"stage"}; bad.code = {u(Getglobal), s(Pushint, 1), Add, u(Setglobal), Pushnil | (1u << 6), s(Pushint, 1), Add, End};
+    const auto bad_program = program(bad);
+    Lua4Vm nested; nested.set_global("host", Lua4Value::host_function("host"));
+    nested.set_global("alert", Lua4Value::host_function("alert")); nested.set_global("stage", Lua4Value::number(1));
+    unsigned children = 0;
+    nested.set_resumable_host_handler([&](const Lua4HostCall& call) {
+        if (call.name == "alert") { alert(call); return Lua4HostResult{true, {}, {}}; }
+        auto child = nested.begin_nested(bad_program); const auto result = nested.resume(child); ++children;
+        check(result.stop == Lua4RunStop::faulted && result.diagnostic.find("arithmetic") != std::string::npos && !nested.stopped(),
+            "The nested script error was not contained in its chunk: " + result.diagnostic);
+        return Lua4HostResult{true, {}, {}};
+    });
+    auto defined = nested.begin_execution(program(define)); check(nested.resume(defined).completed, "Nested _ERRORMESSAGE definition failed");
+    auto root = nested.begin_execution(program(parent)); numeric_result(nested.resume(root), {7});
+    check(children == 1 && !nested.stopped() && nested.get_global("stage").as_number() == 2 && alerts.size() == 2 &&
+        alerts[1].starts_with("arithmetic/tag method unsupported for nil|2"), "The parent did not go on after its child's error");
+
+    // An error inside _ERRORMESSAGE calls it again further up; the chain ends,
+    // the VM stays usable and the invocation reports the first error.
+    Function looping; looping.parameters = 1; looping.strings = {"count"}; // count = count + 1; m()
+    looping.code = {u(Getglobal), s(Addi, 1), u(Setglobal), u(Getlocal), ab(Call, 0, 0), End};
+    Function define_loop; define_loop.strings = {"_ERRORMESSAGE", "count"}; define_loop.children = {looping};
+    define_loop.code = {ab(Closure, 0, 0), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), End};
+    Lua4Vm chain; check(chain.execute(program(define_loop)).completed, "Looping handler definition failed");
+    const auto chained = chain.execute(program(failing));
+    stopped(chained, "cannot call nil");
+    const auto levels = chain.get_global("count").as_number();
+    check(!chain.stopped() && levels > 1 && levels < 2000, "A failing _ERRORMESSAGE was not bounded");
+    check(chain.execute(program(reads)).completed, "The VM did not survive a failing _ERRORMESSAGE");
+
+    // Out of memory breaks without a message (luaD_breakrun LUA_ERRMEM).
+    Function grow; grow.strings = {"list", "n"}; // list[n] = {} forever
+    grow.code = {u(Getglobal, 1), s(Addi, 1), u(Setglobal, 1), u(Getglobal), u(Getglobal, 1), u(Createtable), ab(Settable, 3, 3),
+        s(Jmp, -8), End};
+    Function setup; setup.strings = {"list", "n"}; setup.code = {u(Createtable), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), End};
+    Lua4Limits tight; tight.max_heap_bytes = 64u * 1024u; Lua4Vm full(tight); full.set_global("alert", Lua4Value::host_function("alert"));
+    full.set_host_handler([&](const Lua4HostCall& call) { alert(call); return std::vector<Lua4Value>{}; });
+    check(full.execute(program(define)).completed && full.execute(program(setup)).completed, "Out-of-memory setup failed");
+    stopped(full.execute(program(grow)), "not enough memory");
+    check(alerts.size() == 2 && !full.stopped(), "Out of memory called _ERRORMESSAGE or stopped the VM");
+    check(full.execute(program(setup)).completed, "The VM did not go on after running out of memory");
+}
+
 Bytes file_bytes(const char* path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot read optional original Lua chunk");
@@ -628,7 +706,7 @@ int main(int argc, char** argv) {
     try {
         reader_checks(); values_and_arithmetic(); control_flow(); calls_closures_and_tables(); host_and_limits();
         resumed_frames_and_results();resumed_tailcalls();nested_owned_invocations();continuation_ownership_and_faults();nested_faults_and_limits();
-        garbage_collection();
+        garbage_collection(); script_errors_keep_the_vm();
         if (argc == 3) original(argv[1], argv[2]);
         else if (argc != 1) throw std::runtime_error("Usage: dw4_lua4_tests [func-chunk boot-chunk]");
         std::cout << "Lua 4 tests passed: " << checks << " checks\n"; return 0;

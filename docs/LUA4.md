@@ -60,13 +60,41 @@ source/prototype/program-counter location. For example, `be:CFLclear()` reaches
 the handler as `be.CFLclear`, with the original receiver at argument zero.
 Native bindings own their validation and effects. In synchronous `execute()`,
 an absent handler, a rejected native request or a callback exception stops
-execution; no call is skipped.
+execution and the VM; no call is skipped.
 
 `Lua4RunResult` reports completion, returned values, executed instruction and
 host-call counts, and the failure location and diagnostic. State already written
-before failure remains inspectable. A terminally stopped VM cannot resume or execute a
-later chunk; the caller must construct a fresh VM. There is no implicit invocation
-of the script's `_ERRORMESSAGE`, rollback, retry, or startup-stage advancement.
+before failure remains inspectable; there is no rollback, retry or
+startup-stage advancement.
+
+Errors follow the original's protected calls. The game runs every chunk
+through `igLuaState::runBuffer` (80272768): `lua_dobuffer` (80278810) ->
+`lua_call` (80278648) -> `luaD_runprotected` (802789E4). On failure it only
+logs `igLuaState::runBuffer(%s) failed - reason %s` and keeps the `lua_State`.
+A script error (a Lua runtime error, a stack overflow or a port guard) goes
+through `lua_error` (8027894C). First `message` (802788A4) looks up
+`_ERRORMESSAGE` raw in the globals and, if it is a function, calls it with the
+error text on top of the failing frames. `func.lua` defines it as
+`be:MsgBox(a0, 0)`. An error inside that handler calls it again further up the
+stack. The chain ends when one call completes, or when a break without a
+message ends it (out of memory, or a second stack overflow).
+Then `luaD_breakrun` (8027898C) unwinds to the protected call:
+`luaD_runprotected` restores the stack top, `Cbase` and the stack limit, and
+`lua_call` removes the chunk closure. The port does the same. The invocation
+reports `faulted`, its frames are released, and the VM, its globals and any
+parent invocation go on (`Lua4Vm::stopped()` stays false). Out of memory
+(`luaD_breakrun` with `LUA_ERRMEM`) skips `_ERRORMESSAGE`. Only a Lua closure
+is called as `_ERRORMESSAGE`; the base library's C version (stderr through
+`_ALERT`) has no port counterpart. A host pause inside the chain cannot be
+served while unwinding and ends it.
+
+Host and API faults are not script errors of the original, and they stop the
+VM for good: a callback exception, a malformed host result, an unbound host
+function in synchronous `execute()`, an abandoned invocation or a broken
+invariant. A stopped VM cannot resume or execute a later chunk, so the caller
+must construct a fresh VM. The engine (`run_script`) logs every failed run as
+`script NAME stopped: ...`. It installs a fresh VM with `func.lua` only after
+such a fault.
 
 ## Retained native-service calls
 
@@ -111,9 +139,11 @@ pending child. One child may be pending per host call; a completed child permits
 the next sequential child, matching an ordered script-registry walk. A parent
 cannot report completion while its child is pending. Recursive self-resume,
 unrelated native reentry and externally resuming a child reject before execution.
-Child faults or abandonment also fault the parent VM, even if a host callback
-tries to swallow that outcome. Shared globals are not restored after nested
-chunks. This is an explicit native availability boundary around synchronous Lua
+A child's script error ends only the child, the way a nested `lua_dobuffer`
+has its own protected `lua_call`: the callback gets the faulted result and the
+parent goes on. A child's fault or abandonment stops the shared VM and faults
+the parent, even if a host callback tries to swallow that outcome. Shared
+globals are not restored after nested chunks. This is an explicit native availability boundary around synchronous Lua
 calls, not a Lua coroutine API or a separate VM copy.
 
 ## Limits and unsupported operations
@@ -188,10 +218,11 @@ observable: it changes only the live estimate (when collections run) and the
 free themselves; they are counted once per distinct string. Nothing in the
 collection depends on addresses or hashing order, so runs are deterministic.
 The port's scripts create no userdata (`be` is a permanent host global), so no
-`gc` tag method runs. Live data above `max_heap_bytes` after a collection stops
-the VM with "not enough memory"; the original's pool fails far earlier (the
-GameCube has 24 MB of main memory). `collect_garbage()` is `collectgarbage()` between root invocations and
-`heap_stats()` reports the counters. A table or closure that only the host
+`gc` tag method runs. Live data above `max_heap_bytes` after a collection ends
+the invocation with "not enough memory", a break without `_ERRORMESSAGE` like
+the allocator's `LUA_ERRMEM`; the original's pool fails far earlier (the
+GameCube has 24 MB of main memory). `collect_garbage()` is `collectgarbage()`
+between root invocations and `heap_stats()` reports the counters. A table or closure that only the host
 still holds is collected like an unanchored value of the Lua C API.
 
 Unknown opcodes are rejected while reading. Executed `POW` requires an

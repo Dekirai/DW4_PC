@@ -29,6 +29,22 @@ constexpr std::array<std::string_view, 49> op_names{
     "JMPT", "JMPF", "JMPONT", "JMPONF", "JMP", "PUSHNILJMP", "FORPREP", "FORLOOP",
     "LFORPREP", "LFORLOOP", "CLOSURE"};
 [[noreturn]] void fail(const std::string& reason) { throw Lua4Error("Lua 4: " + reason); }
+// Errors of a running script are Lua errors (lua_error 8027894C ->
+// luaD_breakrun 8027898C with LUA_ERRRUN): they first call the script's
+// _ERRORMESSAGE, then end the invocation at its protected call. A break
+// without a message (luaD_breakrun with LUA_ERRMEM or LUA_ERRERR) skips
+// _ERRORMESSAGE.
+class Lua4Break : public Lua4Error { public: using Lua4Error::Lua4Error; };
+// Host-side or API faults (a callback exception or malformed result, an
+// abandoned invocation, a broken invariant): not script errors of the
+// original, they stop the VM for good.
+class Lua4Fault : public Lua4Error { public: using Lua4Error::Lua4Error; };
+[[noreturn]] void fault(const std::string& reason) { throw Lua4Fault("Lua 4: " + reason); }
+std::string error_text(std::string_view diagnostic) {
+    constexpr std::string_view prefix = "Lua 4: ";
+    if (diagnostic.starts_with(prefix)) diagnostic.remove_prefix(prefix.size());
+    return std::string(diagnostic.substr(0, max_value_string));
+}
 void limit(std::size_t value, std::size_t ceiling, std::string_view name) {
     if (!value || value > ceiling) fail(std::string(name) + " limit is outside the supported range");
 }
@@ -565,8 +581,10 @@ struct Lua4Vm::Impl {
         entries_live = entries;
         nblocks = live; threshold = live > SIZE_MAX / 2 ? SIZE_MAX : 2 * live;
         set_count_triggers();
+        // Like the allocator's failure (luaM_realloc 8027BD18 ->
+        // luaD_breakrun LUA_ERRMEM): a break without an error message.
         if (live > limits.max_heap_bytes)
-            fail("not enough memory: " + std::to_string(live) + " live bytes exceed the VM heap of " +
+            throw Lua4Break("Lua 4: not enough memory: " + std::to_string(live) + " live bytes exceed the VM heap of " +
                 std::to_string(limits.max_heap_bytes));
     }
     double numeric(const Lua4Value& value) {
@@ -641,7 +659,7 @@ struct Lua4Vm::Impl {
                 execution.result.stop=Lua4RunStop::completed;execution.finished=true;return;
             }
             auto& frame=*execution.frames.back();
-            if(!frame.call) fail("missing retained caller result boundary");
+            if(!frame.call) fault("missing retained caller result boundary");
             const auto base=frame.call->base,count=frame.call->results;const bool tail=frame.call->tail;
             site=frame.call->site;frame.stack.resize(base);
             const auto desired=tail || count==255 ? returned.size() : count;
@@ -654,8 +672,11 @@ struct Lua4Vm::Impl {
         }
     }
     void host_results(Execution& execution,Execution::Frame& frame,std::vector<Lua4Value> returned) {
-        if(returned.size()>max_prototype_stack) fail("host returned too many values");
-        for(const auto& value:returned) import(value);
+        try {
+            if(returned.size()>max_prototype_stack) fail("host returned too many values");
+            for(const auto& value:returned) import(value);
+        } catch (const Lua4Fault&) { throw; }
+        catch (const std::exception& error) { throw Lua4Fault(error.what()); }
         const auto base=frame.call->base,count=frame.call->results;const bool tail=frame.call->tail;
         frame.stack.resize(base);
         const auto desired=tail || count==255 ? returned.size() : count;
@@ -670,18 +691,24 @@ struct Lua4Vm::Impl {
     bool pending_call(Execution& execution,Execution::Frame& frame) {
         auto& call=*frame.call;site=call.site;validate(call.function);
         if(call.function.type_!=Lua4Type::HostFunction) {
-            if(call.entered) fail("retained Lua call has no child frame");
+            if(call.entered) fault("retained Lua call has no child frame");
             call.entered=true;enter_frame(execution,call.function,call.arguments);return true;
         }
         if(!call.entered) {
             if(host_calls>=limits.max_host_calls) fail("host call budget exhausted");
-            if(!next_call) fail("host call identity space exhausted");
+            if(!next_call) fault("host call identity space exhausted");
             ++host_calls;call.id=next_call++;call.entered=true;
         }
         const Lua4HostCall request{*call.function.text_,call.arguments,call.site,execution.id,call.id};
         if(!execution.resumable) {
-            if(!host) fail("unbound native host function " + safe_label(*call.function.text_));
-            auto returned=host(request);site=call.site;host_results(execution,frame,std::move(returned));return true;
+            if(!host) fault("unbound native host function " + safe_label(*call.function.text_));
+            std::vector<Lua4Value> returned;
+            try { returned=host(request); }
+            catch (const Lua4Fault&) { throw; }
+            catch (const std::exception& error) { throw Lua4Fault(error.what()); }
+            site=call.site;
+            if(stopped)fault("VM faulted during a nested invocation");
+            host_results(execution,frame,std::move(returned));return true;
         }
         if(!call.handler)call.handler=resumable_host;
         if(!call.handler) {
@@ -697,24 +724,28 @@ struct Lua4Vm::Impl {
             ~CallbackScope(){vm.callback_execution=previous_execution;vm.callback=previous_call;}
         };
         Lua4HostResult returned;
-        {
+        try {
             CallbackScope scope(*this,execution,call);
             returned=call.handler(request);
         }
+        catch (const Lua4Fault&) { throw; }
+        catch (const std::exception& error) { throw Lua4Fault(error.what()); }
         site=call.site;
-        if(stopped)fail("VM faulted during a nested invocation");
+        // A nested chunk's script error ended only that chunk (its own
+        // protected lua_call); only a fault or abandonment stops the VM.
+        if(stopped)fault("VM faulted during a nested invocation");
         if(!returned.completed) {
-            if(!returned.returned.empty())fail("incomplete host call cannot return values");
-            if(returned.diagnostic.size()>4096)fail("host suspension diagnostic exceeds 4096 bytes");
+            if(!returned.returned.empty())fault("incomplete host call cannot return values");
+            if(returned.diagnostic.size()>4096)fault("host suspension diagnostic exceeds 4096 bytes");
             execution.result.diagnostic=std::move(returned.diagnostic);return false;
         }
-        if(const auto child=call.child.lock();child && !child->finished)fail("complete the owned nested invocation before returning host results");
+        if(const auto child=call.child.lock();child && !child->finished)fault("complete the owned nested invocation before returning host results");
         host_results(execution,frame,std::move(returned.returned));return true;
     }
     void process(Execution& execution) {
         if(!execution.initialized) {
             execution.initialized=true;
-            if(!execution.program)fail("empty program");
+            if(!execution.program)fault("empty program");
             // lua_dobuffer 80278810 -> protectedparser 80278708 collects
             // when nblocks/8 >= GCthreshold/10 (unsigned, 0x80278730..
             // 0x80278744: srwi, divwu, luaC_collectgarbage), about 80 % of
@@ -728,7 +759,7 @@ struct Lua4Vm::Impl {
             enter_frame(execution,closure(execution.program,execution.program->root,{}),{});
         }
         while(!execution.finished) {
-            if(stopped)fail("VM faulted during a nested invocation");
+            if(stopped)fault("VM faulted during a nested invocation");
             check_gc();
             auto& frame=*execution.frames.back();
             if(frame.call) {
@@ -856,6 +887,42 @@ struct Lua4Vm::Impl {
             }
         }
     }
+    // lua_error (8027894C) -> message (802788A4): before luaD_breakrun the
+    // original looks up _ERRORMESSAGE raw in the globals and, if it is a
+    // function, calls it with the error text on top of the failing frames,
+    // without protection (func.lua: be:MsgBox(msg, 0)). An error inside it
+    // calls it again further up, until one call completes or a break without
+    // a message (out of memory, the second stack overflow) ends the chain;
+    // then everything unwinds to the protected call (resume). Only a Lua
+    // closure is called: the base library's C _ERRORMESSAGE (stderr through
+    // _ALERT, replaced by func.lua) has no port counterpart. A host pause
+    // inside the chain cannot be served while unwinding and ends it.
+    void error_message(const std::shared_ptr<Impl>& self, const Execution& failed, std::string message) {
+        std::vector<std::shared_ptr<Execution>> handlers; // Kept until the break, like the stack below.
+        struct Release {
+            Impl& vm; std::vector<std::shared_ptr<Execution>>& runs;
+            ~Release() { for (auto at = runs.rbegin(); at != runs.rend(); ++at) { (*at)->finished = true; vm.release_frames(**at); } }
+        } release{*this, handlers};
+        // Every level takes at least one stack slot, the first stack overflow
+        // retries once in place: the original cannot nest deeper than this.
+        for (std::size_t level = 0; level < limits.max_call_depth + 2; ++level) {
+            const auto handler = get_global("_ERRORMESSAGE", false);
+            if (handler.type_ != Lua4Type::Function || !next_execution) return;
+            auto run = std::make_shared<Execution>();
+            run->owner = self; run->program = closure_at(handler).program; run->resumable = failed.resumable;
+            run->id = next_execution++; run->initialized = true;
+            executions.push_back(run.get()); handlers.push_back(run);
+            try {
+                const Lua4Value text = string(std::move(message));
+                enter_frame(*run, handler, std::span<const Lua4Value>(&text, 1));
+                process(*run);
+                return;
+            }
+            catch (const Lua4Fault&) { throw; }
+            catch (const Lua4Break&) { return; }
+            catch (const Lua4Error& error) { message = error_text(error.what()); }
+        }
+    }
 };
 
 void Lua4Execution::Impl::abandon() noexcept {
@@ -906,8 +973,9 @@ Lua4Value Lua4Vm::table_get(const Lua4Value& table, const Lua4Value& key) const 
 }
 void Lua4Vm::collect_garbage() {
     if (!impl_ || impl_->running || impl_->stopped || impl_->pending_execution()) fail("cannot collect in an inactive/running/stopped or suspended VM");
-    try { impl_->collect(); } catch (...) { impl_->stopped = true; throw; }
+    try { impl_->collect(); } catch (const Lua4Break&) { throw; } catch (...) { impl_->stopped = true; throw; }
 }
+bool Lua4Vm::stopped() const noexcept { return !impl_ || impl_->stopped; }
 Lua4HeapStats Lua4Vm::heap_stats() const {
     if (!impl_) fail("inactive VM");
     return {impl_->nblocks, impl_->threshold, impl_->collections, impl_->objects_live, impl_->entries_live};
@@ -951,14 +1019,30 @@ Lua4RunResult Lua4Vm::resume(Lua4Execution& handle) {
         ~RunScope(){execution.executing=false;vm.running=previous;}
     } scope(*state,*execution);
     execution->result.diagnostic.clear();
+    // A script error ends this invocation at its protected call like
+    // lua_dobuffer's lua_call (80278648 -> luaD_runprotected 802789E4):
+    // _ERRORMESSAGE first, then the frames go, the VM and its globals stay
+    // (igLuaState::runBuffer 80272768 only logs "failed - reason"); a
+    // nested chunk's error leaves its parent running. Faults stop the VM.
+    enum class Stop { none, script, quiet, terminal } stop=Stop::none;
     try {
-        if(state->stopped)fail("VM is stopped; an incomplete invocation was faulted or abandoned");
+        if(state->stopped)fault("VM is stopped; an incomplete invocation was faulted or abandoned");
         state->process(*execution);
-    } catch (const std::exception& error) {
-        state->stopped=true;execution->result.diagnostic=error.what();execution->result.stop=Lua4RunStop::faulted;
-    } catch (...) {
-        state->stopped=true;execution->result.diagnostic="Lua 4: unknown host exception";execution->result.stop=Lua4RunStop::faulted;
     }
+    catch (const Lua4Fault& error) { stop=Stop::terminal;execution->result.diagnostic=error.what(); }
+    catch (const Lua4Break& error) { stop=Stop::quiet;execution->result.diagnostic=error.what(); }
+    catch (const Lua4Error& error) { stop=Stop::script;execution->result.diagnostic=error.what(); }
+    catch (const std::exception& error) { stop=Stop::terminal;execution->result.diagnostic=error.what(); }
+    catch (...) { stop=Stop::terminal;execution->result.diagnostic="Lua 4: unknown host exception"; }
+    const auto failed_at=state->site;
+    if(stop==Stop::script) {
+        try { state->error_message(state,*execution,error_text(execution->result.diagnostic)); }
+        catch (const std::exception& error) { stop=Stop::terminal;execution->result.diagnostic+=std::string("; in _ERRORMESSAGE: ")+error.what(); }
+        catch (...) { stop=Stop::terminal;execution->result.diagnostic+="; in _ERRORMESSAGE: unknown host exception"; }
+    }
+    if(stop!=Stop::none)execution->result.stop=Lua4RunStop::faulted;
+    if(stop==Stop::terminal)state->stopped=true;
+    state->site=failed_at;
     auto& result=execution->result;
     result.site=state->site;result.instructions=state->instructions;result.host_calls=state->host_calls;
     if(result.stop==Lua4RunStop::faulted) {

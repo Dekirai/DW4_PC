@@ -103,19 +103,29 @@ bool Engine::run_script(std::string_view name) {
             }
             ++script_depth_;
             Lua4RunResult run;
-            if (script_depth_ > 1) {
-                auto execution = lua_->begin_nested(found->second);
-                run = lua_->resume(execution);
-            } else {
-                auto execution = lua_->begin_execution(found->second);
-                run = lua_->resume(execution);
+            try {
+                if (script_depth_ > 1) {
+                    auto execution = lua_->begin_nested(found->second);
+                    run = lua_->resume(execution);
+                } else {
+                    auto execution = lua_->begin_execution(found->second);
+                    run = lua_->resume(execution);
+                }
+            } catch (const std::exception& error) {
+                run.diagnostic = error.what(); // A stopped VM refuses to begin.
             }
             --script_depth_;
             ran = true;
             if (!run.completed) {
+                // igLuaState::runBuffer (80272768) only logs "runBuffer(%s)
+                // failed - reason %s" after the script's _ERRORMESSAGE ran
+                // (be:MsgBox): the half-run chunk's frames are gone
+                // (luaD_runprotected restored the stack top), the lua_State
+                // and all stage globals stay, and a nested run's caller goes
+                // on. Only a host fault stops the port's VM for good; then a
+                // fresh VM gets func.lua's helpers back.
                 log("script " + std::string(name) + " stopped: " + run.diagnostic);
-                if (script_depth_ == 0) {
-                    // Keep going with a fresh VM (restore shared helpers).
+                if (script_depth_ == 0 && lua_->stopped()) {
                     install_lua();
                     if (name != "func.lua") run_script("func.lua");
                 }
