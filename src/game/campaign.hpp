@@ -32,6 +32,7 @@ public:
         bool walk{};             // steer the stick toward (x, z)
         float x{}, z{};
         float reach{4.0f};       // squared distance that counts as there
+        bool ride_strike{};      // A is for a ride's target passing by (survive does not hold it back)
     };
     // `player` is null outside the game stages (logos, title, loading).
     Output update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);

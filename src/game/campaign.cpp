@@ -631,7 +631,12 @@ struct BossFight {
     const char* strike;
     const char* follow;
     float keep;
-    bool real_blows = false; // only without the one-hit cheat (it fells such a boss with a blow)
+    // Only without the one-hit cheat (it fells such a boss with a blow) and
+    // without god mode: the routine's guard is a no-cheat one (survive), and
+    // a god-mode player that does not guard lay in e_mammos's blows for
+    // 150000 frames (SQ_MDMG, hit reactions go on without damage); god mode
+    // keeps the ExploreBot's way, which beat it before the routine came.
+    bool real_blows = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
@@ -1564,6 +1569,156 @@ int CampaignBot::next_sale(engine::Engine& engine) const {
     return -1;
 }
 
+// A ride whose targets pass on both sides (kRideTargets without `strike`: the
+// stag0103 boat) when blows are real (no one-hit cheat). The boat runs a
+// recorded path (r_boatz01 WAIT01, WAIT02) at 0.2 a frame past the six
+// factory towers (20x20 hit boxes, their near edges 16-17 off the boat's
+// middle, in pairs at the same place along the way, one on each side) and
+// the two shelves (70x70, 14-15 off), and the bomb blows up the boat at
+// matf00 unless all eight are down by then (two blows a tower, three a
+// shelf; stag0103 hit_g_facttowerz06.lua / hit_g_shelfz06.lua). The swing
+// reaches them from anywhere on the boat (some 6.5 to either side of the
+// middle): measured with the same scripted swings in the port and in the
+// original (work/dref/r19/boat, both broke the three right towers and the
+// right shelf). So the player faces across the boat toward the target that
+// passes first while it is abreast (its box along the way within the
+// swing's half width of the player), and swings: a tap of A per swing, let
+// go during the attack (A held through SQ_ATCK1 charges, Atck01..03 of
+// 8034D214, and the charged SQ_ATCKTM takes some 100 frames more); a pair's
+// other tower follows with a step to the other side (a step turns the
+// player at once). A target about to pass behind is followed toward the
+// boat's back (until its wall stops the player); one still ahead draws the
+// player to the boat's front, where the window of a pair opens first.
+// Shots are left to the guard (survive): every blow that lands on a player
+// costs the boat 5 of its 100 HP (hit_p_*.lua), and SQ_GUARD takes none. The
+// player's own HP does not drop here.
+constexpr float kPassAlongReach = 2.5f;  // the swing's box half (3) less a little: along the way
+constexpr float kPassSideReach = 14.0f;  // across, to a target box's near edge, for a swing (it reaches ~18)
+constexpr float kPassNear = 30.0f;       // a target abreast nearer than this across is walked toward
+constexpr float kPassAhead = 90.0f;      // a target this far ahead draws the player to the front
+constexpr float kPassBehind = 30.0f;     // one this far behind (still standing) is followed
+
+bool ride_pass_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const RideTargets& ride, const RideFrame& car,
+                    const engine::Vec3f& ride_v, int frame, CampaignBot::Output& out) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!models || !player.node) return false;
+    // The way the ride travels along its axis (kept while it stands).
+    static float dir = 1.0f;
+    if (const float va = ride_v.x * car.ax + ride_v.z * car.az; std::abs(va) > 0.02f) dir = va > 0.0f ? 1.0f : -1.0f;
+    const auto me = position_of(player);
+    const float pu = car.along(me) * dir, ps = car.side(me);
+    const std::string prefixes = std::string("|") + ride.prefixes + "|";
+    struct Pass {
+        const engine::ModelCtrlManager::ModelRam* ram;
+        float u0, u1, gap; // along the way (u grows toward the ride's front), the gap across to the box
+        int side;          // +1: on the ride's +X side
+    };
+    std::vector<Pass> passes;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->hp <= 0 || !e->hit || e->hit->boxes.empty() || !listed_in(prefixes, *e)) continue;
+        if (e->seq_name == "SQ_SWON" || e->seq_name == "SQ_SWOF" || e->seq_name == "SQ_POWEROF") continue;
+        const auto& m = e->node->matrix;
+        float u0 = 1e30f, u1 = -1e30f, s0 = 1e30f, s1 = -1e30f;
+        for (const auto& [lo, hi] : e->hit->boxes)
+            for (int corner = 0; corner < 4; ++corner) {
+                const float x = corner & 1 ? hi.x : lo.x, z = corner & 2 ? hi.z : lo.z, y = (lo.y + hi.y) * 0.5f;
+                const engine::Vec3f w{x * m(0, 0) + y * m(1, 0) + z * m(2, 0) + m(3, 0), 0.0f, x * m(0, 2) + y * m(1, 2) + z * m(2, 2) + m(3, 2)};
+                const float u = car.along(w) * dir, sd = car.side(w);
+                u0 = std::min(u0, u), u1 = std::max(u1, u), s0 = std::min(s0, sd), s1 = std::max(s1, sd);
+            }
+        const int side = s0 + s1 > 0.0f ? 1 : -1;
+        passes.push_back({e.get(), u0, u1, side > 0 ? s0 - ps : ps - s1, side});
+    }
+    const float fx = player.node->matrix(2, 0), fz = player.node->matrix(2, 2);
+    const int facing_side = fx * car.sx + fz * car.sz >= 0.0f ? 1 : -1;
+    // The target abreast that passes first (of a pair: the side faced).
+    const Pass* now = nullptr;
+    for (const auto& t : passes) {
+        if (t.u0 - kPassAlongReach > pu || pu > t.u1 + kPassAlongReach || t.gap > kPassNear) continue;
+        if (!now || t.u1 < now->u1 - 4.0f || (std::abs(t.u1 - now->u1) <= 4.0f && t.side == facing_side && now->side != facing_side)) now = &t;
+    }
+    const bool attacking = player.seq_name.rfind("SQ_ATCK", 0) == 0;
+    const bool control = player.ctrl_mode != 0 && player.control_enabled;
+    // The ride's back wall along the way, once a walk back has met it (the
+    // walls stop the player): a target that passed is followed while some of
+    // it is still within the swing's reach of a place the player can stand.
+    // (A walk back that has not moved the player for a few frames of
+    // SQ_WALK: the wall. The first frame of a walk does not move it.)
+    static int seen_frame = -100000;
+    static float rear = -1e30f, back_from = 1e30f;
+    static int back_frame = -100, stuck = 0;
+    if (frame - seen_frame > 300 || frame < seen_frame) rear = -1e30f, back_frame = -100, stuck = 0;
+    seen_frame = frame;
+    if (back_frame == frame - 1 && player.seq_name == "SQ_WALK" && std::abs(pu - back_from) < 0.05f) {
+        if (++stuck >= 4) rear = pu;
+    } else if (back_frame == frame - 1) {
+        stuck = 0;
+    }
+    const auto walk_back = [&] {
+        const auto at = car.world((pu - 10.0f) * dir, ps, me.y);
+        out.walk = true;
+        out.x = at.x;
+        out.z = at.z;
+        out.reach = 0.25f;
+        back_from = pu;
+        back_frame = frame;
+    };
+    const Pass* ahead = nullptr;
+    const Pass* behind = nullptr;
+    for (const auto& t : passes) {
+        if (t.u0 - kPassAlongReach > pu && t.u0 - pu < kPassAhead && (!ahead || t.u0 < ahead->u0)) ahead = &t;
+        if (t.u1 + kPassAlongReach < pu && pu - t.u1 < kPassBehind && t.u1 + kPassAlongReach > rear + 0.5f && t.gap <= kPassNear &&
+            (!behind || t.u1 > behind->u1))
+            behind = &t;
+    }
+    if (now) {
+        const float want_x = car.sx * float(now->side), want_z = car.sz * float(now->side);
+        const bool facing = fx * want_x + fz * want_z > 0.9f;
+        out.ride_strike = true;
+        if (control && !attacking) {
+            // (About to fall behind: along toward the ride's back first, the
+            // step facing that way; a step aside turns back to the target.)
+            if (pu > now->u1 + kPassAlongReach - 3.0f && pu > rear + 1.0f) {
+                walk_back();
+            } else if (!facing || now->gap > kPassSideReach) {
+                // A step toward it (it turns the player that way at once),
+                // on to the boat's edge while the gap is wide.
+                out.walk = true;
+                out.x = me.x + want_x * 10.0f;
+                out.z = me.z + want_z * 10.0f;
+                out.reach = 0.25f;
+            } else if (frame % 4 < 2) {
+                out.buttons |= pad_button::a;
+            }
+        }
+    } else if (control) {
+        // Nothing abreast: after one that passed and still stands (unless the
+        // next comes soon), toward the front for one still ahead, else the
+        // middle across.
+        if (behind && pu > rear + 1.0f && (!ahead || ahead->u0 - pu > 15.0f)) {
+            walk_back();
+        } else {
+            const auto at = car.world((ahead ? pu + 10.0f : pu) * dir, std::abs(ps) > 2.0f ? 0.0f : ps, me.y);
+            if (std::hypot(at.x - me.x, at.z - me.z) > 0.5f) {
+                out.walk = true;
+                out.x = at.x;
+                out.z = at.z;
+                out.reach = 0.25f;
+            }
+        }
+    }
+    if (static const bool on = std::getenv("DW4_TRACE_RIDE") != nullptr; on && frame % 6 == 0) {
+        std::string list;
+        for (const auto& t : passes)
+            list += " " + t.ram->info_name + "#" + std::to_string(t.ram->index) + ":" + std::to_string(int(t.u0 - pu)) + ".." +
+                    std::to_string(int(t.u1 - pu)) + "/" + std::to_string(int(t.gap)) + "/" + std::to_string(t.ram->hp);
+        std::printf("[%d] pass at (%.0f,%.0f) u %.1f s %.1f %s %s%s%s%s |%s\n", frame, me.x, me.z, pu, ps, player.seq_name.c_str(),
+                    now ? (now->ram->info_name + "#" + std::to_string(now->ram->index)).c_str() : "-",
+                    out.buttons & pad_button::a ? " A" : "", out.walk ? " walk" : "", facing_side > 0 ? " face+" : " face-", list.c_str());
+    }
+    return true;
+}
+
 bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& stage,
                        const std::string& goal, int frame, CampaignBot::Output& out) {
     const auto me = position_of(player);
@@ -1584,6 +1739,8 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
             ride_frame = frame;
         }
         const RideFrame car = ride_frame_of(player);
+        // (Real blows: the passing targets' own step, see ride_pass_step.)
+        if (ride.strike <= 0.0f && !engine.cheats().one_hit && car.valid) return ride_pass_step(engine, player, ride, car, ride_v, frame, out);
         const std::string prefixes = std::string("|") + ride.prefixes + "|";
         const std::string avoid = std::string("|") + ride.avoid + "|";
         const engine::ModelCtrlManager::ModelRam* best = nullptr;
@@ -3257,13 +3414,16 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     if (!engine.cheats().one_hit && !player.panel_open) {
         const float due = blow_due(engine, player, kHoldAttackLead, frame);
         // A technique at the enemy in front when the MP allows (survive).
-        if (due > kHoldAttackLead && controllable && panel_ready && frame - tech_end_ >= kTechGap && tech_target(engine, player, slot)) {
+        if (due > kHoldAttackLead && controllable && panel_ready && frame - tech_end_ >= kTechGap && !out.ride_strike &&
+            tech_target(engine, player, slot)) {
             tech_at_ = frame;
             tech_end_ = frame + 4 + 2 * std::clamp(int(slot.wazalist.size()) - 1, 0, 5) + 14;
             survive(engine, player, frame, out);
             return;
         }
-        if (guarding && due <= kHoldAttackLead) {
+        // (A swing at a ride's target passing by goes in all the same: it
+        // passes once, and the blow costs the boat no more than the hit.)
+        if (guarding && due <= kHoldAttackLead && !out.ride_strike) {
             if (out.buttons & pad_button::a) ++held_presses_;
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
@@ -3784,7 +3944,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     // Boss fights (kBossFights).
     if (controllable && step->action.rfind("explore:", 0) == 0)
         for (const auto& fight : kBossFights)
-            if (stage == fight.stage && (!fight.real_blows || !engine.cheats().one_hit) &&
+            if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, frame, out)) {
                 last_ = me;
                 return out;
