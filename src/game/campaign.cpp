@@ -637,6 +637,11 @@ struct BossFight {
     // 150000 frames (SQ_MDMG, hit reactions go on without damage); god mode
     // keeps the ExploreBot's way, which beat it before the routine came.
     bool real_blows = false;
+    // Out of the attack boxes that are about to go live (see boss_fight).
+    bool dodge = false;
+    // Models ('|'-separated prefixes) that have to fall before the boss can
+    // be hurt: while one stands, the frames are the ExploreBot's.
+    const char* first = "";
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
@@ -650,6 +655,22 @@ constexpr BossFight kBossFights[] = {
     // its body box): the ExploreBot's walk-and-swing landed 4 blows in 9000
     // frames of a no-cheat run at level 11, its guard held off by the blows.
     {"dng102b3", "e_mammos", "e_mammos", 30.0f, true},
+    // stagBS01: Apocalymon (f_apocaly) is invulnerable (MUTEKI) until the
+    // five poles g_b01cpole (100 HP, 10 a blow that is not one of the
+    // technique families 40..99, hit_g_b01cpole.lua) are down; then
+    // SQ_PHASE2 floats it (body from 30 up: a jump attack reaches it) and its
+    // SQ_MAGIC (106 frames) puts blast pillars on the ground around the
+    // player (x_031fblst03a1/a2, kind 70070, boxes 4..8 wide that go live
+    // 24..84 frames after the cast, 12 frames each), 115..160 a blow for a
+    // level 9 Veemon of 280 HP and more than half of all the damage the
+    // no-cheat runs took there (r17 s2p: level 14, 70 blows taken, defeat
+    // at 595 of its 666 HP). So once it can be hurt the player steps out of
+    // the pillars that are about to go live (`dodge`) and starts no swing
+    // that one would meet; the guard takes what cannot be left in time.
+    // (The poles are the ExploreBot's: with `dodge` the routine gives the
+    // frames back while the boss is invulnerable, and the ExploreBot broke
+    // them in half the time.)
+    {"stagbs01", "f_apocaly", "f_apocaly", 25.0f, true, true, "g_b01cpole"},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -663,6 +684,18 @@ bool listed_in(const std::string& list, const engine::ModelCtrlManager::ModelRam
         if (!token.empty() && (token.find('#') != std::string::npos ? token == exact : ram.info_name.rfind(token, 0) == 0)) return true;
         at = bar + 1;
     }
+    return false;
+}
+
+// Whether a model named by a '|'-separated prefix list (listed_in, without
+// the outer bars) is generated with HP left.
+bool any_alive(engine::Engine& engine, const char* names) {
+    if (!names || !*names) return false;
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!models) return false;
+    const std::string list = std::string("|") + names + "|";
+    for (const auto& e : models->rams())
+        if (e->generated && e->hp > 0 && listed_in(list, *e)) return true;
     return false;
 }
 
@@ -2414,6 +2447,11 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         if (trace()) std::printf("[%d] campaign menu device list page %d -> %s\n", frame, list_page_, list_turn_ > 0 ? "RIGHT" : "LEFT");
         return true;
     };
+    const auto subwnd_running = [&] {
+        engine::Packet running;
+        engine.messenger().send(engine, "SUBWND", std::nullopt, -1, "ISRUN", running);
+        return !running.bools.empty() && running.bools[0];
+    };
     for (const auto& menu : selects->open_selects()) {
         if (menu.index != 0 && menu.index != 4) continue;
         if (!menu.taking_input) {
@@ -2528,6 +2566,16 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             } else if (menu.name.rfind("i_stcursor", 0) == 0) {
                 cancel = true;
             }
+        } else if (lab_target_ < 0 && subwnd_running()) {
+            // A shop program that no errand owns is left: its lists backed
+            // out of, Exit of Buy / Sell / Exit. The gear errand's program
+            // can look closed between two of its windows (SUBWND ISRUN off),
+            // so the errand ended while the armor shop's stock stayed open,
+            // and its first line was picked again and again ("Not enough
+            // BITS"; 430000 frames in stagML13 on main 51c7572, level 5 with
+            // 1125 bits).
+            if (menu.name.rfind("i_stcursor", 0) == 0) cancel = true;
+            else if (menu.name == "i_stmesscr" && menu.items >= 3) want = menu.items - 1;
         } else if (lab_target_ >= 0) {
             // The Digi-Lab (bML01004.lua, beNDMWShopCtrl20 / ShopCtrlEvolve):
             // "use the lab?" and later "equip now?" (2 lines, i_messcr), the
@@ -2806,8 +2854,54 @@ void reach_report(engine::Engine& engine, const engine::ModelCtrlManager::ModelR
 
 // One frame of a boss fight (see kBossFights); false once the boss is down
 // (or not there yet).
+// Attack boxes (kind group 7/8, not a permanent body box) that are live or
+// go live within kDodgeHorizon frames, on the ground as rectangles grown by
+// the player's body half and kDodgeMargin, for a dodge (boss_fight).
+// (Apocalymon's SQ_MAGIC makes all its pillars at the cast, live 24..84
+// frames later: the horizon sees them all.)
+constexpr float kDodgeHorizon = 100.0f, kDodgeMargin = 1.5f;
+// A swing takes some 30 frames in which the player cannot leave (SQ_ATCK1).
+constexpr float kSwingBusy = 32.0f;
+struct DodgeArea {
+    float x0, x1, z0, z1, due, end;
+};
+std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) {
+    std::vector<DodgeArea> areas;
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    if (!models || !player.node) return areas;
+    const auto me = position_of(player);
+    constexpr float body_half = 2.5f, body_height = 17.0f;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        if (e->category == "ENEMY" && e->hp <= 0) continue;
+        const auto& m = e->node->matrix;
+        for (const auto& box : e->hitboxes) {
+            const int group = box.kind / 10000;
+            if ((group != 7 && group != 8) || box.end >= 1e7f || box.elapsed >= box.end) continue;
+            const float due = std::max(0.0f, box.delay - box.elapsed);
+            if (due > kDodgeHorizon) continue;
+            const engine::Vec3f o = box.offset;
+            const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
+            const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
+            const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
+            if (me.y + body_height + 1.0f <= cy - box.size.y * 0.5f || me.y - 1.0f >= cy + box.size.y * 0.5f) continue;
+            const float gx = box.size.x * 0.5f + body_half + kDodgeMargin, gz = box.size.z * 0.5f + body_half + kDodgeMargin;
+            areas.push_back({cx - gx, cx + gx, cz - gz, cz + gz, due, std::max(0.0f, box.end - box.elapsed)});
+        }
+    }
+    return areas;
+}
+
+// The soonest an area meets the point (1e9 when none does).
+float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
+    float due = 1e9f;
+    for (const auto& a : areas)
+        if (x >= a.x0 && x <= a.x1 && z >= a.z0 && z <= a.z1) due = std::min(due, a.due);
+    return due;
+}
+
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                             const std::string& follow, float keep, int frame, Output& out) {
+                             const std::string& follow, float keep, bool dodge, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -2826,6 +2920,10 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         for (const auto& box : e->hitboxes) {
             const int group = box.kind / 10000;
             if ((group != 7 && group != 8) || box.elapsed + 4.0f < box.delay) continue;
+            // (With `dodge` a permanent body box is no threat here: guarding
+            // against Apocalymon's body held the player at its feet, guarding
+            // while the pillars came down; survive's touch guard steps away.)
+            if (dodge && box.end >= 1e7f) continue;
             const engine::Vec3f o = box.offset;
             const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
             const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
@@ -2844,6 +2942,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     engine::Vec3f at{};
     float best = 1e30f;
     bool in_reach = false;
+    float body_bottom = 0.0f;
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->hp <= 0 || e->muteki != 0.0f || !e->hit || e->hit->boxes.empty() || !listed_in(targets, *e))
             continue;
@@ -2866,6 +2965,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             focus = e.get();
             at = p;
             in_reach = y0 < me.y + 8.0f && y1 > me.y;
+            body_bottom = y0;
         }
     }
     if (tracing && frame % 30 == 0)
@@ -2873,6 +2973,55 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                     boss->hp, boss->seq_name.c_str(),
                     focus ? (focus->info_name + " d " + std::to_string(int(best)) + (in_reach ? " in reach" : "")).c_str() : "-",
                     threat.empty() ? "-" : threat.c_str(), me.x, me.y, me.z);
+    // The dodge: out of the attack boxes about to go live where the player
+    // stands, to the nearest spot (rings of 5..21 around the player, on the
+    // floor at its height, reached before the box goes live) that no box
+    // meets at all, else one that none meets until well after the player is
+    // there (walking 0.7 a frame: the pillars of one cast go live in waves);
+    // no swing while one would meet the player before the swing is over
+    // (kSwingBusy); the guard (16 frames of SQ_GUARD) for a box that cannot
+    // be left in time, just before it goes live.
+    std::vector<DodgeArea> areas;
+    float here_due = 1e9f;
+    if (dodge) {
+        areas = dodge_areas(engine, player);
+        here_due = dodge_due(areas, me.x, me.z);
+        const bool control = player.ctrl_mode != 0 && player.control_enabled;
+        if (here_due <= kDodgeHorizon && control) {
+            auto* hitland = engine.get<engine::HitLandManager>();
+            float best_d = 1e30f;
+            engine::Vec3f spot{};
+            for (const float r : {5.0f, 9.0f, 13.0f, 17.0f, 21.0f})
+                for (int k = 0; k < 16; ++k) {
+                    const float a = float(k) * 0.3926991f;
+                    const engine::Vec3f q{me.x + std::sin(a) * r, me.y, me.z + std::cos(a) * r};
+                    const float walk = r / 0.7f + 2.0f;
+                    const float there = dodge_due(areas, q.x, q.z);
+                    if (there <= walk + 40.0f) continue;
+                    if (walk >= here_due + 2.0f) continue;
+                    if (hitland) {
+                        const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
+                        if (!land.found || std::abs(land.position.y - me.y) > 3.0f) continue;
+                    }
+                    // (A spot no box meets first; not toward the boss's body.)
+                    const float d = r + (there < 1e8f ? 30.0f : 0.0f) + (flat(q, position_of(*boss)) < 12.0f ? 50.0f : 0.0f);
+                    if (d < best_d) best_d = d, spot = q;
+                }
+            if (best_d < 1e29f) {
+                out.walk = true;
+                out.x = spot.x;
+                out.z = spot.z;
+                out.reach = 1.0f;
+                if (tracing && frame % 6 == 0)
+                    std::printf("[%d] campaign boss dodge: due %.0f here, to (%.0f,%.0f), %zu areas\n", frame, here_due, spot.x, spot.z, areas.size());
+                return true;
+            }
+            if (here_due <= 3.0f) {
+                if (frame % 4 < 2) out.buttons |= pad_button::b;
+                return true;
+            }
+        }
+    }
     if (!threat.empty()) {
         // (B is read on its press: pulsed so the guard is taken again.)
         if (frame % 8 < 4) out.buttons |= pad_button::b;
@@ -2880,9 +3029,23 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     }
     if (focus) {
         // The swing's boxes reach up to ~20 ahead: struck from 2.5..6.5 off
-        // its hit body, outside the reach of a contact box around it.
+        // its hit body, outside the reach of a contact box around it. A body
+        // floating out of the swing's reach (8 above the feet) takes a jump
+        // attack (X, then A in the air).
+        const bool jump = !in_reach && dodge && body_bottom > me.y + 8.0f && body_bottom < me.y + 25.0f;
+        const bool safe = here_due > (jump ? kSwingBusy + 12.0f : kSwingBusy);
+        // (With `dodge` the way there must stay clear: no point of it that a
+        // box meets before the player passes it and a little after.)
+        bool way_clear = true;
+        if (dodge && !areas.empty()) {
+            const float d = flat(at, me);
+            for (float t = 2.0f; t < std::min(d, 8.0f); t += 2.0f) {
+                const float x = me.x + (at.x - me.x) * t / d, z = me.z + (at.z - me.z) * t / d;
+                if (dodge_due(areas, x, z) <= t / 0.7f + 12.0f) way_clear = false;
+            }
+        }
         if (best > 6.5f) {
-            walk_to(engine, player, at, 5.0f, frame, out);
+            if (way_clear) walk_to(engine, player, at, 5.0f, frame, out);
         } else if (best < 2.5f) {
             const auto c = position_of(*focus);
             const float d = std::max(0.01f, flat(c, me));
@@ -2890,7 +3053,10 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             out.x = me.x + (me.x - c.x) / d * 6.0f;
             out.z = me.z + (me.z - c.z) / d * 6.0f;
             out.reach = 1.0f;
-        } else if (frame % 12 < 3) {
+        } else if (safe && jump) {
+            if (frame % 40 < 3) out.buttons |= pad_button::x;
+            else if (frame % 40 >= 10 && frame % 40 < 13) out.buttons |= pad_button::a;
+        } else if (safe && frame % 12 < 3) {
             out.buttons |= pad_button::a;
         }
         return true;
@@ -3945,7 +4111,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     if (controllable && step->action.rfind("explore:", 0) == 0)
         for (const auto& fight : kBossFights)
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
-                boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, frame, out)) {
+                !any_alive(engine, fight.first) &&
+                boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, frame, out)) {
                 last_ = me;
                 return out;
             }
