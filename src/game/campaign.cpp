@@ -2986,6 +2986,10 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     if (dodge) {
         areas = dodge_areas(engine, player);
         here_due = dodge_due(areas, me.x, me.z);
+        // (A box about to go live within 20 of the player: no heal now that
+        // holds the player 30 frames, SQ_ITEM, unless the HP is very low.)
+        for (const auto& a : areas)
+            if (a.due < 50.0f && std::max({a.x0 - me.x, me.x - a.x1, a.z0 - me.z, me.z - a.z1}) < 20.0f) dodge_frame_ = frame;
         const bool control = player.ctrl_mode != 0 && player.control_enabled;
         if (here_due <= kDodgeHorizon && control) {
             auto* hitland = engine.get<engine::HitLandManager>();
@@ -3433,7 +3437,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // biggest one held, Recovery last.
     // (Not in god mode: a pit there can still set the HP to 1, GAMERAM ADDHP
     // absolute, and the cheat runs keep their path.)
-    if (!engine.cheats().god && slot.hp > 0 && low_hp && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
+    // (Not while a boss fight's dodge sees a box coming, see dodge_frame_,
+    // as long as the HP takes two of the biggest recent blows.)
+    const bool dodging = dodge_frame_ >= frame - 1 && slot.hp * 100 >= slot.max_hp * 25 && (!big_hits || slot.hp > 2 * big_hit_);
+    if (!engine.cheats().god && slot.hp > 0 && low_hp && !dodging && frame - heal_at_ >= kHealGap && controllable && !player.panel_open &&
         panel_ready) {
         int pick = -1;
         auto* db = engine.get<engine::DatabaseManager>();
