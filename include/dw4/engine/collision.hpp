@@ -70,8 +70,10 @@ public:
     // Kind 0x400 geometry (HITLAND_TRAVERSAL): a beCopyTransform child whose
     // matrix the candidate traversal 803009D0 copies from its source
     // transform [12] at query time (80128CF4 at 0x80300CE0). Its triangles
-    // stay in the child's space; every query reads the source node set here
-    // and the child's bit of the check-switch mask (0x80300CA0..0x80300CBC).
+    // stay in the child's space; every query reads the source node set here,
+    // the child's bit of the check-switch mask (0x80300CA0..0x80300CBC) and
+    // the bound of the copy transform's first child moved by the source
+    // translation, unrotated (0x80300CEC..0x80300D80).
     std::uint32_t add_dynamic(const ObjectView& copy_transform, std::uint32_t kind, std::uint16_t info = 0xFFFF,
                               std::uint16_t child = 0);
     // The followed source node and the switch node whose mask word holds the
@@ -110,9 +112,15 @@ private:
         // check-switch mask and the child's bit in it.
         const Node* mask_switch{};
         std::uint32_t bit{};
+        // The bound (igAABox) of the copy transform's first child, in the
+        // child's space; without one every query takes the child.
+        bool bounded{};
+        Vec3f bound_min, bound_max;
     };
-    // The enabled dynamic triangles within `reach` of p, in world space.
-    void dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const;
+    // The enabled dynamic triangles of the query (X/Z box minimum..maximum,
+    // centre p and half-size `reach` of it), in world space.
+    void dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
+                      std::vector<CollisionTriangle>& out) const;
     std::vector<Dynamic> dynamic_;
     void index_triangle(std::size_t index);
     bool enabled(const CollisionTriangle& t) const { return t.group >= groups_.size() || groups_[t.group]; }
