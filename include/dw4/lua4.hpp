@@ -109,8 +109,9 @@ struct Lua4Limits {
     // run of a new game up to dng101b1, over four stage loads.
     std::size_t api_stack_top = 2;
     // Live Lua data after a garbage collection (the Lua 4.0.1 nblocks model);
-    // above it the VM stops with "not enough memory" like the original's
-    // allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun LUA_ERRMEM).
+    // above it the invocation ends with "not enough memory" like the
+    // original's allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun
+    // LUA_ERRMEM, no _ERRORMESSAGE).
     std::size_t max_heap_bytes = 32u * 1024u * 1024u;
     std::size_t max_objects = 65536; // Live tables + closures (a collection runs before failing).
     std::size_t max_table_entries = 262144; // Live table entries (a collection runs before failing).
@@ -183,10 +184,10 @@ public:
     // frame referring to it is invalid after a collection.
     void collect_garbage();
     Lua4HeapStats heap_stats() const;
-    // A script error (a Lua runtime error, stack overflow, out of memory or a port guard)
-    // ends only its invocation, like lua_dobuffer's protected call: the
-    // VM, its globals and any parent invocation go on. Only host or API
-    // faults (callback exceptions, malformed host results, abandoned
+    // A script error (a Lua runtime error, stack overflow, out of memory or
+    // a port guard) ends only its invocation, like lua_dobuffer's protected
+    // call: the VM, its globals and any parent invocation go on. Only host
+    // or API faults (callback exceptions, malformed host results, abandoned
     // invocations) stop the VM for good; then a fresh VM is needed.
     bool stopped() const noexcept;
     Lua4RunResult execute(const Lua4Program& program);

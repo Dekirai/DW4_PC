@@ -71,8 +71,8 @@ Errors follow the original's protected calls. The game runs every chunk
 through `igLuaState::runBuffer` (80272768): `lua_dobuffer` (80278810) ->
 `lua_call` (80278648) -> `luaD_runprotected` (802789E4). On failure it only
 logs `igLuaState::runBuffer(%s) failed - reason %s` and keeps the `lua_State`.
-A script error (a Lua runtime error, a stack overflow or a port guard) goes
-through `lua_error` (8027894C). First `message` (802788A4) looks up
+A script error (a Lua runtime error or a stack overflow) goes through
+`lua_error` (8027894C). First `message` (802788A4) looks up
 `_ERRORMESSAGE` raw in the globals and, if it is a function, calls it with the
 error text on top of the failing frames. `func.lua` defines it as
 `be:MsgBox(a0, 0)`. An error inside that handler calls it again further up the
@@ -83,7 +83,9 @@ Then `luaD_breakrun` (8027898C) unwinds to the protected call:
 `lua_call` removes the chunk closure. The port does the same. The invocation
 reports `faulted`, its frames are released, and the VM, its globals and any
 parent invocation go on (`Lua4Vm::stopped()` stays false). Out of memory
-(`luaD_breakrun` with `LUA_ERRMEM`) skips `_ERRORMESSAGE`. Only a Lua closure
+(`luaD_breakrun` with `LUA_ERRMEM`) skips `_ERRORMESSAGE`, and so do the
+port's per-root guards (instructions, host calls, string work), which stand
+for runaway scripts the original would simply keep running. Only a Lua closure
 is called as `_ERRORMESSAGE`; the base library's C version (stderr through
 `_ALERT`) has no port counterpart. A host pause inside the chain cannot be
 served while unwinding and ends it.
@@ -169,12 +171,12 @@ own allocations and effects require separate bounds.
 ## Stack
 
 The original has one Lua stack of 1,024 `TObject` slots: `igLuaState`
-(80272594) calls `lua_open(0, pool)` (8027E924 `f_luaopen` takes the default
-size for 0). Every chunk, Lua frame and C call lives on it at absolute
-positions, and `luaD_checkstack` (80278088) fails when `stack_last - top <= n`,
-with `stack_last` = slot 1,023. The port keeps the same positions (a frame's
-local 0 is the slot above its function, a CALL's top is the slot above its
-last argument) and checks where the original checks:
+(80272594) calls `lua_open(0, pool)` (8027E9D4), and `f_luaopen` (8027E924)
+takes the default size for 0. Every chunk, Lua frame and C call lives on it at
+absolute positions, and `luaD_checkstack` (80278088) fails when
+`stack_last - top <= n`, with `stack_last` = slot 1,023. The port keeps the
+same positions (a frame's local 0 is the slot above its function, a CALL's top
+is the slot above its last argument) and checks where the original checks:
 
 | Check | Original | Reserve above the top |
 | --- | --- | ---: |
@@ -195,27 +197,28 @@ slot 2, local 0 at slot 3); a chunk a host callback runs starts at the
 callback's top, above its arguments and upvalues (what the binding itself
 pushes before such a run is not modelled).
 
-A Dolphin run confirms the model. `work/dref/fix_r22lua/tools/mk_stacklog.py`
-makes an AR code that hooks `luaD_checkstack` and `igLuaState::runBuffer` and
-logs each new peak (top + reserve, the top, the reserve, the caller) and the
-top at every chunk start through OSReport. It ran over a new game up to
-`dng101b1` (`work/dref/scripts/newgame_dng101b1.txt`, 5,600 fields). Every one
-of the 29 chunk starts was at top 2. The peaks after the binding's own setup
-(4 and 24) were 27 (`func.lua`, a setglobal tag method at top 7), 35 / 38 /
-39 / 40 (the first `boot.lua`, the gettable method of `be` at tops 14 / 17 /
-18 / 19, reserve 21), 48 (a 37-slot chunk at top 3) and 61 (a 13-slot
-function at top 40 in `dng101b1`'s `boot.lua`). The port, on the same input,
-asks for exactly the same checks with the same values, and its peaks after
-those chunks are 27, 40 and 61 (it reports a peak when a chunk ends). An
-overflow raises "stack overflow" as a Lua error: `stack_last` grows by
+An overflow raises "stack overflow" as a Lua error: `stack_last` grows by
 `EXTRA_STACK` = 40 slots (+0x280 at 0x802780DC) so that `_ERRORMESSAGE` can
 run, and a second overflow before the protected call restores the limit
 (`restore_stack_limit` 80278100) breaks with `LUA_ERRERR` and no message.
 `heap_stats().stack_peak` is the highest top + reserve any check asked for,
-and `DW4_TRACE_LUA_STACK=1` logs each new high in the game.
+`Lua4RunResult::stack_base` the slot of a chunk's closure, and
+`DW4_TRACE_LUA_STACK=1` logs each new high (after a root chunk) and every
+nested chunk's slot in the game.
 
-Completed handles retain their owned results until released (they are
-collector roots while the handle lives).
+A Dolphin run confirms the model. `work/dref/fix_r22lua/tools/mk_stacklog.py`
+makes an AR code that hooks `luaD_checkstack` and `igLuaState::runBuffer` and
+logs through OSReport each new peak (top + reserve, the top, the reserve, the
+caller) and the top at every chunk start. It ran over a new game up to
+`dng101b1` (`work/dref/scripts/newgame_dng101b1.txt`, 5,600 fields). All 29
+chunk starts were at top 2. After the binding's own setup (peaks 4 and 24)
+the new peaks were 27 (`func.lua`, a setglobal tag method at top 7), 35 / 38 /
+39 / 40 (the first `boot.lua`, the gettable method of `be` at tops 14 / 17 /
+18 / 19, reserve 21), 48 (a 37-slot chunk at top 3) and 61 (a 13-slot
+function at top 40 in `dng101b1`'s `boot.lua`). A temporary port build that
+printed every new peak at the check gave the same values, tops and reserves
+in the same chunks on the same input. The regression and campaign runs of
+this round stay far below slot 1,023 (see Validation).
 
 ## Garbage collection
 
@@ -307,9 +310,15 @@ parameter/result adjustment, varargs, table writes and cycles, strict native
 calls, live limits and the collector (a hit-script-like chunk run 2 x 20,000
 times under a 96 KiB heap and 64 objects, globals kept across collections,
 cycles and dead keys freed, identical counters in two VMs, stale handles,
-out of memory, collection inside a nested chunk). It also checks reference-confirmed edge cases such
-as rejecting the string `+-1` in arithmetic and rejecting a numeric-string loop
-index assigned by the body. The optional original test reads two caller-supplied
+out of memory, collection inside a nested chunk), script errors (the VM and its
+globals stay, `_ERRORMESSAGE` gets the text first, a nested chunk's error
+leaves its parent running, a failing handler chain ends at the stack, out of
+memory skips the handler), the stack (recursion overflows after 995 levels,
+the lent `EXTRA_STACK`, the second overflow, the exact C call, tag method, Lua
+entry and nested chunk boundaries) and `^` (results, coercion through either
+operand, errors, its stack reserve). It also checks reference-confirmed edge
+cases such as rejecting the string `+-1` in arithmetic and rejecting a
+numeric-string loop index assigned by the body. The optional original test reads two caller-supplied
 chunks and checks persistent helper definitions and the first unsupported call.
 
 The original synchronous checks remain in the expanded suite. Retained execution
@@ -320,7 +329,7 @@ abandonment and guarded reentry.
 
 Source-linked Release and fully instrumented MSVC AddressSanitizer runs passed 416 synthetic
 checks plus 10 optional original checks before the collector; the suite now
-has 438 synthetic checks (Release). The original `func.lua` contains 18
+has 508 synthetic checks (Release). The original `func.lua` contains 18
 prototypes and 2,516 instructions; its top level executes 35 instructions,
 defines 17 functions and makes no native calls. `boot.lua` contains eight
 prototypes and 761 instructions. With only the symbolic `be` object installed,

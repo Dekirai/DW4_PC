@@ -415,7 +415,11 @@ struct Lua4Vm::Impl {
     // Real allocations raise the live estimate; nothing is freed or checked
     // here: collections run only at boundaries where every value is rooted.
     void allocate(std::size_t bytes) { nblocks = bytes > SIZE_MAX - nblocks ? SIZE_MAX : nblocks + bytes; }
-    void work(std::size_t bytes) { charge(work_remaining, bytes, "VM string work"); }
+    // The per-root guards (instructions, host calls, string work) stand for
+    // runaway scripts the original would just keep running: they end the
+    // invocation without calling _ERRORMESSAGE, like a break.
+    [[noreturn]] static void guard(const std::string& name) { throw Lua4Break("Lua 4: " + name + " budget exhausted"); }
+    void work(std::size_t bytes) { if (bytes > work_remaining) guard("VM string work"); work_remaining -= bytes; }
     // luaD_checkstack (80278088): fails when stack_last - top <= n. The
     // first overflow lends the error handler EXTRA_STACK slots and raises
     // "stack overflow" (lua_error, so _ERRORMESSAGE runs); another one
@@ -760,7 +764,7 @@ struct Lua4Vm::Impl {
         const auto upvalues=host_upvalues(call.function);
         if(!call.entered) {
             check_stack(top,upvalues+c_reserve); // callCclosure (80278340, 0x80278368)
-            if(host_calls>=limits.max_host_calls) fail("host call budget exhausted");
+            if(host_calls>=limits.max_host_calls) guard("host call");
             if(!next_call) fault("host call identity space exhausted");
             ++host_calls;call.id=next_call++;call.entered=true;
         }
@@ -848,7 +852,7 @@ struct Lua4Vm::Impl {
             // raises with its operands still on the stack.
             const auto top = frame.base + stack.size();
             error_top = top;
-            if (instructions >= limits.max_instructions) fail("instruction budget exhausted");
+            if (instructions >= limits.max_instructions) guard("instruction");
             ++instructions;
             const auto raw = proto->code[pc++], op = raw & 63, u = raw >> 6, a = raw >> 15, b = (raw >> 6) & 511;
             const auto s = static_cast<std::int64_t>(u) - signed_bias;

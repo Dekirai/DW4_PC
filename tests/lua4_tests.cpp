@@ -631,6 +631,9 @@ void script_errors_keep_the_vm() {
     check(alerts.size() == 1 && alerts[0] == "cannot call nil|7", "_ERRORMESSAGE did not get the error text on top of the failing chunk");
     numeric_result(vm.execute(program(reads)), {7}); // Globals stay as written, no rollback, no later writes.
     check(alerts.size() == 1, "A completed chunk called _ERRORMESSAGE");
+    Function forever; forever.code = {s(Jmp, -1), End}; // A port guard ends the run like a break.
+    stopped(vm.execute(program(forever)), "instruction budget");
+    check(alerts.size() == 1 && !vm.stopped(), "A port guard called _ERRORMESSAGE or stopped the VM");
 
     // A nested chunk's error ends only that chunk (its own protected lua_call);
     // the host callback and the parent go on with their frame values.
