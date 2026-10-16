@@ -9,7 +9,10 @@
 // it follows the stage exit graph (kExits): lobby gates are walked to and
 // their menus answered, fields and dungeons are handed to the ExploreBot
 // with the exit mat as its goal. Nothing in the game is changed: the story
-// flags are set by the game's own scripts.
+// flags are set by the game's own scripts. Without the test cheats it plays
+// for survival (campaign.cpp "Survival"): techniques and MP disks without
+// DW4_ONE_HIT; guards, heals, heal gates, Gate Disks, the lobby shops, the
+// bit capsule and training below gate levels without DW4_GOD.
 #include "test_path.hpp"
 
 #include <cstdint>
@@ -54,6 +57,34 @@ private:
                     const std::string& follow, float keep, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
+    // Survival without god mode (campaign.cpp kSupplies): the next disk shop
+    // purchase, the bit capsule recovered with a Raise Disk, the emergency
+    // heal and panel upkeep laid over the frame's output.
+    struct Purchase {
+        int record = -1, count = 0, held = 0;
+    };
+    Purchase next_purchase(engine::Engine& engine) const;
+    int planned_spend(engine::Engine& engine) const;
+    // The next device to equip at the Digi-Lab (campaign.cpp kEquipGain):
+    // kind 0 the weapon in use (POWERSOCKET 0), 1 the board (MAINSLOT), 2 the
+    // accessory (SUBSLOT); device -1 when the equipment is the best held.
+    struct EquipPick {
+        int kind = -1, device = -1;
+    };
+    EquipPick next_equip(engine::Engine& engine) const;
+    double equip_value(engine::Engine& engine, const engine::ItemDevice& d) const;
+    // The stock line of a device shop (6 weapons, 7 armor) to buy, -1 none.
+    int next_gear(engine::Engine& engine, int program) const;
+    // The next device to sell at the disk shop (campaign.cpp kSellFrom), -1 none.
+    int next_sale(engine::Engine& engine) const;
+    bool raise_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
+    bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    float blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame);
+    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap);
+    bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
+    void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
+    Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
 
     std::string stage_;
     int entry_ = -1;             // the player point the current stage was entered at
@@ -89,6 +120,71 @@ private:
     int maze_since_ = -1;        // in this maze place (or since its last turn) since
     std::string region_now_;     // the maze region the player was last found in (kMazeRegions)
     int region_check_{};         // when it was looked for
+    // Survival without god mode.
+    std::map<int, int> prices_;  // conItem record -> HANBAI price (read where the table is loaded)
+    bool shop_open_ = false;     // a shop errand's program (SUBWND DISK) may be running
+    bool heal_open_ = false;     // the X-Data shop (a full heal on leaving) may be running
+    int heal_at_ = -100000;      // the last emergency heal (Y)
+    int panel_close_at_ = -100000; // the last R that closes a panel left open
+    int disk_use_ = -1;          // the disk being used from the L panel (conItem record), -1 none
+    int disk_use_at_{};          // its use began (L)
+    int disk_line_{};            // its line in the panel
+    int disk_ups_{};             // UP presses that reach the panel's top
+    bool disk_quick_{};          // used with Y (the emergency heal) instead
+    int disk_held_{};            // its count when the use began
+    int raise_tries_{};          // Raise Disk uses tried in this stage
+    int raise_walk_since_ = -1;  // walking to the bit capsule since
+    bool alive_ = false;         // player 1 was alive in the last game frame
+    int deaths_{};               // defeats so far
+    int guard_traced_ = -100000; // the last traced guard
+    std::string guard_what_;     // the box guarded against (traces)
+    struct BoxSeen {
+        int frame = -1, prev_frame = -1;
+        engine::Vec3f at{}, prev{};
+    };
+    std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
+    int tech_at_ = -1;           // a technique cast began (R), -1 none
+    int touch_traced_ = -100000; // the last traced one
+    int gate_disk_at_ = -100000; // the last Gate Disk use
+    int gate_refused_at_ = -1;   // the stage visit (its stage_frame_) whose panel refused the Gate Disk
+    int last_attack_ = 0;        // the last frame player 1 attacked (SQ_ATCK*, SQ_WAZA)
+    int aggressive_until_ = -1;  // no guards until
+    int held_presses_ = 0;       // presses of A the guard took back since the last attack
+    int guard_held_ = -100000;   // the last frame a guard held an attack back
+    int tech_end_ = -100000;     // the last cast's end
+    int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
+    int last_hp_ = -1;           // player 1's HP in the last frame (survive)
+    int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
+    // The equipment errand at the Digi-Lab (next_equip).
+    bool equip_open_ = false;    // its lab program may be running
+    int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
+    int list_page_ = 0;          // a device list's page (lab or sale list, counted from its opening)
+    int list_turn_ = 0, list_turn_at_ = -100000; // a page turn pressed (+1 / -1), when
+    bool equip_folder_ = false;  // the device list was open in the last frame
+    EquipPick equip_tried_{};    // the pick the errand began with
+    int equip_since_ = -1;       // the errand's step since
+    std::set<std::pair<int, int>> equip_failed_; // (kind, device record) picks the lab did not take
+    // Device sales at the disk shop (next_sale).
+    bool shop_selling_ = false;  // Sell was chosen in the shop menu
+    bool sale_confirm_ = false;  // a device was picked from the sale list (its yes follows)
+    int sale_target_ = -1;       // that device
+    int sale_at_ = -1;           // a device sold (the list's page follows the folder)
+    // Gear from the weapon and armor shops (next_gear).
+    bool gear_open_ = false;     // a device shop program of the errand may be running
+    int gear_program_ = 6;       // its program (6 weapons, 7 armor)
+    bool gear_buying_ = false;   // Buy was chosen: the stock list
+    bool gear_ran_ = false;      // its program was seen running
+    std::array<int, 2> gear_checked_{-1, -1}; // the level each shop was last looked at
+    // Training (campaign.cpp kTraining).
+    std::string objective_now_;  // the objective worked on (defeats raise its gate)
+    std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
+    int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
+    int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
+    bool train_leaving_ = false; // the training field is spent: leaving it
+    int gate_since_ = -1;        // walking to a heal gate since, -1 none
+    std::string gate_mat_;       // its mat
+    engine::Vec3f gate_at_{};    // where it is
+    std::set<std::string> gate_tried_; // "<stage> <mat>" heal gates given up
 };
 
 // One step of a ride's targets (campaign.cpp kRideTargets: the stag0103

@@ -2137,6 +2137,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         approach_.clear();
         unkillable_.clear();
         regenerating_.clear();
+        vanished_.clear();
         enemy_last_.clear();
         enemy_hp_.clear();
         kill_credits_ = 0;
@@ -2233,6 +2234,28 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
     // between newly cleared generators so endless waves still are.
     if (auto* all = engine.get<engine::ModelCtrlManager>())
         for (const auto& e : all->rams()) {
+            // An enemy RAM taken by a new spawn (a generator's FIND_SPACE
+            // reuses a defeated enemy's RAM): the marks of the defeated one
+            // (lowest HP, no damage, left alone) go, or the new one at full
+            // HP would count as healing itself and soon be left alone for
+            // the stage (dng206f2's minotaur waves in a god-mode campaign
+            // run: GENE-25 and GENE-28 never cleared). Not with the one-hit
+            // cheat (the recorded runs keep their path).
+            if (!engine.cheats().one_hit && e->category == "ENEMY") {
+                const void* key = e.get();
+                if (!e->generated || !e->node || e->hp <= 0) {
+                    vanished_.insert(key);
+                } else if (vanished_.erase(key)) {
+                    lowest_hp_.erase(key);
+                    fruitless_.erase(key);
+                    fruitless_runs_.erase(key);
+                    regenerating_.erase(key);
+                    unkillable_.erase(key);
+                    unreachable_.erase(key);
+                    approach_.erase(key);
+                    enemy_last_.erase(key);
+                }
+            }
             if (!e->generated || !e->node || e->category != "ENEMY") continue;
             auto [hp, fresh] = enemy_hp_.emplace(e.get(), e->hp);
             if (!fresh && hp->second > 0 && e->hp <= 0 && flat(position_of(*e), me) < 80.0f && kill_credits_ < 16) {
