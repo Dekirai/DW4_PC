@@ -192,6 +192,7 @@ private:
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
+    std::map<std::string, int> train_falls_;   // training field -> highest level a defeat there came at (train_for)
     int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
     int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
     bool train_leaving_ = false; // the training field is spent: leaving it

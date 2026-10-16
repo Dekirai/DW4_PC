@@ -1361,7 +1361,14 @@ constexpr int kGateWalk = 1500;
 
 // The training an objective needs first: null when player 1 is at its gate
 // level (kGates, and one above the level of a defeat at it, `defeats`).
-const Objective* train_for(engine::Engine& engine, const Objective& objective, const std::map<std::string, int>& defeats) {
+// A field the player was defeated in at its level or above (`falls`) gives
+// way to the field of the area before while the HP disks held are down to
+// kTripHealStock, until the level is past it: without the bits for disks the
+// defeats there came one after another, each losing the bits and part of
+// the EXP to the bit capsule (no-cheat runs from a level 13 and a level 16
+// state: 28 and 10 defeats in a row in stag0201, the level never rising).
+const Objective* train_for(engine::Engine& engine, const Objective& objective, const std::map<std::string, int>& defeats,
+                           const std::map<std::string, int>& falls) {
     auto* sys = engine.get<engine::GameSystem>();
     if (!sys) return nullptr;
     int need = 0;
@@ -1370,15 +1377,25 @@ const Objective* train_for(engine::Engine& engine, const Objective& objective, c
     if (const auto it = defeats.find(objective.name); it != defeats.end()) need = std::max(need, it->second + 1);
     if (sys->players[0].stats.level >= need) return nullptr;
     const std::string_view stage = objective.stage;
-    for (const auto& training : kTraining) {
+    for (std::size_t index = 0; index < std::size(kTraining); ++index) {
         bool serves = false;
-        const std::string_view list = training.stages;
+        const std::string_view list = kTraining[index].stages;
         for (std::size_t at = 0; at <= list.size();) {
             const auto bar = std::min(list.find('|', at), list.size());
             if (bar > at && stage.substr(0, bar - at) == list.substr(at, bar - at)) serves = true;
             at = bar + 1;
         }
         if (!serves) continue;
+        std::size_t pick = index;
+        int heals = 0;
+        for (const auto& disk : sys->players[0].disks)
+            if (disk.record >= 0 && disk.record <= 2) heals += disk.count;
+        while (pick > 0 && heals <= kTripHealStock) {
+            const auto fall = falls.find(kTraining[pick].field);
+            if (fall == falls.end() || fall->second < sys->players[0].stats.level) break;
+            --pick;
+        }
+        const auto& training = kTraining[pick];
         // (One training at a time: the strings live on until the next.)
         static std::string name, action;
         static Objective storage{"", "", "", ""};
@@ -2283,7 +2300,7 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // Training (no god mode): below the objective's gate level the player
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
-        if (const auto* training = train_for(engine, *objective, defeat_levels_)) objective = training;
+        if (const auto* training = train_for(engine, *objective, defeat_levels_, train_falls_)) objective = training;
     // The maze region of a place: from the point it was entered at, for the
     // place the player is in the region found by walking (region_now_: a
     // ledge walked off leaves the region entered).
@@ -3323,6 +3340,7 @@ void CampaignBot::save_memory(std::ostream& out) const {
     };
     out << "deaths " << deaths_ << "\n";
     for (const auto& [objective, level] : defeat_levels_) out << "defeat " << word(objective) << " " << level << "\n";
+    for (const auto& [field, level] : train_falls_) out << "trainfall " << word(field) << " " << level << "\n";
     out << "gear_checked " << gear_checked_[0] << " " << gear_checked_[1] << "\n";
     for (const auto& [kind, record] : equip_failed_) out << "equip_failed " << kind << " " << record << "\n";
     for (const auto& gate : gate_tried_) out << "gate_tried " << word(gate) << "\n";
@@ -3351,6 +3369,10 @@ void CampaignBot::load_memory(std::istream& in) {
             std::string objective;
             int level = 0;
             if (f >> objective >> level) defeat_levels_[unword(objective)] = level;
+        } else if (key == "trainfall") {
+            std::string field;
+            int level = 0;
+            if (f >> field >> level) train_falls_[unword(field)] = level;
         } else if (key == "gear_checked") {
             f >> gear_checked_[0] >> gear_checked_[1];
         } else if (key == "equip_failed") {
@@ -3421,6 +3443,9 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             // (Each defeat at an objective raises its gate level, kTraining.)
             if (!fallen_objective_.empty() && fallen_objective_.rfind("train", 0) != 0)
                 defeat_levels_[fallen_objective_] = std::max(defeat_levels_[fallen_objective_], fallen_level_);
+            // (A defeat while training: that field waits for a higher level, train_for.)
+            if (fallen_objective_.rfind("train", 0) == 0)
+                train_falls_[lower(fallen_stage_)] = std::max(train_falls_[lower(fallen_stage_)], fallen_level_);
             std::printf("[%d] campaign: defeated (%d so far) in %s at level %d with %d bits\n", fallen_at_, deaths_, fallen_stage_.c_str(),
                         fallen_level_, slot.bits);
             fallen_at_ = -1;
@@ -3448,7 +3473,10 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     }
     const auto& slot = sys->players[0];
     // The biggest blow taken within kBigHitFor frames (the heals' threshold).
-    if (last_hp_ > slot.hp && slot.hp > 0) {
+    // (Not a pit's or a quicksand's respawn, which sets the HP to 1, GAMERAM
+    // ADDHP absolute: dng205b3's sand counted as a blow of 859 of 860 HP, and
+    // the driver gave the boss stage up at full HP for want of heals.)
+    if (last_hp_ > slot.hp && slot.hp > 1) {
         const int hit = last_hp_ - slot.hp;
         if (hit >= big_hit_ || frame - big_hit_at_ > kBigHitFor) big_hit_ = hit, big_hit_at_ = frame;
     }
