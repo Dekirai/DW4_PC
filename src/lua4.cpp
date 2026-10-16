@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <map>
+#include <unordered_set>
 #include <utility>
 
 namespace dw4 {
@@ -285,7 +286,7 @@ struct Lua4Vm::Impl {
         Lua4Type type{};
         double number{};
         std::string text;
-        std::size_t handle{};
+        std::uint64_t handle{};
         bool operator<(const Key& other) const {
             if (type != other.type) return type < other.type;
             if (type == Lua4Type::Number) return number < other.number;
@@ -300,6 +301,51 @@ struct Lua4Vm::Impl {
         std::shared_ptr<const Proto> proto;
         std::vector<Lua4Value> upvalues;
     };
+    // Slots of one object kind. A freed slot is reused (last freed first) with
+    // its generation advanced, so a stale handle can never reach the new object.
+    template<class T> struct Arena {
+        std::vector<std::unique_ptr<T>> slots;
+        std::vector<std::uint32_t> generation, free;
+        static std::uint32_t index(std::uint64_t handle) { return static_cast<std::uint32_t>(handle); }
+        bool live(std::uint64_t handle) const {
+            const auto at = index(handle);
+            return at < slots.size() && slots[at] && generation[at] == static_cast<std::uint32_t>(handle >> 32);
+        }
+        std::uint64_t place(std::unique_ptr<T> object) {
+            std::uint32_t at;
+            if (!free.empty()) { at = free.back(); free.pop_back(); slots[at] = std::move(object); }
+            else {
+                if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) fail("VM arena slot space exhausted");
+                at = static_cast<std::uint32_t>(slots.size()); slots.push_back(std::move(object)); generation.push_back(0);
+            }
+            return std::uint64_t(generation[at]) << 32 | at;
+        }
+        std::size_t sweep(const std::vector<std::uint8_t>& marks) {
+            std::size_t kept = 0;
+            for (std::uint32_t at = 0; at < slots.size(); ++at) {
+                if (!slots[at]) continue;
+                if (marks[at]) { ++kept; continue; }
+                slots[at].reset(); ++generation[at]; free.push_back(at);
+            }
+            return kept;
+        }
+    };
+    // Lua 4.0.1 accounting (lstate.h nblocks) with the original sizes of the
+    // GameCube build: lua_State 0x74 bytes plus its fixed 1024-slot stack of
+    // 16-byte TObjects (lua_open 8027E9D4 is called with stack size 0 by
+    // igLuaState 80272594, f_luaopen 8027E924 uses 1024); a table is a 24-byte
+    // Hash with 40-byte nodes (luaH_new 8028111C, setnodevector 80281044);
+    // a closure 16 + 16 per upvalue (sizeclosure); a string 21 + its length
+    // (sizestring). Collections never change script results, only when
+    // memory is given back, so these sizes only pace the collector.
+    static constexpr std::size_t state_bytes = 0x74 + 1024 * 16;
+    static constexpr std::size_t hash_bytes = 24, node_bytes = 40;
+    static constexpr std::size_t closure_bytes(std::size_t upvalues) { return 16 + 16 * upvalues; }
+    static constexpr std::size_t string_bytes(std::size_t length) { return 21 + length; }
+    // Objects / entries one step can create before the next boundary check:
+    // a table or closure (or a vararg table when a call enters), SETLIST /
+    // SETMAP / vararg packing of at most a declared stack of values.
+    static constexpr std::size_t object_reserve = 2, entry_reserve = 256;
     Lua4Limits limits;
     std::uint64_t identity{};
     Lua4HostHandler host;
@@ -309,16 +355,19 @@ struct Lua4Vm::Impl {
     Execution::Call* callback{};
     std::uint64_t next_execution=1,next_call=1;
     std::map<std::string, Lua4Value, std::less<>> globals;
-    std::vector<std::unique_ptr<Table>> tables;
-    std::vector<std::unique_ptr<Closure>> closures;
-    std::vector<std::shared_ptr<const Lua4Program::Impl>> programs;
-    std::size_t heap_remaining{}, objects_remaining{}, entries_remaining{};
+    Arena<Table> tables;
+    Arena<Closure> closures;
+    // Every execution handle alive, in creation order: their frames, pending
+    // calls and kept results are the collector's roots besides the globals.
+    std::vector<Execution*> executions;
+    std::size_t nblocks = state_bytes, threshold = 2 * state_bytes, collections{};
+    std::size_t objects_live{}, entries_live{}, object_trigger{}, entry_trigger{};
+    std::size_t work_remaining{};
     std::size_t instructions{}, host_calls{}, active_stack{}, depth{};
     bool stopped{}, running{};
     Lua4Site site;
 
-    explicit Impl(Lua4Limits requested) : limits(requested), heap_remaining(requested.max_heap_bytes),
-        objects_remaining(requested.max_objects), entries_remaining(requested.max_table_entries) {
+    explicit Impl(Lua4Limits requested) : limits(requested), work_remaining(requested.max_string_work) {
         limit(limits.max_instructions, 10000000, "execution instruction");
         limit(limits.max_call_depth, 128, "call depth");
         limit(limits.max_stack_values, 65536, "stack value");
@@ -327,72 +376,87 @@ struct Lua4Vm::Impl {
         limit(limits.max_table_entries, 1048576, "table entry");
         limit(limits.max_globals, 65536, "global");
         limit(limits.max_host_calls, 65536, "host call");
+        limit(limits.max_string_work, 1024u * 1024u * 1024u, "string work");
         static std::atomic<std::uint64_t> next{1}; identity = next.fetch_add(1);
         if (!identity) fail("VM identity space exhausted");
+        set_count_triggers();
     }
-    void allocate(std::size_t bytes) { charge(heap_remaining, bytes, "VM heap allocation"); }
+    // Real allocations raise the live estimate; nothing is freed or checked
+    // here: collections run only at boundaries where every value is rooted.
+    void allocate(std::size_t bytes) { nblocks = bytes > SIZE_MAX - nblocks ? SIZE_MAX : nblocks + bytes; }
+    void work(std::size_t bytes) { charge(work_remaining, bytes, "VM string work"); }
     void validate(const Lua4Value& value) const {
         if (value.type_ == Lua4Type::Table || value.type_ == Lua4Type::Function) {
             if (value.owner_ != identity) fail("value belongs to another VM");
-            if ((value.type_ == Lua4Type::Table && value.handle_ >= tables.size()) ||
-                (value.type_ == Lua4Type::Function && value.handle_ >= closures.size())) fail("invalid VM-owned handle");
+            if ((value.type_ == Lua4Type::Table && !tables.live(value.handle_)) ||
+                (value.type_ == Lua4Type::Function && !closures.live(value.handle_)))
+                fail("invalid or collected VM-owned handle");
         }
         if (value.text_ && value.text_->size() > max_value_string) fail("oversized imported string");
         if (value.type_ == Lua4Type::Number && !std::isfinite(value.number_)) fail("non-finite imported number");
     }
+    Table& table_at(const Lua4Value& value) { return *tables.slots[Arena<Table>::index(value.handle_)]; }
+    Closure& closure_at(const Lua4Value& value) { return *closures.slots[Arena<Closure>::index(value.handle_)]; }
     void import(const Lua4Value& value) {
         validate(value);
-        if (value.text_) allocate(value.text_->size() + 64);
+        if (value.text_) allocate(string_bytes(value.text_->size()));
     }
-    Key key(const Lua4Value& value) {
+    Key key(const Lua4Value& value, bool charged = true) {
         validate(value);
         if (value.type_ == Lua4Type::Nil) fail("nil table key");
-        if (value.text_) allocate(value.text_->size());
+        if (value.text_ && charged) work(value.text_->size());
         return {value.type_, value.number_, value.text_ ? *value.text_ : std::string{}, value.handle_};
     }
     Lua4Value string(std::string value) {
         if (value.size() > max_value_string) fail("computed string exceeds 1 MiB");
-        allocate(value.size() + 64); return Lua4Value::string(std::move(value));
+        allocate(string_bytes(value.size())); return Lua4Value::string(std::move(value));
+    }
+    void new_object() {
+        if (objects_live >= limits.max_objects) fail("VM object count budget exhausted");
+        ++objects_live;
     }
     Lua4Value table() {
-        charge(objects_remaining, 1, "VM object count"); allocate(sizeof(Table) + 64);
-        Lua4Value value; value.type_ = Lua4Type::Table; value.owner_ = identity; value.handle_ = tables.size();
-        tables.push_back(std::make_unique<Table>()); return value;
+        new_object(); allocate(hash_bytes + node_bytes);
+        Lua4Value value; value.type_ = Lua4Type::Table; value.owner_ = identity;
+        value.handle_ = tables.place(std::make_unique<Table>()); return value;
     }
     Lua4Value closure(std::shared_ptr<const Lua4Program::Impl> program, std::shared_ptr<const Proto> proto,
         std::vector<Lua4Value> upvalues) {
-        charge(objects_remaining, 1, "VM object count"); allocate(sizeof(Closure) + 64 + upvalues.size() * sizeof(Lua4Value));
-        Lua4Value value; value.type_ = Lua4Type::Function; value.owner_ = identity; value.handle_ = closures.size();
-        closures.push_back(std::make_unique<Closure>(Closure{std::move(program), std::move(proto), std::move(upvalues)}));
+        new_object(); allocate(closure_bytes(upvalues.size()));
+        Lua4Value value; value.type_ = Lua4Type::Function; value.owner_ = identity;
+        value.handle_ = closures.place(std::make_unique<Closure>(Closure{std::move(program), std::move(proto), std::move(upvalues)}));
         return value;
     }
-    Lua4Value table_get(const Lua4Value& value, const Lua4Value& index) {
+    Lua4Value table_get(const Lua4Value& value, const Lua4Value& index, bool charged = true) {
         validate(value);
         if (value.type_ != Lua4Type::Table) fail("table access needs a table, got " + value.describe());
         if (index.type_ == Lua4Type::Nil) return {};
-        const auto& entries = tables[value.handle_]->values;
-        const auto found = entries.find(key(index)); return found == entries.end() ? Lua4Value{} : found->second;
+        const auto& entries = table_at(value).values;
+        const auto found = entries.find(key(index, charged)); return found == entries.end() ? Lua4Value{} : found->second;
     }
     Lua4Value get(const Lua4Value& value, const Lua4Value& index) {
         if (value.type_ == Lua4Type::HostObject) {
             if (index.type_ != Lua4Type::String) fail("host object method key must be a string");
             if (value.text_->size() + index.text_->size() + 1 > 4096) fail("host function name exceeds 4096 bytes");
             auto name = *value.text_ + "." + *index.text_;
-            allocate(name.size() + 64); return Lua4Value::host_function(std::move(name));
+            allocate(string_bytes(name.size())); return Lua4Value::host_function(std::move(name));
         }
         return table_get(value, index);
     }
     void set(const Lua4Value& value, const Lua4Value& index, const Lua4Value& assigned) {
         validate(value); validate(assigned);
         if (value.type_ != Lua4Type::Table) fail("table assignment needs a table");
-        auto& entries = tables[value.handle_]->values;
+        auto& entries = table_at(value).values;
         const auto converted = key(index); const auto found = entries.find(converted);
         if (found == entries.end()) {
             if (assigned.type_ == Lua4Type::Nil) return;
-            charge(entries_remaining, 1, "table entry"); allocate(sizeof(Key) + sizeof(Lua4Value) + converted.text.size() + 64);
+            if (entries_live >= limits.max_table_entries) fail("table entry budget exhausted");
+            ++entries_live;
+            allocate(node_bytes + (converted.text.empty() ? 0 : string_bytes(converted.text.size())));
             entries.emplace(converted, assigned);
         } else {
-            // Keep deleted slots: this avoids reclaim/reallocate cycles evading budgets.
+            // A nil value keeps its node until the next collection removes the
+            // dead key, as Lua 4.0.1 markall does (luaH_remove).
             found->second = assigned;
         }
     }
@@ -402,18 +466,101 @@ struct Lua4Vm::Impl {
         const auto found = globals.find(name);
         if (found == globals.end()) {
             if (globals.size() >= limits.max_globals) fail("global count limit exceeded");
-            allocate(name.size() + sizeof(Lua4Value) + 96); globals.emplace(std::move(name), value);
+            allocate(node_bytes + string_bytes(name.size())); globals.emplace(std::move(name), value);
         } else found->second = value;
     }
-    Lua4Value get_global(std::string_view name) {
+    Lua4Value get_global(std::string_view name, bool charged = true) {
         if (name.size() > max_value_string) fail("global name exceeds 1 MiB");
-        allocate(name.size());
+        if (charged) work(name.size());
         const auto found = globals.find(name); return found == globals.end() ? Lua4Value{} : found->second;
+    }
+    void set_count_triggers() {
+        // Collect before a step could need more objects / entries than the
+        // limits allow, but only once something new exists since the last one.
+        object_trigger = std::max(objects_live + 1, limits.max_objects > object_reserve ? limits.max_objects - object_reserve + 1 : 1);
+        entry_trigger = std::max(entries_live + 1, limits.max_table_entries > entry_reserve ? limits.max_table_entries - entry_reserve + 1 : 1);
+    }
+    // luaC_checkGC (80279894): the original checks after every call
+    // (luaD_call 80278448), CREATETABLE / CONCAT / CLOSURE (luaV_execute
+    // 802834F8) and before loading a chunk (80278708). The port checks at
+    // every instruction boundary, where all live values sit in frames.
+    void check_gc() {
+        if (nblocks >= std::min(threshold, limits.max_heap_bytes) || objects_live >= object_trigger || entries_live >= entry_trigger)
+            collect();
+    }
+    // luaC_collectgarbage (80279830): mark from the roots, sweep the rest,
+    // threshold = 2 x the live bytes. The original's only gc tag methods are
+    // the igLua binding's per-class "gc" methods (80270BC4 / 8026E65C) for
+    // userdata; the port's scripts hold no userdata (be is a permanent host
+    // global), so no tag method runs. Marks per slot, roots and sweep in
+    // slot order: the result is independent of addresses.
+    void collect() {
+        ++collections;
+        std::vector<std::uint8_t> table_marks(tables.slots.size()), closure_marks(closures.slots.size());
+        std::vector<std::uint32_t> table_work, closure_work;
+        // Sharing sets: membership only, so the byte sum does not depend on hashing order.
+        std::unordered_set<const std::string*> strings;
+        std::unordered_set<const Lua4Program::Impl*> programs;
+        std::size_t live = state_bytes, entries = 0;
+        auto text = [&](const std::shared_ptr<const std::string>& value) {
+            if (value && strings.insert(value.get()).second) live += string_bytes(value->size());
+        };
+        auto object = [&](Lua4Type type, std::uint64_t handle) {
+            const auto at = static_cast<std::uint32_t>(handle);
+            if (type == Lua4Type::Table && tables.live(handle) && !table_marks[at]) { table_marks[at] = 1; table_work.push_back(at); }
+            if (type == Lua4Type::Function && closures.live(handle) && !closure_marks[at]) { closure_marks[at] = 1; closure_work.push_back(at); }
+        };
+        auto mark = [&](const Lua4Value& value) {
+            if (value.type_ == Lua4Type::Table || value.type_ == Lua4Type::Function) {
+                if (value.owner_ == identity) object(value.type_, value.handle_);
+            } else text(value.text_);
+        };
+        auto program = [&](const Lua4Program::Impl* value) {
+            if (value && programs.insert(value).second) live += value->retained_bytes;
+        };
+        for (auto entry = globals.begin(); entry != globals.end();) {
+            if (entry->second.type_ == Lua4Type::Nil) { entry = globals.erase(entry); continue; }
+            live += node_bytes + string_bytes(entry->first.size()); mark(entry->second); ++entry;
+        }
+        for (const auto* execution : executions) {
+            program(execution->program.get());
+            for (const auto& frame : execution->frames) {
+                program(frame->program.get());
+                for (const auto& value : frame->captures) mark(value);
+                for (const auto& value : frame->stack) mark(value);
+                if (frame->call) { mark(frame->call->function); for (const auto& value : frame->call->arguments) mark(value); }
+            }
+            for (const auto& value : execution->result.returned) mark(value);
+        }
+        while (!table_work.empty() || !closure_work.empty()) {
+            if (!closure_work.empty()) {
+                const auto& value = *closures.slots[closure_work.back()]; closure_work.pop_back();
+                live += closure_bytes(value.upvalues.size()); program(value.program.get());
+                for (const auto& upvalue : value.upvalues) mark(upvalue);
+                continue;
+            }
+            auto& values = tables.slots[table_work.back()]->values; table_work.pop_back();
+            for (auto entry = values.begin(); entry != values.end();) {
+                if (entry->second.type_ == Lua4Type::Nil) { entry = values.erase(entry); continue; } // dead key
+                const auto& k = entry->first;
+                if (k.type == Lua4Type::Table || k.type == Lua4Type::Function) object(k.type, k.handle);
+                else if (!k.text.empty()) live += string_bytes(k.text.size());
+                mark(entry->second); ++entries; ++entry;
+            }
+            live += hash_bytes + node_bytes * std::max<std::size_t>(1, values.size());
+        }
+        objects_live = tables.sweep(table_marks) + closures.sweep(closure_marks);
+        entries_live = entries;
+        nblocks = live; threshold = live > SIZE_MAX / 2 ? SIZE_MAX : 2 * live;
+        set_count_triggers();
+        if (live > limits.max_heap_bytes)
+            fail("not enough memory: " + std::to_string(live) + " live bytes exceed the VM heap of " +
+                std::to_string(limits.max_heap_bytes));
     }
     double numeric(const Lua4Value& value) {
         if (value.type_ == Lua4Type::Number) return value.number_;
         if (value.type_ != Lua4Type::String) fail("arithmetic/tag method unsupported for " + value.describe());
-        allocate(value.text_->size());
+        work(value.text_->size());
         std::string_view input = *value.text_;
         auto whitespace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; };
         while (!input.empty() && whitespace(input.front())) input.remove_prefix(1);
@@ -429,7 +576,7 @@ struct Lua4Vm::Impl {
         return result;
     }
     std::string text(const Lua4Value& value) {
-        if (value.type_ == Lua4Type::String) { allocate(value.text_->size()); return *value.text_; }
+        if (value.type_ == Lua4Type::String) { work(value.text_->size()); return *value.text_; }
         if (value.type_ == Lua4Type::Number) return value.describe();
         fail("concatenation tag method is unsupported for " + value.describe());
     }
@@ -437,13 +584,13 @@ struct Lua4Vm::Impl {
         if (a.type_ != b.type_) return false;
         if (a.type_ == Lua4Type::Nil) return true;
         if (a.type_ == Lua4Type::Number) return a.number_ == b.number_;
-        if (a.text_) { allocate(a.text_->size() + b.text_->size()); return *a.text_ == *b.text_; }
+        if (a.text_) { work(a.text_->size() + b.text_->size()); return *a.text_ == *b.text_; }
         return a.owner_ == b.owner_ && a.handle_ == b.handle_;
     }
     bool less(const Lua4Value& a, const Lua4Value& b) {
         if (a.type_ == Lua4Type::Number && b.type_ == Lua4Type::Number) return a.number_ < b.number_;
         if (a.type_ == Lua4Type::String && b.type_ == Lua4Type::String) {
-            allocate(a.text_->size() + b.text_->size());
+            work(a.text_->size() + b.text_->size());
             return std::lexicographical_compare(a.text_->begin(), a.text_->end(), b.text_->begin(), b.text_->end(),
                 [](unsigned char l, unsigned char r) { return l < r; });
         }
@@ -460,9 +607,8 @@ struct Lua4Vm::Impl {
         validate(function);
         if(function.type_!=Lua4Type::Function) fail("cannot call " + function.describe());
         if(depth>=limits.max_call_depth) fail("call depth budget exhausted");
-        const auto& value=*closures[function.handle_];
+        const auto& value=closure_at(function);
         if(value.proto->stack>limits.max_stack_values-active_stack) fail("aggregate stack budget exhausted");
-        if(execution.resumable) allocate(sizeof(Execution::Frame)+(value.proto->stack+value.upvalues.size())*sizeof(Lua4Value));
         auto frame=std::make_unique<Execution::Frame>();
         frame->program=value.program;frame->proto=value.proto;frame->captures=value.upvalues;frame->stack.reserve(value.proto->stack);
         const auto& proto=*frame->proto;
@@ -557,14 +703,17 @@ struct Lua4Vm::Impl {
         if(!execution.initialized) {
             execution.initialized=true;
             if(!execution.program)fail("empty program");
-            if(execution.resumable)allocate(sizeof(Execution));
-            if(std::find(programs.begin(),programs.end(),execution.program)==programs.end()) {
-                allocate(execution.program->retained_bytes);programs.push_back(execution.program);
-            }
+            // lua_dobuffer 80278810 -> protectedparser 80278708: a collection
+            // check, then every run undumps its chunk again; the new blocks
+            // raise the threshold too, as they probably stay.
+            check_gc();
+            allocate(execution.program->retained_bytes);
+            threshold=execution.program->retained_bytes>SIZE_MAX-threshold ? SIZE_MAX : threshold+execution.program->retained_bytes;
             enter_frame(execution,closure(execution.program,execution.program->root,{}),{});
         }
         while(!execution.finished) {
             if(stopped)fail("VM faulted during a nested invocation");
+            check_gc();
             auto& frame=*execution.frames.back();
             if(frame.call) {
                 if(!pending_call(execution,frame)) {execution.result.stop=Lua4RunStop::host_required;return;}
@@ -600,7 +749,6 @@ struct Lua4Vm::Impl {
                 if(a>=stack.size())fail("call target is outside the active stack");
                 Execution::Call call;call.function=stack[a];call.arguments.assign(stack.begin()+a+1,stack.end());
                 call.site=site;call.base=a;call.results=b;call.tail=op==3;
-                if(execution.resumable)allocate(sizeof(Execution::Call)+call.arguments.size()*sizeof(Lua4Value));
                 frame.call=std::move(call);break;
             }
             case 4:
@@ -701,6 +849,7 @@ Lua4Execution::Impl::~Impl() {
     abandon();
     if(const auto vm=owner.lock()) {
         vm->release_frames(*this);
+        if(const auto at=std::find(vm->executions.begin(),vm->executions.end(),this);at!=vm->executions.end())vm->executions.erase(at);
     }
 }
 Lua4Execution::Lua4Execution(std::shared_ptr<Impl> impl):impl_(std::move(impl)) {}
@@ -734,10 +883,18 @@ void Lua4Vm::set_global(std::string name, const Lua4Value& value) {
     impl_->import(value); impl_->set_global(std::move(name), value);
 }
 Lua4Value Lua4Vm::get_global(std::string_view name) const {
-    if (!impl_) fail("inactive VM"); return impl_->get_global(name);
+    if (!impl_) fail("inactive VM"); return impl_->get_global(name, false);
 }
 Lua4Value Lua4Vm::table_get(const Lua4Value& table, const Lua4Value& key) const {
-    if (!impl_) fail("inactive VM"); return impl_->table_get(table, key);
+    if (!impl_) fail("inactive VM"); return impl_->table_get(table, key, false);
+}
+void Lua4Vm::collect_garbage() {
+    if (!impl_ || impl_->running || impl_->stopped || impl_->pending_execution()) fail("cannot collect in an inactive/running/stopped or suspended VM");
+    try { impl_->collect(); } catch (...) { impl_->stopped = true; throw; }
+}
+Lua4HeapStats Lua4Vm::heap_stats() const {
+    if (!impl_) fail("inactive VM");
+    return {impl_->nblocks, impl_->threshold, impl_->collections, impl_->objects_live, impl_->entries_live};
 }
 Lua4Execution Lua4Vm::begin_execution(const Lua4Program& program) {
     if(!impl_ || impl_->running || impl_->stopped || impl_->pending_execution())
@@ -745,7 +902,8 @@ Lua4Execution Lua4Vm::begin_execution(const Lua4Program& program) {
     if(!impl_->next_execution)fail("execution identity space exhausted");
     auto execution=std::make_shared<Lua4Execution::Impl>();execution->owner=impl_;execution->program=program.impl_;
     execution->id=impl_->next_execution++;impl_->active_execution=execution;
-    impl_->instructions=impl_->host_calls=0;impl_->site={};
+    impl_->instructions=impl_->host_calls=0;impl_->work_remaining=impl_->limits.max_string_work;impl_->site={};
+    impl_->executions.push_back(execution.get());
     return Lua4Execution(std::move(execution));
 }
 Lua4Execution Lua4Vm::begin_nested(const Lua4Program& program) {
@@ -757,6 +915,7 @@ Lua4Execution Lua4Vm::begin_nested(const Lua4Program& program) {
     auto execution=std::make_shared<Lua4Execution::Impl>();execution->owner=impl_;execution->program=program.impl_;
     execution->id=impl_->next_execution++;execution->parent=impl_->callback_execution->shared_from_this();
     execution->parent_call=impl_->callback->id;impl_->callback->child=execution;
+    impl_->executions.push_back(execution.get());
     return Lua4Execution(std::move(execution));
 }
 Lua4RunResult Lua4Vm::resume(Lua4Execution& handle) {

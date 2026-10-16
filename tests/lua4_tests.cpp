@@ -303,17 +303,19 @@ void host_and_limits() {
     f.children = {recurse}; f.code = {ab(Closure, 0, 0), u(Setglobal), u(Getglobal), ab(Call, 0, 0), End};
     Lua4Limits limits; limits.max_call_depth = 4; stopped(run(f, limits), "call depth");
     limits = {}; limits.max_stack_values = 31; stopped(run(f, limits), "aggregate stack");
+    f = {}; f.code = {u(Createtable), u(Createtable), u(Createtable), u(Createtable), End};
+    limits = {}; limits.max_objects = 3; stopped(run(f, limits), "object count"); // Four live tables.
     f = {}; f.code = {u(Createtable), Pop | (1u << 6), s(Jmp, -3), End};
-    limits = {}; limits.max_objects = 3; stopped(run(f, limits), "object count");
+    limits.max_instructions = 3000; stopped(run(f, limits), "instruction budget"); // Garbage is collected.
     f = {}; f.strings = {"a", "b"}; f.code = {s(Pushint, 1), u(Setglobal), s(Pushint, 2), u(Setglobal, 1), End};
     limits = {}; limits.max_globals = 1; stopped(run(f, limits), "global count");
     Lua4Vm partial(limits); stopped(partial.execute(program(f)), "global count");
     check(partial.get_global("a").as_number() == 1 && !partial.get_global("b").truthy(), "Failure rolled back or invented prior global state");
     f = {}; f.code = {u(Createtable), s(Pushint, 1), s(Pushint, 2), ab(Setlist, 0, 2), End};
     limits = {}; limits.max_table_entries = 1; stopped(run(f, limits), "table entry");
-    limits = {}; limits.max_heap_bytes = 1; stopped(run(Function{}, limits), "heap allocation");
+    limits = {}; limits.max_heap_bytes = 1; stopped(run(Function{}, limits), "not enough memory");
     f = {}; f.strings = {std::string(4096, 'x')}; f.code = {u(Pushstring), u(Pushstring), s(Jmpeq, -3), End};
-    limits = {}; limits.max_heap_bytes = 32768; stopped(run(f, limits), "heap allocation");
+    limits = {}; limits.max_string_work = 32768; stopped(run(f, limits), "string work budget");
     limits = {}; limits.max_host_calls = 1; Lua4Vm host_limited(limits);
     host_limited.set_global("f", Lua4Value::host_function("f"));
     host_limited.set_host_handler([](const Lua4HostCall&) { return std::vector<Lua4Value>{}; });
@@ -509,6 +511,96 @@ void nested_faults_and_limits() {
     outer.emplace(recursive.begin_execution(chunk));check(recursive.resume(*outer).completed,"Rejected recursive misuse damaged an otherwise complete invocation");
 }
 
+// Mark & sweep (Lua 4.0.1 luaC_collectgarbage): a hit script runs on every
+// hit for a whole stage on one VM. With the old cumulative allowance story
+// run c9 lost hit_p_girumon.lua runs after ~140000 frames in stag0304.
+void garbage_collection() {
+    Function captured; captured.stack = 1; captured.code = {u(Pushupvalue), Return, End};
+    Function hit; hit.strings = {"be", "MDLgetBulletKind", "I<", ">", "tmp", "MDLsetSD", "fn"}; hit.children = {captured};
+    hit.code = {u(Getglobal), u(Pushself, 1), ab(Call, 0, 1), u(Pushstring, 2), u(Getlocal), u(Pushstring, 3), u(Concat, 3),
+        u(Getglobal), u(Pushself, 5), u(Getlocal, 1), ab(Call, 2, 0), u(Createtable), u(Setglobal, 4),
+        u(Getlocal, 1), ab(Closure, 0, 1), u(Setglobal, 6), End};
+    Function keep; keep.strings = {"keep", "value"};
+    keep.code = {u(Createtable), u(Pushstring, 1), s(Pushint, 42), u(Setmap, 1), u(Setglobal), End};
+    Function churn; churn.strings = {"keep", "n"}; // n = n + 1; keep[n] = 1; keep[n] = nil (a new dead key per run)
+    churn.code = {u(Getglobal, 1), s(Addi, 1), u(Setglobal, 1), u(Getglobal), u(Getglobal, 1), s(Pushint, 1), ab(Settable, 3, 3),
+        u(Getglobal), u(Getglobal, 1), u(Pushnil, 1), ab(Settable, 3, 3), End};
+    Function cycle; cycle.strings = {"self"}; // t.self = t, then dropped
+    cycle.code = {u(Createtable), u(Getlocal), u(Pushstring), u(Getlocal), ab(Settable, 3, 3), Pop | (1u << 6), End};
+    Function invoke; invoke.strings = {"fn"}; invoke.code = {u(Getglobal), ab(Call, 0, 1), Return, End};
+    const auto hit_program = program(hit), churn_program = program(churn), cycle_program = program(cycle);
+    auto session = [&](Lua4Vm& vm, unsigned runs) {
+        vm.set_global("be", Lua4Value::host_object("be")); vm.set_global("n", Lua4Value::number(0));
+        unsigned messages = 0;
+        vm.set_host_handler([&](const Lua4HostCall& call) {
+            if (call.name == "be.MDLgetBulletKind") return std::vector<Lua4Value>{Lua4Value::number(70126)};
+            if (call.name != "be.MDLsetSD" || call.arguments.size() != 2 || call.arguments[1].as_string() != "I<70126>")
+                throw std::runtime_error("Hit script fixture call changed");
+            ++messages; return std::vector<Lua4Value>{};
+        });
+        check(vm.execute(program(keep)).completed, "Persistent table setup failed");
+        for (unsigned i = 0; i < runs; ++i) {
+            for (const auto* chunk : {&hit_program, &churn_program, &cycle_program}) {
+                const auto result = vm.execute(*chunk);
+                if (!result.completed) throw std::runtime_error("Repeated script run stopped: " + result.diagnostic);
+            }
+        }
+        check(messages == runs, "Hit script host calls were lost");
+    };
+    // Far below the old 32 MiB allowance: only live data counts.
+    Lua4Limits small; small.max_heap_bytes = 96u * 1024u; small.max_objects = 64; small.max_table_entries = 64;
+    Lua4Vm vm(small); session(vm, 20000);
+    const auto stats = vm.heap_stats();
+    check(stats.collections > 100 && stats.live_bytes <= small.max_heap_bytes && stats.objects <= small.max_objects &&
+        stats.table_entries <= small.max_table_entries, "Collector did not keep the live heap bounded");
+    const auto kept = vm.get_global("keep");
+    check(vm.table_get(kept, Lua4Value::string("value")).as_number() == 42 &&
+        !vm.table_get(kept, Lua4Value::number(20000)).truthy(), "A table kept in a global lost its contents");
+    const auto latest = vm.execute(program(invoke));
+    check(latest.completed && latest.returned.size() == 1 && latest.returned[0].as_string() == "I<70126>",
+        "The closure kept in a global lost its upvalue");
+    vm.collect_garbage();
+    const auto after = vm.heap_stats();
+    check(after.collections > stats.collections && after.table_entries == 1 && after.objects == 3 &&
+        after.threshold == 2 * after.live_bytes, "Explicit collection kept garbage or dead keys"); // keep, tmp, fn
+    // Two VMs running the same scripts collect identically (no address order).
+    Lua4Vm twin(small); session(twin, 20000); twin.execute(program(invoke)); twin.collect_garbage();
+    const auto same = twin.heap_stats();
+    check(same.live_bytes == after.live_bytes && same.threshold == after.threshold && same.collections == after.collections &&
+        same.objects == after.objects && same.table_entries == after.table_entries, "Collection is not deterministic");
+    // A value only the host still holds is collected; its handle never aliases a newer object.
+    Function make; make.code = {u(Createtable), Return, End};
+    const auto loose = vm.execute(program(make)); check(loose.completed, "Loose table chunk failed");
+    vm.collect_garbage(); rejects([&] { vm.table_get(loose.returned[0], Lua4Value::number(1)); }, "collected");
+    check(vm.execute(program(make)).completed, "Reused arena slot failed");
+    rejects([&] { vm.table_get(loose.returned[0], Lua4Value::number(1)); }, "collected");
+    // Live data beyond the heap: out of memory, as the original allocator would fail.
+    Function grow; grow.strings = {"list", "n"}; // list[n] = {} forever
+    grow.code = {u(Getglobal, 1), s(Addi, 1), u(Setglobal, 1), u(Getglobal), u(Getglobal, 1), u(Createtable), ab(Settable, 3, 3),
+        s(Jmp, -8), End};
+    Function setup; setup.strings = {"list", "n"}; setup.code = {u(Createtable), u(Setglobal), s(Pushint, 0), u(Setglobal, 1), End};
+    Lua4Limits tight; tight.max_heap_bytes = 64u * 1024u; Lua4Vm full(tight);
+    check(full.execute(program(setup)).completed, "Growth setup failed");
+    const auto oom = full.execute(program(grow)); stopped(oom, "not enough memory");
+    const auto grown = full.get_global("n").as_number();
+    check(grown > 200 && grown < 1000 && full.heap_stats().live_bytes > tight.max_heap_bytes, "Out-of-memory point changed");
+    // A collection inside a nested chunk keeps the parent's frame values.
+    Function parent; parent.strings = {"v", "host"};
+    parent.code = {u(Createtable), u(Pushstring), s(Pushint, 7), u(Setmap, 1), u(Getglobal, 1), ab(Call, 1, 0),
+        u(Getlocal), u(Getdotted), u(Return, 1), End};
+    Function garbage; garbage.code = {s(Pushint, 1), s(Pushint, 500), s(Pushint, 1), s(Forprep, 3), u(Createtable), Pop | (1u << 6),
+        s(Forloop, -3), End};
+    Lua4Limits few; few.max_objects = 16; Lua4Vm nested(few); nested.set_global("host", Lua4Value::host_function("host"));
+    const auto garbage_program = program(garbage);
+    nested.set_resumable_host_handler([&](const Lua4HostCall&) {
+        auto child = nested.begin_nested(garbage_program); const auto result = nested.resume(child);
+        check(result.completed, "Nested garbage chunk stopped: " + result.diagnostic);
+        return Lua4HostResult{true, {}, {}};
+    });
+    auto root = nested.begin_execution(program(parent)); numeric_result(nested.resume(root), {7});
+    check(nested.heap_stats().collections > 20, "Nested chunk did not collect");
+}
+
 Bytes file_bytes(const char* path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot read optional original Lua chunk");
@@ -536,6 +628,7 @@ int main(int argc, char** argv) {
     try {
         reader_checks(); values_and_arithmetic(); control_flow(); calls_closures_and_tables(); host_and_limits();
         resumed_frames_and_results();resumed_tailcalls();nested_owned_invocations();continuation_ownership_and_faults();nested_faults_and_limits();
+        garbage_collection();
         if (argc == 3) original(argv[1], argv[2]);
         else if (argc != 1) throw std::runtime_error("Usage: dw4_lua4_tests [func-chunk boot-chunk]");
         std::cout << "Lua 4 tests passed: " << checks << " checks\n"; return 0;
