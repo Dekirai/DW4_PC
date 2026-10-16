@@ -356,6 +356,7 @@ private:
     int leap_frame_{};
     bool runup_ready_{};     // at the run-up point of a long jump: run and jump
     int platform_wait_since_ = -1; // waiting at a take-off for a moving platform since
+    int jump_hold_since_ = -1;     // a row of jumps waits for the enemies by its landings since
     bool closest_{};         // the goal cannot be reached: wait at the nearest point
     std::vector<Platform> platforms_;                  // in the order first seen (the walking map's moving floors)
     std::map<const void*, engine::Vec3f> stirring_;    // other models' positions one step ago (platform candidates)

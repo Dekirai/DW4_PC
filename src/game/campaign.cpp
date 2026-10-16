@@ -3358,13 +3358,36 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
     if (auto* sys = engine.get<engine::GameSystem>()) {
         const auto& slot = sys->players[0];
         const bool alive = slot.joined && slot.hp > 0 && lower(engine.stage_name()).rfind("stagis", 0) != 0;
-        if (alive_ && !alive && slot.joined && slot.hp == 0) {
+        // (A pit sets the HP to 0 and the stage puts the player back with 1
+        // HP within a moment, dng103f2's gap: no defeat, no gate raised. A
+        // bit capsule, no HP back within kFallBack frames or a stage change
+        // first make it one.)
+        constexpr int kFallBack = 300;
+        if (alive_ && !alive && slot.joined && slot.hp == 0 && fallen_at_ < 0) {
+            fallen_at_ = frame;
+            fallen_level_ = slot.stats.level;
+            fallen_objective_ = objective_now_;
+            fallen_stage_ = engine.stage_name();
+        }
+        if (fallen_at_ >= 0 && slot.hp > 0 && engine.stage_name() == fallen_stage_) {
+            std::printf("[%d] campaign: fell in %s and is back with %d HP (no defeat)\n", frame, fallen_stage_.c_str(), slot.hp);
+            fallen_at_ = -1;
+        } else if (fallen_at_ >= 0 && (frame - fallen_at_ > kFallBack || engine.stage_name() != fallen_stage_ || [&] {
+                       // (The defeated player leaves its bit capsule, PLAYER2;
+                       // a pit regenerates the player without one.)
+                       auto* models = engine.get<engine::ModelCtrlManager>();
+                       if (!models) return false;
+                       for (const auto& e : models->rams())
+                           if (e->generated && e->category == "PLAYER2" && e->index == 0) return true;
+                       return false;
+                   }())) {
             ++deaths_;
             // (Each defeat at an objective raises its gate level, kTraining.)
-            if (!objective_now_.empty() && objective_now_.rfind("train", 0) != 0)
-                defeat_levels_[objective_now_] = std::max(defeat_levels_[objective_now_], slot.stats.level);
-            std::printf("[%d] campaign: defeated (%d so far) in %s at level %d with %d bits\n", frame, deaths_, engine.stage_name().c_str(),
-                        slot.stats.level, slot.bits);
+            if (!fallen_objective_.empty() && fallen_objective_.rfind("train", 0) != 0)
+                defeat_levels_[fallen_objective_] = std::max(defeat_levels_[fallen_objective_], fallen_level_);
+            std::printf("[%d] campaign: defeated (%d so far) in %s at level %d with %d bits\n", fallen_at_, deaths_, fallen_stage_.c_str(),
+                        fallen_level_, slot.bits);
+            fallen_at_ = -1;
         }
         alive_ = alive;
     }

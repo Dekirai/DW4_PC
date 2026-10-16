@@ -145,6 +145,10 @@ private:
     int raise_walk_since_ = -1;  // walking to the bit capsule since
     bool alive_ = false;         // player 1 was alive in the last game frame
     int deaths_{};               // defeats so far
+    int fallen_at_ = -1;         // player 1's HP reached 0 here, not yet known as a defeat (a pit respawns the player)
+    int fallen_level_{};         // its level then
+    std::string fallen_objective_; // the objective then
+    std::string fallen_stage_;   // the stage then
     int guard_traced_ = -100000; // the last traced guard
     std::string guard_what_;     // the box guarded against (traces)
     struct BoxSeen {

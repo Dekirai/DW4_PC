@@ -2629,6 +2629,47 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // there then is the floor now 24 steps of its motion back),
             // else wait at the take-off.
             bool ready = true;
+            // With real blows (no test cheat) a row of jumps over a pit (this
+            // one and the next ones of the route) starts only while no enemy
+            // within kJumpFoe of their landings can strike before the player
+            // is over: it attacks, waits (its AI picks next) or walks with
+            // less than kJumpFoeWalk frames of its AITIMER left; a shot near
+            // a landing counts too. A blow in the air drops the player into
+            // the pit (dng103f2's stepping stones and the two e_scum on the
+            // far side, which walk 157 frames, wait and fire for 91: 11..14
+            // falls in a row at level 15, each one back with 1 HP and a heal
+            // used, then the Gate Disk out). The player waits at the take-off
+            // of the first stone, out of their range; after kJumpFoeHold
+            // frames it jumps anyway.
+            bool hold_jump = false;
+            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f) {
+                constexpr float kJumpFoe = 25.0f, kJumpFoeWalk = 150.0f;
+                constexpr int kJumpFoeHold = 2400;
+                std::vector<engine::Vec3f> landings;
+                for (std::size_t i = next_; i < route_.size() && i < next_ + 6; ++i)
+                    if (route_[i].jump) landings.push_back(route_[i].point);
+                bool danger = false;
+                for (const auto& e : models->rams()) {
+                    if (danger) break;
+                    if (!e->generated || !e->node || e->is_player) continue;
+                    const bool shot = e->category == "EBULLET";
+                    if (!shot && (e->category != "ENEMY" || e->hp <= 0 || e->info_name.rfind("g_", 0) == 0)) continue;
+                    const auto at = position_of(*e);
+                    bool near = false;
+                    for (const auto& l : landings) near = near || (flat(at, l) < kJumpFoe && std::abs(at.y - l.y) < 20.0f);
+                    if (!near) continue;
+                    if (!shot && e->seq_name == "SQ_WALK" && e->ai_timer &&
+                        float(e->ai_timer->end - engine::timer_time(*e->ai_timer, engine.time())) > kJumpFoeWalk * 16666667.0f)
+                        continue;
+                    danger = true;
+                }
+                if (!danger) {
+                    jump_hold_since_ = -1;
+                } else {
+                    if (jump_hold_since_ < 0) jump_hold_since_ = frame;
+                    hold_jump = frame - jump_hold_since_ < kJumpFoeHold;
+                }
+            }
             if (span > 21.0f) {
                 // A long jump: from a run-up point 8 units back, run along the
                 // line and jump at the edge.
@@ -2637,6 +2678,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 const float lateral = std::abs((me.z - takeoff.z) * ux - (me.x - takeoff.x) * uz);
                 const engine::Vec3f runup{takeoff.x - ux * 8.0f, takeoff.y, takeoff.z - uz * 8.0f};
                 if (runup_ready_ && (lateral > 3.0f || along < -12.0f)) runup_ready_ = false; // knocked off the line
+                if (hold_jump) runup_ready_ = false; // (waits at the run-up point)
                 if (!runup_ready_) {
                     decision.x = runup.x;
                     decision.z = runup.z;
@@ -2685,13 +2727,13 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 }
             if (span > 21.0f) {
                 // handled above
-            } else if (!ready) {
+            } else if (!ready || hold_jump) {
                 decision.x = takeoff.x;
                 decision.z = takeoff.z;
                 decision.reach = 1.0f;
                 stalled_ = 0; // waiting on purpose, for 900 frames at most
                 if (platform_wait_since_ < 0) platform_wait_since_ = frame;
-                if (frame - platform_wait_since_ < 900) watch.since = frame;
+                if (hold_jump || frame - platform_wait_since_ < 900) watch.since = frame;
             } else if (flat(takeoff, me) < 4.0f && !airborne) {
                 platform_wait_since_ = -1;
                 decision.jump = true;
