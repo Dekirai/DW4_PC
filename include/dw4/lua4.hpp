@@ -68,7 +68,7 @@ private:
     double number_{};
     std::shared_ptr<const std::string> text_;
     std::uint64_t owner_{};
-    std::size_t handle_{};
+    std::uint64_t handle_{}; // Arena slot (low 32 bits) and its reuse generation (high 32 bits).
     friend class Lua4Vm;
 };
 
@@ -96,11 +96,26 @@ struct Lua4Limits {
     std::size_t max_instructions = 1000000; // Per root invocation, including nested chunks.
     std::size_t max_call_depth = 64;
     std::size_t max_stack_values = 16384;
-    std::size_t max_heap_bytes = 32u * 1024u * 1024u; // Cumulative allocation/string-work allowance.
-    std::size_t max_objects = 65536;
-    std::size_t max_table_entries = 262144;
+    // Live Lua data after a garbage collection (the Lua 4.0.1 nblocks model);
+    // above it the VM stops with "not enough memory" like the original's
+    // allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun LUA_ERRMEM).
+    std::size_t max_heap_bytes = 32u * 1024u * 1024u;
+    std::size_t max_objects = 65536; // Live tables + closures (a collection runs before failing).
+    std::size_t max_table_entries = 262144; // Live table entries (a collection runs before failing).
     std::size_t max_globals = 4096;
     std::size_t max_host_calls = 8192; // Logical calls per root; retry does not charge again.
+    // Per root invocation, like max_instructions: bytes of string comparison,
+    // key lookup and number conversion work (a CPU guard, not memory).
+    std::size_t max_string_work = 32u * 1024u * 1024u;
+};
+
+// The collector's view of a VM (Lua 4.0.1 lgc.c accounting).
+struct Lua4HeapStats {
+    std::size_t live_bytes{}; // nblocks: live data at the last collection + allocations since.
+    std::size_t threshold{}; // GCthreshold: 2 x live after a collection (luaC_collectgarbage).
+    std::size_t collections{};
+    std::size_t objects{}; // Tables + closures not yet swept (garbage included until a collection).
+    std::size_t table_entries{};
 };
 
 enum class Lua4RunStop { completed, host_required, faulted };
@@ -145,6 +160,13 @@ public:
     void set_global(std::string name, const Lua4Value& value);
     Lua4Value get_global(std::string_view name) const;
     Lua4Value table_get(const Lua4Value& table, const Lua4Value& key) const;
+    // Mark & sweep like Lua 4.0.1 luaC_collectgarbage. Runs on its own at
+    // instruction boundaries once the live estimate reaches the threshold;
+    // this is collectgarbage() (lua_setgcthreshold 0), only between roots.
+    // A table or closure value the host kept without a global or a running
+    // frame referring to it is invalid after a collection.
+    void collect_garbage();
+    Lua4HeapStats heap_stats() const;
     Lua4RunResult execute(const Lua4Program& program);
     // Exactly one pending root per VM. Existing execute() stays synchronous
     // and uses only the ordinary handler; this API explicitly opts into pauses.

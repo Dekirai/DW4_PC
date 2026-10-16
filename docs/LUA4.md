@@ -48,7 +48,10 @@ receiver as the first argument. Table construction retains the original reverse
 `Lua4Vm` retains programs referenced by its closures and preserves globals across
 successful `execute()` calls. Tables and closures use VM-owned handles; importing
 a handle from a different VM fails. An arena owns these objects, so cyclic
-tables cannot form leaked shared-pointer ownership cycles.
+tables cannot form leaked shared-pointer ownership cycles; the garbage
+collector below frees unreachable ones. A handle carries its arena slot and the
+slot's reuse generation, so a collected value fails cleanly ("invalid or
+collected VM-owned handle") and never reaches a newer object in that slot.
 
 The default environment is empty. A caller can explicitly install
 `Lua4Value::host_object("be")`, symbolic host functions, and a strict
@@ -99,7 +102,7 @@ handler exists, replacing it while work is pending rejects. A stable handler can
 consult an explicitly owned service resolver whose missing dependencies become
 available later. Unrelated `execute`, `begin_execution`, global writes and handler
 changes cannot overwrite a suspended invocation. Existing read-only global/table
-inspection remains available and retains its usual cumulative string-work costs.
+inspection remains available; host inspection does not charge string work.
 
 `begin_nested(program)` is valid only inside an invoked resumable host callback.
 The child executes on the same VM, globals, arena and root budgets. That logical
@@ -122,25 +125,59 @@ allowance, one million parsed records, 250 declared stack slots per prototype,
 100 fixed parameters and 32 captured values. Caller limits are validated and
 cannot remove the hard ceilings.
 
-Default VM limits are one million instructions and 8,192 native calls per
-root invocation, 64 nested calls, 16,384 aggregate reserved stack values, 65,536 arena
-objects, 262,144 table entries and 4,096 globals. A cumulative 32 MiB allowance
-charges retained programs, objects, copied/imported strings and string-processing
-work. Repeated comparisons, key lookups and numeric conversions consume that
-allowance again. Budgets do not reset between successful chunks, except the
-explicitly per-root counters. Retained nested chunks share those counters.
-Instructions and logical host calls are charged once; a not-ready retry charges
-neither again. The stopped/unbound logical host call still counts. Suspended
-frames keep their call-depth and aggregate stack reservations, and retained
-execution/frame/argument storage also consumes the cumulative heap allowance.
-Host callbacks are trusted application code;
-their own allocations and effects require separate bounds.
+Default VM limits are one million instructions, 8,192 native calls and 32 MiB
+of string work (comparisons, key lookups, number conversions) per root
+invocation, 64 nested calls, 16,384 aggregate reserved stack values, 65,536 live
+tables and closures, 262,144 live table entries, 4,096 globals and 32 MiB of live
+Lua data. The per-root counters reset with every root invocation; retained
+nested chunks share them. Instructions and logical host calls are charged once;
+a not-ready retry charges neither again. The stopped/unbound logical host call
+still counts. Suspended frames keep their call-depth and aggregate stack
+reservations. Host callbacks are trusted application code; their own
+allocations and effects require separate bounds.
 
-Completed handles retain their owned results until released. Programs, closures,
-tables and cumulative allocation work still have no full original garbage
-collector. Repeated gameplay execution therefore requires a later lifetime and
-collection implementation; per-invocation suspension does not reset or hide
-those cumulative limits.
+Completed handles retain their owned results until released (they are
+collector roots while the handle lives).
+
+## Garbage collection
+
+The original (GDJEB2) runs stock Lua 4.0.1 inside the Alchemy `igLuaState`
+(80272594): `lua_open(0, pool)` (8027E9D4) gives the fixed 1024-slot stack of
+`f_luaopen` (8027E924) and stores an `igMemoryPool` in a field added after the
+stock `lua_State` (offset 0x70); `luaM_realloc` (8027BD18) allocates through
+that pool's virtual functions and fails with `luaD_breakrun(LUA_ERRMEM)`. The
+collector is unchanged: `nblocks` (0x60) counts object sizes, `GCthreshold`
+(0x5C) starts at twice the state after opening, `luaC_checkGC` (80279894) runs
+after every `luaD_call` (80278448), at CREATETABLE/CONCAT/CLOSURE
+(`luaV_execute` 802834F8) and in `lua_concat`/`lua_setgcthreshold`;
+`protectedparser` (80278708) collects before every chunk load and adds the new
+chunk's blocks to the threshold; `luaC_collectgarbage` (80279830) marks, sweeps
+and sets the threshold to twice the live bytes. The game itself never changes
+the threshold: `lua_setgcthreshold` (80273C58) is reached only from the base
+library's `collectgarbage`, which the binding setup (80270BC4) runs once as
+`collectgarbage()`. The binding installs `gc` tag methods per bound class
+(80270BC4, 8026E65C) that release the C++ peers of collected userdata; no `gc`
+method exists for nil.
+
+The port keeps that model. Allocations of tables (24-byte hash, 40-byte
+nodes), closures (16 + 16 per upvalue), strings (21 + length), globals and the
+program of every run (as the original undumps the chunk per run) raise the live
+estimate. At every instruction boundary, where all live values sit in frames,
+a collection runs once the estimate reaches the threshold, or before a step
+could exceed the live object/entry limits. It marks from the globals and every
+live execution (frame stacks, captures, pending call function and arguments,
+kept results), traverses tables and closures through a work list with marks
+per arena slot, removes table entries and globals whose value is nil (the dead
+keys Lua 4.0.1 `markall` drops), sweeps the arenas in slot order and sets the
+threshold to twice the measured live bytes. Strings are shared C++ values that
+free themselves; they are counted once per distinct string. Nothing in the
+collection depends on addresses or hashing order, so runs are deterministic.
+The port's scripts create no userdata (`be` is a permanent host global), so no
+`gc` tag method runs. Live data above `max_heap_bytes` after a collection stops
+the VM with "not enough memory"; the original's pool fails far earlier (the
+GameCube has 24 MB of main memory). `collect_garbage()` is `collectgarbage()` between root invocations and
+`heap_stats()` reports the counters. A table or closure that only the host
+still holds is collected like an unanchored value of the Lua C API.
 
 Unknown opcodes are rejected while reading. Executed `POW` requires an
 unimplemented arithmetic tag method and stops. `LFORPREP`/`LFORLOOP` stop because
@@ -158,7 +195,10 @@ The asset-free suite generates its own binary chunks. It covers both byte
 orders, truncation at every byte boundary, malformed metadata and operands,
 ownership, arithmetic, conditional stack behavior, numeric loops, closures,
 parameter/result adjustment, varargs, table writes and cycles, strict native
-calls and cumulative limits. It also checks reference-confirmed edge cases such
+calls, live limits and the collector (a hit-script-like chunk run 2 x 20,000
+times under a 96 KiB heap and 64 objects, globals kept across collections,
+cycles and dead keys freed, identical counters in two VMs, stale handles,
+out of memory, collection inside a nested chunk). It also checks reference-confirmed edge cases such
 as rejecting the string `+-1` in arithmetic and rejecting a numeric-string loop
 index assigned by the body. The optional original test reads two caller-supplied
 chunks and checks persistent helper definitions and the first unsupported call.
@@ -169,8 +209,9 @@ and sites, completed-prefix preservation, nested and sequential children, shared
 globals/budgets, absent handlers, malformed results, exceptions, owner moves,
 abandonment and guarded reentry.
 
-Source-linked Release and fully instrumented MSVC AddressSanitizer runs pass 416 synthetic
-checks plus 10 optional original checks. The original `func.lua` contains 18
+Source-linked Release and fully instrumented MSVC AddressSanitizer runs passed 416 synthetic
+checks plus 10 optional original checks before the collector; the suite now
+has 438 synthetic checks (Release). The original `func.lua` contains 18
 prototypes and 2,516 instructions; its top level executes 35 instructions,
 defines 17 functions and makes no native calls. `boot.lua` contains eight
 prototypes and 761 instructions. With only the symbolic `be` object installed,
