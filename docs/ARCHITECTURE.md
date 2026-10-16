@@ -294,7 +294,14 @@ model, first 3.5 width against the ridden walls (kind 0x1000), else 2.15 width
 against all walls. Routes (boats, trains, rails, some bosses) follow the
 igTransformRecorder under an animated route transform (MOVERL JOINT,
 GETTRCDATA). `DW4_TRACE_HITLAND=1` logs wall hits, `=2` every wall candidate;
-`DW4_TRACE_RIDE=1` logs rides, `=2` every ride step.
+`DW4_TRACE_RIDE=1` logs rides, `=2` every ride step. While the position lock
+(`_isPosLock`, ctrl work +A8) is set - a MOVERL follow or an effect form
+GENERATE with the lock flag (8030D260) - 8030CB2C skips the motion step
+8030A448 and places the model instead (0x8030CD54): on the effect's source node
+plus its offset (the GENERATE rotation is not repeated), else on the recorder,
+else on the followed bone, before the wait, the subcommands and the walls. The
+next MOVE, MOVEEX or MOVERL releases the lock (8030A71C). `DW4_TRACE_LOCK=1`
+logs locks, releases and locked models whose walls and floors run.
 
 ## Adding a manager
 
