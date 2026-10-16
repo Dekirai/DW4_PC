@@ -675,6 +675,20 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.follow_model.clear();
         ram.follow_bone.clear();
         ram.follow_trace = nullptr;
+        // _moveObjectList (info work +0xC8, field 39) is an object field with
+        // the construct flag (802C6F54..802C6F70, meta 802C840C), so the fresh
+        // work owns a NEW beModelCtrlMoveObjectList with count 0, not the old
+        // channels. The first MOVE / MOVEEX / MOVERL of this life sees the
+        // count 0 (8030A6BC, 0x8030A820) and makes four new move objects
+        // (802C85DC at 0x8030A890 / 900 / 970 / 9E0) whose fields all start
+        // at 0 (802C876C: _endTime, _value, _acc, _speed 0.0; the rest has no
+        // default); 8030A1F4 sets the speed (+1C) only in modes 4 / 5, so a
+        // 'Move' accelerates from 0 again. Until then 8030A448 finds the
+        // count 0 and neither queries the KEIKATIMER nor steps or turns
+        // (0x8030A484..0x8030A48C). Megadramon's bolt x_027emagc01a#1, made
+        // again every MAGIC cycle, kept the last bolt's 0.75 and hit 23-25
+        // frames early (dng411b1, dng412b1, dngq6b01).
+        if (auto list = ram.channels.list_owner()) list->mutable_entries().clear();
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
                 sys->prepare_player(engine, ram.index);
