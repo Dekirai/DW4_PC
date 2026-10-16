@@ -642,6 +642,9 @@ struct BossFight {
     // Models ('|'-separated prefixes) that have to fall before the boss can
     // be hurt: while one stands, the frames are the ExploreBot's.
     const char* first = "";
+    // The arena's middle and the radius beyond which the player is near its
+    // wall (0: none): a blow-and-guard fight there keeps off the wall.
+    float arena_x = 0.0f, arena_z = 0.0f, arena_r = 0.0f;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
@@ -654,7 +657,11 @@ constexpr BossFight kBossFights[] = {
     // dng102b3: Mammothmon (e_mammos) charges and tramples (x_007erunn02a,
     // its body box): the ExploreBot's walk-and-swing landed 4 blows in 9000
     // frames of a no-cheat run at level 11, its guard held off by the blows.
-    {"dng102b3", "e_mammos", "e_mammos", 30.0f, true},
+    // (Its arena is a ring around the generator point (-660, 120), some 85
+    // across to the wall; pinned against the wall by its charges the player
+    // guarded there and took its blows every 95 frames: a level 10 run gave
+    // up three times with 285 of its 302 HP done.)
+    {"dng102b3", "e_mammos", "e_mammos", 30.0f, true, false, "", -660.0f, 120.0f, 55.0f},
     // stagBS01: Apocalymon (f_apocaly) is invulnerable (MUTEKI) until the
     // five poles g_b01cpole (100 HP, 10 a blow that is not one of the
     // technique families 40..99, hit_g_b01cpole.lua) are down; then
@@ -2901,7 +2908,8 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 }
 
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                             const std::string& follow, float keep, bool dodge, int frame, Output& out) {
+                             const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, int frame,
+                             Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -2914,6 +2922,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     // An enemy attack box that has started (or starts within a few frames)
     // and meets the player's body grown by a small margin (boxes move).
     std::string threat;
+    bool threat_blow = false; // (a blow, not a permanent body box)
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player) continue;
         const auto& m = e->node->matrix;
@@ -2931,7 +2940,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             constexpr float margin = 2.5f;
             if (std::abs(me.x - cx) < box.size.x * 0.5f + body_half + margin && std::abs(me.z - cz) < box.size.z * 0.5f + body_half + margin &&
                 me.y + body_height + 1.0f > cy - box.size.y * 0.5f && me.y - 1.0f < cy + box.size.y * 0.5f)
-                threat = e->info_name + " " + std::to_string(box.kind);
+                threat = e->info_name + " " + std::to_string(box.kind), threat_blow = threat_blow || box.end < 1e7f;
         }
     }
     // The listed model in focus: the nearest one that can take a hit (alive,
@@ -3024,6 +3033,26 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 if (frame % 4 < 2) out.buttons |= pad_button::b;
                 return true;
             }
+        }
+    }
+    // Near the arena's wall (beyond arena_r from its middle) with the boss
+    // close: around the boss toward the middle (the side of it nearer the
+    // middle) instead of a guard or a step back into the wall.
+    if (arena_r > 0.0f && !threat_blow && player.ctrl_mode != 0 && player.control_enabled) {
+        const engine::Vec3f mid{arena_x, me.y, arena_z};
+        const auto b = position_of(*boss);
+        if (flat(me, mid) > arena_r && flat(b, me) < 40.0f) {
+            const float bx = b.x - me.x, bz = b.z - me.z, bd = std::max(0.01f, std::hypot(bx, bz));
+            float sx = -bz / bd, sz = bx / bd; // one side of the boss
+            if (sx * (mid.x - me.x) + sz * (mid.z - me.z) < 0.0f) sx = -sx, sz = -sz;
+            // (Away from the boss a little as well, so the way round clears its body.)
+            out.walk = true;
+            out.x = me.x + (sx - bx / bd * 0.5f) * 10.0f;
+            out.z = me.z + (sz - bz / bd * 0.5f) * 10.0f;
+            out.reach = 1.0f;
+            if (tracing && frame % 30 == 0)
+                std::printf("[%d] campaign boss: off the wall (%.0f from the middle), around %s\n", frame, flat(me, mid), boss->info_name.c_str());
+            return true;
         }
     }
     if (!threat.empty()) {
@@ -3910,6 +3939,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         stuck_since_ = -1;
         raise_tries_ = 0;
         train_leaving_ = false;
+        stall_leave_.clear();
         train_exp_at_ = frame;
         boxes_seen_.clear();
         // A new visit: the ExploreBot is not asked in the lobby, so back in
@@ -4045,6 +4075,28 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         }
         step->action = "explore:" + (train_leaving_ ? step->action.substr(6) : std::string("none"));
     }
+    // A field step that has lasted kStallLeave frames leaves the field by
+    // another of its exits (kExits) for this visit; the plan brings the
+    // player back, and the field starts anew. A cheat run fell again and
+    // again from stag0304's climb to matz00 (knocked off the ledge of the
+    // g_cannon02 it has to break) and explored the low ground for 350000
+    // frames, also with a fresh ExploreBot; the same state with other start
+    // delays climbed it in 30000..70000 frames. (The longest step of a
+    // finished cheat run took 150000; not in boss stages or while training.)
+    constexpr int kStallLeave = 180000;
+    if (step && step->action.rfind("explore:", 0) == 0 && step->stage == stage_ && stall_leave_.empty() && !lobby(stage_) &&
+        stage_.rfind("stagbs", 0) != 0 && objective_now_.rfind("train", 0) != 0 &&
+        step->stage + " " + step->action + " (" + step->why + ")" == traced_ && frame - traced_at_ >= kStallLeave) {
+        const std::string goals = "|" + step->action.substr(8) + "|";
+        for (const auto& exit : kExits)
+            if (stage_ == exit.stage && goals.find(std::string("|") + exit.mat + "|") == std::string::npos && !*exit.when) {
+                stall_leave_ = exit.mat;
+                std::printf("[%d] campaign: %s stalled for %d frames, left by %s for now\n", frame, step->action.c_str(), frame - traced_at_,
+                            exit.mat);
+                break;
+            }
+    }
+    if (step && !stall_leave_.empty() && step->stage == stage_) step->action = "explore:" + stall_leave_;
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
     if (key != traced_) {
         std::printf("[%d] campaign: %s\n", frame, key.c_str());
@@ -4147,7 +4199,8 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
         for (const auto& fight : kBossFights)
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
-                boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, frame, out)) {
+                boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
+                           frame, out)) {
                 last_ = me;
                 return out;
             }

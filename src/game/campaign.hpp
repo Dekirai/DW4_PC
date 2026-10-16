@@ -63,7 +63,7 @@ private:
                                                          int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                    const std::string& follow, float keep, bool dodge, int frame, Output& out);
+                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -192,6 +192,7 @@ private:
     int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
     int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
     bool train_leaving_ = false; // the training field is spent: leaving it
+    std::string stall_leave_;    // a field step stalled: the exit mat it is left by for this visit (kStallLeave)
     int gate_since_ = -1;        // walking to a heal gate since, -1 none
     std::string gate_mat_;       // its mat
     engine::Vec3f gate_at_{};    // where it is
