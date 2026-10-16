@@ -51,6 +51,7 @@ std::vector<MatCtrlManager::MatBox> MatCtrlManager::mat_boxes() const {
 void MatCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     context_ = nullptr;
+    live_ = 0;
 }
 
 bool MatCtrlManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
@@ -82,14 +83,20 @@ void MatCtrlManager::update(Engine& engine) {
                 mat.current = mat.previous = 0;
                 mat.enabled = true;
             }
+            live_ = 0;
             ram.initialized = true;
             continue;
         }
-        // 80302F94: set bit (1 << player) for every mat box containing the player.
+        // 0x80303668..0x8030372C: PLAYER GETMATRIX; a player whose index is
+        // in the reply (a generated one) is marked live (manager +0x20 +
+        // player), then 80302F94 sets bit (1 << player) for every mat box
+        // containing it.
         for (auto& mat : ram.mats) mat.current = 0;
+        live_ = 0;
         for (int player = 0; player < 4 && models; ++player) {
             const auto* model = models->player(player);
             if (!model || !model->node) continue;
+            live_ |= 1u << player;
             const auto& m = model->node->matrix;
             const Vec3f p{m(3, 0), m(3, 1), m(3, 2)};
             for (auto& mat : ram.mats)
@@ -112,6 +119,7 @@ void MatCtrlManager::update(Engine& engine) {
 
 bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std::span<const Lua4Value> args,
                                  std::vector<Lua4Value>& out) {
+    (void)engine;
     if (method == "MATsetRun") {
         pending_run_ = !args.empty() && args[0].type() == Lua4Type::Number && args[0].as_number() != 0;
         return true;
@@ -135,11 +143,11 @@ bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std:
         return true;
     }
     if (method == "MATisAllPlayer") {
-        std::uint32_t joined = 0;
-        if (auto* sys = engine.get<GameSystem>())
-            for (std::size_t i = 0; i < sys->players.size(); ++i)
-                if (sys->players[i].joined) joined |= 1u << i;
-        out = {Lua4Value::number(joined && (current & joined) == joined ? 1 : 0)};
+        // 80302B40: every live player (manager +0x20..+0x23) on the mat - not
+        // every joined one: with a defeated player's bit capsule out, the
+        // others can still take an exit (dng411b1 two-player run: player 2
+        // gets the gate prompt alone). With nobody alive it is true.
+        out = {Lua4Value::number((current & live_) == live_ ? 1 : 0)};
         return true;
     }
     // 80302D08 / MATisRideOffPlayer: the player stepped on / off this frame
@@ -151,15 +159,12 @@ bool MatCtrlManager::script_call(Engine& engine, const std::string& method, std:
         out = {Lua4Value::number((changed & mask) ? 1 : 0)};
         return true;
     }
-    // The player whose state changed, preferring one that stepped on.
-    std::uint32_t changed = current ^ previous;
-    std::uint32_t pick = (changed & current) ? (changed & current) : changed ? changed : current;
+    // MATgetPlayerNo (80302C3C): the first live player that stepped on the
+    // mat this update, else 0.
+    const std::uint32_t stepped_on = current & ~previous & live_;
     int player = 0;
-    while (pick && !(pick & 1u)) {
-        pick >>= 1;
-        ++player;
-    }
-    out = {Lua4Value::number(player)};
+    while (player < 4 && !(stepped_on & (1u << player))) ++player;
+    out = {Lua4Value::number(player < 4 ? player : 0)};
     return true;
 }
 

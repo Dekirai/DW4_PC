@@ -1081,6 +1081,11 @@ private:
     std::vector<std::unique_ptr<MatRam>> rams_;
     Mat* context_{};
     std::optional<bool> pending_run_; // MATsetRun for the running mat (80302DA8)
+    // Manager +0x20..+0x23: the players that answered this update's PLAYER
+    // GETMATRIX (generated, i.e. alive; 0x80303668..0x803036C4), cleared by
+    // a RAM's first update (0x80303530). MATisAllPlayer and MATgetPlayerNo
+    // only count these.
+    std::uint32_t live_{};
 };
 
 // SAVEUTILITY (beSaveUtil, commands 80323D20, update 80323538): the memory
