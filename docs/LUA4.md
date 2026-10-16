@@ -180,18 +180,33 @@ last argument) and checks where the original checks:
 | --- | --- | ---: |
 | Lua function entry, arguments still on the stack | `luaV_execute` 802834F8 (0x80283540) | `maxstacksize` + 8 |
 | C function call (`be:X`, `gsub`, ...) | `callCclosure` 80278340 (0x80278368) | upvalues + 20 |
-| `be.X` / `be:X` lookup, gettable method | `luaV_gettable` 80282A90 | 2, then 20 |
+| `be.X` / `be:X` lookup, the class's gettable method | `luaV_gettable` 80282A90 | 2, then 1 + 20 |
 | reading a nil global, getglobal method | `luaV_getglobal` 80282D10 | 3, then 20 |
 | assigning over a nil global, setglobal method | `luaV_setglobal` 80282DE4 | 3, then 20 |
 | `^`, the math library's pow method | `call_binTM` in `luaV_execute` | 2 (event name, method), then 20 |
 
-The tag methods are the igLua binding's (80270BC4): getglobal / setglobal for
-the nil tag (8026C8C8 / 8026C980), gettable for its classes (8026D2B8); a
-`be:X` method closure carries its method as one upvalue (8026BB48), the
-library functions registered by name carry none. A chunk the game runs starts
-on an empty API stack (closure at slot 0, local 0 at slot 1); a chunk a host
-callback runs starts at the callback's top, above its arguments and upvalues
-(what the binding itself pushes before such a run is not modelled). An
+The tag methods are the igLua binding's: getglobal / setglobal for the nil
+tag (80270BC4: 8026C8C8 / 8026C980, no upvalue) and gettable per class
+(8026E65C -> 8026E590: 8026D2B8 with the class as one upvalue). A `be:X`
+method closure carries its method as one upvalue (8026BB48), the library
+functions registered by name carry none. A chunk the game runs starts with
+two values already on the API stack (`Lua4Limits::api_stack_top`: closure at
+slot 2, local 0 at slot 3); a chunk a host callback runs starts at the
+callback's top, above its arguments and upvalues (what the binding itself
+pushes before such a run is not modelled).
+
+A Dolphin run confirms the model. `work/dref/fix_r22lua/tools/mk_stacklog.py`
+makes an AR code that hooks `luaD_checkstack` and `igLuaState::runBuffer` and
+logs each new peak (top + reserve, the top, the reserve, the caller) and the
+top at every chunk start through OSReport. It ran over a new game up to
+`dng101b1` (`work/dref/scripts/newgame_dng101b1.txt`, 5,600 fields). Every one
+of the 29 chunk starts was at top 2. The peaks after the binding's own setup
+(4 and 24) were 27 (`func.lua`, a setglobal tag method at top 7), 35 / 38 /
+39 / 40 (the first `boot.lua`, the gettable method of `be` at tops 14 / 17 /
+18 / 19, reserve 21), 48 (a 37-slot chunk at top 3) and 61 (a 13-slot
+function at top 40 in `dng101b1`'s `boot.lua`). The port, on the same input,
+asks for exactly the same checks with the same values, and its peaks after
+those chunks are 27, 40 and 61 (it reports a peak when a chunk ends). An
 overflow raises "stack overflow" as a Lua error: `stack_last` grows by
 `EXTRA_STACK` = 40 slots (+0x280 at 0x802780DC) so that `_ERRORMESSAGE` can
 run, and a second overflow before the protected call restores the limit

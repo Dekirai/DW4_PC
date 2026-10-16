@@ -103,6 +103,11 @@ struct Lua4Limits {
     // absolute positions; luaD_checkstack (80278088) raises "stack
     // overflow" (docs/LUA4.md, Stack).
     std::size_t stack_size = 1024;
+    // Values on the API stack when the game starts a chunk: a run from the
+    // game puts its closure at this slot. Measured in Dolphin (AR log at
+    // igLuaState::runBuffer 80272768): L->top - L->stack is 2 slots at every
+    // run of a new game up to dng101b1, over four stage loads.
+    std::size_t api_stack_top = 2;
     // Live Lua data after a garbage collection (the Lua 4.0.1 nblocks model);
     // above it the VM stops with "not enough memory" like the original's
     // allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun LUA_ERRMEM).
@@ -137,6 +142,7 @@ struct Lua4RunResult {
     std::size_t host_calls{};
     std::vector<Lua4Value> returned;
     Lua4RunStop stop = Lua4RunStop::faulted;
+    std::size_t stack_base{}; // Stack slot of the chunk's closure (local 0 is the next one).
 };
 
 // One retained invocation, owning program/frame/argument/result state. An

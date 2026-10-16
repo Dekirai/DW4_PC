@@ -401,6 +401,7 @@ struct Lua4Vm::Impl {
         limit(limits.max_call_depth, 4096, "call depth");
         limit(limits.stack_size, 65536, "stack size");
         stack_last = limits.stack_size - 1;
+        if (limits.api_stack_top >= stack_last) fail("API stack top limit is outside the supported range");
         limit(limits.max_heap_bytes, 128u * 1024u * 1024u, "heap byte");
         limit(limits.max_objects, 262144, "object");
         limit(limits.max_table_entries, 1048576, "table entry");
@@ -434,14 +435,15 @@ struct Lua4Vm::Impl {
     static std::size_t host_upvalues(const Lua4Value& function) {
         return function.text_ && function.text_->find('.') != std::string::npos ? 1 : 0;
     }
-    // The binding's tag methods are C calls too (80270BC4): getglobal /
-    // setglobal for nil values (8026C8C8 / 8026C980), gettable for its
-    // classes (8026D2B8). luaV_getglobal / luaV_setglobal (80282D10 /
-    // 80282DE4) check 3 slots, luaV_gettable (80282A90) 2, then the
-    // function and its arguments sit above top for callCclosure.
-    void tag_method_call(std::size_t top, std::size_t pushed) {
+    // The binding's tag methods are C calls too: getglobal / setglobal for
+    // nil values (80270BC4: 8026C8C8 / 8026C980, no upvalue) and gettable
+    // per class (8026E65C -> 8026E590: 8026D2B8 with the class as one
+    // upvalue). luaV_getglobal / luaV_setglobal (80282D10 / 80282DE4) check
+    // 3 slots, luaV_gettable (80282A90) 2, then the function and its
+    // arguments sit above top for callCclosure.
+    void tag_method_call(std::size_t top, std::size_t pushed, std::size_t upvalues) {
         check_stack(top, pushed);
-        check_stack(top + pushed, c_reserve);
+        check_stack(top + pushed, upvalues + c_reserve);
     }
     void validate(const Lua4Value& value) const {
         if (value.type_ == Lua4Type::Table || value.type_ == Lua4Type::Function) {
@@ -496,7 +498,7 @@ struct Lua4Vm::Impl {
     Lua4Value get(const Lua4Value& value, const Lua4Value& index, std::size_t top) {
         error_top = top;
         if (value.type_ == Lua4Type::HostObject) {
-            tag_method_call(top, 2); // The binding's gettable method finds be:X.
+            tag_method_call(top, 2, 1); // The class's gettable method finds be:X.
             if (index.type_ != Lua4Type::String) fail("host object method key must be a string");
             if (value.text_->size() + index.text_->size() + 1 > 4096) fail("host function name exceeds 4096 bytes");
             auto name = *value.text_ + "." + *index.text_;
@@ -884,7 +886,7 @@ struct Lua4Vm::Impl {
             case 11: push(local(u)); break;
             case 12: { // A nil global goes through the binding's getglobal method.
                 const auto value = get_global(constant().as_string());
-                if (value.type_ == Lua4Type::Nil) tag_method_call(top, 3);
+                if (value.type_ == Lua4Type::Nil) tag_method_call(top, 3, 0);
                 push(value); break;
             }
             // L->top in luaV_gettable: GETTABLE has table and key on the
@@ -898,7 +900,7 @@ struct Lua4Vm::Impl {
             case 18: { const auto value = pop(); if (u >= stack.size()) fail("local assignment exceeds active stack"); stack[u] = value; break; }
             case 19: { // Over a nil (or absent) global the binding's setglobal method sets it.
                 auto name = std::string(constant().as_string());
-                if (get_global(name, false).type_ == Lua4Type::Nil) tag_method_call(top, 3);
+                if (get_global(name, false).type_ == Lua4Type::Nil) tag_method_call(top, 3, 0);
                 const auto value = pop(); set_global(std::move(name), value); break;
             }
             case 20:
@@ -1086,7 +1088,7 @@ Lua4Execution Lua4Vm::begin_execution(const Lua4Program& program) {
     if(!impl_->next_execution)fail("execution identity space exhausted");
     auto execution=std::make_shared<Lua4Execution::Impl>();execution->owner=impl_;execution->program=program.impl_;
     execution->id=impl_->next_execution++;impl_->active_execution=execution;
-    execution->func=0; // The game's runBuffer calls start on an empty API stack.
+    execution->func=impl_->limits.api_stack_top; // What the game leaves on the API stack.
     impl_->instructions=impl_->host_calls=0;impl_->work_remaining=impl_->limits.max_string_work;impl_->site={};
     impl_->executions.push_back(execution.get());
     return Lua4Execution(std::move(execution));
@@ -1152,6 +1154,7 @@ Lua4RunResult Lua4Vm::resume(Lua4Execution& handle) {
     state->site=failed_at;
     auto& result=execution->result;
     result.site=state->site;result.instructions=state->instructions;result.host_calls=state->host_calls;
+    result.stack_base=execution->func;
     if(result.stop==Lua4RunStop::faulted) {
         result.completed=false;execution->finished=true;state->release_frames(*execution);
         if(!result.site.source.empty())result.diagnostic+=" at "+result.site.source+" "+result.site.prototype+" pc "+std::to_string(result.site.pc);
