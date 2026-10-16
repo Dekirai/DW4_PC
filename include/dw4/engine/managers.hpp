@@ -685,14 +685,17 @@ private:
     bool deliver(Engine& engine, DelivRam& ram, std::string_view command, Packet& packet);
     bool query(Engine& engine, std::string_view command, Packet& packet);
     std::vector<std::unique_ptr<DelivRam>> deliveries_;
-    // A kind 0x400 child: its dynamic collision and the model node it follows.
+    // A kind 0x400 child: its dynamic collision, the model node it follows and
+    // its bit in the check switch's mask.
     struct Follower {
         std::uint32_t id{};
         ObjectView source;   // beCopyTransform [12], a model instance's node
-        std::string info;    // owning HITLANDMODEL row
+        ObjectView check;    // the info's _checkSwitch [8]
+        std::uint32_t bit{}; // the child's index in it
+        std::string info;    // owning HITLANDMODEL info
+        bool resolved{};
     };
     std::vector<Follower> followers_;
-    std::map<std::string, bool, std::less<>> info_off_; // HITLANDMODEL OFFHIT on the whole info
     std::vector<std::unique_ptr<Ram>> rams_;
     std::vector<std::unique_ptr<HitRam>> children_;
     CollisionWorld world_;
@@ -1584,6 +1587,13 @@ public:
     // Whether the action whose model instance is `node` shows it (its switch
     // bit); true for a node no action owns.
     bool drawn(const Node* node) const;
+    // The action switch whose bit mask is the one of `other` (an igSwitch):
+    // the same mask object or the same mask words. A kind 0x400 HitLand check
+    // switch shares the mask object of its model's action switch, so the
+    // action bits (0x802F1EB4 / 0x802F20E8 set on a start, 0x802F1C58 NDSP
+    // and 0x802F0898 FADESET HIDE clear) also switch the collision; nullptr
+    // when no action switch shares it.
+    const Node* mask_switch(const ObjectView& other) const;
 
 private:
     void dispatch(Engine& engine, ActionRam& ram, std::string_view name);

@@ -104,20 +104,30 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
     return std::uint32_t(dynamic_.size() - 1);
 }
 
-void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, bool enabled) {
+void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Node* mask_switch, std::uint32_t bit) {
     if (id >= dynamic_.size()) return;
     dynamic_[id].node = source;
-    dynamic_[id].enabled = enabled;
+    dynamic_[id].mask_switch = mask_switch;
+    dynamic_[id].bit = bit;
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const {
     for (const auto& d : dynamic_) {
         if (d.local.empty() || !d.node) continue;
-        if (d.grouped ? !(d.group < groups_.size() && groups_[d.group]) : !d.enabled) continue;
         // 803009D0 copies a kind 0x400 child's source matrix into the child
         // (80128CF4 at 0x80300CE0) in every candidate pass, before its bounds
         // test: a model moved earlier in this frame (a ridden car or boat) is
         // met where it is now. Reading the node here is that copy.
+        if (d.grouped) {
+            if (!(d.group < groups_.size() && groups_[d.group])) continue;
+        } else {
+            // 0x80300CA0..0x80300CBC: the child's bit of the check-switch mask
+            // word, read in every pass; nothing else (no model state) gates
+            // the child. The mask is the ACTION switch's (one shared bit mask
+            // object), so a model that NDSP / REMOVE hides loses its
+            // collision at that moment, and one an action shows has it.
+            if (!d.mask_switch || !d.mask_switch->child_enabled(d.bit)) continue;
+        }
         const Mat4& matrix = d.node->matrix;
         const Vec3f origin = transform_point(Vec3f{}, matrix);
         const float dx = p.x - origin.x, dz = p.z - origin.z;
