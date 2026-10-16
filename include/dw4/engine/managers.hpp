@@ -1389,6 +1389,7 @@ private:
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);
     void place_locked(Engine& engine, ModelRam& ram);
+    void player_erase_hook(Engine& engine, ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
     void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix, std::string_view mode);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);

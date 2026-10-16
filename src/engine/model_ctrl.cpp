@@ -294,12 +294,19 @@ void trace_unlock(Engine& engine, const ModelCtrlManager::ModelRam& ram, std::st
 } // namespace
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
-    // DW4_TRACE_SEQ=<model> logs that model's sequence changes.
-    if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && ram.info_name == trace)
+    // DW4_TRACE_SEQ=<model> logs that model's sequence changes (=* every
+    // model's, to set beside the Dolphin S log of 8030E978).
+    if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && (ram.info_name == trace || std::string_view(trace) == "*"))
         engine.log("seq " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name + " -> " + std::string(name) +
                    (ram.node ? " at (" + std::to_string(int(ram.node->matrix(3, 0))) + "," + std::to_string(int(ram.node->matrix(3, 1))) + "," +
                                    std::to_string(int(ram.node->matrix(3, 2))) + ")"
                              : std::string()));
+    // 0x8030E884..0x8030E8C4: the command "SQ_ERAS" - a JUMP is the command
+    // handler too (8030BCB8 -> vtable +8C) - first runs the class's erase
+    // hook (vtable +B4) for a generated model, then starts the sequence
+    // (8030F530). Only the player class has one (8034E3C0, the other model
+    // classes keep the empty 8030F5D8).
+    if (name == "SQ_ERAS" && ram.generated && ram.is_player) player_erase_hook(engine, ram);
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)
@@ -1655,26 +1662,12 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         const auto& entry = update_order_[i];
         auto& ram = *entry.ram;
         if (!ram.generated) continue;
-        // 8030CB2C: an erased model is removed on its next update.
+        // 8030CB2C: an erased model is removed on its next update (the
+        // player's bit capsule came with the SQ_ERAS start, player_erase_hook).
         if (ram.seq_name == "SQ_ERAS") {
             Packet p;
-            const Mat4 last = ram.node ? ram.node->matrix : Mat4{};
             command(engine, ram, "REMOVE", p);
             if (ram.item_label >= 0) item_label(engine, ram, false);
-            if (ram.is_player) {
-                // Player erase hook (vtable +B4, 8034E3C0): the defeated player
-                // leaves its bit capsule, whose script ends the attempt.
-                static const char* entries[] = {"SQ_ENTR1P", "SQ_ENTR2P", "SQ_ENTR3P", "SQ_ENTR4P"};
-                Packet capsule;
-                capsule.matrices.push_back(last);
-                capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
-                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
-                Packet run;
-                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "ISRUN", run);
-                if (run.boolean(0))
-                    if (auto* sys = engine.get<GameSystem>()) sys->store_bit_chip(ram.index);
-                engine.log("player " + std::to_string(ram.index) + " defeated");
-            }
             continue;
         }
         if (ram.frozen) continue;
@@ -1998,6 +1991,33 @@ void ModelCtrlManager::place_locked(Engine& engine, ModelRam& ram) {
         return;
     }
     std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+}
+
+// The player's erase hook (vtable +B4, 8034E3C0), run when SQ_ERAS starts:
+// the defeated player leaves its bit capsule where it stands (MODELCTRL
+// g_000bcaps GENERATE with the node matrix and SQ_ENTR<n>P), whose script
+// ends the attempt when nobody is left; a capsule that runs keeps the bits
+// and EXP (GAMERAM BKCHIPBITEXP); an open quick panel closes (+0x124,
+// NDMWPANEL REMOVE). The removal follows on the next update, so the capsule
+// is there one frame before it (two-player dng411b1 run: Dolphin's capsule
+// starts SQ_ENTR1P in the frame of the defeated player's SQ_ERAS; the port
+// made it with the REMOVE, a frame late).
+void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
+    static const char* entries[] = {"SQ_ENTR1P", "SQ_ENTR2P", "SQ_ENTR3P", "SQ_ENTR4P"};
+    Packet capsule;
+    capsule.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
+    capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
+    engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
+    Packet run;
+    engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "ISRUN", run);
+    if (run.boolean(0))
+        if (auto* sys = engine.get<GameSystem>()) sys->store_bit_chip(ram.index);
+    if (ram.panel_open) {
+        ram.panel_open = false;
+        Packet remove;
+        engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
+    }
+    engine.log("player " + std::to_string(ram.index) + " defeated");
 }
 
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
