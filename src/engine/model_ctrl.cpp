@@ -2594,6 +2594,24 @@ bool ActionManager::drawn(const Node* node) const {
     return true;
 }
 
+const Node* ActionManager::mask_switch(const ObjectView& other) const {
+    // igSwitch [8] is the bit mask object (+20), its [4] the mask words
+    // (+10) that 802066A8 / 0x80300CB8 index.
+    if (!other || !other.is_a("igSwitch")) return nullptr;
+    const auto mask = other.ref(8);
+    if (!mask) return nullptr;
+    const auto words = mask.memory(4);
+    for (const auto& ram : rams_) {
+        const Node* own = ram->switch_node;
+        if (!own || !own->object || !own->object.is_a("igSwitch")) continue;
+        const auto own_mask = own->object.ref(8);
+        if (!own_mask) continue;
+        if (own_mask.document() == mask.document() && own_mask.reference() == mask.reference()) return own;
+        if (!words.empty() && own_mask.memory(4).data() == words.data()) return own;
+    }
+    return nullptr;
+}
+
 void ActionManager::apply_visuals(ActionRam& ram) {
     if (ram.switch_node) ram.switch_node->set_child_enabled(ram.switch_child, ram.visible);
     if (ram.node) {
