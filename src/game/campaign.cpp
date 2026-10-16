@@ -1293,6 +1293,7 @@ struct Supply {
     int record;          // conItem row (DISKFOLDER record)
     int keep;            // bought up to this count (a slot holds 9)
     int from_hp, to_hp;  // for a maximum HP in [from_hp, to_hp)
+    int reserve = 0;     // bits that stay after the purchase
 };
 constexpr Supply kSupplies[] = {
     {0, 9, 0, 1200},       // HP Disk S: 450 HP for 100 bits
@@ -1300,6 +1301,11 @@ constexpr Supply kSupplies[] = {
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
     {8, 2, 0, 1 << 30},    // Gate Disk (120 bits): back to the lobby (kGateTrip)
+    // HP Disk M as a second slot of heals below 1200 HP, with 5000 bits to
+    // spare (a slot holds 9 of one record: 9 HP Disks S were all a no-cheat
+    // run at level 17 took into dng204b2's minotaur waves, twice given up
+    // with no heal left and 40000 bits held).
+    {1, 9, 0, 1200, 5000},
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
@@ -1405,7 +1411,7 @@ CampaignBot::Purchase CampaignBot::next_purchase(engine::Engine& engine) const {
         if (it == prices_.end() || it->second <= 0) continue;
         const int held = disks_held(slot, s.record);
         const int want = std::min({s.keep, 9}) - held;
-        const int count = std::min(want, slot.bits / it->second);
+        const int count = std::min(want, std::max(0, slot.bits - s.reserve) / it->second);
         if (count > 0) return {s.record, count, held};
     }
     return {};
@@ -1421,7 +1427,7 @@ int CampaignBot::planned_spend(engine::Engine& engine) const {
         if (slot.max_hp < s.from_hp || slot.max_hp >= s.to_hp) continue;
         const auto it = prices_.find(s.record);
         if (it == prices_.end() || it->second <= 0) continue;
-        const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), bits / it->second);
+        const int count = std::min(std::min({s.keep, 9}) - disks_held(slot, s.record), std::max(0, bits - s.reserve) / it->second);
         if (count <= 0) continue;
         bits -= count * it->second;
         spend += count * it->second;
