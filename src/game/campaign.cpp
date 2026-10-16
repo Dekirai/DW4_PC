@@ -1261,6 +1261,9 @@ Scheduled ride_schedule(engine::ModelCtrlManager& models, const RideTargets& rid
 //   MP (kLobbyHealBelow); below an objective's gate level it trains in the
 //   area's field (kTraining, kGates).
 constexpr int kHealBelow = 40; // percent of the maximum HP
+// Stages without the quick panels (no beNDMWPanelWazaInfo in the stage
+// package, so no disk can be used there): the HP is topped up before them.
+constexpr const char* kNoHealStages[] = {"stag0203"};
 constexpr int kHealGap = 90;   // frames between two emergency heals
 constexpr int kHealQuickBelow = 20; // percent: Y (whatever disk it takes) instead of the panel
 // Also low HP: below kBigHitMargin percent of the biggest blow taken within
@@ -3341,6 +3344,7 @@ void CampaignBot::save_memory(std::ostream& out) const {
     out << "deaths " << deaths_ << "\n";
     for (const auto& [objective, level] : defeat_levels_) out << "defeat " << word(objective) << " " << level << "\n";
     for (const auto& [field, level] : train_falls_) out << "trainfall " << word(field) << " " << level << "\n";
+    for (const auto& stage : no_panel_stages_) out << "nopanel " << word(stage) << "\n";
     out << "gear_checked " << gear_checked_[0] << " " << gear_checked_[1] << "\n";
     for (const auto& [kind, record] : equip_failed_) out << "equip_failed " << kind << " " << record << "\n";
     for (const auto& gate : gate_tried_) out << "gate_tried " << word(gate) << "\n";
@@ -3369,6 +3373,9 @@ void CampaignBot::load_memory(std::istream& in) {
             std::string objective;
             int level = 0;
             if (f >> objective >> level) defeat_levels_[unword(objective)] = level;
+        } else if (key == "nopanel") {
+            std::string stage;
+            if (f >> stage) no_panel_stages_.insert(unword(stage));
         } else if (key == "trainfall") {
             std::string field;
             int level = 0;
@@ -3487,6 +3494,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // among the train's mechas (defeat at level 14 with 18 HP disks held).
     const bool panel = engine.messenger().count("NDMWPANEL", std::nullopt, player.index) != 0;
     if (!panel) tech_at_ = -1, disk_use_ = -1;
+    if (!panel && player.control_enabled && !lobby(stage_)) no_panel_stages_.insert(lower(engine.stage_name()));
     if (tech_at_ >= 0) {
         // A technique cast: R opens the technique panel (GENERATEWAZA), UP
         // to its top (the first technique, WAZALIST 0; once per further
@@ -3579,7 +3587,17 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // dng101b2's Blossomon hits a level 6 Veemon of 270 HP for 70..100 and
     // 222 when critical, and at kHealBelow percent, 108 HP, one blow ended it.)
     const bool big_hits = frame - big_hit_at_ <= kBigHitFor;
-    const bool low_hp = slot.hp * 100 < slot.max_hp * kHealBelow ||
+    // Before a stage without heals (kNoHealStages, or seen without the quick
+    // panels) the HP is topped up while an HP Disk S's worth is missing: the
+    // stag0203 train was boarded with 658 of 1040 HP after the fights on the
+    // way through stag0201, and its mechas took 658 over the ride (defeats
+    // at levels 21, 22 and 23 at the same place, some 9700 frames on).
+    bool topping = false;
+    if (!exit_to_.empty() && (no_panel_stages_.count(exit_to_) ||
+                              std::any_of(std::begin(kNoHealStages), std::end(kNoHealStages), [&](const char* s) { return exit_to_ == s; })))
+        if (auto* db = engine.get<engine::DatabaseManager>())
+            topping = slot.max_hp - slot.hp >= db->number("conItem", 0, "HP").value_or(1 << 30);
+    const bool low_hp = topping || slot.hp * 100 < slot.max_hp * kHealBelow ||
                         (big_hits && slot.hp * 100 < big_hit_ * kBigHitMargin && slot.hp * 100 < slot.max_hp * 90);
     // A heal: the smallest HP disk that makes up the missing HP, else the
     // biggest one held, Recovery last.
@@ -4191,6 +4209,12 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             }
     }
     if (step && !stall_leave_.empty() && step->stage == stage_) step->action = "explore:" + stall_leave_;
+    // (The stage the step's exit mat leads to: survive tops the HP up before
+    // a stage without heals.)
+    exit_to_.clear();
+    if (step && step->stage == stage_ && step->action.rfind("explore:", 0) == 0)
+        for (const auto& exit : kExits)
+            if (stage_ == exit.stage && step->action.substr(8) == exit.mat) exit_to_ = exit.target;
     const std::string key = step ? step->stage + " " + step->action + " (" + step->why + ")" : "no step";
     if (key != traced_) {
         std::printf("[%d] campaign: %s\n", frame, key.c_str());

@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <vector>
@@ -169,6 +170,8 @@ private:
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
+    std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
+    std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
