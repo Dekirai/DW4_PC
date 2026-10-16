@@ -491,10 +491,20 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // locks only when exactly one came back (0x8030ACE4..0x8030AD44);
             // anything else (ACTOR) keeps the model and bone names and locks
             // (0x8030AD4C..0x8030AE40). The shared move handler 8030A6BC first
-            // makes a missing KEIKATIMER, then ends a running lock (8030A71C).
+            // makes a missing KEIKATIMER, ends a running lock (8030A71C) and
+            // gives an empty channel list its four move objects (0x8030A81C),
+            // as for MOVE: a model whose life starts with MOVERL has four
+            // inactive channels, so once it is unlocked (a JOINT without trace
+            // data) 8030A448 no longer returns at once: it queries the
+            // KEIKATIMER and turns the model (a player by its stick).
             ensure_keika(ram, engine.time());
             trace_unlock(engine, ram, type);
             end_follow(ram);
+            try {
+                ram.channels.allocate();
+            } catch (const std::exception& error) {
+                engine.note(std::string("MODELCTRL MOVERL channels: ") + error.what());
+            }
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
                 ram.follow_bone = std::string(command.str(4));
@@ -515,11 +525,13 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
             // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
             // position lock (8030A71C: a MOVERL follow or a locked effect
-            // form, which then moves on from where it was placed).
+            // form, which then moves on from where it was placed); an empty
+            // channel list gets its four move objects (0x8030A81C).
             ensure_keika(ram, engine.time());
             trace_unlock(engine, ram, type);
             end_follow(ram);
             try {
+                ram.channels.allocate();
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
                     // 8030A6BC: MOVE name selects channel and mode.

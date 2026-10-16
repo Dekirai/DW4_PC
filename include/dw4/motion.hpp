@@ -128,6 +128,10 @@ public:
     // Applies only the recovered channel effects of 8030A6BC. The caller must
     // separately establish its timer, model work and attachment lifecycle.
     void apply(const MotionCommand& command);
+    // 8030A6BC (0x8030A81C..0x8030AA18): before MOVE, MOVEEX or MOVERL is
+    // handled, an empty list gets four new move objects (802C85DC) with the
+    // default fields; a list that has them keeps them.
+    void allocate();
     MotionStep advance(float delta_frames); // Original order: rotation, X, Y, Z.
     MotionStep advance(MotionTimer& timer, std::uint64_t world_time);
     // 8030A448: rotation channel, model turning, then local translation. Uses
