@@ -769,7 +769,7 @@ struct Lua4Vm::Impl {
             try { returned=host(request); }
             catch (const Lua4Fault&) { throw; }
             catch (const std::exception& error) { throw Lua4Fault(error.what()); }
-            site=call.site;
+            site=call.site;error_top=top;
             if(stopped)fault("VM faulted during a nested invocation");
             host_results(execution,frame,std::move(returned));return true;
         }
@@ -795,7 +795,7 @@ struct Lua4Vm::Impl {
         }
         catch (const Lua4Fault&) { throw; }
         catch (const std::exception& error) { throw Lua4Fault(error.what()); }
-        site=call.site;
+        site=call.site;error_top=top; // A nested chunk moved it.
         // A nested chunk's script error ended only that chunk (its own
         // protected lua_call); only a fault or abandonment stops the VM.
         if(stopped)fault("VM faulted during a nested invocation");
@@ -809,7 +809,7 @@ struct Lua4Vm::Impl {
     }
     void process(Execution& execution) {
         if(!execution.initialized) {
-            execution.initialized=true;
+            execution.initialized=true;error_top=execution.func;
             if(!execution.program)fault("empty program");
             // lua_dobuffer 80278810 -> protectedparser 80278708 collects
             // when nblocks/8 >= GCthreshold/10 (unsigned, 0x80278730..
