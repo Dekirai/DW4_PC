@@ -94,8 +94,15 @@ using Lua4ResumableHostHandler = std::function<Lua4HostResult(const Lua4HostCall
 
 struct Lua4Limits {
     std::size_t max_instructions = 1000000; // Per root invocation, including nested chunks.
-    std::size_t max_call_depth = 64;
-    std::size_t max_stack_values = 16384;
+    // Lua frames alive at once (a port guard; every frame takes at least one
+    // stack slot, so the 1024-slot stack below binds first).
+    std::size_t max_call_depth = 1024;
+    // The original's one Lua stack in slots: igLuaState 80272594 calls
+    // lua_open(0, pool) (8027E9D4), so f_luaopen 8027E924 takes the default
+    // 1024 (L->stacksize). Chunks, Lua frames and C calls share it through
+    // absolute positions; luaD_checkstack (80278088) raises "stack
+    // overflow" (docs/LUA4.md, Stack).
+    std::size_t stack_size = 1024;
     // Live Lua data after a garbage collection (the Lua 4.0.1 nblocks model);
     // above it the VM stops with "not enough memory" like the original's
     // allocator failure (luaM_realloc 8027BD18 -> luaD_breakrun LUA_ERRMEM).
@@ -116,6 +123,9 @@ struct Lua4HeapStats {
     std::size_t collections{};
     std::size_t objects{}; // Tables + closures not yet swept (garbage included until a collection).
     std::size_t table_entries{};
+    // Highest top + reserve any luaD_checkstack check of this VM asked for;
+    // a check fails once this reaches stack_size - 1.
+    std::size_t stack_peak{};
 };
 
 enum class Lua4RunStop { completed, host_required, faulted };
@@ -167,7 +177,7 @@ public:
     // frame referring to it is invalid after a collection.
     void collect_garbage();
     Lua4HeapStats heap_stats() const;
-    // A script error (a Lua runtime error, out of memory or a port guard)
+    // A script error (a Lua runtime error, stack overflow, out of memory or a port guard)
     // ends only its invocation, like lua_dobuffer's protected call: the
     // VM, its globals and any parent invocation go on. Only host or API
     // faults (callback exceptions, malformed host results, abandoned

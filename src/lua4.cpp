@@ -20,6 +20,11 @@ constexpr std::size_t max_value_string = 1024u * 1024u;
 constexpr std::size_t max_prototype_stack = 250;
 constexpr std::size_t fields_per_flush = 62; // Lua 4.0.1: min(64, MAXSTACK / 4).
 constexpr std::uint32_t signed_bias = 33554431;
+// Lua stack reserves of the GameCube build, in slots: luaD_checkstack
+// (80278088) lends EXTRA_STACK = 40 (+0x280 at 0x802780DC) after a first
+// overflow; luaV_execute (802834F8) checks maxstacksize + 8 on entry
+// (0x80283540); callCclosure (80278340) checks nupvalues + LUA_MINSTACK 20.
+constexpr std::size_t extra_stack = 40, frame_reserve = 8, c_reserve = 20;
 constexpr std::array<std::string_view, 49> op_names{
     "END", "RETURN", "CALL", "TAILCALL", "PUSHNIL", "POP", "PUSHINT", "PUSHSTRING",
     "PUSHNUM", "PUSHNEGNUM", "PUSHUPVALUE", "GETLOCAL", "GETGLOBAL", "GETTABLE",
@@ -283,12 +288,14 @@ struct Lua4Execution::Impl : std::enable_shared_from_this<Lua4Execution::Impl> {
         std::shared_ptr<const Proto> proto;
         std::vector<Lua4Value> captures, stack;
         std::size_t pc{};
+        std::size_t base{}; // Absolute stack slot of local 0 (the slot above the called function).
         std::optional<Call> call;
     };
     std::weak_ptr<Lua4Vm::Impl> owner;
     std::shared_ptr<const Lua4Program::Impl> program;
     std::weak_ptr<Impl> parent;
     std::uint64_t id{}, parent_call{};
+    std::size_t func{}; // Absolute stack slot of the chunk's closure (or the handler function).
     std::vector<std::unique_ptr<Frame>> frames;
     Lua4RunResult result;
     bool resumable=true, initialized{}, executing{}, finished{};
@@ -379,14 +386,21 @@ struct Lua4Vm::Impl {
     std::size_t nblocks = state_bytes, threshold = 2 * state_bytes, collections{};
     std::size_t objects_live{}, entries_live{}, object_trigger{}, entry_trigger{};
     std::size_t work_remaining{};
-    std::size_t instructions{}, host_calls{}, active_stack{}, depth{};
+    std::size_t instructions{}, host_calls{}, depth{};
+    // The one Lua stack (lstate.h): stack_last = L->stack_last as a slot
+    // index (stacksize - 1, raised by EXTRA_STACK after a first overflow
+    // until the protected call restores it); error_top = L->top where a
+    // script error is raised (its _ERRORMESSAGE goes there); callback_top =
+    // L->top inside the running host callback (a nested chunk's closure).
+    std::size_t stack_last{}, stack_peak{}, error_top{}, callback_top{};
     bool stopped{}, running{};
     Lua4Site site;
 
     explicit Impl(Lua4Limits requested) : limits(requested), work_remaining(requested.max_string_work) {
         limit(limits.max_instructions, 10000000, "execution instruction");
-        limit(limits.max_call_depth, 128, "call depth");
-        limit(limits.max_stack_values, 65536, "stack value");
+        limit(limits.max_call_depth, 4096, "call depth");
+        limit(limits.stack_size, 65536, "stack size");
+        stack_last = limits.stack_size - 1;
         limit(limits.max_heap_bytes, 128u * 1024u * 1024u, "heap byte");
         limit(limits.max_objects, 262144, "object");
         limit(limits.max_table_entries, 1048576, "table entry");
@@ -401,6 +415,34 @@ struct Lua4Vm::Impl {
     // here: collections run only at boundaries where every value is rooted.
     void allocate(std::size_t bytes) { nblocks = bytes > SIZE_MAX - nblocks ? SIZE_MAX : nblocks + bytes; }
     void work(std::size_t bytes) { charge(work_remaining, bytes, "VM string work"); }
+    // luaD_checkstack (80278088): fails when stack_last - top <= n. The
+    // first overflow lends the error handler EXTRA_STACK slots and raises
+    // "stack overflow" (lua_error, so _ERRORMESSAGE runs); another one
+    // before the protected call restored the limit breaks with LUA_ERRERR
+    // and no message.
+    void check_stack(std::size_t top, std::size_t n) {
+        stack_peak = std::max(stack_peak, top + n);
+        if (top + n < stack_last) return;
+        error_top = top;
+        if (stack_last > limits.stack_size - 1) throw Lua4Break("Lua 4: stack overflow while handling a stack overflow");
+        stack_last += extra_stack;
+        fail("stack overflow");
+    }
+    // A C function's stack needs (callCclosure): the igLua binding's method
+    // closures (be:X, 8026BB48) carry their method as one upvalue; library
+    // functions registered by name (gsub, format, floor, ...) carry none.
+    static std::size_t host_upvalues(const Lua4Value& function) {
+        return function.text_ && function.text_->find('.') != std::string::npos ? 1 : 0;
+    }
+    // The binding's tag methods are C calls too (80270BC4): getglobal /
+    // setglobal for nil values (8026C8C8 / 8026C980), gettable for its
+    // classes (8026D2B8). luaV_getglobal / luaV_setglobal (80282D10 /
+    // 80282DE4) check 3 slots, luaV_gettable (80282A90) 2, then the
+    // function and its arguments sit above top for callCclosure.
+    void tag_method_call(std::size_t top, std::size_t pushed) {
+        check_stack(top, pushed);
+        check_stack(top + pushed, c_reserve);
+    }
     void validate(const Lua4Value& value) const {
         if (value.type_ == Lua4Type::Table || value.type_ == Lua4Type::Function) {
             if (value.owner_ != identity) fail("value belongs to another VM");
@@ -450,8 +492,11 @@ struct Lua4Vm::Impl {
         const auto& entries = table_at(value).values;
         const auto found = entries.find(key(index, charged)); return found == entries.end() ? Lua4Value{} : found->second;
     }
-    Lua4Value get(const Lua4Value& value, const Lua4Value& index) {
+    // top: L->top during luaV_gettable, the key just below it.
+    Lua4Value get(const Lua4Value& value, const Lua4Value& index, std::size_t top) {
+        error_top = top;
         if (value.type_ == Lua4Type::HostObject) {
+            tag_method_call(top, 2); // The binding's gettable method finds be:X.
             if (index.type_ != Lua4Type::String) fail("host object method key must be a string");
             if (value.text_->size() + index.text_->size() + 1 > 4096) fail("host function name exceeds 4096 bytes");
             auto name = *value.text_ + "." + *index.text_;
@@ -630,16 +675,21 @@ struct Lua4Vm::Impl {
         const auto active=active_execution.lock();return active && !active->finished;
     }
     void release_frames(Execution& execution) noexcept {
-        for(const auto& frame:execution.frames) {active_stack-=frame->proto->stack;--depth;}
+        depth-=execution.frames.size();
         execution.frames.clear();
     }
-    void enter_frame(Execution& execution,const Lua4Value& function,std::span<const Lua4Value> arguments) {
+    // luaD_call (80278448) with the function at slot func and its arguments
+    // above it: luaV_execute (802834F8) checks maxstacksize + 8 slots above
+    // that top (0x80283540), then local 0 is func + 1.
+    void enter_frame(Execution& execution,const Lua4Value& function,std::span<const Lua4Value> arguments,std::size_t func) {
         validate(function);
+        error_top=func+1+arguments.size();
         if(function.type_!=Lua4Type::Function) fail("cannot call " + function.describe());
-        if(depth>=limits.max_call_depth) fail("call depth budget exhausted");
         const auto& value=closure_at(function);
-        if(value.proto->stack>limits.max_stack_values-active_stack) fail("aggregate stack budget exhausted");
+        check_stack(func+1+arguments.size(),value.proto->stack+frame_reserve);
+        if(depth>=limits.max_call_depth) fail("call depth budget exhausted");
         auto frame=std::make_unique<Execution::Frame>();
+        frame->base=func+1;
         frame->program=value.program;frame->proto=value.proto;frame->captures=value.upvalues;frame->stack.reserve(value.proto->stack);
         const auto& proto=*frame->proto;
         for(std::size_t i=0;i<proto.parameters;++i) frame->stack.push_back(i<arguments.size() ? arguments[i] : Lua4Value{});
@@ -648,12 +698,11 @@ struct Lua4Vm::Impl {
             for(std::size_t i=0;i<count;++i) set(packed,Lua4Value::number(static_cast<double>(i+1)),arguments[proto.parameters+i]);
             set(packed,string("n"),Lua4Value::number(static_cast<double>(count)));frame->stack.push_back(packed);
         }
-        const auto size=proto.stack;
-        execution.frames.push_back(std::move(frame));active_stack+=size;++depth;
+        execution.frames.push_back(std::move(frame));++depth;
     }
     void finish_frame(Execution& execution,std::vector<Lua4Value> returned) {
         for(;;) {
-            active_stack-=execution.frames.back()->proto->stack;--depth;execution.frames.pop_back();
+            --depth;execution.frames.pop_back();
             if(execution.frames.empty()) {
                 execution.result.returned=std::move(returned);execution.result.completed=true;
                 execution.result.stop=Lua4RunStop::completed;execution.finished=true;return;
@@ -690,11 +739,16 @@ struct Lua4Vm::Impl {
     }
     bool pending_call(Execution& execution,Execution::Frame& frame) {
         auto& call=*frame.call;site=call.site;validate(call.function);
+        // The function at slot base + A, its arguments above: the call top.
+        const auto func=frame.base+call.base,top=func+1+call.arguments.size();
+        error_top=top;
         if(call.function.type_!=Lua4Type::HostFunction) {
             if(call.entered) fault("retained Lua call has no child frame");
-            call.entered=true;enter_frame(execution,call.function,call.arguments);return true;
+            call.entered=true;enter_frame(execution,call.function,call.arguments,func);return true;
         }
+        const auto upvalues=host_upvalues(call.function);
         if(!call.entered) {
+            check_stack(top,upvalues+c_reserve); // callCclosure (80278340, 0x80278368)
             if(host_calls>=limits.max_host_calls) fail("host call budget exhausted");
             if(!next_call) fault("host call identity space exhausted");
             ++host_calls;call.id=next_call++;call.entered=true;
@@ -715,17 +769,19 @@ struct Lua4Vm::Impl {
             execution.result.diagnostic="Lua 4: unbound native host function " + safe_label(*call.function.text_);
             return false;
         }
+        // A chunk the callback runs (lua_dobuffer) gets its closure at the C
+        // function's top: above the arguments and the pushed upvalues.
         struct CallbackScope {
-            Impl& vm;Execution* previous_execution;Execution::Call* previous_call;
-            CallbackScope(Impl& value,Execution& execution,Execution::Call& call)
-                :vm(value),previous_execution(value.callback_execution),previous_call(value.callback) {
-                vm.callback_execution=&execution;vm.callback=&call;
+            Impl& vm;Execution* previous_execution;Execution::Call* previous_call;std::size_t previous_top;
+            CallbackScope(Impl& value,Execution& execution,Execution::Call& call,std::size_t top)
+                :vm(value),previous_execution(value.callback_execution),previous_call(value.callback),previous_top(value.callback_top) {
+                vm.callback_execution=&execution;vm.callback=&call;vm.callback_top=top;
             }
-            ~CallbackScope(){vm.callback_execution=previous_execution;vm.callback=previous_call;}
+            ~CallbackScope(){vm.callback_execution=previous_execution;vm.callback=previous_call;vm.callback_top=previous_top;}
         };
         Lua4HostResult returned;
         try {
-            CallbackScope scope(*this,execution,call);
+            CallbackScope scope(*this,execution,call,top+upvalues);
             returned=call.handler(request);
         }
         catch (const Lua4Fault&) { throw; }
@@ -756,7 +812,10 @@ struct Lua4Vm::Impl {
             if(nblocks/8>=threshold/10) collect();
             allocate(execution.program->retained_bytes);
             threshold=execution.program->retained_bytes>SIZE_MAX-threshold ? SIZE_MAX : threshold+execution.program->retained_bytes;
-            enter_frame(execution,closure(execution.program,execution.program->root,{}),{});
+            // f_parser pushes the main closure at the caller's top (slot 0
+            // for a run from the game, the callback's top for a nested
+            // one); lua_call 80278648 calls it without arguments.
+            enter_frame(execution,closure(execution.program,execution.program->root,{}),{},execution.func);
         }
         while(!execution.finished) {
             if(stopped)fault("VM faulted during a nested invocation");
@@ -774,6 +833,10 @@ struct Lua4Vm::Impl {
             auto pop=[&](){need(1);auto value=stack.back();stack.pop_back();return value;};
             if (pc >= proto->code.size()) fail("execution left the prototype code");
             site = {program->info.label, proto->path, pc};
+            // Absolute top before the instruction: L->top for the errors it
+            // raises with its operands still on the stack.
+            const auto top = frame.base + stack.size();
+            error_top = top;
             if (instructions >= limits.max_instructions) fail("instruction budget exhausted");
             ++instructions;
             const auto raw = proto->code[pc++], op = raw & 63, u = raw >> 6, a = raw >> 15, b = (raw >> 6) & 511;
@@ -810,15 +873,25 @@ struct Lua4Vm::Impl {
             case 10:
                 if (u >= captures.size()) fail("closure upvalue index is unbound"); push(captures[u]); break;
             case 11: push(local(u)); break;
-            case 12: push(get_global(constant().as_string())); break;
-            case 13: { const auto index = pop(); const auto value = pop(); push(get(value, index)); break; }
-            case 14: { const auto value = pop(); push(get(value, constant())); break; }
-            case 15: { const auto index = local(u); const auto value = pop(); push(get(value, index)); break; }
-            case 16: { const auto receiver = pop(); push(get(receiver, constant())); push(receiver); break; }
+            case 12: { // A nil global goes through the binding's getglobal method.
+                const auto value = get_global(constant().as_string());
+                if (value.type_ == Lua4Type::Nil) tag_method_call(top, 3);
+                push(value); break;
+            }
+            // L->top in luaV_gettable: GETTABLE has table and key on the
+            // stack; GETDOTTED, GETINDEXED and PUSHSELF push the key first.
+            case 13: { const auto index = pop(); const auto value = pop(); push(get(value, index, top)); break; }
+            case 14: { const auto value = pop(); push(get(value, constant(), top + 1)); break; }
+            case 15: { const auto index = local(u); const auto value = pop(); push(get(value, index, top + 1)); break; }
+            case 16: { const auto receiver = pop(); push(get(receiver, constant(), top + 1)); push(receiver); break; }
             case 17:
                 if (u > limits.max_table_entries) fail("table size hint exceeds table limit"); push(table()); break;
             case 18: { const auto value = pop(); if (u >= stack.size()) fail("local assignment exceeds active stack"); stack[u] = value; break; }
-            case 19: { const auto value = pop(); set_global(std::string(constant().as_string()), value); break; }
+            case 19: { // Over a nil (or absent) global the binding's setglobal method sets it.
+                auto name = std::string(constant().as_string());
+                if (get_global(name, false).type_ == Lua4Type::Nil) tag_method_call(top, 3);
+                const auto value = pop(); set_global(std::move(name), value); break;
+            }
             case 20:
                 need(a); need(b);
                 if (a < 3) fail("SETTABLE has no table/key/value operands");
@@ -903,24 +976,26 @@ struct Lua4Vm::Impl {
             Impl& vm; std::vector<std::shared_ptr<Execution>>& runs;
             ~Release() { for (auto at = runs.rbegin(); at != runs.rend(); ++at) { (*at)->finished = true; vm.release_frames(**at); } }
         } release{*this, handlers};
-        // Every level takes at least one stack slot, the first stack overflow
-        // retries once in place: the original cannot nest deeper than this.
-        for (std::size_t level = 0; level < limits.max_call_depth + 2; ++level) {
+        // The handler and the text go at L->top of the error; a level that
+        // fails starts the next one at its own error top, at least one slot
+        // higher, so the stack check ends any chain within this many levels.
+        auto top = error_top;
+        for (std::size_t level = 0; level < limits.stack_size + extra_stack + 2; ++level) {
             const auto handler = get_global("_ERRORMESSAGE", false);
             if (handler.type_ != Lua4Type::Function || !next_execution) return;
             auto run = std::make_shared<Execution>();
             run->owner = self; run->program = closure_at(handler).program; run->resumable = failed.resumable;
-            run->id = next_execution++; run->initialized = true;
+            run->id = next_execution++; run->initialized = true; run->func = top;
             executions.push_back(run.get()); handlers.push_back(run);
             try {
                 const Lua4Value text = string(std::move(message));
-                enter_frame(*run, handler, std::span<const Lua4Value>(&text, 1));
+                enter_frame(*run, handler, std::span<const Lua4Value>(&text, 1), top); // luaD_call(top, 0 results)
                 process(*run);
                 return;
             }
             catch (const Lua4Fault&) { throw; }
             catch (const Lua4Break&) { return; }
-            catch (const Lua4Error& error) { message = error_text(error.what()); }
+            catch (const Lua4Error& error) { message = error_text(error.what()); top = error_top; }
         }
     }
 };
@@ -978,7 +1053,7 @@ void Lua4Vm::collect_garbage() {
 bool Lua4Vm::stopped() const noexcept { return !impl_ || impl_->stopped; }
 Lua4HeapStats Lua4Vm::heap_stats() const {
     if (!impl_) fail("inactive VM");
-    return {impl_->nblocks, impl_->threshold, impl_->collections, impl_->objects_live, impl_->entries_live};
+    return {impl_->nblocks, impl_->threshold, impl_->collections, impl_->objects_live, impl_->entries_live, impl_->stack_peak};
 }
 Lua4Execution Lua4Vm::begin_execution(const Lua4Program& program) {
     if(!impl_ || impl_->running || impl_->stopped || impl_->pending_execution())
@@ -986,6 +1061,7 @@ Lua4Execution Lua4Vm::begin_execution(const Lua4Program& program) {
     if(!impl_->next_execution)fail("execution identity space exhausted");
     auto execution=std::make_shared<Lua4Execution::Impl>();execution->owner=impl_;execution->program=program.impl_;
     execution->id=impl_->next_execution++;impl_->active_execution=execution;
+    execution->func=0; // The game's runBuffer calls start on an empty API stack.
     impl_->instructions=impl_->host_calls=0;impl_->work_remaining=impl_->limits.max_string_work;impl_->site={};
     impl_->executions.push_back(execution.get());
     return Lua4Execution(std::move(execution));
@@ -999,6 +1075,7 @@ Lua4Execution Lua4Vm::begin_nested(const Lua4Program& program) {
     auto execution=std::make_shared<Lua4Execution::Impl>();execution->owner=impl_;execution->program=program.impl_;
     execution->id=impl_->next_execution++;execution->parent=impl_->callback_execution->shared_from_this();
     execution->parent_call=impl_->callback->id;impl_->callback->child=execution;
+    execution->func=impl_->callback_top;
     impl_->executions.push_back(execution.get());
     return Lua4Execution(std::move(execution));
 }
@@ -1040,7 +1117,12 @@ Lua4RunResult Lua4Vm::resume(Lua4Execution& handle) {
         catch (const std::exception& error) { stop=Stop::terminal;execution->result.diagnostic+=std::string("; in _ERRORMESSAGE: ")+error.what(); }
         catch (...) { stop=Stop::terminal;execution->result.diagnostic+="; in _ERRORMESSAGE: unknown host exception"; }
     }
-    if(stop!=Stop::none)execution->result.stop=Lua4RunStop::faulted;
+    if(stop!=Stop::none) {
+        execution->result.stop=Lua4RunStop::faulted;
+        // restore_stack_limit (80278100) with the top restored to the call's
+        // (the closure slot + 1): a lent EXTRA_STACK is taken back.
+        if(execution->func+1<state->limits.stack_size-1)state->stack_last=state->limits.stack_size-1;
+    }
     if(stop==Stop::terminal)state->stopped=true;
     state->site=failed_at;
     auto& result=execution->result;

@@ -116,6 +116,15 @@ bool Engine::run_script(std::string_view name) {
             }
             --script_depth_;
             ran = true;
+            // DW4_TRACE_LUA_STACK=1 logs each new high of the Lua stack (the
+            // deepest luaD_checkstack top + reserve, 1023 overflows).
+            if (static const bool trace_stack = std::getenv("DW4_TRACE_LUA_STACK") != nullptr; trace_stack && script_depth_ == 0) {
+                static std::size_t logged = 0;
+                if (const auto peak = lua_->heap_stats().stack_peak; peak > logged) {
+                    logged = peak;
+                    log("lua stack peak " + std::to_string(peak) + " of 1023 after " + std::string(name));
+                }
+            }
             if (!run.completed) {
                 // igLuaState::runBuffer (80272768) only logs "runBuffer(%s)
                 // failed - reason %s" after the script's _ERRORMESSAGE ran

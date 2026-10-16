@@ -77,7 +77,7 @@ through `lua_error` (8027894C). First `message` (802788A4) looks up
 error text on top of the failing frames. `func.lua` defines it as
 `be:MsgBox(a0, 0)`. An error inside that handler calls it again further up the
 stack. The chain ends when one call completes, or when a break without a
-message ends it (out of memory, or a second stack overflow).
+message ends it (out of memory, or a second stack overflow, see Stack).
 Then `luaD_breakrun` (8027898C) unwinds to the protected call:
 `luaD_runprotected` restores the stack top, `Cbase` and the stack limit, and
 `lua_call` removes the chunk closure. The port does the same. The invocation
@@ -157,14 +157,46 @@ cannot remove the hard ceilings.
 
 Default VM limits are one million instructions, 8,192 native calls and 32 MiB
 of string work (comparisons, key lookups, number conversions) per root
-invocation, 64 nested calls, 16,384 aggregate reserved stack values, 65,536 live
-tables and closures, 262,144 live table entries, 4,096 globals and 32 MiB of live
-Lua data. The per-root counters reset with every root invocation; retained
-nested chunks share them. Instructions and logical host calls are charged once;
-a not-ready retry charges neither again. The stopped/unbound logical host call
-still counts. Suspended frames keep their call-depth and aggregate stack
-reservations. Host callbacks are trusted application code; their own
-allocations and effects require separate bounds.
+invocation, the original's 1,024-slot Lua stack (below), 1,024 live Lua frames,
+65,536 live tables and closures, 262,144 live table entries, 4,096 globals and
+32 MiB of live Lua data. The per-root counters reset with every root
+invocation; retained nested chunks share them. Instructions and logical host
+calls are charged once; a not-ready retry charges neither again. The
+stopped/unbound logical host call still counts. Suspended frames keep their
+stack slots and call depth. Host callbacks are trusted application code; their
+own allocations and effects require separate bounds.
+
+## Stack
+
+The original has one Lua stack of 1,024 `TObject` slots: `igLuaState`
+(80272594) calls `lua_open(0, pool)` (8027E924 `f_luaopen` takes the default
+size for 0). Every chunk, Lua frame and C call lives on it at absolute
+positions, and `luaD_checkstack` (80278088) fails when `stack_last - top <= n`,
+with `stack_last` = slot 1,023. The port keeps the same positions (a frame's
+local 0 is the slot above its function, a CALL's top is the slot above its
+last argument) and checks where the original checks:
+
+| Check | Original | Reserve above the top |
+| --- | --- | ---: |
+| Lua function entry, arguments still on the stack | `luaV_execute` 802834F8 (0x80283540) | `maxstacksize` + 8 |
+| C function call (`be:X`, `gsub`, ...) | `callCclosure` 80278340 (0x80278368) | upvalues + 20 |
+| `be.X` / `be:X` lookup, gettable method | `luaV_gettable` 80282A90 | 2, then 20 |
+| reading a nil global, getglobal method | `luaV_getglobal` 80282D10 | 3, then 20 |
+| assigning over a nil global, setglobal method | `luaV_setglobal` 80282DE4 | 3, then 20 |
+
+The tag methods are the igLua binding's (80270BC4): getglobal / setglobal for
+the nil tag (8026C8C8 / 8026C980), gettable for its classes (8026D2B8); a
+`be:X` method closure carries its method as one upvalue (8026BB48), the
+library functions registered by name carry none. A chunk the game runs starts
+on an empty API stack (closure at slot 0, local 0 at slot 1); a chunk a host
+callback runs starts at the callback's top, above its arguments and upvalues
+(what the binding itself pushes before such a run is not modelled). An
+overflow raises "stack overflow" as a Lua error: `stack_last` grows by
+`EXTRA_STACK` = 40 slots (+0x280 at 0x802780DC) so that `_ERRORMESSAGE` can
+run, and a second overflow before the protected call restores the limit
+(`restore_stack_limit` 80278100) breaks with `LUA_ERRERR` and no message.
+`heap_stats().stack_peak` is the highest top + reserve any check asked for,
+and `DW4_TRACE_LUA_STACK=1` logs each new high in the game.
 
 Completed handles retain their owned results until released (they are
 collector roots while the handle lives).
