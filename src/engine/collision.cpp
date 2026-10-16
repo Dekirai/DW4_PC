@@ -45,6 +45,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
                 for (const auto& v : {t.a, t.b, t.c}) d.reach = std::max(d.reach, length(v));
             }
             d.node = node;
+            d.grouped = true;
             d.group = group;
             dynamic_.push_back(std::move(d));
             continue;
@@ -103,17 +104,21 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
     return std::uint32_t(dynamic_.size() - 1);
 }
 
-void CollisionWorld::set_dynamic(std::uint32_t id, const Mat4& matrix, bool enabled) {
+void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, bool enabled) {
     if (id >= dynamic_.size()) return;
-    dynamic_[id].matrix = matrix;
+    dynamic_[id].node = source;
     dynamic_[id].enabled = enabled;
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const {
     for (const auto& d : dynamic_) {
-        if (d.local.empty()) continue;
-        if (d.node ? !(d.group < groups_.size() && groups_[d.group]) : !d.enabled) continue;
-        const Mat4& matrix = d.node ? d.node->matrix : d.matrix;
+        if (d.local.empty() || !d.node) continue;
+        if (d.grouped ? !(d.group < groups_.size() && groups_[d.group]) : !d.enabled) continue;
+        // 803009D0 copies a kind 0x400 child's source matrix into the child
+        // (80128CF4 at 0x80300CE0) in every candidate pass, before its bounds
+        // test: a model moved earlier in this frame (a ridden car or boat) is
+        // met where it is now. Reading the node here is that copy.
+        const Mat4& matrix = d.node->matrix;
         const Vec3f origin = transform_point(Vec3f{}, matrix);
         const float dx = p.x - origin.x, dz = p.z - origin.z;
         const float limit = d.reach + reach;
