@@ -304,9 +304,14 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     // 0x8030E884..0x8030E8C4: the command "SQ_ERAS" - a JUMP is the command
     // handler too (8030BCB8 -> vtable +8C) - first runs the class's erase
     // hook (vtable +B4) for a generated model, then starts the sequence
-    // (8030F530). Only the player class has one (8034E3C0, the other model
-    // classes keep the empty 8030F5D8).
-    if (name == "SQ_ERAS" && ram.generated && ram.is_player) player_erase_hook(engine, ram);
+    // (8030F530). Only the player class (vtable 804E7DAC: 8034E3C0) and the
+    // item class (804EDC5C: 803ABE0C, its name label) have one; the other
+    // model classes keep the empty 8030F5D8 (scan of every vtable with the
+    // update 8030CB2C at +0x84).
+    if (name == "SQ_ERAS" && ram.generated) {
+        if (ram.is_player) player_erase_hook(engine, ram);
+        else if (ram.category == "ITEM") item_erase_hook(engine, ram);
+    }
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)
@@ -664,9 +669,14 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // keeps the last one's HP or record.
         ram.hp = ram.max_hp = 0;
         ram.record = -1;
-        if (ram.item_label >= 0) item_label(engine, ram, false);
+        // The item GENERATE hook 803AAC90 makes a fresh item work (8033A8A8:
+        // no label, blink phase and "COLOR" timer gone). A label still shown
+        // would keep its line taken in the original; the port drops it (the
+        // erase hook at SQ_ERAS normally did that already).
+        if (ram.item_label >= 0) item_erase_hook(engine, ram);
+        ram.item_lit = false;
+        ram.item_color_timer.reset();
         ram.item_table = -1;
-        ram.item_player = -1;
         // Drop form (802FCE60): I<record>/I<drop table id>.
         if (ram.category == "ITEM" && packet.ints.size() >= 2) {
             ram.item_record = packet.ints[0];
@@ -1663,11 +1673,11 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         auto& ram = *entry.ram;
         if (!ram.generated) continue;
         // 8030CB2C: an erased model is removed on its next update (the
-        // player's bit capsule came with the SQ_ERAS start, player_erase_hook).
+        // player's bit capsule and an item's name label went with the SQ_ERAS
+        // start, player_erase_hook / item_erase_hook).
         if (ram.seq_name == "SQ_ERAS") {
             Packet p;
             command(engine, ram, "REMOVE", p);
-            if (ram.item_label >= 0) item_label(engine, ram, false);
             continue;
         }
         if (ram.frozen) continue;
@@ -1677,7 +1687,13 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             if (ram.is_player) update_player(engine, ram);
             else if (ram.category == "ENEMY") update_enemy(engine, ram);
             else if (ram.category == "PLAYER2") update_capsule(engine, ram);
-            else if (ram.ai_maps && !ram.ai_maps->empty()) {
+            else if (ram.category == "ITEM") {
+                // 80309168 runs the class update (vtable +A0, 803AB5AC for
+                // beNDMWMdlItem) only with _isOnCtrl set (0x8030918C): no item
+                // label, pickup or contact take outside the CTRL sequences.
+                if (ram.control_enabled && ram.item_table >= 0) update_item(engine, ram);
+                apply_control(engine, ram);
+            } else if (ram.ai_maps && !ram.ai_maps->empty()) {
                 // 80308FF4, the AI slot (vtable +A0) of beModelCtrl and of
                 // most model classes (objects, bullets, effects): the AIM map,
                 // else the AIH homing. Floor switches (g_dbutton*) are objects
@@ -1695,7 +1711,6 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         }
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
-        if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         // 8030CD30..8030CD4C: 8030A448 runs unless the position is locked
         // (_isPosLock +A8); it clears the translated byte (+78) and checks the
         // channel list itself. A locked model (0x8030CD54) is placed instead,

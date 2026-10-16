@@ -1,6 +1,7 @@
 #include "dw4/engine/managers.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace dw4::engine {
 namespace {
@@ -29,6 +30,12 @@ int roll_value(int level) {
 Vec3f name_color(int table, const ItemDevice& device) {
     if (table < 3) return {0.9f, 0.9f, 0.9f};
     return device_color(device);
+}
+
+// DW4_TRACE_ITEM=1 logs the item name labels going on and off.
+void trace_label(Engine& engine, const ModelCtrlManager::ModelRam& ram, int line, const char* what) {
+    static const bool on = std::getenv("DW4_TRACE_ITEM") != nullptr;
+    if (on) engine.log("item label " + ram.info_name + "#" + std::to_string(ram.index) + " " + what + " line " + std::to_string(line) + " in " + ram.seq_name);
 }
 
 Packet text_packet(int slot, std::string argument = {}) {
@@ -81,11 +88,16 @@ ItemDevice roll_item_device(int table, int record, int level) {
     return device;
 }
 
-// KIND_ITEM (803AB5AC): the nearest player within 8 units may pick the item
-// up; instant items (insItem: bits, X data) are taken on contact. Other items
-// show their name over the model while that player stays close.
+// KIND_ITEM (803AB5AC, vtable +A0): the class update the control step
+// 80309168 runs only while the sequence has a CTRL mode and _isOnCtrl is set
+// (0x8030918C; the drop items' SQ_ENT2, SQ_WAIT and SQ_BODING have "isLive",
+// SQ_ENTR, SQ_EXIT and SQ_DDMG none). 8031C67C 'PLAYER' 'NEAR' picks the
+// nearest player (smallest squared distance, the first of equals) and the
+// item counts as near below 8 units (0x803AB6EC..0x803AB71C). Instant items
+// (insItem: bits, X data; +F8 clear) are taken on contact; the others show
+// their name for one near player and can then be picked up by that player.
 void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
-    if (!ram.node || ram.seq_name == "SQ_DDMG") return;
+    if (!ram.node) return;
     const auto& m = ram.node->matrix;
     int nearest = -1;
     float best = 64.0f;
@@ -96,9 +108,13 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
         const float d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < best) { best = d2; nearest = other->index; }
     }
-    ram.item_player = nearest;
     if (ram.item_table != 1) {
-        item_label(engine, ram, nearest >= 0);
+        // The label state (RAM +0x18, 0x803AB81C): 0 shows a label for the
+        // near player when that player's line is free (0x803AB838..0x803ABA44),
+        // 1 keeps it on its owner and goes on in the same update.
+        if (ram.item_label < 0 && nearest >= 0 && !item_labels_[std::size_t(std::clamp(nearest, 0, 3))])
+            show_item_label(engine, ram, nearest);
+        if (ram.item_label >= 0) update_item_label(engine, ram);
         return;
     }
     if (nearest < 0) return;
@@ -154,52 +170,73 @@ void ModelCtrlManager::update_item(Engine& engine, ModelRam& ram) {
     post_effect(engine, "PLAYER", std::nullopt, nearest, panels[record - 1][0], panels[record - 1][1]);
 }
 
-// 803AB864..803ABDB0: one of four ITNAMEFONT lines (font00..03) carries the
-// name, blinking between its colour and a third of it every half second, and
-// follows the item 10 units above its origin in screen space.
-void ModelCtrlManager::item_label(Engine& engine, ModelRam& ram, bool show) {
+// 0x803AB838..0x803ABA44: the label goes on the near player's own
+// ITNAMEFONT line (font00..03 by player, 804EDB90) when no other item holds
+// that line: ALIGN CENTER, TEXTSET with the item's name, the blink phase and
+// its "COLOR" timer cleared (0x803AB8F4..0x803AB904), SWITCH SET; the item
+// becomes the line's holder (manager +0x30) and the label's owner (+FC).
+void ModelCtrlManager::show_item_label(Engine& engine, ModelRam& ram, int player) {
     auto& messenger = engine.messenger();
-    if (!show) {
-        if (ram.item_label < 0) return;
-        Packet off = text_packet(ram.item_label, "CLR");
-        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", off);
-        item_labels_[std::size_t(ram.item_label)] = false;
-        ram.item_label = -1;
-        return;
-    }
-    const Vec3f color = name_color(ram.item_table, ram.item_device);
-    if (ram.item_label < 0) {
-        const auto free = std::find(item_labels_.begin(), item_labels_.end(), false);
-        if (free == item_labels_.end()) return;
-        ram.item_label = int(free - item_labels_.begin());
-        *free = true;
-        std::string name;
-        if (auto* db = engine.get<DatabaseManager>())
-            name = db->text(GameSystem::item_tables[std::clamp(ram.item_table, 0, 6)], ram.item_record, "NAME");
-        Packet align = text_packet(ram.item_label, "CENTER");
-        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "ALIGN", align);
-        Packet text = text_packet(ram.item_label, name);
-        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", text);
+    player = std::clamp(player, 0, 3);
+    std::string name;
+    if (auto* db = engine.get<DatabaseManager>())
+        name = db->text(GameSystem::item_tables[std::clamp(ram.item_table, 0, 6)], ram.item_record, "NAME");
+    Packet align = text_packet(player, "CENTER");
+    messenger.send(engine, "TEXTCTL", std::nullopt, -1, "ALIGN", align);
+    Packet text = text_packet(player, name);
+    messenger.send(engine, "TEXTCTL", std::nullopt, -1, "TEXTSET", text);
+    ram.item_lit = false;
+    ram.item_color_timer.reset();
+    Packet on = text_packet(player, "SET");
+    messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", on);
+    item_labels_[std::size_t(player)] = true;
+    ram.item_label = player;
+    trace_label(engine, ram, player, "on");
+}
+
+// 0x803ABA54..0x803ABDDC, label state 1: the named RAM timer "COLOR"
+// (8031E238, a missing one counts as expired) switches the line between the
+// name colour (803B07E0) and a third of it, then restarts with half a second
+// (8031DE44, 500000000 ns); so the first update after SWITCH SET sends the
+// full colour. The label follows the item 10 units above its origin while
+// its owner (+FC, PLAYER GETMATRIX; no answer counts as 100) is closer than
+// 8 units; otherwise the class's erase hook drops it (vtable +B4 at
+// 0x803ABDC0) and the state goes back to 0.
+void ModelCtrlManager::update_item_label(Engine& engine, ModelRam& ram) {
+    auto& messenger = engine.messenger();
+    const auto now = engine.time();
+    if (!ram.item_color_timer || timer_expired(*ram.item_color_timer, now)) {
+        Vec3f color = name_color(ram.item_table, ram.item_device);
+        if (ram.item_lit) {
+            ram.item_lit = false;
+            color = {color.x / 3.0f, color.y / 3.0f, color.z / 3.0f};
+        } else {
+            ram.item_lit = true;
+        }
         Packet tint = text_packet(ram.item_label);
         tint.vectors.push_back(color);
         messenger.send(engine, "TEXTCTL", std::nullopt, -1, "COLOR", tint);
-        Packet on = text_packet(ram.item_label, "SET");
-        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", on);
-        ram.item_dim = false;
-        ram.item_blink = engine.time() + 500'000'000;
-    } else if (engine.time() >= ram.item_blink) {
-        ram.item_dim = !ram.item_dim;
-        ram.item_blink = engine.time() + 500'000'000;
-        Packet tint = text_packet(ram.item_label);
-        tint.vectors.push_back(ram.item_dim ? Vec3f{color.x / 3.0f, color.y / 3.0f, color.z / 3.0f} : color);
-        messenger.send(engine, "TEXTCTL", std::nullopt, -1, "COLOR", tint);
+        timer_start(ram.item_color_timer.emplace(), now, 500000000);
+    }
+    if (!ram.node) return;
+    const auto& m = ram.node->matrix;
+    float d2 = 100.0f;
+    for (const auto& other : rams_) {
+        if (!other->is_player || !other->generated || !other->node || other->index != ram.item_label) continue;
+        const auto& o = other->node->matrix;
+        const float dx = m(3, 0) - o(3, 0), dy = m(3, 1) - o(3, 1), dz = m(3, 2) - o(3, 2);
+        d2 = dz * dz + (dx * dx + dy * dy);
+        break;
+    }
+    if (d2 >= 64.0f) {
+        item_erase_hook(engine, ram);
+        return;
     }
     auto* cameras = engine.get<CameraManager>();
-    if (!cameras || !ram.node) return;
+    if (!cameras) return;
     FrameCamera camera;
     cameras->frame_camera(engine, camera);
     const Mat4 vp = camera.view * camera.projection;
-    const auto& m = ram.node->matrix;
     const Vec3f p{m(3, 0), m(3, 1) + 10.0f, m(3, 2)};
     const float x = p.x * vp(0, 0) + p.y * vp(1, 0) + p.z * vp(2, 0) + vp(3, 0);
     const float y = p.x * vp(0, 1) + p.y * vp(1, 1) + p.z * vp(2, 1) + vp(3, 1);
@@ -211,11 +248,32 @@ void ModelCtrlManager::item_label(Engine& engine, ModelRam& ram, bool show) {
     messenger.send(engine, "TEXTCTL", std::nullopt, -1, "SETPOSITION", position);
 }
 
-// 803AC0E8: the player next to the item picks it up. Disks stack to nine per
-// kind (DISKFOLDER), equipment fills up to 36 DEVICEFOLDER slots, key items set
-// their common FLAGFOLDER entry; a full folder leaves the item lying.
+// The item class's erase hook (vtable +B4, 803ABE0C): with a label shown
+// (+100) it clears that flag, frees the owner's line (manager +0x30), sets
+// +FC = -1 and sends TEXTCTL SWITCH ITNAMEFONT <line> CLR. It runs when the
+// owner walks away (0x803ABDC0), after a pickup (0x803AC408) and when SQ_ERAS
+// starts on the generated item (command handler 0x8030E884, select_sequence),
+// so a vanishing item's name goes with its SQ_ERAS, a frame before the
+// removal.
+void ModelCtrlManager::item_erase_hook(Engine& engine, ModelRam& ram) {
+    if (ram.item_label < 0) return;
+    const int line = std::clamp(ram.item_label, 0, 3);
+    item_labels_[std::size_t(line)] = false;
+    ram.item_label = -1;
+    Packet off = text_packet(line, "CLR");
+    engine.messenger().send(engine, "TEXTCTL", std::nullopt, -1, "SWITCH", off);
+    trace_label(engine, ram, line, "off");
+}
+
+// 803AC0E8 (vtable +BC, DROPITEM ACTION1 <player>): only a non-instant item
+// whose label is shown and owned by the asking player is picked up
+// (0x803AC1D8..0x803AC208). Disks stack to nine per kind (DISKFOLDER),
+// equipment fills up to 36 DEVICEFOLDER slots, key items set their common
+// FLAGFOLDER entry; a full folder leaves the item lying. A pickup sends
+// DROPITEM SQ_DDMG to the item and then runs its erase hook (0x803AC3F0,
+// 0x803AC408).
 bool ModelCtrlManager::pick_item(Engine& engine, ModelRam& ram, int player) {
-    if (!ram.generated || ram.item_table < 0 || ram.item_table == 1 || player < 0 || player != ram.item_player)
+    if (!ram.generated || ram.item_table < 0 || ram.item_table == 1 || player < 0 || ram.item_label < 0 || player != ram.item_label)
         return false;
     auto* sys = engine.get<GameSystem>();
     if (!sys) return false;
@@ -233,9 +291,9 @@ bool ModelCtrlManager::pick_item(Engine& engine, ModelRam& ram, int player) {
     std::string name;
     if (auto* db = engine.get<DatabaseManager>()) name = db->text(GameSystem::item_tables[ram.item_table], ram.item_record, "NAME");
     engine.log("player " + std::to_string(player) + " picked up " + game_text_utf8(name));
-    item_label(engine, ram, false);
     ram.item_table = -1;
     select_sequence(engine, ram, "SQ_DDMG");
+    item_erase_hook(engine, ram);
     return true;
 }
 
