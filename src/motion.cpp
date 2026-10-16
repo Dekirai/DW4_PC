@@ -282,6 +282,9 @@ void MotionChannels::apply(const MotionCommand& command) {
     }
     publish(candidate);
 }
+void MotionChannels::allocate() {
+    if (!allocated()) publish(States{});
+}
 MotionStep MotionChannels::advance(float delta_frames) {
     finite(delta_frames); MotionStep result;
     if (!allocated()) return result;

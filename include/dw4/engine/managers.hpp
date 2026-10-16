@@ -1084,6 +1084,11 @@ private:
     std::vector<std::unique_ptr<MatRam>> rams_;
     Mat* context_{};
     std::optional<bool> pending_run_; // MATsetRun for the running mat (80302DA8)
+    // Manager +0x20..+0x23: the players that answered this update's PLAYER
+    // GETMATRIX (generated, i.e. alive; 0x80303668..0x803036C4), cleared by
+    // a RAM's first update (0x80303530). MATisAllPlayer and MATgetPlayerNo
+    // only count these.
+    std::uint32_t live_{};
 };
 
 // SAVEUTILITY (beSaveUtil, commands 80323D20, update 80323538): the memory
@@ -1278,8 +1283,19 @@ public:
         // An effect placed on its source model (GENERATE effect form: string0/int0).
         std::string attach_name;
         int attach_index = -1;
-        Vec3f attach_offset{}, attach_rotation{};
-        bool attach_lock{};
+        Vec3f attach_offset{}, attach_rotation{}; // offset: ctrl work +BC..+C4 with the lock
+        // Ctrl work +AC: the source's node a locked effect form took from the
+        // GETMATRIX reply (8030D4C8..8030D510); placed on it every update.
+        const Node* attach_node{};
+        // Ctrl work +A8 _isPosLock: set by a locked effect form (8030D530)
+        // and by MOVERL (8030ACFC / 8030AE40), cleared by the next MOVE /
+        // MOVEEX / MOVERL (8030A72C). While set, 8030CB2C places the model
+        // (attach node, else trace, else bone) instead of running 8030A448.
+        bool pos_lock{};
+        // Ctrl work +78: a translation channel ran (8030A448) or a ride moved
+        // the model (8030CFCC); the walls and floors run when set (8030D00C).
+        // Only 8030A448 clears it, so it keeps its value while locked.
+        bool translated{};
         // The model its bullets shoot for (string2/int1, effect work +0xDC/+0xE0);
         // a chained effect inherits its source's owner (80310340).
         std::string owner_name;
@@ -1318,11 +1334,13 @@ public:
         Vec3f ai_world_target{};        // AI work +10: a WPOS map's target
         const Homing* homing{};         // AIH AI: state (work +1C), steps (+20)
         int homing_state{}, homing_steps{};
-        // MOVERL "JOINT" (8030ADC0, ctrl work +A8/+B4/+B8): the model follows a
-        // bone of another model with the same index instead of moving.
+        // MOVERL ACTOR (8030AD4C..8030AE40, ctrl work +B4/+B8): the model
+        // follows a bone of another model with the same index instead of
+        // moving. Like the trace (+B0) they stay after the follow ends
+        // (8030A71C only clears +A8) and count only while pos_lock is set.
         std::string follow_model, follow_bone;
         Node* trace{};        // own "TRC" data: an igTransformRecorder
-        Node* follow_trace{}; // MOVERL ACTOR: another model's recorder
+        Node* follow_trace{}; // MOVERL JOINT (+B0): another model's recorder
         // beNDMWMdlPEBase status work (+240..+268), made by the first status
         // command (803AEBB4). Slots: 0 poison, 1 attack down, 2 power down,
         // 3 bind, 4 refract, 5 speed up, 6 power up, 7 metal, 8 sleep, 9 stun,
@@ -1373,6 +1391,8 @@ private:
     bool pick_item(Engine& engine, ModelRam& ram, int player);
     void update_effects(Engine& engine, ModelRam& ram);
     void place_attached(ModelRam& ram);
+    void place_locked(Engine& engine, ModelRam& ram);
+    void player_erase_hook(Engine& engine, ModelRam& ram);
     bool player_wait(Engine& engine, ModelRam& ram, std::string_view wait);
     void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix, std::string_view mode);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
