@@ -1321,9 +1321,17 @@ void ModelCtrlManager::apply_control(Engine& engine, ModelRam& ram) {
 }
 
 // 8030A448: returns whether a translation channel ran (ctrl work +78), which
-// lets the walls and floors run this frame.
+// lets the walls and floors run this frame. It clears +78 and returns at once
+// while the work's channel list is empty (0x8030A478..0x8030A48C): before the
+// first MOVE of a life nothing turns or moves.
 bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     if (!ram.node) return false;
+    try {
+        if (!ram.channels.allocated()) return false;
+    } catch (const std::exception& error) {
+        engine.note(std::string("model motion: ") + error.what());
+        return false;
+    }
     auto& m = ram.node->matrix;
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
     if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
@@ -1343,7 +1351,7 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     // +84 += pi/180 * step, the yaw rate +90 = 1.25 * |that|) before the
     // model turns, the translation channels move it after the turn.
     dw4::MotionStep step;
-    if (ram.channels.allocated()) {
+    {
         const bool rotating = ram.channels.states()[3].active;
         const float frames = keika_frames(ram, engine.time());
         try {
@@ -1360,23 +1368,36 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     }
     // Turning (8030C85C at 0x8030A50C, not forced; turn_step): every axis
     // with a rate steps toward its wanted angle by rate * KEIKATIMER frames.
-    turn_step(ram, engine.time());
+    // Only when an applied angle changed (fcmpu 0x8030C9D0..0x8030CA0C) does
+    // 8030C85C rebuild the basis, straight into the node matrix: 80128DAC
+    // keeps the translation, 80129134 builds the rotation from the applied
+    // angles, 80128D90 puts the translation back (0x8030CA10..0x8030CB14).
+    // Otherwise the node matrix stays as it is - the turn a ride gave it
+    // (8030CEB0 last^-1 * current, which never touches +80 / +98), the tilt
+    // of a recorder a MOVERL follow left or the X / Z rotation of a GENERATE
+    // placement - until the model turns itself. (The port rebuilt it every
+    // frame: on the stag0203 train the player kept his world heading when
+    // the car turned; in Dolphin he turns with it.)
+    const bool turned = turn_step(ram, engine.time());
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
-    bool moved = false;
     try {
-        dw4::original_model_turn_basis(matrix, ram.applied);
-        matrix[12] = position.x;
-        matrix[13] = position.y;
-        matrix[14] = position.z;
+        if (turned) {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+        }
+        // A running translation channel copies the (possibly rebuilt) node
+        // matrix (80128CF4 at 0x8030A610), moves it in its own axes
+        // (80128DC8 at 0x8030A664) and sets it back (vtable +0x94).
         if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
-        moved = step.translation_updated;
     } catch (const std::exception& error) {
         engine.note(std::string("model motion: ") + error.what());
         return false;
     }
-    std::copy(matrix.begin(), matrix.end(), m.m.begin());
-    return moved;
+    if (turned || step.translation_updated) std::copy(matrix.begin(), matrix.end(), m.m.begin());
+    return step.translation_updated;
 }
 
 // 8030CEB0: the ride's own step (vtable +5C: 802E9370 none for a platform,
@@ -1639,8 +1660,9 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                            std::to_string(ram.node->matrix(3, 2)) + ")" + (ram.follow_trace->recorded ? "" : " (not recorded)"));
         } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
         bool moved = false;
-        if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated()))
-            moved = advance_motion(engine, ram);
+        // 8030CD30..8030CD4C: 8030A448 runs unless the position is locked
+        // (_isPosLock +A8: a MOVERL follow); it checks the channel list itself.
+        if (!ram.follow_trace && ram.follow_model.empty()) moved = advance_motion(engine, ram);
         // 8030CEB0: a ride carries the model and always lets the walls and
         // floors run.
         if (ram.ride && ram.node) {
