@@ -617,7 +617,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         std::string seq = "SQ_WAIT";
         if (packet.strings.size() == 1 && packet.strings[0]) seq = *packet.strings[0];
         else if (packet.strings.size() >= 2 && packet.strings[1]) seq = *packet.strings[1];
-        if (ram.hp == 0) ram.hp = ram.max_hp = 100;
+        // _mHp / _hp (info work +0x08 / +0x0C) are new beDataObjInt objects
+        // of the fresh work (construct flags 802C6D84 / 802C6DA4; their int
+        // has no default, 802DD7B4) and _recNo (+0x10) defaults to -1
+        // (802C6DA8..802C6DB0). Only the enemy hook fills them from the
+        // generator ints (0x8034BCC0..0x8034BCEC); a max HP still 0 after the
+        // hook becomes 100 / 100 (0x8030DA60..0x8030DA78). A life no longer
+        // keeps the last one's HP or record.
+        ram.hp = ram.max_hp = 0;
+        ram.record = -1;
         if (ram.item_label >= 0) item_label(engine, ram, false);
         ram.item_table = -1;
         ram.item_player = -1;
@@ -636,6 +644,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.record = packet.ints[0];
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
+        if (ram.max_hp == 0) ram.hp = ram.max_hp = 100;
         ram.muteki = 0;
         // The KIND vtable +0x98 hook (8034BB48 enemy, 8034BEA8 object,
         // 8034D61C player) installs a fresh info work at ONE+0x14 on every
@@ -689,8 +698,50 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // again every MAGIC cycle, kept the last bolt's 0.75 and hit 23-25
         // frames early (dng411b1, dng412b1, dngq6b01).
         if (auto list = ram.channels.list_owner()) list->mutable_entries().clear();
+        // The rest of the fresh work: _keyInput (+0x70) has no default; the
+        // port's single-string SETLABEL label belongs to the label lists
+        // above; _subCommand (+0xE4) is a new beModelCtrlSubCom whose list is
+        // constructed empty (802C7020..802C703C, 802C5484), so the sequence
+        // cleanup of this GENERATE finds no subcommand of the last life (no
+        // SQ_ERAS for its sequence-dead effects, no queued hitbox).
+        ram.key_input = false;
+        ram.label.clear();
+        ram.effects.clear();
+        ram.hitboxes.clear();
+        ++ram.hitbox_generation;
+        // beNDMWMdlPEBaseInfoWork (players and enemies, 803398B0) holds the
+        // status work: _dispRamNoList, _dispPosNoList, _timerList,
+        // _isFirstList, _downDataList and _upDataList (+0xF0..+0x10C) are
+        // null and _poisonDamage / _poisonEndurance (+0x100 / +0x104) 0 in
+        // every fresh work; the next status command makes them (803AEBB4).
+        // An enemy remade in a RAM no longer inherits the DOWN / UP values,
+        // poison damage or icons of the last one.
+        ram.status.reset();
+        if (ram.is_player) {
+            // beNDMWMdlPlayerInfoWork (80339494): the player hook gives
+            // _turnAtkTimer (+0x114) a new list of eight zeros (8034D7B8..
+            // 8034D864); _bodyAtkSt0 / _bodyAtkPad / _bodyAtkTimer (+0x118 /
+            // +0x11C / +0x120, the Slam double tap), _isPanel (+0x124) and
+            // _wCheckSt / _wCheckMode (+0x128 / +0x12C, the A combo) have no
+            // default. A respawned player starts without the last life's
+            // Spiral history, Slam tap or combo phase.
+            ram.spin.fill(0);
+            ram.slam_state = 0;
+            ram.slam_direction = 0;
+            ram.slam_timer = 0.0f;
+            ram.panel_open = false;
+            ram.combo_phase = 0;
+            ram.combo_released = false;
+        }
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
+                // 0x8034DA7C..0x8034DB24: the hook clears GAMERAM UPDATA[0..6]
+                // and DOWNDATA[0..5] (804E7C68 / 804E7C6C = 0) before
+                // RECALCPLAYER (0x8034DCF4): the status values of the last
+                // life (its fresh status work no longer times them) go.
+                auto& gameram = sys->players[std::size_t(std::clamp(ram.index, 0, 3))];
+                std::fill_n(gameram.updata.begin(), 7, 0);
+                std::fill_n(gameram.downdata.begin(), 6, 0);
                 sys->prepare_player(engine, ram.index);
                 const auto& slot = sys->players[std::size_t(std::clamp(ram.index, 0, 3))];
                 const auto& stats = slot.stats;
@@ -722,6 +773,17 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 hud("NUMBERCTRL", "hpnm", "SETVALUE", hp_value);
                 hud("METERCTRL", "mpmt", "SETPERCENT", mp_percent);
                 hud("NUMBERCTRL", "mpnm", "SETVALUE", mp_value);
+                // 0x8034DEA4..0x8034DED8: in the five stages of 804E7C80
+                // (strcmp 8009D5D8) the hook sends PLAYER <ram> SETMETAL, so a
+                // player respawned there is metal again like at the stage
+                // start (the stage scripts' funcStageIn sends it as well).
+                static constexpr std::string_view kMetalStages[] = {"dng204b1", "dng204b2", "dng205b1", "dng205b2", "dng205b3"};
+                std::string stage = engine.stage_name();
+                std::transform(stage.begin(), stage.end(), stage.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (std::find(std::begin(kMetalStages), std::end(kMetalStages), stage) != std::end(kMetalStages)) {
+                    Packet metal;
+                    engine.messenger().send(engine, "PLAYER", std::nullopt, ram.index, "SETMETAL", metal);
+                }
             }
         }
         ram.attach_name.clear();
