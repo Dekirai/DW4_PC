@@ -2877,13 +2877,12 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
     if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
         engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name));
     if (!ram.actions) return;
-    const Action* found = nullptr;
-    for (const auto& a : *ram.actions) if (a.name == name) { found = &a; break; }
-    if (!found) {
-        engine.note("ACTION " + std::string(name) + " missing in " + ram.info_name);
-        return;
-    }
-    if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
+    // The default path of 802F1794 (every name but NDSP and the special
+    // commands) activates the RAM and sets its switch-mask bit first
+    // (0x802F1E94..0x802F1EF4 for an inactive RAM, 0x802F20E4..0x802F2120 for
+    // an active one) and looks the action up only after that (800695CC at
+    // 0x802F2144): a name the model has no action for still shows the model
+    // and turns its collision on (kind 0x400 children follow that bit).
     if (!ram.action_active) {
         ram.action_active = true;
         // 0x802F1EC0-0x802F1EC8: work +14 (motion), +34 (fade), +44 (wait).
@@ -2918,17 +2917,42 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
         ram.motion_immediate = false; // 0x802F212C, also for the action already running
     }
     ram.visible = true;
-    if (ram.current == found) { apply_visuals(ram); return; }
+    const Action* found = nullptr;
+    for (const auto& a : *ram.actions) if (a.name == name) { found = &a; break; }
+    if (!found) engine.note("ACTION " + std::string(name) + " missing in " + ram.info_name);
+    // 0x802F2148..0x802F2158: the action already current (work +8) runs no
+    // command and sends no broadcast.
+    if (ram.current == found) {
+        if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name) + " already current");
+        apply_visuals(ram);
+        return;
+    }
+    if (!found) {
+        // A missing name while another action is current: the original stores
+        // the null action and its command loop 802F1510 reads through it
+        // (lwz 0xC(r29) at 0x802F16A4), a fault no stage data reaches. Keep
+        // the model shown, run nothing and send no broadcast.
+        ram.current = nullptr;
+        ram.cursor = 0;
+        apply_visuals(ram);
+        return;
+    }
     ram.current = found;
     ram.cursor = 0;
-    // ACTION_BROADCAST (8031308C): starters react to (model, RAM, action).
+    // 0x802F21B0: the commands run (802F1510) with the switch bit already
+    // set, and only then 80305ED0 at 0x802F21D8 sends ACTION_BROADCAST
+    // (info name, RAM index, action name): the action starters (802F228C)
+    // and the SE sets (803130D4, MODELCTRL SETSOUND: here SoundManager::
+    // action_started) see the model as its first commands left it.
+    run(engine, ram);
+    apply_visuals(ram);
+    if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
     Packet broadcast;
     broadcast.strings.emplace_back(ram.info_name);
     broadcast.ints.push_back(ram.index);
     if (engine.messenger().count("ACTION_BROADCAST", std::nullopt, -1))
         engine.messenger().send(engine, "ACTION_BROADCAST", std::nullopt, -1, name, broadcast);
-    run(engine, ram);
-    apply_visuals(ram);
 }
 
 bool ActionManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
@@ -2969,6 +2993,8 @@ bool ActionManager::command(Engine& engine, Ram& base, std::string_view command,
         return true;
     }
     if (command == "NDSP") {
+        if (static const char* trace = std::getenv("DW4_TRACE_ACTION"); trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " NDSP");
         ram.color.reset();
         ram.blend.reset();
         ram.texture.reset();
