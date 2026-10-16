@@ -150,9 +150,11 @@ collector is unchanged: `nblocks` (0x60) counts object sizes, `GCthreshold`
 (0x5C) starts at twice the state after opening, `luaC_checkGC` (80279894) runs
 after every `luaD_call` (80278448), at CREATETABLE/CONCAT/CLOSURE
 (`luaV_execute` 802834F8) and in `lua_concat`/`lua_setgcthreshold`;
-`protectedparser` (80278708) collects before every chunk load and adds the new
-chunk's blocks to the threshold; `luaC_collectgarbage` (80279830) marks, sweeps
-and sets the threshold to twice the live bytes. The game itself never changes
+before every chunk load `protectedparser` (80278708) collects when
+`nblocks/8 >= GCthreshold/10` (unsigned divisions, 0x80278730..0x80278744:
+about 80 % of the threshold, not `luaC_checkGC`'s `nblocks >= GCthreshold`) and
+then adds the new chunk's blocks to the threshold; `luaC_collectgarbage`
+(80279830) marks, sweeps and sets the threshold to twice the live bytes. The game itself never changes
 the threshold: `lua_setgcthreshold` (80273C58) is reached only from the base
 library's `collectgarbage`, which the binding setup (80270BC4) runs once as
 `collectgarbage()`. The binding installs `gc` tag methods per bound class
@@ -162,14 +164,27 @@ method exists for nil.
 The port keeps that model. Allocations of tables (24-byte hash, 40-byte
 nodes), closures (16 + 16 per upvalue), strings (21 + length), globals and the
 program of every run (as the original undumps the chunk per run) raise the live
-estimate. At every instruction boundary, where all live values sit in frames,
-a collection runs once the estimate reaches the threshold, or before a step
-could exceed the live object/entry limits. It marks from the globals and every
-live execution (frame stacks, captures, pending call function and arguments,
-kept results), traverses tables and closures through a work list with marks
-per arena slot, removes table entries and globals whose value is nil (the dead
-keys Lua 4.0.1 `markall` drops), sweeps the arenas in slot order and sets the
-threshold to twice the measured live bytes. Strings are shared C++ values that
+estimate. Before a chunk loads, the 80 % test of `protectedparser` above
+decides a collection. At every instruction boundary, where all live values sit
+in frames, a collection runs once the estimate reaches the threshold, or before
+a step could exceed the live object/entry limits. It marks from the globals and
+every live execution (frame stacks, captures, pending call function and
+arguments, kept results), traverses tables and closures through a work list
+with marks per arena slot, erases table entries and globals whose value is nil,
+sweeps the arenas in slot order and sets the threshold to twice the measured
+live bytes.
+
+Erasing dead keys approximates the original. `traversetable` (in `markall`
+802790CC, 0x80279184..0x802791C4) calls `luaH_remove` (80280F48) for a node
+with a nil value and then still marks its key and value. `luaH_remove` keeps
+number keys and string keys of 30 bytes or less as they are; a longer string,
+a table or a function key becomes an unused number key with the same main
+position. No node is freed until the next rehash, which moves only non-nil
+entries. A nil-valued node reads as absent everywhere (table and global gets,
+the probes of `getn`, host `table_get`), and the port has no `next`, `foreach`
+or LFOR traversal (no game chunk contains LFORPREP), so the difference is not
+observable: it changes only the live estimate (when collections run) and the
+`max_table_entries` / `max_globals` guards. Strings are shared C++ values that
 free themselves; they are counted once per distinct string. Nothing in the
 collection depends on addresses or hashing order, so runs are deterministic.
 The port's scripts create no userdata (`be` is a permanent host global), so no

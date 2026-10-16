@@ -455,8 +455,8 @@ struct Lua4Vm::Impl {
             allocate(node_bytes + (converted.text.empty() ? 0 : string_bytes(converted.text.size())));
             entries.emplace(converted, assigned);
         } else {
-            // A nil value keeps its node until the next collection removes the
-            // dead key, as Lua 4.0.1 markall does (luaH_remove).
+            // A nil value keeps its node until the next collection drops the
+            // dead key (collect: an approximation of luaH_remove).
             found->second = assigned;
         }
     }
@@ -481,9 +481,10 @@ struct Lua4Vm::Impl {
         entry_trigger = std::max(entries_live + 1, limits.max_table_entries > entry_reserve ? limits.max_table_entries - entry_reserve + 1 : 1);
     }
     // luaC_checkGC (80279894): the original checks after every call
-    // (luaD_call 80278448), CREATETABLE / CONCAT / CLOSURE (luaV_execute
-    // 802834F8) and before loading a chunk (80278708). The port checks at
-    // every instruction boundary, where all live values sit in frames.
+    // (luaD_call 80278448) and at CREATETABLE / CONCAT / CLOSURE
+    // (luaV_execute 802834F8); before loading a chunk protectedparser
+    // (80278708) has its own 80 % test (process). The port checks at every
+    // instruction boundary, where all live values sit in frames.
     void check_gc() {
         if (nblocks >= std::min(threshold, limits.max_heap_bytes) || objects_live >= object_trigger || entries_live >= entry_trigger)
             collect();
@@ -540,6 +541,17 @@ struct Lua4Vm::Impl {
                 continue;
             }
             auto& values = tables.slots[table_work.back()]->values; table_work.pop_back();
+            // Dead keys (nil values) are erased. The original's traversetable
+            // (in markall 802790CC, 0x80279184..0x802791C4) calls luaH_remove
+            // (80280F48) for them and then still marks key and value:
+            // number keys and string keys of 30 bytes or less stay as they
+            // are, longer strings, tables and functions become an unused
+            // number key of the same main position; no node is freed until
+            // the next rehash, which only moves non-nil entries. A nil-valued
+            // node reads as absent everywhere (gets, getn's probes, host
+            // table_get), and the port has no next / foreach / LFOR traversal
+            // (no game chunk has LFORPREP), so erasing changes only the
+            // live estimate and the max_table_entries / max_globals guards.
             for (auto entry = values.begin(); entry != values.end();) {
                 if (entry->second.type_ == Lua4Type::Nil) { entry = values.erase(entry); continue; } // dead key
                 const auto& k = entry->first;
@@ -703,10 +715,14 @@ struct Lua4Vm::Impl {
         if(!execution.initialized) {
             execution.initialized=true;
             if(!execution.program)fail("empty program");
-            // lua_dobuffer 80278810 -> protectedparser 80278708: a collection
-            // check, then every run undumps its chunk again; the new blocks
-            // raise the threshold too, as they probably stay.
-            check_gc();
+            // lua_dobuffer 80278810 -> protectedparser 80278708 collects
+            // when nblocks/8 >= GCthreshold/10 (unsigned, 0x80278730..
+            // 0x80278744: srwi, divwu, luaC_collectgarbage), about 80 % of
+            // the threshold, not luaC_checkGC's nblocks >= GCthreshold.
+            // Then every run undumps its chunk again; the new blocks raise
+            // the threshold too, as they probably stay. The port's object /
+            // entry guards wait for the first instruction boundary.
+            if(nblocks/8>=threshold/10) collect();
             allocate(execution.program->retained_bytes);
             threshold=execution.program->retained_bytes>SIZE_MAX-threshold ? SIZE_MAX : threshold+execution.program->retained_bytes;
             enter_frame(execution,closure(execution.program,execution.program->root,{}),{});
