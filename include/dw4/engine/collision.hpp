@@ -68,11 +68,12 @@ public:
     void set_group_enabled(std::uint32_t group, bool enabled);
     bool group_enabled(std::uint32_t group) const { return group >= groups_.size() || groups_[group]; }
     // Kind 0x400 geometry (HITLAND_TRAVERSAL): a beCopyTransform child whose
-    // matrix is copied from its source transform [12] every frame. Its
-    // triangles stay in the child's space and follow set_dynamic.
+    // matrix the candidate traversal 803009D0 copies from its source
+    // transform [12] at query time (80128CF4 at 0x80300CE0). Its triangles
+    // stay in the child's space; every query reads the source node set here.
     std::uint32_t add_dynamic(const ObjectView& copy_transform, std::uint32_t kind, std::uint16_t info = 0xFFFF,
                               std::uint16_t child = 0);
-    void set_dynamic(std::uint32_t id, const Mat4& matrix, bool enabled);
+    void set_dynamic(std::uint32_t id, const Node* source, bool enabled);
     std::size_t triangle_count() const { return triangles_.size(); }
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // HITLAND_TRAVERSAL: every segment against the triangles of the selected
@@ -98,10 +99,10 @@ private:
                   std::vector<CollisionTriangle>* into = nullptr);
     struct Dynamic {
         std::vector<CollisionTriangle> local;
-        float reach{};       // largest local distance from the origin
-        Mat4 matrix{};
-        bool enabled{};
-        const Node* node{};  // a followed transform: its matrix, enabled by the group
+        float reach{};        // largest local distance from the origin
+        const Node* node{};   // the followed node, whose matrix every query reads
+        bool grouped{};       // a check-switch transform: enabled by its group
+        bool enabled{};       // a kind 0x400 child: set_dynamic
         std::uint32_t group{};
     };
     // The enabled dynamic triangles within `reach` of p, in world space.

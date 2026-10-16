@@ -1923,8 +1923,8 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
     // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
     // Kind bit 0x400 marks model-attached geometry whose children follow the
-    // source model transform (HITLAND_TRAVERSAL.md); that dynamic collision is
-    // not reconstructed, so it is left out of the static world.
+    // source model transform (HITLAND_TRAVERSAL.md); it stays out of the
+    // static world and is met where its model is at query time.
     const auto kind = std::uint32_t(info.i32(10));
     if (kind & 0x400u) {
         // Each check-switch child is a beCopyTransform following its model
@@ -1970,7 +1970,9 @@ bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command
 
 void HitLandManager::update(Engine& engine) {
     if (followers_.empty()) return;
-    // The copy transforms take their model's matrix (80128CF4); a removed
+    // The copy transforms take their model's matrix (80128CF4) when a query
+    // runs (803009D0 at 0x80300CE0), so the world keeps the model node and
+    // reads its matrix then, not here before ModelCtrl moves it. A removed
     // model (a broken box) leaves no collision behind.
     auto* models = engine.get<ModelCtrlManager>();
     for (const auto& follower : followers_) {
@@ -1983,7 +1985,7 @@ void HitLandManager::update(Engine& engine) {
                     break;
                 }
         const auto off = info_off_.find(follower.info);
-        world_.set_dynamic(follower.id, node ? node->matrix : Mat4{}, live && (off == info_off_.end() || !off->second));
+        world_.set_dynamic(follower.id, node, live && (off == info_off_.end() || !off->second));
         if (static const bool trace = std::getenv("DW4_TRACE_HITLAND") != nullptr; trace && live && engine.frame() % 300 == 0)
             engine.log("hitland " + follower.info + " follows (" + std::to_string(node->matrix(3, 0)) + ", " +
                        std::to_string(node->matrix(3, 1)) + ", " + std::to_string(node->matrix(3, 2)) + ")");

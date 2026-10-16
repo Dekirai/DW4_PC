@@ -263,7 +263,9 @@ whose kind meets the query flags (front faces only, 801238E8). CHECKLAND
 the highest floor inside the up/down window, else the nearest below; CHECKWALL
 (802FE7F0) runs the wide preflight, the longitudinal pull-back along the
 movement and the lateral push along the nearest wall's normal (H = 1.42
-width). Kind 0x400 geometry follows its model's node; a check-switch child
+width). Kind 0x400 geometry follows its model's node, read when the query
+runs (803009D0 copies the source matrix in every candidate pass, so a car or
+boat moved earlier in the frame is met where it is now); a check-switch child
 that is a transform follows that transform's scene node (the limit circle
 under the beChangePosTransform, which `ChangePosManager` keeps at the players'
 centre while everyone is within 40 units, so players cannot leave each other).
