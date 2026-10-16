@@ -7,7 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <set>
+#include <sstream>
 
 namespace dw4::game {
 namespace {
@@ -2873,7 +2875,98 @@ void region_report(engine::Engine& engine, const engine::ModelCtrlManager::Model
     std::fflush(stdout);
 }
 
+namespace {
+CampaignBot* g_live_bot = nullptr; // the driver of this run (campaign_memory_save)
+std::string g_pending_memory;      // memory read with --load-state, for its next update
+bool g_memory_pending = false;
+} // namespace
+
+void campaign_memory_save(const std::filesystem::path& path) {
+    if (!g_live_bot) return;
+    std::ofstream file(path, std::ios::binary);
+    if (file) g_live_bot->save_memory(file);
+}
+
+void campaign_memory_load(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return;
+    std::ostringstream text;
+    text << file.rdbuf();
+    g_pending_memory = text.str();
+    g_memory_pending = true;
+    std::printf("campaign: driver memory from %s\n", path.string().c_str());
+}
+
+// One "key values..." line per entry (blanks inside names written as '~').
+void CampaignBot::save_memory(std::ostream& out) const {
+    const auto word = [](std::string text) {
+        std::replace(text.begin(), text.end(), ' ', '~');
+        return text.empty() ? std::string("-") : text;
+    };
+    out << "deaths " << deaths_ << "\n";
+    for (const auto& [objective, level] : defeat_levels_) out << "defeat " << word(objective) << " " << level << "\n";
+    out << "gear_checked " << gear_checked_[0] << " " << gear_checked_[1] << "\n";
+    for (const auto& [kind, record] : equip_failed_) out << "equip_failed " << kind << " " << record << "\n";
+    for (const auto& gate : gate_tried_) out << "gate_tried " << word(gate) << "\n";
+    for (const auto& [place, count] : place_visits_) out << "visits " << word(place.first) << " " << place.second << " " << count << "\n";
+    for (const auto& [place, hash] : swept_) out << "swept " << word(place.first) << " " << place.second << " " << hash << "\n";
+    for (const auto& [record, price] : prices_) out << "price " << record << " " << price << "\n";
+    out << "timers " << heal_at_ << " " << gate_disk_at_ << " " << last_attack_ << " " << aggressive_until_ << " " << held_presses_ << " "
+        << guard_held_ << " " << tech_end_ << " " << panel_ready_at_ << " " << big_hit_ << " " << big_hit_at_ << " " << train_exp_ << " "
+        << train_exp_at_ << "\n";
+}
+
+void CampaignBot::load_memory(std::istream& in) {
+    const auto unword = [](std::string text) {
+        if (text == "-") return std::string();
+        std::replace(text.begin(), text.end(), '~', ' ');
+        return text;
+    };
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream f(line);
+        std::string key;
+        f >> key;
+        if (key == "deaths") {
+            f >> deaths_;
+        } else if (key == "defeat") {
+            std::string objective;
+            int level = 0;
+            if (f >> objective >> level) defeat_levels_[unword(objective)] = level;
+        } else if (key == "gear_checked") {
+            f >> gear_checked_[0] >> gear_checked_[1];
+        } else if (key == "equip_failed") {
+            int kind = 0, record = 0;
+            if (f >> kind >> record) equip_failed_.insert({kind, record});
+        } else if (key == "gate_tried") {
+            std::string gate;
+            if (f >> gate) gate_tried_.insert(unword(gate));
+        } else if (key == "visits") {
+            std::string stage;
+            int entry = 0, count = 0;
+            if (f >> stage >> entry >> count) place_visits_[{unword(stage), entry}] = count;
+        } else if (key == "swept") {
+            std::string stage;
+            int entry = 0;
+            std::size_t hash = 0;
+            if (f >> stage >> entry >> hash) swept_[{unword(stage), entry}] = hash;
+        } else if (key == "price") {
+            int record = 0, price = 0;
+            if (f >> record >> price) prices_[record] = price;
+        } else if (key == "timers") {
+            f >> heal_at_ >> gate_disk_at_ >> last_attack_ >> aggressive_until_ >> held_presses_ >> guard_held_ >> tech_end_ >> panel_ready_at_ >>
+                big_hit_ >> big_hit_at_ >> train_exp_ >> train_exp_at_;
+        }
+    }
+}
+
 CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
+    g_live_bot = this;
+    if (g_memory_pending) {
+        g_memory_pending = false;
+        std::istringstream text(g_pending_memory);
+        load_memory(text);
+    }
     // The disk shop's prices, wherever the conItem table is loaded.
     if (auto* db = engine.get<engine::DatabaseManager>(); db && db->has_column("conItem", "HANBAI"))
         for (const auto& s : kSupplies)

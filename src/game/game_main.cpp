@@ -928,6 +928,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             state_slots[0] = read_state_file(options.load_state);
             if (!state_slots[0]) throw std::runtime_error("unreadable state file " + options.load_state.string());
             load_state(0);
+            // (A campaign run resumed: the driver's memory saved with the state.)
+            if (const auto memory = std::filesystem::path(options.load_state).replace_extension(".mem"); std::filesystem::exists(memory))
+                dw4::game::campaign_memory_load(memory);
             // DW4_CHEATS_FROM_ENV=1 (test runs): the test cheats from the
             // environment (DW4_GOD, DW4_ONE_HIT, DW4_INFINITE_MP) instead of
             // the state's, from the loaded frame on (a cheat run resumed
@@ -1439,9 +1442,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 save_state(0);
                 state_test_save = false;
             }
-            if (stage_states && steps > 0 && last_step_loaded && can_save().empty())
-                write_state_file(std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state"),
-                                 SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
+            if (stage_states && steps > 0 && last_step_loaded && can_save().empty()) {
+                const auto state_file = std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state");
+                write_state_file(state_file, SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
+                // (The campaign driver's memory beside it, for resumed runs.)
+                dw4::game::campaign_memory_save(std::filesystem::path(state_file).replace_extension(".mem"));
+            }
             if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
             if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
                 interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));

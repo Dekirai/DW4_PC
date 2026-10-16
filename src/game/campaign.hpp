@@ -16,6 +16,8 @@
 #include "test_path.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <iosfwd>
 #include <map>
 #include <optional>
 #include <string>
@@ -33,6 +35,12 @@ public:
     };
     // `player` is null outside the game stages (logos, title, loading).
     Output update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
+    // The driver's memory that outlives a stage (defeat levels, shop and lab
+    // errands done, heal gates given up, visits, cooldowns) as text lines, so
+    // a run resumed from a stage state goes on as the run that saved it
+    // (test tooling, see campaign_memory_save).
+    void save_memory(std::ostream& out) const;
+    void load_memory(std::istream& in);
 
 private:
     struct Step {
@@ -186,6 +194,13 @@ private:
     engine::Vec3f gate_at_{};    // where it is
     std::set<std::string> gate_tried_; // "<stage> <mat>" heal gates given up
 };
+
+// Test tooling for resumed runs: the live campaign driver's memory written
+// next to a stage state (DW4_STAGE_STATES: <frame>_<stage>.mem beside the
+// .dw4state), and read back with --load-state (that state's .mem, when there
+// is one) before the driver's next update. No-ops without a driver.
+void campaign_memory_save(const std::filesystem::path& path);
+void campaign_memory_load(const std::filesystem::path& path);
 
 // One step of a ride's targets (campaign.cpp kRideTargets: the stag0103
 // boat's factory towers, the stag0203 train's junction signs) on the way to
