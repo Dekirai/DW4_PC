@@ -165,6 +165,7 @@ private:
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
+    int jump_at_ = -100000;      // a boss fight's jump attack began (X), see boss_fight
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu

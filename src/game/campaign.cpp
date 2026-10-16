@@ -3037,7 +3037,26 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         // floating out of the swing's reach (8 above the feet) takes a jump
         // attack (X, then A in the air).
         const bool jump = !in_reach && dodge && body_bottom > me.y + 8.0f && body_bottom < me.y + 25.0f;
-        const bool safe = here_due > (jump ? kSwingBusy + 12.0f : kSwingBusy);
+        // With `dodge` the blows go in while the boss's AI waits: its AIM map
+        // picks again when its AITIMER runs out (update_ai_map, 80308654),
+        // and close by Apocalymon's second phase map (MAP01: within 20 of the
+        // player 11 of 16 picks SQ_WAIT for 30 frames, else SQ_MAGIC; 20..60
+        // also walks at the player; beyond 60 it only walks) holds still. A
+        // jump attack (X, A 10 frames later, down after some 40) starts with
+        // kJumpWindow frames or more of its wait left, so a cast picked next
+        // comes down (24 frames after the cast) after the attack; also while
+        // a hit holds it (damage, stun).
+        constexpr float kJumpWindow = 18.0f;
+        const bool held = boss->seq_name.find("DMG") != std::string::npos || boss->seq_name.find("FORM") != std::string::npos ||
+                          boss->seq_name == "SQ_STUN";
+        const bool window = !dodge || held || (boss->seq_name == "SQ_WAIT" && ai_frames_left(engine, *boss) >= kJumpWindow);
+        const bool safe = here_due > (jump ? kSwingBusy + 12.0f : kSwingBusy) && window;
+        // (A jump attack under way: X, then A in the air.)
+        if (const int t = frame - jump_at_; t >= 0 && t <= 40) {
+            if (t < 3) out.buttons |= pad_button::x;
+            else if (t >= 10 && t < 13) out.buttons |= pad_button::a;
+            return true;
+        }
         // (With `dodge` the way there must stay clear: no point of it that a
         // box meets before the player passes it and a little after.)
         bool way_clear = true;
@@ -3058,8 +3077,10 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
             out.z = me.z + (me.z - c.z) / d * 6.0f;
             out.reach = 1.0f;
         } else if (safe && jump) {
-            if (frame % 40 < 3) out.buttons |= pad_button::x;
-            else if (frame % 40 >= 10 && frame % 40 < 13) out.buttons |= pad_button::a;
+            if (player.ctrl_mode != 0 && player.control_enabled) {
+                jump_at_ = frame;
+                out.buttons |= pad_button::x;
+            }
         } else if (safe && frame % 12 < 3) {
             out.buttons |= pad_button::a;
         }
