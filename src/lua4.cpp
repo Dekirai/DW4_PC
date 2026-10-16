@@ -650,6 +650,15 @@ struct Lua4Vm::Impl {
             fail("unsupported numeric string or arithmetic tag method");
         return result;
     }
+    // luaL_check_number (80274214) inside math_pow: a numeric string
+    // converts, anything else is luaL_argerror's "number expected"; a tag
+    // method call has no function name, so it shows as `?'.
+    double pow_argument(const Lua4Value& value, int argument) {
+        if (value.type_ == Lua4Type::Number || value.type_ == Lua4Type::String) return numeric(value);
+        const char* type = value.type_ == Lua4Type::Nil ? "nil" : value.type_ == Lua4Type::Table ? "table" :
+            value.type_ == Lua4Type::HostObject ? "userdata" : "function";
+        fail("bad argument #" + std::to_string(argument) + " to `?' (number expected, got " + type + ")");
+    }
     std::string text(const Lua4Value& value) {
         if (value.type_ == Lua4Type::String) { work(value.text_->size()); return *value.text_; }
         if (value.type_ == Lua4Type::Number) return value.describe();
@@ -914,7 +923,23 @@ struct Lua4Vm::Impl {
                 push(Lua4Value::number(value)); break;
             }
             case 24: { const auto value = numeric(pop()); push(Lua4Value::number(value + static_cast<double>(s))); break; }
-            case 28: fail("POW requires an unsupported Lua 4 arithmetic tag method");
+            case 28: {
+                // OP_POW converts nothing itself: call_binTM looks for a pow
+                // tag method on the first operand's tag, then the second's,
+                // then the global one. The only one is the math library's
+                // for numbers (igLuaState opens it, lua_mathlibopen 8027BC14
+                // -> math_pow 8027B668), so a number on either side calls
+                // math_pow(a, b, "pow"), else "undefined operation".
+                need(2);
+                const auto right = stack.back(), left = stack[stack.size() - 2];
+                if (left.type_ != Lua4Type::Number && right.type_ != Lua4Type::Number) fail("undefined operation");
+                // The event name and the method go on the stack (lua_pushstring,
+                // luaD_openstack), then callCclosure checks 20 slots.
+                check_stack(top + 2, c_reserve);
+                // math_pow reads argument 2 before argument 1, then pow (800A2D14).
+                const auto exponent = pow_argument(right, 2), value = pow_argument(left, 1);
+                stack.resize(stack.size() - 2); push(Lua4Value::number(std::pow(value, exponent))); break;
+            }
             case 29: {
                 need(u); if (u < 2) fail("CONCAT requires at least two operands");
                 const auto base = stack.size() - u; std::string joined;

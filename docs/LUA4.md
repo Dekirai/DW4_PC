@@ -183,6 +183,7 @@ last argument) and checks where the original checks:
 | `be.X` / `be:X` lookup, gettable method | `luaV_gettable` 80282A90 | 2, then 20 |
 | reading a nil global, getglobal method | `luaV_getglobal` 80282D10 | 3, then 20 |
 | assigning over a nil global, setglobal method | `luaV_setglobal` 80282DE4 | 3, then 20 |
+| `^`, the math library's pow method | `call_binTM` in `luaV_execute` | 2 (event name, method), then 20 |
 
 The tag methods are the igLua binding's (80270BC4): getglobal / setglobal for
 the nil tag (8026C8C8 / 8026C980), gettable for its classes (8026D2B8); a
@@ -257,8 +258,23 @@ GameCube has 24 MB of main memory). `collect_garbage()` is `collectgarbage()`
 between root invocations and `heap_stats()` reports the counters. A table or closure that only the host
 still holds is collected like an unanchored value of the Lua C API.
 
-Unknown opcodes are rejected while reading. Executed `POW` requires an
-unimplemented arithmetic tag method and stops. `LFORPREP`/`LFORLOOP` stop because
+`POW` (`^`) has no numeric meaning in Lua 4 itself. `luaV_execute`'s
+`call_binTM` looks for a `pow` tag method on the first operand's tag, then on
+the second's, then for the global one. The game opens the math library
+(`igLuaState` 80272594), and `lua_mathlibopen` (8027BC14) sets `math_pow`
+(8027B668) as the `pow` method for numbers. So when either operand is a
+number, the port calls it the same way: `math_pow(a, b, "pow")` reads argument
+2 before argument 1 (`luaL_check_number` 80274214; a numeric string converts,
+anything else is ``bad argument #n to `?' (number expected, got TYPE)``) and
+returns `pow(a, b)`. Two operands that are not numbers (two numeric strings
+included) give "undefined operation". The port uses `std::pow`, while the
+original uses fdlibm's `__ieee754_pow` (800A042C behind 800A2D14); inexact
+results may differ in the last bit. No game chunk contains `POW`: a scan of
+all 7,300 embedded scripts (2,902 distinct chunks in 98 catalog resources and
+package members) found no `POW` and no `LFORPREP`. The decompiled scripts in
+`work/port-research/dec` agree.
+
+Unknown opcodes are rejected while reading. `LFORPREP`/`LFORLOOP` stop because
 the original hash-table iteration order is not implemented. General tag methods,
 userdata behavior, garbage-collector callbacks and the Lua standard libraries
 are outside this profile. Number formatting uses 16 significant digits.

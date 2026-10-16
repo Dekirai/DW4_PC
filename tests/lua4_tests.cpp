@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -164,7 +165,7 @@ void values_and_arithmetic() {
     check(inverted.completed && inverted.returned.size() == 3 && inverted.returned[0].as_number() == 1 &&
         !inverted.returned[1].truthy() && !inverted.returned[2].truthy(), "NOT used modern boolean semantics");
     f.code = {s(Pushint, 1), s(Pushint, 0), Div, Return, End}; stopped(run(f), "non-finite");
-    f.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End}; stopped(run(f), "tag method");
+    f.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End}; numeric_result(run(f), {8}); // Math library pow tag method.
     f.code = {u(Pushnil, 1), Minus, Return, End}; stopped(run(f), "arithmetic");
     f.code = {u(Pushnil, 1), u(Pushstring, 1), u(Concat, 2), Return, End}; stopped(run(f), "concatenation");
     f.code = {Add, End}; stopped(run(f), "underflow");
@@ -750,6 +751,30 @@ void stack_limit() {
     // runs is far below slot 1023 (docs/LUA4.md).
 }
 
+// '^' (OP_POW) has no numeric meaning of its own: call_binTM finds the math
+// library's pow tag method for numbers (lua_mathlibopen 8027BC14 -> math_pow
+// 8027B668) through either operand and calls it with (a, b, "pow").
+void power() {
+    Function f; f.strings = {"3", "2", "x"};
+    f.code = {s(Pushint, 2), s(Pushint, 10), Pow, s(Pushint, 9), u(Pushnum), Pow, s(Pushint, 2), u(Pushstring), Pow,
+        u(Pushstring, 1), s(Pushint, 3), Pow, s(Pushint, -2), s(Pushint, 2), Pow, Return, End};
+    f.numbers = {0.5};
+    numeric_result(run(f), {1024, 3, 8, 8, 4}); // number ^ numeric string, numeric string ^ number
+    f.code = {s(Pushint, 2), u(Pushnum), Pow, Return, End};
+    numeric_result(run(f), {std::pow(2.0, 0.5)});
+    f.code = {u(Pushstring, 1), u(Pushstring), Pow, Return, End}; stopped(run(f), "undefined operation"); // No number: no method.
+    f.code = {u(Pushnil, 2), Pow, Return, End}; stopped(run(f), "undefined operation");
+    f.code = {s(Pushint, 2), u(Pushnil, 1), Pow, Return, End}; stopped(run(f), "bad argument #2 to `?' (number expected, got nil)");
+    f.code = {u(Createtable), s(Pushint, 2), Pow, Return, End}; stopped(run(f), "bad argument #1 to `?' (number expected, got table)");
+    f.code = {s(Pushint, 2), u(Pushstring, 2), Pow, Return, End}; stopped(run(f), "numeric string");
+    f.code = {s(Pushint, 0), s(Pushint, -1), Pow, Return, End}; stopped(run(f), "non-finite"); // The port has no infinities.
+    // The method call needs the event name, the method and callCclosure's 20
+    // slots above the two operands (top 3 here): 3 + 2 + 20 < stack_last.
+    Function small; small.stack = 4; small.code = {s(Pushint, 2), s(Pushint, 3), Pow, Return, End};
+    Lua4Limits limits; limits.stack_size = 26; stopped(run(small, limits), "stack overflow");
+    limits.stack_size = 27; numeric_result(run(small, limits), {8});
+}
+
 Bytes file_bytes(const char* path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) throw std::runtime_error("Cannot read optional original Lua chunk");
@@ -777,7 +802,7 @@ int main(int argc, char** argv) {
     try {
         reader_checks(); values_and_arithmetic(); control_flow(); calls_closures_and_tables(); host_and_limits();
         resumed_frames_and_results();resumed_tailcalls();nested_owned_invocations();continuation_ownership_and_faults();nested_faults_and_limits();
-        garbage_collection(); script_errors_keep_the_vm(); stack_limit();
+        garbage_collection(); script_errors_keep_the_vm(); stack_limit(); power();
         if (argc == 3) original(argv[1], argv[2]);
         else if (argc != 1) throw std::runtime_error("Usage: dw4_lua4_tests [func-chunk boot-chunk]");
         std::cout << "Lua 4 tests passed: " << checks << " checks\n"; return 0;
