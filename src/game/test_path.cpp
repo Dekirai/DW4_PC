@@ -1951,6 +1951,18 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // Targets given up for a moment are tried again, not those left
         // alone for taking no damage.
         std::erase_if(unreachable_, [&](const auto& entry) { return entry.second - frame < 2000; });
+        // Nor turrets whose posts were given up for the stage: one may stand
+        // in the only way on (its body filling it), so the stage is not done
+        // without it (from now on its walk to the post counts a quarter).
+        for (const void* turret : unreached_) {
+            unkillable_.erase(turret);
+            unreachable_.erase(turret);
+            fruitless_runs_.erase(turret);
+            approach_.erase(turret);
+            forgiven_.insert(turret);
+            if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore tries a given-up post again\n", frame);
+        }
+        unreached_.clear();
         planned_ = -1000;
         what_ = "forget the explored ground";
         return;
@@ -2066,6 +2078,60 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
             band->second = {std::min(band->second.first, c.y - h.size.y * 0.5f - 7.5f), std::max(band->second.second, c.y + h.size.y * 0.5f + 0.5f)};
         }
     }
+    // The steady view for crossings that start with a jump into the fire: a
+    // bullet seen the step before keeps counting while its box list is empty
+    // (a box re-armed: still generated, near where it was, not erasing), and
+    // only a bullet new to it is a shot, placed in its turret's sequence.
+    std::erase_if(volleys_, dead);
+    std::erase_if(phases_, dead);
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->category != "ENEMY" || e->info_name.rfind("g_", 0) != 0) continue;
+        auto [entry, fresh] = phases_.try_emplace(e.get());
+        auto& phase = entry->second;
+        // (First seen in the middle of a sequence: its start is not known.)
+        if (fresh) {
+            phase.serial = e->sequence_serial;
+            phase.seq = e->seq_name;
+            continue;
+        }
+        if (phase.serial == e->sequence_serial) continue;
+        // (A run of the firing sequence that ended: its length.)
+        if (phase.start >= 0 && !phase.fire_seq.empty() && phase.seq == phase.fire_seq) phase.length = std::max(phase.length, frame - phase.start);
+        phase.serial = e->sequence_serial;
+        phase.seq = e->seq_name;
+        phase.start = frame;
+    }
+    std::map<const void*, std::pair<engine::Vec3f, const void*>> steady;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->is_player) continue;
+        const auto at = position_of(*e);
+        const auto before = steady_bullets_.find(e.get());
+        const bool known = before != steady_bullets_.end() && flat(before->second.first, at) <= 20.0f;
+        if (const auto seen = live.find(e.get()); seen != live.end()) {
+            steady[e.get()] = seen->second;
+            if (!known) {
+                auto& shots = volleys_[seen->second.second];
+                if (shots.empty() || frame - shots.back() > 4) {
+                    shots.push_back(frame);
+                    if (const auto phase = phases_.find(seen->second.second); phase != phases_.end() && phase->second.start >= 0) {
+                        auto& ph = phase->second;
+                        if (ph.fire_seq.empty()) ph.fire_seq = ph.seq;
+                        const int offset = frame - ph.start;
+                        bool seen_offset = false;
+                        for (const int o : ph.offsets) seen_offset = seen_offset || std::abs(o - offset) <= 3;
+                        if (ph.seq == ph.fire_seq && !seen_offset && ph.offsets.size() < 8) {
+                            ph.offsets.push_back(offset);
+                            std::sort(ph.offsets.begin(), ph.offsets.end());
+                        }
+                    }
+                }
+                if (shots.size() > 12) shots.erase(shots.begin());
+            }
+        } else if (known && e->hitboxes.empty() && e->seq_name.rfind("SQ_ERAS", 0) != 0 && alive.count(before->second.second)) {
+            steady[e.get()] = {at, before->second.second};
+        }
+    }
+    steady_bullets_ = std::move(steady);
     bullets_ = std::move(live);
     if (frame % 30 == 0) std::erase_if(fire_cells_, [&](const auto& entry) { return frame - entry.second.frame > 150; });
 }
@@ -2169,6 +2235,11 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         bullets_.clear();
         bullet_speed_.clear();
         turret_band_.clear();
+        steady_bullets_.clear();
+        volleys_.clear();
+        phases_.clear();
+        unreached_.clear();
+        forgiven_.clear();
         standing_.clear();
         perch_skip_.clear();
         fire_wait_since_ = fire_go_until_ = -1;
@@ -2466,6 +2537,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         float before = 0.0f, inside = 0.0f;
         int jumps = 0;
         bool entered = false, left = false, jump_in = false;
+        std::size_t entry_index = route_.size(); // the waypoint whose way in enters the fire
         engine::Vec3f from = me, last_safe = me, first_hot{};
         for (std::size_t i = next_; i < route_.size() && !left && (entered || before < 30.0f); ++i) {
             const auto& to = route_[i].point;
@@ -2482,6 +2554,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 if (!entered && hot) {
                     entered = true;
                     first_hot = p;
+                    entry_index = i;
                     // A jump into the fire: waited for at its take-off.
                     jump_in = route_[i].jump;
                     if (jump_in) last_safe = from;
@@ -2517,6 +2590,12 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                              flat(me, last_safe) / 0.75f;
         bool go = true;
         float least = std::numeric_limits<float>::infinity();
+        // A jump up into the lane (from the floor below it, where the bullets
+        // pass overhead) is timed on the steady view of the bullets and
+        // shots (track_fire): a bullet re-arming its box is no gap, and its
+        // re-arm no shot that would spoil the volley pattern.
+        const auto& live_bullets = jump_in ? steady_bullets_ : bullets_;
+        auto& shot_frames = jump_in ? volleys_ : shots_;
         for (const auto& [turret, band] : turrets) {
             const auto stand = standing_.find(turret);
             if (stand == standing_.end()) continue;
@@ -2526,17 +2605,43 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             const auto at = stand->second.first;
             // A bullet still to pass the entry.
             const float speed = bullet_speed_[turret];
-            for (const auto& [bullet, info] : bullets_)
+            for (const auto& [bullet, info] : live_bullets)
                 if (info.second == turret && flat(info.first, at) < flat(first_hot, at) + 3.0f) go = false;
-            const auto& shots = shots_[turret];
+            const auto& shots = shot_frames[turret];
             float remaining = -1.0f;
-            if (shots.size() >= 6) {
+            // A jump up into the lane: the turret's phase in its firing
+            // sequence tells the next shot (one learned from at least a
+            // whole run): the next shot frame of this run, else the first of
+            // the next run (one frame after this one ends); out of that
+            // sequence (hit, between runs) no gap is known.
+            bool phased = false;
+            if (jump_in)
+                if (const auto ph = phases_.find(turret); ph != phases_.end() && !ph->second.fire_seq.empty() && !ph->second.offsets.empty() &&
+                                                          ph->second.length > ph->second.offsets.back()) {
+                    phased = true;
+                    const auto* model = static_cast<const engine::ModelCtrlManager::ModelRam*>(turret);
+                    if (model->seq_name == ph->second.fire_seq) {
+                        const int elapsed = frame - ph->second.start;
+                        remaining = float(ph->second.length + 1 - elapsed + ph->second.offsets.front());
+                        for (const int o : ph->second.offsets)
+                            if (o >= elapsed) {
+                                remaining = float(o - elapsed);
+                                break;
+                            }
+                    }
+                }
+            if (!phased && shots.size() >= 6) {
                 std::vector<int> gaps;
                 for (std::size_t i = 1; i < shots.size(); ++i) gaps.push_back(shots[i] - shots[i - 1]);
                 const std::size_t n = gaps.size();
-                for (std::size_t i = n - 1; i >= 2 && remaining < 0.0f; --i)
-                    if (std::abs(gaps[i - 2] - gaps[n - 2]) <= 4 && std::abs(gaps[i - 1] - gaps[n - 1]) <= 4)
+                // (For a jump into the lane only the latest repeat counts: an
+                // overdue shot is no gap.)
+                bool matched = false;
+                for (std::size_t i = n - 1; i >= 2 && remaining < 0.0f && !matched; --i)
+                    if (std::abs(gaps[i - 2] - gaps[n - 2]) <= 4 && std::abs(gaps[i - 1] - gaps[n - 1]) <= 4) {
                         remaining = float(gaps[i] - (frame - shots.back()));
+                        matched = jump_in;
+                    }
             }
             // (Its next bullet still has to fly to where the player will be.)
             const engine::Vec3f until = to_post && perch_ ? *perch_ : first_hot;
@@ -2547,7 +2652,15 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             if (remaining < needed) go = false;
             least = std::min(least, remaining);
         }
-        if (entered && !go) {
+        // Below the take-off's floor (a step on the way up to it, which the
+        // straight walk to the waiting point would only run into: stag0304's
+        // stairs to the cannon at (-370,120,100)): on along the route (its
+        // jumps included) until the take-off is the waypoint before the jump
+        // into the fire; the wait starts there.
+        const bool to_takeoff = jump_in && next_ < entry_index && std::abs(last_safe.y - me.y) > 2.0f;
+        if (entered && !go && to_takeoff) {
+            fire_wait_since_ = -1;
+        } else if (entered && !go) {
             if (fire_wait_since_ < 0) {
                 fire_wait_since_ = frame;
                 if (std::getenv("DW4_TRACE_EXPLORE"))
@@ -2804,11 +2917,17 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // A post never got onto (a turret's fire throwing the player back
             // each time, or never a gap to cross it) is given up for a while,
             // as a structure never reached; for the stage the third time.
-            if (!held_by_hit(player) && ++approach_[target_] > 1800) {
+            // (A forgiven turret's walk to its post counts a quarter: the far
+            // explored ground it comes back from is no try at the post.)
+            const bool counts = !forgiven_.count(target_) || flat(*perch_, me) <= 40.0f || frame % 4 == 0;
+            if (!held_by_hit(player) && counts && ++approach_[target_] > 1800) {
                 if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore gives up reaching %s\n", frame, what_.c_str());
                 approach_[target_] = 0;
                 unreachable_[target_] = frame + 3000;
-                if (++fruitless_runs_[target_] >= 3) unkillable_.insert(target_);
+                if (++fruitless_runs_[target_] >= 3) {
+                    unkillable_.insert(target_);
+                    unreached_.insert(target_);
+                }
                 planned_ = -1000;
             }
         } else {

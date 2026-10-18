@@ -263,7 +263,18 @@ whose kind meets the query flags (front faces only, 801238E8). CHECKLAND
 the highest floor inside the up/down window, else the nearest below; CHECKWALL
 (802FE7F0) runs the wide preflight, the longitudinal pull-back along the
 movement and the lateral push along the nearest wall's normal (H = 1.42
-width). Kind 0x400 geometry follows its model's node; a check-switch child
+width). Kind 0x400 geometry follows its model's node, read when the query
+runs (803009D0 copies the source matrix in every candidate pass, so a car or
+boat moved earlier in the frame is met where it is now). Such a child counts
+only while its bit of the check switch mask is set, read in the same pass;
+the check switch shares that bit mask object with the model's ACTION switch,
+so `ActionManager::mask_switch` gives the node whose bits an action start sets
+and NDSP or FADESET HIDE clear: a box or wall that REMOVE hides loses its
+collision at once, a hidden fade scaffold (dng310f3) carries no one, and ONHIT / OFFHIT (by the info's name list, empty for these) never touch
+them. The broad phase takes such a child when the bound of the copy
+transform's first child, moved by the model's translation but not turned,
+meets the query box in X and Z (80300974), so a turned car or boat can stick
+out of it and be skipped there. A check-switch child
 that is a transform follows that transform's scene node (the limit circle
 under the beChangePosTransform, which `ChangePosManager` keeps at the players'
 centre while everyone is within 40 units, so players cannot leave each other).
@@ -292,7 +303,14 @@ model, first 3.5 width against the ridden walls (kind 0x1000), else 2.15 width
 against all walls. Routes (boats, trains, rails, some bosses) follow the
 igTransformRecorder under an animated route transform (MOVERL JOINT,
 GETTRCDATA). `DW4_TRACE_HITLAND=1` logs wall hits, `=2` every wall candidate;
-`DW4_TRACE_RIDE=1` logs rides, `=2` every ride step.
+`DW4_TRACE_RIDE=1` logs rides, `=2` every ride step. While the position lock
+(`_isPosLock`, ctrl work +A8) is set - a MOVERL follow or an effect form
+GENERATE with the lock flag (8030D260) - 8030CB2C skips the motion step
+8030A448 and places the model instead (0x8030CD54): on the effect's source node
+plus its offset (the GENERATE rotation is not repeated), else on the recorder,
+else on the followed bone, before the wait, the subcommands and the walls. The
+next MOVE, MOVEEX or MOVERL releases the lock (8030A71C). `DW4_TRACE_LOCK=1`
+logs locks, releases and locked models whose walls and floors run.
 
 ## Adding a manager
 

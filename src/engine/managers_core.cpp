@@ -1923,19 +1923,20 @@ void HitLandManager::add_info(Engine& engine, const ObjectView& info) {
     make_rams(engine, this, info, rams_, "HITLANDMODEL");
     // _checkSwitch [8] selects the queried geometry; _kind [10] its query bits.
     // Kind bit 0x400 marks model-attached geometry whose children follow the
-    // source model transform (HITLAND_TRAVERSAL.md); that dynamic collision is
-    // not reconstructed, so it is left out of the static world.
+    // source model transform (HITLAND_TRAVERSAL.md); it stays out of the
+    // static world and is met where its model is at query time.
     const auto kind = std::uint32_t(info.i32(10));
     if (kind & 0x400u) {
         // Each check-switch child is a beCopyTransform following its model
-        // instance ([12]), e.g. one per box of g_box.
+        // instance ([12]), e.g. one per box of g_box; child i is enabled by
+        // bit i of the check switch's mask (update resolves where it lives).
         const auto check = info.ref(8);
         const auto children = check && check.is_a("igGroup") ? check.list(7) : std::vector<ObjectView>{check};
         for (std::size_t i = 0; i < children.size(); ++i) {
             const auto& child = children[i];
             if (!child) continue;
-            followers_.push_back(
-                {world_.add_dynamic(child, kind, info_index, std::uint16_t(i)), child.ref(12), std::string(info.str(2))});
+            followers_.push_back({world_.add_dynamic(child, kind, info_index, std::uint16_t(i)), child.ref(12), check,
+                                  std::uint32_t(i), std::string(info.str(2))});
         }
         return;
     }
@@ -1962,31 +1963,53 @@ bool HitLandManager::command(Engine& engine, Ram& base, std::string_view command
     if (auto* delivery = dynamic_cast<DelivRam*>(&base)) return deliver(engine, *delivery, command, packet);
     if (command == "CHECKLAND" || command == "CHECKWALL" || command == "CHECKWALLFULL") return query(engine, command, packet);
     if (command != "ONHIT" && command != "OFFHIT") return false;
-    info_off_[base.info_name] = command == "OFFHIT";
+    // ONHIT (0x802FE584) / OFFHIT (0x802FE6A0) look the message's name up in
+    // the info's name list [9] and set (802066A8) / clear (80206714) that
+    // child's bit of the check switch mask; here each named child is its own
+    // row and group. Kind 0x400 infos author empty name lists (igStringObjList
+    // in g_box and every other one of the survey stages), so these commands
+    // never touch their children: those follow the ACTION bits (update).
     for (const auto& child : children_)
         if (child.get() == &base) world_.set_group_enabled(child->group, command == "ONHIT");
     return true;
 }
 
 void HitLandManager::update(Engine& engine) {
-    if (followers_.empty()) return;
-    // The copy transforms take their model's matrix (80128CF4); a removed
-    // model (a broken box) leaves no collision behind.
-    auto* models = engine.get<ModelCtrlManager>();
-    for (const auto& follower : followers_) {
+    // The copy transforms take their model's matrix (80128CF4) when a query
+    // runs (803009D0 at 0x80300CE0), so the world keeps the model node and
+    // reads its matrix then, not here before ModelCtrl moves it. The same
+    // pass reads the child's bit of the check switch mask (0x80300CA0) and
+    // nothing else: the check switch of every kind 0x400 info shares its bit
+    // mask object with the action switch of its model (g_box: igSwitch #12210
+    // and the ACTION switch #12637 both hold mask object #12514 in dngq7b1e),
+    // and ACTION sets bit `RAM index` when an action starts (0x802F1EB4 /
+    // 0x802F20E8) and clears it on NDSP (0x802F1C58), which REMOVE sends
+    // (0x8030DC54), and on FADESET HIDE (0x802F0898). A box that breaks
+    // (SQ_DDMG DEAD01, SQ_ERAS, REMOVE) loses its collision inside that
+    // model's update, a hidden dng310f3 fade scaffold (OFSW01) carries no one
+    // and a model not shown yet has none. So the world reads the action
+    // switch node's mask at query time.
+    auto* actions = engine.get<ActionManager>();
+    for (auto& follower : followers_) {
+        if (follower.resolved) continue;
         const Node* node = engine.scenes().node(follower.source);
-        bool live = false;
-        if (node && models)
-            for (const auto& ram : models->rams())
-                if (ram->node == node) {
-                    live = ram->generated;
-                    break;
-                }
-        const auto off = info_off_.find(follower.info);
-        world_.set_dynamic(follower.id, node ? node->matrix : Mat4{}, live && (off == info_off_.end() || !off->second));
-        if (static const bool trace = std::getenv("DW4_TRACE_HITLAND") != nullptr; trace && live && engine.frame() % 300 == 0)
+        const Node* mask = actions ? actions->mask_switch(follower.check) : nullptr;
+        // Until an action switch on the same mask is known (its info may come
+        // later), the check switch's own authored mask (all clear in the data).
+        follower.resolved = mask != nullptr;
+        if (!mask) mask = engine.scenes().node(follower.check);
+        world_.set_dynamic(follower.id, node, mask, follower.bit);
+    }
+    if (static const bool trace = std::getenv("DW4_TRACE_HITLAND") != nullptr; trace && engine.frame() % 300 == 0) {
+        auto* actions_now = engine.get<ActionManager>();
+        for (const auto& follower : followers_) {
+            const Node* node = engine.scenes().node(follower.source);
+            const Node* mask = actions_now ? actions_now->mask_switch(follower.check) : nullptr;
+            if (!mask) mask = engine.scenes().node(follower.check);
+            if (!node || !mask || !mask->child_enabled(follower.bit)) continue;
             engine.log("hitland " + follower.info + " follows (" + std::to_string(node->matrix(3, 0)) + ", " +
                        std::to_string(node->matrix(3, 1)) + ", " + std::to_string(node->matrix(3, 2)) + ")");
+        }
     }
 }
 
@@ -2135,7 +2158,6 @@ bool HitLandManager::deliver(Engine& engine, DelivRam& ram, std::string_view com
 void HitLandManager::clear_stage(Engine&) {
     deliveries_.clear();
     followers_.clear();
-    info_off_.clear();
     rams_.clear();
     children_.clear();
     world_.clear();

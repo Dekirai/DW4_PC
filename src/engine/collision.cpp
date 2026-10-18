@@ -45,6 +45,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
                 for (const auto& v : {t.a, t.b, t.c}) d.reach = std::max(d.reach, length(v));
             }
             d.node = node;
+            d.grouped = true;
             d.group = group;
             dynamic_.push_back(std::move(d));
             continue;
@@ -99,25 +100,62 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
     }
     for (const auto& t : d.local)
         for (const auto& v : {t.a, t.b, t.c}) d.reach = std::max(d.reach, length(v));
+    // 0x80300CF0..0x80300D20: the broad phase reads the bound of the copy
+    // transform's child 0 (+1C list, slot 0, its igNode bound +C).
+    if (copy_transform)
+        if (const auto children = copy_transform.list(7); !children.empty() && children.front())
+            if (const auto bound = children.front().ref(3); bound && bound.is_a("igAABox")) {
+                d.bounded = true;
+                d.bound_min = bound.vec3(2).value_or(Vec3f{});
+                d.bound_max = bound.vec3(3).value_or(Vec3f{});
+            }
     dynamic_.push_back(std::move(d));
     return std::uint32_t(dynamic_.size() - 1);
 }
 
-void CollisionWorld::set_dynamic(std::uint32_t id, const Mat4& matrix, bool enabled) {
+void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Node* mask_switch, std::uint32_t bit) {
     if (id >= dynamic_.size()) return;
-    dynamic_[id].matrix = matrix;
-    dynamic_[id].enabled = enabled;
+    dynamic_[id].node = source;
+    dynamic_[id].mask_switch = mask_switch;
+    dynamic_[id].bit = bit;
 }
 
-void CollisionWorld::dynamic_near(const Vec3f& p, float reach, std::vector<CollisionTriangle>& out) const {
+void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
+                                  std::vector<CollisionTriangle>& out) const {
     for (const auto& d : dynamic_) {
-        if (d.local.empty()) continue;
-        if (d.node ? !(d.group < groups_.size() && groups_[d.group]) : !d.enabled) continue;
-        const Mat4& matrix = d.node ? d.node->matrix : d.matrix;
-        const Vec3f origin = transform_point(Vec3f{}, matrix);
-        const float dx = p.x - origin.x, dz = p.z - origin.z;
-        const float limit = d.reach + reach;
-        if (dx * dx + dz * dz > limit * limit) continue;
+        if (d.local.empty() || !d.node) continue;
+        // 803009D0 copies a kind 0x400 child's source matrix into the child
+        // (80128CF4 at 0x80300CE0) in every candidate pass, before its bounds
+        // test: a model moved earlier in this frame (a ridden car or boat) is
+        // met where it is now. Reading the node here is that copy.
+        const Mat4& matrix = d.node->matrix;
+        if (d.grouped) {
+            if (!(d.group < groups_.size() && groups_[d.group])) continue;
+            const Vec3f origin = transform_point(Vec3f{}, matrix);
+            const float dx = p.x - origin.x, dz = p.z - origin.z;
+            const float limit = d.reach + reach;
+            if (dx * dx + dz * dz > limit * limit) continue;
+        } else {
+            // 0x80300CA0..0x80300CBC: the child's bit of the check-switch mask
+            // word, read in every pass; nothing else (no model state) gates
+            // the child. The mask is the ACTION switch's (one shared bit mask
+            // object), so a model that NDSP / REMOVE hides loses its
+            // collision at that moment, and one an action shows has it.
+            if (!d.mask_switch || !d.mask_switch->child_enabled(d.bit)) continue;
+            // 0x80300CEC 80128DAC: the copied translation; 0x80300D28..
+            // 0x80300D7C add it to the child-0 bound with six single adds (no
+            // rotation, no scale); 80300974 keeps the child when the moved
+            // box meets the query box in X and Z (inclusive, ordered compares:
+            // a NaN rejects). A turned model (the stag0203 car after a curve,
+            // a wall placed at 90 degrees) can stick out of that box, and the
+            // original then skips it for queries there.
+            if (d.bounded) {
+                const float tx = matrix(3, 0), tz = matrix(3, 2);
+                const float low_x = d.bound_min.x + tx, high_x = d.bound_max.x + tx;
+                const float low_z = d.bound_min.z + tz, high_z = d.bound_max.z + tz;
+                if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
+            }
+        }
         for (const auto& local : d.local) {
             CollisionTriangle t = local;
             t.a = transform_point(local.a, matrix);
@@ -225,7 +263,7 @@ void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f&
     std::vector<CollisionTriangle> moving;
     const Vec3f center{(minimum.x + maximum.x) * 0.5f, 0, (minimum.z + maximum.z) * 0.5f};
     const float reach = std::max(maximum.x - minimum.x, maximum.z - minimum.z) * 0.5f + 1.0f;
-    dynamic_near(center, reach, moving);
+    dynamic_near(center, reach, minimum, maximum, moving);
     auto test = [&](const CollisionTriangle& t) {
         if (!selects(t.kind, flags)) return;
         for (const auto& segment : segments) {

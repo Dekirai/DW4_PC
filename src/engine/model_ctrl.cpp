@@ -267,28 +267,46 @@ ModelCtrlManager::ModelRam* ModelCtrlManager::find(std::string_view name, int in
 }
 
 namespace {
-// 8030A71C: a running MOVERL follow (+A8) ends; the facing it left on the
-// node (the yaw of its +Z axis) becomes the controller's Y angles
-// (+9C/+84), from which later frames rebuild the basis.
+// 8030A71C: a position lock (+A8: a MOVERL follow or a locked effect form)
+// ends; the facing it left on the node (the yaw of its +Z axis, 8012D434 /
+// 800A2C74) becomes the controller's Y angles (+9C/+84), from which later
+// frames rebuild the basis. Only +A8 is cleared: the attach node (+AC), the
+// trace (+B0) and the bone names (+B4/+B8) stay.
 void end_follow(ModelCtrlManager::ModelRam& ram) {
-    if (!ram.follow_trace && ram.follow_model.empty()) return;
+    if (!ram.pos_lock) return;
+    ram.pos_lock = false;
     if (ram.node) {
         const auto& m = ram.node->matrix;
         ram.applied[1] = ram.desired[1] = std::atan2(m(2, 0), m(2, 2));
     }
-    ram.follow_model.clear();
-    ram.follow_bone.clear();
-    ram.follow_trace = nullptr;
+}
+// DW4_TRACE_LOCK=1 logs position locks: effect forms that lock, the move
+// commands that end a lock, and locked models whose walls and floors run.
+bool trace_lock() {
+    static const bool on = std::getenv("DW4_TRACE_LOCK") != nullptr;
+    return on;
+}
+void trace_unlock(Engine& engine, const ModelCtrlManager::ModelRam& ram, std::string_view type) {
+    if (!trace_lock() || !ram.pos_lock) return;
+    engine.log("lock " + ram.info_name + "#" + std::to_string(ram.index) + " ends by " + std::string(type) + " in " + ram.seq_name +
+               (ram.attach_node ? " (effect form on " + ram.attach_name + "#" + std::to_string(ram.attach_index) + ")" : std::string()));
 }
 } // namespace
 
 void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::string_view name) {
-    // DW4_TRACE_SEQ=<model> logs that model's sequence changes.
-    if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && ram.info_name == trace)
+    // DW4_TRACE_SEQ=<model> logs that model's sequence changes (=* every
+    // model's, to set beside the Dolphin S log of 8030E978).
+    if (static const char* trace = std::getenv("DW4_TRACE_SEQ"); trace && (ram.info_name == trace || std::string_view(trace) == "*"))
         engine.log("seq " + ram.info_name + "#" + std::to_string(ram.index) + " " + ram.seq_name + " -> " + std::string(name) +
                    (ram.node ? " at (" + std::to_string(int(ram.node->matrix(3, 0))) + "," + std::to_string(int(ram.node->matrix(3, 1))) + "," +
                                    std::to_string(int(ram.node->matrix(3, 2))) + ")"
                              : std::string()));
+    // 0x8030E884..0x8030E8C4: the command "SQ_ERAS" - a JUMP is the command
+    // handler too (8030BCB8 -> vtable +8C) - first runs the class's erase
+    // hook (vtable +B4) for a generated model, then starts the sequence
+    // (8030F530). Only the player class has one (8034E3C0, the other model
+    // classes keep the empty 8030F5D8).
+    if (name == "SQ_ERAS" && ram.generated && ram.is_player) player_erase_hook(engine, ram);
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)
@@ -476,31 +494,51 @@ void ModelCtrlManager::run_commands(Engine& engine, ModelRam& ram) {
             ++at;
         } else if (type == "beModelCtrlMOVERL") {
             // 8030ACBC: JOINT takes the model's trace data (GETTRCDATA, the
-            // recorder under its animated route: boats, trains, rails);
-            // anything else (ACTOR) keeps the model and bone names. The
-            // shared move handler 8030A6BC first makes a missing KEIKATIMER,
-            // then ends a running follow (8030A71C).
+            // recorder under its animated route: boats, trains, rails) and
+            // locks only when exactly one came back (0x8030ACE4..0x8030AD44);
+            // anything else (ACTOR) keeps the model and bone names and locks
+            // (0x8030AD4C..0x8030AE40). The shared move handler 8030A6BC first
+            // makes a missing KEIKATIMER, ends a running lock (8030A71C) and
+            // gives an empty channel list its four move objects (0x8030A81C),
+            // as for MOVE: a model whose life starts with MOVERL has four
+            // inactive channels, so once it is unlocked (a JOINT without trace
+            // data) 8030A448 no longer returns at once: it queries the
+            // KEIKATIMER and turns the model (a player by its stick).
             ensure_keika(ram, engine.time());
+            trace_unlock(engine, ram, type);
             end_follow(ram);
+            try {
+                ram.channels.allocate();
+            } catch (const std::exception& error) {
+                engine.note(std::string("MODELCTRL MOVERL channels: ") + error.what());
+            }
             if (name != "JOINT") {
                 ram.follow_model = std::string(command.str(3));
                 ram.follow_bone = std::string(command.str(4));
+                ram.pos_lock = true;
             } else {
                 Packet trace;
                 engine.messenger().send(engine, "MODELCTRL", std::string(command.str(3)), ram.index, "GETTRCDATA", trace);
-                if (trace.objects.size() == 1) ram.follow_trace = static_cast<Node*>(trace.objects[0]);
+                if (trace.objects.size() == 1) {
+                    ram.follow_trace = static_cast<Node*>(trace.objects[0]);
+                    ram.pos_lock = true;
+                }
                 if (static const bool trace_log = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace_log)
                     engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace of " +
-                               std::string(command.str(3)) + (ram.follow_trace ? "" : " (none)"));
+                               std::string(command.str(3)) + (trace.objects.size() == 1 ? "" : " (none)"));
             }
             ++at;
         } else if (type == "beModelCtrlMOVE" || type == "beModelCtrlMOVEEX") {
             // 8030A6BC (the handler of MOVE, MOVEEX and MOVERL): a missing
             // KEIKATIMER is made (0x8030A6F8..0x8030A718); a new move ends a
-            // MOVERL follow (8030A71C).
+            // position lock (8030A71C: a MOVERL follow or a locked effect
+            // form, which then moves on from where it was placed); an empty
+            // channel list gets its four move objects (0x8030A81C).
             ensure_keika(ram, engine.time());
+            trace_unlock(engine, ram, type);
             end_follow(ram);
             try {
+                ram.channels.allocate();
                 auto motion = dw4::decode_motion_command(*command.document(), command.reference());
                 if (type == "beModelCtrlMOVE") {
                     // 8030A6BC: MOVE name selects channel and mode.
@@ -617,7 +655,15 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         std::string seq = "SQ_WAIT";
         if (packet.strings.size() == 1 && packet.strings[0]) seq = *packet.strings[0];
         else if (packet.strings.size() >= 2 && packet.strings[1]) seq = *packet.strings[1];
-        if (ram.hp == 0) ram.hp = ram.max_hp = 100;
+        // _mHp / _hp (info work +0x08 / +0x0C) are new beDataObjInt objects
+        // of the fresh work (construct flags 802C6D84 / 802C6DA4; their int
+        // has no default, 802DD7B4) and _recNo (+0x10) defaults to -1
+        // (802C6DA8..802C6DB0). Only the enemy hook fills them from the
+        // generator ints (0x8034BCC0..0x8034BCEC); a max HP still 0 after the
+        // hook becomes 100 / 100 (0x8030DA60..0x8030DA78). A life no longer
+        // keeps the last one's HP or record.
+        ram.hp = ram.max_hp = 0;
+        ram.record = -1;
         if (ram.item_label >= 0) item_label(engine, ram, false);
         ram.item_table = -1;
         ram.item_player = -1;
@@ -636,6 +682,7 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.record = packet.ints[0];
             ram.hp = ram.max_hp = std::max(1, packet.ints[1]);
         }
+        if (ram.max_hp == 0) ram.hp = ram.max_hp = 100;
         ram.muteki = 0;
         // The KIND vtable +0x98 hook (8034BB48 enemy, 8034BEA8 object,
         // 8034D61C player) installs a fresh info work at ONE+0x14 on every
@@ -675,8 +722,69 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         ram.follow_model.clear();
         ram.follow_bone.clear();
         ram.follow_trace = nullptr;
+        // _isPosLock (+A8), the attach node (+AC) and the translated byte
+        // (+78) start at 0 / null with the fresh work.
+        ram.pos_lock = false;
+        ram.attach_node = nullptr;
+        ram.translated = false;
+        // _moveObjectList (info work +0xC8, field 39) is an object field with
+        // the construct flag (802C6F54..802C6F70, meta 802C840C), so the fresh
+        // work owns a NEW beModelCtrlMoveObjectList with count 0, not the old
+        // channels. The first MOVE / MOVEEX / MOVERL of this life sees the
+        // count 0 (8030A6BC, 0x8030A820) and makes four new move objects
+        // (802C85DC at 0x8030A890 / 900 / 970 / 9E0) whose fields all start
+        // at 0 (802C876C: _endTime, _value, _acc, _speed 0.0; the rest has no
+        // default); 8030A1F4 sets the speed (+1C) only in modes 4 / 5, so a
+        // 'Move' accelerates from 0 again. Until then 8030A448 finds the
+        // count 0 and neither queries the KEIKATIMER nor steps or turns
+        // (0x8030A484..0x8030A48C). Megadramon's bolt x_027emagc01a#1, made
+        // again every MAGIC cycle, kept the last bolt's 0.75 and hit 23-25
+        // frames early (dng411b1, dng412b1, dngq6b01).
+        if (auto list = ram.channels.list_owner()) list->mutable_entries().clear();
+        // The rest of the fresh work: _keyInput (+0x70) has no default; the
+        // port's single-string SETLABEL label belongs to the label lists
+        // above; _subCommand (+0xE4) is a new beModelCtrlSubCom whose list is
+        // constructed empty (802C7020..802C703C, 802C5484), so the sequence
+        // cleanup of this GENERATE finds no subcommand of the last life (no
+        // SQ_ERAS for its sequence-dead effects, no queued hitbox).
+        ram.key_input = false;
+        ram.label.clear();
+        ram.effects.clear();
+        ram.hitboxes.clear();
+        ++ram.hitbox_generation;
+        // beNDMWMdlPEBaseInfoWork (players and enemies, 803398B0) holds the
+        // status work: _dispRamNoList, _dispPosNoList, _timerList,
+        // _isFirstList, _downDataList and _upDataList (+0xF0..+0x10C) are
+        // null and _poisonDamage / _poisonEndurance (+0x100 / +0x104) 0 in
+        // every fresh work; the next status command makes them (803AEBB4).
+        // An enemy remade in a RAM no longer inherits the DOWN / UP values,
+        // poison damage or icons of the last one.
+        ram.status.reset();
+        if (ram.is_player) {
+            // beNDMWMdlPlayerInfoWork (80339494): the player hook gives
+            // _turnAtkTimer (+0x114) a new list of eight zeros (8034D7B8..
+            // 8034D864); _bodyAtkSt0 / _bodyAtkPad / _bodyAtkTimer (+0x118 /
+            // +0x11C / +0x120, the Slam double tap), _isPanel (+0x124) and
+            // _wCheckSt / _wCheckMode (+0x128 / +0x12C, the A combo) have no
+            // default. A respawned player starts without the last life's
+            // Spiral history, Slam tap or combo phase.
+            ram.spin.fill(0);
+            ram.slam_state = 0;
+            ram.slam_direction = 0;
+            ram.slam_timer = 0.0f;
+            ram.panel_open = false;
+            ram.combo_phase = 0;
+            ram.combo_released = false;
+        }
         if (ram.is_player) {
             if (auto* sys = engine.get<GameSystem>()) {
+                // 0x8034DA7C..0x8034DB24: the hook clears GAMERAM UPDATA[0..6]
+                // and DOWNDATA[0..5] (804E7C68 / 804E7C6C = 0) before
+                // RECALCPLAYER (0x8034DCF4): the status values of the last
+                // life (its fresh status work no longer times them) go.
+                auto& gameram = sys->players[std::size_t(std::clamp(ram.index, 0, 3))];
+                std::fill_n(gameram.updata.begin(), 7, 0);
+                std::fill_n(gameram.downdata.begin(), 6, 0);
                 sys->prepare_player(engine, ram.index);
                 const auto& slot = sys->players[std::size_t(std::clamp(ram.index, 0, 3))];
                 const auto& stats = slot.stats;
@@ -708,11 +816,21 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
                 hud("NUMBERCTRL", "hpnm", "SETVALUE", hp_value);
                 hud("METERCTRL", "mpmt", "SETPERCENT", mp_percent);
                 hud("NUMBERCTRL", "mpnm", "SETVALUE", mp_value);
+                // 0x8034DEA4..0x8034DED8: in the five stages of 804E7C80
+                // (strcmp 8009D5D8) the hook sends PLAYER <ram> SETMETAL, so a
+                // player respawned there is metal again like at the stage
+                // start (the stage scripts' funcStageIn sends it as well).
+                static constexpr std::string_view kMetalStages[] = {"dng204b1", "dng204b2", "dng205b1", "dng205b2", "dng205b3"};
+                std::string stage = engine.stage_name();
+                std::transform(stage.begin(), stage.end(), stage.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                if (std::find(std::begin(kMetalStages), std::end(kMetalStages), stage) != std::end(kMetalStages)) {
+                    Packet metal;
+                    engine.messenger().send(engine, "PLAYER", std::nullopt, ram.index, "SETMETAL", metal);
+                }
             }
         }
         ram.attach_name.clear();
         ram.attach_index = -1;
-        ram.attach_lock = false;
         ram.owner_name.clear();
         ram.owner_index = -1;
         // Effect form (8030D260, sent by 80310340 and by scripts): ints source
@@ -746,8 +864,27 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
             ram.attach_offset = packet.vectors.empty() ? Vec3f{} : packet.vectors[0];
             ram.aim_height = ram.attach_offset.y; // 0x8030D5E0: info work +0x54
             ram.attach_rotation = packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{};
-            ram.attach_lock = packet.boolean(0);
             place_attached(ram);
+            // The lock (bool 0, 80306A1C at 0x8030D40C) keeps the source's
+            // node from the GETMATRIX reply (object 0: only a generated model
+            // answers) as +AC and the offset as +BC..+C4, and sets _isPosLock
+            // (8030D4C0..8030D530). The rotation is applied only here: the
+            // later placements (8030CD54) take the source matrix and the
+            // offset alone.
+            if (packet.boolean(0)) {
+                const auto* source = find(ram.attach_name, ram.attach_index);
+                ram.attach_node = source && source->generated ? source->node : nullptr;
+                ram.pos_lock = true;
+                if (trace_lock()) {
+                    const Vec3f r = ram.attach_rotation;
+                    char line[256];
+                    std::snprintf(line, sizeof line, "lock %s#%d %s on %s#%d%s offset (%.2f, %.2f, %.2f) rotation (%.3f, %.3f, %.3f)",
+                                  ram.info_name.c_str(), ram.index, seq.c_str(), ram.attach_name.c_str(), ram.attach_index,
+                                  ram.attach_node ? "" : " (no node)", ram.attach_offset.x, ram.attach_offset.y, ram.attach_offset.z,
+                                  r.x, r.y, r.z);
+                    engine.log(line);
+                }
+            }
         } else if (ram.node && !packet.vectors.empty())
             ram.node->matrix = placement_matrix(packet.vectors[0], packet.vectors.size() > 1 ? packet.vectors[1] : Vec3f{});
         else if (ram.node && !packet.matrices.empty())
@@ -1250,9 +1387,17 @@ void ModelCtrlManager::apply_control(Engine& engine, ModelRam& ram) {
 }
 
 // 8030A448: returns whether a translation channel ran (ctrl work +78), which
-// lets the walls and floors run this frame.
+// lets the walls and floors run this frame. It clears +78 and returns at once
+// while the work's channel list is empty (0x8030A478..0x8030A48C): before the
+// first MOVE of a life nothing turns or moves.
 bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     if (!ram.node) return false;
+    try {
+        if (!ram.channels.allocated()) return false;
+    } catch (const std::exception& error) {
+        engine.note(std::string("model motion: ") + error.what());
+        return false;
+    }
     auto& m = ram.node->matrix;
     const Vec3f position{m(3, 0), m(3, 1), m(3, 2)};
     if (static const char* traced = std::getenv("DW4_TRACE_MOTION"); traced && ram.info_name == traced && (engine.frame() % 10 == 0 || std::getenv("DW4_TRACE_MOTION_ALL"))) {
@@ -1272,7 +1417,7 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     // +84 += pi/180 * step, the yaw rate +90 = 1.25 * |that|) before the
     // model turns, the translation channels move it after the turn.
     dw4::MotionStep step;
-    if (ram.channels.allocated()) {
+    {
         const bool rotating = ram.channels.states()[3].active;
         const float frames = keika_frames(ram, engine.time());
         try {
@@ -1289,23 +1434,36 @@ bool ModelCtrlManager::advance_motion(Engine& engine, ModelRam& ram) {
     }
     // Turning (8030C85C at 0x8030A50C, not forced; turn_step): every axis
     // with a rate steps toward its wanted angle by rate * KEIKATIMER frames.
-    turn_step(ram, engine.time());
+    // Only when an applied angle changed (fcmpu 0x8030C9D0..0x8030CA0C) does
+    // 8030C85C rebuild the basis, straight into the node matrix: 80128DAC
+    // keeps the translation, 80129134 builds the rotation from the applied
+    // angles, 80128D90 puts the translation back (0x8030CA10..0x8030CB14).
+    // Otherwise the node matrix stays as it is - the turn a ride gave it
+    // (8030CEB0 last^-1 * current, which never touches +80 / +98), the tilt
+    // of a recorder a MOVERL follow left or the X / Z rotation of a GENERATE
+    // placement - until the model turns itself. (The port rebuilt it every
+    // frame: on the stag0203 train the player kept his world heading when
+    // the car turned; in Dolphin he turns with it.)
+    const bool turned = turn_step(ram, engine.time());
     std::array<float, 16> matrix{};
     std::copy(m.m.begin(), m.m.end(), matrix.begin());
-    bool moved = false;
     try {
-        dw4::original_model_turn_basis(matrix, ram.applied);
-        matrix[12] = position.x;
-        matrix[13] = position.y;
-        matrix[14] = position.z;
+        if (turned) {
+            dw4::original_model_turn_basis(matrix, ram.applied);
+            matrix[12] = position.x;
+            matrix[13] = position.y;
+            matrix[14] = position.z;
+        }
+        // A running translation channel copies the (possibly rebuilt) node
+        // matrix (80128CF4 at 0x8030A610), moves it in its own axes
+        // (80128DC8 at 0x8030A664) and sets it back (vtable +0x94).
         if (step.translation_updated) dw4::translate_model_local(matrix, step.translation);
-        moved = step.translation_updated;
     } catch (const std::exception& error) {
         engine.note(std::string("model motion: ") + error.what());
         return false;
     }
-    std::copy(matrix.begin(), matrix.end(), m.m.begin());
-    return moved;
+    if (turned || step.translation_updated) std::copy(matrix.begin(), matrix.end(), m.m.begin());
+    return step.translation_updated;
 }
 
 // 8030CEB0: the ride's own step (vtable +5C: 802E9370 none for a platform,
@@ -1509,26 +1667,12 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         const auto& entry = update_order_[i];
         auto& ram = *entry.ram;
         if (!ram.generated) continue;
-        // 8030CB2C: an erased model is removed on its next update.
+        // 8030CB2C: an erased model is removed on its next update (the
+        // player's bit capsule came with the SQ_ERAS start, player_erase_hook).
         if (ram.seq_name == "SQ_ERAS") {
             Packet p;
-            const Mat4 last = ram.node ? ram.node->matrix : Mat4{};
             command(engine, ram, "REMOVE", p);
             if (ram.item_label >= 0) item_label(engine, ram, false);
-            if (ram.is_player) {
-                // Player erase hook (vtable +B4, 8034E3C0): the defeated player
-                // leaves its bit capsule, whose script ends the attempt.
-                static const char* entries[] = {"SQ_ENTR1P", "SQ_ENTR2P", "SQ_ENTR3P", "SQ_ENTR4P"};
-                Packet capsule;
-                capsule.matrices.push_back(last);
-                capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
-                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
-                Packet run;
-                engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "ISRUN", run);
-                if (run.boolean(0))
-                    if (auto* sys = engine.get<GameSystem>()) sys->store_bit_chip(ram.index);
-                engine.log("player " + std::to_string(ram.index) + " defeated");
-            }
             continue;
         }
         if (ram.frozen) continue;
@@ -1557,7 +1701,18 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
         if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
-        if (ram.follow_trace) {
+        // 8030CD30..8030CD4C: 8030A448 runs unless the position is locked
+        // (_isPosLock +A8); it clears the translated byte (+78) and checks the
+        // channel list itself. A locked model (0x8030CD54) is placed instead,
+        // without channel steps, turning or a KEIKATIMER query, and keeps +78
+        // as the last 8030A448 left it: on the locked effect form's source
+        // node (+AC), else on the recorder of a MOVERL JOINT (+B0), else on
+        // the bone of a MOVERL ACTOR (+B4/+B8).
+        if (!ram.pos_lock) {
+            ram.translated = advance_motion(engine, ram);
+        } else if (ram.attach_node) {
+            place_locked(engine, ram);
+        } else if (ram.follow_trace) {
             // 8030CD94: the recorder's last world matrix (_m, +0x20: the TRC
             // data +0x10 plus the offset of the field meta 805646FC), as the
             // last traversal left it.
@@ -1566,15 +1721,14 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
                 engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " trace at (" +
                            std::to_string(ram.node->matrix(3, 0)) + ", " + std::to_string(ram.node->matrix(3, 1)) + ", " +
                            std::to_string(ram.node->matrix(3, 2)) + ")" + (ram.follow_trace->recorded ? "" : " (not recorded)"));
-        } else if (!ram.follow_model.empty()) follow_bone(engine, ram);
-        bool moved = false;
-        if (!ram.follow_trace && ram.follow_model.empty() && (ram.is_player || ram.channels.allocated()))
-            moved = advance_motion(engine, ram);
+        } else if (!ram.follow_model.empty()) {
+            follow_bone(engine, ram);
+        }
         // 8030CEB0: a ride carries the model and always lets the walls and
         // floors run.
         if (ram.ride && ram.node) {
             ride_step(ram);
-            moved = true;
+            ram.translated = true; // 0x8030CFC8
         }
         // 8030CFEC: the wait runs after the motion and before the walls and
         // floors, so a jump's apex goes straight into its fall.
@@ -1588,12 +1742,15 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         }
         if (!ram.hitboxes.empty()) update_hitboxes(engine, ram);
         if (!ram.effects.empty() && ram.generated) update_effects(engine, ram);
-        // 8030D028: walls and floors.
-        if (moved && ram.generated) collide(engine, ram);
+        // 8030D00C..8030D028: walls and floors while +78 is set.
+        if (ram.translated && ram.generated) {
+            if (ram.pos_lock && trace_lock() && engine.messenger().count("HITLANDDELIVER", ram.info_name, ram.index))
+                engine.log("lock " + ram.info_name + "#" + std::to_string(ram.index) + " walls and floors while locked in " + ram.seq_name);
+            collide(engine, ram);
+        }
         // 8030D02C: the slipped floor remembers where the model ended.
         if (ram.ride && ram.ride->kind == ModelRam::Ride::Kind::slipped && ram.node)
             ram.ride->point = {ram.node->matrix(3, 0), ram.node->matrix(3, 1), ram.node->matrix(3, 2)};
-        if (ram.attach_lock && ram.generated) place_attached(ram);
     }
 }
 
@@ -1821,6 +1978,53 @@ void ModelCtrlManager::place_attached(ModelRam& ram) {
     ram.node->matrix = m;
 }
 
+// 0x8030CD54..0x8030CD90: a locked effect form stands on its source every
+// update: the node it kept (+AC; read whether that model is still generated
+// or not) copied (80128CF4 from +0x20), moved by the offset +BC..+C4 in its
+// own axes (80128DC8) and set on the effect's node (vtable +0x94). The
+// GENERATE rotation is not applied again, so a rotated locked effect lines
+// up with its source from its first update on. (The port placed it after the
+// walls and floors, a frame late for its hitboxes, and kept the rotation.)
+void ModelCtrlManager::place_locked(Engine& engine, ModelRam& ram) {
+    if (!ram.node || !ram.attach_node) return;
+    std::array<float, 16> matrix{};
+    std::copy(ram.attach_node->matrix.m.begin(), ram.attach_node->matrix.m.end(), matrix.begin());
+    try {
+        dw4::translate_model_local(matrix, {ram.attach_offset.x, ram.attach_offset.y, ram.attach_offset.z});
+    } catch (const std::exception& error) {
+        engine.note(std::string("locked effect: ") + error.what());
+        return;
+    }
+    std::copy(matrix.begin(), matrix.end(), ram.node->matrix.m.begin());
+}
+
+// The player's erase hook (vtable +B4, 8034E3C0), run when SQ_ERAS starts:
+// the defeated player leaves its bit capsule where it stands (MODELCTRL
+// g_000bcaps GENERATE with the node matrix and SQ_ENTR<n>P), whose script
+// ends the attempt when nobody is left; a capsule that runs keeps the bits
+// and EXP (GAMERAM BKCHIPBITEXP); an open quick panel closes (+0x124,
+// NDMWPANEL REMOVE). The removal follows on the next update, so the capsule
+// is there one frame before it (two-player dng411b1 run: Dolphin's capsule
+// starts SQ_ENTR1P in the frame of the defeated player's SQ_ERAS; the port
+// made it with the REMOVE, a frame late).
+void ModelCtrlManager::player_erase_hook(Engine& engine, ModelRam& ram) {
+    static const char* entries[] = {"SQ_ENTR1P", "SQ_ENTR2P", "SQ_ENTR3P", "SQ_ENTR4P"};
+    Packet capsule;
+    capsule.matrices.push_back(ram.node ? ram.node->matrix : Mat4{});
+    capsule.strings.emplace_back(entries[std::clamp(ram.index, 0, 3)]);
+    engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "GENERATE", capsule);
+    Packet run;
+    engine.messenger().send(engine, "MODELCTRL", "g_000bcaps", ram.index, "ISRUN", run);
+    if (run.boolean(0))
+        if (auto* sys = engine.get<GameSystem>()) sys->store_bit_chip(ram.index);
+    if (ram.panel_open) {
+        ram.panel_open = false;
+        Packet remove;
+        engine.messenger().send(engine, "NDMWPANEL", std::nullopt, ram.index, "REMOVE", remove);
+    }
+    engine.log("player " + std::to_string(ram.index) + " defeated");
+}
+
 // KIND_PLAYER2 bit capsule (beNDMWMdlPlayer2, 8034EB78): switches on while a
 // live player is within 30 units; with no live player left it runs
 // end_g_000bcaps.lua, the stage's game over.
@@ -2036,8 +2240,10 @@ void ModelCtrlManager::follow_bone(Engine& engine, ModelRam& ram) {
     bone.strings.emplace_back(ram.follow_bone);
     engine.messenger().send(engine, "ACTION", ram.follow_model, ram.index, "GETBONEMATRIX", bone);
     if (bone.matrices.size() != 1) return;
+    // 0x8030CE34..0x8030CE54: MODELCTRL GETMATRIX answers only for a
+    // generated model (8030D910 case 10).
     const auto* target = find(ram.follow_model, ram.index);
-    if (!target || !target->node) return;
+    if (!target || !target->generated || !target->node) return;
     ram.node->matrix = bone.matrices[0] * target->node->matrix;
     if (static const bool trace = std::getenv("DW4_TRACE_FOLLOW") != nullptr; trace && engine.frame() % 60 == 0)
         engine.log("follow " + ram.info_name + "#" + std::to_string(ram.index) + " on " + ram.follow_model + " at (" +
@@ -2514,6 +2720,24 @@ bool ActionManager::drawn(const Node* node) const {
     for (const auto& ram : rams_)
         if (ram->node == node) return !ram->switch_node || ram->switch_node->child_enabled(ram->switch_child);
     return true;
+}
+
+const Node* ActionManager::mask_switch(const ObjectView& other) const {
+    // igSwitch [8] is the bit mask object (+20), its [4] the mask words
+    // (+10) that 802066A8 / 0x80300CB8 index.
+    if (!other || !other.is_a("igSwitch")) return nullptr;
+    const auto mask = other.ref(8);
+    if (!mask) return nullptr;
+    const auto words = mask.memory(4);
+    for (const auto& ram : rams_) {
+        const Node* own = ram->switch_node;
+        if (!own || !own->object || !own->object.is_a("igSwitch")) continue;
+        const auto own_mask = own->object.ref(8);
+        if (!own_mask) continue;
+        if (own_mask.document() == mask.document() && own_mask.reference() == mask.reference()) return own;
+        if (!words.empty() && own_mask.memory(4).data() == words.data()) return own;
+    }
+    return nullptr;
 }
 
 void ActionManager::apply_visuals(ActionRam& ram) {
