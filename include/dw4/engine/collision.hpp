@@ -4,6 +4,7 @@
 #include "dw4/engine/math.hpp"
 
 #include <functional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -83,7 +84,7 @@ public:
     const std::vector<CollisionTriangle>& triangles() const { return triangles_; }
     // HITLAND_TRAVERSAL: every segment against the triangles of the selected
     // infos within the X/Z bounds; all front-face hits (801238E8, side 0).
-    void query(const std::vector<HitSegment>& segments, const Vec3f& minimum, const Vec3f& maximum, std::uint32_t flags,
+    void query(std::span<const HitSegment> segments, const Vec3f& minimum, const Vec3f& maximum, std::uint32_t flags,
                std::vector<HitCandidate>& out) const;
     LandResult check_land(const Vec3f& position, float width, float up, float down) const;
     WallResult check_wall(const Vec3f& position, const Vec3f& direction, float width, float down, std::uint32_t flags,
@@ -116,11 +117,17 @@ private:
         // child's space; without one every query takes the child.
         bool bounded{};
         Vec3f bound_min, bound_max;
+        // `local` in world space at the node matrix `placed_matrix` (bit for
+        // bit), so queries between two moves of the node reuse it.
+        mutable std::vector<CollisionTriangle> placed;
+        mutable Mat4 placed_matrix{};
+        mutable bool placed_valid{};
     };
     // The enabled dynamic triangles of the query (X/Z box minimum..maximum,
-    // centre p and half-size `reach` of it), in world space.
+    // centre p and half-size `reach` of it), in world space: one list per
+    // dynamic child, in their order.
     void dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
-                      std::vector<CollisionTriangle>& out) const;
+                      std::vector<const std::vector<CollisionTriangle>*>& out) const;
     std::vector<Dynamic> dynamic_;
     void index_triangle(std::size_t index);
     bool enabled(const CollisionTriangle& t) const { return t.group >= groups_.size() || groups_[t.group]; }

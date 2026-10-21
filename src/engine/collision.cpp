@@ -3,10 +3,11 @@
 #include "dw4/engine/scene_graph.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <set>
+#include <cstring>
 
 namespace dw4::engine {
 
@@ -121,7 +122,7 @@ void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Nod
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
-                                  std::vector<CollisionTriangle>& out) const {
+                                  std::vector<const std::vector<CollisionTriangle>*>& out) const {
     for (const auto& d : dynamic_) {
         if (d.local.empty() || !d.node) continue;
         // 803009D0 copies a kind 0x400 child's source matrix into the child
@@ -156,17 +157,23 @@ void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& mini
                 if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
             }
         }
-        for (const auto& local : d.local) {
-            CollisionTriangle t = local;
-            t.a = transform_point(local.a, matrix);
-            t.b = transform_point(local.b, matrix);
-            t.c = transform_point(local.c, matrix);
-            const Vec3f n = cross(t.b - t.a, t.c - t.a);
-            if (length(n) < 1e-8f) continue;
-            t.normal = normalize(n);
-            t.group = UINT32_MAX; // checked above
-            out.push_back(t);
+        if (!d.placed_valid || std::memcmp(d.placed_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
+            d.placed.clear();
+            for (const auto& local : d.local) {
+                CollisionTriangle t = local;
+                t.a = transform_point(local.a, matrix);
+                t.b = transform_point(local.b, matrix);
+                t.c = transform_point(local.c, matrix);
+                const Vec3f n = cross(t.b - t.a, t.c - t.a);
+                if (length(n) < 1e-8f) continue;
+                t.normal = normalize(n);
+                t.group = UINT32_MAX; // checked above
+                d.placed.push_back(t);
+            }
+            d.placed_matrix = matrix;
+            d.placed_valid = true;
         }
+        out.push_back(&d.placed);
     }
 }
 
@@ -246,21 +253,25 @@ HitSegment HitSegment::between(const Vec3f& start, const Vec3f& end) {
     return s;
 }
 
-void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f& minimum, const Vec3f& maximum,
+void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& minimum, const Vec3f& maximum,
                            std::uint32_t flags, std::vector<HitCandidate>& out) const {
-    std::vector<std::int64_t> keys;
+    // Scratch lists kept between queries (no allocation per query).
+    thread_local std::vector<std::int64_t> keys;
+    thread_local std::vector<std::uint32_t> indices;
+    thread_local std::vector<const std::vector<CollisionTriangle>*> moving;
+    keys.clear();
     cells({minimum.x, 0, minimum.z}, {maximum.x, 0, maximum.z}, keys);
     keys.push_back(key(INT32_MAX, INT32_MAX));
-    std::vector<std::uint32_t> indices;
-    std::set<std::uint32_t> seen;
+    indices.clear();
     for (auto k : keys) {
         const auto it = grid_.find(k);
         if (it == grid_.end()) continue;
-        for (auto index : it->second)
-            if (seen.insert(index).second) indices.push_back(index);
+        indices.insert(indices.end(), it->second.begin(), it->second.end());
     }
-    std::sort(indices.begin(), indices.end()); // the infos' traversal order
-    std::vector<CollisionTriangle> moving;
+    // Each triangle once, in index order (the infos' traversal order).
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    moving.clear();
     const Vec3f center{(minimum.x + maximum.x) * 0.5f, 0, (minimum.z + maximum.z) * 0.5f};
     const float reach = std::max(maximum.x - minimum.x, maximum.z - minimum.z) * 0.5f + 1.0f;
     dynamic_near(center, reach, minimum, maximum, moving);
@@ -291,7 +302,8 @@ void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f&
         const auto& t = triangles_[index];
         if (enabled(t)) test(t);
     }
-    for (const auto& t : moving) test(t);
+    for (const auto* placed : moving)
+        for (const auto& t : *placed) test(t);
 }
 
 // 80300444: four rays from Y 1000 down to -100 at the corners of the width;
@@ -300,10 +312,11 @@ void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f&
 LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
     const float right = width + p.x, far = width + p.z, left = p.x - width, near = p.z - width;
     constexpr float top = 1000.0f, bottom = -100.0f;
-    const std::vector<HitSegment> segments{
+    const std::array<HitSegment, 4> segments{
         HitSegment::between({right, top, far}, {right, bottom, far}), HitSegment::between({left, top, far}, {left, bottom, far}),
         HitSegment::between({right, top, near}, {right, bottom, near}), HitSegment::between({left, top, near}, {left, bottom, near})};
-    std::vector<HitCandidate> hits;
+    thread_local std::vector<HitCandidate> hits;
+    hits.clear();
     query(segments, {left, bottom, near}, {right, top, far}, 1u, hits);
     auto inside = [&](float height) { return up + height > p.y && height - down < p.y; };
     LandResult result;
@@ -363,7 +376,7 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
     }
     const Vec3f base{position.x, down + position.y, position.z};
     const Vec3f plus = base + direction * radius, minus = base + direction * -radius;
-    auto bounds = [&](const std::vector<HitSegment>& segments, Vec3f& lo, Vec3f& hi) {
+    auto bounds = [&](std::span<const HitSegment> segments, Vec3f& lo, Vec3f& hi) {
         lo = hi = segments.front().origin;
         for (const auto& s : segments) {
             extend(lo, hi, s.origin);
@@ -372,11 +385,12 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
         lo.y = hi.y = position.y;
     };
     auto parallel = [&](float displacement) {
-        return std::vector<HitSegment>{HitSegment::between(minus, plus),
-                                       HitSegment::between(minus + side * displacement, plus + side * displacement),
-                                       HitSegment::between(minus + side * -displacement, plus + side * -displacement)};
+        return std::array<HitSegment, 3>{HitSegment::between(minus, plus),
+                                         HitSegment::between(minus + side * displacement, plus + side * displacement),
+                                         HitSegment::between(minus + side * -displacement, plus + side * -displacement)};
     };
-    std::vector<HitCandidate> hits;
+    thread_local std::vector<HitCandidate> hits;
+    hits.clear();
     Vec3f lo, hi;
     if (!skip_preflight) {
         const auto segments = parallel(radius);
@@ -405,8 +419,8 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
         hits.clear();
         const Vec3f raised{result.position.x, down + result.position.y, result.position.z};
         const Vec3f center = raised + direction * (3.0f * radius * 0.25f);
-        const std::vector<HitSegment> segments{HitSegment::between(center, center + side * radius),
-                                               HitSegment::between(center, center + side * -radius)};
+        const std::array<HitSegment, 2> segments{HitSegment::between(center, center + side * radius),
+                                                 HitSegment::between(center, center + side * -radius)};
         bounds(segments, lo, hi);
         query(segments, lo, hi, flags, hits);
         if (!hits.empty()) {
@@ -437,20 +451,21 @@ WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, f
     flags &= ~1u;
     auto pass = [&](float radius, std::uint32_t query_flags) {
         const Vec3f base{position.x, down + position.y, position.z};
-        std::vector<HitSegment> segments;
+        std::array<HitSegment, 8> segments;
         Vec3f lo = base, hi = base;
         Vec3f direction{1.0f, 0.0f, 0.0f};
         constexpr float turn = 0.70710677f;
         for (int i = 0; i < 8; ++i) {
             const Vec3f end = base + direction * radius;
-            segments.push_back(HitSegment::between(base, end));
+            segments[std::size_t(i)] = HitSegment::between(base, end);
             extend(lo, hi, end);
             if (i == 7) break;
             direction = normalize(Vec3f{direction.x * turn + direction.z * turn, direction.y,
                                         direction.z * turn - direction.x * turn});
         }
         lo.y = hi.y = position.y;
-        std::vector<HitCandidate> hits;
+        thread_local std::vector<HitCandidate> hits;
+        hits.clear();
         query(segments, lo, hi, query_flags, hits);
         if (hits.empty()) return false;
         std::size_t selected = 0;
