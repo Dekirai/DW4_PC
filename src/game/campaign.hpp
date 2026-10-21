@@ -64,7 +64,8 @@ private:
                                                          int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, int frame, Output& out);
+                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch, int frame,
+                    Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -91,7 +92,9 @@ private:
     void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
     bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     float blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame);
-    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap);
+    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap, int frame);
+    void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
+    bool guard_pulse(int frame);
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -157,6 +160,10 @@ private:
         engine::Vec3f at{}, prev{};
     };
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
+    bool blow_shot_ = false;     // the blow blow_due found last is a shot in flight
+    engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
+    int me_seen_frame_ = -1;
+    int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
     int gate_disk_at_ = -100000; // the last Gate Disk use

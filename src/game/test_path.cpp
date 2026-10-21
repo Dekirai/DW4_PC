@@ -1546,6 +1546,21 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             const auto fired = shots_.find(e.get());
             const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
             if (pass == 0 && defending && !structure && !boss && !hover) continue;
+            // Without the test cheats a turret is no target of its own: none
+            // has to fall, and its post lies in the fire of its neighbours
+            // (stag0204's g_cannon02 row: a shell of 15 % of the maximum HP
+            // every 150 frames from each, and a swing at one keeps the guard
+            // out; a no-cheat run on such a post took 20 shells in 2000
+            // frames). It waits like a post given up for the stage until the
+            // stage is explored to the end, then it is forgiven (its body
+            // may fill the only way on, see unreached_).
+            if (turret && !engine.cheats().one_hit && !engine.cheats().god && !forgiven_.count(e.get())) {
+                if (std::getenv("DW4_TRACE_EXPLORE") && !unreached_.count(e.get()))
+                    std::printf("[%d] explore leaves the turret %s#%d for now\n", frame, e->info_name.c_str(), e->index);
+                unkillable_.insert(e.get());
+                unreached_.insert(e.get());
+                continue;
+            }
             if (hold && !on_hold(at)) continue;
             // Near a pit in a quicksand basin: struck only in passing.
             if (sandy && in_pit(at, 0.0f)) {
@@ -1808,6 +1823,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             } else {
                 continue;
             }
+            // Without the test cheats a wall that stopped a live turret's
+            // shots is left standing (shields_): the player fights on
+            // behind it.
+            if (kind == Gimmick::strike && !engine.cheats().one_hit && !engine.cheats().god)
+                if (const auto shield = shields_.find(e.get()); shield != shields_.end()) {
+                    const auto* turret = static_cast<const engine::ModelCtrlManager::ModelRam*>(shield->second);
+                    if (turret->generated && turret->hp > 0) continue;
+                }
             // A switch seen switched on is done for a long while (pairs that
             // power each other back on would otherwise take turns forever).
             if (kind != Gimmick::strike) {
@@ -2110,6 +2133,7 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
         if (const auto seen = live.find(e.get()); seen != live.end()) {
             steady[e.get()] = seen->second;
             if (!known) {
+                shot_born_[e.get()] = frame;
                 auto& shots = volleys_[seen->second.second];
                 if (shots.empty() || frame - shots.back() > 4) {
                     shots.push_back(frame);
@@ -2131,6 +2155,54 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
             steady[e.get()] = {at, before->second.second};
         }
     }
+    // Shots that ended away from the player at a gimmick's body (a bullet
+    // of the steady view that starts erasing, or is gone, or whose RAM a new
+    // shot took far off): that gimmick shields the ground behind it from the
+    // turret (stag0204: the rock walls g_rock02z02 along x 530 stop the
+    // g_cannon02 shells short of the corridor the player breaks through; a
+    // no-cheat run that broke them took the shells all the way down the
+    // corridor, 15 % of the maximum HP each). See shields_.
+    if (const auto* me_ram = models->player(0); me_ram && me_ram->node) {
+        const auto me = position_of(*me_ram);
+        // (The flights that ended this frame raise the turrets' ranges only
+        // after all of them are judged: the same in any order.)
+        std::vector<std::pair<const void*, int>> flights;
+        const auto ended_at = [&](const engine::Vec3f& end, const void* shooter, int age) {
+            // (Only a shot cut short counts: one at the end of its flight
+            // may end next to anything, stag0204's corridor rocks among
+            // them. A turret's longest flight so far is its shots' range.)
+            const auto known = shot_life_.find(shooter);
+            const int life = known != shot_life_.end() ? known->second : 0;
+            const bool short_flight = life >= 30 && age >= 0 && age < life - 8;
+            flights.emplace_back(shooter, age);
+            if (!short_flight || flat(end, me) < 15.0f) return; // (not at the player or its guard)
+            for (const auto& g : models->rams()) {
+                if (!g->generated || !g->node || g->hp <= 0 || g->info_name.rfind("g_", 0) != 0 || !g->hit || g->hit->boxes.empty()) continue;
+                if (g->category == "ENEMY" || g->category == "ITEM" || g->category == "PLAYER") continue;
+                if (body_gap(*g, end) > 6.0f || end.y < body_bottom(*g) - 6.0f || end.y > body_top(*g) + 6.0f) continue;
+                if (std::getenv("DW4_TRACE_EXPLORE") && !shields_.count(g.get()))
+                    std::printf("[%d] explore: %s#%d stops the shots of %s (%.0f,%.0f,%.0f)\n", frame, g->info_name.c_str(), g->index,
+                                static_cast<const engine::ModelCtrlManager::ModelRam*>(shooter)->info_name.c_str(), end.x, end.y, end.z);
+                shields_[g.get()] = shooter;
+            }
+        };
+        for (const auto& [shot, last] : steady_bullets_) {
+            if (!alive.count(last.second)) continue;
+            const auto now = steady.find(shot);
+            if (now != steady.end() && flat(now->second.first, last.first) <= 20.0f) continue;
+            const auto* e = static_cast<const engine::ModelCtrlManager::ModelRam*>(shot);
+            const bool erasing = alive.count(shot) && e->generated && e->node && e->seq_name.rfind("SQ_ERAS", 0) == 0;
+            const auto born = shot_born_.find(shot);
+            // (A RAM a new shot took this frame: that shot's birth, the old one's age unknown.)
+            const int age = born != shot_born_.end() && born->second != frame ? frame - born->second : -1;
+            ended_at(erasing ? position_of(*e) : last.first, last.second, age);
+            if (born != shot_born_.end() && now == steady.end()) shot_born_.erase(born);
+        }
+        for (const auto& [shooter, age] : flights) shot_life_[shooter] = std::max(shot_life_[shooter], age);
+    }
+    std::erase_if(shields_, [&](const auto& entry) { return !alive.count(entry.first) || !alive.count(entry.second); });
+    std::erase_if(shot_born_, [&](const auto& entry) { return !alive.count(entry.first); });
+    std::erase_if(shot_life_, [&](const auto& entry) { return !alive.count(entry.first); });
     steady_bullets_ = std::move(steady);
     bullets_ = std::move(live);
     if (frame % 30 == 0) std::erase_if(fire_cells_, [&](const auto& entry) { return frame - entry.second.frame > 150; });
@@ -2236,6 +2308,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         bullet_speed_.clear();
         turret_band_.clear();
         steady_bullets_.clear();
+        shields_.clear();
+        shot_born_.clear();
+        shot_life_.clear();
         volleys_.clear();
         phases_.clear();
         unreached_.clear();

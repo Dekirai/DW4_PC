@@ -538,7 +538,13 @@ std::vector<Lua4Value> Engine::lua_call(const Lua4HostCall& call) {
     if (method == "MDLdspDamage" || method == "MDLdspDamageP" || method == "MDLdspExp") {
         // 802EAE28..48: floating damage / player damage / EXP numbers at the model.
         const int value = to_int(arg(0));
-        if (method != "MDLdspExp") log("damage " + std::to_string(value) + (context ? " -> " + context->name : std::string()));
+        if (method != "MDLdspExp") {
+            // (DW4_TRACE_DAMAGE: the shooter and the bullet kind too, a test aid.)
+            static const bool by = std::getenv("DW4_TRACE_DAMAGE") != nullptr;
+            log("damage " + std::to_string(value) + (context ? " -> " + context->name : std::string()) +
+                (by && context ? " by " + context->shooter_name + "#" + std::to_string(context->shooter) + " kind " + std::to_string(context->bullet_kind)
+                               : std::string()));
+        }
         if (auto* model = context_model(); model && model->node) {
             const auto& m = model->node->matrix;
             show_number(*this, method == "MDLdspDamage" ? 0 : method == "MDLdspDamageP" ? 3 : 1, value, Vec3f{m(3, 0), m(3, 1), m(3, 2)});

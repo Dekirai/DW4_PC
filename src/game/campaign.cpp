@@ -645,6 +645,9 @@ struct BossFight {
     // The arena's middle and the radius beyond which the player is near its
     // wall (0: none): a blow-and-guard fight there keeps off the wall.
     float arena_x = 0.0f, arena_z = 0.0f, arena_r = 0.0f;
+    // Blows are struck from outside the boss's permanent body box where it
+    // reaches past its hit body (touch_reach), not from 2.5 off the hit body.
+    bool clear_touch = false;
 };
 constexpr BossFight kBossFights[] = {
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
@@ -681,6 +684,20 @@ constexpr BossFight kBossFights[] = {
     // (Its dais: a disk of some 49 around (3, 0), cut straight at x -40;
     // the fight keeps within 33 of its middle, off the rim.)
     {"stagbs01", "f_apocaly", "f_apocaly", 25.0f, true, true, "g_b01cpole", 3.0f, 0.0f, 33.0f},
+    // stagBS02: Belphemon (f_belvam, 1510 HP, MAMORI 100, resistances 600)
+    // spends much of the fight in the air: SQ_HOVERON flies to the nearest
+    // of eight points 53 up round the arena and SQ_HOVERAI / SQ_HOVER1..4
+    // hold it over the middle (aim_f_belvam.lua), its body 53..93 up, out of
+    // every swing; it comes down (SQ_LAND) to walk, swing (70073, ~26 % of
+    // a level 16 Veemon's HP) and cast (70071, ~33 %). The ExploreBot chased
+    // it under its hover and swung at the air: a level 16 no-cheat run
+    // landed 4 blows in 12000 frames (50 HP) and took 6000. The routine
+    // strikes only while its body is in the swing's height, keeps off
+    // meanwhile and steps out of the boxes about to go live.
+    // (Its body box, 70000, ~20 % of the HP a touch, reaches 10 out of its
+    // middle, its hit body 8: struck from 2.5 off the hit body the player
+    // stood in it, `clear_touch`.)
+    {"stagbs02", "f_belvam", "f_belvam", 25.0f, true, true, "", 0.0f, 0.0f, 0.0f, true},
 };
 
 // Whether a model is named by a '|'-separated list ("<model>#<n>" names that
@@ -707,6 +724,22 @@ bool any_alive(engine::Engine& engine, const char* names) {
     for (const auto& e : models->rams())
         if (e->generated && e->hp > 0 && listed_in(list, *e)) return true;
     return false;
+}
+
+// How far a model's permanent body boxes (enemy attack kinds, end 1e8: they
+// hurt on touch) reach past its hit body (flat, the larger half extents
+// compared; 0 when they do not).
+float touch_reach(const engine::ModelCtrlManager::ModelRam& ram) {
+    if (!ram.hit || ram.hit->boxes.empty()) return 0.0f;
+    float hit_half = 0.0f;
+    for (const auto& [lo, hi] : ram.hit->boxes) hit_half = std::max({hit_half, (hi.x - lo.x) * 0.5f, (hi.z - lo.z) * 0.5f});
+    float reach = 0.0f;
+    for (const auto& box : ram.hitboxes) {
+        const int group = box.kind / 10000;
+        if ((group != 7 && group != 8) || box.end < 1e7f) continue;
+        reach = std::max(reach, std::max(box.size.x, box.size.z) * 0.5f - hit_half);
+    }
+    return reach;
 }
 
 // The point of a model's hit boxes (world X/Z, from the local boxes and the
@@ -2942,14 +2975,23 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 }
 
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                             const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, int frame,
-                             Output& out) {
+                             const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
+                             int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
     const auto* boss = find_model(engine, follow + "#0", me);
     if (!boss || boss->hp <= 0) return false;
     const bool tracing = std::getenv("DW4_TRACE_CAMPAIGN") && std::string_view(std::getenv("DW4_TRACE_CAMPAIGN")) == "2";
+    // DW4_TRACE_BOSSBOX (research): the boss's attack boxes as authored
+    // (offset in its own axes, size, delay, end) when each is queued; =all:
+    // every box in every frame.
+    if (static const char* boxes = std::getenv("DW4_TRACE_BOSSBOX"); boxes)
+        for (const auto& box : boss->hitboxes)
+            if ((box.elapsed < 1.5f && box.end < 1e7f) || std::string_view(boxes) == "all")
+                std::printf("[%d] bossbox %s %s kind %d offset (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f\n", frame,
+                            boss->info_name.c_str(), boss->seq_name.c_str(), box.kind, box.offset.x, box.offset.y, box.offset.z, box.size.x,
+                            box.size.y, box.size.z, box.delay, box.end);
     const std::string targets = "|" + strike + "|";
     // The player's body (the stages' p_* hit body: 5 wide, 17 high).
     const float body_half = 2.5f, body_height = 17.0f;
@@ -3032,6 +3074,68 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
         for (const auto& a : areas)
             if (a.due < 50.0f && std::max({a.x0 - me.x, me.x - a.x1, a.z0 - me.z, me.z - a.z1}) < 20.0f) dodge_frame_ = frame;
         const bool control = player.ctrl_mode != 0 && player.control_enabled;
+        // clear_touch: a spot next to the focus, outside its body box, that
+        // no box meets before a swing from there is over (Belphemon's claws,
+        // SQ_ATCK1, sweep 10..37 ahead of it and 21 to each side, queued at
+        // the attack's start for 35..112 frames on; its back stays clear):
+        // walked to, the player turned to the focus, the swing struck from
+        // there. (Before, the dodge took the player away from the front
+        // and the walk to the nearest hit point brought it back into the
+        // claws: a level 16 no-cheat run guarded 62 times in 10000 frames
+        // and swung never.)
+        if (clear_touch && focus && in_reach && control) {
+            const auto c = position_of(*focus);
+            float hit_half = 0.0f;
+            for (const auto& [lo, hi] : focus->hit->boxes) hit_half = std::max({hit_half, (hi.x - lo.x) * 0.5f, (hi.z - lo.z) * 0.5f});
+            const float ring = hit_half + std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) + 2.0f;
+            auto* hitland = engine.get<engine::HitLandManager>();
+            float best_walk = 1e30f;
+            engine::Vec3f spot{};
+            for (int k = 0; k < 16; ++k) {
+                const float a = float(k) * 0.3926991f;
+                const engine::Vec3f q{c.x + std::sin(a) * ring, me.y, c.z + std::cos(a) * ring};
+                const float walk = flat(q, me);
+                if (walk >= best_walk || dodge_due(areas, q.x, q.z) <= walk / 0.7f + kSwingBusy + 4.0f) continue;
+                if (hitland) {
+                    const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
+                    if (!land.found || std::abs(land.position.y - me.y) > 3.0f) continue;
+                }
+                // (The way there clear of boxes going live before it is passed,
+                // and round the boss's body box, not through it.)
+                bool clear = true;
+                for (float t = 0.25f; t < 1.0f && clear; t += 0.25f) {
+                    const float x = me.x + (q.x - me.x) * t, z = me.z + (q.z - me.z) * t;
+                    if (dodge_due(areas, x, z) <= walk * t / 0.7f + 8.0f || std::hypot(x - c.x, z - c.z) < ring - 3.0f) clear = false;
+                }
+                if (!clear) continue;
+                best_walk = walk;
+                spot = q;
+            }
+            if (best_walk < 1e29f) {
+                if (best_walk > 2.0f) {
+                    out.walk = true;
+                    out.x = spot.x;
+                    out.z = spot.z;
+                    out.reach = 1.0f;
+                } else {
+                    const float dx = c.x - me.x, dz = c.z - me.z, dd = std::max(0.01f, std::hypot(dx, dz));
+                    const float facing = (player.node->matrix(2, 0) * dx + player.node->matrix(2, 2) * dz) / dd;
+                    const bool casting = boss->seq_name == "SQ_MAGIC";
+                    if (facing < 0.9f) {
+                        // (A step toward its middle turns the player to it.)
+                        out.walk = true;
+                        out.x = c.x;
+                        out.z = c.z;
+                        out.reach = 1.0f;
+                    } else if (here_due > kSwingBusy && !casting && frame % 12 < 3) {
+                        out.buttons |= pad_button::a;
+                    }
+                }
+                if (tracing && frame % 30 == 0)
+                    std::printf("[%d] campaign boss: strike spot (%.0f,%.0f) %.1f off, here due %.0f\n", frame, spot.x, spot.z, best_walk, here_due);
+                return true;
+            }
+        }
         if (here_due <= kDodgeHorizon && control) {
             auto* hitland = engine.get<engine::HitLandManager>();
             float best_d = 1e30f;
@@ -3162,9 +3266,11 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 if (dodge_due(areas, x, z) <= t / 0.7f + 12.0f) way_clear = false;
             }
         }
-        if (best > 6.5f) {
-            if (way_clear) walk_to(engine, player, at, 5.0f, frame, out);
-        } else if (best < 2.5f) {
+        // (clear_touch: from outside the focus's body box, touch_reach.)
+        const float near = clear_touch ? std::max(2.5f, touch_reach(*focus) + body_half + 0.5f) : 2.5f;
+        if (best > near + 4.0f) {
+            if (way_clear) walk_to(engine, player, at, near + 2.5f, frame, out);
+        } else if (best < near) {
             const auto c = position_of(*focus);
             const float d = std::max(0.01f, flat(c, me));
             out.walk = true;
@@ -3513,7 +3619,11 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             if (auto* db = engine.get<engine::DatabaseManager>(); db && !slot.wazalist.empty())
                 panel_ready_at_ = frame + db->number("pcTech", slot.wazalist[0], "DELAY").value_or(0) + 1;
         } else if (t == a_at + 10 && player.panel_open) out.buttons |= pad_button::r;
-        if (t > a_at + 14) tech_at_ = -1;
+        // (A panel still open then - its R fell in the cast's FIRE wait - is
+        // closed by the upkeep below, as after a disk: left open it kept the
+        // guard out, B was no guard with it up, and A picked from it; a
+        // level 16 no-cheat run at Belphemon walked into its body that way.)
+        if (t > a_at + 14) tech_at_ = -1, panel_close_at_ = frame;
         return;
     }
     if (disk_use_ >= 0 && disk_quick_) {
@@ -3665,10 +3775,15 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     const bool guarding = !engine.cheats().god && frame >= aggressive_until_;
     if (guarding && !engine.cheats().one_hit && player.control_enabled && player.node) {
         float gap = 0.0f;
-        if (const auto away = touch_escape(engine, player, gap)) {
-            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !player.panel_open) {
+        if (const auto away = touch_escape(engine, player, gap, frame)) {
+            if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
+                std::printf("[%d] touch gap %.1f muteki %.0f controllable %d panel %d seq %s\n", frame, gap, player.muteki, controllable,
+                            player.panel_open, player.seq_name.c_str());
+            // (Also with a quick panel up: B still asks for the guard then,
+            // 8034C6CC, and the panel branch applies the request.)
+            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable) {
                 if (out.buttons & pad_button::a) ++held_presses_;
-                out.buttons = frame % 4 < 2 ? pad_button::b : 0;
+                out.buttons = guard_pulse(frame) ? pad_button::b : 0;
                 guard_held_ = frame;
                 if (trace() && frame - touch_traced_ >= 600) {
                     touch_traced_ = frame;
@@ -3752,25 +3867,31 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
     // attack (SQ_ATCK1 runs 29 frames). So while an enemy attack is under way
     // that will meet the player no attack is started, and B goes in just
     // before its box goes live.
-    if (!engine.cheats().one_hit && !player.panel_open) {
+    // (The guard also with a quick panel up, see the touch guard; the
+    // technique is cast only with none.)
+    if (!engine.cheats().one_hit) {
         const float due = blow_due(engine, player, kHoldAttackLead, frame);
         // A technique at the enemy in front when the MP allows (survive).
-        if (due > kHoldAttackLead && panel && controllable && panel_ready && frame - tech_end_ >= kTechGap && !out.ride_strike &&
-            tech_target(engine, player, slot)) {
+        if (!player.panel_open && due > kHoldAttackLead && panel && controllable && panel_ready && frame - tech_end_ >= kTechGap &&
+            !out.ride_strike && tech_target(engine, player, slot)) {
             tech_at_ = frame;
             tech_end_ = frame + 4 + 2 * std::clamp(int(slot.wazalist.size()) - 1, 0, 5) + 14;
             survive(engine, player, frame, out);
             return;
         }
+        // (A shot in flight is guarded against in an aggressive window too:
+        // that window is for an enemy whose blows never pause, and one
+        // stag0204 cannon shell takes 15 % of the maximum HP.)
+        const bool guard_it = guarding || (!engine.cheats().god && blow_shot_);
         // (A swing at a ride's target passing by goes in all the same: it
         // passes once, and the blow costs the boat no more than the hit.)
-        if (guarding && due <= kHoldAttackLead && !out.ride_strike) {
+        if (guard_it && due <= kHoldAttackLead && !out.ride_strike) {
             if (out.buttons & pad_button::a) ++held_presses_;
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
         }
-        if (guarding && due <= kGuardLead && player.muteki <= due + 1.0f && controllable) {
-            if (frame % 4 < 2) out.buttons |= pad_button::b;
+        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable) {
+            if (guard_pulse(frame)) out.buttons |= pad_button::b;
             if (trace() && frame - guard_traced_ >= 600) {
                 guard_traced_ = frame;
                 std::printf("[%d] campaign guards (%s)\n", frame, guard_what_.c_str());
@@ -3784,6 +3905,16 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         out.buttons &= ~pad_button::a;
         if ((frame - panel_close_at_) % 30 == 15) out.buttons |= pad_button::r;
     }
+}
+
+// B for a guard of survive: it is read on its press, so it is pulsed (two
+// frames down, two up), and a pulse starts at once when the guard is wanted
+// (the old frame % 4 pattern could hold the first press back two frames,
+// past the blow kGuardLead or a touch is seen before).
+bool CampaignBot::guard_pulse(int frame) {
+    if (guard_pulse_last_ != frame - 1 && guard_pulse_last_ != frame) guard_pulse_from_ = frame;
+    guard_pulse_last_ = frame;
+    return (frame - guard_pulse_from_) % 4 < 2;
 }
 
 // Whether to cast the first technique (WAZALIST 0) now: it does damage
@@ -3832,8 +3963,10 @@ bool CampaignBot::tech_target(engine::Engine& engine, const engine::ModelCtrlMan
 // touches player 1's body or comes within kTouchGap of it: 10 units away from
 // the touching box on the far side (nothing when no box touches); `gap` is
 // the space left between the box and the body (below 0: they overlap).
-std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap) {
-    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kTouchGap = 3.0f;
+std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap,
+                                                       int frame) {
+    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kTouchGap = 3.0f, kTouchAhead = 3.0f;
+    track_step(player, frame);
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models || !player.node) return std::nullopt;
     const auto me = position_of(player);
@@ -3848,10 +3981,33 @@ std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, c
             const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
             const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
             const float cz = o.x * m(0, 2) + o.y * m(1, 2) + o.z * m(2, 2) + m(3, 2);
-            if (std::abs(me.x - cx) < box.size.x * 0.5f + kBodyHalf + kTouchGap && std::abs(me.z - cz) < box.size.z * 0.5f + kBodyHalf + kTouchGap &&
-                me.y + kBodyHeight > cy - box.size.y * 0.5f && me.y < cy + box.size.y * 0.5f) {
+            // (Where the box will be kTouchAhead frames on, carried along
+            // its last step against the player's: an enemy that runs at the
+            // player closes the last units within a frame, stagBS02's
+            // Belphemon 1.2 a frame, and its touch landed before the guard.)
+            auto& seen = boxes_seen_[{e.get(), int(&box - e->hitboxes.data())}];
+            if (seen.frame != frame) {
+                seen.prev = seen.at;
+                seen.prev_frame = seen.frame;
+                seen.at = {cx, cy, cz};
+                seen.frame = frame;
+            }
+            float px = cx, pz = cz;
+            if (seen.prev_frame == frame - 1) {
+                px += (seen.at.x - seen.prev.x - me_step_.x) * kTouchAhead;
+                pz += (seen.at.z - seen.prev.z - me_step_.z) * kTouchAhead;
+            }
+            if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
+                std::printf("touch? %s#%d kind %d now gap x %.1f z %.1f, in %.0f frames x %.1f z %.1f\n", e->info_name.c_str(), e->index, box.kind,
+                            std::abs(me.x - cx) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - cz) - box.size.z * 0.5f - kBodyHalf, kTouchAhead,
+                            std::abs(me.x - px) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - pz) - box.size.z * 0.5f - kBodyHalf);
+            const auto near_x = [&](float x) { return std::abs(me.x - x) < box.size.x * 0.5f + kBodyHalf + kTouchGap; };
+            const auto near_z = [&](float z) { return std::abs(me.z - z) < box.size.z * 0.5f + kBodyHalf + kTouchGap; };
+            if (((near_x(cx) && near_z(cz)) || (near_x(px) && near_z(pz))) && me.y + kBodyHeight > cy - box.size.y * 0.5f &&
+                me.y < cy + box.size.y * 0.5f) {
                 const float dx = me.x - cx, dz = me.z - cz, d = std::max(0.01f, std::hypot(dx, dz));
-                gap = std::max(std::abs(dx) - box.size.x * 0.5f - kBodyHalf, std::abs(dz) - box.size.z * 0.5f - kBodyHalf);
+                gap = std::min(std::max(std::abs(dx) - box.size.x * 0.5f - kBodyHalf, std::abs(dz) - box.size.z * 0.5f - kBodyHalf),
+                               std::max(std::abs(me.x - px) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - pz) - box.size.z * 0.5f - kBodyHalf));
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
                 return engine::Vec3f{me.x + dx / d * 10.0f, me.y, me.z + dz / d * 10.0f};
             }
@@ -3860,20 +4016,40 @@ std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, c
     return std::nullopt;
 }
 
+// Player 1's own step in the last frame (me_step_: the relative motion of
+// shots and running enemies), once per frame.
+void CampaignBot::track_step(const engine::ModelCtrlManager::ModelRam& player, int frame) {
+    if (me_seen_frame_ == frame || !player.node) return;
+    const auto me = position_of(player);
+    me_step_ = me_seen_frame_ == frame - 1 ? engine::Vec3f{me.x - me_seen_.x, me.y - me_seen_.y, me.z - me_seen_.z} : engine::Vec3f{};
+    me_seen_ = me;
+    me_seen_frame_ = frame;
+}
+
 // Frames until an enemy blow lands on player 1 (1e9: none within `horizon`):
 // an attack box (kind group 7 or 8, MODEL_HITBOX, queued with its delay when
 // the attack starts) that has not ended and meets the player's body (5 wide,
 // 17 high) grown by a margin (boxes move with their lunging owner, more so
 // the further off their start; a shot's box flies further in a frame,
 // EBULLET; a box that moves is taken ahead by its last step). Permanent body
-// boxes (end 1e8) are left out.
+// boxes (end 1e8) are left out. A shot in flight (a live box of a model
+// that is no enemy itself, an effect or bullet such as x_bltcannon02, that
+// moved in the last frame) also counts from the first frame its box, carried
+// on along its last step, meets the body carried on along the player's last
+// step (blow_shot_ tells that the blow due is such a shot): the stag0204
+// cannons (g_cannon02, x_bltcannon02 70101) turn to the player and fire
+// straight shells of 15 % of the maximum HP (eneatk TYPE 2) every 150
+// frames each, which the old test saw some 12 units off only, after a swing
+// that keeps the guard out had begun.
 float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame) {
-    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f;
+    constexpr float kBodyHalf = 2.5f, kBodyHeight = 17.0f, kShotMargin = 4.0f;
     float best = 1e9f;
+    blow_shot_ = false;
     if (!player.node) return best;
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return best;
     const auto me = position_of(player);
+    track_step(player, frame);
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player || e->hitboxes.empty()) continue;
         if (e->category == "ENEMY" && e->hp <= 0) continue;
@@ -3886,7 +4062,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             // it, the attack goes on; only the blows of attacks count.)
             if ((group != 7 && group != 8) || box.elapsed >= box.end || box.end >= 1e7f) continue;
             const float due = std::max(0.0f, box.delay - box.elapsed);
-            if (due > horizon || due >= best) continue;
+            if (due > horizon) continue;
             const engine::Vec3f o = box.offset;
             const float cx = o.x * m(0, 0) + o.y * m(1, 0) + o.z * m(2, 0) + m(3, 0);
             const float cy = o.x * m(0, 1) + o.y * m(1, 1) + o.z * m(2, 1) + m(3, 1);
@@ -3901,6 +4077,36 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                 seen.at = {cx, cy, cz};
                 seen.frame = frame;
             }
+            if (e->category != "ENEMY" && due == 0.0f && seen.prev_frame == frame - 1) {
+                const engine::Vec3f shot{seen.at.x - seen.prev.x, seen.at.y - seen.prev.y, seen.at.z - seen.prev.z};
+                // (Against the player walking on as in its last step, and
+                // standing still: an attack's lunge or a stop changes the
+                // player's motion, so the earlier meeting counts.)
+                for (const engine::Vec3f v : {engine::Vec3f{shot.x - me_step_.x, shot.y - me_step_.y, shot.z - me_step_.z}, shot}) {
+                    if (v.x * v.x + v.z * v.z < 0.09f) continue;
+                    // Slabs: |r + v t| < h on each axis, t in [0, horizon].
+                    float t0 = 0.0f, t1 = horizon;
+                    const auto slab = [&](float r, float vel, float h) {
+                        if (std::abs(vel) < 1e-4f) {
+                            if (std::abs(r) >= h) t0 = 1e9f;
+                            return;
+                        }
+                        float a = (-h - r) / vel, b = (h - r) / vel;
+                        if (a > b) std::swap(a, b);
+                        t0 = std::max(t0, a);
+                        t1 = std::min(t1, b);
+                    };
+                    slab(cx - me.x, v.x, box.size.x * 0.5f + kBodyHalf + kShotMargin);
+                    slab(cz - me.z, v.z, box.size.z * 0.5f + kBodyHalf + kShotMargin);
+                    slab(cy - (me.y + kBodyHeight * 0.5f), v.y, box.size.y * 0.5f + kBodyHeight * 0.5f + 1.0f);
+                    if (t0 <= t1 && t0 < best) {
+                        best = t0;
+                        blow_shot_ = true;
+                        guard_what_ = e->info_name + " " + std::to_string(box.kind);
+                    }
+                }
+            }
+            if (due >= best) continue;
             if (seen.prev_frame == frame - 1) {
                 const float ahead = due + kGuardLead;
                 cx2 += (seen.at.x - seen.prev.x) * ahead;
@@ -3909,13 +4115,14 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
             }
             const float grow = e->category == "EBULLET" ? 9.0f + due * 2.0f : 3.0f + due * 0.25f;
             if (static const bool t = std::getenv("DW4_TRACE_GUARD") != nullptr; t)
-                std::printf("guard? %s#%d %s kind %d due %.0f el %.0f end %.0f gap x %.1f z %.1f y %.1f..%.1f me y %.1f mu %.0f seq %s\n",
-                            e->info_name.c_str(), e->index, e->seq_name.c_str(), box.kind, due, box.elapsed, box.end,
+                std::printf("guard? %s#%d %s %s owner %s kind %d due %.0f el %.0f end %.0f gap x %.1f z %.1f y %.1f..%.1f me y %.1f mu %.0f seq %s\n",
+                            e->info_name.c_str(), e->index, e->seq_name.c_str(), e->category.c_str(), e->owner_name.c_str(), box.kind, due, box.elapsed, box.end,
                             std::abs(me.x - cx2) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - cz) - box.size.z * 0.5f - kBodyHalf,
                             cy2 - box.size.y * 0.5f, cy2 + box.size.y * 0.5f, me.y, player.muteki, player.seq_name.c_str());
             if (std::abs(me.x - cx2) < box.size.x * 0.5f + kBodyHalf + grow && std::abs(me.z - cz) < box.size.z * 0.5f + kBodyHalf + grow &&
                 me.y + kBodyHeight + 1.0f > cy2 - box.size.y * 0.5f && me.y - 1.0f < cy2 + box.size.y * 0.5f) {
                 best = due;
+                blow_shot_ = false;
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
             }
         }
@@ -4318,7 +4525,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           frame, out)) {
+                           fight.clear_touch, frame, out)) {
                 last_ = me;
                 return out;
             }
