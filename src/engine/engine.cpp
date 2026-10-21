@@ -317,7 +317,12 @@ void Engine::request_stage(std::string name) {
 
 std::string Engine::loader_state() const {
     if (loader_state_ < 0) return "idle";
-    return "state " + std::to_string(loader_state_);
+    std::string text = loader_state_ == kLoaderBoot ? std::string("boot reads")
+                       : loader_state_ == kLoaderDescriptor ? std::string("descriptor")
+                                                            : "state " + std::to_string(loader_state_);
+    if (loader_file_.active)
+        text += ", " + loader_file_.item.name + " " + std::to_string(loader_file_.read) + "/" + std::to_string(loader_file_.sectors) + " sectors";
+    return text;
 }
 
 void Engine::attach_scene_root(Node* root) {
