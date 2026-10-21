@@ -116,15 +116,22 @@ public:
 private:
     std::vector<MessengerRow> rows_;
     std::vector<DeferredMessage> deferred_;
-    // The rows of each category in row order (selection reads only these;
-    // rebuilt after the rows change).
-    struct CategoryHash {
+    // The rows of each category, all and by name, as row numbers in row
+    // order (selection reads only these; rebuilt after the rows change).
+    struct TextHash {
         using is_transparent = void;
         std::size_t operator()(std::string_view text) const { return std::hash<std::string_view>{}(text); }
     };
-    mutable std::unordered_map<std::string, std::vector<std::uint32_t>, CategoryHash, std::equal_to<>> by_category_;
+    struct CategoryRows {
+        std::vector<std::uint32_t> all, unnamed;
+        std::unordered_map<std::string, std::vector<std::uint32_t>, TextHash, std::equal_to<>> named;
+    };
+    mutable std::unordered_map<std::string, CategoryRows, TextHash, std::equal_to<>> by_category_;
     mutable bool by_category_stale_ = true;
-    const std::vector<std::uint32_t>* category_rows(std::string_view category) const;
+    // Calls `visit(row)` for the rows of `category` that a selection by
+    // `name` (any when empty) can take, in row order, until it returns false.
+    template <class Visit>
+    void candidates(std::string_view category, std::optional<std::string_view> name, Visit&& visit) const;
 };
 
 // beDemoManager record types (802F7580 / 802F7EC0).
