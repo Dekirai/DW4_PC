@@ -1743,9 +1743,12 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // (In a quicksand room the reached point nearest the middle that is
         // not at the pit, else the pull drags the player in.)
         std::optional<engine::Vec3f> inside;
-        if (sandy && !engine.cheats().one_hit && !engine.cheats().god) {
+        if (!pits.empty() && !engine.cheats().one_hit && !engine.cheats().god) {
             // With real blows the fight lasts: the reached point of the mat
-            // farthest from the pits. The sand pulls toward the sink at 0.26
+            // farthest from the pits (also without sand: dng206f2's matg20
+            // wave was held at the pit's rim beside the moving platforms,
+            // and a level 26 no-cheat chain was thrown in three times in
+            // 3000 frames, out of heals). The sand pulls toward the sink at 0.26
             // to 0.51 a frame (SETQUICKSAND, 80309674) whenever the player
             // does not walk - every swing, guard and knock-back - and a
             // guard's recoil (SQ_GUARDR, ~15) or a hit throws it further:
@@ -2613,6 +2616,23 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
+    // Without the test cheats an enemy is not chased over moving platforms:
+    // a blow or a guard's recoil on a landing throws the player into the
+    // pit (back with 1 HP, ADDHP absolute): a level 26 no-cheat chain hopped
+    // after an e_minotaru across dng206f2's platforms, guarded on the
+    // landing's edge and fell three times in 2000 frames, out of heals. It
+    // comes off the platforms to the player or is left for later.
+    if (!engine.cheats().one_hit && !engine.cheats().god && target_ && what_.rfind("enemy", 0) == 0 && !(hop_ && hop_->jumped)) {
+        bool rides = false;
+        for (std::size_t k = next_; k < route_.size() && !rides; ++k) rides = route_[k].support >= 0;
+        if (rides) {
+            if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore leaves %s (the way rides a moving platform)\n", frame, what_.c_str());
+            unreachable_[target_] = frame + 3000;
+            hop_.reset();
+            planned_ = -1000;
+            return decision;
+        }
+    }
     // A hop onto or off a moving platform along the route (waiting on
     // purpose; hop_step gives up on its own).
     if (hop_step(engine, player, me, airborne, frame, decision)) {
