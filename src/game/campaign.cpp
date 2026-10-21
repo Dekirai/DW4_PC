@@ -2841,6 +2841,21 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
             if (gear_ran_) {
                 if (auto* sys = engine.get<engine::GameSystem>()) gear_checked_[std::size_t(gear_program_ - 6)] = sys->players[0].stats.level;
                 gear_visit_[std::size_t(gear_program_ - 6)] = stage_frame_;
+                // (Traced: what a weapon shop asked for the pockets had in stock.)
+                auto* sys = engine.get<engine::GameSystem>();
+                auto* db = engine.get<engine::DatabaseManager>();
+                auto* windows = engine.get<engine::SubWindowManager>();
+                if (trace() && gear_program_ == 6 && sys && db && windows && wanted_element(engine) >= 0 && pocket_weapon(engine, 1) < 0)
+                    if (const auto* stock = windows->shop_stock(6)) {
+                        int ranked = 0, fitting = 0;
+                        for (const auto& e : *stock)
+                            if (e && e->type == 0 && e->rank >= 1) {
+                                ++ranked;
+                                if (weapon_fits(*db, sys->players[0], *e)) ++fitting;
+                            }
+                        std::printf("[%d] campaign: weapon shop stock: %zu lines, %d of rank 1+, %d of them fit (bits %d)\n", frame, stock->size(),
+                                    ranked, fitting, sys->players[0].bits);
+                    }
             }
             gear_open_ = gear_buying_ = gear_ran_ = false;
         }
