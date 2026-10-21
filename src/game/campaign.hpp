@@ -199,6 +199,7 @@ private:
     // (checkpoint_forget), only this survives.
     struct Segment {
         bool began = false;            // the game (new or loaded) has begun
+        int began_at = -1;             // in that frame
         std::set<std::string> held;    // checkpoints already behind the game when it began
         std::set<std::string> saved;   // checkpoints saved in this run
         std::string due;               // the checkpoint being saved now, empty none

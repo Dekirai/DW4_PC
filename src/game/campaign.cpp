@@ -227,8 +227,12 @@ constexpr Objective kObjectives[] = {
     {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2", "stagml12", "evolve:2"},
     {"key item 7 (dng308b3 boss)", "K7|P6", "dng308b3", "explore:matz02"},
     // (Loading a save clears flags 36-66 again, stagIS10 gameStart.lua: the
-    // lever and the console count as done once key item 8 is held.)
-    {"lever (stag0301)", "F56|K8|P6", "stag0301", "strike:g_lever01z03#0"},
+    // lever and the console count as done once key item 8 is held.) Flag 56
+    // needs all seven levers g_lever01z03 #0-#6 pulled in one visit
+    // (hit_g_lever01z03.lua counts them in a stage global): the nearest one
+    // not pulled yet is struck. (The full runs so far had the ExploreBot pull
+    // them all in passing; the run that did not stalled on #0 alone.)
+    {"lever (stag0301)", "F56|K8|P6", "stag0301", "strike:g_lever01z03#*"},
     {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
@@ -4019,6 +4023,7 @@ void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
     if (!s.began) {
         if (!in_game) return;
         s.began = true;
+        s.began_at = frame;
         std::string behind;
         for (const auto& c : kCheckpoints)
             if (holds(engine, c.reached)) {
@@ -4060,7 +4065,7 @@ void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
             std::error_code error;
             std::filesystem::create_directories(dir, error);
             std::ofstream note(std::filesystem::path(dir) / "story.txt");
-            note << "complete " << frame << "\nfrom " << from << "\nstage " << stage << "\n" << game_summary(engine) << "\n";
+            note << "complete " << frame << "\nfrom " << from << "\nbegan " << s.began_at << "\nstage " << stage << "\n" << game_summary(engine) << "\n";
         }
         if (env_on("DW4_CAMPAIGN_STOP")) {
             s.finished = true;
@@ -4099,7 +4104,8 @@ void CampaignBot::checkpoint_saved(engine::Engine& engine, int frame) {
     {
         // order: the checkpoint's place in kCheckpoints; from: what the run
         // began with ("new" game or the last checkpoint behind the loaded
-        // save); saved / reached: the run's frames.
+        // save); began / saved / reached: the run's frames (the game began,
+        // the checkpoint saved, its condition met).
         int order = 0;
         std::string from = "new";
         for (int i = 0; i < int(std::size(kCheckpoints)); ++i) {
@@ -4107,8 +4113,8 @@ void CampaignBot::checkpoint_saved(engine::Engine& engine, int frame) {
             if (s.held.count(kCheckpoints[i].name)) from = kCheckpoints[i].name;
         }
         std::ofstream note(out / "checkpoint.txt");
-        note << "checkpoint " << s.due << "\norder " << order << "\nfrom " << from << "\nsaved " << frame << "\nreached " << s.due_since
-             << "\nstage " << lower(engine.stage_name()) << "\n" << game_summary(engine) << "\n";
+        note << "checkpoint " << s.due << "\norder " << order << "\nfrom " << from << "\nbegan " << s.began_at << "\nsaved " << frame
+             << "\nreached " << s.due_since << "\nstage " << lower(engine.stage_name()) << "\n" << game_summary(engine) << "\n";
         written = written && bool(note);
     }
     std::printf("[%d] campaign: checkpoint %s saved (%s) -> %s%s\n", frame, s.due.c_str(), game_summary(engine).c_str(), out.generic_string().c_str(),
