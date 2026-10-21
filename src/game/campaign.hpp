@@ -179,6 +179,11 @@ private:
     int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
     std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
     std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
+    std::set<int> flags_seen_;   // story flags seen on so far (a visit that sets a new one made progress)
+    bool flags_init_ = false;    // flags_seen_ filled with the flags on when the driver started
+    int new_flag_visit_ = -1;    // the stage visit (its stage_frame_) that last set a flag never seen before
+    int new_flag_ = -1;          // that flag
+    std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu

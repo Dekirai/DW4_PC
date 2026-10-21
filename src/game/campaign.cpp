@@ -1360,6 +1360,13 @@ constexpr int kGateTripBits = 400;
 // Disk of its own, a few HP and MP disks used), some 6000 frames each, a
 // third of a no-cheat run's training time at level 14.
 constexpr int kTripHealStock = 4;
+// A Gate Disk out of an objective's stage raises its gate only when the
+// visit made no progress (no story flag set for the first time): after one
+// that did, the player restocks and comes back, at most kProgressTrips times
+// per objective. Flags set within kFlagSettle frames of a stage's start are
+// its start scripts'.
+constexpr int kProgressTrips = 4;
+constexpr int kFlagSettle = 600;
 
 // Training (no god mode): an objective in a combat stage is taken on only
 // at its gate level: the highest of the table's level for it and one more
@@ -3451,6 +3458,10 @@ void CampaignBot::save_memory(std::ostream& out) const {
     for (const auto& [objective, level] : defeat_levels_) out << "defeat " << word(objective) << " " << level << "\n";
     for (const auto& [field, level] : train_falls_) out << "trainfall " << word(field) << " " << level << "\n";
     for (const auto& stage : no_panel_stages_) out << "nopanel " << word(stage) << "\n";
+    for (const auto& [objective, trips] : progress_trips_) out << "progress " << word(objective) << " " << trips << "\n";
+    out << "flags_seen";
+    for (const int flag : flags_seen_) out << " " << flag;
+    out << "\n";
     out << "gear_checked " << gear_checked_[0] << " " << gear_checked_[1] << "\n";
     for (const auto& [kind, record] : equip_failed_) out << "equip_failed " << kind << " " << record << "\n";
     for (const auto& gate : gate_tried_) out << "gate_tried " << word(gate) << "\n";
@@ -3482,6 +3493,13 @@ void CampaignBot::load_memory(std::istream& in) {
         } else if (key == "nopanel") {
             std::string stage;
             if (f >> stage) no_panel_stages_.insert(unword(stage));
+        } else if (key == "progress") {
+            std::string objective;
+            int trips = 0;
+            if (f >> objective >> trips) progress_trips_[unword(objective)] = trips;
+        } else if (key == "flags_seen") {
+            for (int flag = 0; f >> flag;) flags_seen_.insert(flag);
+            flags_init_ = true;
         } else if (key == "trainfall") {
             std::string field;
             int level = 0;
@@ -3564,6 +3582,17 @@ CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::Mo
             fallen_at_ = -1;
         }
         alive_ = alive;
+    }
+    // Story flags never seen on before (new_flag_visit_: the stage visit
+    // that set one, after its first kFlagSettle frames, which belong to
+    // the stage's start scripts).
+    if (!flags_init_ || frame % 15 == 0) {
+        for (const auto& [flag, value] : engine.flags())
+            if (value && flags_seen_.insert(flag).second && flags_init_ && frame - stage_frame_ > kFlagSettle && !lobby(stage_)) {
+                new_flag_visit_ = stage_frame_;
+                new_flag_ = flag;
+            }
+        flags_init_ = true;
     }
     Output out = play(engine, player, frame);
     if (player && player->node && lower(engine.stage_name()).rfind("stagis", 0) != 0) survive(engine, *player, frame, out);
@@ -3835,10 +3864,21 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             // like a defeat (kGates): a boss that outlasts the supplies would
             // otherwise be walked back to again and again (s2h: dng102b3's
             // e_mammos, four trips of ~35000 frames at level 7).
+            // (Not when this visit set a story flag never seen before, after
+            // the stage's start: the progress stays - stag0204's scorpion
+            // gate, flag 50, towers 51..54 and boss gate 55 open for good -
+            // so the player restocks and comes back at once; at most
+            // kProgressTrips times per objective.)
             if (dying && objective_now_.rfind("train", 0) != 0 && !objective_now_.empty() && escape_stage_frame_ != stage_frame_) {
                 escape_stage_frame_ = stage_frame_;
-                defeat_levels_[objective_now_] = std::max(defeat_levels_[objective_now_], slot.stats.level);
-                std::printf("[%d] campaign: %s given up at level %d, trains first\n", frame, objective_now_.c_str(), slot.stats.level);
+                if (new_flag_visit_ == stage_frame_ && progress_trips_[objective_now_] < kProgressTrips) {
+                    ++progress_trips_[objective_now_];
+                    std::printf("[%d] campaign: %s left with progress (flag %d set in this visit), back after restocking\n", frame,
+                                objective_now_.c_str(), new_flag_);
+                } else {
+                    defeat_levels_[objective_now_] = std::max(defeat_levels_[objective_now_], slot.stats.level);
+                    std::printf("[%d] campaign: %s given up at level %d, trains first\n", frame, objective_now_.c_str(), slot.stats.level);
+                }
             }
             survive(engine, player, frame, out);
             return;
