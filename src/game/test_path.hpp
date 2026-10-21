@@ -285,6 +285,8 @@ private:
     std::map<const void*, const void*> shields_;
     std::map<const void*, int> shot_born_;  // enemy bullet of the steady view -> the frame its shot was first seen
     std::map<const void*, int> shot_life_;  // turret -> the longest flight of its shots so far (frames)
+    std::map<const void*, int> shot_kind_;  // turret -> the bullet kind of its shots
+    bool heavy_turret(engine::Engine& engine, const void* turret) const;
     // Each turret's firing sequence, as seen: the sequence its shots start
     // in, the shots' frames after that sequence's start and its longest run.
     // A turret hit by the player leaves it (stag0304's g_cannon02: SQ_SDMG,
