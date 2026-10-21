@@ -299,20 +299,37 @@ void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& mi
                            std::uint32_t flags, std::vector<HitCandidate>& out) const {
     // Scratch lists kept between queries (no allocation per query).
     thread_local std::vector<std::int64_t> keys;
-    thread_local std::vector<std::uint32_t> indices;
+    thread_local std::vector<const std::vector<std::uint32_t>*> lists;
+    thread_local std::vector<std::uint32_t> merged;
     thread_local std::vector<const std::vector<CollisionTriangle>*> moving;
     keys.clear();
     cells({minimum.x, 0, minimum.z}, {maximum.x, 0, maximum.z}, keys);
     keys.push_back(key(INT32_MAX, INT32_MAX));
-    indices.clear();
+    lists.clear();
     for (auto k : keys) {
         const auto it = grid_.find(k);
-        if (it == grid_.end()) continue;
-        indices.insert(indices.end(), it->second.begin(), it->second.end());
+        if (it != grid_.end() && !it->second.empty()) lists.push_back(&it->second);
     }
-    // Each triangle once, in index order (the infos' traversal order).
-    std::sort(indices.begin(), indices.end());
-    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    // Each triangle once, in index order (the infos' traversal order). A
+    // grid list holds its triangles once each in index order (they are
+    // indexed as they are added), so a single list is used as it is and two
+    // are merged.
+    static const std::vector<std::uint32_t> no_triangles;
+    const std::vector<std::uint32_t>* indices = &no_triangles;
+    if (lists.size() == 1) {
+        indices = lists[0];
+    } else if (lists.size() == 2) {
+        merged.resize(lists[0]->size() + lists[1]->size());
+        std::merge(lists[0]->begin(), lists[0]->end(), lists[1]->begin(), lists[1]->end(), merged.begin());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        indices = &merged;
+    } else if (lists.size() > 2) {
+        merged.clear();
+        for (const auto* list : lists) merged.insert(merged.end(), list->begin(), list->end());
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        indices = &merged;
+    }
     moving.clear();
     const Vec3f center{(minimum.x + maximum.x) * 0.5f, 0, (minimum.z + maximum.z) * 0.5f};
     const float reach = std::max(maximum.x - minimum.x, maximum.z - minimum.z) * 0.5f + 1.0f;
@@ -340,7 +357,7 @@ void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& mi
             out.push_back(c);
         }
     };
-    for (auto index : indices) {
+    for (auto index : *indices) {
         const auto& t = triangles_[index];
         if (enabled(t)) test(t);
     }
