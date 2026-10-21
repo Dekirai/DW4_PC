@@ -223,7 +223,8 @@ dw4_game.exe --stage stagml11   rem jump straight to the Home lobby
 ```
 
 `Play-DW4-Game.cmd` starts `build\Game\dw4_game.exe`. Further options:
-`--smoke-test FRAMES` (hidden window, fixed steps), `--input SCRIPT` (lines
+`--smoke-test FRAMES` (fixed steps as fast as the machine runs them; without a picture, see
+below), `--input SCRIPT` (lines
 `frame BUTTON [duration [player]]` (BUTTON A, B, X, Y, Z, L, R, START, UP, DOWN, LEFT, RIGHT or `STICK:x,y`
 with raw stick values -128..127, several joined by `+`), `frame GOTO x z [duration]`, `frame SEEK duration [model-prefix]`
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
@@ -244,6 +245,15 @@ Disk escape raises that level like a defeat)),
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
 every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
 the environment's from the loaded frame on).
+A test run draws no pictures unless it needs them: without `--screenshot` / `--screenshot-frames`,
+`DW4_TEXTURE_PACK` or `DW4_DUMP_TEXTURES` it opens no window and no OpenGL context, decodes no
+movies and mixes no sound (unless `DW4_AUDIO_DUMP`), so it simulates several times faster (a
+campaign run about 8x, several such runs side by side scale with the CPU cores). The scene is still
+traversed after every step exactly as for a picture (`Engine::traverse_scene`: animation clocks,
+motion combiners and recorded matrices advance there), so such a run plays the same frames as one
+that draws them: the fingerprints, logs and stage states are identical. `DW4_RENDER=1` draws the
+pictures anyway in a hidden window (the old behaviour; `DW4_TRACE_SHADOW` needs it); the last
+frame's draw list is collected once at the end for the `draws` count and `DW4_DRAW_DUMP`.
 Test-run environment variables: `DW4_GOD` keeps players alive, `DW4_ONE_HIT` makes
 player hits defeat their target, `DW4_INFINITE_MP` keeps MP full,
 `DW4_DEVICES=type:record:rank:value,...`, `DW4_DISKS=record:count,...` and

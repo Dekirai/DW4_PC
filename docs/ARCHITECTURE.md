@@ -56,7 +56,14 @@ Every random number comes from one generator (`SystemRandom`, beSystem's
 igMersenneTwisterRandomNumber seeded 5150 at boot) through `fight::random()`.
 
 `Engine::render` traverses the attached scene roots (layer switches under
-`ROOTATTR`) into draw items for the host renderer.
+`ROOTATTR`) into draw items for the host renderer. That traversal is part of
+the simulation: node animation clocks (NodeAnim), the motion combiners of the
+actors (`ActionManager::pose_for`), LOD choices and the transform recorders
+advance in it, so every picture the original draws must be traversed.
+`Engine::traverse_scene` does the same traversal (shadow casters and receivers
+included) without draw items, carrying only the view matrix down instead of
+the render state; test runs without pictures, catch-up steps and save state
+replays use it.
 
 ## Messenger and scripts
 
@@ -295,6 +302,14 @@ out of it and be skipped there. A check-switch child
 that is a transform follows that transform's scene node (the limit circle
 under the beChangePosTransform, which `ChangePosManager` keeps at the players'
 centre while everyone is within 40 units, so players cannot leave each other).
+
+The test bots' route planning runs its walking maps inside a
+`CollisionWorld::Still` scope: nothing moves meanwhile, so the enabled moving
+children and their placement are read once, and the check_land / check_wall
+answers are kept with the collision state they were found in (all group
+switches plus each enabled moving child and its matrix, compared word for
+word). The next plan in the same state reads them; answers are the same as
+the queries'. The simulation itself never uses such a scope.
 
 HITLANDDELIVER rows (beHitLandDelivInfoRam, 802FDA0C) carry each model's
 cylinder: HITWALL queries from the previous to the current node position and
