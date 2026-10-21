@@ -186,6 +186,29 @@ sends `MODELCTRL SQ_ERAS` for a started sequence-dead effect whose selected RAM
 is not −1. This guard also applies if a native continuation has selected a RAM
 but is still waiting for generation.
 
+## Who runs the cleanup
+
+The MODELCTRL command handler `8030D910` calls `803108A0` for an ordinary sequence
+start (`0x8030E9D0`), for `SQ_ERAS2` (`0x8030E920`) and for `REMOVE`
+(`0x8030DC68`). `SQ_ERAS` (`0x8030E884..0x8030E8C8`, also reached by a JUMP) runs
+only the class erase hook (vtable `+B4`) and `8030F530`: the list survives until
+the `REMOVE` that the model's next update issues (`8030CB2C`, `0x8030CC58`). The
+update's own pass (`803107E0` at `0x8030D008`) comes after the wait
+(`0x8030CFEC`), so an entry queued by the commands the wait resumed still starts
+in that frame: the Bind / Sleep / Freeze / Pwr Dwn carrier `x_200mind03` lands,
+starts ACTION `ATCK0n`, its action starter queues the ring `x_200mind02`
+`SQ_ATCKnn` with delay 0 and the sequence jumps to `SQ_ERAS`. Dolphin (research
+save, fixed random generator, logged world clock): the ring 12 frames after the
+cast action, the hit 6 frames later, the carrier gone one frame and the ring 31
+frames after the ring started; the port matches frame for frame since protocol
+23 (pixel difference below 0.2 % with the replayed clock). Only an ordinary
+start ends a sequence-long MUTEKI (`0x8030EA0C`); `SQ_ERAS` and `SQ_ERAS2` keep it.
+
+`803107E0` reads the entry count once (`r31`) and lowers it per removal, so an
+entry appended by a callback during the pass, or by a sequence that a callback
+started (the cleanup empties the list and the new sequence appends from index
+0), waits for the next pass.
+
 ## Interruption, unavailable services and ownership
 
 Sequence cleanup visits the original list in order, skipping the cleanup callback
