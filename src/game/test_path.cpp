@@ -69,6 +69,7 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
     const int w = std::min(400, int((std::abs(from.x - to.x) + 2 * margin) / step) + 1);
     const int h = std::min(400, int((std::abs(from.z - to.z) + 2 * margin) / step) + 1);
     Grid grid(world, x0, z0, w, h, std::max(from.y, to.y), wall_flags);
+    const engine::CollisionWorld::Still still(world); // nothing moves while the route is searched
     if (std::getenv("DW4_TRACE_GRID")) {
         // Probe the column straight south of the start.
         const auto [cx, cz] = grid.cell_at(from.x, from.z);
@@ -133,6 +134,7 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
 WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
                  const std::vector<AvoidBox>& avoid, float width, const std::vector<MovingFloor>& moving) {
     constexpr float step = Grid::step, climb = Grid::climb, drop = Grid::drop;
+    const engine::CollisionWorld::Still still(world); // nothing moves while the map is built
     // The grid is aligned to the world (multiples of three cells), so the
     // samples do not move with the player.
     x0_ = std::floor((from.x - range) / (3 * step)) * (3 * step);

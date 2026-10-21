@@ -13,6 +13,8 @@ namespace dw4::engine {
 
 void CollisionWorld::clear() {
     dynamic_.clear();
+    still_.clear();
+    still_stale_ = true;
     triangles_.clear();
     grid_.clear();
     groups_.assign(1, true);
@@ -49,6 +51,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
             d.grouped = true;
             d.group = group;
             dynamic_.push_back(std::move(d));
+            still_stale_ = true;
             continue;
         }
         const auto first = triangles_.size();
@@ -63,6 +66,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
 
 void CollisionWorld::set_group_enabled(std::uint32_t group, bool enabled) {
     if (group < groups_.size()) groups_[group] = enabled;
+    still_stale_ = true;
 }
 
 void CollisionWorld::cells(const Vec3f& lo, const Vec3f& hi, std::vector<std::int64_t>& out) const {
@@ -111,6 +115,7 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
                 d.bound_max = bound.vec3(3).value_or(Vec3f{});
             }
     dynamic_.push_back(std::move(d));
+    still_stale_ = true;
     return std::uint32_t(dynamic_.size() - 1);
 }
 
@@ -119,10 +124,63 @@ void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Nod
     dynamic_[id].node = source;
     dynamic_[id].mask_switch = mask_switch;
     dynamic_[id].bit = bit;
+    still_stale_ = true;
+}
+
+void CollisionWorld::refresh_still() const {
+    still_.clear();
+    for (std::size_t i = 0; i < dynamic_.size(); ++i) {
+        const auto& d = dynamic_[i];
+        if (d.local.empty() || !d.node) continue;
+        if (d.grouped ? !(d.group < groups_.size() && groups_[d.group]) : (!d.mask_switch || !d.mask_switch->child_enabled(d.bit)))
+            continue;
+        const Mat4& matrix = d.node->matrix;
+        still_.push_back({std::uint32_t(i), transform_point(Vec3f{}, matrix), matrix(3, 0), matrix(3, 2)});
+    }
+    still_stale_ = false;
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
                                   std::vector<const std::vector<CollisionTriangle>*>& out) const {
+    auto place = [&](const Dynamic& d) {
+        const Mat4& matrix = d.node->matrix;
+        if (!d.placed_valid || std::memcmp(d.placed_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
+            d.placed.clear();
+            for (const auto& local : d.local) {
+                CollisionTriangle t = local;
+                t.a = transform_point(local.a, matrix);
+                t.b = transform_point(local.b, matrix);
+                t.c = transform_point(local.c, matrix);
+                const Vec3f n = cross(t.b - t.a, t.c - t.a);
+                if (length(n) < 1e-8f) continue;
+                t.normal = normalize(n);
+                t.group = UINT32_MAX; // checked above
+                d.placed.push_back(t);
+            }
+            d.placed_matrix = matrix;
+            d.placed_valid = true;
+        }
+        out.push_back(&d.placed);
+    };
+    if (still_depth_ > 0) {
+        // The same tests as below on the children enabled at the scope's
+        // start, with their placement then.
+        if (still_stale_) refresh_still();
+        for (const auto& s : still_) {
+            const auto& d = dynamic_[s.index];
+            if (d.grouped) {
+                const float dx = p.x - s.origin.x, dz = p.z - s.origin.z;
+                const float limit = d.reach + reach;
+                if (dx * dx + dz * dz > limit * limit) continue;
+            } else if (d.bounded) {
+                const float low_x = d.bound_min.x + s.tx, high_x = d.bound_max.x + s.tx;
+                const float low_z = d.bound_min.z + s.tz, high_z = d.bound_max.z + s.tz;
+                if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
+            }
+            place(d);
+        }
+        return;
+    }
     for (const auto& d : dynamic_) {
         if (d.local.empty() || !d.node) continue;
         // 803009D0 copies a kind 0x400 child's source matrix into the child
@@ -157,23 +215,7 @@ void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& mini
                 if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
             }
         }
-        if (!d.placed_valid || std::memcmp(d.placed_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
-            d.placed.clear();
-            for (const auto& local : d.local) {
-                CollisionTriangle t = local;
-                t.a = transform_point(local.a, matrix);
-                t.b = transform_point(local.b, matrix);
-                t.c = transform_point(local.c, matrix);
-                const Vec3f n = cross(t.b - t.a, t.c - t.a);
-                if (length(n) < 1e-8f) continue;
-                t.normal = normalize(n);
-                t.group = UINT32_MAX; // checked above
-                d.placed.push_back(t);
-            }
-            d.placed_matrix = matrix;
-            d.placed_valid = true;
-        }
-        out.push_back(&d.placed);
+        place(d);
     }
 }
 

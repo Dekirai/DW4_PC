@@ -503,13 +503,6 @@ Mat4 TransformSequence::evaluate(std::int64_t time) const {
     return blend(j - 1, j, blend_ratio(at - times[j - 1], times[j] - times[j - 1]));
 }
 
-bool Node::child_enabled(std::size_t index) const {
-    if (kind != NodeKind::switch_node) return true;
-    const std::size_t word = index / 32;
-    if (word >= mask.size()) return false;
-    return (mask[word] >> (index % 32)) & 1u;
-}
-
 void Node::set_child_enabled(std::size_t index, bool enabled) {
     const std::size_t word = index / 32;
     if (word >= mask.size()) mask.resize(word + 1, 0);

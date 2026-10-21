@@ -99,6 +99,25 @@ public:
         if ((query & 0x1000u) && !(kind & 0x1000u)) return false;
         return (kind & query & 0x1FFu) != 0;
     }
+    // Route planning between two steps (the test bots' walking maps) runs
+    // thousands of queries while nothing moves. While a Still scope lives,
+    // the moving children's enable bits (group or switch mask) and
+    // placement are read once, so each query looks only at the enabled
+    // ones; the results are the same as without it. Nothing the world
+    // follows (node matrices, switch masks) may change meanwhile; a group
+    // switched inside the scope is picked up.
+    class Still {
+    public:
+        explicit Still(const CollisionWorld& world) : world_(world) {
+            if (world_.still_depth_++ == 0) world_.still_stale_ = true;
+        }
+        ~Still() { --world_.still_depth_; }
+        Still(const Still&) = delete;
+        Still& operator=(const Still&) = delete;
+
+    private:
+        const CollisionWorld& world_;
+    };
 
 private:
     void add_node(const ObjectView& node, const Mat4& parent, int depth, std::uint32_t kind, std::uint32_t group,
@@ -123,6 +142,18 @@ private:
         mutable Mat4 placed_matrix{};
         mutable bool placed_valid{};
     };
+    // A dynamic child enabled at the start of a Still scope, with its
+    // placement then: the origin (grouped children) or the translation
+    // (bounded copy transforms).
+    struct StillDynamic {
+        std::uint32_t index{};
+        Vec3f origin{};
+        float tx{}, tz{};
+    };
+    mutable std::vector<StillDynamic> still_;
+    mutable int still_depth_ = 0;
+    mutable bool still_stale_ = true;
+    void refresh_still() const;
     // The enabled dynamic triangles of the query (X/Z box minimum..maximum,
     // centre p and half-size `reach` of it), in world space: one list per
     // dynamic child, in their order.

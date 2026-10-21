@@ -213,7 +213,14 @@ struct Node {
     bool reset_time{}, reset_rot_scale{};
     std::optional<NodeAnim> anim;
 
-    bool child_enabled(std::size_t index) const;
+    // (Inline: the collision queries read the switch bits of every moving
+    // child they consider.)
+    bool child_enabled(std::size_t index) const {
+        if (kind != NodeKind::switch_node) return true;
+        const std::size_t word = index / 32;
+        if (word >= mask.size()) return false;
+        return (mask[word] >> (index % 32)) & 1u;
+    }
     void set_child_enabled(std::size_t index, bool enabled);
     void set_all_children(bool enabled);
 };
