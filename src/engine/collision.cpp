@@ -187,7 +187,7 @@ void CollisionWorld::refresh_still() const {
     memo->used = ++memo_clock_;
     if (++memo->scopes < 2) return;
     // (Bounded: a long exploration of one floor keeps adding places.)
-    if (memo->land.size() + memo->wall.size() > 3'000'000) {
+    if (memo->land.size() + memo->wall.size() > 1'000'000) {
         memo->land.clear();
         memo->wall.clear();
     }
@@ -207,19 +207,20 @@ std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
 LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
     StillMemo* memo = still_memo();
     if (!memo) return land_query(p, width, up, down);
-    const LandKey key{bits(p.x), bits(p.y), bits(p.z), bits(width), bits(up), bits(down)};
-    if (const auto it = memo->land.find(key); it != memo->land.end()) return it->second;
-    return memo->land.emplace(key, land_query(p, width, up, down)).first->second;
+    const std::array<std::uint32_t, 6> key{bits(p.x), bits(p.y), bits(p.z), bits(width), bits(up), bits(down)};
+    if (const auto* answer = memo->land.find(key)) return *answer;
+    return memo->land.insert(key, land_query(p, width, up, down));
 }
 
 WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direction, float width, float down,
                                       std::uint32_t flags, bool skip_preflight) const {
     StillMemo* memo = still_memo();
     if (!memo) return wall_query(position, direction, width, down, flags, skip_preflight);
-    const WallKey key{bits(position.x), bits(position.y), bits(position.z), bits(direction.x), bits(direction.y),
-                      bits(direction.z), bits(width), bits(down), flags | (skip_preflight ? 0x80000000u : 0u)};
-    if (const auto it = memo->wall.find(key); it != memo->wall.end()) return it->second;
-    return memo->wall.emplace(key, wall_query(position, direction, width, down, flags, skip_preflight)).first->second;
+    const std::array<std::uint32_t, 10> key{bits(position.x),  bits(position.y),  bits(position.z), bits(direction.x),
+                                            bits(direction.y), bits(direction.z), bits(width),      bits(down),
+                                            flags,             skip_preflight ? 1u : 0u};
+    if (const auto* answer = memo->wall.find(key)) return *answer;
+    return memo->wall.insert(key, wall_query(position, direction, width, down, flags, skip_preflight));
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,

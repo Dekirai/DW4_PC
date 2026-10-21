@@ -160,23 +160,69 @@ private:
     mutable int still_depth_ = 0;
     mutable bool still_stale_ = true;
     void refresh_still() const;
-    // Kept answers per collision state (Still); the arguments' bits are the key.
-    struct WordsHash {
-        template <std::size_t N> std::size_t operator()(const std::array<std::uint32_t, N>& words) const {
-            std::uint64_t h = 0x9E3779B97F4A7C15ull;
-            for (const auto w : words) {
-                h = (h ^ w) * 0xFF51AFD7ED558CCDull;
-                h ^= h >> 29;
+    // Kept answers per collision state (Still): an open-addressing table
+    // keyed by the arguments' bits.
+    template <std::size_t N, class Value> class Answers {
+    public:
+        using Key = std::array<std::uint32_t, N>;
+        const Value* find(const Key& key) const {
+            if (slots_.empty()) return nullptr;
+            const std::uint64_t h = hash(key);
+            const std::size_t mask = slots_.size() - 1;
+            for (std::size_t i = std::size_t(h) & mask;; i = (i + 1) & mask) {
+                const Slot& slot = slots_[i];
+                if (!slot.used) return nullptr;
+                if (slot.hash == h && slot.key == key) return &slot.value;
             }
-            return std::size_t(h);
         }
+        // `key` must not be in the table yet.
+        const Value& insert(const Key& key, Value value) {
+            if ((count_ + 1) * 2 > slots_.size()) grow();
+            const std::uint64_t h = hash(key);
+            return place(h, key, std::move(value));
+        }
+        std::size_t size() const { return count_; }
+        void clear() {
+            slots_.clear();
+            count_ = 0;
+        }
+
+    private:
+        struct Slot {
+            std::uint64_t hash{};
+            Key key{};
+            Value value{};
+            bool used{};
+        };
+        static std::uint64_t hash(const Key& key) {
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;
+            for (const auto w : key) h = (h ^ w) * 0xFF51AFD7ED558CCDull;
+            h ^= h >> 33; // (murmur finalizer: the low bits pick the slot)
+            h *= 0xC4CEB9FE1A85EC53ull;
+            return h ^ (h >> 33);
+        }
+        const Value& place(std::uint64_t h, const Key& key, Value value) {
+            const std::size_t mask = slots_.size() - 1;
+            std::size_t i = std::size_t(h) & mask;
+            while (slots_[i].used) i = (i + 1) & mask;
+            slots_[i] = Slot{h, key, std::move(value), true};
+            ++count_;
+            return slots_[i].value;
+        }
+        void grow() {
+            std::vector<Slot> old = std::move(slots_);
+            slots_.assign(old.empty() ? 4096 : old.size() * 2, Slot{});
+            count_ = 0;
+            for (auto& slot : old)
+                if (slot.used) place(slot.hash, slot.key, std::move(slot.value));
+        }
+        std::vector<Slot> slots_;
+        std::size_t count_{};
     };
-    using LandKey = std::array<std::uint32_t, 6>;
-    using WallKey = std::array<std::uint32_t, 9>;
     struct StillMemo {
         std::vector<std::uint32_t> state;
-        std::unordered_map<LandKey, LandResult, WordsHash> land;
-        std::unordered_map<WallKey, WallResult, WordsHash> wall;
+        Answers<6, LandResult> land;
+        Answers<10, WallResult> wall;
         std::uint64_t used{};
         int scopes{}; // Still scopes met in this state (answers are kept from the second on)
     };
