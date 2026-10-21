@@ -959,7 +959,9 @@ const GeometryData* SceneCache::geometry(const Attribute* attribute) {
 }
 
 namespace {
-void apply(const Attribute* a, RenderState& s, Mat4& model) {
+// `picture` false (a traversal without draw items): the lights, which only
+// the draw items use, are not collected.
+void apply(const Attribute* a, RenderState& s, Mat4& model, bool picture) {
     switch (a->kind) {
     case AttrKind::texture_bind:
         if (a->unit == 0) s.texture = a;
@@ -997,7 +999,7 @@ void apply(const Attribute* a, RenderState& s, Mat4& model) {
         if (!s.lighting_forced) s.lighting = a->enabled;
         break;
     case AttrKind::light_state:
-        if (a->enabled && a->light) s.lights.push_back(a->light);
+        if (picture && a->enabled && a->light) s.lights.push_back(a->light);
         break;
     case AttrKind::fog: s.fog_params = a; break;
     case AttrKind::fog_state: s.fog = a->enabled; break;
@@ -1161,11 +1163,11 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
     ActorScope scope = parent_scope;
     switch (n->kind) {
     case NodeKind::attr_set:
-        for (const auto* a : n->attributes) apply(a, state, model);
+        for (const auto* a : n->attributes) apply(a, state, model, ctx.output != nullptr);
         break;
     case NodeKind::blend_matrix_select: {
-        for (const auto* a : n->attributes) apply(a, state, model);
-        if (scope.pose && scope.pose->skeleton) {
+        for (const auto* a : n->attributes) apply(a, state, model, ctx.output != nullptr);
+        if (ctx.output && scope.pose && scope.pose->skeleton) {
             auto palette = std::make_shared<std::vector<Mat4>>();
             const auto& skel = *scope.pose->skeleton;
             for (const auto joint : n->blend_indices) {
@@ -1187,10 +1189,11 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
             model = scope.pose->bone_world[std::size_t(n->bone_index)] * scope.actor_model;
         break;
     case NodeKind::light_set:
-        for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
+        if (ctx.output)
+            for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
         return;
     case NodeKind::light_state_set:
-        for (const auto* a : n->attributes) apply(a, state, model);
+        for (const auto* a : n->attributes) apply(a, state, model, ctx.output != nullptr);
         break;
     case NodeKind::transform: {
         Mat4 local = n->sequence && n->sequence->valid ? n->sequence->evaluate(time) : n->matrix;
@@ -1308,7 +1311,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         return;
     }
     case NodeKind::geometry: {
-        for (const auto* a : n->attributes) apply(a, state, model);
+        for (const auto* a : n->attributes) apply(a, state, model, ctx.output != nullptr);
         apply_overrides(*n, state);
         if (n->runtime_geometry) {
             if (n->runtime_geometry->valid && ctx.output) {
@@ -1327,9 +1330,10 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
             }
             break;
         }
+        if (!ctx.output) break; // no draw items (nor geometry decoding)
         for (const auto* g : n->geometries) {
             const auto* data = ctx.cache->geometry(g);
-            if (!data || !data->valid || !ctx.output) continue;
+            if (!data || !data->valid) continue;
             DrawItem item;
             item.geometry = data;
             item.node = n;

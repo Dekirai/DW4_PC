@@ -271,6 +271,12 @@ public:
     // Collect the draw list for the current state.
     // `shadow` (optional) receives the projected-shadow light and casters.
     void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow = nullptr);
+    // The scene traversal of render(..., shadow) without the draw lists, for
+    // pictures that are not shown (test runs, catch-up steps, save state
+    // replays). The traversal advances animation clocks, motion combiners,
+    // LOD choices and recorded matrices, which the simulation reads, so a
+    // picture the original draws must be traversed either way.
+    void traverse_scene();
     // Optional host inspection camera replacing the game camera (debug only).
     std::optional<FrameCamera> debug_camera;
     // Per-scene draw statistics for diagnostics.
@@ -391,6 +397,9 @@ private:
     void load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred_infos);
     void register_info(const ObjectView& info);
     void update_managers();
+    // The frame's camera, clear colour and traversal context (render,
+    // traverse_scene); `out` null: no draw items.
+    TraversalContext frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color);
     void install_lua();
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 

@@ -1182,8 +1182,7 @@ bool Engine::main_lobby() const {
     return stage == "stagml02" || stage == "stagml11" || stage == "stagml12" || stage == "stagml13";
 }
 
-void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
-    out.clear();
+TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color) {
     clear_color = {0, 0, 0, 1};
     if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
     if (auto* cam = get<CameraManager>()) cam->frame_camera(*this, camera);
@@ -1192,12 +1191,29 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     context.cache = &scenes_;
     context.time = time_;
     context.camera = camera;
-    context.output = &out;
+    context.output = out;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
         context.actor_pose = [this, actions](const Node& actor) { return actions->pose_for(actor, time_, true); };
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
+    return context;
+}
+
+void Engine::traverse_scene() {
+    // As render(): the same nodes in the same order with the same camera,
+    // time and poses; only the draw items (geometry, particle quads, skin
+    // palettes, lights) are left out.
+    FrameCamera camera;
+    Vec4f clear_color;
+    TraversalContext context = frame_context(nullptr, camera, clear_color);
+    traverse(&global_root_, context);
+    if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
+}
+
+void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
+    out.clear();
+    TraversalContext context = frame_context(&out, camera, clear_color);
     traverse(&global_root_, context);
     // The scene traversal submits its packages to the igSorter it holds at
     // +0x44 (geometry 801DDB84 -> 80205684). Its begin (801DB82C) resets the

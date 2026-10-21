@@ -607,6 +607,9 @@ public:
     // Fills the frame's light and caster draw items (casters traverse with
     // the given context's time and actor poses).
     void render(Engine& engine, const TraversalContext& context, ShadowFrame& frame);
+    // The same caster and receiver traversals without draw items
+    // (Engine::traverse_scene).
+    void traverse(const TraversalContext& context);
 
 private:
     std::vector<Node*> casters_, receivers_;
@@ -619,6 +622,8 @@ private:
     Vec3f up_{1, 0, 0};                 // [29] _upVector
     Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
+    bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
+    void traverse(const TraversalContext& context, std::vector<DrawItem>* casters, std::vector<DrawItem>* receivers);
 };
 
 // bePoint01 (80312A70): PLAYERPOINT generation groups and point matrices.

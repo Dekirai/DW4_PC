@@ -118,10 +118,23 @@ void ShadowManager::update(Engine& engine) {
         }
 }
 
+void ShadowManager::traverse(const TraversalContext& context, std::vector<DrawItem>* casters, std::vector<DrawItem>* receivers) {
+    TraversalContext caster = context;
+    caster.output = casters;
+    caster.actor_hook = nullptr;
+    for (auto* root : casters_) dw4::engine::traverse(root, caster);
+    caster.output = receivers;
+    for (auto* root : receivers_) dw4::engine::traverse(root, caster);
+}
+
+void ShadowManager::traverse(const TraversalContext& context) {
+    if (active()) traverse(context, nullptr, nullptr);
+}
+
 void ShadowManager::render(Engine& engine, const TraversalContext& context, ShadowFrame& frame) {
     frame.casters.clear();
     frame.receivers.clear();
-    frame.active = shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty();
+    frame.active = active();
     if (!frame.active) return;
     frame.factor = factor_;
     frame.width = width_;
@@ -131,12 +144,7 @@ void ShadowManager::render(Engine& engine, const TraversalContext& context, Shad
     frame.light_view = look_at(*light_, *light_ + direction_, up_);
     // 801FE5E4 (0x801FE66C): ortho(_left, _right, _bottom, _top, near, far).
     frame.light_projection = orthographic(left_, right_, bottom_, top_, near_, far_);
-    TraversalContext caster = context;
-    caster.output = &frame.casters;
-    caster.actor_hook = nullptr;
-    for (auto* root : casters_) traverse(root, caster);
-    caster.output = &frame.receivers;
-    for (auto* root : receivers_) traverse(root, caster);
+    traverse(context, &frame.casters, &frame.receivers);
     if (static const bool trace = std::getenv("DW4_TRACE_SHADOW") != nullptr; trace && engine.frame() % 120 == 0) {
         const std::size_t receiving = frame.receivers.size();
         engine.log("shadow light (" + std::to_string(light_->x) + ", " + std::to_string(light_->y) + ", " +

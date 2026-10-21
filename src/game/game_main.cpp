@@ -655,7 +655,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
     // Test runs draw no pictures unless they need them (screenshots, texture
     // pack or dump folders, DW4_RENDER=1): no window, no OpenGL context, no
     // menu. The scene is still traversed after every step exactly as for a
-    // picture (Engine::render), since animation clocks, motion
+    // picture (Engine::traverse_scene), since animation clocks, motion
     // combiners and recorded matrices advance there, so such a run simulates
     // the same frames as one that draws them.
     const bool draw = !options.smoke_frames || !options.screenshot.empty() || std::getenv("DW4_TEXTURE_PACK") ||
@@ -802,10 +802,6 @@ int run(const Options& options, dw4::game::Settings& settings) {
         std::optional<KeyCapture> capture;
         auto next_present = std::chrono::steady_clock::now();
         std::uint64_t net_submitted = std::uint64_t(net.active() ? net.start().delay : 0);
-        std::vector<dw4::engine::DrawItem> catch_up_items;
-        dw4::engine::FrameCamera catch_up_camera;
-        dw4::engine::Vec4f catch_up_clear{};
-        dw4::engine::ShadowFrame catch_up_shadow;
         // Smooth motion above 60 presents per second (settings.ini smooth_motion).
         dw4::game::MotionInterpolator interpolator;
         double present_interval = 1.0 / 60.0;
@@ -862,17 +858,13 @@ int run(const Options& options, dw4::game::Settings& settings) {
             engine.set_resource_overrides(mod_folders);
             engine.set_card_root(card_root);
             engine.restore(state.snapshot);
-            std::vector<dw4::engine::DrawItem> replay_items;
-            dw4::engine::FrameCamera replay_camera;
-            dw4::engine::Vec4f replay_clear{};
-            dw4::engine::ShadowFrame replay_shadow;
-            if (state.load_step_drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
+            if (state.load_step_drawn) engine.traverse_scene();
             std::vector<std::int16_t> scratch(std::size_t(kAudioFrameSamples + 1) * 2);
             auto* sound = engine.get<dw4::engine::SoundManager>();
             for (const auto& step : state.inputs) {
                 engine.step(step.pads);
                 if (sound) sound->render(scratch.data(), std::size_t(step_samples(engine.frame()))); // music position
-                if (step.drawn) engine.render(replay_items, replay_camera, replay_clear, &replay_shadow);
+                if (step.drawn) engine.traverse_scene();
             }
             const bool exact = engine.fingerprint() == state.fingerprint;
             input_log = state.inputs;
@@ -1161,7 +1153,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 // steps traverses the skipped pictures without drawing them
                 // (loading screens and route animations run on that clock).
                 if (i > 0) {
-                    engine.render(catch_up_items, catch_up_camera, catch_up_clear, &catch_up_shadow);
+                    engine.traverse_scene();
                     if (last_step_loaded) load_step_drawn = true;
                     else if (!input_log.empty()) input_log.back().drawn = true;
                 }
@@ -1444,7 +1436,8 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 rendered_serial = serial;
                 interpolator.reset();
             }
-            engine.render(items, camera, clear, &shadow);
+            if (draw) engine.render(items, camera, clear, &shadow);
+            else engine.traverse_scene();
             if (steps > 0) {
                 if (last_step_loaded) load_step_drawn = true;
                 else if (!input_log.empty()) input_log.back().drawn = true;
@@ -1905,6 +1898,10 @@ int run(const Options& options, dw4::game::Settings& settings) {
             std::cout << "state test: " << (state_mismatch < 0 ? "identical after loading" : "differs from frame " + std::to_string(state_mismatch))
                       << " (" << state_fingerprints.size() << " frames compared)\n";
         if (settings_changed && !options.smoke_frames) settings.save();
+        // Without pictures the last frame's draw list is collected once here
+        // (a second traversal at the same time changes nothing), for the
+        // draw count and DW4_DRAW_DUMP.
+        if (!draw) engine.render(items, camera, clear, &shadow);
         std::cout << "stage " << engine.stage_name() << ", frame " << engine.frame() << ", draws " << items.size() << '\n';
         if (net.active()) {
             std::cout << "online: final fingerprint " << std::hex << engine.fingerprint() << std::dec
