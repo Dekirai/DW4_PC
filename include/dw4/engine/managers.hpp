@@ -607,6 +607,9 @@ public:
     // Fills the frame's light and caster draw items (casters traverse with
     // the given context's time and actor poses).
     void render(Engine& engine, const TraversalContext& context, ShadowFrame& frame);
+    // The same caster and receiver traversals without draw items
+    // (Engine::traverse_scene).
+    void traverse(const TraversalContext& context);
 
 private:
     std::vector<Node*> casters_, receivers_;
@@ -619,6 +622,8 @@ private:
     Vec3f up_{1, 0, 0};                 // [29] _upVector
     Vec3f direction_{0, -1, 0};         // the light's direction
     std::optional<Vec3f> light_;
+    bool active() const { return shader_ && light_.has_value() && !casters_.empty() && !receivers_.empty(); }
+    void traverse(const TraversalContext& context, std::vector<DrawItem>* casters, std::vector<DrawItem>* receivers);
 };
 
 // bePoint01 (80312A70): PLAYERPOINT generation groups and point matrices.
@@ -1379,6 +1384,9 @@ public:
     // 803B0620: a cure ends the poison of a model.
     void clear_poison(ModelRam& ram);
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
+    // Changes whenever the RAM list does (never the same value twice, also
+    // across engines), for test code that keeps lookups over the list.
+    std::uint64_t rams_generation() const { return rams_generation_; }
 
 private:
     void update_player(Engine& engine, ModelRam& ram);
@@ -1423,6 +1431,12 @@ private:
     void set_down(Engine& engine, ModelRam& ram, int index, int value);
     void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
+    std::vector<ModelRam*> player_rams_; // the PLAYER RAMs, in rams_ order (player())
+    static std::uint64_t next_rams_generation() {
+        static std::uint64_t next = 0;
+        return ++next;
+    }
+    std::uint64_t rams_generation_ = next_rams_generation();
     struct UpdateEntry {
         int rank{};
         ModelRam* ram{};

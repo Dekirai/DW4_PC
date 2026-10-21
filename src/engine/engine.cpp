@@ -72,29 +72,66 @@ void Manager::fallback(Engine& engine, Ram& ram, std::string_view command, Packe
 // ---------------------------------------------------------------------------
 void Messenger::add_row(std::string category, std::optional<std::string> name, std::int32_t index, Ram* recipient) {
     rows_.push_back({std::move(category), std::move(name), index, recipient});
+    by_category_stale_ = true;
 }
 
 void Messenger::remove_rows(Manager* manager) {
     std::erase_if(rows_, [&](const MessengerRow& row) { return row.recipient && row.recipient->manager == manager; });
+    by_category_stale_ = true;
 }
 
 void Messenger::clear() {
     rows_.clear();
     deferred_.clear();
+    by_category_stale_ = true;
+}
+
+template <class Visit>
+void Messenger::candidates(std::string_view category, std::optional<std::string_view> name, Visit&& visit) const {
+    if (by_category_stale_) {
+        by_category_.clear();
+        for (std::size_t i = 0; i < rows_.size(); ++i) {
+            auto& rows = by_category_[rows_[i].category];
+            rows.all.push_back(std::uint32_t(i));
+            if (rows_[i].name) rows.named[*rows_[i].name].push_back(std::uint32_t(i));
+            else rows.unnamed.push_back(std::uint32_t(i));
+        }
+        by_category_stale_ = false;
+    }
+    const auto found = by_category_.find(category);
+    if (found == by_category_.end()) return;
+    const auto& rows = found->second;
+    if (!name) {
+        for (const auto i : rows.all)
+            if (!visit(rows_[i])) return;
+        return;
+    }
+    // A named selection takes the rows of that name and the unnamed ones:
+    // both lists merged back into row order.
+    static const std::vector<std::uint32_t> none;
+    const auto named = rows.named.find(*name);
+    const auto& a = named == rows.named.end() ? none : named->second;
+    const auto& b = rows.unnamed;
+    std::size_t ia = 0, ib = 0;
+    while (ia < a.size() || ib < b.size()) {
+        const std::uint32_t i = ib >= b.size() || (ia < a.size() && a[ia] < b[ib]) ? a[ia++] : b[ib++];
+        if (!visit(rows_[i])) return;
+    }
 }
 
 namespace {
-bool row_matches(const MessengerRow& row, std::string_view category, std::optional<std::string_view> name, std::int32_t index) {
-    if (row.category != category) return false;
-    if (name && row.name && *row.name != *name) return false;
-    if (index != -1 && row.index != -1 && row.index != index) return false;
-    return true;
-}
+// A row takes a message when the category is its own, the name (if both
+// have one) is its own and the index (if neither is -1) is its own;
+// candidates() gives the rows that fit the first two.
+bool index_matches(const MessengerRow& row, std::int32_t index) { return index == -1 || row.index == -1 || row.index == index; }
 } // namespace
 
 std::size_t Messenger::count(std::string_view category, std::optional<std::string_view> name, std::int32_t index) const {
     std::size_t n = 0;
-    for (const auto& row : rows_) if (row_matches(row, category, name, index)) ++n;
+    candidates(category, name, [&](const MessengerRow& row) {
+        if (index_matches(row, index)) ++n;
+        return true;
+    });
     return n;
 }
 
@@ -115,17 +152,23 @@ std::size_t Messenger::send(Engine& engine, std::string_view category, std::opti
         // happens. Scripts GENERATE into a free RAM that way (Lucemon's
         // x_035frunn01a grids, Infermon's split).
         bool any = false;
-        for (const auto& row : rows_) {
-            if (row.category != category || (name && row.name && *row.name != *name)) continue;
+        candidates(category, name, [&](const MessengerRow& row) {
             any = true;
             if (row.recipient && !row.recipient->active) {
                 recipients.push_back(row.recipient);
-                break;
+                return false;
             }
-        }
+            return true;
+        });
         if (any && recipients.empty()) return 0;
-    } else
-        for (const auto& row : rows_) if (row_matches(row, category, name, index)) recipients.push_back(row.recipient);
+    } else {
+        // (The candidate rows in row order: the same selection as the
+        // original's walk over all rows.)
+        candidates(category, name, [&](const MessengerRow& row) {
+            if (index_matches(row, index)) recipients.push_back(row.recipient);
+            return true;
+        });
+    }
     if (recipients.empty()) {
         engine.note("no recipient: " + std::string(category) + " " + std::string(command) +
                     (name ? " (" + std::string(*name) + ")" : std::string()));
@@ -289,7 +332,10 @@ Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResou
 
 Engine::~Engine() = default;
 
-void Engine::add_manager(std::unique_ptr<Manager> manager) { managers_.push_back(std::move(manager)); }
+void Engine::add_manager(std::unique_ptr<Manager> manager) {
+    managers_.push_back(std::move(manager));
+    found_managers_.clear();
+}
 
 Manager* Engine::manager(std::string_view type_name) const {
     for (const auto& m : managers_) if (m->type_name() == type_name) return m.get();
@@ -1182,8 +1228,7 @@ bool Engine::main_lobby() const {
     return stage == "stagml02" || stage == "stagml11" || stage == "stagml12" || stage == "stagml13";
 }
 
-void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
-    out.clear();
+TraversalContext Engine::frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color) {
     clear_color = {0, 0, 0, 1};
     if (auto* bk = get<BkColorManager>()) clear_color = bk->color();
     if (auto* cam = get<CameraManager>()) cam->frame_camera(*this, camera);
@@ -1192,12 +1237,29 @@ void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clea
     context.cache = &scenes_;
     context.time = time_;
     context.camera = camera;
-    context.output = &out;
+    context.output = out;
     if (auto* models = get<ModelCtrlManager>()) models->install_actor_hook(*this, context);
     if (auto* actions = get<ActionManager>())
         context.actor_pose = [this, actions](const Node& actor) { return actions->pose_for(actor, time_, true); };
     Mat4 inverse_view;
     if (invert(camera.view, inverse_view)) context.camera_position = {inverse_view(3, 0), inverse_view(3, 1), inverse_view(3, 2)};
+    return context;
+}
+
+void Engine::traverse_scene() {
+    // As render(): the same nodes in the same order with the same camera,
+    // time and poses; only the draw items (geometry, particle quads, skin
+    // palettes, lights) are left out.
+    FrameCamera camera;
+    Vec4f clear_color;
+    TraversalContext context = frame_context(nullptr, camera, clear_color);
+    traverse(&global_root_, context);
+    if (auto* shadows = get<ShadowManager>()) shadows->traverse(context);
+}
+
+void Engine::render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow) {
+    out.clear();
+    TraversalContext context = frame_context(&out, camera, clear_color);
     traverse(&global_root_, context);
     // The scene traversal submits its packages to the igSorter it holds at
     // +0x44 (geometry 801DDB84 -> 80205684). Its begin (801DB82C) resets the

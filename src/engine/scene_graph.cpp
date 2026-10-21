@@ -7,6 +7,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace dw4::engine {
 namespace {
@@ -501,13 +502,6 @@ Mat4 TransformSequence::evaluate(std::int64_t time) const {
     std::size_t j = 1;
     while (j + 1 < count && times[j] < at) ++j;
     return blend(j - 1, j, blend_ratio(at - times[j - 1], times[j] - times[j - 1]));
-}
-
-bool Node::child_enabled(std::size_t index) const {
-    if (kind != NodeKind::switch_node) return true;
-    const std::size_t word = index / 32;
-    if (word >= mask.size()) return false;
-    return (mask[word] >> (index % 32)) & 1u;
 }
 
 void Node::set_child_enabled(std::size_t index, bool enabled) {
@@ -1153,19 +1147,109 @@ Node* first_actor(Node* n, int depth) {
     return nullptr;
 }
 
-void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time,
+// What a traversal carries down besides the matrix, the time and the actor
+// scope: the whole render state when it collects draw items, else only the
+// view matrix a modelview attribute sets (billboards and LODs read it). The
+// rest of the render state never changes what a traversal does to the
+// nodes, poses and clocks, so both traversals visit the same nodes with the
+// same matrices and times.
+struct ViewOnly {
+    std::optional<Mat4> view;
+};
+
+// The running effect's particles as camera-facing quads (draw items only;
+// `state` takes the node's overrides as before the quads).
+void particle_items(Node* n, TraversalContext& ctx, const Mat4& model, RenderState& state) {
+    if (n->particle_start < 0 || !ctx.output) return;
+    const std::int64_t now = n->particle_paused >= 0 ? n->particle_paused : ctx.time;
+    const float seconds = float(double(now - n->particle_start) * 1e-9);
+    const Mat4 view = state.view.value_or(ctx.camera.view);
+    if (n->particle_geometry.size() < n->particles.size()) n->particle_geometry.resize(n->particles.size());
+    apply_overrides(*n, state);
+    for (std::size_t i = 0; i < n->particles.size(); ++i) {
+        auto& geometry = n->particle_geometry[i];
+        if (!geometry) geometry = std::make_shared<GeometryData>();
+        *geometry = GeometryData{}; // a new serial: the renderer uploads the new quads
+        if (!build_particles(n->particles[i], seconds, model, view, *geometry)) continue;
+        DrawItem item;
+        item.geometry = geometry.get();
+        item.node = n;
+        item.model = Mat4{};
+        item.state = state;
+        item.layer = ctx.layer;
+        item.order = ctx.order++;
+        ctx.output->push_back(std::move(item));
+    }
+}
+
+// A geometry node's draw items: its runtime geometry (text, numbers) or its
+// decoded geometry attributes, skinned with the actor's palette.
+void geometry_items(Node* n, TraversalContext& ctx, const Mat4& model, const RenderState& state, const ActorScope& scope) {
+    if (!ctx.output) return;
+    if (n->runtime_geometry) {
+        if (!n->runtime_geometry->valid) return;
+        DrawItem item;
+        item.geometry = n->runtime_geometry.get();
+        item.node = n;
+        item.model = model;
+        item.state = state;
+        if (n->runtime_texture) {
+            item.state.texture = n->runtime_texture;
+            item.state.texture_enabled = true;
+        }
+        item.layer = ctx.layer;
+        item.order = ctx.order++;
+        ctx.output->push_back(std::move(item));
+        return;
+    }
+    for (const auto* g : n->geometries) {
+        const auto* data = ctx.cache->geometry(g);
+        if (!data || !data->valid) continue;
+        DrawItem item;
+        item.geometry = data;
+        item.node = n;
+        item.model = model;
+        item.state = state;
+        item.layer = ctx.layer;
+        item.order = ctx.order++;
+        if (data->weight_count && scope.palette) item.palette = scope.palette;
+        ctx.output->push_back(std::move(item));
+    }
+}
+
+template <class State> constexpr bool kPicture = std::is_same_v<State, RenderState>;
+
+template <class State> void apply_all(const std::vector<const Attribute*>& attributes, State& state, Mat4& model) {
+    if constexpr (kPicture<State>) {
+        for (const auto* a : attributes) apply(a, state, model);
+    } else {
+        for (const auto* a : attributes)
+            if (a->kind == AttrKind::model_view_matrix) {
+                state.view = a->matrix;
+                model = Mat4{};
+            }
+    }
+}
+
+template <class State> void overrides(const Node& n, State& state) {
+    if constexpr (kPicture<State>) apply_overrides(n, state);
+}
+
+template <class State>
+void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const State& parent_state, std::int64_t time,
            const ActorScope& parent_scope, int depth) {
+    constexpr bool picture = kPicture<State>;
     if (!n || n->hidden || depth > 256) return;
     Mat4 model = parent_model;
-    RenderState state = parent_state;
+    State state = parent_state;
     ActorScope scope = parent_scope;
     switch (n->kind) {
     case NodeKind::attr_set:
-        for (const auto* a : n->attributes) apply(a, state, model);
+        apply_all(n->attributes, state, model);
         break;
     case NodeKind::blend_matrix_select: {
-        for (const auto* a : n->attributes) apply(a, state, model);
-        if (scope.pose && scope.pose->skeleton) {
+        apply_all(n->attributes, state, model);
+        if (picture && scope.pose && scope.pose->skeleton) {
             auto palette = std::make_shared<std::vector<Mat4>>();
             const auto& skel = *scope.pose->skeleton;
             for (const auto joint : n->blend_indices) {
@@ -1187,46 +1271,26 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
             model = scope.pose->bone_world[std::size_t(n->bone_index)] * scope.actor_model;
         break;
     case NodeKind::light_set:
-        for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
+        if constexpr (picture)
+            for (const auto* a : n->attributes) if (a->kind == AttrKind::light) state.lights.push_back(a);
         return;
     case NodeKind::light_state_set:
-        for (const auto* a : n->attributes) apply(a, state, model);
+        apply_all(n->attributes, state, model);
         break;
     case NodeKind::transform: {
         Mat4 local = n->sequence && n->sequence->valid ? n->sequence->evaluate(time) : n->matrix;
         if (n->runtime_matrix) local = *n->runtime_matrix * local;
         if (n->texture_transform) {
             // UV animation (icon atlases, scrolling surfaces).
-            state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
+            if constexpr (picture) state.texture_matrix = state.texture_matrix ? local * *state.texture_matrix : local;
             break;
         }
         model = local * model;
         break;
     }
-    case NodeKind::particle_timer: {
-        // The running effect's particles as camera-facing quads.
-        if (n->particle_start < 0 || !ctx.output) break;
-        const std::int64_t now = n->particle_paused >= 0 ? n->particle_paused : ctx.time;
-        const float seconds = float(double(now - n->particle_start) * 1e-9);
-        const Mat4 view = state.view.value_or(ctx.camera.view);
-        if (n->particle_geometry.size() < n->particles.size()) n->particle_geometry.resize(n->particles.size());
-        apply_overrides(*n, state);
-        for (std::size_t i = 0; i < n->particles.size(); ++i) {
-            auto& geometry = n->particle_geometry[i];
-            if (!geometry) geometry = std::make_shared<GeometryData>();
-            *geometry = GeometryData{}; // a new serial: the renderer uploads the new quads
-            if (!build_particles(n->particles[i], seconds, model, view, *geometry)) continue;
-            DrawItem item;
-            item.geometry = geometry.get();
-            item.node = n;
-            item.model = Mat4{};
-            item.state = state;
-            item.layer = ctx.layer;
-            item.order = ctx.order++;
-            ctx.output->push_back(std::move(item));
-        }
+    case NodeKind::particle_timer:
+        if constexpr (picture) particle_items(n, ctx, model, state);
         break;
-    }
     case NodeKind::transform_recorder:
         // igTransformRecorder traversal 801DE9C0 (table 0x80415194): _m
         // (+0x20, vtable +0x94) = modelview stack top * the traversal's
@@ -1301,50 +1365,20 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         // (801F799C); the ranges are squared distances. The players'
         // [0, 0, 10000] show Kage (child 0) never, High (1) up to 100 units
         // and Low (2) beyond; the shadow proxies draw Kage directly.
-        apply_overrides(*n, state);
+        overrides(*n, state);
         const Vec3f eye = transform_point(n->lod_center, model * state.view.value_or(ctx.camera.view));
         if (Node* child = n->select_lod(eye.z * eye.z + (eye.x * eye.x + eye.y * eye.y)))
             visit(child, ctx, model, state, time, scope, depth + 1);
         return;
     }
-    case NodeKind::geometry: {
-        for (const auto* a : n->attributes) apply(a, state, model);
-        apply_overrides(*n, state);
-        if (n->runtime_geometry) {
-            if (n->runtime_geometry->valid && ctx.output) {
-                DrawItem item;
-                item.geometry = n->runtime_geometry.get();
-                item.node = n;
-                item.model = model;
-                item.state = state;
-                if (n->runtime_texture) {
-                    item.state.texture = n->runtime_texture;
-                    item.state.texture_enabled = true;
-                }
-                item.layer = ctx.layer;
-                item.order = ctx.order++;
-                ctx.output->push_back(std::move(item));
-            }
-            break;
-        }
-        for (const auto* g : n->geometries) {
-            const auto* data = ctx.cache->geometry(g);
-            if (!data || !data->valid || !ctx.output) continue;
-            DrawItem item;
-            item.geometry = data;
-            item.node = n;
-            item.model = model;
-            item.state = state;
-            item.layer = ctx.layer;
-            item.order = ctx.order++;
-            if (data->weight_count && scope.palette) item.palette = scope.palette;
-            ctx.output->push_back(std::move(item));
-        }
+    case NodeKind::geometry:
+        apply_all(n->attributes, state, model);
+        overrides(*n, state);
+        if constexpr (picture) geometry_items(n, ctx, model, state, scope); // (no geometry decoding without)
         break;
-    }
     case NodeKind::actor: {
         if (ctx.actor_hook) ctx.actor_hook(*n, model, ctx);
-        apply_overrides(*n, state);
+        overrides(*n, state);
         ActorScope actor;
         actor.actor_model = n->actor_matrix * model;
         actor.pose = ctx.actor_pose ? ctx.actor_pose(scope.pose_actor ? *scope.pose_actor : *n) : nullptr;
@@ -1356,7 +1390,7 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
         return;
     default: break;
     }
-    apply_overrides(*n, state);
+    overrides(*n, state);
     for (std::size_t i = 0; i < n->children.size(); ++i) {
         if (!n->child_enabled(i)) continue;
         visit(n->children[i], ctx, model, state, n->fixed_time ? *n->fixed_time : time, scope, depth + 1);
@@ -1365,7 +1399,9 @@ void visit(Node* n, TraversalContext& ctx, const Mat4& parent_model, const Rende
 } // namespace
 
 void traverse(Node* n, TraversalContext& ctx, const Mat4& parent_model, const RenderState& parent_state, std::int64_t time) {
-    visit(n, ctx, parent_model, parent_state, time, ActorScope{}, 0);
+    // Without an output list nothing of the render state is needed but the view.
+    if (ctx.output) visit(n, ctx, parent_model, parent_state, time, ActorScope{}, 0);
+    else visit(n, ctx, parent_model, ViewOnly{parent_state.view}, time, ActorScope{}, 0);
 }
 
 void traverse(Node* root, TraversalContext& context) {

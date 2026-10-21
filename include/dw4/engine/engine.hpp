@@ -116,6 +116,22 @@ public:
 private:
     std::vector<MessengerRow> rows_;
     std::vector<DeferredMessage> deferred_;
+    // The rows of each category, all and by name, as row numbers in row
+    // order (selection reads only these; rebuilt after the rows change).
+    struct TextHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view text) const { return std::hash<std::string_view>{}(text); }
+    };
+    struct CategoryRows {
+        std::vector<std::uint32_t> all, unnamed;
+        std::unordered_map<std::string, std::vector<std::uint32_t>, TextHash, std::equal_to<>> named;
+    };
+    mutable std::unordered_map<std::string, CategoryRows, TextHash, std::equal_to<>> by_category_;
+    mutable bool by_category_stale_ = true;
+    // Calls `visit(row)` for the rows of `category` that a selection by
+    // `name` (any when empty) can take, in row order, until it returns false.
+    template <class Visit>
+    void candidates(std::string_view category, std::optional<std::string_view> name, Visit&& visit) const;
 };
 
 // beDemoManager record types (802F7580 / 802F7EC0).
@@ -271,6 +287,12 @@ public:
     // Collect the draw list for the current state.
     // `shadow` (optional) receives the projected-shadow light and casters.
     void render(std::vector<DrawItem>& out, FrameCamera& camera, Vec4f& clear_color, ShadowFrame* shadow = nullptr);
+    // The scene traversal of render(..., shadow) without the draw lists, for
+    // pictures that are not shown (test runs, catch-up steps, save state
+    // replays). The traversal advances animation clocks, motion combiners,
+    // LOD choices and recorded matrices, which the simulation reads, so a
+    // picture the original draws must be traversed either way.
+    void traverse_scene();
     // Optional host inspection camera replacing the game camera (debug only).
     std::optional<FrameCamera> debug_camera;
     // Per-scene draw statistics for diagnostics.
@@ -323,9 +345,17 @@ public:
 
     // Manager access.
     Manager* manager(std::string_view type_name) const;
+    // The first manager that is a T (looked up once per type, then kept
+    // until managers are added).
     template <class T> T* get() const {
-        for (const auto& m : managers_) if (auto* p = dynamic_cast<T*>(m.get())) return p;
-        return nullptr;
+        const std::size_t id = manager_type_id<T>();
+        if (id < found_managers_.size() && found_managers_[id].known) return static_cast<T*>(found_managers_[id].manager);
+        T* found = nullptr;
+        for (const auto& m : managers_)
+            if ((found = dynamic_cast<T*>(m.get()))) break;
+        if (id >= found_managers_.size()) found_managers_.resize(id + 1);
+        found_managers_[id] = {found, true};
+        return found;
     }
     void add_manager(std::unique_ptr<Manager> manager);
 
@@ -391,6 +421,9 @@ private:
     void load_file(const std::string& logical_path, bool member, std::vector<ObjectView>& deferred_infos);
     void register_info(const ObjectView& info);
     void update_managers();
+    // The frame's camera, clear colour and traversal context (render,
+    // traverse_scene); `out` null: no draw items.
+    TraversalContext frame_context(std::vector<DrawItem>* out, FrameCamera& camera, Vec4f& clear_color);
     void install_lua();
     std::vector<Lua4Value> lua_call(const Lua4HostCall& call);
 
@@ -401,6 +434,20 @@ private:
     DemoManager demo_;
     SceneCache scenes_;
     std::vector<std::unique_ptr<Manager>> managers_;
+    // get<T>() results by manager_type_id<T>() (the T* as void*).
+    struct FoundManager {
+        void* manager{};
+        bool known{};
+    };
+    mutable std::vector<FoundManager> found_managers_;
+    static std::size_t next_manager_type_id() {
+        static std::size_t next = 0;
+        return next++;
+    }
+    template <class T> static std::size_t manager_type_id() {
+        static const std::size_t id = next_manager_type_id();
+        return id;
+    }
     // igSerialScheduler's active list (8028B7B0): the managers in the order
     // their first info of the stage was accepted (802F251C -> 8028A398 ->
     // 80041E40 append-unique); every stage clear unschedules them (802F2628).

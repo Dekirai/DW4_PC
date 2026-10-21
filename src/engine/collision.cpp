@@ -3,15 +3,19 @@
 #include "dw4/engine/scene_graph.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <set>
+#include <cstring>
 
 namespace dw4::engine {
 
 void CollisionWorld::clear() {
     dynamic_.clear();
+    still_.clear();
+    forget_answers();
     triangles_.clear();
     grid_.clear();
     groups_.assign(1, true);
@@ -29,6 +33,7 @@ const std::string& CollisionWorld::info_name(std::uint16_t info) const {
 
 std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_switch, std::uint32_t kind, std::uint16_t info,
                                                     const std::function<const Node*(const ObjectView&)>& resolve) {
+    forget_answers();
     std::vector<std::uint32_t> ids;
     if (!check_switch) return ids;
     const auto children = check_switch.is_a("igGroup") ? check_switch.list(7) : std::vector<ObjectView>{check_switch};
@@ -48,6 +53,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
             d.grouped = true;
             d.group = group;
             dynamic_.push_back(std::move(d));
+            still_stale_ = true;
             continue;
         }
         const auto first = triangles_.size();
@@ -62,6 +68,7 @@ std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_sw
 
 void CollisionWorld::set_group_enabled(std::uint32_t group, bool enabled) {
     if (group < groups_.size()) groups_[group] = enabled;
+    still_stale_ = true;
 }
 
 void CollisionWorld::cells(const Vec3f& lo, const Vec3f& hi, std::vector<std::int64_t>& out) const {
@@ -85,7 +92,10 @@ void CollisionWorld::index_triangle(std::size_t index) {
     for (auto k : keys) grid_[k].push_back(std::uint32_t(index));
 }
 
-void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind, 0); }
+void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) {
+    add_node(root, Mat4{}, 0, kind, 0);
+    forget_answers();
+}
 
 std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std::uint32_t kind, std::uint16_t info,
                                           std::uint16_t child) {
@@ -110,6 +120,7 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
                 d.bound_max = bound.vec3(3).value_or(Vec3f{});
             }
     dynamic_.push_back(std::move(d));
+    forget_answers();
     return std::uint32_t(dynamic_.size() - 1);
 }
 
@@ -118,10 +129,141 @@ void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Nod
     dynamic_[id].node = source;
     dynamic_[id].mask_switch = mask_switch;
     dynamic_[id].bit = bit;
+    still_stale_ = true;
+}
+
+void CollisionWorld::forget_answers() const {
+    memos_.clear();
+    memo_ = nullptr;
+    still_stale_ = true;
+}
+
+void CollisionWorld::refresh_still() const {
+    still_.clear();
+    // The collision state: every group switch, then each enabled moving
+    // child with its matrix.
+    auto& state = still_state_;
+    state.assign((groups_.size() + 31) / 32 + 1, 0u);
+    state[0] = std::uint32_t(groups_.size());
+    for (std::size_t g = 0; g < groups_.size(); ++g)
+        if (groups_[g]) state[1 + g / 32] |= 1u << (g % 32);
+    for (std::size_t i = 0; i < dynamic_.size(); ++i) {
+        const auto& d = dynamic_[i];
+        if (d.local.empty() || !d.node) continue;
+        if (d.grouped ? !(d.group < groups_.size() && groups_[d.group]) : (!d.mask_switch || !d.mask_switch->child_enabled(d.bit)))
+            continue;
+        const Mat4& matrix = d.node->matrix;
+        still_.push_back({std::uint32_t(i), transform_point(Vec3f{}, matrix), matrix(3, 0), matrix(3, 2)});
+        state.push_back(std::uint32_t(i));
+        const auto first = state.size();
+        state.resize(first + 16);
+        std::memcpy(&state[first], matrix.m.data(), sizeof matrix.m);
+    }
+    still_stale_ = false;
+    // The kept answers of this state. A few states are kept (plans switch
+    // walls off and on around their maps); answers are kept only from the
+    // second scope in a state on, so a state that never comes back (a
+    // platform moving between two plans) costs no bookkeeping. Not while
+    // DW4_TRACE_HITLAND=2 prints the queries' hits.
+    static const bool keep = [] {
+        const char* trace = std::getenv("DW4_TRACE_HITLAND");
+        return !(trace && trace[0] == '2');
+    }();
+    memo_ = nullptr;
+    if (!keep) return;
+    StillMemo* memo = nullptr;
+    for (const auto& kept : memos_)
+        if (kept->state == state) {
+            memo = kept.get();
+            break;
+        }
+    if (!memo) {
+        if (memos_.size() >= 8)
+            memos_.erase(std::min_element(memos_.begin(), memos_.end(), [](const auto& a, const auto& b) { return a->used < b->used; }));
+        memos_.push_back(std::make_unique<StillMemo>());
+        memo = memos_.back().get();
+        memo->state = state;
+    }
+    memo->used = ++memo_clock_;
+    if (++memo->scopes < 2) return;
+    // (Bounded: a long exploration of one floor keeps adding places.)
+    if (memo->land.size() + memo->wall.size() > 400'000) {
+        memo->land.clear();
+        memo->wall.clear();
+    }
+    memo_ = memo;
+}
+
+CollisionWorld::StillMemo* CollisionWorld::still_memo() const {
+    if (still_depth_ <= 0) return nullptr;
+    if (still_stale_) refresh_still();
+    return memo_;
+}
+
+namespace {
+std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
+} // namespace
+
+LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
+    StillMemo* memo = still_memo();
+    if (!memo) return land_query(p, width, up, down);
+    const std::array<std::uint32_t, 6> key{bits(p.x), bits(p.y), bits(p.z), bits(width), bits(up), bits(down)};
+    if (const auto* answer = memo->land.find(key)) return *answer;
+    return memo->land.insert(key, land_query(p, width, up, down));
+}
+
+WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direction, float width, float down,
+                                      std::uint32_t flags, bool skip_preflight) const {
+    StillMemo* memo = still_memo();
+    if (!memo) return wall_query(position, direction, width, down, flags, skip_preflight);
+    const std::array<std::uint32_t, 10> key{bits(position.x),  bits(position.y),  bits(position.z), bits(direction.x),
+                                            bits(direction.y), bits(direction.z), bits(width),      bits(down),
+                                            flags,             skip_preflight ? 1u : 0u};
+    if (const auto* answer = memo->wall.find(key)) return *answer;
+    return memo->wall.insert(key, wall_query(position, direction, width, down, flags, skip_preflight));
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
-                                  std::vector<CollisionTriangle>& out) const {
+                                  std::vector<const std::vector<CollisionTriangle>*>& out) const {
+    auto place = [&](const Dynamic& d) {
+        const Mat4& matrix = d.node->matrix;
+        if (!d.placed_valid || std::memcmp(d.placed_matrix.m.data(), matrix.m.data(), sizeof matrix.m) != 0) {
+            d.placed.clear();
+            for (const auto& local : d.local) {
+                CollisionTriangle t = local;
+                t.a = transform_point(local.a, matrix);
+                t.b = transform_point(local.b, matrix);
+                t.c = transform_point(local.c, matrix);
+                const Vec3f n = cross(t.b - t.a, t.c - t.a);
+                if (length(n) < 1e-8f) continue;
+                t.normal = normalize(n);
+                t.group = UINT32_MAX; // checked above
+                d.placed.push_back(t);
+            }
+            d.placed_matrix = matrix;
+            d.placed_valid = true;
+        }
+        out.push_back(&d.placed);
+    };
+    if (still_depth_ > 0) {
+        // The same tests as below on the children enabled at the scope's
+        // start, with their placement then.
+        if (still_stale_) refresh_still();
+        for (const auto& s : still_) {
+            const auto& d = dynamic_[s.index];
+            if (d.grouped) {
+                const float dx = p.x - s.origin.x, dz = p.z - s.origin.z;
+                const float limit = d.reach + reach;
+                if (dx * dx + dz * dz > limit * limit) continue;
+            } else if (d.bounded) {
+                const float low_x = d.bound_min.x + s.tx, high_x = d.bound_max.x + s.tx;
+                const float low_z = d.bound_min.z + s.tz, high_z = d.bound_max.z + s.tz;
+                if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
+            }
+            place(d);
+        }
+        return;
+    }
     for (const auto& d : dynamic_) {
         if (d.local.empty() || !d.node) continue;
         // 803009D0 copies a kind 0x400 child's source matrix into the child
@@ -156,17 +298,7 @@ void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& mini
                 if (!(high_x >= minimum.x) || !(low_x <= maximum.x) || !(high_z >= minimum.z) || !(low_z <= maximum.z)) continue;
             }
         }
-        for (const auto& local : d.local) {
-            CollisionTriangle t = local;
-            t.a = transform_point(local.a, matrix);
-            t.b = transform_point(local.b, matrix);
-            t.c = transform_point(local.c, matrix);
-            const Vec3f n = cross(t.b - t.a, t.c - t.a);
-            if (length(n) < 1e-8f) continue;
-            t.normal = normalize(n);
-            t.group = UINT32_MAX; // checked above
-            out.push_back(t);
-        }
+        place(d);
     }
 }
 
@@ -246,21 +378,42 @@ HitSegment HitSegment::between(const Vec3f& start, const Vec3f& end) {
     return s;
 }
 
-void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f& minimum, const Vec3f& maximum,
+void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& minimum, const Vec3f& maximum,
                            std::uint32_t flags, std::vector<HitCandidate>& out) const {
-    std::vector<std::int64_t> keys;
+    // Scratch lists kept between queries (no allocation per query).
+    thread_local std::vector<std::int64_t> keys;
+    thread_local std::vector<const std::vector<std::uint32_t>*> lists;
+    thread_local std::vector<std::uint32_t> merged;
+    thread_local std::vector<const std::vector<CollisionTriangle>*> moving;
+    keys.clear();
     cells({minimum.x, 0, minimum.z}, {maximum.x, 0, maximum.z}, keys);
     keys.push_back(key(INT32_MAX, INT32_MAX));
-    std::vector<std::uint32_t> indices;
-    std::set<std::uint32_t> seen;
+    lists.clear();
     for (auto k : keys) {
         const auto it = grid_.find(k);
-        if (it == grid_.end()) continue;
-        for (auto index : it->second)
-            if (seen.insert(index).second) indices.push_back(index);
+        if (it != grid_.end() && !it->second.empty()) lists.push_back(&it->second);
     }
-    std::sort(indices.begin(), indices.end()); // the infos' traversal order
-    std::vector<CollisionTriangle> moving;
+    // Each triangle once, in index order (the infos' traversal order). A
+    // grid list holds its triangles once each in index order (they are
+    // indexed as they are added), so a single list is used as it is and two
+    // are merged.
+    static const std::vector<std::uint32_t> no_triangles;
+    const std::vector<std::uint32_t>* indices = &no_triangles;
+    if (lists.size() == 1) {
+        indices = lists[0];
+    } else if (lists.size() == 2) {
+        merged.resize(lists[0]->size() + lists[1]->size());
+        std::merge(lists[0]->begin(), lists[0]->end(), lists[1]->begin(), lists[1]->end(), merged.begin());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        indices = &merged;
+    } else if (lists.size() > 2) {
+        merged.clear();
+        for (const auto* list : lists) merged.insert(merged.end(), list->begin(), list->end());
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        indices = &merged;
+    }
+    moving.clear();
     const Vec3f center{(minimum.x + maximum.x) * 0.5f, 0, (minimum.z + maximum.z) * 0.5f};
     const float reach = std::max(maximum.x - minimum.x, maximum.z - minimum.z) * 0.5f + 1.0f;
     dynamic_near(center, reach, minimum, maximum, moving);
@@ -287,23 +440,25 @@ void CollisionWorld::query(const std::vector<HitSegment>& segments, const Vec3f&
             out.push_back(c);
         }
     };
-    for (auto index : indices) {
+    for (auto index : *indices) {
         const auto& t = triangles_[index];
         if (enabled(t)) test(t);
     }
-    for (const auto& t : moving) test(t);
+    for (const auto* placed : moving)
+        for (const auto& t : *placed) test(t);
 }
 
 // 80300444: four rays from Y 1000 down to -100 at the corners of the width;
 // the highest floor inside the window, else the nearest one below, else the
 // lowest.
-LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
+LandResult CollisionWorld::land_query(const Vec3f& p, float width, float up, float down) const {
     const float right = width + p.x, far = width + p.z, left = p.x - width, near = p.z - width;
     constexpr float top = 1000.0f, bottom = -100.0f;
-    const std::vector<HitSegment> segments{
+    const std::array<HitSegment, 4> segments{
         HitSegment::between({right, top, far}, {right, bottom, far}), HitSegment::between({left, top, far}, {left, bottom, far}),
         HitSegment::between({right, top, near}, {right, bottom, near}), HitSegment::between({left, top, near}, {left, bottom, near})};
-    std::vector<HitCandidate> hits;
+    thread_local std::vector<HitCandidate> hits;
+    hits.clear();
     query(segments, {left, bottom, near}, {right, top, far}, 1u, hits);
     auto inside = [&](float height) { return up + height > p.y && height - down < p.y; };
     LandResult result;
@@ -348,7 +503,7 @@ LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, flo
 // previous query hit) finds any wall; the longitudinal pass pulls the
 // position back along the direction from the nearest hit, the lateral pass
 // pushes it out along the nearest wall's normal.
-WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direction, float width, float down,
+WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direction, float width, float down,
                                       std::uint32_t flags, bool skip_preflight) const {
     WallResult result;
     result.position = position;
@@ -363,7 +518,7 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
     }
     const Vec3f base{position.x, down + position.y, position.z};
     const Vec3f plus = base + direction * radius, minus = base + direction * -radius;
-    auto bounds = [&](const std::vector<HitSegment>& segments, Vec3f& lo, Vec3f& hi) {
+    auto bounds = [&](std::span<const HitSegment> segments, Vec3f& lo, Vec3f& hi) {
         lo = hi = segments.front().origin;
         for (const auto& s : segments) {
             extend(lo, hi, s.origin);
@@ -372,11 +527,12 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
         lo.y = hi.y = position.y;
     };
     auto parallel = [&](float displacement) {
-        return std::vector<HitSegment>{HitSegment::between(minus, plus),
-                                       HitSegment::between(minus + side * displacement, plus + side * displacement),
-                                       HitSegment::between(minus + side * -displacement, plus + side * -displacement)};
+        return std::array<HitSegment, 3>{HitSegment::between(minus, plus),
+                                         HitSegment::between(minus + side * displacement, plus + side * displacement),
+                                         HitSegment::between(minus + side * -displacement, plus + side * -displacement)};
     };
-    std::vector<HitCandidate> hits;
+    thread_local std::vector<HitCandidate> hits;
+    hits.clear();
     Vec3f lo, hi;
     if (!skip_preflight) {
         const auto segments = parallel(radius);
@@ -405,8 +561,8 @@ WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direct
         hits.clear();
         const Vec3f raised{result.position.x, down + result.position.y, result.position.z};
         const Vec3f center = raised + direction * (3.0f * radius * 0.25f);
-        const std::vector<HitSegment> segments{HitSegment::between(center, center + side * radius),
-                                               HitSegment::between(center, center + side * -radius)};
+        const std::array<HitSegment, 2> segments{HitSegment::between(center, center + side * radius),
+                                                 HitSegment::between(center, center + side * -radius)};
         bounds(segments, lo, hi);
         query(segments, lo, hi, flags, hits);
         if (!hits.empty()) {
@@ -437,20 +593,21 @@ WallResult CollisionWorld::check_wall_full(const Vec3f& position, float width, f
     flags &= ~1u;
     auto pass = [&](float radius, std::uint32_t query_flags) {
         const Vec3f base{position.x, down + position.y, position.z};
-        std::vector<HitSegment> segments;
+        std::array<HitSegment, 8> segments;
         Vec3f lo = base, hi = base;
         Vec3f direction{1.0f, 0.0f, 0.0f};
         constexpr float turn = 0.70710677f;
         for (int i = 0; i < 8; ++i) {
             const Vec3f end = base + direction * radius;
-            segments.push_back(HitSegment::between(base, end));
+            segments[std::size_t(i)] = HitSegment::between(base, end);
             extend(lo, hi, end);
             if (i == 7) break;
             direction = normalize(Vec3f{direction.x * turn + direction.z * turn, direction.y,
                                         direction.z * turn - direction.x * turn});
         }
         lo.y = hi.y = position.y;
-        std::vector<HitCandidate> hits;
+        thread_local std::vector<HitCandidate> hits;
+        hits.clear();
         query(segments, lo, hi, query_flags, hits);
         if (hits.empty()) return false;
         std::size_t selected = 0;

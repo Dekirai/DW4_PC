@@ -267,6 +267,8 @@ private:
     };
     std::map<std::pair<int, int>, FireCell> fire_cells_;
     std::map<const void*, std::vector<int>> shots_;                       // turret -> frames of its last bullets' starts
+    std::vector<const void*> alive_;                                      // track_fire: the RAMs, sorted
+    std::uint64_t alive_generation_ = 0;                                  // ... of this RAM list
     std::map<const void*, std::pair<engine::Vec3f, const void*>> bullets_; // live enemy bullet -> position, turret
     std::map<const void*, std::pair<engine::Vec3f, int>> standing_;      // enemy -> where it stands and since when
     std::map<const void*, float> bullet_speed_;                          // turret -> how far its bullets fly in a step

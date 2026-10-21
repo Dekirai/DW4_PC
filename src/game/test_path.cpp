@@ -69,6 +69,7 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
     const int w = std::min(400, int((std::abs(from.x - to.x) + 2 * margin) / step) + 1);
     const int h = std::min(400, int((std::abs(from.z - to.z) + 2 * margin) / step) + 1);
     Grid grid(world, x0, z0, w, h, std::max(from.y, to.y), wall_flags);
+    const engine::CollisionWorld::Still still(world); // nothing moves while the route is searched
     if (std::getenv("DW4_TRACE_GRID")) {
         // Probe the column straight south of the start.
         const auto [cx, cz] = grid.cell_at(from.x, from.z);
@@ -133,6 +134,7 @@ std::vector<engine::Vec3f> find_walk_path(const engine::CollisionWorld& world, c
 WalkMap::WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
                  const std::vector<AvoidBox>& avoid, float width, const std::vector<MovingFloor>& moving) {
     constexpr float step = Grid::step, climb = Grid::climb, drop = Grid::drop;
+    const engine::CollisionWorld::Still still(world); // nothing moves while the map is built
     // The grid is aligned to the world (multiples of three cells), so the
     // samples do not move with the player.
     x0_ = std::floor((from.x - range) / (3 * step)) * (3 * step);
@@ -2015,15 +2017,22 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
     // The stored models are read later (posts, the turret in front): keep
     // only those still alive (a removed model, or a state load that builds a
     // new engine on the same stage, leaves stale keys).
-    std::set<const void*> alive;
-    for (const auto& e : models->rams()) alive.insert(e.get());
-    const auto dead = [&](const auto& entry) { return !alive.count(entry.first); };
+    // (A sorted list, rebuilt when the RAM list changes: this runs every step.)
+    if (alive_generation_ != models->rams_generation()) {
+        alive_.clear();
+        for (const auto& e : models->rams()) alive_.push_back(e.get());
+        std::sort(alive_.begin(), alive_.end());
+        alive_generation_ = models->rams_generation();
+    }
+    const auto& alive = alive_;
+    const auto is_alive = [&](const void* p) { return std::binary_search(alive.begin(), alive.end(), p); };
+    const auto dead = [&](const auto& entry) { return !is_alive(entry.first); };
     std::erase_if(shots_, dead);
     std::erase_if(standing_, dead);
     std::erase_if(bullet_speed_, dead);
     std::erase_if(turret_band_, dead);
     for (auto& [key, cell] : fire_cells_)
-        if (cell.shooter && !alive.count(cell.shooter)) cell.shooter = nullptr;
+        if (cell.shooter && !is_alive(cell.shooter)) cell.shooter = nullptr;
     std::map<const void*, std::pair<engine::Vec3f, const void*>> live;
     for (const auto& e : models->rams()) {
         if (!e->generated || !e->node || e->is_player) continue;
@@ -2130,7 +2139,7 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
                 }
                 if (shots.size() > 12) shots.erase(shots.begin());
             }
-        } else if (known && e->hitboxes.empty() && e->seq_name.rfind("SQ_ERAS", 0) != 0 && alive.count(before->second.second)) {
+        } else if (known && e->hitboxes.empty() && e->seq_name.rfind("SQ_ERAS", 0) != 0 && is_alive(before->second.second)) {
             steady[e.get()] = {at, before->second.second};
         }
     }
