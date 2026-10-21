@@ -1364,8 +1364,11 @@ constexpr int kTripHealStock = 4;
 // visit made no progress (no story flag set for the first time): after one
 // that did, the player restocks and comes back, at most kProgressTrips times
 // per objective. Flags set within kFlagSettle frames of a stage's start are
-// its start scripts'.
-constexpr int kProgressTrips = 4;
+// its start scripts'. (stag0204 alone holds six such steps - the scorpion
+// gate, flag 50, the towers 51..54 and the boss gate 55 - and a level 22
+// no-cheat chain set one a visit: 50, 53, 51; dng205b3 took four visits
+// with progress and a fifth after training.)
+constexpr int kProgressTrips = 8;
 constexpr int kFlagSettle = 600;
 
 // Training (no god mode): an objective in a combat stage is taken on only
