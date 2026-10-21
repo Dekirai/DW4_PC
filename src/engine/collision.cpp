@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,7 +15,7 @@ namespace dw4::engine {
 void CollisionWorld::clear() {
     dynamic_.clear();
     still_.clear();
-    still_stale_ = true;
+    forget_answers();
     triangles_.clear();
     grid_.clear();
     groups_.assign(1, true);
@@ -32,6 +33,7 @@ const std::string& CollisionWorld::info_name(std::uint16_t info) const {
 
 std::vector<std::uint32_t> CollisionWorld::add_switch(const ObjectView& check_switch, std::uint32_t kind, std::uint16_t info,
                                                     const std::function<const Node*(const ObjectView&)>& resolve) {
+    forget_answers();
     std::vector<std::uint32_t> ids;
     if (!check_switch) return ids;
     const auto children = check_switch.is_a("igGroup") ? check_switch.list(7) : std::vector<ObjectView>{check_switch};
@@ -90,7 +92,10 @@ void CollisionWorld::index_triangle(std::size_t index) {
     for (auto k : keys) grid_[k].push_back(std::uint32_t(index));
 }
 
-void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) { add_node(root, Mat4{}, 0, kind, 0); }
+void CollisionWorld::add_graph(const ObjectView& root, std::uint32_t kind) {
+    add_node(root, Mat4{}, 0, kind, 0);
+    forget_answers();
+}
 
 std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std::uint32_t kind, std::uint16_t info,
                                           std::uint16_t child) {
@@ -115,7 +120,7 @@ std::uint32_t CollisionWorld::add_dynamic(const ObjectView& copy_transform, std:
                 d.bound_max = bound.vec3(3).value_or(Vec3f{});
             }
     dynamic_.push_back(std::move(d));
-    still_stale_ = true;
+    forget_answers();
     return std::uint32_t(dynamic_.size() - 1);
 }
 
@@ -127,8 +132,21 @@ void CollisionWorld::set_dynamic(std::uint32_t id, const Node* source, const Nod
     still_stale_ = true;
 }
 
+void CollisionWorld::forget_answers() const {
+    memos_.clear();
+    memo_ = nullptr;
+    still_stale_ = true;
+}
+
 void CollisionWorld::refresh_still() const {
     still_.clear();
+    // The collision state: every group switch, then each enabled moving
+    // child with its matrix.
+    auto& state = still_state_;
+    state.assign((groups_.size() + 31) / 32 + 1, 0u);
+    state[0] = std::uint32_t(groups_.size());
+    for (std::size_t g = 0; g < groups_.size(); ++g)
+        if (groups_[g]) state[1 + g / 32] |= 1u << (g % 32);
     for (std::size_t i = 0; i < dynamic_.size(); ++i) {
         const auto& d = dynamic_[i];
         if (d.local.empty() || !d.node) continue;
@@ -136,8 +154,72 @@ void CollisionWorld::refresh_still() const {
             continue;
         const Mat4& matrix = d.node->matrix;
         still_.push_back({std::uint32_t(i), transform_point(Vec3f{}, matrix), matrix(3, 0), matrix(3, 2)});
+        state.push_back(std::uint32_t(i));
+        const auto first = state.size();
+        state.resize(first + 16);
+        std::memcpy(&state[first], matrix.m.data(), sizeof matrix.m);
     }
     still_stale_ = false;
+    // The kept answers of this state. A few states are kept (plans switch
+    // walls off and on around their maps); answers are kept only from the
+    // second scope in a state on, so a state that never comes back (a
+    // platform moving between two plans) costs no bookkeeping. Not while
+    // DW4_TRACE_HITLAND=2 prints the queries' hits.
+    static const bool keep = [] {
+        const char* trace = std::getenv("DW4_TRACE_HITLAND");
+        return !(trace && trace[0] == '2');
+    }();
+    memo_ = nullptr;
+    if (!keep) return;
+    StillMemo* memo = nullptr;
+    for (const auto& kept : memos_)
+        if (kept->state == state) {
+            memo = kept.get();
+            break;
+        }
+    if (!memo) {
+        if (memos_.size() >= 8)
+            memos_.erase(std::min_element(memos_.begin(), memos_.end(), [](const auto& a, const auto& b) { return a->used < b->used; }));
+        memos_.push_back(std::make_unique<StillMemo>());
+        memo = memos_.back().get();
+        memo->state = state;
+    }
+    memo->used = ++memo_clock_;
+    if (++memo->scopes < 2) return;
+    // (Bounded: a long exploration of one floor keeps adding places.)
+    if (memo->land.size() + memo->wall.size() > 3'000'000) {
+        memo->land.clear();
+        memo->wall.clear();
+    }
+    memo_ = memo;
+}
+
+CollisionWorld::StillMemo* CollisionWorld::still_memo() const {
+    if (still_depth_ <= 0) return nullptr;
+    if (still_stale_) refresh_still();
+    return memo_;
+}
+
+namespace {
+std::uint32_t bits(float value) { return std::bit_cast<std::uint32_t>(value); }
+} // namespace
+
+LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
+    StillMemo* memo = still_memo();
+    if (!memo) return land_query(p, width, up, down);
+    const LandKey key{bits(p.x), bits(p.y), bits(p.z), bits(width), bits(up), bits(down)};
+    if (const auto it = memo->land.find(key); it != memo->land.end()) return it->second;
+    return memo->land.emplace(key, land_query(p, width, up, down)).first->second;
+}
+
+WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direction, float width, float down,
+                                      std::uint32_t flags, bool skip_preflight) const {
+    StillMemo* memo = still_memo();
+    if (!memo) return wall_query(position, direction, width, down, flags, skip_preflight);
+    const WallKey key{bits(position.x), bits(position.y), bits(position.z), bits(direction.x), bits(direction.y),
+                      bits(direction.z), bits(width), bits(down), flags | (skip_preflight ? 0x80000000u : 0u)};
+    if (const auto it = memo->wall.find(key); it != memo->wall.end()) return it->second;
+    return memo->wall.emplace(key, wall_query(position, direction, width, down, flags, skip_preflight)).first->second;
 }
 
 void CollisionWorld::dynamic_near(const Vec3f& p, float reach, const Vec3f& minimum, const Vec3f& maximum,
@@ -368,7 +450,7 @@ void CollisionWorld::query(std::span<const HitSegment> segments, const Vec3f& mi
 // 80300444: four rays from Y 1000 down to -100 at the corners of the width;
 // the highest floor inside the window, else the nearest one below, else the
 // lowest.
-LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, float down) const {
+LandResult CollisionWorld::land_query(const Vec3f& p, float width, float up, float down) const {
     const float right = width + p.x, far = width + p.z, left = p.x - width, near = p.z - width;
     constexpr float top = 1000.0f, bottom = -100.0f;
     const std::array<HitSegment, 4> segments{
@@ -420,7 +502,7 @@ LandResult CollisionWorld::check_land(const Vec3f& p, float width, float up, flo
 // previous query hit) finds any wall; the longitudinal pass pulls the
 // position back along the direction from the nearest hit, the lateral pass
 // pushes it out along the nearest wall's normal.
-WallResult CollisionWorld::check_wall(const Vec3f& position, const Vec3f& direction, float width, float down,
+WallResult CollisionWorld::wall_query(const Vec3f& position, const Vec3f& direction, float width, float down,
                                       std::uint32_t flags, bool skip_preflight) const {
     WallResult result;
     result.position = position;

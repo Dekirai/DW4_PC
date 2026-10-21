@@ -3,7 +3,9 @@
 #include "dw4/engine/igb_view.hpp"
 #include "dw4/engine/math.hpp"
 
+#include <array>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -105,7 +107,11 @@ public:
     // placement are read once, so each query looks only at the enabled
     // ones; the results are the same as without it. Nothing the world
     // follows (node matrices, switch masks) may change meanwhile; a group
-    // switched inside the scope is picked up.
+    // switched inside the scope is picked up. The answers of check_land and
+    // check_wall in such scopes are also kept with the collision state they
+    // were found in (the group switches and the enabled moving children
+    // with their matrices, compared word for word), so the next plan in the
+    // same state reads them instead of querying again.
     class Still {
     public:
         explicit Still(const CollisionWorld& world) : world_(world) {
@@ -154,6 +160,35 @@ private:
     mutable int still_depth_ = 0;
     mutable bool still_stale_ = true;
     void refresh_still() const;
+    // Kept answers per collision state (Still); the arguments' bits are the key.
+    struct WordsHash {
+        template <std::size_t N> std::size_t operator()(const std::array<std::uint32_t, N>& words) const {
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;
+            for (const auto w : words) {
+                h = (h ^ w) * 0xFF51AFD7ED558CCDull;
+                h ^= h >> 29;
+            }
+            return std::size_t(h);
+        }
+    };
+    using LandKey = std::array<std::uint32_t, 6>;
+    using WallKey = std::array<std::uint32_t, 9>;
+    struct StillMemo {
+        std::vector<std::uint32_t> state;
+        std::unordered_map<LandKey, LandResult, WordsHash> land;
+        std::unordered_map<WallKey, WallResult, WordsHash> wall;
+        std::uint64_t used{};
+        int scopes{}; // Still scopes met in this state (answers are kept from the second on)
+    };
+    mutable std::vector<std::unique_ptr<StillMemo>> memos_;
+    mutable StillMemo* memo_{};
+    mutable std::uint64_t memo_clock_{};
+    mutable std::vector<std::uint32_t> still_state_;
+    void forget_answers() const;
+    StillMemo* still_memo() const;
+    LandResult land_query(const Vec3f& position, float width, float up, float down) const;
+    WallResult wall_query(const Vec3f& position, const Vec3f& direction, float width, float down, std::uint32_t flags,
+                          bool skip_preflight) const;
     // The enabled dynamic triangles of the query (X/Z box minimum..maximum,
     // centre p and half-size `reach` of it), in world space: one list per
     // dynamic child, in their order.
