@@ -1384,6 +1384,9 @@ public:
     // 803B0620: a cure ends the poison of a model.
     void clear_poison(ModelRam& ram);
     const std::vector<std::unique_ptr<ModelRam>>& rams() const { return rams_; }
+    // Changes whenever the RAM list does (never the same value twice, also
+    // across engines), for test code that keeps lookups over the list.
+    std::uint64_t rams_generation() const { return rams_generation_; }
 
 private:
     void update_player(Engine& engine, ModelRam& ram);
@@ -1429,6 +1432,11 @@ private:
     void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
     std::vector<ModelRam*> player_rams_; // the PLAYER RAMs, in rams_ order (player())
+    static std::uint64_t next_rams_generation() {
+        static std::uint64_t next = 0;
+        return ++next;
+    }
+    std::uint64_t rams_generation_ = next_rams_generation();
     struct UpdateEntry {
         int rank{};
         ModelRam* ram{};

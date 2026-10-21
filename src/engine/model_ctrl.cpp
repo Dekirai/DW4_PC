@@ -248,12 +248,14 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         update_order_.insert(at, {rank, ram.get()});
         if (ram->is_player) player_rams_.push_back(ram.get());
         rams_.push_back(std::move(ram));
+        rams_generation_ = next_rams_generation();
     }
 }
 
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
     player_rams_.clear();
+    rams_generation_ = next_rams_generation();
     update_order_.clear();
     ai_maps_.clear();
     item_labels_.fill(false);

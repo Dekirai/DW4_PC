@@ -2017,11 +2017,14 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
     // The stored models are read later (posts, the turret in front): keep
     // only those still alive (a removed model, or a state load that builds a
     // new engine on the same stage, leaves stale keys).
-    // (A sorted list rather than a set: this runs every step over all RAMs.)
-    std::vector<const void*> alive;
-    alive.reserve(models->rams().size());
-    for (const auto& e : models->rams()) alive.push_back(e.get());
-    std::sort(alive.begin(), alive.end());
+    // (A sorted list, rebuilt when the RAM list changes: this runs every step.)
+    if (alive_generation_ != models->rams_generation()) {
+        alive_.clear();
+        for (const auto& e : models->rams()) alive_.push_back(e.get());
+        std::sort(alive_.begin(), alive_.end());
+        alive_generation_ = models->rams_generation();
+    }
+    const auto& alive = alive_;
     const auto is_alive = [&](const void* p) { return std::binary_search(alive.begin(), alive.end(), p); };
     const auto dead = [&](const auto& entry) { return !is_alive(entry.first); };
     std::erase_if(shots_, dead);
