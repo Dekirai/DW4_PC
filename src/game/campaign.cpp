@@ -3810,6 +3810,13 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
                             player.panel_open, player.seq_name.c_str());
             // (Also with a quick panel up: B still asks for the guard then,
             // 8034C6CC, and the panel branch applies the request.)
+            // (With a drop behind the player the guard's recoil would throw
+            // it down: the touching enemy, in front of it, is struck
+            // instead, see guard_footing.)
+            if (gap <= kTouchGuard && player.muteki == 0.0f && controllable && !guard_footing(engine, player)) {
+                out.buttons = frame % 10 < 3 ? pad_button::a : 0;
+                return;
+            }
             if (gap <= kTouchGuard && player.muteki == 0.0f && controllable) {
                 if (out.buttons & pad_button::a) ++held_presses_;
                 out.buttons = guard_pulse(frame) ? pad_button::b : 0;
@@ -3930,7 +3937,7 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
             out.buttons &= ~pad_button::a;
             guard_held_ = frame;
         }
-        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable) {
+        if (guard_it && due <= kGuardLead && player.muteki <= due + 1.0f && controllable && guard_footing(engine, player)) {
             if (guard_pulse(frame)) out.buttons |= pad_button::b;
             if (trace() && frame - guard_traced_ >= 600) {
                 guard_traced_ = frame;
@@ -3945,6 +3952,37 @@ void CampaignBot::survive(engine::Engine& engine, const engine::ModelCtrlManager
         out.buttons &= ~pad_button::a;
         if ((frame - panel_close_at_) % 30 == 15) out.buttons |= pad_button::r;
     }
+}
+
+// Whether a guard may be taken where the player stands: a guarded blow
+// ends the guard in SQ_GUARDR, which carries the player up to some 15 units
+// straight away from the blow (dng205b3: 301 -> 316 in 17 frames), so that
+// ground must not drop away (kGuardDrop): with a drop behind it the blow
+// (20..30 HP) is taken, and a touching enemy, in front of the player, is
+// struck instead. A fall into a pit puts the player back with 1 HP (the
+// respawn mats: GAMERAM ADDHP absolute 1, 8036F220 stores the absolute
+// value) and costs a heal. The guards against e_mecha1 touches threw a level
+// 18 no-cheat run over the rim of dng205b3's sand bowls into the sinks, and
+// on dng103f2's stepping stones a level 12 run off a stone (there 3 falls
+// instead of 5 and on to Apocalymon; in dng205b3 with kSandFightMargin 1
+// fall instead of 2 in 90000 frames).
+constexpr float kGuardDrop = 8.0f; // a step down deeper than this behind the player is a drop (a ledge's lower floor is not)
+bool CampaignBot::guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const {
+    auto* hitland = engine.get<engine::HitLandManager>();
+    if (!hitland || !player.node) return true;
+    const auto me = position_of(player);
+    float dx = me.x - guard_from_.x, dz = me.z - guard_from_.z;
+    float d = std::hypot(dx, dz);
+    if (d < 0.5f) {
+        // (A blow right on the player: straight back from its facing.)
+        dx = -player.node->matrix(2, 0), dz = -player.node->matrix(2, 2);
+        d = std::max(0.01f, std::hypot(dx, dz));
+    }
+    for (const float k : {3.0f, 6.0f, 9.0f, 12.0f, 15.0f}) {
+        const auto land = hitland->world().check_land({me.x + dx / d * k, me.y + 5.0f, me.z + dz / d * k}, 1.0f, 400.0f, 1.0f);
+        if (!land.found || land.position.y < me.y - kGuardDrop) return false;
+    }
+    return true;
 }
 
 // B for a guard of survive: it is read on its press, so it is pulsed (two
@@ -4049,6 +4087,7 @@ std::optional<engine::Vec3f> CampaignBot::touch_escape(engine::Engine& engine, c
                 gap = std::min(std::max(std::abs(dx) - box.size.x * 0.5f - kBodyHalf, std::abs(dz) - box.size.z * 0.5f - kBodyHalf),
                                std::max(std::abs(me.x - px) - box.size.x * 0.5f - kBodyHalf, std::abs(me.z - pz) - box.size.z * 0.5f - kBodyHalf));
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
+                guard_from_ = {cx, cy, cz};
                 return engine::Vec3f{me.x + dx / d * 10.0f, me.y, me.z + dz / d * 10.0f};
             }
         }
@@ -4142,6 +4181,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                     if (t0 <= t1 && t0 < best) {
                         best = t0;
                         blow_shot_ = true;
+                        guard_from_ = {cx, cy, cz};
                         guard_what_ = e->info_name + " " + std::to_string(box.kind);
                     }
                 }
@@ -4163,6 +4203,7 @@ float CampaignBot::blow_due(engine::Engine& engine, const engine::ModelCtrlManag
                 me.y + kBodyHeight + 1.0f > cy2 - box.size.y * 0.5f && me.y - 1.0f < cy2 + box.size.y * 0.5f) {
                 best = due;
                 blow_shot_ = false;
+                guard_from_ = {cx2, cy2, cz};
                 guard_what_ = e->info_name + " " + std::to_string(box.kind);
             }
         }

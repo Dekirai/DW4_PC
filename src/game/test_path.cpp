@@ -671,6 +671,17 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
     return hazard;
 }
 
+// Without the test cheats an enemy this far around a quicksand pit's guard
+// box (the sink grown by 25) is not walked to: it comes to the player, who
+// holds its waves away from the pit (see the hold in plan()). The sand pulls
+// at least 0.26 a frame and a fight drifts with every swing, guard recoil
+// and knock-back; walking out to the waves at 45 from the guard box a level
+// 18 no-cheat run still fell into dng205b3's sinks 8..9 times in 90000
+// frames, at 90 once or twice (5 heals instead of 9, more waves cleared).
+// (At most the reached sand's own clearance less 15: a small room keeps
+// enemies to fight.)
+constexpr float kSandFightMargin = 90.0f;
+
 bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = quicksands_.find(mat);
     if (it != quicksands_.end()) return it->second;
@@ -1332,6 +1343,26 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         moving.push_back(std::move(floor));
     }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index), moving);
+    // A point's distance from the nearest quicksand pit's guard box (flat).
+    const auto pit_clear = [&](const engine::Vec3f& q) {
+        float clear = std::numeric_limits<float>::infinity();
+        for (const auto& a : pits) {
+            const float dx = std::max({a.min_x - q.x, 0.0f, q.x - a.max_x}), dz = std::max({a.min_z - q.z, 0.0f, q.z - a.max_z});
+            clear = std::min(clear, std::hypot(dx, dz));
+        }
+        return clear;
+    };
+    // How far the reached sand gets from the pits (see kSandFightMargin):
+    // the enemy margin stays below it, so a small room still has enemies to
+    // fight.
+    float sand_clear = 0.0f;
+    if (sandy && !engine.cheats().one_hit && !engine.cheats().god)
+        for (const auto& q : map.samples())
+            for (const auto& box : boxes)
+                if (q.x >= box.min.x && q.x <= box.max.x && q.z >= box.min.z && q.z <= box.max.z && quicksand_mat(engine, box.name)) {
+                    sand_clear = std::max(sand_clear, pit_clear(q));
+                    break;
+                }
     auto go = [&](const engine::Vec3f& where, const void* target, std::string what) {
         route_ = map.route_to(where);
         target_ = target;
@@ -1562,8 +1593,9 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 continue;
             }
             if (hold && !on_hold(at)) continue;
-            // Near a pit in a quicksand basin: struck only in passing.
-            if (sandy && in_pit(at, 0.0f)) {
+            // Near a pit in a quicksand basin: struck only in passing (with
+            // real blows further off as well, see the hold below).
+            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f)))) {
                 unreachable_[e.get()] = frame + 120;
                 continue;
             }
@@ -1715,7 +1747,24 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // (In a quicksand room the reached point nearest the middle that is
         // not at the pit, else the pull drags the player in.)
         std::optional<engine::Vec3f> inside;
-        if (sandy) {
+        if (sandy && !engine.cheats().one_hit && !engine.cheats().god) {
+            // With real blows the fight lasts: the reached point of the mat
+            // farthest from the pits. The sand pulls toward the sink at 0.26
+            // to 0.51 a frame (SETQUICKSAND, 80309674) whenever the player
+            // does not walk - every swing, guard and knock-back - and a
+            // guard's recoil (SQ_GUARDR, ~15) or a hit throws it further:
+            // held at the middle of dng205b3's matg06 room, 45 from the sink
+            // centre, a level 18 no-cheat run fell in 8..14 times a visit,
+            // each fall back with 1 HP (ADDHP absolute, 8036F220) and a heal.
+            float farthest = -1.0f;
+            for (const auto& q : map.samples()) {
+                if (q.x < hold->min.x + 1.0f || q.x > hold->max.x - 1.0f || q.z < hold->min.z + 1.0f || q.z > hold->max.z - 1.0f) continue;
+                if (const float clear = pit_clear(q); clear > farthest) {
+                    farthest = clear;
+                    inside = q;
+                }
+            }
+        } else if (sandy) {
             const engine::Vec3f middle{(hold->min.x + hold->max.x) * 0.5f, 0.0f, (hold->min.z + hold->max.z) * 0.5f};
             float nearest = std::numeric_limits<float>::infinity();
             for (const auto& q : map.samples()) {

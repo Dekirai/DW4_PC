@@ -95,6 +95,7 @@ private:
     std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap, int frame);
     void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
     bool guard_pulse(int frame);
+    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -164,6 +165,7 @@ private:
     engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
     int me_seen_frame_ = -1;
     int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
+    engine::Vec3f guard_from_{}; // where the blow last found by blow_due / touch_escape comes from (its box centre)
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
     int gate_disk_at_ = -100000; // the last Gate Disk use
