@@ -770,8 +770,24 @@ struct BossFight {
     // Blows are struck from outside the boss's permanent body box where it
     // reaches past its hit body (touch_reach), not from 2.5 off the hit body.
     bool clear_touch = false;
+    // With `dodge`: markers that show where blasts will come before their
+    // boxes exist (omen_areas).
+    const char* omen = "";
 };
 constexpr BossFight kBossFights[] = {
+    // stagBS03 with real blows: Lucemon lays rows of five bombs across its
+    // arena (gr1_f_luce.lua bom1..bom8: x_035frunn01a at fixed points, 30
+    // apart, generated 40..72 frames after the call; 29 frames after its
+    // SQ_BOM begins the blast x_035frunn01b comes there, kind 70076, fire,
+    // ~20 % of a level 32 player's HP: boxes 20 wide live at once for 18
+    // frames, then rings 30, 50, 70 and 90 wide for 15 frames each, 0, 15,
+    // 30 and 45 frames after the blast, 34..64 high), the most of the
+    // damage a no-cheat test took there (55 of 68 blows in 48000 frames,
+    // the guard a frame late every time: no box shows before the blast).
+    // So the markers are omens of those rings (omen_areas), and the player
+    // steps out of what is about to go live (`dodge`) or guards just before.
+    {"stagbs03", "f_luce2|f_luce", "f_luce", 22.0f, true, true, "", 0.0f, 0.0f, 0.0f, false,
+     "x_035frunn01a:29:10@0+18|15@0+15|25@15+15|35@30+15|45@45+15"},
     // stagBS03: Lucemon (f_luce) takes damage only on the ground
     // (hit_f_luce.lua: g_Ground, set by gr2_f_luce.lua "GROUND" in its
     // SQ_SWITCH3), which the shield ball f_luce2 starts when it breaks (its
@@ -3345,6 +3361,49 @@ std::vector<DodgeArea> dodge_areas(engine::Engine& engine, const engine::ModelCt
     return areas;
 }
 
+// Omens (BossFight::omen): a marker model that shows where a blast will be
+// before the blast's own boxes exist, "<marker prefix>:<frames from the
+// marker's first frame to the blast>:<half>@<delay>+<live>|..." with the
+// blast's boxes as rings round the marker (half extent, frames from the
+// blast to the box, frames it is live): areas like dodge_areas' from the
+// marker's first frame on (`seen`: marker RAM -> its sequence serial and
+// first frame).
+void omen_areas(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, std::string_view omen, int frame,
+                std::map<const void*, std::pair<std::uint32_t, int>>& seen, std::vector<DodgeArea>& areas) {
+    auto* models = engine.get<engine::ModelCtrlManager>();
+    const auto colon = omen.find(':'), colon2 = omen.find(':', colon + 1);
+    if (!models || !player.node || colon == std::string_view::npos || colon2 == std::string_view::npos) return;
+    const std::string marker(omen.substr(0, colon));
+    const float lead = float(std::atof(std::string(omen.substr(colon + 1, colon2 - colon - 1)).c_str()));
+    struct Ring {
+        float half, delay, live;
+    };
+    std::vector<Ring> rings;
+    const std::string list(omen.substr(colon2 + 1));
+    for (std::size_t at = 0; at < list.size();) {
+        const auto bar = std::min(list.find('|', at), list.size());
+        Ring r{};
+        if (std::sscanf(list.c_str() + at, "%f@%f+%f", &r.half, &r.delay, &r.live) == 3) rings.push_back(r);
+        at = bar + 1;
+    }
+    const auto me = position_of(player);
+    constexpr float body_half = 2.5f, body_height = 17.0f;
+    for (const auto& e : models->rams()) {
+        if (!e->generated || !e->node || e->info_name.rfind(marker, 0) != 0 || e->seq_name == "SQ_ERAS") continue;
+        auto& first = seen[e.get()];
+        if (first.first != e->sequence_serial || first.second > frame) first = {e->sequence_serial, frame};
+        const float age = float(frame - first.second);
+        const auto& m = e->node->matrix;
+        if (std::abs(m(3, 1) - me.y) > body_height + 10.0f) continue;
+        for (const auto& r : rings) {
+            const float due = lead + r.delay - age;
+            if (due + r.live < 0.0f || due > kDodgeHorizon) continue;
+            const float g = r.half + body_half + kDodgeMargin;
+            areas.push_back({m(3, 0) - g, m(3, 0) + g, m(3, 2) - g, m(3, 2) + g, std::max(0.0f, due), std::max(0.0f, due + r.live)});
+        }
+    }
+}
+
 // The soonest an area meets the point (1e9 when none does).
 float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
     float due = 1e9f;
@@ -3355,7 +3414,7 @@ float dodge_due(const std::vector<DodgeArea>& areas, float x, float z) {
 
 bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
                              const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
-                             int frame, Output& out) {
+                             const char* omen, int frame, Output& out) {
     auto* models = engine.get<engine::ModelCtrlManager>();
     if (!models) return false;
     const auto me = position_of(player);
@@ -3371,6 +3430,24 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 std::printf("[%d] bossbox %s %s kind %d offset (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f\n", frame,
                             boss->info_name.c_str(), boss->seq_name.c_str(), box.kind, box.offset.x, box.offset.y, box.offset.z, box.size.x,
                             box.size.y, box.size.z, box.delay, box.end);
+    // DW4_TRACE_XBOX=<prefix> (research): the models of that name prefix
+    // (effects, markers) when they start a sequence, with their attack boxes
+    // (how omens were measured).
+    if (static const char* prefix = std::getenv("DW4_TRACE_XBOX"); prefix) {
+        static std::map<const void*, std::string> seen;
+        for (const auto& e : models->rams()) {
+            if (!e->generated || !e->node || e->info_name.rfind(prefix, 0) != 0) continue;
+            std::string key = e->seq_name + ":" + std::to_string(e->hitboxes.size());
+            if (seen[e.get()] == key) continue;
+            seen[e.get()] = key;
+            const auto& m = e->node->matrix;
+            std::printf("[%d] xbox %s#%d %s at (%.1f,%.1f,%.1f) me (%.1f,%.1f,%.1f)\n", frame, e->info_name.c_str(), e->index, e->seq_name.c_str(), m(3, 0), m(3, 1),
+                        m(3, 2), me.x, me.y, me.z);
+            for (const auto& box : e->hitboxes)
+                std::printf("      box kind %d off (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f elapsed %.0f\n", box.kind, box.offset.x,
+                            box.offset.y, box.offset.z, box.size.x, box.size.y, box.size.z, box.delay, box.end, box.elapsed);
+        }
+    }
     const std::string targets = "|" + strike + "|";
     // The player's body (the stages' p_* hit body: 5 wide, 17 high).
     const float body_half = 2.5f, body_height = 17.0f;
@@ -3447,6 +3524,7 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
     float here_due = 1e9f;
     if (dodge) {
         areas = dodge_areas(engine, player);
+        if (omen && *omen) omen_areas(engine, player, omen, frame, omen_seen_, areas);
         here_due = dodge_due(areas, me.x, me.z);
         // (A box about to go live within 20 of the player: no heal now that
         // holds the player 30 frames, SQ_ITEM, unless the HP is very low.)
@@ -4980,7 +5058,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
             if (stage == fight.stage && (!fight.real_blows || (!engine.cheats().one_hit && !engine.cheats().god)) &&
                 !any_alive(engine, fight.first) &&
                 boss_fight(engine, *player, fight.strike, fight.follow, fight.keep, fight.dodge, fight.arena_x, fight.arena_z, fight.arena_r,
-                           fight.clear_touch, frame, out)) {
+                           fight.clear_touch, fight.omen, frame, out)) {
                 last_ = me;
                 return out;
             }

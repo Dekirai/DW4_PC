@@ -70,8 +70,8 @@ private:
                                                          int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch, int frame,
-                    Output& out);
+                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch,
+                    const char* omen, int frame, Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -131,6 +131,7 @@ private:
     int foe_since_{}, foe_hp_{}; // since when without losing HP, its HP then
     int foe_seen_ = -1000;       // the last frame a foe was fought
     std::map<const void*, int> foe_left_; // enemies left alone until
+    std::map<const void*, std::pair<std::uint32_t, int>> omen_seen_; // a boss fight's omen markers: sequence serial, first frame
     const void* target_ = nullptr; // the model a talk/strike step walks to
     int target_since_{};          // since when (not reached)
     std::map<const void*, int> target_skip_; // "#*" targets not reached, left alone until
