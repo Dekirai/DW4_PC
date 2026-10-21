@@ -260,7 +260,9 @@ save box N (as the character select loads it), `DW4_ENTRY=n` starts a
 test run's first stage at player point group n (as when arriving from another exit),
 `DW4_PLAYERS=n` joins n players, `DW4_OPEN_MENU=1` opens the F1 menu,
 `DW4_WINDOW=WxH` and `DW4_WIDESCREEN=1` size test windows, `DW4_SMOKE_STAGES=n` ends a test run
-once the n-th stage has loaded,
+once the n-th stage has loaded, `DW4_NO_DRAW=1` runs a test run without drawing or presenting
+pictures (the simulation and its scene traversals unchanged, the fingerprints the same, about half
+the time; not with `--screenshot`),
 `DW4_TRACE_SELECT`, `DW4_TRACE_TEXT`, `DW4_TRACE_PLAYER`, `DW4_TRACE_HIT`, `DW4_TRACE_EXPLORE` and
 `DW4_TRACE_CAMPAIGN` log menu cursors, text, player state, hits, the exploring bot's targets and the
 campaign driver's menu answers, heals, guards and trainings (`DW4_TRACE_GUARD` every enemy attack box

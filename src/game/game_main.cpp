@@ -803,6 +803,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
         // DW4_TRACE_FINGERPRINT=N prints the state fingerprint every N frames:
         // two runs of the same script must print the same lines (determinism).
         const int trace_fingerprint = std::getenv("DW4_TRACE_FINGERPRINT") ? std::atoi(std::getenv("DW4_TRACE_FINGERPRINT")) : 0;
+        // DW4_NO_DRAW=1 (test runs without screenshots): the simulation and
+        // the scene traversal after every step run as always, but nothing is
+        // drawn or presented (hidden bot runs take about half the time; the
+        // fingerprints stay the same).
+        const char* no_draw_value = std::getenv("DW4_NO_DRAW");
+        const bool no_draw = options.smoke_frames && options.screenshot.empty() && no_draw_value && *no_draw_value && *no_draw_value != '0';
         auto last = std::chrono::steady_clock::now();
         double accumulator = 0;
         const auto card_root = engine.card_root();
@@ -1464,7 +1470,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             }
             // From the step that took a stage change on, the original presents
             // nothing new: the last picture stays until the loader draws.
-            if (engine.presenting() || !renderer.draw_kept_picture(width, height)) {
+            if (!no_draw && (engine.presenting() || !renderer.draw_kept_picture(width, height))) {
                 renderer.render(items, camera, clear, screen, wide, width, height);
                 // A playing movie covers the screen with its current picture.
                 // After its end Sofdec's last picture stays up until the
@@ -1828,7 +1834,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 ImGui::End();
             }
             ImGui::Render();
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            if (!no_draw) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
             const bool shoot = !options.screenshot.empty() &&
                 ((options.screenshot_frames.empty() && frame == options.smoke_frames) ||
@@ -1849,7 +1855,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
                 if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
             }
-            SDL_GL_SwapWindow(window);
+            if (!no_draw) SDL_GL_SwapWindow(window);
             {
                 const auto now = std::chrono::steady_clock::now();
                 const double seconds = std::chrono::duration<double>(now - last_present).count();
