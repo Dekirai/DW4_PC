@@ -1402,7 +1402,7 @@ private:
     void item_erase_hook(Engine& engine, ModelRam& ram);
     void item_sequence_hook(Engine& engine, ModelRam& ram);
     bool pick_item(Engine& engine, ModelRam& ram, int player);
-    void update_effects(Engine& engine, ModelRam& ram);
+    void update_effects(Engine& engine, ModelRam& ram, std::size_t count);
     void place_attached(ModelRam& ram);
     void place_locked(Engine& engine, ModelRam& ram);
     void player_erase_hook(Engine& engine, ModelRam& ram);
@@ -1410,6 +1410,7 @@ private:
     void run_model_script(Engine& engine, ModelRam& ram, std::string_view prefix, std::string_view mode);
     bool hit_check(Engine& engine, ModelRam& ram, Packet& packet);
     void select_sequence(Engine& engine, ModelRam& ram, std::string_view name);
+    void release_subcommands(Engine& engine, ModelRam& ram); // 803108A0
     void run_commands(Engine& engine, ModelRam& ram);
     // The player's sequence-change hook (beNDMWMdlPlayer vtable +B8).
     void player_sequence_hook(Engine& engine, ModelRam& ram);
