@@ -309,7 +309,10 @@ Engine::Engine(const std::filesystem::path& data_root) : resources_(MountedResou
 
 Engine::~Engine() = default;
 
-void Engine::add_manager(std::unique_ptr<Manager> manager) { managers_.push_back(std::move(manager)); }
+void Engine::add_manager(std::unique_ptr<Manager> manager) {
+    managers_.push_back(std::move(manager));
+    found_managers_.clear();
+}
 
 Manager* Engine::manager(std::string_view type_name) const {
     for (const auto& m : managers_) if (m->type_name() == type_name) return m.get();

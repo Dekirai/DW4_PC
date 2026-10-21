@@ -246,12 +246,14 @@ void ModelCtrlManager::add_info(Engine& engine, const ObjectView& info) {
         const auto at = std::upper_bound(update_order_.begin(), update_order_.end(), rank,
                                          [](int r, const UpdateEntry& e) { return r < e.rank; });
         update_order_.insert(at, {rank, ram.get()});
+        if (ram->is_player) player_rams_.push_back(ram.get());
         rams_.push_back(std::move(ram));
     }
 }
 
 void ModelCtrlManager::clear_stage(Engine&) {
     rams_.clear();
+    player_rams_.clear();
     update_order_.clear();
     ai_maps_.clear();
     item_labels_.fill(false);
@@ -1183,8 +1185,8 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
 }
 
 const ModelCtrlManager::ModelRam* ModelCtrlManager::player(int index) const {
-    for (const auto& ram : rams_)
-        if (ram->is_player && ram->generated && ram->index == index) return ram.get();
+    for (const auto* ram : player_rams_)
+        if (ram->generated && ram->index == index) return ram;
     return nullptr;
 }
 

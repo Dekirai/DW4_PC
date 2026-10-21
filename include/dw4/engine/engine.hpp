@@ -338,9 +338,17 @@ public:
 
     // Manager access.
     Manager* manager(std::string_view type_name) const;
+    // The first manager that is a T (looked up once per type, then kept
+    // until managers are added).
     template <class T> T* get() const {
-        for (const auto& m : managers_) if (auto* p = dynamic_cast<T*>(m.get())) return p;
-        return nullptr;
+        const std::size_t id = manager_type_id<T>();
+        if (id < found_managers_.size() && found_managers_[id].known) return static_cast<T*>(found_managers_[id].manager);
+        T* found = nullptr;
+        for (const auto& m : managers_)
+            if ((found = dynamic_cast<T*>(m.get()))) break;
+        if (id >= found_managers_.size()) found_managers_.resize(id + 1);
+        found_managers_[id] = {found, true};
+        return found;
     }
     void add_manager(std::unique_ptr<Manager> manager);
 
@@ -419,6 +427,20 @@ private:
     DemoManager demo_;
     SceneCache scenes_;
     std::vector<std::unique_ptr<Manager>> managers_;
+    // get<T>() results by manager_type_id<T>() (the T* as void*).
+    struct FoundManager {
+        void* manager{};
+        bool known{};
+    };
+    mutable std::vector<FoundManager> found_managers_;
+    static std::size_t next_manager_type_id() {
+        static std::size_t next = 0;
+        return next++;
+    }
+    template <class T> static std::size_t manager_type_id() {
+        static const std::size_t id = next_manager_type_id();
+        return id;
+    }
     // igSerialScheduler's active list (8028B7B0): the managers in the order
     // their first info of the stage was accepted (802F251C -> 8028A398 ->
     // 80041E40 append-unique); every stage clear unschedules them (802F2628).

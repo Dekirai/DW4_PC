@@ -1428,6 +1428,7 @@ private:
     void set_down(Engine& engine, ModelRam& ram, int index, int value);
     void set_up(Engine& engine, ModelRam& ram, int index, int value);
     std::vector<std::unique_ptr<ModelRam>> rams_;
+    std::vector<ModelRam*> player_rams_; // the PLAYER RAMs, in rams_ order (player())
     struct UpdateEntry {
         int rank{};
         ModelRam* ram{};
