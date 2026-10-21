@@ -281,6 +281,12 @@ private:
     // 3 shots 30 frames apart every 152 frames).
     std::map<const void*, std::pair<engine::Vec3f, const void*>> steady_bullets_; // live enemy bullet -> position, turret
     std::map<const void*, std::vector<int>> volleys_;                              // turret -> frames of its last shots
+    // Gimmicks that stopped a turret's shot away from the player (the shot
+    // ended at their body), with that turret: walls between its fire and
+    // the way, which a no-cheat run leaves standing while the turret lives.
+    std::map<const void*, const void*> shields_;
+    std::map<const void*, int> shot_born_;  // enemy bullet of the steady view -> the frame its shot was first seen
+    std::map<const void*, int> shot_life_;  // turret -> the longest flight of its shots so far (frames)
     // Each turret's firing sequence, as seen: the sequence its shots start
     // in, the shots' frames after that sequence's start and its longest run.
     // A turret hit by the player leaves it (stag0304's g_cannon02: SQ_SDMG,
@@ -386,6 +392,7 @@ private:
     int leap_frame_{};
     bool runup_ready_{};     // at the run-up point of a long jump: run and jump
     int platform_wait_since_ = -1; // waiting at a take-off for a moving platform since
+    int jump_hold_since_ = -1;     // a row of jumps waits for the enemies by its landings since
     bool closest_{};         // the goal cannot be reached: wait at the nearest point
     std::vector<Platform> platforms_;                  // in the order first seen (the walking map's moving floors)
     std::map<const void*, engine::Vec3f> stirring_;    // other models' positions one step ago (platform candidates)

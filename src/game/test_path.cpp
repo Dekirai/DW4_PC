@@ -673,6 +673,17 @@ bool ExploreBot::hazard_mat(engine::Engine& engine, const std::string& mat) {
     return hazard;
 }
 
+// Without the test cheats an enemy this far around a quicksand pit's guard
+// box (the sink grown by 25) is not walked to: it comes to the player, who
+// holds its waves away from the pit (see the hold in plan()). The sand pulls
+// at least 0.26 a frame and a fight drifts with every swing, guard recoil
+// and knock-back; walking out to the waves at 45 from the guard box a level
+// 18 no-cheat run still fell into dng205b3's sinks 8..9 times in 90000
+// frames, at 90 once or twice (5 heals instead of 9, more waves cleared).
+// (At most the reached sand's own clearance less 15: a small room keeps
+// enemies to fight.)
+constexpr float kSandFightMargin = 90.0f;
+
 bool ExploreBot::quicksand_mat(engine::Engine& engine, const std::string& mat) {
     const auto it = quicksands_.find(mat);
     if (it != quicksands_.end()) return it->second;
@@ -1334,6 +1345,26 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         moving.push_back(std::move(floor));
     }
     const WalkMap map(hitland->world(), me, 700.0f, flags, avoid, hitland->delivery_width(player.info_name, player.index), moving);
+    // A point's distance from the nearest quicksand pit's guard box (flat).
+    const auto pit_clear = [&](const engine::Vec3f& q) {
+        float clear = std::numeric_limits<float>::infinity();
+        for (const auto& a : pits) {
+            const float dx = std::max({a.min_x - q.x, 0.0f, q.x - a.max_x}), dz = std::max({a.min_z - q.z, 0.0f, q.z - a.max_z});
+            clear = std::min(clear, std::hypot(dx, dz));
+        }
+        return clear;
+    };
+    // How far the reached sand gets from the pits (see kSandFightMargin):
+    // the enemy margin stays below it, so a small room still has enemies to
+    // fight.
+    float sand_clear = 0.0f;
+    if (sandy && !engine.cheats().one_hit && !engine.cheats().god)
+        for (const auto& q : map.samples())
+            for (const auto& box : boxes)
+                if (q.x >= box.min.x && q.x <= box.max.x && q.z >= box.min.z && q.z <= box.max.z && quicksand_mat(engine, box.name)) {
+                    sand_clear = std::max(sand_clear, pit_clear(q));
+                    break;
+                }
     auto go = [&](const engine::Vec3f& where, const void* target, std::string what) {
         route_ = map.route_to(where);
         target_ = target;
@@ -1548,9 +1579,21 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             const auto fired = shots_.find(e.get());
             const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
             if (pass == 0 && defending && !structure && !boss && !hover) continue;
+            // (Turrets are fought with real blows too. Leaving them alone
+            // until the stage was explored to the end kept the way shut where
+            // their bodies fill it - stag0201's g_cannon01 pair before the
+            // movepass to matz02: 180000 frames without reaching it - and in
+            // stag0204, once its gates were open, the level 25 no-cheat chain
+            // crossed its g_cannon02 rows in 37000 frames under 48 shells of
+            // 15 % of the maximum HP (eneatk TYPE 2: no level helps) and was
+            // out of heals in dng206f1; fighting them (4 blows each,
+            // hit_g_cannon02.lua -25 of 100) it crossed in 21800 frames under
+            // 30 and went on to dng206f2. On a first visit both ways took the
+            // same shells, 33 and 37.)
             if (hold && !on_hold(at)) continue;
-            // Near a pit in a quicksand basin: struck only in passing.
-            if (sandy && in_pit(at, 0.0f)) {
+            // Near a pit in a quicksand basin: struck only in passing (with
+            // real blows further off as well, see the hold below).
+            if (sandy && in_pit(at, std::min(kSandFightMargin, std::max(0.0f, sand_clear - 15.0f)))) {
                 unreachable_[e.get()] = frame + 120;
                 continue;
             }
@@ -1702,7 +1745,27 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
         // (In a quicksand room the reached point nearest the middle that is
         // not at the pit, else the pull drags the player in.)
         std::optional<engine::Vec3f> inside;
-        if (sandy) {
+        if (!pits.empty() && !engine.cheats().one_hit && !engine.cheats().god) {
+            // With real blows the fight lasts: the reached point of the mat
+            // farthest from the pits (also without sand: dng206f2's matg20
+            // wave was held at the pit's rim beside the moving platforms,
+            // and a level 26 no-cheat chain was thrown in three times in
+            // 3000 frames, out of heals). The sand pulls toward the sink at 0.26
+            // to 0.51 a frame (SETQUICKSAND, 80309674) whenever the player
+            // does not walk - every swing, guard and knock-back - and a
+            // guard's recoil (SQ_GUARDR, ~15) or a hit throws it further:
+            // held at the middle of dng205b3's matg06 room, 45 from the sink
+            // centre, a level 18 no-cheat run fell in 8..14 times a visit,
+            // each fall back with 1 HP (ADDHP absolute, 8036F220) and a heal.
+            float farthest = -1.0f;
+            for (const auto& q : map.samples()) {
+                if (q.x < hold->min.x + 1.0f || q.x > hold->max.x - 1.0f || q.z < hold->min.z + 1.0f || q.z > hold->max.z - 1.0f) continue;
+                if (const float clear = pit_clear(q); clear > farthest) {
+                    farthest = clear;
+                    inside = q;
+                }
+            }
+        } else if (sandy) {
             const engine::Vec3f middle{(hold->min.x + hold->max.x) * 0.5f, 0.0f, (hold->min.z + hold->max.z) * 0.5f};
             float nearest = std::numeric_limits<float>::infinity();
             for (const auto& q : map.samples()) {
@@ -1810,6 +1873,14 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             } else {
                 continue;
             }
+            // Without the test cheats a wall that stopped a live turret's
+            // shots is left standing (shields_): the player fights on
+            // behind it.
+            if (kind == Gimmick::strike && !engine.cheats().one_hit && !engine.cheats().god)
+                if (const auto shield = shields_.find(e.get()); shield != shields_.end()) {
+                    const auto* turret = static_cast<const engine::ModelCtrlManager::ModelRam*>(shield->second);
+                    if (turret->generated && turret->hp > 0) continue;
+                }
             // A switch seen switched on is done for a long while (pairs that
             // power each other back on would otherwise take turns forever).
             if (kind != Gimmick::strike) {
@@ -2122,6 +2193,7 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
         if (const auto seen = live.find(e.get()); seen != live.end()) {
             steady[e.get()] = seen->second;
             if (!known) {
+                shot_born_[e.get()] = frame;
                 auto& shots = volleys_[seen->second.second];
                 if (shots.empty() || frame - shots.back() > 4) {
                     shots.push_back(frame);
@@ -2143,6 +2215,54 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
             steady[e.get()] = {at, before->second.second};
         }
     }
+    // Shots that ended away from the player at a gimmick's body (a bullet
+    // of the steady view that starts erasing, or is gone, or whose RAM a new
+    // shot took far off): that gimmick shields the ground behind it from the
+    // turret (stag0204: the rock walls g_rock02z02 along x 530 stop the
+    // g_cannon02 shells short of the corridor the player breaks through; a
+    // no-cheat run that broke them took the shells all the way down the
+    // corridor, 15 % of the maximum HP each). See shields_.
+    if (const auto* me_ram = models->player(0); me_ram && me_ram->node) {
+        const auto me = position_of(*me_ram);
+        // (The flights that ended this frame raise the turrets' ranges only
+        // after all of them are judged: the same in any order.)
+        std::vector<std::pair<const void*, int>> flights;
+        const auto ended_at = [&](const engine::Vec3f& end, const void* shooter, int age) {
+            // (Only a shot cut short counts: one at the end of its flight
+            // may end next to anything, stag0204's corridor rocks among
+            // them. A turret's longest flight so far is its shots' range.)
+            const auto known = shot_life_.find(shooter);
+            const int life = known != shot_life_.end() ? known->second : 0;
+            const bool short_flight = life >= 30 && age >= 0 && age < life - 8;
+            flights.emplace_back(shooter, age);
+            if (!short_flight || flat(end, me) < 15.0f) return; // (not at the player or its guard)
+            for (const auto& g : models->rams()) {
+                if (!g->generated || !g->node || g->hp <= 0 || g->info_name.rfind("g_", 0) != 0 || !g->hit || g->hit->boxes.empty()) continue;
+                if (g->category == "ENEMY" || g->category == "ITEM" || g->category == "PLAYER") continue;
+                if (body_gap(*g, end) > 6.0f || end.y < body_bottom(*g) - 6.0f || end.y > body_top(*g) + 6.0f) continue;
+                if (std::getenv("DW4_TRACE_EXPLORE") && !shields_.count(g.get()))
+                    std::printf("[%d] explore: %s#%d stops the shots of %s (%.0f,%.0f,%.0f)\n", frame, g->info_name.c_str(), g->index,
+                                static_cast<const engine::ModelCtrlManager::ModelRam*>(shooter)->info_name.c_str(), end.x, end.y, end.z);
+                shields_[g.get()] = shooter;
+            }
+        };
+        for (const auto& [shot, last] : steady_bullets_) {
+            if (!is_alive(last.second)) continue;
+            const auto now = steady.find(shot);
+            if (now != steady.end() && flat(now->second.first, last.first) <= 20.0f) continue;
+            const auto* e = static_cast<const engine::ModelCtrlManager::ModelRam*>(shot);
+            const bool erasing = is_alive(shot) && e->generated && e->node && e->seq_name.rfind("SQ_ERAS", 0) == 0;
+            const auto born = shot_born_.find(shot);
+            // (A RAM a new shot took this frame: that shot's birth, the old one's age unknown.)
+            const int age = born != shot_born_.end() && born->second != frame ? frame - born->second : -1;
+            ended_at(erasing ? position_of(*e) : last.first, last.second, age);
+            if (born != shot_born_.end() && now == steady.end()) shot_born_.erase(born);
+        }
+        for (const auto& [shooter, age] : flights) shot_life_[shooter] = std::max(shot_life_[shooter], age);
+    }
+    std::erase_if(shields_, [&](const auto& entry) { return !is_alive(entry.first) || !is_alive(entry.second); });
+    std::erase_if(shot_born_, [&](const auto& entry) { return !is_alive(entry.first); });
+    std::erase_if(shot_life_, [&](const auto& entry) { return !is_alive(entry.first); });
     steady_bullets_ = std::move(steady);
     bullets_ = std::move(live);
     if (frame % 30 == 0) std::erase_if(fire_cells_, [&](const auto& entry) { return frame - entry.second.frame > 150; });
@@ -2248,6 +2368,9 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         bullet_speed_.clear();
         turret_band_.clear();
         steady_bullets_.clear();
+        shields_.clear();
+        shot_born_.clear();
+        shot_life_.clear();
         volleys_.clear();
         phases_.clear();
         unreached_.clear();
@@ -2505,6 +2628,23 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         watch.since = frame;
     }
     while (next_ < route_.size() && flat(route_[next_].point, me) < 5.0f) ++next_;
+    // Without the test cheats an enemy is not chased over moving platforms:
+    // a blow or a guard's recoil on a landing throws the player into the
+    // pit (back with 1 HP, ADDHP absolute): a level 26 no-cheat chain hopped
+    // after an e_minotaru across dng206f2's platforms, guarded on the
+    // landing's edge and fell three times in 2000 frames, out of heals. It
+    // comes off the platforms to the player or is left for later.
+    if (!engine.cheats().one_hit && !engine.cheats().god && target_ && what_.rfind("enemy", 0) == 0 && !(hop_ && hop_->jumped)) {
+        bool rides = false;
+        for (std::size_t k = next_; k < route_.size() && !rides; ++k) rides = route_[k].support >= 0;
+        if (rides) {
+            if (std::getenv("DW4_TRACE_EXPLORE")) std::printf("[%d] explore leaves %s (the way rides a moving platform)\n", frame, what_.c_str());
+            unreachable_[target_] = frame + 3000;
+            hop_.reset();
+            planned_ = -1000;
+            return decision;
+        }
+    }
     // A hop onto or off a moving platform along the route (waiting on
     // purpose; hop_step gives up on its own).
     if (hop_step(engine, player, me, airborne, frame, decision)) {
@@ -2754,6 +2894,47 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
             // there then is the floor now 24 steps of its motion back),
             // else wait at the take-off.
             bool ready = true;
+            // With real blows (no test cheat) a row of jumps over a pit (this
+            // one and the next ones of the route) starts only while no enemy
+            // within kJumpFoe of their landings can strike before the player
+            // is over: it attacks, waits (its AI picks next) or walks with
+            // less than kJumpFoeWalk frames of its AITIMER left; a shot near
+            // a landing counts too. A blow in the air drops the player into
+            // the pit (dng103f2's stepping stones and the two e_scum on the
+            // far side, which walk 157 frames, wait and fire for 91: 11..14
+            // falls in a row at level 15, each one back with 1 HP and a heal
+            // used, then the Gate Disk out). The player waits at the take-off
+            // of the first stone, out of their range; after kJumpFoeHold
+            // frames it jumps anyway.
+            bool hold_jump = false;
+            if (!engine.cheats().god && !engine.cheats().one_hit && models && flat(takeoff, me) < 8.0f) {
+                constexpr float kJumpFoe = 25.0f, kJumpFoeWalk = 150.0f;
+                constexpr int kJumpFoeHold = 2400;
+                std::vector<engine::Vec3f> landings;
+                for (std::size_t i = next_; i < route_.size() && i < next_ + 6; ++i)
+                    if (route_[i].jump) landings.push_back(route_[i].point);
+                bool danger = false;
+                for (const auto& e : models->rams()) {
+                    if (danger) break;
+                    if (!e->generated || !e->node || e->is_player) continue;
+                    const bool shot = e->category == "EBULLET";
+                    if (!shot && (e->category != "ENEMY" || e->hp <= 0 || e->info_name.rfind("g_", 0) == 0)) continue;
+                    const auto at = position_of(*e);
+                    bool near = false;
+                    for (const auto& l : landings) near = near || (flat(at, l) < kJumpFoe && std::abs(at.y - l.y) < 20.0f);
+                    if (!near) continue;
+                    if (!shot && e->seq_name == "SQ_WALK" && e->ai_timer &&
+                        float(e->ai_timer->end - engine::timer_time(*e->ai_timer, engine.time())) > kJumpFoeWalk * 16666667.0f)
+                        continue;
+                    danger = true;
+                }
+                if (!danger) {
+                    jump_hold_since_ = -1;
+                } else {
+                    if (jump_hold_since_ < 0) jump_hold_since_ = frame;
+                    hold_jump = frame - jump_hold_since_ < kJumpFoeHold;
+                }
+            }
             if (span > 21.0f) {
                 // A long jump: from a run-up point 8 units back, run along the
                 // line and jump at the edge.
@@ -2762,6 +2943,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 const float lateral = std::abs((me.z - takeoff.z) * ux - (me.x - takeoff.x) * uz);
                 const engine::Vec3f runup{takeoff.x - ux * 8.0f, takeoff.y, takeoff.z - uz * 8.0f};
                 if (runup_ready_ && (lateral > 3.0f || along < -12.0f)) runup_ready_ = false; // knocked off the line
+                if (hold_jump) runup_ready_ = false; // (waits at the run-up point)
                 if (!runup_ready_) {
                     decision.x = runup.x;
                     decision.z = runup.z;
@@ -2810,13 +2992,13 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
                 }
             if (span > 21.0f) {
                 // handled above
-            } else if (!ready) {
+            } else if (!ready || hold_jump) {
                 decision.x = takeoff.x;
                 decision.z = takeoff.z;
                 decision.reach = 1.0f;
                 stalled_ = 0; // waiting on purpose, for 900 frames at most
                 if (platform_wait_since_ < 0) platform_wait_since_ = frame;
-                if (frame - platform_wait_since_ < 900) watch.since = frame;
+                if (hold_jump || frame - platform_wait_since_ < 900) watch.since = frame;
             } else if (flat(takeoff, me) < 4.0f && !airborne) {
                 platform_wait_since_ = -1;
                 decision.jump = true;

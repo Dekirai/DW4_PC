@@ -1002,8 +1002,13 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         return true;
     }
     // Case 16: the record of the control work (+10), zero unless a
-    // generator GENERATE set it.
-    if (command == "GETRECNO") { packet.ints.push_back(std::max(ram.record, 0)); return true; }
+    // generator GENERATE set it; only a generated model answers (8030D910
+    // case 16 tests the RAM's +0x14 flag, which GENERATE sets and REMOVE
+    // clears, and its control work).
+    if (command == "GETRECNO") {
+        if (ram.generated) packet.ints.push_back(std::max(ram.record, 0));
+        return true;
+    }
     if (command == "FIND_SPACE") {
         // First free RAM of this info answers (generator spawn).
         if (!ram.generated && packet.ints.empty()) packet.ints.push_back(ram.index);
@@ -2474,6 +2479,21 @@ bool ModelCtrlManager::hit_check(Engine& engine, ModelRam& ram, Packet& packet) 
         }
     }
     if (!overlap) return false;
+    // 0x8030E778..0x8030E7C8: a shooter that is not a player ('p') has to
+    // answer MODELCTRL <name> <index> GETRECNO with exactly one record (the
+    // record the hit script's FIGHTCALC uses). One that is gone by now (a
+    // removed enemy whose shot is still flying) answers nothing (-9): the
+    // target's hit script is skipped, but the bullet still counts as
+    // delivered (0x8030E85C..0x8030E878) and its BHit script runs.
+    if (const std::string_view shooter = packet.string(0); !shooter.starts_with('p')) {
+        Packet ask;
+        engine.messenger().send(engine, "MODELCTRL", std::string(shooter), packet.integer(1, -1), "GETRECNO", ask);
+        if (ask.ints.size() != 1) {
+            if (trace) engine.log("  shooter " + std::string(shooter) + "#" + std::to_string(packet.integer(1, -1)) + " gone: no hit script");
+            if (packet.bools.empty()) packet.bools.push_back(1);
+            return true;
+        }
+    }
     ModelScriptContext context;
     context.category = ram.category;
     context.name = ram.info_name;

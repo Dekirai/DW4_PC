@@ -240,7 +240,14 @@ also guards against enemy blows and touches, heals with HP disks from the L pane
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
 buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
-Disk escape raises that level like a defeat); with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
+Disk escape raises that level like a defeat unless the visit set a story flag never seen before: then
+it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in
+the area before while short of HP disks); with real blows it strikes the stag0103 boat's towers in
+passing, fights e_mammos off its arena's wall and Apocalymon from its dais, dodging the blast pillars,
+guards against shells in flight, fights turrets, chases no enemy over moving platforms, holds
+waves away from pits and quicksand sinks, takes no guard with a drop behind it and fights
+Belphemon by a boss routine; a field step that stalls for 180000 frames leaves the field and comes
+back; with `DW4_CAMPAIGN_CHECKPOINTS=dir` it saves the game
 like a player at nine points of the story where it returns to the lobby (the save Digi-Elf in
 stagML12, `kCheckpoints`) and copies Card A to `dir/<checkpoint>`, with `DW4_CAMPAIGN_LOAD=1` it
 calls the saved character of Card A at the title instead of starting a new game, so a story run can
@@ -249,8 +256,11 @@ valid when the engine changes, save states do not); `DW4_CAMPAIGN_STOP=1` ends a
 saved its first checkpoint or the story is done, `DW4_CAMPAIGN_STOP=end` only at the story's end),
 `--screenshot FILE.bmp`,
 `--screenshot-frames N,M`, `--flag N=V`, `--load-state FILE` (start from a save state file; with `DW4_STAGE_STATES=dir` a test run leaves one at
-every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
-the environment's from the loaded frame on).
+every stage start, `<frame>_<stage>.dw4state`, and the campaign driver's memory beside it, `<frame>_<stage>.mem`,
+which `--load-state` reads back; `DW4_CHEATS_FROM_ENV=1` replaces the state's test cheats by
+the environment's from the loaded frame on, and `DW4_LEVEL_ON_LOAD=n` / `DW4_DISKS_ON_LOAD=record:count,...`
+set player 1's level and disk counts on the loaded state, to try a later stage at the level and
+with the supplies a no-cheat run would bring there).
 A test run draws no pictures unless it needs them: without `--screenshot` / `--screenshot-frames`,
 `DW4_TEXTURE_PACK` or `DW4_DUMP_TEXTURES` it opens no window and no OpenGL context, decodes no
 movies and mixes no sound (unless `DW4_AUDIO_DUMP`); with the faster collision queries and route

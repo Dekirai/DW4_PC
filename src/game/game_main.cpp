@@ -934,6 +934,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
             state_slots[0] = read_state_file(options.load_state);
             if (!state_slots[0]) throw std::runtime_error("unreadable state file " + options.load_state.string());
             load_state(0);
+            // (A campaign run resumed: the driver's memory saved with the state.)
+            if (const auto memory = std::filesystem::path(options.load_state).replace_extension(".mem"); std::filesystem::exists(memory))
+                dw4::game::campaign_memory_load(memory);
             // DW4_CHEATS_FROM_ENV=1 (test runs): the test cheats from the
             // environment (DW4_GOD, DW4_ONE_HIT, DW4_INFINITE_MP) instead of
             // the state's, from the loaded frame on (a cheat run resumed
@@ -942,6 +945,33 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 engine.cheats().god = std::getenv("DW4_GOD") != nullptr;
                 engine.cheats().one_hit = std::getenv("DW4_ONE_HIT") != nullptr;
                 engine.cheats().infinite_mp = std::getenv("DW4_INFINITE_MP") != nullptr;
+            }
+            // DW4_LEVEL_ON_LOAD=n, DW4_DISKS_ON_LOAD=record:count,... (test
+            // aids for research runs, as DW4_LEVEL / DW4_DISKS for a new
+            // player): player 1's level (the EXP that reaches it; RECALCPLAYER
+            // refills HP and MP) and disk counts on the loaded state, to try a
+            // later stage at the level and with the supplies a run would
+            // bring there (a cheat run's state reaches it at a lower level).
+            if (auto* sys = engine.get<dw4::engine::GameSystem>()) {
+                auto& player = sys->players[0];
+                if (const char* level = std::getenv("DW4_LEVEL_ON_LOAD")) {
+                    auto& stats = player.stats;
+                    stats.level = std::clamp(std::atoi(level), 1, 999);
+                    const std::size_t form = std::size_t(std::clamp(stats.species, 0, 15));
+                    player.base_level[form] = stats.level;
+                    const int below = stats.level - 1;
+                    stats.exp = (below + 140) * below * below + below * 200;
+                    player.base_exp[form] = stats.exp;
+                    player.hp = 0;
+                    sys->recalc_player(engine, 0);
+                }
+                if (const char* disks = std::getenv("DW4_DISKS_ON_LOAD"))
+                    for (const char* at = disks; *at;) {
+                        int record = 0, count = 0;
+                        if (std::sscanf(at, "%d:%d", &record, &count) == 2) player.disk_count(record) = std::clamp(count, 0, 9);
+                        while (*at && *at != ',') ++at;
+                        if (*at == ',') ++at;
+                    }
             }
         }
         // DW4_STAGE_STATES=DIR (test runs): a state file at every stage start
@@ -1449,9 +1479,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                 save_state(0);
                 state_test_save = false;
             }
-            if (stage_states && steps > 0 && last_step_loaded && can_save().empty())
-                write_state_file(std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state"),
-                                 SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
+            if (stage_states && steps > 0 && last_step_loaded && can_save().empty()) {
+                const auto state_file = std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state");
+                write_state_file(state_file, SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
+                // (The campaign driver's memory beside it, for resumed runs.)
+                dw4::game::campaign_memory_save(std::filesystem::path(state_file).replace_extension(".mem"));
+            }
             // The picture, the menu and the sound output.
             if (draw) {
                 if (!interpolator.captured()) interpolator.capture(items, camera, shadow);

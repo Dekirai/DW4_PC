@@ -19,7 +19,10 @@
 #include "test_path.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <iosfwd>
 #include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,12 +36,19 @@ public:
         bool walk{};             // steer the stick toward (x, z)
         float x{}, z{};
         float reach{4.0f};       // squared distance that counts as there
+        bool ride_strike{};      // A is for a ride's target passing by (survive does not hold it back)
     };
     // `player` is null outside the game stages (logos, title, loading).
     Output update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
     // Segment runs (campaign.cpp "Checkpoints"): true once the run has done
     // what DW4_CAMPAIGN_STOP asks for (the caller ends the test run).
     bool finished() const { return segment_.finished; }
+    // The driver's memory that outlives a stage (defeat levels, shop and lab
+    // errands done, heal gates given up, visits, cooldowns) as text lines, so
+    // a run resumed from a stage state goes on as the run that saved it
+    // (test tooling, see campaign_memory_save).
+    void save_memory(std::ostream& out) const;
+    void load_memory(std::istream& in);
 
 private:
     struct Step {
@@ -60,7 +70,8 @@ private:
                                                          int frame = 0) const;
     // One frame of a boss fight (kBossFights); false when the boss is down.
     bool boss_fight(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& strike,
-                    const std::string& follow, float keep, int frame, Output& out);
+                    const std::string& follow, float keep, bool dodge, float arena_x, float arena_z, float arena_r, bool clear_touch, int frame,
+                    Output& out);
     // A maze floor swept (ExploreBot exhausted): on to another exit.
     void maze_turn(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const std::string& goal, int frame);
     // Survival without god mode (campaign.cpp kSupplies): the next disk shop
@@ -87,7 +98,10 @@ private:
     void start_disk(const engine::GameSystem::PlayerSlot& slot, int record, int frame);
     bool heal_gate_step(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     float blow_due(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float horizon, int frame);
-    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap);
+    std::optional<engine::Vec3f> touch_escape(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, float& gap, int frame);
+    void track_step(const engine::ModelCtrlManager::ModelRam& player, int frame);
+    bool guard_pulse(int frame);
+    bool guard_footing(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player) const;
     bool tech_target(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, const engine::GameSystem::PlayerSlot& slot) const;
     void survive(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam& player, int frame, Output& out);
     Output play(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame);
@@ -142,6 +156,10 @@ private:
     int raise_walk_since_ = -1;  // walking to the bit capsule since
     bool alive_ = false;         // player 1 was alive in the last game frame
     int deaths_{};               // defeats so far
+    int fallen_at_ = -1;         // player 1's HP reached 0 here, not yet known as a defeat (a pit respawns the player)
+    int fallen_level_{};         // its level then
+    std::string fallen_objective_; // the objective then
+    std::string fallen_stage_;   // the stage then
     int guard_traced_ = -100000; // the last traced guard
     std::string guard_what_;     // the box guarded against (traces)
     struct BoxSeen {
@@ -149,6 +167,11 @@ private:
         engine::Vec3f at{}, prev{};
     };
     std::map<std::pair<const void*, int>, BoxSeen> boxes_seen_; // attack boxes' world centres (their motion)
+    bool blow_shot_ = false;     // the blow blow_due found last is a shot in flight
+    engine::Vec3f me_seen_{}, me_step_{}; // player 1's position when blow_due last ran, its step in the frame before
+    int me_seen_frame_ = -1;
+    int guard_pulse_from_ = -100, guard_pulse_last_ = -100; // the B pulse of survive's guards (guard_pulse)
+    engine::Vec3f guard_from_{}; // where the blow last found by blow_due / touch_escape comes from (its box centre)
     int tech_at_ = -1;           // a technique cast began (R), -1 none
     int touch_traced_ = -100000; // the last traced one
     int gate_disk_at_ = -100000; // the last Gate Disk use
@@ -161,6 +184,14 @@ private:
     int panel_ready_at_ = -100000; // the panel's FIRE wait after the last pick runs out (survive)
     int last_hp_ = -1;           // player 1's HP in the last frame (survive)
     int big_hit_ = 0, big_hit_at_ = -100000; // the biggest blow taken lately, when
+    int dodge_frame_ = -1;       // the last frame a boss fight's dodge saw a box about to meet the player (survive: no slow heal)
+    std::string exit_to_;        // the stage the current step's exit mat leads to (kExits; survive tops the HP up before a stage without heals)
+    std::set<std::string> no_panel_stages_; // stages seen without the quick panels (survive), beside kNoHealStages
+    std::set<int> flags_seen_;   // story flags seen on so far (a visit that sets a new one made progress)
+    bool flags_init_ = false;    // flags_seen_ filled with the flags on when the driver started
+    int new_flag_visit_ = -1;    // the stage visit (its stage_frame_) that last set a flag never seen before
+    int new_flag_ = -1;          // that flag
+    std::map<std::string, int> progress_trips_; // objective -> Gate Disk trips out of it with progress (no gate raised)
     // The equipment errand at the Digi-Lab (next_equip).
     bool equip_open_ = false;    // its lab program may be running
     int equip_kind_ = -1;        // the slot kind chosen in the lab's equipment menu
@@ -184,9 +215,11 @@ private:
     // Training (campaign.cpp kTraining).
     std::string objective_now_;  // the objective worked on (defeats raise its gate)
     std::map<std::string, int> defeat_levels_; // objective -> highest level a defeat (or a Gate Disk escape) at it came at
+    std::map<std::string, int> train_falls_;   // training field -> highest level a defeat there came at (train_for)
     int escape_stage_frame_ = -1; // the stage visit a Gate Disk escape raised the gate in
     int train_exp_ = -1, train_exp_at_{}; // EXP seen while training, when it last grew
     bool train_leaving_ = false; // the training field is spent: leaving it
+    std::string stall_leave_;    // a field step stalled: the exit mat it is left by for this visit (kStallLeave)
     int gate_since_ = -1;        // walking to a heal gate since, -1 none
     std::string gate_mat_;       // its mat
     engine::Vec3f gate_at_{};    // where it is
@@ -216,6 +249,13 @@ private:
     void checkpoint_saved(engine::Engine& engine, int frame);
     void checkpoint_forget();
 };
+
+// Test tooling for resumed runs: the live campaign driver's memory written
+// next to a stage state (DW4_STAGE_STATES: <frame>_<stage>.mem beside the
+// .dw4state), and read back with --load-state (that state's .mem, when there
+// is one) before the driver's next update. No-ops without a driver.
+void campaign_memory_save(const std::filesystem::path& path);
+void campaign_memory_load(const std::filesystem::path& path);
 
 // One step of a ride's targets (campaign.cpp kRideTargets: the stag0103
 // boat's factory towers, the stag0203 train's junction signs) on the way to
