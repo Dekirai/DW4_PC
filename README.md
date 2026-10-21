@@ -247,8 +247,9 @@ every stage start, `<frame>_<stage>.dw4state`; `DW4_CHEATS_FROM_ENV=1` replaces 
 the environment's from the loaded frame on).
 A test run draws no pictures unless it needs them: without `--screenshot` / `--screenshot-frames`,
 `DW4_TEXTURE_PACK` or `DW4_DUMP_TEXTURES` it opens no window and no OpenGL context, decodes no
-movies and mixes no sound (unless `DW4_AUDIO_DUMP`), so it simulates several times faster (a
-campaign run about 8x, several such runs side by side scale with the CPU cores). The scene is still
+movies and mixes no sound (unless `DW4_AUDIO_DUMP`); with the faster collision queries and route
+planning a campaign or survey run simulates about ten times faster than before (a campaign segment
+530 -> 5300 frames/s, four side by side 295 -> 3400 frames/s each). The scene is still
 traversed after every step exactly as for a picture (`Engine::traverse_scene`: animation clocks,
 motion combiners and recorded matrices advance there), so such a run plays the same frames as one
 that draws them: the fingerprints, logs and stage states are identical. `DW4_RENDER=1` draws the
