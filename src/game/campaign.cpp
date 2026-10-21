@@ -226,8 +226,10 @@ constexpr Objective kObjectives[] = {
     {"Guilmon form from the Digi-Elf (level 16)", "S2|K7&K8|P6|!L16", "stagml12", "talk:n_digilff#1"},
     {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2", "stagml12", "evolve:2"},
     {"key item 7 (dng308b3 boss)", "K7|P6", "dng308b3", "explore:matz02"},
-    {"lever (stag0301)", "F56|P6", "stag0301", "strike:g_lever01z03#0"},
-    {"console (stag0302)", "F57|P6", "stag0302", "strike:g_consolez03#0"},
+    // (Loading a save clears flags 36-66 again, stagIS10 gameStart.lua: the
+    // lever and the console count as done once key item 8 is held.)
+    {"lever (stag0301)", "F56|K8|P6", "stag0301", "strike:g_lever01z03#0"},
+    {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
     // The dng310 fortress (kMazeRegions): Lucemon's gate (dng310f3 matz06)
