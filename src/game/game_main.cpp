@@ -652,50 +652,62 @@ int run(const Options& options, dw4::game::Settings& settings) {
     dw4::engine::Vec3f free_eye{0, 60, 200};
     float free_yaw = 3.14159265f, free_pitch = -0.2f;
 
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) throw std::runtime_error(SDL_GetError());
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
-    if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
-    // Multisampling is chosen with the window (settings.ini msaa, read at
-    // start-up); without support the window opens without it.
-    const int msaa = options.smoke_frames ? 0 : settings.msaa;
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
-    // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
-    // unless DW4_WIDESCREEN=1.
-    int window_width = options.smoke_frames ? 1280 : settings.width;
-    int window_height = options.smoke_frames ? 960 : settings.height;
-    if (options.smoke_frames) {
-        if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
-        settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
-    }
-    SDL_Window* window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
-    SDL_GLContext context = window ? SDL_GL_CreateContext(window) : nullptr;
-    if (!context && msaa > 1) {
-        if (window) SDL_DestroyWindow(window);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+    // Test runs draw no pictures unless they need them (screenshots, texture
+    // pack or dump folders, DW4_RENDER=1): no window, no OpenGL context, no
+    // menu. The scene is still traversed after every step exactly as for a
+    // picture (Engine::render), since animation clocks, motion
+    // combiners and recorded matrices advance there, so such a run simulates
+    // the same frames as one that draws them.
+    const bool draw = !options.smoke_frames || !options.screenshot.empty() || std::getenv("DW4_TEXTURE_PACK") ||
+                      std::getenv("DW4_DUMP_TEXTURES") || (std::getenv("DW4_RENDER") && std::atoi(std::getenv("DW4_RENDER")) != 0);
+    if (!SDL_Init(draw ? SDL_INIT_VIDEO | SDL_INIT_GAMEPAD : SDL_INIT_EVENTS)) throw std::runtime_error(SDL_GetError());
+    SDL_Window* window = nullptr;
+    SDL_GLContext context = nullptr;
+    int samples = 0;
+    if (draw) {
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        Uint64 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE;
+        if (options.smoke_frames) flags |= SDL_WINDOW_HIDDEN;
+        // Multisampling is chosen with the window (settings.ini msaa, read at
+        // start-up); without support the window opens without it.
+        const int msaa = options.smoke_frames ? 0 : settings.msaa;
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
+        // Test runs ignore settings.ini: 1280x960 unless DW4_WINDOW=WxH, 4:3
+        // unless DW4_WIDESCREEN=1.
+        int window_width = options.smoke_frames ? 1280 : settings.width;
+        int window_height = options.smoke_frames ? 960 : settings.height;
+        if (options.smoke_frames) {
+            if (const char* size = std::getenv("DW4_WINDOW")) std::sscanf(size, "%dx%d", &window_width, &window_height);
+            settings.widescreen = std::getenv("DW4_WIDESCREEN") != nullptr;
+        }
         window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
         context = window ? SDL_GL_CreateContext(window) : nullptr;
-    }
-    if (!window || !context) throw std::runtime_error(SDL_GetError());
-    SDL_GL_MakeCurrent(window, context);
-    SDL_GL_SetSwapInterval(options.smoke_frames || !settings.vsync ? 0 : 1);
-    if (!options.smoke_frames && settings.fullscreen) SDL_SetWindowFullscreen(window, true);
-    int samples = 0;
-    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
-    if (samples > 1) glEnable(GL_MULTISAMPLE);
+        if (!context && msaa > 1) {
+            if (window) SDL_DestroyWindow(window);
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+            window = SDL_CreateWindow("Digimon World 4 PC", window_width, window_height, flags);
+            context = window ? SDL_GL_CreateContext(window) : nullptr;
+        }
+        if (!window || !context) throw std::runtime_error(SDL_GetError());
+        SDL_GL_MakeCurrent(window, context);
+        SDL_GL_SetSwapInterval(options.smoke_frames || !settings.vsync ? 0 : 1);
+        if (!options.smoke_frames && settings.fullscreen) SDL_SetWindowFullscreen(window, true);
+        SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
+        if (samples > 1) glEnable(GL_MULTISAMPLE);
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr;
-    ImGui::StyleColorsDark();
-    ImGui_ImplSDL3_InitForOpenGL(window, context);
-    ImGui_ImplOpenGL3_Init("#version 330");
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGui::GetIO().IniFilename = nullptr;
+        ImGui::StyleColorsDark();
+        ImGui_ImplSDL3_InitForOpenGL(window, context);
+        ImGui_ImplOpenGL3_Init("#version 330");
+    }
 
     // Audio: the SoundManager's streams go to the default playback device
     // (not in smoke tests). DW4_AUDIO_DUMP=FILE.wav records what was mixed.
@@ -729,7 +741,9 @@ int run(const Options& options, dw4::game::Settings& settings) {
     };
 
     {
-        dw4::game::GlRenderer renderer;
+        std::optional<dw4::game::GlRenderer> gl_renderer;
+        if (draw) gl_renderer.emplace();
+        dw4::game::GlRenderer* const renderer = gl_renderer ? &*gl_renderer : nullptr;
         // Texture packs: settings.ini [mods] textures (default mods/textures
         // next to the program, else in the working folder); dumps go to
         // mods/dump/textures. Test runs use neither.
@@ -744,17 +758,17 @@ int run(const Options& options, dw4::game::Settings& settings) {
         auto configure_pack = [&] {
             const auto pack = settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack;
             texture_pack.configure(pack, settings.dump_textures ? mods_folder("dump/textures") : std::filesystem::path());
-            renderer.clear_cache();
+            renderer->clear_cache();
         };
         if (!options.smoke_frames) {
             configure_pack();
-            renderer.set_texture_pack(&texture_pack);
+            renderer->set_texture_pack(&texture_pack);
         } else if (std::getenv("DW4_TEXTURE_PACK") || std::getenv("DW4_DUMP_TEXTURES")) {
             // Test runs: DW4_TEXTURE_PACK=dir and / or DW4_DUMP_TEXTURES=dir.
             const char* pack = std::getenv("DW4_TEXTURE_PACK");
             const char* dump = std::getenv("DW4_DUMP_TEXTURES");
             texture_pack.configure(pack ? pack : "", dump ? dump : "");
-            renderer.set_texture_pack(&texture_pack);
+            renderer->set_texture_pack(&texture_pack);
         }
         std::vector<SDL_Gamepad*> gamepads;
         ScriptedInput scripted;
@@ -867,7 +881,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             log_serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
             frame = state.frame;
             accumulator = 0;
-            renderer.clear_cache();
+            if (renderer) renderer->clear_cache();
             interpolator.reset();
             rendered_stage.clear();
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
@@ -907,7 +921,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
             input_log.clear();
             log_serial = 0;
             accumulator = 0;
-            renderer.clear_cache();
+            if (renderer) renderer->clear_cache();
             interpolator.reset();
             rendered_stage.clear();
             state_message = "Online: player " + std::to_string(net.local_slot() + 1) + " of " + std::to_string(started.players);
@@ -976,7 +990,7 @@ int run(const Options& options, dw4::game::Settings& settings) {
                     settings_changed = true;
                     continue;
                 }
-                ImGui_ImplSDL3_ProcessEvent(&event);
+                if (draw) ImGui_ImplSDL3_ProcessEvent(&event);
                 if (event.type == SDL_EVENT_QUIT) running = false;
                 if (event.type == SDL_EVENT_WINDOW_RESIZED && !options.smoke_frames &&
                     !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN)) {
@@ -1420,12 +1434,12 @@ int run(const Options& options, dw4::game::Settings& settings) {
                                                 e->node->matrix(3, 2));
                         }
             }
-            if (steps > 0) interpolator.advance();
+            if (steps > 0 && draw) interpolator.advance();
             // (Every stage load, also of the same stage: the texture cache is
             // keyed by document addresses, which a new load may reuse.)
             const std::uint64_t serial = engine.stage_snapshot() ? engine.stage_snapshot()->serial : 0;
             if (rendered_stage != engine.stage_name() || rendered_serial != serial) {
-                renderer.clear_cache();
+                if (renderer) renderer->clear_cache();
                 rendered_stage = engine.stage_name();
                 rendered_serial = serial;
                 interpolator.reset();
@@ -1442,417 +1456,420 @@ int run(const Options& options, dw4::game::Settings& settings) {
             if (stage_states && steps > 0 && last_step_loaded && can_save().empty())
                 write_state_file(std::filesystem::path(stage_states) / (std::to_string(frame) + "_" + engine.stage_name() + ".dw4state"),
                                  SaveState{*engine.stage_snapshot(), load_step_drawn, input_log, engine.fingerprint(), frame});
-            if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
-            if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
-                interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));
-            renderer.set_shadow(&shadow);
-            int width = 0, height = 0;
-            SDL_GetWindowSizeInPixels(window, &width, &height);
-            dw4::game::Viewport screen;
-            if (width * 3 > height * 4) { screen.height = height; screen.width = height * 4 / 3; }
-            else { screen.width = width; screen.height = width * 3 / 4; }
-            screen.x = (width - screen.width) / 2;
-            screen.y = (height - screen.height) / 2;
-            // Widescreen: the 3D scene uses the whole window width.
-            dw4::game::Viewport wide = screen;
-            if (settings.widescreen && width * 3 > height * 4) {
-                wide.x = 0;
-                wide.width = width;
-            }
-            // From the step that took a stage change on, the original presents
-            // nothing new: the last picture stays until the loader draws.
-            if (engine.presenting() || !renderer.draw_kept_picture(width, height)) {
-                renderer.render(items, camera, clear, screen, wide, width, height);
-                // A playing movie covers the screen with its current picture.
-                // After its end Sofdec's last picture stays up until the
-                // stage changes (the opening's end script switches a frame
-                // later).
-                if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
-                    const auto* movie = sound->movie();
-                    if (!movie_decoder || movie_serial != movie->serial) {
-                        movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
-                        movie_serial = movie->serial;
-                        movie_stage = engine.stage_name();
-                    }
-                    if (movie_decoder->seek(movie->picture_at(engine.time())))
-                        renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                            width, height);
-                } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
-                    renderer.draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
-                                        width, height);
-                } else {
-                    movie_decoder.reset();
+            // The picture, the menu and the sound output.
+            if (draw) {
+                if (!interpolator.captured()) interpolator.capture(items, camera, shadow);
+                if (!options.smoke_frames && settings.smooth_motion && present_interval < 1.0 / 75.0)
+                    interpolator.blend(items, camera, shadow, float(accumulator / dw4::engine::kFieldSeconds));
+                renderer->set_shadow(&shadow);
+                int width = 0, height = 0;
+                SDL_GetWindowSizeInPixels(window, &width, &height);
+                dw4::game::Viewport screen;
+                if (width * 3 > height * 4) { screen.height = height; screen.width = height * 4 / 3; }
+                else { screen.width = width; screen.height = width * 3 / 4; }
+                screen.x = (width - screen.width) / 2;
+                screen.y = (height - screen.height) / 2;
+                // Widescreen: the 3D scene uses the whole window width.
+                dw4::game::Viewport wide = screen;
+                if (settings.widescreen && width * 3 > height * 4) {
+                    wide.x = 0;
+                    wide.width = width;
                 }
-                renderer.keep_picture(width, height);
-            }
+                // From the step that took a stage change on, the original presents
+                // nothing new: the last picture stays until the loader draws.
+                if (engine.presenting() || !renderer->draw_kept_picture(width, height)) {
+                    renderer->render(items, camera, clear, screen, wide, width, height);
+                    // A playing movie covers the screen with its current picture.
+                    // After its end Sofdec's last picture stays up until the
+                    // stage changes (the opening's end script switches a frame
+                    // later).
+                    if (const auto* sound = engine.get<dw4::engine::SoundManager>(); sound && sound->movie()) {
+                        const auto* movie = sound->movie();
+                        if (!movie_decoder || movie_serial != movie->serial) {
+                            movie_decoder = std::make_unique<dw4::game::MovieDecoder>(movie->video);
+                            movie_serial = movie->serial;
+                            movie_stage = engine.stage_name();
+                        }
+                        if (movie_decoder->seek(movie->picture_at(engine.time())))
+                            renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                                width, height);
+                    } else if (movie_decoder && movie_stage == engine.stage_name() && !movie_decoder->rgba().empty()) {
+                        renderer->draw_movie(movie_decoder->rgba().data(), movie_decoder->width(), movie_decoder->height(), screen,
+                                            width, height);
+                    } else {
+                        movie_decoder.reset();
+                    }
+                    renderer->keep_picture(width, height);
+                }
 
-            ImGui_ImplOpenGL3_NewFrame();
-            ImGui_ImplSDL3_NewFrame();
-            ImGui::NewFrame();
-            if (show_menu) {
-                ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
-                ImGui::Begin("DW4 PC (F1)");
-                if (ImGui::BeginTabBar("menu")) {
-                if (ImGui::BeginTabItem("Settings")) {
-                    {
-                        // Presets: Original (the GameCube presentation and
-                        // balance) or Modernized (widescreen, smooth motion,
-                        // anti-aliasing, straight to the title).
-                        const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
-                                              !settings.skip_intro && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
-                                              settings.damage_taken == 100 && settings.drop_seed == 0;
-                        const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro;
-                        int preset = original ? 0 : modernized ? 1 : 2;
-                        static const char* presets[] = {"Original", "Modernized", "Custom"};
-                        if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
-                            const bool modern = preset == 1;
-                            settings.widescreen = modern;
-                            settings.smooth_motion = modern;
-                            settings.msaa = modern ? 4 : 0;
-                            settings.skip_intro = modern;
-                            if (!modern) {
-                                settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
-                                settings.drop_seed = 0;
-                                apply_gameplay(engine.cheats());
-                            }
-                            settings_changed = true;
-                        }
-                        ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro and the original balance.");
-                    }
-                    if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
-                            SDL_SetWindowFullscreen(window, settings.fullscreen);
-                            settings_changed = true;
-                        }
-                        if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen))
-                            settings_changed = true;
-                        if (ImGui::Checkbox("VSync", &settings.vsync)) {
-                            SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
-                            settings_changed = true;
-                        }
-                        if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off"))
-                            settings_changed = true;
-                        if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) settings_changed = true;
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("(now %.0f fps)", present_interval > 0 ? 1.0 / present_interval : 0.0);
-                        ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
+                ImGui_ImplOpenGL3_NewFrame();
+                ImGui_ImplSDL3_NewFrame();
+                ImGui::NewFrame();
+                if (show_menu) {
+                    ImGui::SetNextWindowSize(ImVec2(560, 560), ImGuiCond_FirstUseEver);
+                    ImGui::Begin("DW4 PC (F1)");
+                    if (ImGui::BeginTabBar("menu")) {
+                    if (ImGui::BeginTabItem("Settings")) {
                         {
-                            float worst = 0, total = 0;
-                            for (const float t : frame_times) {
-                                worst = std::max(worst, t);
-                                total += t;
-                            }
-                            char overlay[96];
-                            std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(frame_times.size()), worst);
-                            ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), int(frame_time_at % frame_times.size()),
-                                             overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, 48));
-                        }
-                        static const int sample_choices[] = {0, 2, 4, 8};
-                        static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
-                        int choice = 0;
-                        for (int i = 0; i < 4; ++i)
-                            if (settings.msaa >= sample_choices[i]) choice = i;
-                        if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, 4)) {
-                            settings.msaa = sample_choices[choice];
-                            settings_changed = true;
-                        }
-                        ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
-                        static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
-                        if (!settings.fullscreen) {
-                            ImGui::TextUnformatted("Window size:");
-                            for (const auto& size : sizes) {
-                                ImGui::SameLine();
-                                const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
-                                if (ImGui::SmallButton(label.c_str())) {
-                                    SDL_SetWindowSize(window, size[0], size[1]);
-                                    settings.width = size[0];
-                                    settings.height = size[1];
-                                    settings_changed = true;
+                            // Presets: Original (the GameCube presentation and
+                            // balance) or Modernized (widescreen, smooth motion,
+                            // anti-aliasing, straight to the title).
+                            const bool original = !settings.widescreen && !settings.smooth_motion && settings.msaa == 0 &&
+                                                  !settings.skip_intro && settings.exp_rate == 100 && settings.damage_dealt == 100 &&
+                                                  settings.damage_taken == 100 && settings.drop_seed == 0;
+                            const bool modernized = settings.widescreen && settings.smooth_motion && settings.msaa >= 4 && settings.skip_intro;
+                            int preset = original ? 0 : modernized ? 1 : 2;
+                            static const char* presets[] = {"Original", "Modernized", "Custom"};
+                            if (ImGui::Combo("Preset", &preset, presets, 3) && preset < 2) {
+                                const bool modern = preset == 1;
+                                settings.widescreen = modern;
+                                settings.smooth_motion = modern;
+                                settings.msaa = modern ? 4 : 0;
+                                settings.skip_intro = modern;
+                                if (!modern) {
+                                    settings.exp_rate = settings.damage_dealt = settings.damage_taken = 100;
+                                    settings.drop_seed = 0;
+                                    apply_gameplay(engine.cheats());
                                 }
-                            }
-                        }
-                    }
-                    if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%")) settings_changed = true;
-                    }
-                    if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
-                        if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_SizingStretchSame)) {
-                            for (std::size_t b = 0; b < settings.keys.size(); ++b) {
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
-                                for (std::size_t k = 0; k < settings.keys[b].size(); ++k) {
-                                    ImGui::TableNextColumn();
-                                    const bool waiting = capture && !capture->gamepad && capture->button == b && capture->slot == k;
-                                    const SDL_Scancode code = settings.keys[b][k];
-                                    std::string label = waiting ? "press a key..."
-                                                      : code == SDL_SCANCODE_UNKNOWN ? "-"
-                                                                                     : SDL_GetScancodeName(code);
-                                    label += "##" + std::to_string(b * 8 + k);
-                                    if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k};
-                                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                                        settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
-                                        capture.reset();
-                                        settings_changed = true;
-                                    }
-                                }
-                            }
-                            ImGui::EndTable();
-                        }
-                        if (ImGui::Button("Default keys")) {
-                            settings.reset_keys();
-                            capture.reset();
-                            settings_changed = true;
-                        }
-                    }
-                    if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        if (gamepads.empty()) ImGui::TextDisabled("No controller connected.");
-                        for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
-                            const char* name = SDL_GetGamepadName(gamepads[i]);
-                            ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
-                        }
-                        ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
-                        ImGui::TextDisabled("The left stick moves, the right stick is the C stick.");
-                        if (ImGui::BeginTable("pad", 4, ImGuiTableFlags_SizingStretchSame)) {
-                            for (std::size_t b = 0; b < settings.pad.size(); ++b) {
-                                ImGui::TableNextRow();
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
-                                for (std::size_t k = 0; k < settings.pad[b].size(); ++k) {
-                                    ImGui::TableNextColumn();
-                                    const bool waiting = capture && capture->gamepad && capture->button == b && capture->slot == k;
-                                    std::string label = waiting ? "press..." : dw4::game::pad_input_name(settings.pad[b][k]);
-                                    if (label.empty()) label = "-";
-                                    label += "##pad" + std::to_string(b * 8 + k);
-                                    if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
-                                    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                                        settings.pad[b][k] = {};
-                                        capture.reset();
-                                        settings_changed = true;
-                                    }
-                                }
-                            }
-                            ImGui::EndTable();
-                        }
-                        if (ImGui::Button("Default controller layout")) {
-                            settings.reset_pad();
-                            capture.reset();
-                            settings_changed = true;
-                        }
-                    }
-                    if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
-                        for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
-                            ImGui::PushID(int(slot));
-                            if (ImGui::SmallButton("Save")) save_state(slot);
-                            ImGui::SameLine();
-                            if (ImGui::SmallButton("Load")) load_state(slot);
-                            ImGui::SameLine();
-                            if (state_slots[slot])
-                                ImGui::Text("%zu: %s, %zu steps since its stage loaded", slot + 1, state_slots[slot]->snapshot.stage.c_str(),
-                                            state_slots[slot]->inputs.size());
-                            else
-                                ImGui::TextDisabled("%zu: empty", slot + 1);
-                            ImGui::PopID();
-                        }
-                    }
-                    if (ImGui::CollapsingHeader("Mods")) {
-                        ImGui::TextDisabled("Folders in %s with a mod.ini; changes apply at the next start.", mods_root.string().c_str());
-                        if (mods.empty()) ImGui::TextDisabled("No mods found.");
-                        for (auto& mod : mods) {
-                            bool enabled = !settings.disabled_mods.count(mod.id);
-                            if (ImGui::Checkbox(("##mod" + mod.id).c_str(), &enabled)) {
-                                if (enabled) settings.disabled_mods.erase(mod.id);
-                                else settings.disabled_mods.insert(mod.id);
                                 settings_changed = true;
                             }
+                            ImGui::TextDisabled("Original: 4:3, 60 fps motion, no anti-aliasing, the intro and the original balance.");
+                        }
+                        if (ImGui::CollapsingHeader("Display", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            if (ImGui::Checkbox("Fullscreen (F11)", &settings.fullscreen)) {
+                                SDL_SetWindowFullscreen(window, settings.fullscreen);
+                                settings_changed = true;
+                            }
+                            if (ImGui::Checkbox("Widescreen (the 3D view fills wide windows, 2D stays 4:3)", &settings.widescreen))
+                                settings_changed = true;
+                            if (ImGui::Checkbox("VSync", &settings.vsync)) {
+                                SDL_GL_SetSwapInterval(settings.vsync ? 1 : 0);
+                                settings_changed = true;
+                            }
+                            if (ImGui::SliderInt("Frame limit", &settings.fps_limit, 0, 300, settings.fps_limit ? "%d fps" : "off"))
+                                settings_changed = true;
+                            if (ImGui::Checkbox("Smooth motion above 60 fps", &settings.smooth_motion)) settings_changed = true;
                             ImGui::SameLine();
-                            ImGui::Text("%s %s%s%s (%zu files)", mod.name.c_str(), mod.version.c_str(), mod.author.empty() ? "" : " by ",
-                                        mod.author.c_str(), mod.file_count);
-                            if (!mod.problem.empty()) {
+                            ImGui::TextDisabled("(now %.0f fps)", present_interval > 0 ? 1.0 / present_interval : 0.0);
+                            ImGui::TextDisabled("The game itself always runs at 60 updates per second.");
+                            {
+                                float worst = 0, total = 0;
+                                for (const float t : frame_times) {
+                                    worst = std::max(worst, t);
+                                    total += t;
+                                }
+                                char overlay[96];
+                                std::snprintf(overlay, sizeof overlay, "avg %.2f ms  worst %.2f ms", total / float(frame_times.size()), worst);
+                                ImGui::PlotLines("Frame time", frame_times.data(), int(frame_times.size()), int(frame_time_at % frame_times.size()),
+                                                 overlay, 0.0f, std::max(33.4f, worst), ImVec2(0, 48));
+                            }
+                            static const int sample_choices[] = {0, 2, 4, 8};
+                            static const char* sample_names[] = {"Off", "2x", "4x", "8x"};
+                            int choice = 0;
+                            for (int i = 0; i < 4; ++i)
+                                if (settings.msaa >= sample_choices[i]) choice = i;
+                            if (ImGui::Combo("Anti-aliasing (MSAA)", &choice, sample_names, 4)) {
+                                settings.msaa = sample_choices[choice];
+                                settings_changed = true;
+                            }
+                            ImGui::TextDisabled("Anti-aliasing applies at the next start (now %dx).", samples > 1 ? samples : 0);
+                            static const int sizes[][2] = {{1280, 960}, {1440, 1080}, {1920, 1440}, {1280, 720}, {1920, 1080}, {2560, 1440}};
+                            if (!settings.fullscreen) {
+                                ImGui::TextUnformatted("Window size:");
+                                for (const auto& size : sizes) {
+                                    ImGui::SameLine();
+                                    const std::string label = std::to_string(size[0]) + "x" + std::to_string(size[1]);
+                                    if (ImGui::SmallButton(label.c_str())) {
+                                        SDL_SetWindowSize(window, size[0], size[1]);
+                                        settings.width = size[0];
+                                        settings.height = size[1];
+                                        settings_changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            if (ImGui::SliderInt("Volume", &settings.volume, 0, 100, "%d%%")) settings_changed = true;
+                        }
+                        if (ImGui::CollapsingHeader("Keyboard (player 1)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            ImGui::TextDisabled("Click a key to change it, right-click to clear it.");
+                            if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_SizingStretchSame)) {
+                                for (std::size_t b = 0; b < settings.keys.size(); ++b) {
+                                    ImGui::TableNextRow();
+                                    ImGui::TableNextColumn();
+                                    ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
+                                    for (std::size_t k = 0; k < settings.keys[b].size(); ++k) {
+                                        ImGui::TableNextColumn();
+                                        const bool waiting = capture && !capture->gamepad && capture->button == b && capture->slot == k;
+                                        const SDL_Scancode code = settings.keys[b][k];
+                                        std::string label = waiting ? "press a key..."
+                                                          : code == SDL_SCANCODE_UNKNOWN ? "-"
+                                                                                         : SDL_GetScancodeName(code);
+                                        label += "##" + std::to_string(b * 8 + k);
+                                        if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k};
+                                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                                            settings.keys[b][k] = SDL_SCANCODE_UNKNOWN;
+                                            capture.reset();
+                                            settings_changed = true;
+                                        }
+                                    }
+                                }
+                                ImGui::EndTable();
+                            }
+                            if (ImGui::Button("Default keys")) {
+                                settings.reset_keys();
+                                capture.reset();
+                                settings_changed = true;
+                            }
+                        }
+                        if (ImGui::CollapsingHeader("Controllers", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            if (gamepads.empty()) ImGui::TextDisabled("No controller connected.");
+                            for (std::size_t i = 0; i < gamepads.size() && i < 4; ++i) {
+                                const char* name = SDL_GetGamepadName(gamepads[i]);
+                                ImGui::BulletText("Player %zu: %s", i + 1, name ? name : "controller");
+                            }
+                            ImGui::TextDisabled("Click an input and press a controller button or trigger; right-click clears.");
+                            ImGui::TextDisabled("The left stick moves, the right stick is the C stick.");
+                            if (ImGui::BeginTable("pad", 4, ImGuiTableFlags_SizingStretchSame)) {
+                                for (std::size_t b = 0; b < settings.pad.size(); ++b) {
+                                    ImGui::TableNextRow();
+                                    ImGui::TableNextColumn();
+                                    ImGui::TextUnformatted(dw4::game::pad_key_name(dw4::game::PadKey(b)));
+                                    for (std::size_t k = 0; k < settings.pad[b].size(); ++k) {
+                                        ImGui::TableNextColumn();
+                                        const bool waiting = capture && capture->gamepad && capture->button == b && capture->slot == k;
+                                        std::string label = waiting ? "press..." : dw4::game::pad_input_name(settings.pad[b][k]);
+                                        if (label.empty()) label = "-";
+                                        label += "##pad" + std::to_string(b * 8 + k);
+                                        if (ImGui::Button(label.c_str(), ImVec2(-1, 0))) capture = KeyCapture{b, k, true};
+                                        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                                            settings.pad[b][k] = {};
+                                            capture.reset();
+                                            settings_changed = true;
+                                        }
+                                    }
+                                }
+                                ImGui::EndTable();
+                            }
+                            if (ImGui::Button("Default controller layout")) {
+                                settings.reset_pad();
+                                capture.reset();
+                                settings_changed = true;
+                            }
+                        }
+                        if (ImGui::CollapsingHeader("Save states", ImGuiTreeNodeFlags_DefaultOpen)) {
+                            ImGui::TextDisabled("F5 saves and F9 loads state 1. Files: %s", state_dir.string().c_str());
+                            for (std::size_t slot = 0; slot < state_slots.size(); ++slot) {
+                                ImGui::PushID(int(slot));
+                                if (ImGui::SmallButton("Save")) save_state(slot);
                                 ImGui::SameLine();
-                                ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "- %s", mod.problem.c_str());
+                                if (ImGui::SmallButton("Load")) load_state(slot);
+                                ImGui::SameLine();
+                                if (state_slots[slot])
+                                    ImGui::Text("%zu: %s, %zu steps since its stage loaded", slot + 1, state_slots[slot]->snapshot.stage.c_str(),
+                                                state_slots[slot]->inputs.size());
+                                else
+                                    ImGui::TextDisabled("%zu: empty", slot + 1);
+                                ImGui::PopID();
                             }
-                            if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
                         }
-                    }
-                    if (ImGui::CollapsingHeader("Texture packs")) {
-                        ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
-                        ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
-                                            (settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack).string().c_str());
-                        if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
+                        if (ImGui::CollapsingHeader("Mods")) {
+                            ImGui::TextDisabled("Folders in %s with a mod.ini; changes apply at the next start.", mods_root.string().c_str());
+                            if (mods.empty()) ImGui::TextDisabled("No mods found.");
+                            for (auto& mod : mods) {
+                                bool enabled = !settings.disabled_mods.count(mod.id);
+                                if (ImGui::Checkbox(("##mod" + mod.id).c_str(), &enabled)) {
+                                    if (enabled) settings.disabled_mods.erase(mod.id);
+                                    else settings.disabled_mods.insert(mod.id);
+                                    settings_changed = true;
+                                }
+                                ImGui::SameLine();
+                                ImGui::Text("%s %s%s%s (%zu files)", mod.name.c_str(), mod.version.c_str(), mod.author.empty() ? "" : " by ",
+                                            mod.author.c_str(), mod.file_count);
+                                if (!mod.problem.empty()) {
+                                    ImGui::SameLine();
+                                    ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "- %s", mod.problem.c_str());
+                                }
+                                if (!mod.description.empty()) ImGui::TextDisabled("    %s", mod.description.c_str());
+                            }
+                        }
+                        if (ImGui::CollapsingHeader("Texture packs")) {
+                            ImGui::Text("%zu replacement textures loaded.", texture_pack.replacement_count());
+                            ImGui::TextDisabled("PNG files named ..._<16 hex digit hash>.png below %s",
+                                                (settings.texture_pack.empty() ? mods_folder("textures") : settings.texture_pack).string().c_str());
+                            if (ImGui::Checkbox("Dump textures (to mods/dump/textures)", &settings.dump_textures)) {
+                                settings_changed = true;
+                                configure_pack();
+                            }
+                            if (ImGui::Button("Reload texture pack")) configure_pack();
+                        }
+                        if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
+                        if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
                             settings_changed = true;
-                            configure_pack();
-                        }
-                        if (ImGui::Button("Reload texture pack")) configure_pack();
+                        ImGui::TextDisabled("Memory cards: %s", engine.card_root().string().c_str());
+                        ImGui::TextDisabled("(settings.ini [data] cards=<folder with Card A / Card B> changes it)");
+                        ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
+                        ImGui::EndTabItem();
                     }
-                    if (ImGui::Checkbox("Pause the game while this menu is open", &settings.pause_in_menu)) settings_changed = true;
-                    if (ImGui::Checkbox("Skip intro at the next start (straight to the title)", &settings.skip_intro))
-                        settings_changed = true;
-                    ImGui::TextDisabled("Memory cards: %s", engine.card_root().string().c_str());
-                    ImGui::TextDisabled("(settings.ini [data] cards=<folder with Card A / Card B> changes it)");
-                    ImGui::TextDisabled("Settings file: %s", settings.file.string().c_str());
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Online")) {
-                    static int players = 2, port = 52040, delay = 3;
-                    static char address[128] = "127.0.0.1";
-                    if (net.active()) {
-                        ImGui::Text("Playing online as player %d of %d (input delay %d steps).", net.local_slot() + 1, net.start().players,
-                                    net.start().delay);
-                        if (net.desync()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Desync at step %llu.", (unsigned long long)*net.desync());
-                        if (ImGui::Button("Leave the session")) end_session();
-                    } else if (net.in_lobby()) {
-                        ImGui::TextUnformatted(lobby_status.c_str());
-                        if (ImGui::Button("Cancel")) net.close();
-                    } else {
-                        ImGui::TextWrapped("Everyone starts at the title together; each machine's keyboard and first controller play "
-                                           "its own player. The host's Card A and the first guest's Card A (as Card B) are shared "
-                                           "and go back to their owners when the session ends.");
-                        ImGui::SliderInt("Players", &players, 2, 4);
-                        ImGui::InputInt("Port", &port);
-                        ImGui::SliderInt("Input delay (steps)", &delay, 1, 10);
-                        if (ImGui::Button("Host")) {
-                            std::string error;
-                            if (!net.host(port, players, delay, data_hash(engine.resources()), error)) {
-                                state_message = "Online: " + error;
-                                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    if (ImGui::BeginTabItem("Online")) {
+                        static int players = 2, port = 52040, delay = 3;
+                        static char address[128] = "127.0.0.1";
+                        if (net.active()) {
+                            ImGui::Text("Playing online as player %d of %d (input delay %d steps).", net.local_slot() + 1, net.start().players,
+                                        net.start().delay);
+                            if (net.desync()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "Desync at step %llu.", (unsigned long long)*net.desync());
+                            if (ImGui::Button("Leave the session")) end_session();
+                        } else if (net.in_lobby()) {
+                            ImGui::TextUnformatted(lobby_status.c_str());
+                            if (ImGui::Button("Cancel")) net.close();
+                        } else {
+                            ImGui::TextWrapped("Everyone starts at the title together; each machine's keyboard and first controller play "
+                                               "its own player. The host's Card A and the first guest's Card A (as Card B) are shared "
+                                               "and go back to their owners when the session ends.");
+                            ImGui::SliderInt("Players", &players, 2, 4);
+                            ImGui::InputInt("Port", &port);
+                            ImGui::SliderInt("Input delay (steps)", &delay, 1, 10);
+                            if (ImGui::Button("Host")) {
+                                std::string error;
+                                if (!net.host(port, players, delay, data_hash(engine.resources()), error)) {
+                                    state_message = "Online: " + error;
+                                    message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                                }
+                            }
+                            ImGui::Separator();
+                            ImGui::InputText("Host address", address, sizeof address);
+                            if (ImGui::Button("Join")) {
+                                std::string error;
+                                if (!net.join(address, port, data_hash(engine.resources()), read_card(card_root / "Card A"), error)) {
+                                    state_message = "Online: " + error;
+                                    message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                                }
+                            }
+                            ImGui::TextDisabled("Guests outside your network need the host's port forwarded.");
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    if (ImGui::BeginTabItem("Cheats")) {
+                        ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
+                                           "give (levels, bits) stays in saves.");
+                        auto& cheats = engine.cheats();
+                        ImGui::BeginDisabled(net.active());
+                        ImGui::Checkbox("God mode (players lose no HP)", &cheats.god);
+                        ImGui::Checkbox("Infinite MP", &cheats.infinite_mp);
+                        ImGui::Checkbox("One-hit defeats (player hits)", &cheats.one_hit);
+                        ImGui::SeparatorText("Rebalancing (saved; 100% is the original)");
+                        bool gameplay_changed = false;
+                        gameplay_changed |= ImGui::SliderInt("EXP from enemies", &settings.exp_rate, 10, 1000, "%d%%");
+                        gameplay_changed |= ImGui::SliderInt("Damage of your hits", &settings.damage_dealt, 10, 1000, "%d%%");
+                        gameplay_changed |= ImGui::SliderInt("Damage enemies do", &settings.damage_taken, 10, 1000, "%d%%");
+                        ImGui::SeparatorText("Randomizer (saved; 0 is off)");
+                        int seed = int(settings.drop_seed & 0x7FFFFFFF);
+                        if (ImGui::InputInt("Item drop seed", &seed)) {
+                            settings.drop_seed = std::uint32_t(std::max(0, seed));
+                            gameplay_changed = true;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("New seed")) {
+                            settings.drop_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
+                            gameplay_changed = true;
+                        }
+                        ImGui::TextDisabled("Drops change into other items of the same kind; key items stay. The same seed gives the same drops.");
+                        if (gameplay_changed) {
+                            apply_gameplay(cheats);
+                            settings_changed = true;
+                        }
+                        ImGui::EndDisabled();
+                        if (net.active()) ImGui::TextDisabled("Online, the host's settings apply.");
+                        if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !net.active()) {
+                            for (int slot = 0; slot < 4; ++slot) {
+                                auto& player = sys->players[std::size_t(slot)];
+                                if (!player.joined || !player.stats.ready) continue;
+                                ImGui::PushID(slot);
+                                ImGui::SeparatorText(("Player " + std::to_string(slot + 1)).c_str());
+                                ImGui::Text("Level %d  HP %d/%d  MP %d/%d  Bits %d", player.stats.level, player.hp, player.max_hp,
+                                            player.mp, player.max_mp, player.bits);
+                                if (ImGui::Button("Refill HP/MP")) sys->cheat_refill(engine, slot);
+                                ImGui::SameLine();
+                                if (ImGui::Button("+1 level")) sys->cheat_levels(engine, slot, 1);
+                                ImGui::SameLine();
+                                if (ImGui::Button("+10 levels")) sys->cheat_levels(engine, slot, 10);
+                                ImGui::SameLine();
+                                if (ImGui::Button("+100,000 bits")) sys->cheat_bits(slot, 100000);
+                                ImGui::PopID();
                             }
                         }
-                        ImGui::Separator();
-                        ImGui::InputText("Host address", address, sizeof address);
-                        if (ImGui::Button("Join")) {
-                            std::string error;
-                            if (!net.join(address, port, data_hash(engine.resources()), read_card(card_root / "Card A"), error)) {
-                                state_message = "Online: " + error;
-                                message_until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                            }
-                        }
-                        ImGui::TextDisabled("Guests outside your network need the host's port forwarded.");
+                        ImGui::EndTabItem();
                     }
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Cheats")) {
-                    ImGui::TextWrapped("Optional cheats for this session. They change the original game; what they "
-                                       "give (levels, bits) stays in saves.");
-                    auto& cheats = engine.cheats();
-                    ImGui::BeginDisabled(net.active());
-                    ImGui::Checkbox("God mode (players lose no HP)", &cheats.god);
-                    ImGui::Checkbox("Infinite MP", &cheats.infinite_mp);
-                    ImGui::Checkbox("One-hit defeats (player hits)", &cheats.one_hit);
-                    ImGui::SeparatorText("Rebalancing (saved; 100% is the original)");
-                    bool gameplay_changed = false;
-                    gameplay_changed |= ImGui::SliderInt("EXP from enemies", &settings.exp_rate, 10, 1000, "%d%%");
-                    gameplay_changed |= ImGui::SliderInt("Damage of your hits", &settings.damage_dealt, 10, 1000, "%d%%");
-                    gameplay_changed |= ImGui::SliderInt("Damage enemies do", &settings.damage_taken, 10, 1000, "%d%%");
-                    ImGui::SeparatorText("Randomizer (saved; 0 is off)");
-                    int seed = int(settings.drop_seed & 0x7FFFFFFF);
-                    if (ImGui::InputInt("Item drop seed", &seed)) {
-                        settings.drop_seed = std::uint32_t(std::max(0, seed));
-                        gameplay_changed = true;
-                    }
+                    if (ImGui::BeginTabItem("Debug")) {
+                    ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
+                    ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
+                                renderer->mesh_count(), renderer->texture_count());
+                    static char stage[64] = "stagis10";
+                    ImGui::InputText("##stage", stage, sizeof stage);
                     ImGui::SameLine();
-                    if (ImGui::Button("New seed")) {
-                        settings.drop_seed = std::uint32_t(std::chrono::steady_clock::now().time_since_epoch().count() & 0x7FFFFFFF) | 1u;
-                        gameplay_changed = true;
-                    }
-                    ImGui::TextDisabled("Drops change into other items of the same kind; key items stay. The same seed gives the same drops.");
-                    if (gameplay_changed) {
-                        apply_gameplay(cheats);
-                        settings_changed = true;
-                    }
-                    ImGui::EndDisabled();
-                    if (net.active()) ImGui::TextDisabled("Online, the host's settings apply.");
-                    if (auto* sys = engine.get<dw4::engine::GameSystem>(); sys && !net.active()) {
-                        for (int slot = 0; slot < 4; ++slot) {
-                            auto& player = sys->players[std::size_t(slot)];
-                            if (!player.joined || !player.stats.ready) continue;
-                            ImGui::PushID(slot);
-                            ImGui::SeparatorText(("Player " + std::to_string(slot + 1)).c_str());
-                            ImGui::Text("Level %d  HP %d/%d  MP %d/%d  Bits %d", player.stats.level, player.hp, player.max_hp,
-                                        player.mp, player.max_mp, player.bits);
-                            if (ImGui::Button("Refill HP/MP")) sys->cheat_refill(engine, slot);
-                            ImGui::SameLine();
-                            if (ImGui::Button("+1 level")) sys->cheat_levels(engine, slot, 1);
-                            ImGui::SameLine();
-                            if (ImGui::Button("+10 levels")) sys->cheat_levels(engine, slot, 10);
-                            ImGui::SameLine();
-                            if (ImGui::Button("+100,000 bits")) sys->cheat_bits(slot, 100000);
-                            ImGui::PopID();
+                    if (ImGui::Button("Load stage")) engine.request_stage(stage);
+                    if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
+                        if (const auto* p = models->player(0); p && p->node) {
+                            const auto& m = p->node->matrix;
+                            ImGui::Text("Player 0: %s seq=%s pos=(%.1f, %.1f, %.1f) ctrl=%d mode=%d ground=%d", p->info_name.c_str(),
+                                        p->seq_name.c_str(), m(3, 0), m(3, 1), m(3, 2), p->control_enabled ? 1 : 0, p->ctrl_mode,
+                                        p->on_ground ? 1 : 0);
                         }
                     }
-                    ImGui::EndTabItem();
-                }
-                if (ImGui::BeginTabItem("Debug")) {
-                ImGui::Text("Stage: %s  (%s)", engine.stage_name().c_str(), engine.loader_state().c_str());
-                ImGui::Text("Frame %llu  draws %zu  meshes %zu  textures %zu", (unsigned long long)engine.frame(), items.size(),
-                            renderer.mesh_count(), renderer.texture_count());
-                static char stage[64] = "stagis10";
-                ImGui::InputText("##stage", stage, sizeof stage);
-                ImGui::SameLine();
-                if (ImGui::Button("Load stage")) engine.request_stage(stage);
-                if (auto* models = engine.get<dw4::engine::ModelCtrlManager>()) {
-                    if (const auto* p = models->player(0); p && p->node) {
-                        const auto& m = p->node->matrix;
-                        ImGui::Text("Player 0: %s seq=%s pos=(%.1f, %.1f, %.1f) ctrl=%d mode=%d ground=%d", p->info_name.c_str(),
-                                    p->seq_name.c_str(), m(3, 0), m(3, 1), m(3, 2), p->control_enabled ? 1 : 0, p->ctrl_mode,
-                                    p->on_ground ? 1 : 0);
+                    if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
                     }
+                    if (ImGui::CollapsingHeader("Demo scripts")) {
+                        for (const auto& line : engine.demo().describe()) ImGui::TextUnformatted(line.c_str());
+                    }
+                    if (ImGui::CollapsingHeader("Log")) {
+                        for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
+                    }
+                    ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
+                    }
+                    ImGui::End();
                 }
-                if (ImGui::CollapsingHeader("Unimplemented original behavior", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    for (const auto& note : engine.notes()) ImGui::BulletText("%s (x%zu)", note.text.c_str(), note.count);
+                if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
+                    ImGui::SetNextWindowPos(ImVec2(12, 12));
+                    ImGui::SetNextWindowBgAlpha(0.6f);
+                    ImGui::Begin("##state", nullptr,
+                                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+                    ImGui::TextUnformatted(state_message.c_str());
+                    ImGui::End();
                 }
-                if (ImGui::CollapsingHeader("Demo scripts")) {
-                    for (const auto& line : engine.demo().describe()) ImGui::TextUnformatted(line.c_str());
-                }
-                if (ImGui::CollapsingHeader("Log")) {
-                    for (const auto& line : engine.log_lines()) ImGui::TextUnformatted(line.c_str());
-                }
-                ImGui::EndTabItem();
-                }
-                ImGui::EndTabBar();
-                }
-                ImGui::End();
-            }
-            if (!state_message.empty() && std::chrono::steady_clock::now() < message_until) {
-                ImGui::SetNextWindowPos(ImVec2(12, 12));
-                ImGui::SetNextWindowBgAlpha(0.6f);
-                ImGui::Begin("##state", nullptr,
-                             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
-                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-                ImGui::TextUnformatted(state_message.c_str());
-                ImGui::End();
-            }
-            ImGui::Render();
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+                ImGui::Render();
+                ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-            const bool shoot = !options.screenshot.empty() &&
-                ((options.screenshot_frames.empty() && frame == options.smoke_frames) ||
-                 std::find(options.screenshot_frames.begin(), options.screenshot_frames.end(), frame) != options.screenshot_frames.end());
-            if (shoot) {
-                std::vector<std::uint8_t> pixels(std::size_t(width * height * 4));
-                glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                std::string path = options.screenshot;
-                if (!options.screenshot_frames.empty()) {
-                    const auto dot = path.rfind('.');
-                    path = path.substr(0, dot) + "_" + std::to_string(frame) + (dot == std::string::npos ? ".bmp" : path.substr(dot));
+                const bool shoot = !options.screenshot.empty() &&
+                    ((options.screenshot_frames.empty() && frame == options.smoke_frames) ||
+                     std::find(options.screenshot_frames.begin(), options.screenshot_frames.end(), frame) != options.screenshot_frames.end());
+                if (shoot) {
+                    std::vector<std::uint8_t> pixels(std::size_t(width * height * 4));
+                    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                    std::string path = options.screenshot;
+                    if (!options.screenshot_frames.empty()) {
+                        const auto dot = path.rfind('.');
+                        path = path.substr(0, dot) + "_" + std::to_string(frame) + (dot == std::string::npos ? ".bmp" : path.substr(dot));
+                    }
+                    write_bmp(path, width, height, pixels);
+                    std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
                 }
-                write_bmp(path, width, height, pixels);
-                std::cout << "screenshot " << path << " at frame " << frame << " stage " << engine.stage_name() << '\n';
-            }
-            // Keep about three frames of audio queued across frame hitches.
-            if (audio) {
-                const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
-                if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
-            }
-            SDL_GL_SwapWindow(window);
-            {
-                const auto now = std::chrono::steady_clock::now();
-                const double seconds = std::chrono::duration<double>(now - last_present).count();
-                last_present = now;
-                present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
-                frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
+                // Keep about three frames of audio queued across frame hitches.
+                if (audio) {
+                    const int queued = SDL_GetAudioStreamQueued(audio) / int(2 * sizeof(std::int16_t));
+                    if (queued < kAudioFrameSamples * 2) mix_audio(kAudioFrameSamples * 3 - queued);
+                }
+                SDL_GL_SwapWindow(window);
+                {
+                    const auto now = std::chrono::steady_clock::now();
+                    const double seconds = std::chrono::duration<double>(now - last_present).count();
+                    last_present = now;
+                    present_interval += (std::min(seconds, 0.1) - present_interval) * 0.1;
+                    frame_times[frame_time_at++ % frame_times.size()] = float(seconds * 1000.0);
+                }
             }
             // Frame limit (settings.ini fps_limit): presents are spaced out;
             // the simulation keeps its fixed 60 Hz steps.
@@ -1952,12 +1969,14 @@ int run(const Options& options, dw4::game::Settings& settings) {
         for (const auto& note : engine.notes()) std::cout << "  " << note.text << " x" << note.count << '\n';
         for (auto* pad : gamepads) SDL_CloseGamepad(pad);
     }
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
+    if (draw) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+    }
     if (audio) SDL_DestroyAudioStream(audio);
-    SDL_GL_DestroyContext(context);
-    SDL_DestroyWindow(window);
+    if (context) SDL_GL_DestroyContext(context);
+    if (window) SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
 }
