@@ -304,9 +304,14 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     // 0x8030E884..0x8030E8C4: the command "SQ_ERAS" - a JUMP is the command
     // handler too (8030BCB8 -> vtable +8C) - first runs the class's erase
     // hook (vtable +B4) for a generated model, then starts the sequence
-    // (8030F530). Only the player class has one (8034E3C0, the other model
-    // classes keep the empty 8030F5D8).
-    if (name == "SQ_ERAS" && ram.generated && ram.is_player) player_erase_hook(engine, ram);
+    // (8030F530). Only the player class (vtable 804E7DAC: 8034E3C0) and the
+    // item class (804EDC5C: 803ABE0C, its name label) have one; the other
+    // model classes keep the empty 8030F5D8 (scan of every vtable with the
+    // update 8030CB2C at +0x84).
+    if (name == "SQ_ERAS" && ram.generated) {
+        if (ram.is_player) player_erase_hook(engine, ram);
+        else if (ram.category == "ITEM") item_erase_hook(engine, ram);
+    }
     // Sequence cleanup releases the queued hitboxes (MODEL_HITBOX) and a
     // sequence-long invulnerability; started sequence-dead effects are erased.
     for (const auto& effect : ram.effects)
@@ -381,6 +386,7 @@ void ModelCtrlManager::select_sequence(Engine& engine, ModelRam& ram, std::strin
     // so a jumped-to sequence runs the hook before the outer one does.
     if (ram.is_player) player_sequence_hook(engine, ram);
     else if (ram.category == "ENEMY") status_sequence_check(engine, ram);
+    else if (ram.category == "ITEM") item_sequence_hook(engine, ram);
 }
 
 // beNDMWMdlPlayer +B8 (8034E1B0): standing in SQ_WAIT, the player's number
@@ -664,9 +670,14 @@ bool ModelCtrlManager::command(Engine& engine, Ram& base, std::string_view comma
         // keeps the last one's HP or record.
         ram.hp = ram.max_hp = 0;
         ram.record = -1;
-        if (ram.item_label >= 0) item_label(engine, ram, false);
+        // The item GENERATE hook 803AAC90 makes a fresh item work (8033A8A8:
+        // no label, blink phase and "COLOR" timer gone). A label still shown
+        // would keep its line taken in the original; the port drops it (the
+        // erase hook at SQ_ERAS normally did that already).
+        if (ram.item_label >= 0) item_erase_hook(engine, ram);
+        ram.item_lit = false;
+        ram.item_color_timer.reset();
         ram.item_table = -1;
-        ram.item_player = -1;
         // Drop form (802FCE60): I<record>/I<drop table id>.
         if (ram.category == "ITEM" && packet.ints.size() >= 2) {
             ram.item_record = packet.ints[0];
@@ -1663,11 +1674,11 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         auto& ram = *entry.ram;
         if (!ram.generated) continue;
         // 8030CB2C: an erased model is removed on its next update (the
-        // player's bit capsule came with the SQ_ERAS start, player_erase_hook).
+        // player's bit capsule and an item's name label went with the SQ_ERAS
+        // start, player_erase_hook / item_erase_hook).
         if (ram.seq_name == "SQ_ERAS") {
             Packet p;
             command(engine, ram, "REMOVE", p);
-            if (ram.item_label >= 0) item_label(engine, ram, false);
             continue;
         }
         if (ram.frozen) continue;
@@ -1677,7 +1688,13 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
             if (ram.is_player) update_player(engine, ram);
             else if (ram.category == "ENEMY") update_enemy(engine, ram);
             else if (ram.category == "PLAYER2") update_capsule(engine, ram);
-            else if (ram.ai_maps && !ram.ai_maps->empty()) {
+            else if (ram.category == "ITEM") {
+                // 80309168 runs the class update (vtable +A0, 803AB5AC for
+                // beNDMWMdlItem) only with _isOnCtrl set (0x8030918C): no item
+                // label, pickup or contact take outside the CTRL sequences.
+                if (ram.control_enabled && ram.item_table >= 0) update_item(engine, ram);
+                apply_control(engine, ram);
+            } else if (ram.ai_maps && !ram.ai_maps->empty()) {
                 // 80308FF4, the AI slot (vtable +A0) of beModelCtrl and of
                 // most model classes (objects, bullets, effects): the AIM map,
                 // else the AIH homing. Floor switches (g_dbutton*) are objects
@@ -1695,7 +1712,6 @@ void ModelCtrlManager::update_slot(Engine& engine, int slot) {
         }
         // 8030CD18: the status update of players and enemies (vtable +C0).
         if (ram.is_player || ram.category == "ENEMY") update_status(engine, ram);
-        if (ram.category == "ITEM" && ram.item_table >= 0) update_item(engine, ram);
         // 8030CD30..8030CD4C: 8030A448 runs unless the position is locked
         // (_isPosLock +A8); it clears the translated byte (+78) and checks the
         // channel list itself. A locked model (0x8030CD54) is placed instead,
@@ -2877,13 +2893,12 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
     if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
         engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name));
     if (!ram.actions) return;
-    const Action* found = nullptr;
-    for (const auto& a : *ram.actions) if (a.name == name) { found = &a; break; }
-    if (!found) {
-        engine.note("ACTION " + std::string(name) + " missing in " + ram.info_name);
-        return;
-    }
-    if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
+    // The default path of 802F1794 (every name but NDSP and the special
+    // commands) activates the RAM and sets its switch-mask bit first
+    // (0x802F1E94..0x802F1EF4 for an inactive RAM, 0x802F20E4..0x802F2120 for
+    // an active one) and looks the action up only after that (800695CC at
+    // 0x802F2144): a name the model has no action for still shows the model
+    // and turns its collision on (kind 0x400 children follow that bit).
     if (!ram.action_active) {
         ram.action_active = true;
         // 0x802F1EC0-0x802F1EC8: work +14 (motion), +34 (fade), +44 (wait).
@@ -2918,17 +2933,42 @@ void ActionManager::dispatch(Engine& engine, ActionRam& ram, std::string_view na
         ram.motion_immediate = false; // 0x802F212C, also for the action already running
     }
     ram.visible = true;
-    if (ram.current == found) { apply_visuals(ram); return; }
+    const Action* found = nullptr;
+    for (const auto& a : *ram.actions) if (a.name == name) { found = &a; break; }
+    if (!found) engine.note("ACTION " + std::string(name) + " missing in " + ram.info_name);
+    // 0x802F2148..0x802F2158: the action already current (work +8) runs no
+    // command and sends no broadcast.
+    if (ram.current == found) {
+        if (trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " " + std::string(name) + " already current");
+        apply_visuals(ram);
+        return;
+    }
+    if (!found) {
+        // A missing name while another action is current: the original stores
+        // the null action and its command loop 802F1510 reads through it
+        // (lwz 0xC(r29) at 0x802F16A4), a fault no stage data reaches. Keep
+        // the model shown, run nothing and send no broadcast.
+        ram.current = nullptr;
+        ram.cursor = 0;
+        apply_visuals(ram);
+        return;
+    }
     ram.current = found;
     ram.cursor = 0;
-    // ACTION_BROADCAST (8031308C): starters react to (model, RAM, action).
+    // 0x802F21B0: the commands run (802F1510) with the switch bit already
+    // set, and only then 80305ED0 at 0x802F21D8 sends ACTION_BROADCAST
+    // (info name, RAM index, action name): the action starters (802F228C)
+    // and the SE sets (803130D4, MODELCTRL SETSOUND: here SoundManager::
+    // action_started) see the model as its first commands left it.
+    run(engine, ram);
+    apply_visuals(ram);
+    if (auto* sound = engine.get<SoundManager>()) sound->action_started(engine, ram.info_name, ram.index, name);
     Packet broadcast;
     broadcast.strings.emplace_back(ram.info_name);
     broadcast.ints.push_back(ram.index);
     if (engine.messenger().count("ACTION_BROADCAST", std::nullopt, -1))
         engine.messenger().send(engine, "ACTION_BROADCAST", std::nullopt, -1, name, broadcast);
-    run(engine, ram);
-    apply_visuals(ram);
 }
 
 bool ActionManager::command(Engine& engine, Ram& base, std::string_view command, Packet& packet) {
@@ -2969,6 +3009,8 @@ bool ActionManager::command(Engine& engine, Ram& base, std::string_view command,
         return true;
     }
     if (command == "NDSP") {
+        if (static const char* trace = std::getenv("DW4_TRACE_ACTION"); trace && (ram.info_name == trace || std::string_view(trace) == "*"))
+            engine.log("action " + ram.info_name + "#" + std::to_string(ram.index) + " NDSP");
         ram.color.reset();
         ram.blend.reset();
         ram.texture.reset();
