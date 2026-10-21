@@ -230,7 +230,9 @@ with raw stick values -128..127, several joined by `+`), `frame GOTO x z [durati
 and `frame SEND CATEGORY COMMAND [arguments|- [row]]`; `SEEK duration mat:matz02` walks a route onto
 a mat and confirms its prompt, `SEEK duration explore:matz02` plays through the stage to it: it fights
 enemies (hovering ones from a ledge its swing reaches them from, turrets in the gaps between their
-volleys), picks up items, steps on the other mats and explores until the way is open; `0 SEEK duration
+volleys; on a moving ride such as the stag0103 boat only those it can strike from the ride, guarding
+against a shot just before it lands), picks up items, steps on the other mats and explores
+until the way is open; `0 SEEK duration
 campaign` plays the story from the boot logos: a new game, then the story objectives in order up to
 the staff roll, see `src/game/campaign.cpp`; the dng310 fortress is planned over its floors' regions
 and the flags that open their doors, the Lucemon fight by a boss routine; without `DW4_ONE_HIT` it

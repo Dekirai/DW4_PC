@@ -87,8 +87,9 @@ public:
     WalkMap(const engine::CollisionWorld& world, const engine::Vec3f& from, float range, std::uint32_t wall_flags,
             const std::vector<AvoidBox>& avoid = {}, float width = 2.5f, const std::vector<MovingFloor>& moving = {});
     // The reached floor point nearest to `p` (flat distance) if it lies
-    // within `tolerance`.
-    std::optional<engine::Vec3f> nearest(const engine::Vec3f& p, float tolerance) const;
+    // within `tolerance`; `support` (if given) receives the moving floor it
+    // lies on (index into `moving`), -1 the stage floor.
+    std::optional<engine::Vec3f> nearest(const engine::Vec3f& p, float tolerance, int* support = nullptr) const;
     // The reached point inside an XZ rectangle nearest to its middle (a mat
     // that reaches into a wall still has floor inside); the stage floor
     // first, or only.
@@ -206,6 +207,7 @@ private:
         std::vector<engine::Vec3f> trail;     // the origin each step, oldest first
         int last_frame = -1;
         int moving_steps{};                   // steps it moved of the recorded ones
+        int moved_at = -1;                    // the last frame it was seen moving
         bool hop_on{};                        // moves sideways and keeps moving (set by each plan)
         bool sideways() const;
     };
@@ -397,6 +399,7 @@ private:
     std::vector<Platform> platforms_;                  // in the order first seen (the walking map's moving floors)
     std::map<const void*, engine::Vec3f> stirring_;    // other models' positions one step ago (platform candidates)
     std::set<const void*> not_platforms_;              // moved, but their floor is not their own
+    std::set<const void*> off_ride_;                   // enemies the last plan found out of reach from the ride (trace)
     // A hop under way: the run-up until `jump_at` (or the edge), then the
     // jump with the stick on the landing until touch-down at `land_at`.
     struct Hop {

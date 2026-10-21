@@ -2281,6 +2281,19 @@ bool ride_targets_step(engine::Engine& engine, const engine::ModelCtrlManager::M
                 out.walk = false;
                 if (player.slam_state == 1 || player.slam_state == 3) out.buttons |= slam_tap;
             }
+        } else if (!sign) {
+            // With no sign to meet, the guard goes in only when a shot or a
+            // blow is about to land: a shot within 18 (`incoming`, some 10
+            // frames out) or a blow certain within kGuardLead, B every other
+            // frame then. SQ_GUARD lasts 15 frames (then SQ_GUARD2, without
+            // guard) and B is read on its press with control only, so B
+            // pulsed while a shot was within `guard` started guards that
+            // were over when it came: a stag0103 pod missile (1.2 units a
+            // frame, seen 40 off) met SQ_GUARD2 or the SQ_WAIT after it, and
+            // every hit on the player outside SQ_GUARD costs the boat 5 of
+            // its 100 HP (hit_p_agumon.lua). A survey run on the boat took
+            // 20 hits that way, which sank it; timed, it takes 4.
+            if ((incoming || blow.certain <= kGuardLead) && frame % 2 == 0) out.buttons |= pad_button::b;
         } else {
             // (B is read on its press: pulsed so the guard is taken again;
             // against a blow about to land every other frame.)
