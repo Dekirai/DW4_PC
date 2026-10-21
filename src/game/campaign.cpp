@@ -2480,7 +2480,13 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
         if (running.bools.empty() || !running.bools[0]) heal_open_ = false;
     }
     // The equipment errand's lab program likewise (next_equip).
-    if (step.action.rfind("equip:", 0) == 0) {
+    // (Neither it nor the gear errand takes over while the disk shop's
+    // program still runs: the errand that follows the restock began while
+    // the shop's sale menus were up, and the gear branch answered the shop's
+    // Devices / Disks menu (2 lines) with A and its sale list with B, round
+    // and round - 44000 frames in stagML13 on a level 21 test with a full
+    // device folder. The shop branch backs out of them first.)
+    if (step.action.rfind("equip:", 0) == 0 && !shop_open_) {
         equip_open_ = true;
     } else if (equip_open_) {
         engine::Packet running;
@@ -2489,7 +2495,7 @@ bool CampaignBot::answer_menu(engine::Engine& engine, const engine::ModelCtrlMan
     }
     // The gear errand's shop program likewise; once it has run and closed the
     // shop is looked at for this level (next_gear).
-    if (step.action.rfind("gear:", 0) == 0) {
+    if (step.action.rfind("gear:", 0) == 0 && !shop_open_) {
         gear_open_ = true;
         gear_program_ = step.action.find("n_digilfm") != std::string::npos ? 6 : 7;
     }
