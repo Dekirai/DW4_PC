@@ -235,10 +235,14 @@ campaign` plays the story from the boot logos: a new game, then the story object
 the staff roll, see `src/game/campaign.cpp`; the dng310 fortress is planned over its floors' regions
 and the flags that open their doors, the Lucemon fight by a boss routine; without `DW4_ONE_HIT` it
 casts its first technique while the MP lasts (MP disks when it runs out) and puts the strongest
-devices found on at the Digi-Lab, and without `DW4_GOD` it
+devices found on at the Digi-Lab (PWR Medals into the chip pockets of a weapon of rank 1+), and
+without `DW4_GOD` it
 also guards against enemy blows and touches, heals with HP disks from the L panel, uses heal gates,
 the X-Data shop's refill and Gate Disks, sells the weaker devices and restocks at the disk shop,
-buys stronger devices at the weapon and armor shops, recovers its bit capsule with a
+buys stronger devices at the weapon and armor shops, takes the fire the dng308 / dng309 cell walls
+need from a fire PWR Medal (stagML13 chip shop) in the pocket of a rank 1+ weapon (weapon shop,
+whose stock is rolled anew on each visit) instead of the Guilmon form, which begins at level 1,
+recovers its bit capsule with a
 Raise Disk after a defeat and trains in the area's field below an objective's gate level (a Gate
 Disk escape raises that level like a defeat unless the visit set a story flag never seen before: then
 it restocks and comes back, at most eight times per objective; after a defeat in a field it trains in

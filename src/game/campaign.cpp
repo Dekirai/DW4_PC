@@ -3430,24 +3430,6 @@ bool CampaignBot::boss_fight(engine::Engine& engine, const engine::ModelCtrlMana
                 std::printf("[%d] bossbox %s %s kind %d offset (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f\n", frame,
                             boss->info_name.c_str(), boss->seq_name.c_str(), box.kind, box.offset.x, box.offset.y, box.offset.z, box.size.x,
                             box.size.y, box.size.z, box.delay, box.end);
-    // DW4_TRACE_XBOX=<prefix> (research): the models of that name prefix
-    // (effects, markers) when they start a sequence, with their attack boxes
-    // (how omens were measured).
-    if (static const char* prefix = std::getenv("DW4_TRACE_XBOX"); prefix) {
-        static std::map<const void*, std::string> seen;
-        for (const auto& e : models->rams()) {
-            if (!e->generated || !e->node || e->info_name.rfind(prefix, 0) != 0) continue;
-            std::string key = e->seq_name + ":" + std::to_string(e->hitboxes.size());
-            if (seen[e.get()] == key) continue;
-            seen[e.get()] = key;
-            const auto& m = e->node->matrix;
-            std::printf("[%d] xbox %s#%d %s at (%.1f,%.1f,%.1f) me (%.1f,%.1f,%.1f)\n", frame, e->info_name.c_str(), e->index, e->seq_name.c_str(), m(3, 0), m(3, 1),
-                        m(3, 2), me.x, me.y, me.z);
-            for (const auto& box : e->hitboxes)
-                std::printf("      box kind %d off (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f elapsed %.0f\n", box.kind, box.offset.x,
-                            box.offset.y, box.offset.z, box.size.x, box.size.y, box.size.z, box.delay, box.end, box.elapsed);
-        }
-    }
     const std::string targets = "|" + strike + "|";
     // The player's body (the stages' p_* hit body: 5 wide, 17 high).
     const float body_half = 2.5f, body_height = 17.0f;
@@ -4879,6 +4861,24 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                 }
             }
         }
+    // DW4_TRACE_XBOX=<prefix> (research): the models of that name prefix
+    // (effects, markers) when they start a sequence, with their attack boxes
+    // (how omens were measured).
+    if (static const char* prefix = std::getenv("DW4_TRACE_XBOX"); prefix) {
+        static std::map<const void*, std::string> seen;
+        for (const auto& e : engine.get<engine::ModelCtrlManager>()->rams()) {
+            if (!e->generated || !e->node || e->info_name.rfind(prefix, 0) != 0) continue;
+            std::string key = e->seq_name + ":" + std::to_string(e->hitboxes.size());
+            if (seen[e.get()] == key) continue;
+            seen[e.get()] = key;
+            const auto& m = e->node->matrix;
+            std::printf("[%d] xbox %s#%d %s at (%.1f,%.1f,%.1f) me (%.1f,%.1f,%.1f)\n", frame, e->info_name.c_str(), e->index, e->seq_name.c_str(), m(3, 0), m(3, 1),
+                        m(3, 2), position_of(*player).x, position_of(*player).y, position_of(*player).z);
+            for (const auto& box : e->hitboxes)
+                std::printf("      box kind %d off (%.1f,%.1f,%.1f) size (%.1f,%.1f,%.1f) delay %.0f end %.0f elapsed %.0f\n", box.kind, box.offset.x,
+                            box.offset.y, box.offset.z, box.size.x, box.size.y, box.size.z, box.delay, box.end, box.elapsed);
+        }
+    }
     // On a maze floor: the region the player is in, every ten seconds.
     if (maze_floor(stage) && player->control_enabled && frame - region_check_ >= 600) {
         region_check_ = frame;
