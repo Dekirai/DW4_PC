@@ -1577,27 +1577,17 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
             const auto fired = shots_.find(e.get());
             const bool turret = pass == 0 && structure && fired != shots_.end() && !fired->second.empty();
             if (pass == 0 && defending && !structure && !boss && !hover) continue;
-            // Without the test cheats a turret whose shots take a tenth of
-            // the maximum HP or more (heavy_turret) is no target of its own:
-            // none has to fall, and its post lies in the fire of its
-            // neighbours (stag0204's g_cannon02 row: a shell of 15 % of the
-            // maximum HP every 150 frames from each, and a swing at one keeps
-            // the guard out; a no-cheat run on such a post took 20 shells in
-            // 2000 frames). It waits like a post given up for the stage until
-            // the stage is explored to the end, then it is forgiven (its body
-            // may fill the only way on, see unreached_). Lighter ones are
-            // fought: stag0201's g_cannon01 pair (x_bltcannon01, 4 %) fills
-            // the corridor to the movepass and matz02 (the way to the stag0203
-            // train), and with its waves coming back the stage was never
-            // explored to the end - a level 21 no-cheat chain walked stag0201
-            // for 180000 frames without reaching matz02.
-            if (turret && !engine.cheats().one_hit && !engine.cheats().god && !forgiven_.count(e.get()) && heavy_turret(engine, e.get())) {
-                if (std::getenv("DW4_TRACE_EXPLORE") && !unreached_.count(e.get()))
-                    std::printf("[%d] explore leaves the turret %s#%d for now\n", frame, e->info_name.c_str(), e->index);
-                unkillable_.insert(e.get());
-                unreached_.insert(e.get());
-                continue;
-            }
+            // (Turrets are fought with real blows too. Leaving them alone
+            // until the stage was explored to the end kept the way shut where
+            // their bodies fill it - stag0201's g_cannon01 pair before the
+            // movepass to matz02: 180000 frames without reaching it - and in
+            // stag0204, once its gates were open, the level 25 no-cheat chain
+            // crossed its g_cannon02 rows in 37000 frames under 48 shells of
+            // 15 % of the maximum HP (eneatk TYPE 2: no level helps) and was
+            // out of heals in dng206f1; fighting them (4 blows each,
+            // hit_g_cannon02.lua -25 of 100) it crossed in 21800 frames under
+            // 30 and went on to dng206f2. On a first visit both ways took the
+            // same shells, 33 and 37.)
             if (hold && !on_hold(at)) continue;
             // Near a pit in a quicksand basin: struck only in passing (with
             // real blows further off as well, see the hold below).
@@ -2131,8 +2121,6 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
             speed = std::max(speed * 0.999f, flat(last->second.first, at));
         }
         live[e.get()] = {at, shooter};
-        for (const auto& h : e->hitboxes)
-            if (h.kind / 10000 == 7 || h.kind / 10000 == 8) shot_kind_[shooter] = h.kind;
         const auto& m = e->node->matrix;
         for (const auto& h : e->hitboxes) {
             if ((h.kind / 10000 != 7 && h.kind / 10000 != 8) || (!h.started && h.delay - h.elapsed > 20.0f)) continue;
@@ -2260,23 +2248,9 @@ void ExploreBot::track_fire(engine::Engine& engine, int frame) {
     std::erase_if(shields_, [&](const auto& entry) { return !alive.count(entry.first) || !alive.count(entry.second); });
     std::erase_if(shot_born_, [&](const auto& entry) { return !alive.count(entry.first); });
     std::erase_if(shot_life_, [&](const auto& entry) { return !alive.count(entry.first); });
-    std::erase_if(shot_kind_, [&](const auto& entry) { return !alive.count(entry.first); });
     steady_bullets_ = std::move(steady);
     bullets_ = std::move(live);
     if (frame % 30 == 0) std::erase_if(fire_cells_, [&](const auto& entry) { return frame - entry.second.frame > 150; });
-}
-
-// A turret whose shots take a tenth of the maximum HP or more: the eneatk
-// row of its shots' kind (kind % 10000) with TYPE 2 (a share of the maximum
-// HP, combat.cpp enemy_damage) and TSUYOSA 5 or more (the player's low
-// resistance to the attribute nearly doubles it: x_bltcannon02, 70101,
-// TSUYOSA 8, takes 15 %; x_bltcannon01, 70100, 4 %).
-bool ExploreBot::heavy_turret(engine::Engine& engine, const void* turret) const {
-    const auto kind = shot_kind_.find(turret);
-    auto* db = engine.get<engine::DatabaseManager>();
-    if (kind == shot_kind_.end() || !db) return false;
-    const int attack = kind->second % 10000;
-    return db->number("eneatk", attack, "TYPE").value_or(0) == 2 && db->number("eneatk", attack, "TSUYOSA").value_or(0) >= 5;
 }
 
 bool ExploreBot::in_fire(const engine::Vec3f& p, int frame) const {
@@ -2382,7 +2356,6 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         shields_.clear();
         shot_born_.clear();
         shot_life_.clear();
-        shot_kind_.clear();
         volleys_.clear();
         phases_.clear();
         unreached_.clear();
