@@ -410,6 +410,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     if (auto* points = get<PlayerPointManager>()) snapshot.point_no = points->point_no();
     snapshot.loader_teardown = loader_teardown_;
     snapshot.loader_common = loader_common_;
+    snapshot.stage_active = stage_active_;
     if (auto* sys = get<GameSystem>()) snapshot.system = std::make_shared<const GameSystem>(*sys);
     if (auto* sound = get<SoundManager>()) snapshot.sound = sound->persistent();
     snapshot.serial = ++snapshot_serial_;
@@ -437,6 +438,9 @@ void Engine::restore(const StageSnapshot& snapshot) {
         sys->registered_ = false;
     }
     if (auto* sound = get<SoundManager>()) sound->restore(*this, snapshot.sound);
+    // The managers run on until the loader's state 0 clears beSystem +0x2C,
+    // some fields after the change.
+    stage_active_ = snapshot.stage_active;
     // The rest of the step that started the load (Engine::step).
     pending_stage_ = snapshot.stage;
     begin_stage_load(&snapshot);

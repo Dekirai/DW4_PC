@@ -238,6 +238,7 @@ struct StageSnapshot {
     std::int32_t point_no{};             // PLAYERPOINT's generate point (it survives stage loads)
     std::int32_t loader_teardown{};      // milli-fields the update that starts this load takes (Engine::process_stage_loader)
     bool loader_common{};                // this load still reads BecText.igb and _common/sbiallse.igb (the first of a session)
+    bool stage_active{};                 // beSystem +0x2C at the change (cleared by the loader's state 0)
     std::shared_ptr<const void> system;  // GameSystem copy
     std::shared_ptr<const void> sound;        // SoundManager streams
     std::uint64_t serial{};                   // counts the snapshots of an engine
