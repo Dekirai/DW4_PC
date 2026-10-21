@@ -1332,16 +1332,18 @@ struct Supply {
     int reserve = 0;     // bits that stay after the purchase
 };
 constexpr Supply kSupplies[] = {
-    {0, 9, 0, 1200},       // HP Disk S: 450 HP for 100 bits
+    {0, 9, 0, 1 << 30},    // HP Disk S: 450 HP for 100 bits
     {1, 5, 1200, 1 << 30}, // HP Disk M: 1800 HP for 500 bits
     {3, 6, 0, 1 << 30},    // MP Disk S: 400 MP for 160 bits (techniques, kTechReach)
     {7, 1, 0, 1 << 30},    // Raise Disk (200 bits): the bit capsule after a defeat
     {8, 2, 0, 1 << 30},    // Gate Disk (120 bits): back to the lobby (kGateTrip)
-    // HP Disk M as a second slot of heals below 1200 HP, with 5000 bits to
-    // spare (a slot holds 9 of one record: 9 HP Disks S were all a no-cheat
-    // run at level 17 took into dng204b2's minotaur waves, twice given up
-    // with no heal left and 40000 bits held).
-    {1, 9, 0, 1200, 5000},
+    // A full second slot of heals with 5000 bits to spare (a slot holds 9 of
+    // one record: 9 HP Disks S were all a no-cheat run at level 17 took into
+    // dng204b2's minotaur waves, twice given up with no heal left and 40000
+    // bits held). (Both at any maximum HP: from 1200 on the S slot was left
+    // empty and 5 M were all a level 23 chain carried into stag0204, out of
+    // heals there in 21000 frames with 25000 bits held.)
+    {1, 9, 0, 1 << 30, 5000},
 };
 constexpr int kRaiseDisk = 7;
 constexpr int kRaiseWalk = 1500; // frames to reach the bit capsule
