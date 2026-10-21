@@ -437,9 +437,11 @@ private:
         unsigned archive{}, entry{};
         std::uint32_t sectors{};
         std::uint32_t read{};      // sectors read so far (requests of up to 64)
-        std::uint32_t heavy{};     // sectors up to the end of the igb's object data
-        int stall_chunk{-1};       // the chunk after which the loader makes the objects
-        int stall{};               // ... for that many fields
+        int object_chunk{-1};      // the chunk holding the start of the object buffer (the objects are made after it)
+        int memory_chunk{-1};      // the chunk holding the start of the memory blocks
+        int stall{};               // fields the objects take
+        bool chunk_costed{};       // the booked chunk's processing is counted (wait)
+        std::int64_t wait{};       // fields after its booking before the next request
         std::int64_t booked{-1};   // the frame that saw the chunk on its way booked
         int parse{};
         std::int64_t route_cost{}; // milli-fields of the update that routes the file
@@ -453,6 +455,7 @@ private:
     std::vector<ObjectView> loader_preliminary_; // infos of the /s members, registered when state 100 ends
     std::int64_t loader_cost_{};             // milli-fields the current loader update takes
     int loader_skip_{};                      // retraces the original's current update still covers
+    std::int64_t loader_processing_{};       // milli-fields of chunk processing so far in this load (chunk_extra)
     std::int32_t loader_teardown_{};         // see StageSnapshot::loader_teardown
     bool loader_common_{true};               // see StageSnapshot::loader_common
     bool stage_active_{}; // beSystem +0x2C, see stage_active()

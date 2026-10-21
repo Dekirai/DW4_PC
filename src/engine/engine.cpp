@@ -347,10 +347,21 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
         loader_teardown_ = loader_teardown_cost();
     }
     if (std::getenv("DW4_TRACE_LOADER")) {
-        std::size_t objects = 0, bytes = 0, rams = 0;
+        std::size_t objects = 0, bytes = 0, rams = 0, memories = 0, memory_bytes = 0, generated = 0;
         for (const auto& file : files_)
-            if (file.document) { objects += file.document->objects.size(); bytes += file.document->bytes().size(); }
-        if (auto* models = get<ModelCtrlManager>()) rams = models->rams().size();
+            if (file.document) {
+                objects += file.document->objects.size();
+                bytes += file.document->bytes().size();
+                memories += file.document->memories.size();
+                for (const auto& m : file.document->memories) memory_bytes += m.size;
+            }
+        if (auto* models = get<ModelCtrlManager>()) {
+            rams = models->rams().size();
+            for (const auto& ram : models->rams()) generated += ram->generated ? 1 : 0;
+        }
+        log("loader teardown features " + stage_name_ + ": memories " + std::to_string(memories) + " memory bytes " +
+            std::to_string(memory_bytes) + " generated " + std::to_string(generated) + " lua infos " + std::to_string(lua_infos_.size()) +
+            " schedule " + std::to_string(schedule_.size()));
         log("loader teardown of " + stage_name_ + ": " + std::to_string(files_.size()) + " files, " + std::to_string(objects) +
             " objects, " + std::to_string(bytes) + " bytes, " + std::to_string(rams) + " model RAMs -> " +
             std::to_string(loader_teardown_) + " milli-fields");
@@ -385,6 +396,7 @@ void Engine::begin_stage_load(const StageSnapshot* restoring) {
     loader_preliminary_.clear();
     loader_skip_ = 0;
     loader_cost_ = 0;
+    loader_processing_ = 0;
     // What survives into this stage, for save states.
     StageSnapshot snapshot;
     snapshot.stage = next;
@@ -569,44 +581,60 @@ void Engine::register_info(const ObjectView& info) {
 //   infos in state 5, start.lua) covers the following retraces: the loader
 //   skips them, and a read it asked for is issued with the last of them.
 namespace {
-// What the original's loader spends on a file besides reading it (the
-// captures' stage loads, 12 stage members of 1.0 to 4.9 MB):
-// - a chunk of the igb's object data (header, types, entries and object
-//   buffer: the first 1.5 MB of a 4.5 MB stage member) is processed into the
-//   field after its booking, so the next request comes one tick later than
-//   the drive would allow (chunks 0-9 of the members almost always, the
-//   later chunks with the memory data on time);
-// - after the chunk that completes the object directory (the first one for
-//   up to 30000 declared objects, the second one above) the objects are made:
-//   about 0.207 fields per 1000 objects minus 2.8 more (10900 objects: 0,
-//   23900: 2, 40400: 8; within 2.4);
-// - after the last chunk is booked the file is ready about a field per
-//   600000 bytes later (2746890 bytes -> 5, 4975354 -> 8; p_dorumon 1);
-// - the update that routes a stage member takes about 0.2 fields plus 0.022
-//   per 1000 objects (40382 objects: 1.10, 23931: 0.69).
+// What the original's loading thread spends on a file besides reading it
+// (Dolphin captures of 15 loads, 687 chunks; igAdxFile::read 802AA1B0 asks
+// for the next 64 sectors only when the parser wants more data, and its wait
+// 802A9DC4 sleeps to the next retrace, so a chunk that takes the thread more
+// than the rest of its field delays the next request by whole fields):
+// - a chunk before the object buffer (header, types, entries, the reference
+//   index) or inside it: one field more (object records of 15000-18000
+//   fields: one, at times two);
+// - the chunk holding the start of the object buffer: the objects are made
+//   first, 0.7 + 0.34 per 1000 objects (1079: 1, 8535: 3, 23931: 9, 40382:
+//   14; within 1);
+// - the chunk where the memory blocks start: two more;
+// - memory chunks: none (at times one);
+// - after the last chunk the file is ready 0.49 + 0.32 per 1000 memory
+//   blocks + 1.13 per MB of them later (111 files: 12 one off);
+// - the update that routes the file takes 0.081 fields per 1000 memory
+//   blocks (the stage members with 12400 and more cover a second retrace).
 struct LoaderCost {
-    std::uint32_t heavy{};
-    int stall_chunk{-1};
+    int object_chunk{-1}; // the chunk holding the start of the object buffer (-1: no objects)
+    int memory_chunk{-1}; // the chunk holding the start of the memory blocks (-1: none)
     int stall{};
-    int parse{};
+    int post{};
     std::int64_t route{};
 };
-LoaderCost loader_cost(std::size_t bytes, const IgbDocument* document, bool stage_member) {
+LoaderCost loader_cost(const IgbDocument* document) {
     LoaderCost cost;
-    cost.parse = int((bytes + 300000) / 600000);
     if (!document) return cost;
-    const auto& h = document->metadata.header;
-    const std::uint64_t object_end = 48ull + h.field_type_buffer_size + h.object_type_buffer_size + h.entry_buffer_size + h.object_buffer_size;
-    cost.heavy = std::uint32_t((object_end + 2047) / 2048);
-    if (!stage_member) return cost;
-    const std::size_t objects = document->objects.size();
-    const std::int64_t stall = (std::int64_t(objects) * 207 / 1000 - 2780 + 500) / 1000;
-    if (stall > 0) {
-        cost.stall = int(stall);
-        cost.stall_chunk = objects < 30000 ? 0 : 1;
-    }
-    cost.route = 200 + std::int64_t(objects) * 22 / 1000;
+    const std::size_t chunk = 64 * 2048;
+    const std::size_t objects = document->objects.size(), memories = document->memories.size();
+    std::size_t memory_bytes = 0;
+    for (const auto& m : document->memories) memory_bytes += m.size;
+    const std::size_t memory_start = memories ? document->memories.front().offset : document->consumed_bytes;
+    const std::size_t object_start = memory_start - std::min<std::size_t>(memory_start, document->metadata.header.object_buffer_size);
+    if (objects) cost.object_chunk = int(object_start / chunk);
+    if (memories) cost.memory_chunk = int(memory_start / chunk);
+    cost.stall = int((700 + objects * 34 / 100) / 1000);
+    cost.post = int((492 + memories * 32 / 100 + memory_bytes * 1132 / 1000000) / 1000);
+    cost.route = std::int64_t(memories) * 81 / 1000;
     return cost;
+}
+
+// Fields the loading thread spends on chunk `chunk` of a file beyond the
+// one the next request takes anyway.
+// Milli-fields the loading thread spends on chunk `chunk` of a file beyond
+// the field the next request takes anyway; the captures' memory chunks cost a
+// field more one time in 13, object chunks one time in 7 (the main thread's
+// share of a field varies), which the load's running sum spreads evenly.
+std::int64_t chunk_extra(int chunk, int object_chunk, int memory_chunk, int stall) {
+    if (object_chunk < 0) return 0;
+    if (chunk < object_chunk) return 1000;
+    if (chunk == object_chunk) return std::int64_t(stall) * 1000;
+    if (memory_chunk < 0 || chunk < memory_chunk) return 1150;
+    if (chunk == memory_chunk) return 2000;
+    return 80;
 }
 
 bool trace_loader() {
@@ -616,14 +644,21 @@ bool trace_loader() {
 } // namespace
 
 // The update after NEXTSTAGE (80316258: the managers release the outgoing
-// stage's RAMs, 8006F794 its directories) before the descriptor request
-// grows with the stage's model RAMs: 4.8 fields after the logos (12 RAMs),
-// 7.6 after the title (190), 16.2 after stag0203 (848), 20.5 after stag0204
-// (1137).
+// stage's RAMs, 8006F794 its directories) asks for the next descriptor at its
+// end; it grows with what the stage's files hold: 1.5 fields + 0.7 per 1000
+// memory blocks + 0.18 per 1000 objects (captures: the descriptor request
+// 1.54 fields into the update after stagIS09, 8.59 after stagIS10 (5875
+// blocks, 14804 objects), 16.25 after stag0203, 20.58 after stag0204; the
+// logos, 6.31, take 2 fields longer than this).
 std::int32_t Engine::loader_teardown_cost() const {
     if (files_.empty()) return 0;
-    const auto* models = get<ModelCtrlManager>();
-    return 4600 + 14 * std::int32_t(models ? models->rams().size() : 0);
+    std::size_t memories = 0, objects = 0;
+    for (const auto& file : files_)
+        if (file.document) {
+            memories += file.document->memories.size();
+            objects += file.document->objects.size();
+        }
+    return std::int32_t(1500 + memories * 7 / 10 + objects * 18 / 100);
 }
 
 // State 5 (802FA53C) registers the stage's infos; the update grows with the
@@ -674,17 +709,44 @@ void Engine::loader_request(const LoaderItem& item) {
             log("load failed: " + item.name + ": " + error.what());
         }
     }
-    const bool stage_member = member && member->suffix != "/s";
-    const auto cost = loader_cost(bytes, loader_file_.document.get(), stage_member);
-    loader_file_.parse = cost.parse;
+    const auto cost = loader_cost(loader_file_.document.get());
+    loader_file_.parse = cost.post;
     loader_file_.route_cost = cost.route;
-    loader_file_.heavy = cost.heavy;
-    loader_file_.stall_chunk = cost.stall_chunk;
+    loader_file_.object_chunk = cost.object_chunk;
+    loader_file_.memory_chunk = cost.memory_chunk;
     loader_file_.stall = cost.stall;
+    if (trace_loader() && std::getenv("DW4_TRACE_LOADER_CHUNKS") && loader_file_.document) {
+        // Analysis aid: what each 64-sector chunk of the file holds.
+        const auto& doc = *loader_file_.document;
+        const std::size_t chunk_bytes = 64 * 2048;
+        const std::size_t n = (doc.bytes().size() + chunk_bytes - 1) / chunk_bytes;
+        std::vector<std::size_t> objs(n), fields(n), mems(n);
+        std::vector<std::map<std::string, std::size_t>> types(n);
+        for (const auto& o : doc.objects) {
+            if (o.fields.empty()) continue;
+            const std::size_t k = (o.fields.front().offset - 8) / chunk_bytes;
+            if (k < n) { ++objs[k]; fields[k] += o.fields.size(); }
+        }
+        for (const auto& m : doc.memories) {
+            const std::size_t k = m.offset / chunk_bytes;
+            if (k >= n) continue;
+            ++mems[k];
+            const std::string type = m.memory_type_index >= 0 && std::size_t(m.memory_type_index) < doc.metadata.field_types.size()
+                                         ? doc.metadata.field_types[std::size_t(m.memory_type_index)].name : std::string("?");
+            types[k][type] += m.size;
+        }
+        std::string text = "loader chunks " + item.name + ":";
+        for (std::size_t k = 0; k < n; ++k) {
+            text += " " + std::to_string(k) + "{o" + std::to_string(objs[k]) + " f" + std::to_string(fields[k]) + " m" + std::to_string(mems[k]);
+            for (const auto& [type, size] : types[k]) text += " " + type + "=" + std::to_string(size);
+            text += "}";
+        }
+        log(text);
+    }
     if (trace_loader())
         log("loader F " + item.name + " bytes " + std::to_string(bytes) + " objects " +
             std::to_string(loader_file_.document ? loader_file_.document->objects.size() : 0) + " object data " +
-            std::to_string(loader_file_.heavy) + " sectors, stall " + std::to_string(loader_file_.stall) + " parse " +
+            "chunk " + std::to_string(loader_file_.object_chunk) + " / memory chunk " + std::to_string(loader_file_.memory_chunk) + ", stall " + std::to_string(loader_file_.stall) + " parse " +
             std::to_string(loader_file_.parse) + " route " + std::to_string(loader_file_.route_cost));
 }
 
@@ -772,11 +834,16 @@ void Engine::process_stage_loader() {
     // made.
     if (loader_file_.read >= loader_file_.sectors || loader_file_.booked < 0 || !sound) return;
     const int chunk = int((loader_file_.read - 1) / 64);
-    const std::uint32_t chunk_start = std::uint32_t(chunk) * 64;
-    std::int64_t wait = chunk_start < loader_file_.heavy ? 1 : 0;
-    if (chunk == loader_file_.stall_chunk) wait += loader_file_.stall;
+    if (!loader_file_.chunk_costed) {
+        const std::int64_t before = loader_processing_ / 1000;
+        loader_processing_ += chunk_extra(chunk, loader_file_.object_chunk, loader_file_.memory_chunk, loader_file_.stall);
+        loader_file_.wait = loader_processing_ / 1000 - before;
+        loader_file_.chunk_costed = true;
+    }
+    const std::int64_t wait = loader_file_.wait;
     if (std::int64_t(frame_) < loader_file_.booked + wait) return;
     loader_file_.booked = -1;
+    loader_file_.chunk_costed = false;
     loader_file_.read += sound->read_entry(*this, loader_file_.archive, loader_file_.entry, loader_file_.read, 64);
 }
 

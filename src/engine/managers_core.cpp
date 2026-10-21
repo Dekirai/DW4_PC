@@ -1701,6 +1701,11 @@ void SoundManager::update_driver(Engine& engine) {
     // decoding, PLAYING (disc_timing.hpp). The port's driver tick follows the
     // frame's game update, as the original's servers follow the previous one.
     static const bool trace = std::getenv("DW4_TRACE_SOUND") != nullptr;
+    // Test tool: DW4_DISC_CLOCK=<ticks> replaces the drive's Dolphin clock
+    // offset (DiscDrive::kDolphinClockOffset), to line a run up with a capture
+    // whose world clock stands elsewhere.
+    static const char* disc_clock = std::getenv("DW4_DISC_CLOCK");
+    if (disc_clock) cri_.drive.clock_offset = std::strtoll(disc_clock, nullptr, 10);
     const int inflight_before = cri_.inflight.slot;
     const std::int64_t done_before = cri_.inflight.done;
     std::array<bool, CriStreams::kSlots> playing_before{};
@@ -1752,6 +1757,15 @@ void SoundManager::trace_cri(Engine& engine, int inflight_before, std::int64_t d
                       cri_.inflight.slot, request, static_cast<unsigned long long>(offset),
                       double(cri_.inflight.done - now) / double(CriStreams::kFieldTicks), static_cast<unsigned long long>(engine.frame()));
         engine.log(line);
+        static const bool ring = std::getenv("DW4_TRACE_CRI_RING") != nullptr;
+        if (ring && !loader) {
+            const auto& h = cri_.handles[std::size_t(cri_.inflight.slot)];
+            std::snprintf(line, sizeof line, "  ring: written %llu consumed %llu (used %llu) write_pos %u decoded %llu sj %u aram %llu",
+                          static_cast<unsigned long long>(h.written), static_cast<unsigned long long>(h.consumed),
+                          static_cast<unsigned long long>(h.written - h.consumed), h.write_pos,
+                          static_cast<unsigned long long>(h.decoded), h.sj, static_cast<unsigned long long>(h.moved - h.reclaimed));
+            engine.log(line);
+        }
     }
     for (int slot = 0; slot < CriStreams::kSlots; ++slot)
         if (cri_.playing(slot) && !playing_before[std::size_t(slot)])
