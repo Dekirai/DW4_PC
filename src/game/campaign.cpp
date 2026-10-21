@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <set>
 
 namespace dw4::game {
@@ -223,8 +226,17 @@ constexpr Objective kObjectives[] = {
     {"Guilmon form from the Digi-Elf (level 16)", "S2|K7&K8|P6|!L16", "stagml12", "talk:n_digilff#1"},
     {"digivolve to Guilmon (fire for the cell walls)", "C2|K7&K8|P6|!S2", "stagml12", "evolve:2"},
     {"key item 7 (dng308b3 boss)", "K7|P6", "dng308b3", "explore:matz02"},
-    {"lever (stag0301)", "F56|P6", "stag0301", "strike:g_lever01z03#0"},
-    {"console (stag0302)", "F57|P6", "stag0302", "strike:g_consolez03#0"},
+    // (Loading a save clears flags 36-66 again, stagIS10 gameStart.lua: the
+    // lever and the console count as done once key item 8 is held.) Flag 56
+    // needs all seven levers g_lever01z03 #0-#6 pulled in one visit
+    // (hit_g_lever01z03.lua counts them in a stage global). They take the
+    // talk check (talk boxes), which the ExploreBot gives every gimmick it
+    // finds: it plays the whole field until the flag is set. (The full runs
+    // so far had it pull them all in passing on the way to dng307 or
+    // stag0302; a run that did not stalled 970000 frames on strike:#0, and
+    // strike:#* also pulled none in 260000 frames among the frogs.)
+    {"lever (stag0301)", "F56|K8|P6", "stag0301", "explore:none"},
+    {"console (stag0302)", "F57|K8|P6", "stag0302", "strike:g_consolez03#0"},
     {"key item 8 (dng309b4 boss)", "K8|P6", "dng309b4", "explore:matz02"},
     {"Gekomon (stag0302, flag 333)", "F333|P6", "stag0302", "talk:n_gekoa#0"},
     // The dng310 fortress (kMazeRegions): Lucemon's gate (dng310f3 matz06)
@@ -1336,6 +1348,105 @@ int disks_held(const engine::GameSystem::PlayerSlot& slot, int record) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Checkpoints (segment runs)
+// ---------------------------------------------------------------------------
+// A story run is cut into segments that can run side by side. With
+// DW4_CAMPAIGN_CHECKPOINTS=<dir> the driver saves the game like a player at
+// the points below (kCheckpoints): it talks to the save Digi-Elf in stagML12
+// (n_digilfm#0, n_digilfm_00.lua -> bML01002.lua "save?" yes -> saveshop.lua),
+// whose save room stagIS12 writes the character to Card A and returns to
+// stagML12 (player point 2, save_menu.cpp), and copies Card A to
+// <dir>/<checkpoint>/Card A with a note (checkpoint.txt). A segment run
+// (DW4_CAMPAIGN_LOAD=1) boots, calls that character at the title (Call
+// Digimon, card A, box 0: the lobby stagML11 follows) and plays on;
+// DW4_CAMPAIGN_STOP=1 ends a run once it has saved its first checkpoint or
+// the story is done (flag 86, back in the lobby after the staff roll),
+// DW4_CAMPAIGN_STOP=end only at the story's end (a full run).
+// The saves are the game's own memory card files: they stay loadable when
+// the engine changes, unlike save states.
+// What the driver needs after a load comes from the game state the save
+// holds (story flags, key items, forms, levels, devices, disks): a checkpoint
+// is due when its condition holds and did not hold when the game began (new
+// game or loaded save), and after every checkpoint save the driver forgets
+// everything else it remembered (defeat levels, shops looked at, swept maze
+// places; checkpoint_forget), so the full run plays on from a checkpoint
+// like a segment run from its save.
+// The points lie where the story returns to the lobby (a phase reported, a
+// boss's key item: its dungeon is left by the return gate to stagML11), in
+// story order, about 130000-200000 frames apart in the cheat run c10.
+// DW4_CAMPAIGN_CHECKPOINT_LIST=<name>,<name>... saves only those.
+struct Checkpoint {
+    const char* name;
+    const char* reached; // a condition (see atom()); the later phase keeps it true
+    bool standard = true; // false: only when DW4_CAMPAIGN_CHECKPOINT_LIST names it
+};
+constexpr Checkpoint kCheckpoints[] = {
+    {"p2", "P2", false},      // (tests) Ophanimon's first briefing, some 10000 frames into a new game
+    {"k2", "K2|P3"},          // Leomon beaten, key item 2 from Ophanimon (the boat next)
+    {"p4", "P4"},             // Apocalymon and the lobby consoles done: area 2
+    {"k5", "K5|P5"},          // key items 4 and 5 (the train, the plugs, Belphemon next)
+    {"p5", "P5"},             // Belphemon reported: area 3
+    {"k7", "K7|P6"},          // key items 6 and 7 (Guilmon form on the way)
+    {"k8", "K8|P6"},          // key item 8 (Gekomon and the dng310 fortress next)
+    {"p6", "P6"},             // Lucemon reported: area 4
+    {"k9", "K9|F70|P7"},      // key item 9
+    {"k10", "K9&K10|F70|P7"}, // key item 10: the starship, the last three bosses
+};
+// The errand that saves (stagML12 save Digi-Elf: talk, "save?" yes).
+constexpr Objective kSaveErrand{"save the game at a checkpoint", "", "stagml12", "save:n_digilfm#0"};
+constexpr int kSaveTries = 3; // save room visits that left the card unchanged before a checkpoint is given up
+
+bool env_on(const char* name) {
+    const char* value = std::getenv(name);
+    return value && *value && std::string_view(value) != "0";
+}
+
+// Whether a checkpoint is wanted (DW4_CAMPAIGN_CHECKPOINT_LIST, default the
+// standard ones).
+bool checkpoint_wanted(const Checkpoint& checkpoint) {
+    const std::string_view name = checkpoint.name;
+    const char* list = std::getenv("DW4_CAMPAIGN_CHECKPOINT_LIST");
+    if (!list || !*list) return checkpoint.standard;
+    const std::string_view all(list);
+    for (std::size_t at = 0; at <= all.size();) {
+        const auto comma = std::min(all.find(',', at), all.size());
+        if (all.substr(at, comma - at) == name) return true;
+        at = comma + 1;
+    }
+    return false;
+}
+
+// The save files of Card A (a GCI folder), name -> contents.
+std::map<std::string, std::string> card_files(const std::filesystem::path& folder) {
+    std::map<std::string, std::string> files;
+    std::error_code error;
+    for (auto it = std::filesystem::directory_iterator(folder, error); !error && it != std::filesystem::directory_iterator(); it.increment(error))
+        if (it->is_regular_file(error) && it->path().extension() == ".gci") {
+            std::ifstream in(it->path(), std::ios::binary);
+            files[it->path().filename().string()] = std::string(std::istreambuf_iterator<char>(in), {});
+        }
+    return files;
+}
+
+std::string card_digest(const std::filesystem::path& folder) {
+    std::string digest;
+    for (const auto& [name, data] : card_files(folder)) digest += name + ":" + std::to_string(std::hash<std::string>{}(data)) + ";";
+    return digest;
+}
+
+// "level 14 phase 4 keys 0,1,2,4" for the traces and checkpoint.txt.
+std::string game_summary(engine::Engine& engine) {
+    std::string keys;
+    int level = 0;
+    if (auto* sys = engine.get<engine::GameSystem>()) {
+        level = sys->players[0].stats.level;
+        for (const auto& [index, value] : sys->flag_folder)
+            if (value) keys += (keys.empty() ? "" : ",") + std::to_string(index);
+    }
+    return "level " + std::to_string(level) + " phase " + std::to_string(phase(engine)) + " keys " + (keys.empty() ? "-" : keys);
+}
+
 } // namespace
 
 // The next purchase at the disk shop (kSupplies): record -1 when nothing is
@@ -2071,6 +2182,8 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
     // trains in the area's field first (kTraining, kGates).
     else if (!engine.cheats().god)
         if (const auto* training = train_for(engine, *objective, defeat_levels_)) objective = training;
+    // A checkpoint reached is saved before anything else (segment runs).
+    if (!segment_.due.empty()) objective = &kSaveErrand;
     // The maze region of a place: from the point it was entered at, for the
     // place the player is in the region found by walking (region_now_: a
     // ledge walked off leaves the region entered).
@@ -2159,6 +2272,8 @@ std::optional<CampaignBot::Step> CampaignBot::next_step(engine::Engine& engine) 
 }
 
 CampaignBot::Output CampaignBot::boot(engine::Engine& engine, int frame) {
+    // The save room, and the title of a segment run (calling the saved game).
+    if (const auto checkpoint = checkpoint_boot(engine, frame)) return *checkpoint;
     Output out;
     const int t = frame - stage_frame_;
     if (stage_ == "stagis09") {
@@ -2874,6 +2989,8 @@ void region_report(engine::Engine& engine, const engine::ModelCtrlManager::Model
 }
 
 CampaignBot::Output CampaignBot::update(engine::Engine& engine, const engine::ModelCtrlManager::ModelRam* player, int frame) {
+    // Checkpoints: due, saved, the run's end (segment runs).
+    checkpoint_update(engine, frame);
     // The disk shop's prices, wherever the conItem table is loaded.
     if (auto* db = engine.get<engine::DatabaseManager>(); db && db->has_column("conItem", "HANBAI"))
         for (const auto& s : kSupplies)
@@ -3793,7 +3910,7 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
                 }
         if (goal) walk_to(engine, *player, *goal, 1.5f, frame, out);
     } else if (kind == "talk" || kind == "strike" || kind == "evolve" || kind == "shop" || kind == "heal" ||
-               kind == "equip" || kind == "gear") {
+               kind == "equip" || kind == "gear" || kind == "save") {
         if (const auto* model = find_model(engine, kind == "evolve" ? "n_digilff#1" : what, me, frame)) {
             // Ten seconds of walking without reaching one of several ("#*"; a
             // plug inside the block of the others, stag0205: the walk ends
@@ -3872,6 +3989,182 @@ CampaignBot::Output CampaignBot::play(engine::Engine& engine, const engine::Mode
     }
     last_ = me;
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoints (segment runs), see kCheckpoints.
+// ---------------------------------------------------------------------------
+namespace {
+
+// Calling the saved character at the title (relative to the frame the title
+// stage was requested, like title_presses; the load flow of docs/SAVES.md):
+// START opens Game Start / Option, A goes through the card check to the
+// character select, DOWN moves Create to Call Digimon, A calls it; the A
+// presses that follow take slot A, the first box and its status window
+// ("call this Digimon?" yes), START logs in (gameStart.lua, stagML11 point 0).
+std::vector<TitlePress> load_presses() {
+    std::vector<TitlePress> presses{{647, pad_button::start}, {807, pad_button::a}, {1197, pad_button::down}, {1247, pad_button::a}};
+    for (int at = 1367; at <= 1797; at += 50) presses.push_back({at, pad_button::a});
+    presses.push_back({1847, pad_button::start});
+    return presses;
+}
+
+} // namespace
+
+void CampaignBot::checkpoint_update(engine::Engine& engine, int frame) {
+    auto& s = segment_;
+    const std::string stage = lower(engine.stage_name());
+    const std::string left = s.last_stage;
+    const bool changed = stage != left;
+    s.last_stage = stage;
+    if (s.finished) return;
+    auto* sys = engine.get<engine::GameSystem>();
+    const bool in_game = sys && sys->players[0].joined && !stage.empty() && stage.rfind("stagis", 0) != 0;
+    // The game has begun (the first stage after the title): the checkpoints
+    // behind it (none for a new game; for a loaded save those its story
+    // state passes).
+    if (!s.began) {
+        if (!in_game) return;
+        s.began = true;
+        s.began_at = frame;
+        std::string behind;
+        for (const auto& c : kCheckpoints)
+            if (holds(engine, c.reached)) {
+                s.held.insert(c.name);
+                behind += (behind.empty() ? "" : ",") + std::string(c.name);
+            }
+        std::printf("[%d] campaign: game began in %s: %s, checkpoints behind it: %s\n", frame, stage.c_str(), game_summary(engine).c_str(),
+                    behind.empty() ? "none" : behind.c_str());
+    }
+    const char* dir = std::getenv("DW4_CAMPAIGN_CHECKPOINTS");
+    if (!s.due.empty() && changed) {
+        // Into the save room: the card as it was; out of it: saved or not.
+        if (stage == "stagis12") {
+            s.card_before = card_digest(engine.card_root() / "Card A");
+            ++s.tries;
+        } else if (left == "stagis12") {
+            checkpoint_saved(engine, frame);
+            if (s.finished) return;
+        }
+    }
+    if (dir && *dir && s.due.empty() && in_game)
+        for (const auto& c : kCheckpoints) {
+            if (s.held.count(c.name) || s.saved.count(c.name) || !checkpoint_wanted(c) || !holds(engine, c.reached)) continue;
+            s.due = c.name;
+            s.due_since = frame;
+            s.tries = 0;
+            std::printf("[%d] campaign: checkpoint %s reached in %s (%s)\n", frame, c.name, stage.c_str(), game_summary(engine).c_str());
+            break;
+        }
+    // The story is done: flag 86 (stagML11 start.lua after the staff roll).
+    if (!s.story_done && in_game && lobby(stage) && holds(engine, "F86")) {
+        s.story_done = true;
+        std::printf("[%d] campaign: story complete (flag 86) in %s, %s\n", frame, stage.c_str(), game_summary(engine).c_str());
+        // (The run's end beside its checkpoints: story.txt, complete <frame>.)
+        if (dir && *dir) {
+            std::string from = "new";
+            for (const auto& c : kCheckpoints)
+                if (s.held.count(c.name)) from = c.name;
+            std::error_code error;
+            std::filesystem::create_directories(dir, error);
+            std::ofstream note(std::filesystem::path(dir) / "story.txt");
+            note << "complete " << frame << "\nfrom " << from << "\nbegan " << s.began_at << "\nstage " << stage << "\n" << game_summary(engine) << "\n";
+        }
+        if (env_on("DW4_CAMPAIGN_STOP")) {
+            s.finished = true;
+            std::printf("[%d] campaign: run finished (DW4_CAMPAIGN_STOP)\n", frame);
+        }
+    }
+    if (frame % 10000 == 0 && !s.due.empty())
+        std::printf("[%d] campaign: checkpoint %s due for %d frames\n", frame, s.due.c_str(), frame - s.due_since);
+}
+
+// The save room has returned to the lobby: the card holds the checkpoint
+// (copied to DW4_CAMPAIGN_CHECKPOINTS/<name>), or the save did not happen.
+void CampaignBot::checkpoint_saved(engine::Engine& engine, int frame) {
+    auto& s = segment_;
+    const auto card = engine.card_root() / "Card A";
+    const auto files = card_files(card);
+    if (files.empty() || card_digest(card) == s.card_before) {
+        std::printf("[%d] campaign: checkpoint %s: the save room left the card unchanged (visit %d)\n", frame, s.due.c_str(), s.tries);
+        if (s.tries >= kSaveTries) {
+            std::printf("[%d] campaign: checkpoint %s given up\n", frame, s.due.c_str());
+            s.saved.insert(s.due);
+            s.due.clear();
+        }
+        return;
+    }
+    const std::filesystem::path out = std::filesystem::path(std::getenv("DW4_CAMPAIGN_CHECKPOINTS")) / s.due;
+    std::error_code error;
+    std::filesystem::remove_all(out, error);
+    std::filesystem::create_directories(out / "Card A", error);
+    bool written = !error;
+    for (const auto& [name, data] : files) {
+        std::ofstream file(out / "Card A" / name, std::ios::binary);
+        file.write(data.data(), std::streamsize(data.size()));
+        written = written && bool(file);
+    }
+    {
+        // order: the checkpoint's place in kCheckpoints; from: what the run
+        // began with ("new" game or the last checkpoint behind the loaded
+        // save); began / saved / reached: the run's frames (the game began,
+        // the checkpoint saved, its condition met).
+        int order = 0;
+        std::string from = "new";
+        for (int i = 0; i < int(std::size(kCheckpoints)); ++i) {
+            if (s.due == kCheckpoints[i].name) order = i;
+            if (s.held.count(kCheckpoints[i].name)) from = kCheckpoints[i].name;
+        }
+        std::ofstream note(out / "checkpoint.txt");
+        note << "checkpoint " << s.due << "\norder " << order << "\nfrom " << from << "\nbegan " << s.began_at << "\nsaved " << frame
+             << "\nreached " << s.due_since << "\nstage " << lower(engine.stage_name()) << "\n" << game_summary(engine) << "\n";
+        written = written && bool(note);
+    }
+    std::printf("[%d] campaign: checkpoint %s saved (%s) -> %s%s\n", frame, s.due.c_str(), game_summary(engine).c_str(), out.generic_string().c_str(),
+                written ? "" : " (COPY FAILED)");
+    std::fflush(stdout);
+    s.saved.insert(s.due);
+    s.due.clear();
+    if (env_on("DW4_CAMPAIGN_STOP") && std::string_view(std::getenv("DW4_CAMPAIGN_STOP")) != "end") {
+        s.finished = true;
+        std::printf("[%d] campaign: run finished (DW4_CAMPAIGN_STOP)\n", frame);
+        return;
+    }
+    checkpoint_forget();
+}
+
+// After a checkpoint save the driver plays on knowing only what a fresh
+// driver knows after loading that save: every member but the checkpoint
+// bookkeeping (and the defeat count of the traces) starts anew.
+void CampaignBot::checkpoint_forget() {
+    Segment keep = std::move(segment_);
+    const int deaths = deaths_;
+    *this = CampaignBot{};
+    segment_ = std::move(keep);
+    deaths_ = deaths;
+}
+
+// Inputs of the screens between the stages: the save room (A through slot A,
+// the first box, "Are you done saving?" yes, "Continue?" yes; START once the
+// panel waits for it leaves for stagML12) and, in a segment run
+// (DW4_CAMPAIGN_LOAD), the title calling the saved character. nullopt: the
+// usual boot inputs.
+std::optional<CampaignBot::Output> CampaignBot::checkpoint_boot(engine::Engine& engine, int frame) {
+    (void)engine;
+    const int t = frame - stage_frame_;
+    Output out;
+    if (stage_ == "stagis12") {
+        if (t >= 300 && t % 45 < 3) out.buttons |= pad_button::a;
+        else if (t >= 300 && t % 45 >= 22 && t % 45 < 25) out.buttons |= pad_button::start;
+        return out;
+    }
+    if (stage_ == "stagis10" && env_on("DW4_CAMPAIGN_LOAD")) {
+        static const auto presses = load_presses();
+        for (const auto& press : presses)
+            if (t >= press.at && t < press.at + 3) out.buttons |= press.button;
+        return out;
+    }
+    return std::nullopt;
 }
 
 } // namespace dw4::game

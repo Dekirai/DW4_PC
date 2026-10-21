@@ -14,6 +14,17 @@ with the name entry (NAMESEL) and the difficulty dialog (DIFFSELECT). Addresses 
   stagML12 (PLAYERPOINT 2) or to the title (stagis10) when nobody saved.
 - `stagIS12/start.lua` first copies story flags into the flag folder for the
   chosen difficulty (FLGset 518.., 530.., 542..), plays `RM_NSHOP`.
+- A character called from the title starts in stagML11 (PLAYERPOINT 0) after
+  `stagIS10/gameStart.lua`: COUNTER 2 = 0, the temporary flags cleared (23-34,
+  36-66, 71-73, 84-85, 100-319, 328, 336-391, 409, 415-425, 457-468,
+  475-500, 514-517, 562-566, 571-575, 593-594, 598-610: switches, levers,
+  dungeon and lobby event flags), the key items set again from flags 518..
+  (difficulty 0; 530.. / 542..) and the story flags from their copies 700..
+  (phases 1-6, 19-20, bosses 67-70, 83, 86, 89-99, 320-327, 329-333, 335, 49,
+  383, 82, 334). A game loaded after the stag0301 lever (flag 56) finds it
+  pulled back; the key items it opened the way to stay.
+- The story-run driver saves this way at its checkpoints and segment runs
+  call such saves at the title (`src/game/campaign.cpp` "Checkpoints").
 
 ## Managers
 
