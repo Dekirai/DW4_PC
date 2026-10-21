@@ -105,7 +105,9 @@ public:
     // ADXT readers 8051ABD0.. in each file server pass, so a stream refill
     // wins a tick both want): a file is read in requests of at most 64
     // sectors, one at a time; the loader consumes a booked chunk in the game
-    // update that follows, so the next request comes one field later.
+    // update that follows, so the next request comes one field later (the
+    // engine asks for one chunk at a time and adds the loading thread's work,
+    // Engine::process_stage_loader).
     void load(std::uint64_t disc_offset, std::uint32_t sectors);
     // One VI field of the CRI servers at time `now`.
     void tick(std::int64_t now);
