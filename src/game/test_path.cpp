@@ -459,9 +459,10 @@ int WalkMap::nearest_reached(const engine::Vec3f& p, float tolerance) const {
     return best;
 }
 
-std::optional<engine::Vec3f> WalkMap::nearest(const engine::Vec3f& p, float tolerance) const {
+std::optional<engine::Vec3f> WalkMap::nearest(const engine::Vec3f& p, float tolerance, int* support) const {
     const int cell = nearest_reached(p, tolerance);
     if (cell < 0) return std::nullopt;
+    if (support) *support = support_[std::size_t(cell)];
     return point(cell);
 }
 
@@ -1550,6 +1551,22 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 return;
             }
         }
+    // The moving platform the player rides (one seen moving whose own floor
+    // is under the player; also while it waits at a stop), else -1, and
+    // whether a reached point lies on it: on its path (the walking map's
+    // moving floor) or on its collision where it stands (a platform that
+    // waits is plain floor in the map).
+    int ride = -1;
+    if (const auto land = hitland->world().check_land({me.x, me.y + 5.0f, me.z}, 1.0f, 400.0f, 1.0f); land.found && land.position.y >= me.y - 8.0f)
+        for (std::size_t i = 0; i < platforms_.size() && ride < 0; ++i)
+            if (platforms_[i].info == land.info && platforms_[i].child == land.child) ride = int(i);
+    const auto on_ride = [&](const engine::Vec3f& q, int support) {
+        if (support == ride) return true;
+        const auto land = hitland->world().check_land({q.x, q.y + 5.0f, q.z}, 1.0f, 400.0f, 1.0f);
+        const auto& p = platforms_[std::size_t(ride)];
+        return land.found && land.info == p.info && land.child == p.child;
+    };
+    std::set<const void*> off_ride;
     // Live enemies (structures such as towers first), then pickups: the
     // cheapest to walk to. While defending enemies are only struck in
     // passing (update), except structures.
@@ -1612,6 +1629,30 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 unreachable_[e.get()] = frame + 300;
                 continue;
             }
+            // On a moving platform an enemy is gone for only where the ride
+            // lets the player strike it: its nearest reached floor (a perch's
+            // post) lies on the ride, and a structure's or a boss's body
+            // within a swing of it (update: 15). One out of reach from the
+            // ride is struck once the ride carries the player there. (The
+            // stag0103 boat, walled all round, passes the shore's
+            // g_numepodz01 pods with their bodies 18 and more off its deck,
+            // and the walking map found shore floor past its rail: after a pod
+            // the bot pressed against the rail, open to the pods' missiles,
+            // and every hit on the player outside SQ_GUARD costs the boat 5
+            // of its 100 HP, hit_p_agumon.lua: the twentieth sank it, game
+            // over and back to stag0102.) Without the test cheats the rule in
+            // update also leaves an enemy whose way rides a platform.
+            if (pass == 0 && ride >= 0) {
+                int support = -1;
+                const auto stand =
+                    perch ? map.nearest(*perch, 1.0f, &support) : map.nearest(at, boss ? 60.0f : structure ? 30.0f : 14.0f, &support);
+                if (!stand || !on_ride(*stand, support) || (!perch && (structure || boss) && body_gap(*e, *stand) > 15.0f)) {
+                    if (std::getenv("DW4_TRACE_EXPLORE") && !off_ride_.count(e.get()))
+                        std::printf("[%d] explore: %s#%d is out of reach from the ride\n", frame, e->info_name.c_str(), e->index);
+                    off_ride.insert(e.get());
+                    continue;
+                }
+            }
             if (structure) cost *= 0.3f;
             cost = keep(e.get(), cost);
             if (cost < best_cost) {
@@ -1620,6 +1661,7 @@ void ExploreBot::plan(engine::Engine& engine, const engine::ModelCtrlManager::Mo
                 best_perch = perch;
             }
         }
+        if (pass == 0) off_ride_.swap(off_ride);
         if (best) {
             go(position_of(*best), best, (pass == 0 ? "enemy " : "item ") + best->info_name);
             waiting_since_ = -1;
@@ -2381,6 +2423,7 @@ ExploreBot::Decision ExploreBot::update(engine::Engine& engine, const engine::Mo
         platforms_.clear();
         stirring_.clear();
         not_platforms_.clear();
+        off_ride_.clear();
         hop_.reset();
         hop_wait_since_ = -1;
         hop_spots_for_ = {1e30f, 0.0f, 1e30f};
